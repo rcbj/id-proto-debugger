@@ -23,11 +23,13 @@ use in the reference account.
 
 ## Prerequisites
 
-- Terraform ≥ 1.5, AWS CLI v2.
-- AWS credentials for the **target account** with **write** access (the
-  read-only creds used to analyze the reference account are not enough to
-  apply). Set them via env vars, a profile, or SSO, and optionally set
-  `aws_profile` in `terraform.tfvars`.
+- **State is remote** (S3 `s3://idptools-terraform-state-721850476504`,
+  key `idptools.com/prod.tfstate`) — see `../README.md`.
+- Run Terraform via the **containerized runner** (`../terraform-local.sh prod <action>`);
+  you don't run `terraform` on your host. AWS auth: your SSO session locally,
+  static-key secrets in CI.
+- The two-phase flow below is only relevant for the **initial** stand-up of a
+  brand-new domain (prod is already applied).
 
 ## Deploy — two-phase apply (because of the DNS chicken-and-egg)
 

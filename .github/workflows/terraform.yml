@@ -1,0 +1,57 @@
+name: Terraform
+
+# Runs Terraform inside the same container image used locally
+# (infra/terraform-local.sh). State is remote (S3), so CI runs are meaningful.
+#
+#   - Pull requests touching infra/**: plan BOTH environments (read-only feedback).
+#   - Manual dispatch: pick an environment and action (plan or apply).
+#
+# CI authenticates with static-key secrets (same pattern as the deploy pipeline);
+# local runs use your AWS SSO session.
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [test, prod]
+        default: test
+      action:
+        description: "Terraform action"
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.event.inputs.environment)) || fromJSON('["test","prod"]') }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Build terraform image
+        run: docker build -t idptools-terraform -f infra/Dockerfile .
+
+      - name: Terraform ${{ github.event.inputs.action || 'plan' }} (${{ matrix.environment }})
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          docker run --rm \
+            -e AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY \
+            -e AWS_REGION=us-west-2 \
+            -e TF_ENV="${{ matrix.environment }}" \
+            -e TF_ACTION="${{ github.event.inputs.action || 'plan' }}" \
+            idptools-terraform

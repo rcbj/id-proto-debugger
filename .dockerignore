@@ -6,6 +6,6 @@ tests/report
 tests/node_modules
 .git
 .idea
-infra/terraform/.terraform
-infra/terraform/*.tfstate
-infra/terraform/*.tfstate.*
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*

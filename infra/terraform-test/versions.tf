@@ -8,11 +8,11 @@ terraform {
     }
   }
 
-  # Remote state in S3 (bootstrapped by infra/bootstrap-state.sh). Locking uses
-  # S3-native lockfiles (Terraform >= 1.11), so no DynamoDB table is needed.
+  # Remote state in S3 (bootstrapped by infra/bootstrap-state.sh). Separate
+  # state key from prod, in the same bucket. S3-native locking (no DynamoDB).
   backend "s3" {
     bucket       = "idptools-terraform-state-721850476504"
-    key          = "idptools.com/prod.tfstate"
+    key          = "idptools.com/test.tfstate"
     region       = "us-west-2"
     encrypt      = true
     use_lockfile = true

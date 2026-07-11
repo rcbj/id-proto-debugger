@@ -37,8 +37,11 @@ then run:
 ```bash
 aws sso login            # or: aws login   (refresh your SSO session)
 
-# build + deploy (uses your SSO session)
+# PROD (idptools.com): build + deploy
 ./deploy/deploy-local.sh
+
+# TEST (test.idptools.com): build + deploy
+DEPLOY_ENV=test ./deploy/deploy-local.sh
 
 # build only, no push (no AWS needed)
 SKIP_DEPLOY=true ./deploy/deploy-local.sh
@@ -47,16 +50,24 @@ SKIP_DEPLOY=true ./deploy/deploy-local.sh
 AWS_PROFILE=idptools ./deploy/deploy-local.sh
 ```
 
+`DEPLOY_ENV` (prod | test) selects the bucket / distribution / config in
+`entrypoint.sh`:
+
+| DEPLOY_ENV | Bucket | Distribution | Config |
+|---|---|---|---|
+| `prod` (default) | `www.idptools.com` | `E1C72FI2JLYGWW` | `./env/prod.js` |
+| `test` | `test.idptools.com` | `E21A46XVWQ32FG` | `./env/test-idptools-com.js` |
+
 Overridable env vars: `S3_BUCKET`, `CLOUDFRONT_DISTRIBUTION_ID`, `AWS_REGION`,
 `CONFIG_FILE`, `SKIP_DEPLOY`, `AWS_PROFILE`, `IMAGE_NAME`.
 
 ## GitHub Actions
 
-`.github/workflows/website-deploy.yml` builds the same image and runs it on push
-to `master`. It needs two repo **secrets**:
+Two workflows build the same image and run it, using the same two repo
+**secrets** (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`):
 
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
+- `.github/workflows/website-deploy.yml` — **prod**, on push to `master` (`DEPLOY_ENV=prod`)
+- `.github/workflows/website-deploy-test.yml` — **test**, on push to `develop` or manual dispatch (`DEPLOY_ENV=test`)
 
 > These are stored as GitHub Actions secrets, never in the repo — safe for a
 > public repository. A more secure alternative is GitHub OIDC federation (no

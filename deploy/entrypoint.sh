@@ -6,7 +6,8 @@
 # AWS credentials must be supplied from OUTSIDE the container (env vars, or a
 # mounted ~/.aws profile/SSO session). This script does not create credentials.
 #
-# Configuration (env vars, with idptools.com defaults):
+# Configuration (env vars):
+#   DEPLOY_ENV                   prod | test                     (prod)
 #   S3_BUCKET                    target content bucket           (www.idptools.com)
 #   CLOUDFRONT_DISTRIBUTION_ID   distribution to invalidate      (E1C72FI2JLYGWW)
 #   AWS_REGION                   region for the bucket           (us-west-2)
@@ -14,17 +15,34 @@
 #   SKIP_DEPLOY                  build only, do not push         (false)
 set -euo pipefail
 
-: "${S3_BUCKET:=www.idptools.com}"
-: "${CLOUDFRONT_DISTRIBUTION_ID:=E1C72FI2JLYGWW}"
+# Environment selection: prod (default) or test. Any of S3_BUCKET,
+# CLOUDFRONT_DISTRIBUTION_ID, or CONFIG_FILE set explicitly still override the
+# per-environment defaults below.
+: "${DEPLOY_ENV:=prod}"
+case "${DEPLOY_ENV}" in
+  prod)
+    : "${S3_BUCKET:=www.idptools.com}"
+    : "${CLOUDFRONT_DISTRIBUTION_ID:=E1C72FI2JLYGWW}"
+    : "${CONFIG_FILE:=./env/prod.js}"
+    ;;
+  test)
+    : "${S3_BUCKET:=test.idptools.com}"
+    : "${CLOUDFRONT_DISTRIBUTION_ID:=E21A46XVWQ32FG}"
+    : "${CONFIG_FILE:=./env/test-idptools-com.js}"
+    ;;
+  *)
+    echo "ERROR: unknown DEPLOY_ENV='${DEPLOY_ENV}' (expected 'prod' or 'test')." >&2
+    exit 1
+    ;;
+esac
 : "${AWS_REGION:=us-west-2}"
-: "${CONFIG_FILE:=./env/prod.js}"
 : "${SKIP_DEPLOY:=false}"
 
 # --- Preflight: required tools must be present in the container ---
 command -v node >/dev/null 2>&1 || { echo "ERROR: node not found in container." >&2; exit 1; }
 command -v aws  >/dev/null 2>&1 || { echo "ERROR: aws CLI not found in container." >&2; exit 1; }
 
-echo "==> Building static content (CONFIG_FILE=${CONFIG_FILE})"
+echo "==> [${DEPLOY_ENV}] Building static content (CONFIG_FILE=${CONFIG_FILE})"
 cd /usr/src/app/client
 CONFIG_FILE="${CONFIG_FILE}" npm run build
 

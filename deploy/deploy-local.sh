@@ -12,11 +12,12 @@
 #  .github/workflows/website-deploy.yml.)
 #
 # Overridable via env vars:
-#   S3_BUCKET, CLOUDFRONT_DISTRIBUTION_ID, AWS_REGION, CONFIG_FILE, SKIP_DEPLOY,
-#   AWS_PROFILE, IMAGE_NAME
+#   DEPLOY_ENV (prod|test), S3_BUCKET, CLOUDFRONT_DISTRIBUTION_ID, AWS_REGION,
+#   CONFIG_FILE, SKIP_DEPLOY, AWS_PROFILE, IMAGE_NAME
 #
 # Examples:
-#   ./deploy/deploy-local.sh                    # build + deploy (uses SSO login)
+#   ./deploy/deploy-local.sh                    # prod: build + deploy (SSO login)
+#   DEPLOY_ENV=test ./deploy/deploy-local.sh    # test: build + deploy
 #   SKIP_DEPLOY=true ./deploy/deploy-local.sh   # build only (no AWS needed)
 #   AWS_PROFILE=idptools ./deploy/deploy-local.sh
 set -euo pipefail
@@ -32,11 +33,15 @@ command -v sudo docker >/dev/null 2>&1 || {
 }
 
 run_args=(--rm)
+run_args+=(-e "DEPLOY_ENV=${DEPLOY_ENV:-prod}")
 run_args+=(-e "AWS_REGION=${AWS_REGION:-us-west-2}")
-run_args+=(-e "S3_BUCKET=${S3_BUCKET:-www.idptools.com}")
-run_args+=(-e "CLOUDFRONT_DISTRIBUTION_ID=${CLOUDFRONT_DISTRIBUTION_ID:-E1C72FI2JLYGWW}")
-run_args+=(-e "CONFIG_FILE=${CONFIG_FILE:-./env/prod.js}")
 run_args+=(-e "SKIP_DEPLOY=${SKIP_DEPLOY:-false}")
+
+# Optional explicit overrides — only forwarded when set, so the container's
+# per-environment (DEPLOY_ENV) defaults apply otherwise.
+for v in S3_BUCKET CLOUDFRONT_DISTRIBUTION_ID CONFIG_FILE; do
+  if [ -n "${!v:-}" ]; then run_args+=(-e "${v}=${!v}"); fi
+done
 
 # Short-lived credential file handed to the container; removed on exit.
 CREDS_ENV_FILE=""
