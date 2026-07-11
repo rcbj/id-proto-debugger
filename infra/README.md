@@ -42,10 +42,14 @@ root, the wrapper auto-falls back to `sudo docker` (or set `DOCKER="sudo docker"
 
 ## CI
 
-`.github/workflows/terraform.yml` builds the same image and runs it:
+`.github/workflows/terraform.yml` builds the same image and runs it on
+**manual dispatch only** (Actions tab → *Terraform* → *Run workflow* → pick
+environment + `plan`/`apply`).
 
-- **PRs** touching `infra/**` → `plan` for **both** environments (read-only).
-- **Manual dispatch** → choose environment + `plan`/`apply`.
+It deliberately does **not** run on `pull_request`: on a public repo that would
+either fail noisily on fork PRs (secrets are withheld from forks) or, worse,
+risk executing untrusted PR content with credentials. Keeping it dispatch-only
+means CI never runs on untrusted PR content.
 
 CI authenticates with the `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` repo
 secrets (local runs use your SSO session instead).
