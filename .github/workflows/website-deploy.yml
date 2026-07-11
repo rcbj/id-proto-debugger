@@ -1,0 +1,38 @@
+name: Deploy Static Site (idptools.com)
+
+# Builds the static client content and deploys it to S3 + CloudFront using the
+# SAME container image that developers run locally via deploy/deploy-local.sh.
+# Based on the iyasec.io jekyll.yml pattern, adapted to run everything in Docker.
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+
+      - name: Build deploy image
+        run: docker build -t idptools-static-deploy -f deploy/Dockerfile .
+
+      - name: Build static content and deploy to S3 + CloudFront
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          docker run --rm \
+            -e AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY \
+            -e AWS_REGION=us-west-2 \
+            -e S3_BUCKET=www.idptools.com \
+            -e CLOUDFRONT_DISTRIBUTION_ID=E1C72FI2JLYGWW \
+            -e CONFIG_FILE=./env/prod.js \
+            idptools-static-deploy

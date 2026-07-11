@@ -5,7 +5,8 @@
   "author": "Robert C. Broeckelmann Jr. <robert@iyasec.io>",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "node build.js"
   },
   "dependencies": {
     "@fidm/x509": "^1.2.1",

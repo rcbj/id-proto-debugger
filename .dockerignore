@@ -1,0 +1,11 @@
+# Keep the Docker build context small and reproducible.
+**/node_modules
+client/dist
+coverage
+tests/report
+tests/node_modules
+.git
+.idea
+infra/terraform/.terraform
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*

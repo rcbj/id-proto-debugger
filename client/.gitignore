@@ -1,0 +1,5 @@
+node_modules
+# Static build output (produced by build.js / npm run build)
+dist
+# Transient copy of common/data.js staged during the browserify build
+src/data.js
