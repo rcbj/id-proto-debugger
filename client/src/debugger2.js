@@ -597,7 +597,7 @@ function errorInternalRefreshAPICall(request, status, error) {
 function resetUI(value)
 {
     log.debug("Entering resetUI().");
-    $("#logout_post_redirect_uri").val('http://localhost:3000/logout.html');
+    $("#logout_post_redirect_uri").val((appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000") + "/logout.html");
     if( value == "client_credential" &&
         getParameterByName("redirectFromTokenDetail") != "true")
     {
@@ -905,7 +905,7 @@ function loadValuesFromLocalStorage()
   }
   $("#token_client_id").val(localStorage.getItem("client_id"));
   $("#token_client_secret").val(localStorage.getItem("client_secret"));
-  $("#token_redirect_uri").val(localStorage.getItem("redirect_uri"));
+  $("#token_redirect_uri").val(localStorage.getItem("redirect_uri") || ((appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000") + "/callback"));
   $("#token_scope").val(localStorage.getItem("token_scope"));
   $("#token_username").val(localStorage.getItem("token_username"));
   $("#token_resource").val(localStorage.getItem("token_resource"));

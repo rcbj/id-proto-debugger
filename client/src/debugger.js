@@ -355,7 +355,7 @@ function initValuesToLocalStorage()
       localStorage.setItem("useRefreshToken_yes", true);
       localStorage.setItem("usePKCE_yes", true);
       localStorage.setItem("client_id", "abcxyz");
-      localStorage.setItem("redirect_uri", "http://localhost:3000/callback");
+      localStorage.setItem("redirect_uri", (appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000") + "/callback");
       localStorage.setItem("scope", "openid profile");
       localStorage.setItem("useRefreshToken_no", false);
       localStorage.setItem("usePKCE_no", false);
