@@ -32,6 +32,12 @@ window.onload = function()
   log.debug("Entering window.onload() function.");
   initLocalStorage();
   loadValuesFromLocalStorage();
+  // Static build (appconfig.backendAvailable === false): no api backend, so
+  // force the frontend and disable (gray out) the backend initiation option.
+  if (appconfig.backendAvailable === false) {
+    $("#userinfo_initiateFromFrontEnd").prop("checked", true);
+    $("#userinfo_initiateFromBackEnd").prop("checked", false).prop("disabled", true);
+  }
   resetErrorDisplays();
   var frontEndInitiated = $("#userinfo_initiateFromFrontEnd").is(":checked");
   if(frontEndInitiated) {

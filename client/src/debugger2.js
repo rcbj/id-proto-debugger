@@ -905,7 +905,15 @@ function loadValuesFromLocalStorage()
   }
   $("#token_client_id").val(localStorage.getItem("client_id"));
   $("#token_client_secret").val(localStorage.getItem("client_secret"));
-  $("#token_redirect_uri").val(localStorage.getItem("redirect_uri") || ((appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000") + "/callback"));
+  // Match this deployment's origin (appconfig.uiUrl); heal a stale/empty/
+  // cross-origin value persisted by an earlier build or a different origin.
+  var redirectBase = (appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000");
+  var storedRedirectUri = localStorage.getItem("redirect_uri");
+  if (!storedRedirectUri || storedRedirectUri.indexOf(redirectBase) !== 0) {
+    storedRedirectUri = redirectBase + "/callback";
+    localStorage.setItem("redirect_uri", storedRedirectUri);
+  }
+  $("#token_redirect_uri").val(storedRedirectUri);
   $("#token_scope").val(localStorage.getItem("token_scope"));
   $("#token_username").val(localStorage.getItem("token_username"));
   $("#token_resource").val(localStorage.getItem("token_resource"));
@@ -1354,6 +1362,26 @@ function processStateParameter()
   log.debug("Leaving processStateParameter().");
 }
 
+// On a static build (appconfig.backendAvailable === false) there is no api
+// backend, so every "Initiate ... Call From front or backend" control must use
+// the frontend. Force the Front radio on and disable (gray out) the Back radio
+// for each group, then sync the module flags the call logic reads.
+function enforceBackendAvailability() {
+  log.debug("Entering enforceBackendAvailability().");
+  if (appconfig.backendAvailable === false) {
+    var groups = ["token", "refresh", "revocation", "tokenexchange"];
+    for (var i = 0; i < groups.length; i++) {
+      $("#" + groups[i] + "_initiateFromFrontEnd").prop("checked", true);
+      $("#" + groups[i] + "_initiateFromBackEnd").prop("checked", false).prop("disabled", true);
+    }
+    setInitiateFromEnd();
+    setInitiateRefreshFromEnd();
+    setInitiateRevocationFromEnd();
+    setInitiateTokenExchangeFromEnd();
+  }
+  log.debug("Leaving enforceBackendAvailability().");
+}
+
 $(document).ready(function() {
   log.debug("Entering document.ready() function.");
 
@@ -1444,6 +1472,7 @@ $(document).ready(function() {
   $("#customTokenParametersCheck-no").on("click", recalculateTokenRequestDescription);
 
   loadValuesFromLocalStorage();
+  enforceBackendAvailability();
   recreateUniqueGrantFlowElements();
   recalculateAuthorizationErrorDescription();
   recalculateTokenRequestDescription();

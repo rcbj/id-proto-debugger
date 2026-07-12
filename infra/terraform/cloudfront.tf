@@ -4,6 +4,25 @@
 # support HTTPS), which is why the origin protocol policy is http-only and the
 # bucket's own website config handles index/error routing.
 
+# Rewrite /callback -> /callback/index.html so the S3 website endpoint does not
+# issue a trailing-slash redirect (which drops the OAuth query string) before
+# the callback shim runs. Runs on viewer-request; the query string is preserved.
+resource "aws_cloudfront_function" "callback_rewrite" {
+  name    = "${replace(var.domain, ".", "-")}-callback-rewrite"
+  runtime = "cloudfront-js-2.0"
+  comment = "Rewrite /callback to /callback/index.html (preserve OAuth query string)"
+  publish = true
+  code    = <<-EOT
+function handler(event) {
+  var request = event.request;
+  if (request.uri === '/callback') {
+    request.uri = '/callback/index.html';
+  }
+  return request;
+}
+EOT
+}
+
 resource "aws_cloudfront_distribution" "site" {
   enabled             = true
   is_ipv6_enabled     = true
@@ -31,6 +50,11 @@ resource "aws_cloudfront_distribution" "site" {
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     compress               = true # improvement over the reference (was off)
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.callback_rewrite.arn
+    }
 
     forwarded_values {
       query_string = false

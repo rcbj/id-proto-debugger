@@ -239,6 +239,12 @@ $(document).on("change", "#introspection_authentication_type", function() {
 window.onload = function() {
   log.debug("Entering window.onload() function.");
   loadValuesFromLocalStorage();
+  // Static build (appconfig.backendAvailable === false): no api backend, so
+  // force the frontend and disable (gray out) the backend initiation option.
+  if (appconfig.backendAvailable === false) {
+    $("#introspection_initiateFromFrontEnd").prop("checked", true);
+    $("#introspection_initiateFromBackEnd").prop("checked", false).prop("disabled", true);
+  }
   $("#introspection_authentication_type").trigger("change");
   var frontEndInitiated = $("#introspection_initiateFromFrontEnd").is(":checked");
   if(frontEndInitiated) {

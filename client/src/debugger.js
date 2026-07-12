@@ -430,7 +430,17 @@ function loadValuesFromLocalStorage()
     $("#device_authorization_endpoint").closest('tr').hide();
   }
 
-  $("#redirect_uri").val(localStorage.getItem("redirect_uri"));
+  // Ensure the redirect URI matches this deployment's origin (appconfig.uiUrl).
+  // Heals a stale/empty/cross-origin value persisted by an earlier build or a
+  // different origin, so switching sites (e.g. localhost -> test.idptools.com)
+  // re-defaults the field instead of keeping the old value.
+  var redirectBase = (appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000");
+  var storedRedirectUri = localStorage.getItem("redirect_uri");
+  if (!storedRedirectUri || storedRedirectUri.indexOf(redirectBase) !== 0) {
+    storedRedirectUri = redirectBase + "/callback";
+    localStorage.setItem("redirect_uri", storedRedirectUri);
+  }
+  $("#redirect_uri").val(storedRedirectUri);
   $("#client_id").val(localStorage.getItem("client_id"));
   $("#scope").val(localStorage.getItem("scope"));
   $("#resource").val(localStorage.getItem("resource"));
