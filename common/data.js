@@ -78,6 +78,11 @@ function convertToOAuth2Format(formData) {
         username: username,
         password: password
        };
+       log.debug("clientSecret: " + clientSecret);
+       log.debug("auth_style: " + auth_style);
+       if (!!clientSecret && auth_style) {
+         parameterObject.client_secret = clientSecret;
+       }
     } else if(grantType == "refresh_token") {
       parameterObject = {
         grant_type: grantType,

@@ -223,6 +223,11 @@ async function test() {
     options.addArguments("--headless");
   }
   options.addArguments("--no-sandbox");
+  // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
+  // browsers otherwise block (mixed content / Private Network Access).
+  options.addArguments("--allow-running-insecure-content");
+  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
 
   try {

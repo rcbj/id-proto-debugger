@@ -1,0 +1,21 @@
+# Minimal Keycloak for running the Selenium suite against a deployed (or local)
+# debugger site via remote-run-tests.sh.
+#
+# Dev mode (in-memory H2 — no Postgres needed for throwaway test data), admin
+# keycloak/keycloak, HTTP bound to host port 8080 via host networking. The
+# realm/clients are created at run time by common.sh configureKeycloak.
+version: '2.4'
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6.4
+    command: ["start-dev"]
+    hostname: keycloak
+    network_mode: "host"
+    environment:
+      KC_HTTP_PORT: "8080"
+      # Both the modern (26+) and legacy bootstrap-admin vars, for compatibility.
+      KC_BOOTSTRAP_ADMIN_USERNAME: keycloak
+      KC_BOOTSTRAP_ADMIN_PASSWORD: keycloak
+      KEYCLOAK_ADMIN: keycloak
+      KEYCLOAK_ADMIN_PASSWORD: keycloak
+      KC_HEALTH_ENABLED: "true"

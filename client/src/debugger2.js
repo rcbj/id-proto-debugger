@@ -153,7 +153,8 @@ function buildInternalTokenAPIRequestMessage() {
           code: code,
           scope: scope,
           token_endpoint: token_endpoint,
-          sslValidate: sslValidate
+          sslValidate: sslValidate,
+          auth_style: auth_style
     };
   } else if( grant_type == "client_credentials") {
     formData = {
