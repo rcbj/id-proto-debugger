@@ -239,9 +239,26 @@ async function jwtToolsActivities(driver) {
   // ---- Pane 2: signing (JWS) ----------------------------------------------
   log.info("Generate signing keys.");
   await click(driver, onclickBtn("generateSigningKeys"));
+  // Diagnostics: Web Crypto (crypto.subtle) is only available in a secure
+  // context. Capture the context/crypto state and any error the page reported.
+  await driver.sleep(2000);
+  var cryptoDiag = await driver.executeScript(
+    "return JSON.stringify({" +
+    "  href: location.href," +
+    "  isSecureContext: window.isSecureContext," +
+    "  cryptoType: (typeof window.crypto)," +
+    "  subtleType: (typeof (window.crypto && window.crypto.subtle))," +
+    "  signStatus: ((document.getElementById('sign_status') || {}).value || '')" +
+    "});");
+  log.info("CRYPTO DIAG: " + cryptoDiag);
+  var diag = JSON.parse(cryptoDiag);
+  if (diag.subtleType === "undefined") {
+    throw new Error("crypto.subtle is unavailable (isSecureContext=" + diag.isSecureContext +
+      ", origin=" + diag.href + "). Web Crypto requires a secure context. signStatus=" + diag.signStatus);
+  }
   await waitForValue(driver, By.id("sign_public_key"),
     function (v) { return v.indexOf("BEGIN PUBLIC KEY") !== -1; },
-    "Signing public key (PEM) was not generated.");
+    "Signing public key (PEM) was not generated. sign_status=" + diag.signStatus);
 
   log.info("Toggle keys to JWK.");
   await clickToggle(driver, "sign_key_jwk");
@@ -370,7 +387,10 @@ async function idTokenDecodeActivities(driver, id_token) {
 async function test() {
   const options = new chrome.Options();
   if (headless) {
-    options.addArguments("--headless");
+    // Use "new" headless: unlike the legacy --headless mode, it honors the
+    // --unsafely-treat-insecure-origin-as-secure override below, which is what
+    // makes crypto.subtle (Web Crypto) available on the http://client:3000 origin.
+    options.addArguments("--headless=new");
   }
   options.addArguments("--no-sandbox");
   options.addArguments("--allow-running-insecure-content");
