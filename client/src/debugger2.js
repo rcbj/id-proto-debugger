@@ -153,7 +153,8 @@ function buildInternalTokenAPIRequestMessage() {
           code: code,
           scope: scope,
           token_endpoint: token_endpoint,
-          sslValidate: sslValidate
+          sslValidate: sslValidate,
+          auth_style: auth_style
     };
   } else if( grant_type == "client_credentials") {
     formData = {
@@ -597,7 +598,7 @@ function errorInternalRefreshAPICall(request, status, error) {
 function resetUI(value)
 {
     log.debug("Entering resetUI().");
-    $("#logout_post_redirect_uri").val('http://localhost:3000/logout.html');
+    $("#logout_post_redirect_uri").val((appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000") + "/logout.html");
     if( value == "client_credential" &&
         getParameterByName("redirectFromTokenDetail") != "true")
     {
@@ -905,7 +906,15 @@ function loadValuesFromLocalStorage()
   }
   $("#token_client_id").val(localStorage.getItem("client_id"));
   $("#token_client_secret").val(localStorage.getItem("client_secret"));
-  $("#token_redirect_uri").val(localStorage.getItem("redirect_uri"));
+  // Match this deployment's origin (appconfig.uiUrl); heal a stale/empty/
+  // cross-origin value persisted by an earlier build or a different origin.
+  var redirectBase = (appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000");
+  var storedRedirectUri = localStorage.getItem("redirect_uri");
+  if (!storedRedirectUri || storedRedirectUri.indexOf(redirectBase) !== 0) {
+    storedRedirectUri = redirectBase + "/callback";
+    localStorage.setItem("redirect_uri", storedRedirectUri);
+  }
+  $("#token_redirect_uri").val(storedRedirectUri);
   $("#token_scope").val(localStorage.getItem("token_scope"));
   $("#token_username").val(localStorage.getItem("token_username"));
   $("#token_resource").val(localStorage.getItem("token_resource"));
@@ -1354,6 +1363,26 @@ function processStateParameter()
   log.debug("Leaving processStateParameter().");
 }
 
+// On a static build (appconfig.backendAvailable === false) there is no api
+// backend, so every "Initiate ... Call From front or backend" control must use
+// the frontend. Force the Front radio on and disable (gray out) the Back radio
+// for each group, then sync the module flags the call logic reads.
+function enforceBackendAvailability() {
+  log.debug("Entering enforceBackendAvailability().");
+  if (appconfig.backendAvailable === false) {
+    var groups = ["token", "refresh", "revocation", "tokenexchange"];
+    for (var i = 0; i < groups.length; i++) {
+      $("#" + groups[i] + "_initiateFromFrontEnd").prop("checked", true);
+      $("#" + groups[i] + "_initiateFromBackEnd").prop("checked", false).prop("disabled", true);
+    }
+    setInitiateFromEnd();
+    setInitiateRefreshFromEnd();
+    setInitiateRevocationFromEnd();
+    setInitiateTokenExchangeFromEnd();
+  }
+  log.debug("Leaving enforceBackendAvailability().");
+}
+
 $(document).ready(function() {
   log.debug("Entering document.ready() function.");
 
@@ -1444,6 +1473,7 @@ $(document).ready(function() {
   $("#customTokenParametersCheck-no").on("click", recalculateTokenRequestDescription);
 
   loadValuesFromLocalStorage();
+  enforceBackendAvailability();
   recreateUniqueGrantFlowElements();
   recalculateAuthorizationErrorDescription();
   recalculateTokenRequestDescription();
@@ -1956,6 +1986,17 @@ function extractNonce(id_token) {
   return null;
 }
 
+// Session ID (sid) from the OAuth2 access token (JWT). Used to group the Token
+// History by session. Refresh responses preserve the sid of the originating
+// session, unlike nonce (which is only present on the original authentication).
+function extractSid(access_token) {
+  if (access_token) {
+    var payload = decodeJwtPayload(access_token);
+    if (payload && payload.sid) return payload.sid;
+  }
+  return null;
+}
+
 function saveTokenSetToHistory(access_token, refresh_token, id_token, source) {
   var history = [];
   try { 
@@ -1965,6 +2006,7 @@ function saveTokenSetToHistory(access_token, refresh_token, id_token, source) {
     log.error("An error occurred while writing to local storage: " + e);
   }
   var nonce = extractNonce(id_token);
+  var sid = extractSid(access_token);
   if (history.length >= TOKEN_HISTORY_LIMIT) {
     localStorage.removeItem('token_history');
     renderTokenHistory();
@@ -1973,6 +2015,7 @@ function saveTokenSetToHistory(access_token, refresh_token, id_token, source) {
   history.push({
     timestamp: new Date().toISOString(),
     nonce: nonce,
+    sid: sid,
     source: source || 'token',
     access_token: access_token || '',
     refresh_token: refresh_token || '',
@@ -2054,6 +2097,10 @@ function renderCurrentlyViewing(index, entry) {
                  '<td><strong>Nonce:</strong></td>' +
                  '<td><input type="text" readonly value="' + (entry.nonce || '') + '" style="width:100%;" /></td>' +
                '</tr>' +
+               '<tr>' +
+                 '<td><strong>Session ID (sid):</strong></td>' +
+                 '<td><input type="text" readonly value="' + (entry.sid || '') + '" style="width:100%;" /></td>' +
+               '</tr>' +
              '</table>' +
              '</fieldset>';
   $('#currently-viewing-panel').html(html);
@@ -2070,11 +2117,13 @@ function renderTokenHistory() {
   var activeIndex = parseInt(localStorage.getItem('token_history_active_index'));
   if (isNaN(activeIndex)) activeIndex = -1;
 
-  // Group entries by nonce, preserving first-seen order of each session
+  // Group entries by session id (sid) from the access token, preserving
+  // first-seen order of each session. sid is stable across refreshes, whereas
+  // nonce is only present on the original authentication.
   var sessionOrder = [];
   var sessions = {};
   history.forEach(function(entry, idx) {
-    var key = entry.nonce || '__no_nonce__';
+    var key = entry.sid || '__no_sid__';
     if (!sessions[key]) {
       sessions[key] = [];
       sessionOrder.push(key);
@@ -2085,13 +2134,13 @@ function renderTokenHistory() {
   var html = '<fieldset><legend>Token History</legend>';
   html += '<input type="button" value="Clear History" onclick="return debugger2.clearTokenHistory();" />';
   html += '<div style="max-height:450px; overflow-y:auto;">';
-  sessionOrder.slice().reverse().forEach(function(nonce) {
-    var label = nonce === '__no_nonce__' ? 'No Nonce' : 'Nonce: ' + nonce;
+  sessionOrder.slice().reverse().forEach(function(sid) {
+    var label = sid === '__no_sid__' ? 'No Session ID (sid)' : 'Session ID (sid): ' + sid;
     html += '<div style="margin-bottom:10px;">';
-    html += '<strong>' + label + '</strong>';
+    html += '<strong>' + escapeHtmlText(label) + '</strong>';
     html += '<table border="1" style="margin-top:4px;">';
-    html += '<tr><th style="width:4%">#</th><th style="width:22%">Time</th><th style="width:10%">Source</th><th style="width:10%">Access</th><th style="width:10%">Refresh</th><th style="width:12%">ID Token</th><th>Action</th></tr>';
-    sessions[nonce].slice().reverse().forEach(function(item) {
+    html += '<tr><th style="width:4%">#</th><th style="width:12%">Time</th><th style="width:8%">Source</th><th style="width:19%">Nonce</th><th style="width:19%">Sid</th><th style="width:6%">Access</th><th style="width:6%">Refresh</th><th style="width:8%">ID Token</th><th>Action</th></tr>';
+    sessions[sid].slice().reverse().forEach(function(item) {
       var e = item.entry;
       var idx = item.index;
       var isActive = (idx === activeIndex);
@@ -2102,6 +2151,8 @@ function renderTokenHistory() {
       html += '<td>' + (idx + 1) + '</td>';
       html += '<td style="font-size:80%;">' + datePart + '<br>' + timePart + '</td>';
       html += '<td>' + e.source + '</td>';
+      html += '<td style="font-size:70%; word-break:break-all;">' + escapeHtmlText(e.nonce || '') + '</td>';
+      html += '<td style="font-size:70%; word-break:break-all;">' + escapeHtmlText(e.sid || '') + '</td>';
       html += '<td style="text-align:center;">' + (e.access_token ? '&#10003;' : '') + '</td>';
       html += '<td style="text-align:center;">' + (e.refresh_token ? '&#10003;' : '') + '</td>';
       html += '<td style="text-align:center;">' + (e.id_token ? '&#10003;' : '') + '</td>';

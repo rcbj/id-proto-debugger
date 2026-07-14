@@ -9,6 +9,21 @@ var log = bunyan.createLogger({ name: 'oidc_dynamic_client_registration',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000"
+
+// The public static-content deployments (test.idptools.com / idptools.com) have
+// no api backend, and Dynamic Client Registration is a server-side operation:
+// Keycloak's Trusted Hosts registration policy rejects any request carrying an
+// Origin header ("Invalid origin"), so DCR cannot run from the browser there.
+// Against those targets the test verifies the attempt fails rather than
+// exercising the full create/read/update/delete lifecycle.
+var STATIC_CONTENT_SITE_HOSTS = ["test.idptools.com", "idptools.com"];
+function isStaticContentSite(url) {
+  try {
+    return STATIC_CONTENT_SITE_HOSTS.includes(new URL(url).hostname);
+  } catch (e) {
+    return false;
+  }
+}
 var headless = true;
 var waitTime = appconfig.waitTime;
 
@@ -97,6 +112,11 @@ async function test() {
     options.addArguments("--headless");
   }
   options.addArguments("--no-sandbox");
+  // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
+  // browsers otherwise block (mixed content / Private Network Access).
+  options.addArguments("--allow-running-insecure-content");
+  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
@@ -146,6 +166,32 @@ async function test() {
     // (create) request, so request a fixed scope that omits it.
     metadata.scope = "email profile offline_access";
     await setFieldValueViaScript(driver, "dcr_client_metadata", JSON.stringify(metadata, null, 2));
+
+    // On the static-content deployments there is no backend proxy, and Keycloak
+    // rejects browser-origin registration ("Invalid origin"), so DCR cannot run
+    // from the browser at all. Verify the create attempt fails (an error is
+    // surfaced) rather than registering a client, then stop — the full CRUD
+    // lifecycle below only applies to the containerized/local backend build.
+    if (isStaticContentSite(baseUrl)) {
+      log.info("Static content site: Dynamic Client Registration is not available from the " +
+               "browser (no backend proxy; the IdP rejects browser origins). Verifying the " +
+               "registration attempt fails as expected.");
+      await driver.executeScript("document.getElementById('dcr_response_textarea').value = '';");
+      await driver.executeScript("document.getElementById('display_dcr_error_class').innerHTML = '';");
+      await clickButtonByValue(driver, "Register New Client");
+      await driver.wait(async () => {
+        const errs = await driver.findElements(By.id("dcr_error_textarea"));
+        if (errs.length === 0) {
+          return false;
+        }
+        const v = await errs[0].getAttribute("value");
+        return !!(v && v.trim().length > 0);
+      }, waitTime, "Expected Dynamic Client Registration to fail from the browser on the static " +
+         "site, but no error was reported.");
+      log.info("Dynamic Client Registration was correctly unavailable from the browser on the static site.");
+      log.info("Test completed successfully.");
+      return;
+    }
 
     // ---- CREATE -------------------------------------------------------------
     log.info("Creating (registering) a new client.");

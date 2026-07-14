@@ -5,16 +5,19 @@
   "author": "Robert C. Broeckelmann Jr. <robert@iyasec.io>",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "build": "node build.js"
   },
   "dependencies": {
     "@fidm/x509": "^1.2.1",
     "@peculiar/asn1-pkcs8": "latest",
     "browserify": "^17.0.1",
     "bunyan": "latest",
+    "clean-css-cli": "^5.6.3",
     "dompurify": "latest",
     "envify": "latest",
     "express": "^4.22.2",
+    "html-minifier-terser": "^7.2.0",
     "express-logging": "latest",
     "jquery": "latest",
     "jsonwebtoken": "latest",
@@ -22,6 +25,7 @@
     "jwks": "latest",
     "logops": "latest",
     "pem-file": "latest",
+    "terser": "^5.44.0",
     "xmldom": "latest"
   }
 }

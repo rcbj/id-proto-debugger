@@ -355,7 +355,7 @@ function initValuesToLocalStorage()
       localStorage.setItem("useRefreshToken_yes", true);
       localStorage.setItem("usePKCE_yes", true);
       localStorage.setItem("client_id", "abcxyz");
-      localStorage.setItem("redirect_uri", "http://localhost:3000/callback");
+      localStorage.setItem("redirect_uri", (appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000") + "/callback");
       localStorage.setItem("scope", "openid profile");
       localStorage.setItem("useRefreshToken_no", false);
       localStorage.setItem("usePKCE_no", false);
@@ -430,7 +430,17 @@ function loadValuesFromLocalStorage()
     $("#device_authorization_endpoint").closest('tr').hide();
   }
 
-  $("#redirect_uri").val(localStorage.getItem("redirect_uri"));
+  // Ensure the redirect URI matches this deployment's origin (appconfig.uiUrl).
+  // Heals a stale/empty/cross-origin value persisted by an earlier build or a
+  // different origin, so switching sites (e.g. localhost -> test.idptools.com)
+  // re-defaults the field instead of keeping the old value.
+  var redirectBase = (appconfig.uiUrl ? appconfig.uiUrl : "http://localhost:3000");
+  var storedRedirectUri = localStorage.getItem("redirect_uri");
+  if (!storedRedirectUri || storedRedirectUri.indexOf(redirectBase) !== 0) {
+    storedRedirectUri = redirectBase + "/callback";
+    localStorage.setItem("redirect_uri", storedRedirectUri);
+  }
+  $("#redirect_uri").val(storedRedirectUri);
   $("#client_id").val(localStorage.getItem("client_id"));
   $("#scope").val(localStorage.getItem("scope"));
   $("#resource").val(localStorage.getItem("resource"));
@@ -809,40 +819,61 @@ function triggerDeviceAuthorizationCall()
     scope: $("#scope").val(),
     sslValidate: sslValidate
   };
-  $.ajax({
-    type: "POST",
-    url: appconfig.apiUrl + "/deviceauthorization",
-    crossDomain: true,
-    contentType: "application/json; charset=utf-8",
-    data: JSON.stringify(formData),
-    success: function(data) {
-      log.debug("Device Authorization Endpoint Response: " + JSON.stringify(data));
-      if (localStorage) {
-        localStorage.setItem("device_code", data.device_code || "");
-        localStorage.setItem("user_code", data.user_code || "");
-        localStorage.setItem("verification_uri", data.verification_uri || "");
-        localStorage.setItem("verification_uri_complete", data.verification_uri_complete || "");
-        localStorage.setItem("device_expires_in", data.expires_in || "");
-        localStorage.setItem("device_interval", data.interval || "");
-      }
-      window.location.href = "/debugger2.html";
-    },
-    error: function(request, status, error) {
-      log.error("An error occurred calling the device authorization endpoint.");
-      log.error("request: " + JSON.stringify(request));
-      log.error("status: " + JSON.stringify(status));
-      var errorHtml = "<fieldset>" +
-                        "<legend>Device Authorization Endpoint Error</legend>" +
-                        "<table><tr><td>" +
-                          "<textarea rows='6' cols='80' readonly id='device_authz_error_textarea' name='device_authz_error_textarea'></textarea>" +
-                        "</td></tr></table>" +
-                      "</fieldset>";
-      $("#display_authz_error_class").html(DOMPurify.sanitize(errorHtml));
-      $("#device_authz_error_textarea").val(
-        "HTTP Status: " + (request ? request.status : "") + " " + (request ? request.statusText : "") + "\n" +
-        "Response Body: " + (request ? request.responseText : ""));
+  // Shared success/error handlers for the device authorization response,
+  // whether it comes from the backend proxy or a direct (frontend) call.
+  var onDeviceSuccess = function(data) {
+    log.debug("Device Authorization Endpoint Response: " + JSON.stringify(data));
+    if (localStorage) {
+      localStorage.setItem("device_code", data.device_code || "");
+      localStorage.setItem("user_code", data.user_code || "");
+      localStorage.setItem("verification_uri", data.verification_uri || "");
+      localStorage.setItem("verification_uri_complete", data.verification_uri_complete || "");
+      localStorage.setItem("device_expires_in", data.expires_in || "");
+      localStorage.setItem("device_interval", data.interval || "");
     }
-  });
+    window.location.href = "/debugger2.html";
+  };
+  var onDeviceError = function(request, status, error) {
+    log.error("An error occurred calling the device authorization endpoint.");
+    log.error("request: " + JSON.stringify(request));
+    log.error("status: " + JSON.stringify(status));
+    var errorHtml = "<fieldset>" +
+                      "<legend>Device Authorization Endpoint Error</legend>" +
+                      "<table><tr><td>" +
+                        "<textarea rows='6' cols='80' readonly id='device_authz_error_textarea' name='device_authz_error_textarea'></textarea>" +
+                      "</td></tr></table>" +
+                    "</fieldset>";
+    $("#display_authz_error_class").html(DOMPurify.sanitize(errorHtml));
+    $("#device_authz_error_textarea").val(
+      "HTTP Status: " + (request ? request.status : "") + " " + (request ? request.statusText : "") + "\n" +
+      "Response Body: " + (request ? request.responseText : ""));
+  };
+
+  if (appconfig.backendAvailable === false) {
+    // Static build (no api backend): call the device authorization endpoint
+    // directly from the browser. Keycloak CORS-enables this endpoint for the
+    // client's web origins (public client, no secret).
+    $.ajax({
+      type: "POST",
+      url: $("#device_authorization_endpoint").val(),
+      crossDomain: true,
+      contentType: "application/x-www-form-urlencoded",
+      data: "client_id=" + encodeURIComponent($("#client_id").val()) +
+            "&scope=" + encodeURIComponent($("#scope").val()),
+      success: onDeviceSuccess,
+      error: onDeviceError
+    });
+  } else {
+    $.ajax({
+      type: "POST",
+      url: appconfig.apiUrl + "/deviceauthorization",
+      crossDomain: true,
+      contentType: "application/json; charset=utf-8",
+      data: JSON.stringify(formData),
+      success: onDeviceSuccess,
+      error: onDeviceError
+    });
+  }
   log.debug("Leaving triggerDeviceAuthorizationCall().");
   return false;
 }

@@ -11,6 +11,19 @@ var log = bunyan.createLogger({ name: 'token_introspection',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000"
+
+// The public static-content deployments (test.idptools.com / idptools.com) have
+// no api backend, and Keycloak's introspection endpoint is not CORS-enabled, so
+// a browser introspection call is blocked. Against those targets the test
+// EXPECTS that CORS/network error instead of an active introspection result.
+var STATIC_CONTENT_SITE_HOSTS = ["test.idptools.com", "idptools.com"];
+function isStaticContentSite(url) {
+  try {
+    return STATIC_CONTENT_SITE_HOSTS.includes(new URL(url).hostname);
+  } catch (e) {
+    return false;
+  }
+}
 var headless = true;
 var waitTime = appconfig.waitTime;
 
@@ -294,6 +307,19 @@ function assertIntrospectionActive(outputText, type) {
   }
   assert(parsed !== null,
     "Introspection output for the " + type + " link was not valid JSON: " + outputText);
+
+  // On the static-content deployments there is no backend and Keycloak's
+  // introspection endpoint is not CORS-enabled, so the browser call is blocked.
+  // Expect that CORS/network error (readyState 0 / status 0 / status "error")
+  // rather than an active introspection result.
+  if (isStaticContentSite(baseUrl)) {
+    assert(parsed.status === "error" && parsed.request && parsed.request.status === 0,
+      "Introspection for the " + type + " link on a static site was expected to be blocked " +
+      "by CORS (status 0 error), but got: " + outputText);
+    log.info("Introspection was blocked by CORS as expected on the static site. type=" + type);
+    return;
+  }
+
   assert.strictEqual(parsed.active, true,
     "Introspection for the " + type + " link did not report the token as active (expected \"active\": true). Output: " + outputText);
   log.info("Introspect Token link produced a valid active introspection. type=" + type);
@@ -325,6 +351,11 @@ async function test() {
     options.addArguments("--headless");
   }
   options.addArguments("--no-sandbox");
+  // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
+  // browsers otherwise block (mixed content / Private Network Access).
+  options.addArguments("--allow-running-insecure-content");
+  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 

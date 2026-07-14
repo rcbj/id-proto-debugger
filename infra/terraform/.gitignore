@@ -1,0 +1,18 @@
+# Terraform — never commit these to a public repo.
+# State can contain sensitive values; local dirs/plans are machine-specific.
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# terraform.tfvars here holds only the public domain name, so it is committed.
+# If you ever add secret variables, ignore them explicitly:
+# *.auto.tfvars
+# secrets.tfvars
