@@ -375,6 +375,15 @@ async function test() {
   options.addArguments("--no-sandbox");
   options.addArguments("--allow-running-insecure-content");
   options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  // JWT Tools uses the Web Crypto API (crypto.subtle), which browsers expose
+  // only in a "secure context". http://localhost is treated as secure, but the
+  // containerized runs serve the client at http://client:3000 (a non-secure
+  // origin), where crypto.subtle would be undefined and key generation fails.
+  // Treat the debugger origin as trustworthy so crypto.subtle is available.
+  // (This flag only takes effect when a --user-data-dir is also set.)
+  var secureOrigin = baseUrl.replace(/\/+$/, "");
+  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" + secureOrigin);
+  options.addArguments("--user-data-dir=/tmp/jwt-tools-chrome-" + Date.now());
   const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
 
   try {
