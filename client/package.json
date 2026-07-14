@@ -18,6 +18,7 @@
     "dompurify": "latest",
     "envify": "latest",
     "express": "^4.22.2",
+    "html-minifier-terser": "^7.2.0",
     "express-logging": "latest",
     "html-minifier-terser": "^7.2.0",
     "jquery": "latest",
