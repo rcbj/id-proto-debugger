@@ -12,6 +12,7 @@
 #   CLOUDFRONT_DISTRIBUTION_ID   distribution to invalidate      (E1C72FI2JLYGWW)
 #   AWS_REGION                   region for the bucket           (us-west-2)
 #   CONFIG_FILE                  env config baked into bundles   (./env/prod.js)
+#   GA_MEASUREMENT_ID            Google Analytics ID for the site (per-env below)
 #   SKIP_DEPLOY                  build only, do not push         (false)
 set -euo pipefail
 
@@ -24,11 +25,13 @@ case "${DEPLOY_ENV}" in
     : "${S3_BUCKET:=www.idptools.com}"
     : "${CLOUDFRONT_DISTRIBUTION_ID:=E1C72FI2JLYGWW}"
     : "${CONFIG_FILE:=./env/prod.js}"
+    : "${GA_MEASUREMENT_ID:=G-6VQ9LQZ8VX}"
     ;;
   test)
     : "${S3_BUCKET:=test.idptools.com}"
     : "${CLOUDFRONT_DISTRIBUTION_ID:=E21A46XVWQ32FG}"
     : "${CONFIG_FILE:=./env/test-idptools-com.js}"
+    : "${GA_MEASUREMENT_ID:=G-126VDL985X}"
     ;;
   *)
     echo "ERROR: unknown DEPLOY_ENV='${DEPLOY_ENV}' (expected 'prod' or 'test')." >&2
@@ -44,7 +47,7 @@ command -v aws  >/dev/null 2>&1 || { echo "ERROR: aws CLI not found in container
 
 echo "==> [${DEPLOY_ENV}] Building static content (CONFIG_FILE=${CONFIG_FILE})"
 cd /usr/src/app/client
-CONFIG_FILE="${CONFIG_FILE}" npm run build
+CONFIG_FILE="${CONFIG_FILE}" GA_MEASUREMENT_ID="${GA_MEASUREMENT_ID}" npm run build
 
 if [ "${SKIP_DEPLOY}" = "true" ]; then
   echo "==> SKIP_DEPLOY=true — build complete, not deploying."
