@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 & OpenID Connect Debugger — JWT Tools</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/jwt_tools.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/jwt_tools.js">
+</script>
+
+<p class="jwt-tools-return"><a id="return_link" href="/debugger.html">&larr; Return to debugger</a></p>
+
+<p class="jwt-tools-intro">Compose, sign (JWS), and encrypt (JWE) JSON Web Tokens, verify signatures, and decrypt tokens — all in your browser via the Web Crypto API. <strong>No key material is stored:</strong> private keys, secrets, and generated key pairs live only in this page and are never written to local storage.</p>
+
+<div class="jwt-tools-grid">
+
+  <!-- ===================== 1. Compose ===================== -->
+  <fieldset id="step_compose">
+    <legend>1. Compose</legend>
+
+    <div class="jt-compose-top">
+      <div class="jt-compose-left">
+        <div class="jt-field">
+          <label class="jt-has-copy" title="The JOSE header. Edit freely — the Encoded JWT stays in sync.">JWT Header <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('jwt_tools_header');" title="Copy to clipboard">Copy</button></label>
+          <textarea rows="5" id="jwt_tools_header" name="jwt_tools_header" oninput="return jwt_tools.updateEncoded();"></textarea>
+        </div>
+        <div class="jt-field">
+          <label class="jt-has-copy" title="The claims set. Pre-populated with RFC 7519 registered claims and placeholder values.">JWT Payload <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('jwt_tools_payload');" title="Copy to clipboard">Copy</button></label>
+          <textarea rows="9" id="jwt_tools_payload" name="jwt_tools_payload" oninput="return jwt_tools.updateEncoded();"></textarea>
+        </div>
+      </div>
+      <div class="jt-compose-right">
+        <div class="jt-field">
+          <label class="jt-has-copy" title="The compact-serialized token. Editable: paste a JWT here to decode its header & payload into the fields on the left (and populate the Sign pane if it is signed).">Encoded JWT <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('jwt_tools_encoded');" title="Copy to clipboard">Copy</button></label>
+          <textarea rows="16" id="jwt_tools_encoded" name="jwt_tools_encoded" oninput="return jwt_tools.onEncodedInput();"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="jt-sub-title">Add Custom Claim</div>
+    <div class="jt-row">
+      <input class="jt-grow" type="text" id="custom_claim_name" name="custom_claim_name" placeholder="name" />
+      <input class="jt-grow" type="text" id="custom_claim_value" name="custom_claim_value" placeholder="value" />
+    </div>
+    <div class="jt-row">
+      <select class="jt-grow" id="custom_claim_type" name="custom_claim_type" title="Value type">
+        <option value="string" selected="selected">String</option>
+        <option value="number">Number</option>
+        <option value="boolean">Boolean</option>
+        <option value="json">JSON</option>
+      </select>
+      <select class="jt-grow" id="custom_claim_target" name="custom_claim_target" title="Add to Header or Payload">
+        <option value="jwt_tools_payload" selected="selected">Payload</option>
+        <option value="jwt_tools_header">Header</option>
+      </select>
+      <input type="submit" value="Add" onclick="return jwt_tools.addClaim();" />
+    </div>
+
+    <div class="jt-row">
+      <input type="submit" value="Check RFC Compliance" onclick="return jwt_tools.checkCompliance();" />
+    </div>
+    <div class="jt-field">
+      <label>Compliance Output</label>
+      <textarea rows="5" id="compliance_output" name="compliance_output" readonly></textarea>
+    </div>
+
+    <input class="jt-status" type="text" id="jwt_tools_sync_status" name="jwt_tools_sync_status" readonly />
+  </fieldset>
+
+  <!-- ===================== 2. Sign (JWS) ===================== -->
+  <fieldset id="step_sign">
+    <legend>2. Sign (JWS)</legend>
+
+    <div class="jt-row">
+      <div class="jt-grow">
+        <label title="Algorithm written to the header &quot;alg&quot; when signing.">Signing Algorithm</label>
+        <select id="sign_alg" name="sign_alg">
+          <option value="RS256" selected="selected">RS256 (RSASSA-PKCS1-v1_5)</option>
+          <option value="RS384">RS384</option>
+          <option value="RS512">RS512</option>
+          <option value="PS256">PS256 (RSA-PSS)</option>
+          <option value="PS384">PS384</option>
+          <option value="PS512">PS512</option>
+          <option value="ES256">ES256 (ECDSA P-256)</option>
+          <option value="ES384">ES384 (ECDSA P-384)</option>
+          <option value="ES512">ES512 (ECDSA P-521)</option>
+          <option value="HS256">HS256 (HMAC)</option>
+          <option value="HS384">HS384 (HMAC)</option>
+          <option value="HS512">HS512 (HMAC)</option>
+        </select>
+      </div>
+      <input type="submit" value="Generate Keys" onclick="return jwt_tools.generateSigningKeys();" />
+    </div>
+
+    <div class="jt-row jt-keyfmt">
+      <label class="toggle-switch" title="Toggle how the key fields below are shown and generated.">
+        <input type="checkbox" id="sign_key_jwk" onchange="return jwt_tools.toggleKeyFormat('sign');" />
+        <span class="toggle-slider"></span>
+        Show keys as JWK (off = PEM)
+      </label>
+    </div>
+
+    <div class="jt-field">
+      <label class="jt-has-copy" title="Signing key. For HMAC this is a base64url secret. Not stored anywhere.">Private Key (PKCS#8) / HMAC Secret <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('sign_private_key');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="4" id="sign_private_key" name="sign_private_key"></textarea>
+    </div>
+    <div class="jt-field">
+      <label class="jt-has-copy" title="Corresponding public key, for reference / verification.">Public Key (SPKI) <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('sign_public_key');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="sign_public_key" name="sign_public_key"></textarea>
+    </div>
+
+    <div class="jt-row jt-download">
+      <select class="jt-grow" id="sign_ks_format" name="sign_ks_format" title="Keystore format to download">
+        <option value="pem" selected="selected">PEM</option>
+        <option value="jwk">JWK</option>
+        <option value="der">DER</option>
+        <option value="pkcs12">PKCS#12</option>
+      </select>
+      <input class="jt-grow" type="password" id="sign_ks_password" name="sign_ks_password" placeholder="password (optional)" title="Optional password to protect the download. Required for PKCS#12. Not stored." />
+      <input type="submit" value="Download Keys" onclick="return jwt_tools.downloadSigningKeys();" />
+    </div>
+
+    <div class="jt-row">
+      <input type="submit" value="Generate Signed JWT" onclick="return jwt_tools.signJWT();" />
+    </div>
+    <div class="jt-field">
+      <label>Signed JWT</label>
+      <textarea rows="3" id="jwt_tools_signed" name="jwt_tools_signed" readonly></textarea>
+    </div>
+    <input class="jt-status" type="text" id="sign_status" name="sign_status" readonly />
+
+    <div class="jt-sub">
+      <div class="jt-sub-title">Validate a Signature</div>
+      <div class="jt-field">
+        <label title="Defaults to the JWT you just signed. Paste any JWS to verify.">JWT to Verify</label>
+        <textarea rows="3" id="verify_input" name="verify_input"></textarea>
+      </div>
+      <div class="jt-row">
+        <div class="jt-grow">
+          <label>Verification Type</label>
+          <select id="jwt_verification_type" name="jwt_verification_type" onchange="return jwt_tools.syncVerificationKey();">
+            <option value="hmac" selected="selected">HMAC Secret</option>
+            <option value="x509">X.509 Certificate (PEM)</option>
+            <option value="jwks">JWKS (JSON)</option>
+            <option value="jwks_url">JWKS (URL)</option>
+          </select>
+        </div>
+        <input type="submit" value="Verify" onclick="return jwt_tools.verifyJWT();" />
+      </div>
+      <div class="jt-field">
+        <label title="For HMAC, a base64url secret.">Verification Key / URL</label>
+        <textarea rows="3" id="jwt_verification_key" name="jwt_verification_key"></textarea>
+      </div>
+      <div class="jt-field">
+        <label>Verification Output</label>
+        <textarea rows="2" id="jwt_verification_output" name="jwt_verification_output" readonly></textarea>
+      </div>
+    </div>
+  </fieldset>
+
+  <!-- ===================== 3. Encrypt (JWE) ===================== -->
+  <fieldset id="step_encrypt">
+    <legend>3. Encrypt (JWE)</legend>
+
+    <div class="jt-row">
+      <div class="jt-grow">
+        <label title="How the content encryption key is agreed/wrapped.">Key Management</label>
+        <select id="jwe_alg" name="jwe_alg">
+          <option value="RSA-OAEP" selected="selected">RSA-OAEP</option>
+          <option value="RSA-OAEP-256">RSA-OAEP-256</option>
+          <option value="ECDH-ES">ECDH-ES (P-256)</option>
+        </select>
+      </div>
+      <div class="jt-grow">
+        <label title="Symmetric algorithm used to encrypt the token body.">Content Encryption</label>
+        <select id="jwe_enc" name="jwe_enc">
+          <option value="A256GCM" selected="selected">A256GCM</option>
+          <option value="A192GCM">A192GCM</option>
+          <option value="A128GCM">A128GCM</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="jt-row">
+      <input type="submit" value="Generate Keys" onclick="return jwt_tools.generateEncryptionKeys();" />
+    </div>
+
+    <div class="jt-row jt-keyfmt">
+      <label class="toggle-switch" title="Toggle how the key fields below are shown and generated.">
+        <input type="checkbox" id="jwe_key_jwk" onchange="return jwt_tools.toggleKeyFormat('enc');" />
+        <span class="toggle-slider"></span>
+        Show keys as JWK (off = PEM)
+      </label>
+    </div>
+
+    <div class="jt-field">
+      <label class="jt-has-copy" title="Public key used to encrypt. Not stored anywhere.">Recipient Public Key (SPKI) <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('jwe_public_key');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="jwe_public_key" name="jwe_public_key"></textarea>
+    </div>
+    <div class="jt-field">
+      <label class="jt-has-copy" title="Private key used to decrypt. Not stored anywhere.">Recipient Private Key (PKCS#8) <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('jwe_private_key');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="4" id="jwe_private_key" name="jwe_private_key"></textarea>
+    </div>
+
+    <div class="jt-row jt-download">
+      <select class="jt-grow" id="jwe_ks_format" name="jwe_ks_format" title="Keystore format to download">
+        <option value="pem" selected="selected">PEM</option>
+        <option value="jwk">JWK</option>
+        <option value="der">DER</option>
+        <option value="pkcs12">PKCS#12</option>
+      </select>
+      <input class="jt-grow" type="password" id="jwe_ks_password" name="jwe_ks_password" placeholder="password (optional)" title="Optional password to protect the download. Required for PKCS#12. Not stored." />
+      <input type="submit" value="Download Keys" onclick="return jwt_tools.downloadEncryptionKeys();" />
+    </div>
+
+    <div class="jt-field">
+      <label title="Defaults to the signed JWT (nested JWT). Paste anything to encrypt.">Payload to Encrypt</label>
+      <textarea rows="3" id="jwe_plaintext" name="jwe_plaintext"></textarea>
+    </div>
+    <div class="jt-row">
+      <input type="submit" value="Encrypt JWT" onclick="return jwt_tools.encryptJWT();" />
+    </div>
+    <div class="jt-field">
+      <label>Encrypted JWT (JWE)</label>
+      <textarea rows="3" id="jwt_tools_jwe" name="jwt_tools_jwe" readonly></textarea>
+    </div>
+    <input class="jt-status" type="text" id="jwe_status" name="jwe_status" readonly />
+
+    <div class="jt-sub">
+      <div class="jt-sub-title">Decrypt a JWE</div>
+      <div class="jt-field">
+        <label title="Defaults to the JWE you just produced. Uses the Recipient Private Key above.">JWE to Decrypt</label>
+        <textarea rows="3" id="jwe_decrypt_input" name="jwe_decrypt_input"></textarea>
+      </div>
+      <div class="jt-row">
+        <input type="submit" value="Decrypt JWT" onclick="return jwt_tools.decryptJWT();" />
+      </div>
+      <div class="jt-field">
+        <label>Decryption Output</label>
+        <textarea rows="3" id="jwe_decrypt_output" name="jwe_decrypt_output" readonly></textarea>
+      </div>
+    </div>
+  </fieldset>
+
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

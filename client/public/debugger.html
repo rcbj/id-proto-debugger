@@ -70,6 +70,9 @@
   </fieldset>
 </div>
 
+<!-- Configuration Parameters and Tools side by side -->
+<div style="display:flex; gap:16px; align-items:flex-start; margin-top:8px;">
+  <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <legend>Configuration Parameters
     </legend>
     <form><input class="btn2" type="submit" name="config_expand_button" id="config_expand_button" value="Hide" onclick="return debug.onClickShowGenericFieldSet('config_fieldset');"/></form>
@@ -214,6 +217,26 @@
       </table>
     </form>
   </fieldset>
+  </div>
+  <div class="side-by-side-col" style="flex:0 0 300px;">
+    <div class="step_tools" id="step_tools">
+      <legend style="width:auto;">Tools</legend>
+      <form><input class="btn2" type="submit" name="tools_expand_button" id="tools_expand_button" value="Expand" onclick="var f=document.getElementById('tools_fieldset');var c=f.style.display==='none';f.style.display=c?'block':'none';this.value=c?'Collapse':'Expand';return false;"/></form>
+      <fieldset id="tools_fieldset" name="tools_fieldset" style="display: none;">
+        <table border="0">
+          <tbody>
+            <tr>
+              <td><p>Standalone utilities for working with JSON Web Tokens.</p></td>
+            </tr>
+            <tr>
+              <td><a href="/jwt_tools.html?from=debugger.html" onclick="return debug.clickLink();">JWT Tools</a> — compose, sign (JWS), and encrypt (JWE) JWTs; generate key pairs; verify signatures and decrypt tokens.</td>
+            </tr>
+          </tbody>
+        </table>
+      </fieldset>
+    </div>
+  </div>
+</div>
 
 <div class="step2" id="step2">
   <form name="auth_step" id="auth_step">

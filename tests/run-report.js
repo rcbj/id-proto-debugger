@@ -218,6 +218,27 @@ function buildJobs() {
     },
   });
 
+  // JWT Tools page. First obtains a real OIDC ID Token via the Authorization
+  // Code grant (public client), pastes it into the Encoded JWT field and
+  // confirms the decoded Payload matches the token. Then, from the debugger,
+  // opens the Tools pane, follows the JWT Tools link, adds string/number/boolean
+  // claims and checks RFC compliance, and exercises signing + X.509
+  // verification and JWE encryption + decryption, including the PEM/JWK format
+  // toggle and the key-download buttons.
+  jobs.push({
+    name: "JWT Tools (ID Token decode, compose, sign/verify, encrypt/decrypt)",
+    script: "jwt_tools.js",
+    env: {
+      AUDIENCE: env.OIDC_AUTHORIZATION_CODE_PUBLIC_AUDIENCE,
+      DISCOVERY_ENDPOINT: env.OIDC_AUTHORIZATION_CODE_PUBLIC_DISCOVERY_ENDPOINT,
+      CLIENT_ID: env.OIDC_AUTHORIZATION_CODE_PUBLIC_CLIENT_ID,
+      CLIENT_SECRET: env.OIDC_AUTHORIZATION_CODE_PUBLIC_CLIENT_SECRET,
+      SCOPE: `openid profile email offline_access ${env.OIDC_AUTHORIZATION_CODE_PUBLIC_SCOPE || ""}`.trim(),
+      USER: env.OIDC_AUTHORIZATION_CODE_PUBLIC_USER,
+      PKCE_ENABLED: "true",
+    },
+  });
+
   return jobs;
 }
 

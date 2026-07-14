@@ -1591,9 +1591,9 @@ $(document).ready(function() {
   if (!window.location.search) {
     $('#step3').show();
     $('#token_fieldset').css('display', 'block');
-    $('#token_expand_button').val('Hide');
+    $('#token_expand_button').val('Collapse');
     $('#config_fieldset').css('display', 'block');
-    $('#config_expand_button').val('Hide');
+    $('#config_expand_button').val('Collapse');
     $('#step4').hide();
     $('#step5').hide();
     $('#step6').hide();
@@ -1608,7 +1608,7 @@ $(document).ready(function() {
   if ( $('#step3').is(':visible') &&
        $('#token_fieldset').css('display') === 'none') {
     $('#token_fieldset').css('display', 'block');
-    $('#token_expand_button').val('Hide');
+    $('#token_expand_button').val('Collapse');
   }
 
   if( authzGrantType === "implicit_grant" ||
@@ -2371,7 +2371,7 @@ function onClickShowFieldSet(expand_button_id, field_set_id) {
   } else {
     log.debug('Show ' + field_set_id + '.');
     $("#" + field_set_id).css("display", "block");
-    $("#" + expand_button_id).val("Hide");
+    $("#" + expand_button_id).val("Collapse");
   }
   $("#step0_expand_form").on("click", function(event) {
     event.preventDefault();
@@ -2755,7 +2755,7 @@ function loadTokenForRevocation(type, generation) {
   // Make sure the revocation pane is visible and expanded.
   $("#step6").show();
   $("#revocation_fieldset").css("display", "block");
-  $("#revocation_expand_button").val("Hide");
+  $("#revocation_expand_button").val("Collapse");
   recalculateRevocationRequestDescription();
   var el = document.getElementById("step6");
   if (el && el.scrollIntoView) {

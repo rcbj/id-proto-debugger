@@ -70,6 +70,7 @@ RUN browserify src/userinfo.js -o public/js/userinfo.js --debug --standalone use
 RUN browserify src/introspection.js -o public/js/introspection.js --debug --standalone introspection -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 
 RUN browserify src/logout.js -o public/js/logout.js --debug --standalone logout -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/jwt_tools.js -o public/js/jwt_tools.js --debug --standalone jwt_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----
@@ -82,7 +83,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout"; do \
+      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools"; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

@@ -1,13 +1,18 @@
 #version: '3'
 services:
   postgres:
-    image: postgres:17
+    image: postgres:18
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: keycloak
       POSTGRES_PASSWORD: keycloak
       POSTGRES_DB: keycloak
+      # postgres:18 refuses to start on a data dir initialized by an older
+      # major version. Initialize into a fresh subdirectory of the volume so
+      # the upgrade starts cleanly (test data is disposable and recreated each
+      # run); any legacy PG17 files at the volume root are ignored.
+      PGDATA: /var/lib/postgresql/data/pgdata
     healthcheck:
       test: pg_isready
       interval: 10s

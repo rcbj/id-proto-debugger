@@ -179,6 +179,24 @@
   </fieldset>
 </div>
   </div>
+  <div class="side-by-side-col" style="flex:0 0 300px;">
+    <div class="step_tools" id="step_tools">
+      <legend style="width:auto;">Tools</legend>
+      <form id="tools_expand_form"><input class="btn2" type="submit" name="tools_expand_button" id="tools_expand_button" value="Expand" onclick="var f=document.getElementById('tools_fieldset');var c=f.style.display==='none';f.style.display=c?'block':'none';this.value=c?'Collapse':'Expand';return false;"/></form>
+      <fieldset id="tools_fieldset" name="tools_fieldset" style="display: none;">
+        <table border="0">
+          <tbody>
+            <tr>
+              <td><p>Standalone utilities for working with JSON Web Tokens.</p></td>
+            </tr>
+            <tr>
+              <td><a href="/jwt_tools.html?from=debugger2.html" onclick="return debugger2.clickLink();">JWT Tools</a> — compose, sign (JWS), and encrypt (JWE) JWTs; generate key pairs; verify signatures and decrypt tokens.</td>
+            </tr>
+          </tbody>
+        </table>
+      </fieldset>
+    </div>
+  </div>
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="step3" id="step3">
     <legend id="h2_title_2" name="h2_title_2">Exchange Authorization Code for Access Token
@@ -437,7 +455,7 @@
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="step4" id="step4">
         <form>
-          <input class="btn2" type="submit" name="refresh_expand_button" id="refresh_expand_button" value="Hide" onclick="return debugger2.onClickShowFieldSet('refresh_expand_button', 'refresh_fieldset');"/>
+          <input class="btn2" type="submit" name="refresh_expand_button" id="refresh_expand_button" value="Collapse" onclick="return debugger2.onClickShowFieldSet('refresh_expand_button', 'refresh_fieldset');"/>
         </form>
         <fieldset id="refresh_fieldset" name="refresh_fieldset">
         <legend>Obtain New Access Token Using Refresh Token</legend>
@@ -533,7 +551,7 @@
     <legend>RP-initiated Logout
     </legend>
     <form>
-      <input class="btn2" type="submit" name="logout_expand_button" id="logout_expand_button" value="Hide" onclick="return debugger2.onClickShowFieldSet('logout_expand_button', 'logout_fieldset');"/>
+      <input class="btn2" type="submit" name="logout_expand_button" id="logout_expand_button" value="Collapse" onclick="return debugger2.onClickShowFieldSet('logout_expand_button', 'logout_fieldset');"/>
     </form>
     <fieldset id="logout_fieldset" name="logout_fieldset" style="display: block;">
     <form action="" onsubmit="return false;">
@@ -597,7 +615,7 @@
         <legend>Token Revocation (RFC 7009)
         </legend>
         <form>
-          <input class="btn2" type="submit" name="revocation_expand_button" id="revocation_expand_button" value="Hide" onclick="return debugger2.onClickShowFieldSet('revocation_expand_button', 'revocation_fieldset');"/>
+          <input class="btn2" type="submit" name="revocation_expand_button" id="revocation_expand_button" value="Collapse" onclick="return debugger2.onClickShowFieldSet('revocation_expand_button', 'revocation_fieldset');"/>
         </form>
         <fieldset id="revocation_fieldset" name="revocation_fieldset" style="display: block;">
         <form action="" onsubmit="return false;">
@@ -702,7 +720,7 @@
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="step7" id="step7">
         <form>
-          <input class="btn2" type="submit" name="tokenexchange_expand_button" id="tokenexchange_expand_button" value="Hide" onclick="return debugger2.onClickShowFieldSet('tokenexchange_expand_button', 'tokenexchange_fieldset');"/>
+          <input class="btn2" type="submit" name="tokenexchange_expand_button" id="tokenexchange_expand_button" value="Collapse" onclick="return debugger2.onClickShowFieldSet('tokenexchange_expand_button', 'tokenexchange_fieldset');"/>
         </form>
         <fieldset id="tokenexchange_fieldset" name="tokenexchange_fieldset" style="display: block;">
         <legend>Token Exchange (RFC 8693)</legend>

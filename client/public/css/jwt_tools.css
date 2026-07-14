@@ -1,0 +1,202 @@
+/* Compact single-screen layout for the JWT Tools page. Loaded last so it
+   overrides the shared container/legend/textarea rules from bootstrap and
+   common.css. */
+
+/* Widen the shared (otherwise narrow) bootstrap container for this page only */
+.container {
+  width: 96%;
+  max-width: 1500px;
+}
+
+.jwt-tools-return {
+  font-size: 0.85em;
+  margin: 4px 0 2px;
+}
+
+.jwt-tools-intro {
+  font-size: 0.82em;
+  line-height: 1.35;
+  margin: 6px 0 10px;
+  color: #444;
+}
+.jwt-tools-intro strong { color: #b00; }
+
+/* Three side-by-side columns; collapse to one on narrow viewports */
+.jwt-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .jwt-tools-grid { grid-template-columns: 1fr; }
+}
+
+.jwt-tools-grid fieldset {
+  border: 1px solid #aaa;
+  border-radius: 6px;
+  padding: 6px 12px 12px;
+  margin: 0;
+  min-width: 0;
+  background: #fafafa;
+}
+.jwt-tools-grid legend {
+  width: auto;              /* override common.css legend { width: 540px } */
+  font-weight: bold;
+  font-size: 0.95em;
+  padding: 0 6px;
+  border: none;
+  margin: 0;
+  color: #333;
+}
+
+/* Compose pane: Header+Payload (left) beside a tall Encoded JWT (right) */
+.jt-compose-top {
+  display: flex;
+  gap: 12px;
+  align-items: stretch;
+  margin-bottom: 8px;
+}
+.jt-compose-left {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.jt-compose-right {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+}
+.jt-compose-right .jt-field {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  width: 100%;
+}
+.jt-compose-right .jt-field textarea {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+@media (max-width: 700px) {
+  .jt-compose-top { flex-direction: column; }
+}
+
+.jt-field { margin: 0 0 8px; }
+.jt-field > label {
+  display: block;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 2px;
+}
+
+/* Label carrying an inline Copy button next to the description */
+.jt-field > label.jt-has-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.jt-copy {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  line-height: 1.5;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.jwt-tools-grid textarea,
+.jwt-tools-grid input[type="text"],
+.jwt-tools-grid input[type="password"],
+.jwt-tools-grid select {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.8em;
+  padding: 3px 4px;
+  margin: 0;
+}
+.jwt-tools-grid textarea {
+  font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  resize: vertical;
+  line-height: 1.25;
+}
+
+/* Inline control rows (e.g. name+value, select+button) */
+.jt-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.jt-row > * { margin: 0; }
+.jt-grow { flex: 1 1 0; min-width: 0; }
+
+.jwt-tools-grid input[type="submit"] {
+  font-size: 0.8em;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Single-line status readout */
+.jt-status {
+  font-size: 0.72em !important;
+  color: #555;
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  margin-bottom: 8px;
+}
+
+/* PEM/JWK toggle switch */
+.toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.75em;
+  color: #333;
+  user-select: none;
+}
+.toggle-switch input { display: none; }
+.toggle-slider {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  background-color: #ccc;
+  border-radius: 20px;
+  transition: background-color 0.25s;
+  flex-shrink: 0;
+}
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 3px;
+  top: 3px;
+  background-color: #fff;
+  border-radius: 50%;
+  transition: transform 0.25s;
+}
+.toggle-switch input:checked + .toggle-slider { background-color: #4a90d9; }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(16px); }
+.jt-keyfmt { margin-bottom: 8px; }
+
+/* Sub-section divider inside a column (Validate / Decrypt) */
+.jt-sub {
+  border-top: 1px dashed #bbb;
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.jt-sub-title {
+  font-weight: 700;
+  font-size: 0.82em;
+  margin-bottom: 6px;
+  color: #333;
+}

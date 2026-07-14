@@ -11,20 +11,22 @@
   "dependencies": {
     "@fidm/x509": "^1.2.1",
     "@peculiar/asn1-pkcs8": "latest",
+    "asn1js": "^3.0.10",
     "browserify": "^17.0.1",
     "bunyan": "latest",
     "clean-css-cli": "^5.6.3",
     "dompurify": "latest",
     "envify": "latest",
     "express": "^4.22.2",
-    "html-minifier-terser": "^7.2.0",
     "express-logging": "latest",
+    "html-minifier-terser": "^7.2.0",
     "jquery": "latest",
     "jsonwebtoken": "latest",
     "jwk-to-pem": "latest",
     "jwks": "latest",
     "logops": "latest",
     "pem-file": "latest",
+    "pkijs": "^3.4.0",
     "terser": "^5.44.0",
     "xmldom": "latest"
   }

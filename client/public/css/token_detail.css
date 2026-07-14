@@ -114,7 +114,6 @@ td {
 .toggle-switch input:checked + .toggle-slider::before {
   transform: translateX(18px);
 }
-<<<<<<< HEAD
 
 /* Prevent hidden tooltip spans from intercepting pointer events.
    bootstrap.css hides .tooltiptext with visibility:hidden (not display:none),
