@@ -2,7 +2,7 @@ name: Live Site Test (idptools.com)
 
 # Runs the full Selenium suite against the DEPLOYED PROD site
 # (https://idptools.com), using a throwaway Keycloak spun up locally (browser
-# reaches it at http://keycloak:8080 on the compose network). Same mechanism as
+# reaches it at http://localhost:8080 via host networking). Same mechanism as
 # the test-site live test (docker-compose-live-tests.yml), pointed at prod via
 # LIVE_DEBUGGER_BASE_URL / LIVE_CONFIG_FILE.
 #

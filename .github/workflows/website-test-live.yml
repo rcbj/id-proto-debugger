@@ -1,10 +1,9 @@
 name: Live Site Test (test.idptools.com)
 
 # Runs the full Selenium suite against the DEPLOYED test.idptools.com site,
-# using a throwaway Keycloak spun up locally (postgres + keycloak on a compose
-# network, same stack as the containerized suite). The browser in the tests
-# container reaches that Keycloak at http://keycloak:8080 while it drives the
-# public HTTPS site. See docker-compose-live-tests.yml.
+# using a throwaway Keycloak spun up locally over host networking. The browser
+# in the tests container reaches that Keycloak at http://localhost:8080 while it
+# drives the public HTTPS site. See docker-compose-live-tests.yml.
 #
 # Runs automatically after a successful test-site deploy (post-deploy
 # verification), plus nightly and on demand.

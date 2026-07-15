@@ -39,7 +39,35 @@ runReport()
   node "${NODEJS_BASE_DIR}/run-report.js"
 }
 
+# Poll until Keycloak answers before configuring it. In the fully-containerized
+# stack Keycloak is already up (compose depends_on: service_healthy), so this
+# returns immediately; in the live-site stack (host networking, no healthcheck
+# gate) this is what actually waits for Keycloak to come up.
+waitForKeycloak()
+{
+  echo "Waiting for Keycloak at ${KEYCLOAK_LOCALHOST_BASE_URL} ..."
+  local i=0
+  local max=60
+  local code
+  while [ $i -lt $max ];
+  do
+    code=$(curl -s -o /dev/null -w '%{http_code}' \
+      "${KEYCLOAK_LOCALHOST_BASE_URL}/realms/master/.well-known/openid-configuration" || true)
+    if [ "${code}" = "200" ];
+    then
+      echo "Keycloak is ready."
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 3
+  done
+  echo "ERROR: Keycloak did not become ready at ${KEYCLOAK_LOCALHOST_BASE_URL} within timeout." >&2
+  exit 1
+}
+
 init
+check_return_code $?
+waitForKeycloak
 check_return_code $?
 configureKeycloak
 check_return_code $?
