@@ -240,6 +240,27 @@ async function jwtToolsActivities(driver) {
   assert.ok(compliance.indexOf("FAIL") === -1, "Compliance output contained a FAIL:\n" + compliance);
   log.info("Compliance check passed with no FAIL entries.");
 
+  // ---- Pane 1: generate an RFC 9068 access token, then validate it --------
+  // "Generate RFC 9068 Token" overwrites the Header/Payload/Encoded fields with
+  // a sample OAuth2 JWT access token; "RFC 9068 Compliance" must then pass.
+  log.info("Generate RFC 9068 access token.");
+  await click(driver, onclickBtn("generateRfc9068Token"));
+  await waitForValue(driver, By.id("jwt_tools_header"),
+    function (v) { return v.indexOf('"at+jwt"') !== -1; },
+    "Generate RFC 9068 Token did not populate the header with typ \"at+jwt\".");
+
+  log.info("Check RFC 9068 compliance.");
+  await click(driver, onclickBtn("checkRfc9068Compliance"));
+  // Wait for the RFC 9068 output specifically (distinguishes it from the prior
+  // JWT-RFC output already sitting in the box).
+  var rfc9068 = await waitForValue(driver, By.id("compliance_output"),
+    function (v) { return v.indexOf("RFC 9068") !== -1; },
+    "RFC 9068 compliance output was not produced.");
+  log.info("RFC 9068 compliance output:\n" + rfc9068);
+  assert.ok(rfc9068.indexOf("PASS") !== -1, "Expected at least one PASS in RFC 9068 output.");
+  assert.ok(rfc9068.indexOf("FAIL") === -1, "RFC 9068 compliance reported a FAIL:\n" + rfc9068);
+  log.info("RFC 9068 compliance passed with no FAIL entries.");
+
   // ---- Pane 2: signing (JWS) ----------------------------------------------
   log.info("Generate signing keys.");
   await click(driver, onclickBtn("generateSigningKeys"));

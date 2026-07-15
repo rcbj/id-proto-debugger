@@ -71,7 +71,12 @@
     </div>
 
     <div class="jt-row">
-      <input type="submit" value="Check RFC Compliance" onclick="return jwt_tools.checkCompliance();" />
+      <input type="submit" value="Generate RFC 9068 Token" onclick="return jwt_tools.generateRfc9068Token();" title="Populate the Header, Payload, and Encoded JWT with a sample RFC 9068 access token (unsigned)." />
+    </div>
+
+    <div class="jt-row">
+      <input type="submit" value="JWT RFC Compliance" onclick="return jwt_tools.checkCompliance();" title="Validate against the JWT specs (RFC 7519 / RFC 7515)." />
+      <input type="submit" value="RFC 9068 Compliance" onclick="return jwt_tools.checkRfc9068Compliance();" title="Validate as an OAuth 2.0 JWT access token (RFC 9068)." />
     </div>
     <div class="jt-field">
       <label>Compliance Output</label>

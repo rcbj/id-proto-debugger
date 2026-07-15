@@ -316,6 +316,140 @@ function checkCompliance() {
   return false;
 }
 
+// Validate the composed header/payload as an OAuth 2.0 JWT access token per
+// RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens). Output goes to the same
+// Compliance Output box. Header (§2.1): typ MUST be "at+jwt" and the token MUST
+// be signed (alg present, not "none"). Required claims (§2.2): iss, exp, aud,
+// sub, client_id, iat, jti. scope is conditionally recommended (§2.2.3);
+// auth_time/acr/amr are optional (§2.2.1) and only type-checked if present.
+function checkRfc9068Compliance() {
+  var results = [];
+  function pass(c, m) { results.push('PASS  ' + c + ': ' + m); }
+  function fail(c, m) { results.push('FAIL  ' + c + ': ' + m); }
+  function skip(c, m) { results.push('SKIP  ' + c + ': ' + m); }
+
+  var header, payload;
+  try {
+    header = parseJson('jwt_tools_header', 'JWT Header');
+  } catch (e) {
+    setVal('compliance_output', 'FAIL  header: ' + e.message);
+    return false;
+  }
+  try {
+    payload = parseJson('jwt_tools_payload', 'JWT Payload');
+  } catch (e) {
+    setVal('compliance_output', 'FAIL  payload: ' + e.message);
+    return false;
+  }
+
+  results.push('RFC 9068 — OAuth 2.0 JWT Access Token');
+
+  // ---- Header (RFC 9068 §2.1) ----
+  // typ is REQUIRED and MUST be "at+jwt" (the "application/" prefix is allowed).
+  if (header.typ === undefined) {
+    fail('typ', 'Missing — MUST be "at+jwt" (RFC 9068 §2.1)');
+  } else if (typeof header.typ !== 'string') {
+    fail('typ', '"typ" must be a string');
+  } else if (header.typ === 'at+jwt' || header.typ === 'application/at+jwt') {
+    pass('typ', '"' + header.typ + '"');
+  } else {
+    fail('typ', '"' + header.typ + '" — MUST be "at+jwt" (RFC 9068 §2.1)');
+  }
+
+  // The token MUST be signed; alg is REQUIRED and MUST NOT be "none".
+  if (!header.alg) {
+    fail('alg', 'Missing — access tokens MUST be signed (RFC 9068 §2.1)');
+  } else if (typeof header.alg !== 'string') {
+    fail('alg', '"alg" must be a string');
+  } else if (header.alg === 'none') {
+    fail('alg', '"none" is not permitted — access tokens MUST be signed (RFC 9068 §2.1)');
+  } else {
+    pass('alg', header.alg);
+  }
+
+  // ---- Required claims (RFC 9068 §2.2) ----
+  function requireString(name) {
+    if (payload[name] === undefined) fail(name, 'Missing required claim (RFC 9068 §2.2)');
+    else if (typeof payload[name] !== 'string') fail(name, 'Must be a string');
+    else pass(name, '"' + payload[name] + '"');
+  }
+  function requireNumericDate(name) {
+    if (payload[name] === undefined) fail(name, 'Missing required claim (RFC 9068 §2.2)');
+    else if (typeof payload[name] !== 'number' || !Number.isInteger(payload[name])) fail(name, 'Must be an integer NumericDate');
+    else pass(name, new Date(payload[name] * 1000).toISOString());
+  }
+
+  requireString('iss');
+  requireNumericDate('exp');
+
+  // aud is REQUIRED: a StringOrURI or a non-empty array of them.
+  if (payload.aud === undefined) {
+    fail('aud', 'Missing required claim (RFC 9068 §2.2)');
+  } else if (typeof payload.aud === 'string') {
+    pass('aud', '"' + payload.aud + '"');
+  } else if (Array.isArray(payload.aud) && payload.aud.length > 0 && payload.aud.every(function (a) { return typeof a === 'string'; })) {
+    pass('aud', payload.aud.length + ' value(s)');
+  } else {
+    fail('aud', 'Must be a string or non-empty array of strings');
+  }
+
+  requireString('sub');
+  requireString('client_id');
+  requireNumericDate('iat');
+  requireString('jti');
+
+  // ---- Conditional / optional claims ----
+  // scope SHOULD be present when a scope was requested (RFC 9068 §2.2.3).
+  if (payload.scope === undefined) {
+    skip('scope', 'Not present (SHOULD be present if a scope was requested — RFC 9068 §2.2.3)');
+  } else if (typeof payload.scope !== 'string') {
+    fail('scope', 'Must be a space-delimited string (RFC 9068 §2.2.3)');
+  } else {
+    pass('scope', '"' + payload.scope + '"');
+  }
+
+  // Authentication information claims are optional (RFC 9068 §2.2.1).
+  if (payload.auth_time !== undefined) {
+    if (typeof payload.auth_time !== 'number' || !Number.isInteger(payload.auth_time)) fail('auth_time', 'Must be an integer NumericDate');
+    else pass('auth_time', new Date(payload.auth_time * 1000).toISOString());
+  }
+  if (payload.acr !== undefined) {
+    if (typeof payload.acr !== 'string') fail('acr', 'Must be a string');
+    else pass('acr', '"' + payload.acr + '"');
+  }
+  if (payload.amr !== undefined) {
+    if (Array.isArray(payload.amr) && payload.amr.every(function (a) { return typeof a === 'string'; })) pass('amr', payload.amr.length + ' value(s)');
+    else fail('amr', 'Must be an array of strings');
+  }
+
+  setVal('compliance_output', results.join('\n'));
+  return false;
+}
+
+// Populate Header, Payload, and the Encoded JWT with a sample RFC 9068 access
+// token: header carries alg + typ "at+jwt"; payload carries the required claims
+// (iss, exp, aud, sub, client_id, iat, jti) plus a scope. Produced unsigned
+// (header.payload.) — sign it in the Sign pane to complete it.
+function generateRfc9068Token() {
+  var now = Math.floor(Date.now() / 1000);
+  var header = { alg: 'RS256', typ: 'at+jwt' };
+  var payload = {
+    iss: 'https://as.example.com',
+    sub: 'user-1234',
+    aud: 'https://api.example.com',
+    client_id: 'example-client',
+    iat: now,
+    exp: now + 3600,
+    jti: bytesToB64u(crypto.getRandomValues(new Uint8Array(12))),
+    scope: 'read write'
+  };
+  setVal('jwt_tools_header', JSON.stringify(header, null, 2));
+  setVal('jwt_tools_payload', JSON.stringify(payload, null, 2));
+  updateEncoded(); // fills the Encoded JWT field (header.payload.) from the above
+  setVal('jwt_tools_sync_status', 'Generated a sample RFC 9068 access token (unsigned). Sign it in the Sign (JWS) pane to complete it.');
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Digital signatures (JWS)
 // ---------------------------------------------------------------------------
@@ -1042,6 +1176,8 @@ module.exports = {
   onEncodedInput,
   addClaim,
   checkCompliance,
+  checkRfc9068Compliance,
+  generateRfc9068Token,
   generateSigningKeys,
   signJWT,
   verifyJWT,
