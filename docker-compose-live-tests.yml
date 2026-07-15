@@ -19,15 +19,36 @@
 #   LIVE_DEBUGGER_BASE_URL (default https://test.idptools.com)
 #   LIVE_CONFIG_FILE        (default ./env/test-idptools-com.js)
 services:
+  postgres:
+    image: postgres:18
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+      POSTGRES_DB: keycloak
+      # postgres:18 refuses to start on a data dir initialized by an older
+      # major version. Initialize into a fresh subdirectory of the volume so
+      # the upgrade starts cleanly (test data is disposable and recreated each
+      # run); any legacy PG17 files at the volume root are ignored.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: pg_isready
+      interval: 10s
+      timeout: 60s
+      retries: 5
+      start_period: 45s
+    networks:
+      - keycloak
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.6.4
     command: ["start-dev"]
-    hostname: keycloak
-    network_mode: "host"
     environment:
-      KC_HTTP_PORT: "8080"
-      KC_BOOTSTRAP_ADMIN_USERNAME: keycloak
-      KC_BOOTSTRAP_ADMIN_PASSWORD: keycloak
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
       KEYCLOAK_ADMIN: keycloak
       KEYCLOAK_ADMIN_PASSWORD: keycloak
       KC_HEALTH_ENABLED: "true"
@@ -37,12 +58,11 @@ services:
     build:
       context: .
       dockerfile: tests/Dockerfile
-    network_mode: "host"
     environment:
       # Target the deployed site; talk to the local Keycloak over loopback.
       - DEBUGGER_BASE_URL=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}
-      - KEYCLOAK_BASE_URL=http://localhost:8080
-      - KEYCLOAK_LOCALHOST_BASE_URL=http://localhost:8080
+      - KEYCLOAK_BASE_URL=http://keycloak:8080
+      - KEYCLOAK_LOCALHOST_BASE_URL=http://keycloak:8080
       - CONFIG_FILE=${LIVE_CONFIG_FILE:-./env/test-idptools-com.js}
     # Persist the generated report/logs to the host (gitignored).
     volumes:
