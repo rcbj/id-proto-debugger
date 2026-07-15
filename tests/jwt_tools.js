@@ -89,7 +89,13 @@ async function getAccessToken(driver, client_id, client_secret, scope, pkce_enab
   var redirect_uri = By.id("redirect_uri");
   await driver.findElement(redirect_uri).clear();
   await driver.findElement(redirect_uri).sendKeys(baseUrl + "/callback");
-  await driver.findElement(btn_authorize).click();
+  // Scroll into view and JS-click: a native .click() can fail with "element
+  // click intercepted" because a hidden ".tooltiptext" span still occupies
+  // layout over the button. A JS click bypasses that interception check.
+  var btn_authorize_el = await driver.findElement(btn_authorize);
+  await driver.executeScript(
+    "arguments[0].scrollIntoView({ block: 'center' }); arguments[0].click();",
+    btn_authorize_el);
 
   // Login to Keycloak
   try {

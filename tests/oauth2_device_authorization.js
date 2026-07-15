@@ -57,7 +57,14 @@ async function requestDeviceAuthorization(driver, client_id, scope) {
   await driver.findElement(scopeField).sendKeys(scope);
 
   const authorizeBtn = By.css('input[type="submit"][value="Authorize"]');
-  await driver.findElement(authorizeBtn).click();
+  // Scroll into view and click via JS. A native .click() runs ChromeDriver's
+  // interception check, which fails here because a hidden ".tooltiptext" span
+  // still occupies layout over the button ("element click intercepted"). A JS
+  // click invokes the handler directly and bypasses that check.
+  const authorizeEl = await driver.findElement(authorizeBtn);
+  await driver.executeScript(
+    "arguments[0].scrollIntoView({ block: 'center' }); arguments[0].click();",
+    authorizeEl);
 
   // The device authorization response is shown on debugger2.html.
   await driver.wait(until.elementLocated(By.id("device_user_code")), waitTime);

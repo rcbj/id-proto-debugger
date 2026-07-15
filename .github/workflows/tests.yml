@@ -7,8 +7,9 @@ on:
   # Terraform workflow (workflow_run on success), then the test-site deploy.
   push:
     branches: [ master, develop ]
+  # Run on PRs targeting master or develop (branches = the PR's base branch).
   pull_request:
-    branches: [ master ]
+    branches: [ master, develop ]
   workflow_dispatch:
 permissions:
   contents: read
