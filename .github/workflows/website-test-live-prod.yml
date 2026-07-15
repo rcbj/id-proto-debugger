@@ -1,0 +1,64 @@
+name: Live Site Test (idptools.com)
+
+# Runs the full Selenium suite against the DEPLOYED PROD site
+# (https://idptools.com), using a throwaway Keycloak spun up locally on the
+# runner (host networking, so the browser reaches it at localhost:8080). Same
+# mechanism as the test-site live test (docker-compose-live-tests.yml), pointed
+# at prod via LIVE_DEBUGGER_BASE_URL / LIVE_CONFIG_FILE.
+#
+# Runs automatically after a successful prod deploy, plus nightly and on demand.
+#
+# NOTE: the workflow_run trigger only fires from this file on the DEFAULT branch
+# (master).
+
+on:
+  # After the prod deploy finishes.
+  workflow_run:
+    workflows: ["Deploy Static Site (idptools.com)"]
+    types: [completed]
+  workflow_dispatch:
+  # Nightly, staggered after the test-site live run (11:00 UTC).
+  schedule:
+    - cron: '0 12 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  live-test:
+    runs-on: ubuntu-latest
+    # For a post-deploy (workflow_run) trigger, only run if the deploy
+    # succeeded. Manual dispatch and the nightly schedule always run.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Install docker-compose
+        uses: KengoTODA/actions-setup-docker-compose@v1
+        with:
+          version: '5.2.0'
+
+      - name: Run Selenium suite against the live PROD site
+        run: |
+          sudo LIVE_DEBUGGER_BASE_URL=https://idptools.com \
+               LIVE_CONFIG_FILE=./env/prod.js \
+               docker compose -f docker-compose-live-tests.yml \
+            up --build --abort-on-container-exit --exit-code-from tests
+
+      - name: Tear down the stack
+        if: always()
+        run: sudo docker compose -f docker-compose-live-tests.yml down
+
+      - name: Normalize report permissions
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" tests/report || true
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-test-report-prod
+          path: tests/report/latest
+          if-no-files-found: warn
+          retention-days: 30

@@ -3,11 +3,15 @@ set -x
 
 init()
 {
-  DEBUGGER_BASE_URL=http://client:3000
-  CONFIG_FILE=./env/local.js
-  KEYCLOAK_BASE_URL=http://keycloak:8080
-  KEYCLOAK_LOCALHOST_BASE_URL=http://keycloak:8080
-  CONFIG_FILE=./env/local.js
+  # Defaults target the fully-containerized stack (client + keycloak on the
+  # compose network). They can be overridden via the environment to run the
+  # SAME suite against a deployed site while talking to a locally-spun-up
+  # Keycloak — see docker-compose-live-tests.yml (e.g. DEBUGGER_BASE_URL set to
+  # https://test.idptools.com with KEYCLOAK_BASE_URL=http://localhost:8080).
+  DEBUGGER_BASE_URL="${DEBUGGER_BASE_URL:-http://client:3000}"
+  KEYCLOAK_BASE_URL="${KEYCLOAK_BASE_URL:-http://keycloak:8080}"
+  KEYCLOAK_LOCALHOST_BASE_URL="${KEYCLOAK_LOCALHOST_BASE_URL:-http://keycloak:8080}"
+  CONFIG_FILE="${CONFIG_FILE:-./env/local.js}"
   CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
   COMMON_SH=${CURRENT_DIR}/common.sh
   if [ -r "${COMMON_SH}" ];

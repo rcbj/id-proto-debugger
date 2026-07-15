@@ -1,0 +1,66 @@
+name: Live Site Test (test.idptools.com)
+
+# Runs the full Selenium suite against the DEPLOYED test.idptools.com site,
+# using a throwaway Keycloak spun up locally on the runner. Host networking lets
+# the browser (in the tests container) reach that Keycloak at localhost:8080,
+# while it drives the public HTTPS site. This is remote-run-tests.sh,
+# containerized for CI (see docker-compose-live-tests.yml).
+#
+# Runs automatically after a successful test-site deploy (post-deploy
+# verification), plus nightly and on demand.
+#
+# NOTE: the workflow_run trigger only fires from this file on the DEFAULT branch
+# (master). No branch filter is used: the test-site deploy is itself
+# workflow_run-triggered (so it's attributed to master), and this suite targets
+# the public URL rather than a specific commit — it just needs the deploy to
+# have succeeded.
+
+on:
+  # After the test-site deploy finishes.
+  workflow_run:
+    workflows: ["Deploy Static Site (test.idptools.com)"]
+    types: [completed]
+  workflow_dispatch:
+  # Nightly, after the containerized "Selenium Tests" suite (10:00 UTC).
+  schedule:
+    - cron: '0 11 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  live-test:
+    runs-on: ubuntu-latest
+    # For a post-deploy (workflow_run) trigger, only run if the deploy
+    # succeeded. Manual dispatch and the nightly schedule always run.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - name: Install docker-compose
+        uses: KengoTODA/actions-setup-docker-compose@v1
+        with:
+          version: '5.2.0'
+
+      - name: Run Selenium suite against the live test site
+        run: |
+          sudo docker compose -f docker-compose-live-tests.yml \
+            up --build --abort-on-container-exit --exit-code-from tests
+
+      - name: Tear down the stack
+        if: always()
+        run: sudo docker compose -f docker-compose-live-tests.yml down
+
+      - name: Normalize report permissions
+        if: always()
+        run: sudo chown -R "$(id -u):$(id -g)" tests/report || true
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: live-test-report
+          path: tests/report/latest
+          if-no-files-found: warn
+          retention-days: 30
