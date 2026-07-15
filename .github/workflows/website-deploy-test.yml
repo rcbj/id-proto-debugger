@@ -69,6 +69,12 @@ jobs:
   deploy:
     needs: terraform
     runs-on: ubuntu-latest
+    # For a workflow_run trigger, only deploy if Terraform succeeded on develop.
+    # Manual dispatch always proceeds.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.head_branch == 'develop') }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5

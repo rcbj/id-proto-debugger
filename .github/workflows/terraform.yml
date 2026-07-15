@@ -17,6 +17,11 @@ name: Terraform
 # CI authenticates with static-key secrets; local runs use your AWS SSO session.
 
 on:
+  # Run after the Selenium Tests suite passes for a develop push.
+  workflow_run:
+    workflows: ["Selenium Tests"]
+    types: [completed]
+    branches: [develop]
   workflow_dispatch:
     inputs:
       environment:
