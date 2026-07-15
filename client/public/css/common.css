@@ -5,3 +5,14 @@ textarea {
 legend {
   width: 540px;
 }
+
+/* Bootstrap hides .tooltiptext with visibility:hidden (not display:none), so
+   the span still occupies layout and can be reported by the browser as the
+   topmost element at a nearby control's location — which makes Selenium fail
+   with "element click intercepted: ... <span class="tooltiptext">". Marking
+   hidden tooltips non-interactive keeps them from ever being a pointer/click
+   target. (token_detail.css has the same rule for the token-detail page; this
+   covers the debugger pages, which load common.css but not token_detail.css.) */
+.tooltip .tooltiptext {
+  pointer-events: none;
+}

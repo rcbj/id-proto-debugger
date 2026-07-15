@@ -34,3 +34,12 @@ legend {
   max-width: 100%;
   box-sizing: border-box;
 }
+
+/* Bootstrap hides .tooltiptext with visibility:hidden (not display:none), so
+   the span still occupies layout and can be reported as the topmost element at
+   a control's location, making Selenium fail with "element click intercepted:
+   ... <span class="tooltiptext">". debugger2.html loads this file (not
+   common.css), so mirror common.css / token_detail.css here. */
+.tooltip .tooltiptext {
+  pointer-events: none;
+}
