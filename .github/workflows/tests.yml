@@ -3,8 +3,10 @@ name: Selenium Tests
 on:
   schedule:
     - cron: '0 10 * * *'
+  # develop is the head of the deploy chain: this suite runs first, then the
+  # Terraform workflow (workflow_run on success), then the test-site deploy.
   push:
-    branches: [ master ]
+    branches: [ master, develop ]
   pull_request:
     branches: [ master ]
   workflow_dispatch:

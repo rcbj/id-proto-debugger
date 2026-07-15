@@ -3,22 +3,47 @@ name: Deploy Static Site (test.idptools.com)
 # Builds the static client content and deploys it to the TEST site
 # (test.idptools.com) using the same container image as prod and local runs.
 # DEPLOY_ENV=test selects the test bucket / distribution / config.
+#
+# Ordering: chained AFTER the "Terraform" workflow via `workflow_run`. On a
+# develop push the full pipeline is:
+#   Selenium Tests -> Terraform apply (test) -> Deploy (this).
+# The test suite runs once, in the "Selenium Tests" workflow; this deploy only
+# happens if that suite passed and Terraform then applied successfully.
+#
+# NOTE: workflow_run triggers only fire when this workflow file exists on the
+# repository's DEFAULT branch (master). Merge to the default branch for the
+# chain to take effect.
 
 on:
-  push:
-    branches:
-      - develop
+  # Run after the Terraform workflow completes for a develop push.
+  workflow_run:
+    workflows: ["Terraform"]
+    types: [completed]
+    branches: [develop]
+  # Still allow manual deploys.
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write is needed to push the deploy tag back to the repo.
+  contents: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # For a workflow_run trigger, only deploy if Terraform succeeded on develop.
+    # Manual dispatch always proceeds.
+    if: >-
+      ${{ github.event_name == 'workflow_dispatch' ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.head_branch == 'develop') }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
+        with:
+          # A workflow_run-triggered job checks out the default branch by
+          # default; check out the exact commit the chain ran against so the
+          # deployed content matches. Manual dispatch uses its own ref.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Build deploy image
         run: docker build -t idptools-static-deploy -f deploy/Dockerfile .
@@ -34,3 +59,18 @@ jobs:
             -e AWS_REGION=us-west-2 \
             -e DEPLOY_ENV=test \
             idptools-static-deploy
+
+      # Tag the exact commit that was built/deployed, only after a successful
+      # deploy. Tag format: TEST_IDPTOOLS_MMDDYYYYHHMMSS (UTC):
+      #   MM=month DD=day YYYY=year HH=24h-hour MM=minute SS=second.
+      - name: Tag deployed commit
+        run: |
+          set -euo pipefail
+          TS="$(date -u +%m%d%Y%H%M%S)"
+          TAG="TEST_IDPTOOLS_${TS}"
+          SHA="$(git rev-parse HEAD)"
+          echo "Tagging ${SHA} as ${TAG}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "Deployed test.idptools.com from ${SHA} at ${TS} UTC"
+          git push origin "${TAG}"
