@@ -3,29 +3,20 @@ name: Terraform
 # Runs Terraform inside the same container image used locally
 # (infra/terraform-local.sh). State is remote (S3).
 #
-# Triggers:
-#   - workflow_run after "Selenium Tests" succeeds on develop -> automatically
-#     `apply` the TEST environment. On a develop push the pipeline is:
-#     Selenium Tests -> Terraform (this) -> Deploy test.idptools.com.
-#   - workflow_dispatch -> manual run; choose environment (test|prod) and
-#     action (plan|apply), e.g. to apply prod.
+# Manual dispatch ONLY: choose environment (test|prod) and action (plan|apply),
+# e.g. to apply prod, or plan/apply test on demand.
 #
-# Deliberately NOT triggered on push/pull_request directly: develop changes go
-# through the test suite first, and PR content is never run with credentials.
+# The AUTOMATIC develop pipeline (apply TEST infra, then deploy the test site)
+# lives in the "Deploy Static Site (test.idptools.com)" workflow, which runs
+# terraform + deploy as ordered jobs after the Selenium Tests suite passes.
+# Terraform is NOT auto-run here on develop because chaining terraform -> deploy
+# across separate workflow_run workflows is unreliable: a workflow_run-triggered
+# run is attributed to the default branch, so the develop branch/SHA is lost on
+# the second hop.
 #
-# CI authenticates with static-key secrets (same pattern as the deploy
-# pipeline); local runs use your AWS SSO session.
-#
-# NOTE: workflow_run triggers only fire when this workflow file exists on the
-# repository's DEFAULT branch (master). Merge to the default branch for the
-# chain to take effect.
+# CI authenticates with static-key secrets; local runs use your AWS SSO session.
 
 on:
-  # Run after the Selenium Tests suite passes for a develop push.
-  workflow_run:
-    workflows: ["Selenium Tests"]
-    types: [completed]
-    branches: [develop]
   workflow_dispatch:
     inputs:
       environment:

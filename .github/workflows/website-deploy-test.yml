@@ -1,26 +1,31 @@
 name: Deploy Static Site (test.idptools.com)
 
-# Builds the static client content and deploys it to the TEST site
-# (test.idptools.com) using the same container image as prod and local runs.
-# DEPLOY_ENV=test selects the test bucket / distribution / config.
+# Automatic develop pipeline, chained after the Selenium Tests suite:
 #
-# Ordering: chained AFTER the "Terraform" workflow via `workflow_run`. On a
-# develop push the full pipeline is:
-#   Selenium Tests -> Terraform apply (test) -> Deploy (this).
-# The test suite runs once, in the "Selenium Tests" workflow; this deploy only
-# happens if that suite passed and Terraform then applied successfully.
+#   Selenium Tests  --(workflow_run, develop, success)-->  this workflow
+#       job: terraform  -> apply the TEST infrastructure
+#       job: deploy     -> build + deploy TEST content to S3/CloudFront, then tag
+#                          (needs: terraform)
 #
-# NOTE: workflow_run triggers only fire when this workflow file exists on the
-# repository's DEFAULT branch (master). Merge to the default branch for the
-# chain to take effect.
+# Terraform and deploy are ORDERED JOBS in ONE workflow (not a second
+# workflow_run hop). A workflow_run-triggered run is attributed to the default
+# branch, so chaining terraform -> deploy across separate workflows loses the
+# develop branch/SHA. Chaining a single hop from Selenium Tests keeps it: both
+# jobs check out the exact develop commit the suite tested
+# (github.event.workflow_run.head_sha).
+#
+# The Selenium Tests suite runs once (in its own workflow) and gates this one.
+#
+# NOTE: workflow_run triggers only fire from the workflow file on the DEFAULT
+# branch (master) — keep this file updated there.
 
 on:
-  # Run after the Terraform workflow completes for a develop push.
+  # Run after the Selenium Tests suite completes for a develop push.
   workflow_run:
-    workflows: ["Terraform"]
+    workflows: ["Selenium Tests"]
     types: [completed]
     branches: [develop]
-  # Still allow manual deploys.
+  # Manual full run (apply TEST infra + deploy).
   workflow_dispatch:
 
 permissions:
@@ -28,9 +33,10 @@ permissions:
   contents: write
 
 jobs:
-  deploy:
+  # ---- Apply the TEST infrastructure first ----
+  terraform:
     runs-on: ubuntu-latest
-    # For a workflow_run trigger, only deploy if Terraform succeeded on develop.
+    # For a workflow_run trigger, only proceed if the suite succeeded on develop.
     # Manual dispatch always proceeds.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
@@ -40,9 +46,33 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
         with:
-          # A workflow_run-triggered job checks out the default branch by
-          # default; check out the exact commit the chain ran against so the
-          # deployed content matches. Manual dispatch uses its own ref.
+          # The exact commit the suite tested (workflow_run) or the dispatch ref.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Build terraform image
+        run: docker build -t idptools-terraform -f infra/Dockerfile .
+
+      - name: Terraform apply (test)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          docker run --rm \
+            -e AWS_ACCESS_KEY_ID \
+            -e AWS_SECRET_ACCESS_KEY \
+            -e AWS_REGION=us-west-2 \
+            -e TF_ENV=test \
+            -e TF_ACTION=apply \
+            idptools-terraform
+
+  # ---- Then build + deploy the static content (only if terraform succeeded) ----
+  deploy:
+    needs: terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v5
+        with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
 
       - name: Build deploy image
