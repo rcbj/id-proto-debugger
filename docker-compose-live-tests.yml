@@ -1,44 +1,65 @@
 # Runs the Selenium suite against a DEPLOYED debugger site (default:
 # https://test.idptools.com) while talking to a throwaway Keycloak spun up
-# locally. Same idea as docker-compose-run-tests.yml, except the debugger under
-# test is the hosted site instead of a containerized client — only Keycloak and
-# the test runner are started here.
+# locally. This is the same stack as docker-compose-run-tests.yml (postgres +
+# keycloak + tests on the "keycloak" bridge network) MINUS the containerized
+# api/client — the debugger under test is the hosted site instead.
 #
-# Host networking is used so the browser inside the tests container reaches the
-# local Keycloak at http://localhost:8080 (the same scenario remote-run-tests.sh
-# proves locally). The browser drives the public HTTPS site and makes its
-# OIDC/OAuth calls to that local Keycloak; the suite's Chrome flags
-# (--allow-running-insecure-content + private-network overrides) permit the
-# HTTPS-page -> http://localhost calls.
+# The browser inside the tests container reaches the local Keycloak at
+# http://keycloak:8080 (compose DNS), exactly as the containerized suite does.
+# It drives the public HTTPS site and makes its OIDC/OAuth calls to that local
+# Keycloak; the suite's Chrome flags (--allow-running-insecure-content +
+# private-network overrides) permit the HTTPS-page -> http://keycloak calls.
 #
 # Keycloak's clients are (re)created at run time by common.sh configureKeycloak
 # with redirectUris/webOrigins matching DEBUGGER_BASE_URL, so the deployed
 # site's redirect back to <site>/callback validates.
 #
-# Compose format 2.4 for `depends_on: condition: service_healthy` support.
+# Compose format 2.x for `depends_on: condition: service_healthy` support.
 #
 # Override the target via the environment:
 #   LIVE_DEBUGGER_BASE_URL (default https://test.idptools.com)
 #   LIVE_CONFIG_FILE        (default ./env/test-idptools-com.js)
-version: '2.4'
 services:
+  postgres:
+    image: postgres:18
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak
+      POSTGRES_DB: keycloak
+      # postgres:18 refuses to start on a data dir initialized by an older
+      # major version. Initialize into a fresh subdirectory of the volume so
+      # the upgrade starts cleanly (test data is disposable and recreated each
+      # run); any legacy PG17 files at the volume root are ignored.
+      PGDATA: /var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: pg_isready
+      interval: 10s
+      timeout: 60s
+      retries: 5
+      start_period: 45s
+    networks:
+      - keycloak
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.6.4
     command: ["start-dev"]
-    hostname: keycloak
-    network_mode: "host"
     environment:
-      KC_HTTP_PORT: "8080"
-      KC_BOOTSTRAP_ADMIN_USERNAME: keycloak
-      KC_BOOTSTRAP_ADMIN_PASSWORD: keycloak
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak
       KEYCLOAK_ADMIN: keycloak
       KEYCLOAK_ADMIN_PASSWORD: keycloak
       KC_HEALTH_ENABLED: "true"
+    hostname: keycloak
     healthcheck:
       test: [
         "CMD-SHELL",
         "exec 3<>/dev/tcp/localhost/9000; \
         echo -en 'GET /health/ready' >&3; \
+        # Give the server a moment to respond, then search for 'UP'
         if timeout 3 cat <&3 | grep -m 1 'UP'; then \
           exec 3<&-; exec 3>&-; exit 0; \
         else \
@@ -49,19 +70,22 @@ services:
       timeout: 60s
       retries: 5
       start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - keycloak
 
   tests:
-    container_name: tests
     image: rcbj/test-live
     build:
       context: .
       dockerfile: tests/Dockerfile
-    network_mode: "host"
     environment:
-      # Target the deployed site; talk to the local Keycloak over localhost.
+      # Target the deployed site; talk to the local Keycloak by service name.
       - DEBUGGER_BASE_URL=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}
-      - KEYCLOAK_BASE_URL=http://localhost:8080
-      - KEYCLOAK_LOCALHOST_BASE_URL=http://localhost:8080
+      - KEYCLOAK_BASE_URL=http://keycloak:8080
+      - KEYCLOAK_LOCALHOST_BASE_URL=http://keycloak:8080
       - CONFIG_FILE=${LIVE_CONFIG_FILE:-./env/test-idptools-com.js}
     # Persist the generated report/logs to the host (gitignored).
     volumes:
@@ -69,3 +93,11 @@ services:
     depends_on:
       keycloak:
         condition: service_healthy
+    networks:
+      - keycloak
+
+volumes:
+  postgres_data:
+
+networks:
+  keycloak:
