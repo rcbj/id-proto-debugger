@@ -568,6 +568,27 @@ async function encryptJWT() {
     setVal('jwt_tools_jwe', jwe);
     setVal('jwe_decrypt_input', jwe);
     setVal('jwt_tools_encoded', jwe);
+
+    // Reflect the header parameters added by encryption in the Compose pane's
+    // JWT Header box. Per RFC 7515/7516/7519, a JWS/JWT "alg" (the signing
+    // algorithm) and a JWE "alg" (the key-management algorithm) are distinct
+    // header parameters belonging to distinct (JWS vs JWE) headers, so the
+    // existing signing "alg" MUST NOT be overwritten by the JWE "alg". Only the
+    // newly-introduced JWE parameters (enc, cty [RFC 7519 §5.2], epk, ...) are
+    // added; the JWT's own signing "alg" is preserved.
+    var composeHeader;
+    try {
+      composeHeader = JSON.parse(val('jwt_tools_header'));
+      if (composeHeader === null || typeof composeHeader !== 'object' || Array.isArray(composeHeader)) composeHeader = {};
+    } catch (e) {
+      composeHeader = {};
+    }
+    Object.keys(protectedHeader).forEach(function (k) {
+      if (k === 'alg') return; // preserve the JWS signing "alg"
+      composeHeader[k] = protectedHeader[k];
+    });
+    setVal('jwt_tools_header', JSON.stringify(composeHeader, null, 2));
+
     setVal('jwe_status', 'JWE produced with ' + alg + ' / ' + enc + '.');
     setVal('jwt_tools_sync_status', 'Encoded field now holds the JWE encrypted token.');
   } catch (e) {

@@ -50,6 +50,7 @@ const BUNDLES = [
   ['userinfo', 'userinfo'],
   ['introspection', 'introspection'],
   ['logout', 'logout'],
+  ['jwt_tools', 'jwt_tools'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>

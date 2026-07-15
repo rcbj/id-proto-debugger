@@ -186,7 +186,11 @@ async function clickToggle(driver, checkboxId) {
 }
 
 function onclickBtn(fn) {
-  return By.xpath("//input[@onclick=\"return jwt_tools." + fn + "();\"]");
+  // Match on a substring rather than the exact attribute: the deployed static
+  // site is HTML-minified, which strips the trailing ";" from inline handlers
+  // ("...addClaim();" -> "...addClaim()"). The "jwt_tools.<fn>(" fragment is
+  // present and unique in both the minified and unminified builds.
+  return By.xpath("//input[contains(@onclick, \"jwt_tools." + fn + "(\")]");
 }
 
 async function addCustomClaim(driver, name, value, type) {
