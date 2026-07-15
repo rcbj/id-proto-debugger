@@ -281,3 +281,5 @@ Thanks to the following:
 ![alt text](docs/images/image-6.png)
 10. If successful, the debugger will return "Access token", "Refresh Token" and optionally "ID Token". You can view additional information for each of the tokens if you click on their links (1). You can also introspect the access and refresh token using the identity provider introspection endpoint (2). For ID tokens, you can also decode their userinfo data (3)
 ![alt text](docs/images/image-15.png)
+
+
