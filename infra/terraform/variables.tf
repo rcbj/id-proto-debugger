@@ -42,3 +42,23 @@ variable "tags" {
     ManagedBy = "terraform"
   }
 }
+
+# --- GitHub Actions OIDC deploy role (see iam.tf) ---
+
+variable "deploy_role_name" {
+  description = "Name of the GitHub Actions OIDC deploy role."
+  type        = string
+  default     = "idptools-github-deploy"
+}
+
+variable "create_github_oidc_provider" {
+  description = "Create the GitHub Actions OIDC provider (token.actions.githubusercontent.com). Set to false to reuse one that already exists in the account (only one per account is allowed)."
+  type        = bool
+  default     = true
+}
+
+variable "github_subject_claims" {
+  description = "GitHub OIDC 'sub' claims allowed to assume the deploy role. Defaults to any ref/environment in the repo; tighten to e.g. 'repo:OWNER/REPO:ref:refs/heads/main' or 'repo:OWNER/REPO:environment:prod' to restrict."
+  type        = list(string)
+  default     = ["repo:rcbj/oauth2-oidc-debugger:*"]
+}
