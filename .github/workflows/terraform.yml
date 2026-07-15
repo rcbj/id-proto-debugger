@@ -3,13 +3,25 @@ name: Terraform
 # Runs Terraform inside the same container image used locally
 # (infra/terraform-local.sh). State is remote (S3).
 #
-# Manual dispatch ONLY — deliberately does not run on pull_request, so untrusted
-# PR content is never executed with AWS credentials. Choose environment + action.
+# Triggers:
+#   - push to `develop`  -> automatically `apply` the TEST environment. This
+#     fires both when a PR is merged into develop and on direct commits to
+#     develop (both are pushes). Mirrors the develop->test convention used by
+#     the website-deploy workflows.
+#   - workflow_dispatch  -> manual run; choose environment (test|prod) and
+#     action (plan|apply), e.g. to apply prod.
 #
-# CI authenticates with static-key secrets (same pattern as the deploy pipeline);
-# local runs use your AWS SSO session.
+# Deliberately NOT triggered on pull_request, so untrusted PR content is never
+# executed with AWS credentials. Pushes to develop are post-merge (they require
+# write access), so running with credentials there is safe.
+#
+# CI authenticates with static-key secrets (same pattern as the deploy
+# pipeline); local runs use your AWS SSO session.
 
 on:
+  push:
+    branches:
+      - develop
   workflow_dispatch:
     inputs:
       environment:
@@ -26,9 +38,20 @@ on:
 permissions:
   contents: read
 
+# Serialize runs per environment so two applies never overlap (in addition to
+# the S3-native state lock). Do not cancel an in-flight apply.
+concurrency:
+  group: terraform-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'test' }}
+  cancel-in-progress: false
+
 jobs:
   terraform:
     runs-on: ubuntu-latest
+    # Resolve environment/action from the trigger: a develop push applies test;
+    # a manual dispatch uses the chosen inputs.
+    env:
+      TF_ENV: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'test' }}
+      TF_ACTION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.action || 'apply' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
@@ -36,7 +59,7 @@ jobs:
       - name: Build terraform image
         run: docker build -t idptools-terraform -f infra/Dockerfile .
 
-      - name: Terraform ${{ github.event.inputs.action }} (${{ github.event.inputs.environment }})
+      - name: Terraform ${{ env.TF_ACTION }} (${{ env.TF_ENV }})
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -45,6 +68,6 @@ jobs:
             -e AWS_ACCESS_KEY_ID \
             -e AWS_SECRET_ACCESS_KEY \
             -e AWS_REGION=us-west-2 \
-            -e TF_ENV="${{ github.event.inputs.environment }}" \
-            -e TF_ACTION="${{ github.event.inputs.action }}" \
+            -e TF_ENV="${TF_ENV}" \
+            -e TF_ACTION="${TF_ACTION}" \
             idptools-terraform
