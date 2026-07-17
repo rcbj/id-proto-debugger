@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 & OpenID Connect Debugger — Encoding / Hashing Tools</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/encoding_tools.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/encoding_tools.js">
+</script>
+
+<p class="encoding-tools-return"><a id="return_link" href="/debugger.html">&larr; Return to debugger</a></p>
+
+<p class="encoding-tools-intro">Encode, decode, checksum, and hash arbitrary values &mdash; all in your browser. <strong>Nothing is stored or sent to a server:</strong> every value stays on this page.</p>
+
+<div class="encoding-tools-grid">
+
+  <!-- ===================== 1. Base64 ===================== -->
+  <fieldset id="pane_base64">
+    <legend>Base64</legend>
+
+    <div class="et-field">
+      <label class="et-has-copy" title="The plain, unencoded value to Base64-encode.">Unencoded value <button type="button" class="et-copy" onclick="return encoding_tools.copyField('b64_unencoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="b64_unencoded" name="b64_unencoded" title="Plain text to Base64-encode. Edit this and click Encode."></textarea>
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="The Base64-encoded form of the value above.">Encoded <button type="button" class="et-copy" onclick="return encoding_tools.copyField('b64_encoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="b64_encoded" name="b64_encoded" title="Base64 text. Edit this and click Decode to recover the plain text."></textarea>
+    </div>
+    <div class="et-row">
+      <input type="submit" value="Encode" onclick="return encoding_tools.base64Encode();" title="Base64-encode the Unencoded value into the Encoded box." />
+      <input type="submit" value="Decode" onclick="return encoding_tools.base64Decode();" title="Base64-decode the Encoded value into the Unencoded box." />
+    </div>
+    <input class="et-status" type="text" id="b64_status" name="b64_status" title="Status / result of the last Base64 operation." readonly />
+  </fieldset>
+
+  <!-- ===================== 2. URI Encoding ===================== -->
+  <fieldset id="pane_uri">
+    <legend>URI Encoding</legend>
+
+    <div class="et-field">
+      <label class="et-has-copy" title="The plain, unencoded value to percent-encode for use in a URL.">Unencoded value <button type="button" class="et-copy" onclick="return encoding_tools.copyField('uri_unencoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="uri_unencoded" name="uri_unencoded" title="Plain text to percent-encode. Edit this and click Encode."></textarea>
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="The percent-encoded (URI component) form of the value above.">Encoded <button type="button" class="et-copy" onclick="return encoding_tools.copyField('uri_encoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="uri_encoded" name="uri_encoded" title="Percent-encoded text. Edit this and click Decode."></textarea>
+    </div>
+    <div class="et-row">
+      <input type="submit" value="Encode" onclick="return encoding_tools.uriEncode();" title="URI-encode the Unencoded value into the Encoded box." />
+      <input type="submit" value="Decode" onclick="return encoding_tools.uriDecode();" title="URI-decode the Encoded value into the Unencoded box." />
+    </div>
+    <input class="et-status" type="text" id="uri_status" name="uri_status" title="Status / result of the last URI operation." readonly />
+  </fieldset>
+
+  <!-- ===================== 3. Checksum (one-way) ===================== -->
+  <fieldset id="pane_checksum">
+    <legend>Checksum (CRC-32)</legend>
+
+    <div class="et-field">
+      <label class="et-has-copy" title="The value to run the CRC-32 checksum over.">Unencoded value <button type="button" class="et-copy" onclick="return encoding_tools.copyField('checksum_unencoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="checksum_unencoded" name="checksum_unencoded" title="Input to checksum. Edit this and click Encode."></textarea>
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="The CRC-32 checksum (8 hex digits). A checksum is one-way &mdash; it cannot be decoded.">Encoded <button type="button" class="et-copy" onclick="return encoding_tools.copyField('checksum_encoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="checksum_encoded" name="checksum_encoded" title="CRC-32 checksum (8 hex digits). One-way — cannot be decoded." readonly></textarea>
+    </div>
+    <div class="et-row">
+      <input type="submit" value="Encode" onclick="return encoding_tools.checksum();" title="Compute the CRC-32 checksum of the Unencoded value." />
+    </div>
+    <input class="et-status" type="text" id="checksum_status" name="checksum_status" title="Status / result of the last checksum operation." readonly />
+  </fieldset>
+
+  <!-- ===================== 4. SHA Hashing ===================== -->
+  <fieldset id="pane_sha">
+    <legend>SHA Hashing</legend>
+
+    <div class="et-field">
+      <label class="et-has-copy" title="The value to hash with the selected SHA algorithm.">Unencoded value <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha_unencoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="sha_unencoded" name="sha_unencoded" title="Input to hash. Edit this, pick a size, and click Encode."></textarea>
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="The SHA digest (hex). A hash is one-way &mdash; it cannot be decoded.">Encoded <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha_encoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="sha_encoded" name="sha_encoded" title="SHA digest in hex. One-way — cannot be decoded." readonly></textarea>
+    </div>
+    <div class="et-row">
+      <select class="et-grow" id="sha_size" name="sha_size" title="SHA algorithm / digest size.">
+        <option value="SHA-256" selected="selected">SHA-256</option>
+        <option value="SHA-1">SHA-1</option>
+        <option value="SHA-384">SHA-384</option>
+        <option value="SHA-512">SHA-512</option>
+      </select>
+      <input type="submit" value="Encode" onclick="return encoding_tools.shaHash();" title="Compute the selected SHA digest of the Unencoded value." />
+    </div>
+    <input class="et-status" type="text" id="sha_status" name="sha_status" title="Status / result of the last hash operation." readonly />
+  </fieldset>
+
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

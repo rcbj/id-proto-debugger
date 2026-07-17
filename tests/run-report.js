@@ -239,6 +239,31 @@ function buildJobs() {
     },
   });
 
+  // Encoding / Hashing Tools page. A fully client-side page needing no IdP:
+  // opens it from the debugger Tools pane, confirms the on-load defaults, then
+  // exercises every button — Base64 Encode/Decode (verifying the decoded value
+  // round-trips to the original), URI Encode/Decode, the one-way CRC-32
+  // Checksum, and SHA hashing across all four digest sizes — validating each
+  // output against an independently computed reference value.
+  jobs.push({
+    name: "Encoding / Hashing Tools (Base64, URI, CRC-32, SHA)",
+    script: "encoding_tools.js",
+    env: {},
+  });
+
+  // Digital Signature page. A fully client-side page needing no IdP. For every
+  // pane it sets a value, generates a key, produces a signature/MAC, confirms it
+  // validates, and exercises the keystore downloads. Asymmetric: SLH-DSA (12
+  // sets); RSA (v1.5 & PSS × every hash × 2048/3072); ECC (ECDSA over
+  // P-256/384/521/secp256k1 × every hash, EdDSA, Schnorr, BLS); ML-DSA (44/65/87).
+  // Symmetric MACs: keyed-hash (HMAC/KMAC/BLAKE), block-cipher (CMAC/CBC-MAC/
+  // GMAC), universal-hash (Poly1305/SipHash) — compute + verify + tamper check.
+  jobs.push({
+    name: "Digital Signature (asymmetric sigs + symmetric MACs — generate, sign/MAC, validate, download)",
+    script: "digital_signature.js",
+    env: {},
+  });
+
   return jobs;
 }
 

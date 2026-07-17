@@ -116,7 +116,10 @@ var SIGN_ALGS = {
   PS512: { kind: 'rsa', name: 'RSA-PSS', hash: 'SHA-512', saltLength: 64 },
   ES256: { kind: 'ec', name: 'ECDSA', hash: 'SHA-256', namedCurve: 'P-256' },
   ES384: { kind: 'ec', name: 'ECDSA', hash: 'SHA-384', namedCurve: 'P-384' },
-  ES512: { kind: 'ec', name: 'ECDSA', hash: 'SHA-512', namedCurve: 'P-521' }
+  ES512: { kind: 'ec', name: 'ECDSA', hash: 'SHA-512', namedCurve: 'P-521' },
+  // RFC 8037 — EdDSA over the Edwards curve. Web Crypto supports Ed25519
+  // (Ed448 is spec-defined but not available in the Web Crypto API).
+  EdDSA: { kind: 'okp', name: 'Ed25519' }
 };
 
 // JWE content-encryption key sizes (bytes)
@@ -124,6 +127,11 @@ var ENC_KEY_BYTES = { A128GCM: 16, A192GCM: 24, A256GCM: 32 };
 
 // JWE key-management (asymmetric) hash for RSA-OAEP variants
 var JWE_RSA_HASH = { 'RSA-OAEP': 'SHA-1', 'RSA-OAEP-256': 'SHA-256' };
+
+// ECDH-ES key-agreement key-wrap variants (RFC 7518 §4.6) -> AES key-wrap size
+// in bytes. Plain "ECDH-ES" (direct key agreement) is handled separately.
+var ECDH_KW_BYTES = { 'ECDH-ES+A128KW': 16, 'ECDH-ES+A192KW': 24, 'ECDH-ES+A256KW': 32 };
+function isEcdh(alg) { return alg === 'ECDH-ES' || ECDH_KW_BYTES[alg] !== undefined; }
 
 // ---------------------------------------------------------------------------
 // Composition: keep header / payload / encoded in sync
@@ -464,11 +472,16 @@ async function generateSigningKeys() {
       setVal('sign_private_key', bytesToB64u(secret));
       setVal('sign_public_key', '(HMAC is symmetric — the secret above is used for both signing and verification.)');
     } else if (meta.kind === 'rsa') {
+      var signBits = parseInt(val('sign_rsa_bits'), 10) || 2048;
       var rsaPair = await crypto.subtle.generateKey(
-        { name: meta.name, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: meta.hash },
+        { name: meta.name, modulusLength: signBits, publicExponent: new Uint8Array([1, 0, 1]), hash: meta.hash },
         true, ['sign', 'verify']);
       setVal('sign_private_key', derToPem(await crypto.subtle.exportKey('pkcs8', rsaPair.privateKey), 'PRIVATE KEY'));
       setVal('sign_public_key', derToPem(await crypto.subtle.exportKey('spki', rsaPair.publicKey), 'PUBLIC KEY'));
+    } else if (meta.kind === 'okp') {
+      var edPair = await crypto.subtle.generateKey({ name: meta.name }, true, ['sign', 'verify']);
+      setVal('sign_private_key', derToPem(await crypto.subtle.exportKey('pkcs8', edPair.privateKey), 'PRIVATE KEY'));
+      setVal('sign_public_key', derToPem(await crypto.subtle.exportKey('spki', edPair.publicKey), 'PUBLIC KEY'));
     } else {
       var ecPair = await crypto.subtle.generateKey(
         { name: 'ECDSA', namedCurve: meta.namedCurve }, true, ['sign', 'verify']);
@@ -493,7 +506,9 @@ async function importSigningKey(meta, keyText) {
   }
   var params = meta.kind === 'rsa'
     ? { name: meta.name, hash: meta.hash }
-    : { name: 'ECDSA', namedCurve: meta.namedCurve };
+    : meta.kind === 'okp'
+      ? { name: meta.name }
+      : { name: 'ECDSA', namedCurve: meta.namedCurve };
   return importKeyFlexible(keyText, 'pkcs8', params, ['sign']);
 }
 
@@ -515,6 +530,7 @@ async function signJWT() {
     if (meta.kind === 'hmac') signParams = { name: 'HMAC' };
     else if (meta.kind === 'rsa' && meta.name === 'RSA-PSS') signParams = { name: 'RSA-PSS', saltLength: meta.saltLength };
     else if (meta.kind === 'rsa') signParams = { name: 'RSASSA-PKCS1-v1_5' };
+    else if (meta.kind === 'okp') signParams = { name: meta.name };
     else signParams = { name: 'ECDSA', hash: meta.hash };
 
     var sig = await crypto.subtle.sign(signParams, key, new TextEncoder().encode(signingInput));
@@ -546,13 +562,16 @@ async function verifyHMAC(jwt_, secret, alg) {
 
 async function verifyX509(jwt_, pem, alg) {
   var meta = SIGN_ALGS[alg];
-  if (!meta || (meta.kind !== 'rsa' && meta.kind !== 'ec')) {
+  if (!meta || (meta.kind !== 'rsa' && meta.kind !== 'ec' && meta.kind !== 'okp')) {
     throw new Error('Unsupported asymmetric algorithm: ' + alg);
   }
   var importParams, verifyParams;
   if (meta.kind === 'ec') {
     importParams = { name: 'ECDSA', namedCurve: meta.namedCurve };
     verifyParams = { name: 'ECDSA', hash: meta.hash };
+  } else if (meta.kind === 'okp') {
+    importParams = { name: meta.name };
+    verifyParams = { name: meta.name };
   } else {
     importParams = { name: meta.name, hash: meta.hash };
     verifyParams = meta.name === 'RSA-PSS' ? { name: 'RSA-PSS', saltLength: meta.saltLength } : { name: 'RSASSA-PKCS1-v1_5' };
@@ -614,17 +633,18 @@ async function generateEncryptionKeys() {
   setVal('jwe_status', 'Generating ' + alg + ' key material...');
   try {
     var pair;
-    if (alg === 'ECDH-ES') {
+    if (isEcdh(alg)) {
       pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: ECDH_CURVE }, true, ['deriveBits']);
     } else {
+      var jweBits = parseInt(val('jwe_rsa_bits'), 10) || 2048;
       pair = await crypto.subtle.generateKey(
-        { name: 'RSA-OAEP', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: JWE_RSA_HASH[alg] },
+        { name: 'RSA-OAEP', modulusLength: jweBits, publicExponent: new Uint8Array([1, 0, 1]), hash: JWE_RSA_HASH[alg] },
         true, ['encrypt', 'decrypt']);
     }
     setVal('jwe_public_key', derToPem(await crypto.subtle.exportKey('spki', pair.publicKey), 'PUBLIC KEY'));
     setVal('jwe_private_key', derToPem(await crypto.subtle.exportKey('pkcs8', pair.privateKey), 'PRIVATE KEY'));
     await applyKeyFormat('enc'); // honor the PEM/JWK toggle
-    setVal('jwe_status', 'Generated ' + alg + ' key material' + (alg === 'ECDH-ES' ? ' (P-256).' : '.'));
+    setVal('jwe_status', 'Generated ' + alg + ' key material' + (isEcdh(alg) ? ' (P-256).' : '.'));
   } catch (e) {
     log.error('generateEncryptionKeys: ' + e.message);
     setVal('jwe_status', 'Error: ' + e.message);
@@ -649,17 +669,28 @@ async function concatKdf(z, keyBytes, algId) {
 
 async function deriveEncryptionCek(alg, enc, protectedHeader, recipientPublicPem) {
   var keyBytes = ENC_KEY_BYTES[enc];
-  if (alg === 'ECDH-ES') {
+  if (isEcdh(alg)) {
     var recipientPub = await importKeyFlexible(recipientPublicPem, 'spki',
       { name: 'ECDH', namedCurve: ECDH_CURVE }, []);
     var ephemeral = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: ECDH_CURVE }, true, ['deriveBits']);
     var z = await crypto.subtle.deriveBits({ name: 'ECDH', public: recipientPub }, ephemeral.privateKey, ECDH_CURVE_BITS);
     var epk = await crypto.subtle.exportKey('jwk', ephemeral.publicKey);
     protectedHeader.epk = { kty: epk.kty, crv: epk.crv, x: epk.x, y: epk.y };
-    // For ECDH-ES "direct", the agreed key IS the CEK and encrypted_key is empty.
-    var cekBytes = await concatKdf(z, keyBytes, enc);
-    var cek = await crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false, ['encrypt']);
-    return { cek: cek, encryptedKey: '' };
+    if (alg === 'ECDH-ES') {
+      // "direct": the agreed key IS the CEK; encrypted_key is empty. The Concat
+      // KDF AlgorithmID is the content-encryption "enc" value.
+      var cekBytes = await concatKdf(z, keyBytes, enc);
+      var cek = await crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+      return { cek: cek, encryptedKey: '' };
+    }
+    // ECDH-ES+A*KW: derive a key-wrapping key (Concat KDF AlgorithmID is the
+    // full "alg", keydatalen is the AES-KW size), then wrap a fresh random CEK.
+    var kwBytes = ECDH_KW_BYTES[alg];
+    var kekBytes = await concatKdf(z, kwBytes, alg);
+    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' }, false, ['wrapKey']);
+    var cekKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: keyBytes * 8 }, true, ['encrypt']);
+    var wrapped = await crypto.subtle.wrapKey('raw', cekKey, kek, 'AES-KW');
+    return { cek: cekKey, encryptedKey: bytesToB64u(wrapped) };
   }
   // RSA-OAEP / RSA-OAEP-256: random CEK wrapped with the recipient public key.
   var cekBytes2 = new Uint8Array(keyBytes);
@@ -734,7 +765,7 @@ async function encryptJWT() {
 
 async function decryptCek(alg, enc, protectedHeader, encryptedKey, recipientPrivatePem) {
   var keyBytes = ENC_KEY_BYTES[enc];
-  if (alg === 'ECDH-ES') {
+  if (isEcdh(alg)) {
     if (!protectedHeader.epk) throw new Error('ECDH-ES JWE is missing the "epk" header.');
     var recipientPriv = await importKeyFlexible(recipientPrivatePem, 'pkcs8',
       { name: 'ECDH', namedCurve: protectedHeader.epk.crv }, ['deriveBits']);
@@ -742,8 +773,16 @@ async function decryptCek(alg, enc, protectedHeader, encryptedKey, recipientPriv
       { name: 'ECDH', namedCurve: protectedHeader.epk.crv }, false, []);
     var bits = protectedHeader.epk.crv === 'P-256' ? 256 : (protectedHeader.epk.crv === 'P-384' ? 384 : 521);
     var z = await crypto.subtle.deriveBits({ name: 'ECDH', public: epk }, recipientPriv, bits);
-    var cekBytes = await concatKdf(z, keyBytes, enc);
-    return crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+    if (alg === 'ECDH-ES') {
+      var cekBytes = await concatKdf(z, keyBytes, enc);
+      return crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+    }
+    // ECDH-ES+A*KW: re-derive the key-wrapping key and AES-KW unwrap the CEK.
+    var kwBytes = ECDH_KW_BYTES[alg];
+    var kekBytes = await concatKdf(z, kwBytes, alg);
+    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' }, false, ['unwrapKey']);
+    return crypto.subtle.unwrapKey('raw', b64uToBytes(encryptedKey), kek, 'AES-KW',
+      { name: 'AES-GCM' }, false, ['decrypt']);
   }
   var rsaPriv = await importKeyFlexible(recipientPrivatePem, 'pkcs8',
     { name: 'RSA-OAEP', hash: JWE_RSA_HASH[alg] }, ['decrypt']);
@@ -798,8 +837,9 @@ function certDescriptor(alg) {
   var ecCurve = { ES256: 'P-256', ES384: 'P-384', ES512: 'P-521' };
   var ecHash = { ES256: 'SHA-256', ES384: 'SHA-384', ES512: 'SHA-512' };
   if (alg[0] === 'H') return { kind: 'hmac' };
-  if (alg[0] === 'E' && alg !== 'ECDH-ES') return { kind: 'ec', curve: ecCurve[alg], hash: ecHash[alg] };
-  if (alg === 'ECDH-ES') return { kind: 'ec', curve: 'P-256', hash: 'SHA-256' };
+  if (alg === 'EdDSA') return { kind: 'okp', name: 'Ed25519' };
+  if (alg.indexOf('ECDH-ES') === 0) return { kind: 'ec', curve: 'P-256', hash: 'SHA-256' }; // ECDH-ES[+A*KW]
+  if (alg[0] === 'E') return { kind: 'ec', curve: ecCurve[alg], hash: ecHash[alg] };         // ES256/384/512
   return { kind: 'rsa', hash: 'SHA-256' }; // RS*/PS*/RSA-OAEP*
 }
 
@@ -821,9 +861,9 @@ function stripJwkForImport(jwk) {
 }
 
 function convParams(desc) {
-  return desc.kind === 'rsa'
-    ? { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }
-    : { name: 'ECDSA', namedCurve: desc.curve };
+  if (desc.kind === 'rsa') return { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' };
+  if (desc.kind === 'okp') return { name: desc.name };
+  return { name: 'ECDSA', namedCurve: desc.curve };
 }
 
 async function privToJwk(pem, desc, jwtAlg, use) {
@@ -987,7 +1027,9 @@ async function buildPkcs12(privPem, pubPem, desc, password) {
 async function keysToJwk(privPem, pubPem, desc, jwtAlg, use) {
   var importParams = desc.kind === 'rsa'
     ? { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }
-    : { name: 'ECDSA', namedCurve: desc.curve };
+    : desc.kind === 'okp'
+      ? { name: desc.name }
+      : { name: 'ECDSA', namedCurve: desc.curve };
   var privKey = await crypto.subtle.importKey('pkcs8', pemToDer(privPem), importParams, true, ['sign']);
   var pubKey = await crypto.subtle.importKey('spki', pemToDer(pubPem), importParams, true, ['verify']);
   var jp = await crypto.subtle.exportKey('jwk', privKey);
@@ -1064,6 +1106,7 @@ async function downloadKeys(step) {
     if (isJwk(cfg.pub)) cfg.pub = await pubToPem(cfg.pub, desc);
 
     if (cfg.fmt === 'pkcs12') {
+      if (desc.kind === 'okp') { fail('PKCS#12 export is not supported for EdDSA (Ed25519) keys in-browser. Use PEM, DER, or JWK.'); return false; }
       if (!cfg.pw) { fail('PKCS#12 requires a password. Enter one in the password field.'); return false; }
       var p12 = await buildPkcs12(cfg.priv, cfg.pub, desc, cfg.pw);
       triggerDownload(cfg.base + '.p12', p12, 'application/x-pkcs12');

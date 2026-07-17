@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 & OpenID Connect Debugger — Digital Signature (SLH-DSA)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/digital_signature.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/digital_signature.js">
+</script>
+
+<p class="ds-return"><a id="return_link" href="/debugger.html">&larr; Return to debugger</a></p>
+
+<p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. Pane 1 uses the post-quantum <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+) scheme; pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 4 uses the post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium). The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those four panes are <strong>asymmetric</strong> digital signatures; the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+
+<p class="ds-controls">
+  <input type="button" class="ds-ctl-btn" value="Expand all" onclick="return digital_signature.expandAll();" title="Expand every pane." />
+  <input type="button" class="ds-ctl-btn" value="Collapse all" onclick="return digital_signature.collapseAll();" title="Collapse every pane to its title bar." />
+  <span class="ds-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<div class="ds-grid">
+
+  <!-- ===================== SLH-DSA Digital Signature ===================== -->
+  <fieldset id="pane_signature">
+    <legend>SLH-DSA Digital Signature <span class="ds-badge ds-asym">Asymmetric</span></legend>
+
+    <p class="ds-note" title="SLH-DSA runs entirely in JavaScript in your browser.">&#9203; <strong>Heads up:</strong> SLH-DSA runs entirely in JavaScript, so key generation and especially <em>signing</em> can take several seconds &mdash; the small-signature (<code>s</code>) and 256-bit parameter sets are the slowest. This is expected; give each operation a moment to finish.</p>
+
+    <!-- Value (to sign) + Signature (output), like the Encoding / Hashing page -->
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to sign, or the value whose signature you want to validate. Any text is allowed.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_value" name="ds_value" title="The message to sign / validate. Edit freely."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64-encoded SLH-DSA signature. Produced by Sign; used as input by Validate Signature.">Signature (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="4" id="ds_signature" name="ds_signature" title="Base64 SLH-DSA signature. Populated by Sign; paste one here to Validate."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key Pair</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="SLH-DSA parameter set (FIPS 205). 's' = small signature / slower; 'f' = fast signing / larger signature.">Parameter Set</label>
+          <select id="ds_param" name="ds_param" title="SLH-DSA parameter set used for key generation, signing, and validation.">
+            <option value="SLH-DSA-SHA2-128s" selected="selected">SLH-DSA-SHA2-128s</option>
+            <option value="SLH-DSA-SHA2-128f">SLH-DSA-SHA2-128f</option>
+            <option value="SLH-DSA-SHA2-192s">SLH-DSA-SHA2-192s</option>
+            <option value="SLH-DSA-SHA2-192f">SLH-DSA-SHA2-192f</option>
+            <option value="SLH-DSA-SHA2-256s">SLH-DSA-SHA2-256s</option>
+            <option value="SLH-DSA-SHA2-256f">SLH-DSA-SHA2-256f</option>
+            <option value="SLH-DSA-SHAKE-128s">SLH-DSA-SHAKE-128s</option>
+            <option value="SLH-DSA-SHAKE-128f">SLH-DSA-SHAKE-128f</option>
+            <option value="SLH-DSA-SHAKE-192s">SLH-DSA-SHAKE-192s</option>
+            <option value="SLH-DSA-SHAKE-192f">SLH-DSA-SHAKE-192f</option>
+            <option value="SLH-DSA-SHAKE-256s">SLH-DSA-SHAKE-256s</option>
+            <option value="SLH-DSA-SHAKE-256f">SLH-DSA-SHAKE-256f</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.generateKeys();" title="Generate a fresh SLH-DSA key pair for the selected parameter set." />
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="SLH-DSA private (secret) key, base64 in PEM framing. Used by Sign. Not stored anywhere.">Private Key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_private_key" name="ds_private_key" title="SLH-DSA secret key (PEM-framed base64). Used to Sign."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="SLH-DSA public key, base64 in PEM framing. Used by Validate Signature.">Public Key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_public_key" name="ds_public_key" title="SLH-DSA public key (PEM-framed base64). Used to Validate Signature."></textarea>
+      </div>
+
+      <div class="ds-row">
+        <select class="ds-grow" id="ds_slh_ks_format" name="ds_slh_ks_format" title="Keystore format. SLH-DSA supports PEM and JWK; DER/PKCS#12 have no standard SLH-DSA representation.">
+          <option value="pem" selected="selected">PEM</option>
+          <option value="jwk">JWK</option>
+          <option value="der">DER</option>
+          <option value="pkcs12">PKCS#12</option>
+        </select>
+        <input class="ds-grow" type="password" id="ds_slh_ks_password" name="ds_slh_ks_password" placeholder="password (optional)" title="Optional password. For SLH-DSA it protects the JWK export (PBES2 JWE)." />
+        <input type="submit" value="Download Keys" onclick="return digital_signature.downloadKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.sign();" title="Sign the Value with the Private Key; the Base64 signature is placed in the Signature box." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.validate();" title="Verify the Signature against the Value using the Public Key." />
+    </div>
+
+    <input class="ds-status" type="text" id="ds_status" name="ds_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== RSA Digital Signature ===================== -->
+  <fieldset id="pane_rsa_signature">
+    <legend>RSA Digital Signature <span class="ds-badge ds-asym">Asymmetric</span></legend>
+
+    <p class="ds-note" title="These panes use pure-JS crypto, not the Web Crypto API.">Pick a padding scheme and any hash. Hashes marked <em>legacy</em>/<em>insecure</em>/<em>broken</em> are supported for interop/testing only &mdash; don't use them for real signatures. <code>BLAKE2b-512</code> and <code>BLAKE3-256</code> have no PKCS#1 v1.5 identifier, so use <strong>PSS</strong> with them.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to sign, or the value whose signature you want to validate. Any text is allowed.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_rsa_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_rsa_value" name="ds_rsa_value" title="The message to sign / validate. Edit freely."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64-encoded RSA signature. Produced by Sign; used as input by Validate Signature.">Signature (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_rsa_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="4" id="ds_rsa_signature" name="ds_rsa_signature" title="Base64 RSA signature. Populated by Sign; paste one here to Validate."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key Pair</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="RSA signature padding. PKCS#1 v1.5 (RS*) or PSS (PS*).">Padding</label>
+          <select id="ds_rsa_padding" name="ds_rsa_padding" title="RSA signature padding scheme used for signing and validation.">
+            <option value="v1_5" selected="selected">PKCS#1 v1.5 (RS*)</option>
+            <option value="pss">PSS (PS*)</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="Message digest hashed before RSA signing.">Hash</label>
+          <select id="ds_rsa_hash" name="ds_rsa_hash" title="Hash used to digest the value before RSA signing/validation.">
+            <option value="SHA-256" selected="selected">SHA-256</option>
+            <option value="SHA-384">SHA-384</option>
+            <option value="SHA-512">SHA-512</option>
+            <option value="SHA3-256">SHA3-256</option>
+            <option value="SHA3-384">SHA3-384</option>
+            <option value="SHA3-512">SHA3-512</option>
+            <option value="BLAKE2b-512">BLAKE2b-512 (PSS only)</option>
+            <option value="BLAKE3-256">BLAKE3-256 (PSS only)</option>
+            <option value="RIPEMD-160">RIPEMD-160 (legacy)</option>
+            <option value="SHA-1">SHA-1 (insecure)</option>
+            <option value="MD5">MD5 (broken)</option>
+          </select>
+        </div>
+      </div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="RSA modulus size in bits. Larger sizes are noticeably slower to generate in pure JS.">Key Size</label>
+          <select id="ds_rsa_bits" name="ds_rsa_bits" title="RSA modulus size (bits).">
+            <option value="2048" selected="selected">2048</option>
+            <option value="3072">3072</option>
+            <option value="4096">4096</option>
+            <option value="1024">1024 (insecure)</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.rsaGenerateKeys();" title="Generate a fresh RSA key pair of the selected size (pure JS; larger sizes take longer)." />
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="RSA private key (PKCS#1, PEM). Used by Sign. Not stored anywhere.">Private Key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_rsa_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_rsa_private_key" name="ds_rsa_private_key" title="RSA private key (PKCS#8 PEM). Used to Sign."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="RSA public key (SPKI, PEM). Used by Validate Signature.">Public Key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_rsa_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_rsa_public_key" name="ds_rsa_public_key" title="RSA public key (SPKI PEM). Used to Validate Signature."></textarea>
+      </div>
+
+      <div class="ds-row">
+        <select class="ds-grow" id="ds_rsa_ks_format" name="ds_rsa_ks_format" title="Keystore format to download.">
+          <option value="pem" selected="selected">PEM</option>
+          <option value="jwk">JWK</option>
+          <option value="der">DER</option>
+          <option value="pkcs12">PKCS#12</option>
+        </select>
+        <input class="ds-grow" type="password" id="ds_rsa_ks_password" name="ds_rsa_ks_password" placeholder="password (optional)" title="Optional password. Encrypts the private key: PBES2 for PEM/DER, PBES2 JWE for JWK. Required for PKCS#12." />
+        <input type="submit" value="Download Keys" onclick="return digital_signature.rsaDownloadKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.rsaSign();" title="Sign the Value with the Private Key; the Base64 signature is placed in the Signature box." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.rsaValidate();" title="Verify the Signature against the Value using the Public Key." />
+    </div>
+
+    <input class="ds-status" type="text" id="ds_rsa_status" name="ds_rsa_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== ECC Digital Signature ===================== -->
+  <fieldset id="pane_ecc_signature">
+    <legend>ECC Digital Signature <span class="ds-badge ds-asym">Asymmetric</span></legend>
+
+    <p class="ds-note" title="These panes use pure-JS crypto, not the Web Crypto API.">ECDSA over any curve can use any hash. EdDSA (Ed25519 / Ed448), Schnorr (BIP-340) and BLS (BLS12-381) hash the message themselves, so the Hash selection is ignored for those. Schnorr and BLS keys export only as hex (no standard JWK). Hashes marked <em>legacy</em>/<em>insecure</em>/<em>broken</em> are for interop/testing only.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to sign, or the value whose signature you want to validate. Any text is allowed.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ecc_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_ecc_value" name="ds_ecc_value" title="The message to sign / validate. Edit freely."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64-encoded ECC signature. Produced by Sign; used as input by Validate Signature.">Signature (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ecc_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="4" id="ds_ecc_signature" name="ds_ecc_signature" title="Base64 ECC signature. Populated by Sign; paste one here to Validate."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key Pair</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="ECDSA over a NIST/Koblitz curve, or EdDSA (Edwards curve).">Curve</label>
+          <select id="ds_ecc_curve" name="ds_ecc_curve" title="Curve / scheme used for key generation, signing, and validation.">
+            <option value="P-256" selected="selected">ECDSA P-256</option>
+            <option value="P-384">ECDSA P-384</option>
+            <option value="P-521">ECDSA P-521</option>
+            <option value="secp256k1">ECDSA secp256k1</option>
+            <option value="Ed25519">EdDSA Ed25519</option>
+            <option value="Ed448">EdDSA Ed448</option>
+            <option value="secp256k1-schnorr">Schnorr secp256k1 (BIP-340)</option>
+            <option value="bls12-381">BLS BLS12-381</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="Message digest hashed before ECDSA signing. Ignored for EdDSA.">Hash (ECDSA)</label>
+          <select id="ds_ecc_hash" name="ds_ecc_hash" title="Hash used to digest the value before ECDSA signing. Ignored for EdDSA.">
+            <option value="SHA-256" selected="selected">SHA-256</option>
+            <option value="SHA-384">SHA-384</option>
+            <option value="SHA-512">SHA-512</option>
+            <option value="SHA3-256">SHA3-256</option>
+            <option value="SHA3-384">SHA3-384</option>
+            <option value="SHA3-512">SHA3-512</option>
+            <option value="BLAKE2b-512">BLAKE2b-512</option>
+            <option value="BLAKE3-256">BLAKE3-256</option>
+            <option value="RIPEMD-160">RIPEMD-160 (legacy)</option>
+            <option value="SHA-1">SHA-1 (insecure)</option>
+            <option value="MD5">MD5 (broken)</option>
+          </select>
+        </div>
+      </div>
+      <div class="ds-row">
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.eccGenerateKeys();" title="Generate a fresh ECC key pair for the selected curve." />
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="ECC private key (raw scalar, hex). Used by Sign. Not stored anywhere.">Private Key (hex) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ecc_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_ecc_private_key" name="ds_ecc_private_key" title="ECC private key (raw scalar, hex). Used to Sign."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="ECC public key (raw point, hex). Used by Validate Signature.">Public Key (hex) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ecc_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_ecc_public_key" name="ds_ecc_public_key" title="ECC public key (raw point, hex). Used to Validate Signature."></textarea>
+      </div>
+
+      <div class="ds-row">
+        <select class="ds-grow" id="ds_ecc_ks_format" name="ds_ecc_ks_format" title="Keystore format. Raw ECC keys export as JWK; PEM/DER/PKCS#12 aren't produced for these keys.">
+          <option value="jwk" selected="selected">JWK</option>
+          <option value="pem">PEM</option>
+          <option value="der">DER</option>
+          <option value="pkcs12">PKCS#12</option>
+        </select>
+        <input class="ds-grow" type="password" id="ds_ecc_ks_password" name="ds_ecc_ks_password" placeholder="password (optional)" title="Optional password. Protects the JWK export (PBES2 JWE)." />
+        <input type="submit" value="Download Keys" onclick="return digital_signature.eccDownloadKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.eccSign();" title="Sign the Value with the Private Key; the Base64 signature is placed in the Signature box." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.eccValidate();" title="Verify the Signature against the Value using the Public Key." />
+    </div>
+
+    <input class="ds-status" type="text" id="ds_ecc_status" name="ds_ecc_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== ML-DSA Digital Signature ===================== -->
+  <fieldset id="pane_mldsa_signature">
+    <legend>ML-DSA Digital Signature <span class="ds-badge ds-asym">Asymmetric</span></legend>
+
+    <p class="ds-note" title="ML-DSA is a lattice scheme — fast, unlike SLH-DSA.">Post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium). The primary NIST post-quantum signature standard; fast lattice-based signing.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to sign, or the value whose signature you want to validate. Any text is allowed.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ml_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_ml_value" name="ds_ml_value" title="The message to sign / validate. Edit freely."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64-encoded ML-DSA signature. Produced by Sign; used as input by Validate Signature.">Signature (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ml_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="4" id="ds_ml_signature" name="ds_ml_signature" title="Base64 ML-DSA signature. Populated by Sign; paste one here to Validate."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key Pair</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="ML-DSA parameter set (FIPS 204). Higher numbers = higher security level / larger keys.">Parameter Set</label>
+          <select id="ds_ml_param" name="ds_ml_param" title="ML-DSA parameter set used for key generation, signing, and validation.">
+            <option value="ML-DSA-44">ML-DSA-44</option>
+            <option value="ML-DSA-65" selected="selected">ML-DSA-65</option>
+            <option value="ML-DSA-87">ML-DSA-87</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.mldsaGenerateKeys();" title="Generate a fresh ML-DSA key pair for the selected parameter set." />
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="ML-DSA private (secret) key, base64 in PEM framing. Used by Sign. Not stored anywhere.">Private Key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ml_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_ml_private_key" name="ds_ml_private_key" title="ML-DSA secret key (PEM-framed base64). Used to Sign."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="ML-DSA public key, base64 in PEM framing. Used by Validate Signature.">Public Key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ml_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_ml_public_key" name="ds_ml_public_key" title="ML-DSA public key (PEM-framed base64). Used to Validate Signature."></textarea>
+      </div>
+
+      <div class="ds-row">
+        <select class="ds-grow" id="ds_ml_ks_format" name="ds_ml_ks_format" title="Keystore format. ML-DSA supports PEM and JWK; DER/PKCS#12 have no standard ML-DSA representation.">
+          <option value="pem" selected="selected">PEM</option>
+          <option value="jwk">JWK</option>
+          <option value="der">DER</option>
+          <option value="pkcs12">PKCS#12</option>
+        </select>
+        <input class="ds-grow" type="password" id="ds_ml_ks_password" name="ds_ml_ks_password" placeholder="password (optional)" title="Optional password. For ML-DSA it protects the JWK export (PBES2 JWE)." />
+        <input type="submit" value="Download Keys" onclick="return digital_signature.mldsaDownloadKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.mldsaSign();" title="Sign the Value with the Private Key; the Base64 signature is placed in the Signature box." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.mldsaValidate();" title="Verify the Signature against the Value using the Public Key." />
+    </div>
+
+    <input class="ds-status" type="text" id="ds_ml_status" name="ds_ml_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== Keyed-Hash MACs ===================== -->
+  <fieldset id="pane_khmac">
+    <legend>Keyed-Hash MACs <span class="ds-badge ds-sym">Symmetric (MAC)</span></legend>
+    <p class="ds-note" title="A MAC is not a digital signature.">A <strong>MAC</strong> authenticates with a single shared secret &mdash; it proves integrity and origin but gives <em>no non-repudiation</em> (both parties hold the same key), so it is not a digital signature. Compute a tag, or Verify a pasted tag.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to MAC, or whose tag you want to verify.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_khmac_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_khmac_value" name="ds_khmac_value" title="Message to MAC / verify."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64 MAC tag. Produced by Compute MAC; paste one here to Verify.">MAC (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_khmac_mac');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="ds_khmac_mac" name="ds_khmac_mac" title="Base64 MAC tag."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Secret Key</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="HMAC over a hash, Keccak-based KMAC, or a keyed BLAKE hash.">Algorithm</label>
+          <select id="ds_khmac_alg" name="ds_khmac_alg" onchange="return digital_signature.macGenerateKey('khmac');" title="Keyed-hash MAC algorithm.">
+            <option value="HMAC-SHA256" selected="selected">HMAC-SHA256</option>
+            <option value="HMAC-SHA384">HMAC-SHA384</option>
+            <option value="HMAC-SHA512">HMAC-SHA512</option>
+            <option value="HMAC-SHA3-256">HMAC-SHA3-256</option>
+            <option value="HMAC-SHA3-512">HMAC-SHA3-512</option>
+            <option value="HMAC-SHA1">HMAC-SHA1 (insecure)</option>
+            <option value="KMAC128">KMAC128</option>
+            <option value="KMAC256">KMAC256</option>
+            <option value="BLAKE2b">BLAKE2b (keyed)</option>
+            <option value="BLAKE2s">BLAKE2s (keyed)</option>
+            <option value="BLAKE3">BLAKE3 (keyed)</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Key" onclick="return digital_signature.macGenerateKey('khmac');" title="Generate a random key of a length appropriate to the selected algorithm." />
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Shared secret key, hex. BLAKE3 requires exactly 32 bytes.">Secret Key (hex) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_khmac_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="2" id="ds_khmac_key" name="ds_khmac_key" title="Shared secret key in hex."></textarea>
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Compute MAC" onclick="return digital_signature.macCompute('khmac');" title="Compute the MAC tag over the Value with the Secret Key." />
+      <input type="submit" value="Verify MAC" onclick="return digital_signature.macVerify('khmac');" title="Recompute the tag and compare it to the MAC field." />
+    </div>
+    <input class="ds-status" type="text" id="ds_khmac_status" name="ds_khmac_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== Block-Cipher MACs ===================== -->
+  <fieldset id="pane_bcmac">
+    <legend>Block-Cipher MACs <span class="ds-badge ds-sym">Symmetric (MAC)</span></legend>
+    <p class="ds-note" title="A MAC is not a digital signature.">AES-based MACs. <code>AES-CBC-MAC</code> is legacy (insecure for variable-length messages). <code>AES-GMAC</code> here uses a fixed all-zero nonce for a deterministic demo tag &mdash; real GMAC needs a unique nonce per message.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to MAC, or whose tag you want to verify.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_bcmac_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_bcmac_value" name="ds_bcmac_value" title="Message to MAC / verify."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64 MAC tag. Produced by Compute MAC; paste one here to Verify.">MAC (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_bcmac_mac');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="ds_bcmac_mac" name="ds_bcmac_mac" title="Base64 MAC tag."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Secret Key</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="AES block-cipher MAC construction.">Algorithm</label>
+          <select id="ds_bcmac_alg" name="ds_bcmac_alg" onchange="return digital_signature.macGenerateKey('bcmac');" title="Block-cipher MAC algorithm (AES).">
+            <option value="AES-CMAC" selected="selected">AES-CMAC</option>
+            <option value="AES-CBC-MAC">AES-CBC-MAC (legacy)</option>
+            <option value="AES-GMAC">AES-GMAC (fixed nonce)</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Key" onclick="return digital_signature.macGenerateKey('bcmac');" title="Generate a random AES-256 key (256-bit)." />
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="AES key, hex. 16/24/32 bytes (AES-128/192/256).">Secret Key (hex) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_bcmac_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="2" id="ds_bcmac_key" name="ds_bcmac_key" title="AES key in hex (16/24/32 bytes)."></textarea>
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Compute MAC" onclick="return digital_signature.macCompute('bcmac');" title="Compute the MAC tag over the Value with the Secret Key." />
+      <input type="submit" value="Verify MAC" onclick="return digital_signature.macVerify('bcmac');" title="Recompute the tag and compare it to the MAC field." />
+    </div>
+    <input class="ds-status" type="text" id="ds_bcmac_status" name="ds_bcmac_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== Universal-Hash MACs ===================== -->
+  <fieldset id="pane_uhmac">
+    <legend>Universal-Hash MACs <span class="ds-badge ds-sym">Symmetric (MAC)</span></legend>
+    <p class="ds-note" title="A MAC is not a digital signature."><code>Poly1305</code> is a <em>one-time</em> authenticator &mdash; its 32-byte key must be unique per message. <code>UMAC</code>, <code>VMAC</code>, and <code>PMAC</code> are not offered: no maintained pure-JS implementation exists.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to MAC, or whose tag you want to verify.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_uhmac_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_uhmac_value" name="ds_uhmac_value" title="Message to MAC / verify."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64 MAC tag. Produced by Compute MAC; paste one here to Verify.">MAC (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_uhmac_mac');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="ds_uhmac_mac" name="ds_uhmac_mac" title="Base64 MAC tag."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Secret Key</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Universal-hashing MAC.">Algorithm</label>
+          <select id="ds_uhmac_alg" name="ds_uhmac_alg" onchange="return digital_signature.macGenerateKey('uhmac');" title="Universal-hash MAC algorithm.">
+            <option value="Poly1305" selected="selected">Poly1305 (one-time key)</option>
+            <option value="SipHash-2-4">SipHash-2-4</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Key" onclick="return digital_signature.macGenerateKey('uhmac');" title="Generate a random key (Poly1305 = 32 bytes, SipHash = 16 bytes)." />
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Key, hex. Poly1305 = 32 bytes (one-time), SipHash = 16 bytes.">Secret Key (hex) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_uhmac_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="2" id="ds_uhmac_key" name="ds_uhmac_key" title="Key in hex."></textarea>
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Compute MAC" onclick="return digital_signature.macCompute('uhmac');" title="Compute the MAC tag over the Value with the Secret Key." />
+      <input type="submit" value="Verify MAC" onclick="return digital_signature.macVerify('uhmac');" title="Recompute the tag and compare it to the MAC field." />
+    </div>
+    <input class="ds-status" type="text" id="ds_uhmac_status" name="ds_uhmac_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

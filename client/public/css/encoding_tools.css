@@ -1,0 +1,120 @@
+/* Compact layout for the Encoding / Hashing Tools page. Loaded last so it
+   overrides the shared container/legend/textarea rules from bootstrap and
+   common.css. */
+
+/* Widen the shared (otherwise narrow) bootstrap container for this page only */
+.container {
+  width: 96%;
+  max-width: 1500px;
+}
+
+.encoding-tools-return {
+  font-size: 0.85em;
+  margin: 4px 0 2px;
+}
+
+.encoding-tools-intro {
+  font-size: 0.82em;
+  line-height: 1.35;
+  margin: 6px 0 10px;
+  color: #444;
+}
+.encoding-tools-intro strong { color: #b00; }
+
+/* Compact panes; let them stay short (extra whitespace below is fine).
+   Auto-fit keeps them narrow rather than stretching to fill the row. */
+.encoding-tools-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 360px));
+  gap: 10px;
+  align-items: start;
+  justify-content: start;
+}
+@media (max-width: 620px) {
+  .encoding-tools-grid { grid-template-columns: 1fr; }
+}
+
+.encoding-tools-grid fieldset {
+  border: 1px solid #aaa;
+  border-radius: 6px;
+  padding: 4px 10px 8px;
+  margin: 0;
+  min-width: 0;
+  background: #fafafa;
+}
+.encoding-tools-grid legend {
+  width: auto;              /* override common.css legend { width: 540px } */
+  font-weight: bold;
+  font-size: 0.95em;
+  padding: 0 6px;
+  border: none;
+  margin: 0;
+  color: #333;
+}
+
+.et-field { margin: 0 0 5px; }
+.et-field > label {
+  display: block;
+  font-size: 0.72em;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 1px;
+}
+
+/* Label carrying an inline Copy button next to the description */
+.et-field > label.et-has-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.et-copy {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  line-height: 1.5;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.encoding-tools-grid textarea,
+.encoding-tools-grid input[type="text"],
+.encoding-tools-grid select {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.8em;
+  padding: 3px 4px;
+  margin: 0;
+}
+.encoding-tools-grid textarea {
+  font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  resize: vertical;
+  line-height: 1.25;
+}
+
+/* Inline control rows (e.g. select + button, encode/decode buttons) */
+.et-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 5px;
+}
+.et-row > * { margin: 0; }
+.et-grow { flex: 1 1 0; min-width: 0; }
+
+.encoding-tools-grid input[type="submit"] {
+  font-size: 0.8em;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Single-line status readout */
+.et-status {
+  font-size: 0.72em !important;
+  color: #555;
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  margin-bottom: 0;
+}

@@ -103,9 +103,19 @@
           <option value="ES256">ES256 (ECDSA P-256)</option>
           <option value="ES384">ES384 (ECDSA P-384)</option>
           <option value="ES512">ES512 (ECDSA P-521)</option>
+          <option value="EdDSA">EdDSA (Ed25519)</option>
           <option value="HS256">HS256 (HMAC)</option>
           <option value="HS384">HS384 (HMAC)</option>
           <option value="HS512">HS512 (HMAC)</option>
+        </select>
+      </div>
+      <div class="jt-grow">
+        <label title="RSA modulus size in bits. Used for RS*/PS* only; ignored for EC, EdDSA, and HMAC algorithms.">RSA Key Size</label>
+        <select id="sign_rsa_bits" name="sign_rsa_bits" title="RSA modulus size (bits). Applies when the signing algorithm is RS* or PS*.">
+          <option value="2048" selected="selected">2048</option>
+          <option value="3072">3072</option>
+          <option value="4096">4096</option>
+          <option value="1024">1024 (insecure)</option>
         </select>
       </div>
       <input type="submit" value="Generate Keys" onclick="return jwt_tools.generateSigningKeys();" />
@@ -188,6 +198,9 @@
           <option value="RSA-OAEP" selected="selected">RSA-OAEP</option>
           <option value="RSA-OAEP-256">RSA-OAEP-256</option>
           <option value="ECDH-ES">ECDH-ES (P-256)</option>
+          <option value="ECDH-ES+A128KW">ECDH-ES+A128KW (P-256)</option>
+          <option value="ECDH-ES+A192KW">ECDH-ES+A192KW (P-256)</option>
+          <option value="ECDH-ES+A256KW">ECDH-ES+A256KW (P-256)</option>
         </select>
       </div>
       <div class="jt-grow">
@@ -201,6 +214,15 @@
     </div>
 
     <div class="jt-row">
+      <div class="jt-grow">
+        <label title="RSA modulus size in bits. Used for RSA-OAEP / RSA-OAEP-256 only; ignored for ECDH-ES.">RSA Key Size</label>
+        <select id="jwe_rsa_bits" name="jwe_rsa_bits" title="RSA modulus size (bits). Applies when Key Management is RSA-OAEP or RSA-OAEP-256.">
+          <option value="2048" selected="selected">2048</option>
+          <option value="3072">3072</option>
+          <option value="4096">4096</option>
+          <option value="1024">1024 (insecure)</option>
+        </select>
+      </div>
       <input type="submit" value="Generate Keys" onclick="return jwt_tools.generateEncryptionKeys();" />
     </div>
 

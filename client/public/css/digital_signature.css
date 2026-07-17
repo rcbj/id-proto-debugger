@@ -1,0 +1,171 @@
+/* Compact layout for the Digital Signature (SLH-DSA) page. Mirrors the sizing
+   used on the JWT Tools and Encoding / Hashing Tools pages. Loaded last so it
+   overrides the shared container/legend/textarea rules. */
+
+/* Widen the shared (otherwise narrow) bootstrap container for this page only */
+.container {
+  width: 96%;
+  max-width: 1500px;
+}
+
+.ds-return {
+  font-size: 0.85em;
+  margin: 4px 0 2px;
+}
+
+.ds-intro {
+  font-size: 0.82em;
+  line-height: 1.35;
+  margin: 6px 0 10px;
+  color: #444;
+}
+.ds-intro strong { color: #b00; }
+
+/* Compact panes side by side; wrap to one column on narrow viewports. */
+.ds-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 460px));
+  gap: 10px;
+  align-items: start;
+  justify-content: start;
+}
+@media (max-width: 640px) {
+  .ds-grid { grid-template-columns: 1fr; }
+}
+
+.ds-grid fieldset {
+  border: 1px solid #aaa;
+  border-radius: 6px;
+  padding: 4px 10px 8px;
+  margin: 0;
+  min-width: 0;
+  background: #fafafa;
+}
+.ds-grid legend {
+  width: auto;              /* override common.css legend { width: 540px } */
+  font-weight: bold;
+  font-size: 0.95em;
+  padding: 0 6px;
+  border: none;
+  margin: 0;
+  color: #333;
+}
+
+/* Expand-all / collapse-all control row. */
+.ds-controls { margin: 0 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ds-ctl-btn { font-size: 0.78em; padding: 3px 10px; cursor: pointer; }
+.ds-controls-hint { font-size: 0.72em; color: #777; }
+
+/* Collapsible panes — click a legend to collapse/expand its fieldset. */
+.ds-grid legend { cursor: pointer; user-select: none; }
+.ds-grid legend::before { content: "\25be\00a0"; color: #666; font-size: 0.9em; } /* down triangle */
+.ds-grid fieldset.ds-collapsed legend::before { content: "\25b8\00a0"; }            /* right triangle */
+.ds-grid fieldset.ds-collapsed > *:not(legend) { display: none; }
+.ds-grid fieldset.ds-collapsed { padding-bottom: 4px; }
+
+/* Asymmetric / Symmetric badge on each pane legend */
+.ds-badge {
+  font-size: 0.62em;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  vertical-align: middle;
+  margin-left: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.ds-asym { background: #e6f0ff; color: #1b4b8f; border: 1px solid #b9d3f2; }
+.ds-sym  { background: #f3e9ff; color: #5a2a8f; border: 1px solid #d8bef0; }
+
+/* In-pane performance note (SLH-DSA) */
+.ds-note {
+  font-size: 0.72em;
+  line-height: 1.35;
+  margin: 4px 0 8px;
+  padding: 5px 8px;
+  color: #663c00;
+  background: #fff8e6;
+  border: 1px solid #f0d48a;
+  border-radius: 4px;
+}
+.ds-note code { font-size: 0.95em; }
+
+.ds-field { margin: 0 0 5px; }
+.ds-field > label {
+  display: block;
+  font-size: 0.72em;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 1px;
+}
+
+/* Label carrying an inline Copy button next to the description */
+.ds-field > label.ds-has-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.ds-copy {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  line-height: 1.5;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.ds-grid textarea,
+.ds-grid input[type="text"],
+.ds-grid select {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.8em;
+  padding: 3px 4px;
+  margin: 0;
+}
+.ds-grid textarea {
+  font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  resize: vertical;
+  line-height: 1.25;
+}
+
+/* Inline control rows (select + button, sign/validate buttons) */
+.ds-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 5px;
+}
+.ds-row > * { margin: 0; }
+.ds-grow { flex: 1 1 0; min-width: 0; }
+
+.ds-grid input[type="submit"] {
+  font-size: 0.8em;
+  padding: 5px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+/* Sub-section divider inside the pane (Key Pair) */
+.ds-sub {
+  border-top: 1px dashed #bbb;
+  margin-top: 8px;
+  padding-top: 6px;
+}
+.ds-sub-title {
+  font-weight: 700;
+  font-size: 0.82em;
+  margin-bottom: 5px;
+  color: #333;
+}
+
+/* Single-line status readout */
+.ds-status {
+  font-size: 0.72em !important;
+  color: #555;
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  margin-bottom: 0;
+}
