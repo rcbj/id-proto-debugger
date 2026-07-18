@@ -82,8 +82,13 @@ function onclickBtn(fn) {
   return By.xpath("//input[contains(@onclick, \"digital_signature." + fn + "(\")]");
 }
 // MAC buttons pass a pane prefix, e.g. digital_signature.macCompute('khmac').
+// Match the call and the pane prefix without assuming a quote style: the live
+// site's HTML is minified, which rewrites the inline-attribute quotes from
+// single to double (macGenerateKey('khmac') -> macGenerateKey("khmac")). Each of
+// macGenerateKey/macCompute/macVerify references a single prefix, so the
+// conjunction still identifies exactly one button per pane.
 function macBtn(fn, prefix) {
-  return By.xpath("//input[contains(@onclick, \"digital_signature." + fn + "('" + prefix + "')\")]");
+  return By.xpath("//input[contains(@onclick, \"digital_signature." + fn + "(\") and contains(@onclick, \"" + prefix + "\")]");
 }
 
 // Generate a key pair for a pane and wait until both key fields populate.
