@@ -7,5 +7,6 @@ tests/node_modules
 # Code coverage output
 coverage/
 
-# Downloaded IdP metadata (remote-run-tests.sh)
+# Downloaded IdP metadata (remote-run-tests.sh / common.sh download_saml_metadata)
 tests/saml-idp-metadata.xml
+saml-idp-metadata.xml

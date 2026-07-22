@@ -42,9 +42,15 @@ jobs:
         with:
           version: '5.2.0'
 
+      # Target the deployed test site. docker-compose-live-tests.yml derives the
+      # SAML/API env the suite needs (API_BASE_URL, SAML_SP_ENTITY_ID, ACS/SLO,
+      # SAML_BACKEND_AVAILABLE) from LIVE_DEBUGGER_BASE_URL — mirroring the
+      # non-localhost branch of remote-run-tests.sh — so setting it here is enough.
       - name: Run Selenium suite against the live test site
         run: |
-          sudo docker compose -f docker-compose-live-tests.yml \
+          sudo LIVE_DEBUGGER_BASE_URL=https://test.idptools.com \
+               LIVE_CONFIG_FILE=./env/test-idptools-com.js \
+               docker compose -f docker-compose-live-tests.yml \
             up --build --abort-on-container-exit --exit-code-from tests
 
       - name: Tear down the stack

@@ -99,6 +99,13 @@ init()
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL
 
+  # The target is a deployed HTTPS site with no API proxy: the browser can't fetch
+  # the local http Keycloak descriptor cross-origin (CORS). Have common.sh's
+  # configureKeycloak download the descriptor to a file so the SAML tests UPLOAD it
+  # (shared with docker-compose-live-tests.yml — one implementation, no drift).
+  export SAML_METADATA_UPLOAD=1
+  export SAML_METADATA_FILE="${SAML_METADATA_FILE:-${CURRENT_DIR}/tests/saml-idp-metadata.xml}"
+
   COMMON_SH=${CURRENT_DIR}/common/common.sh
   if [ -r "${COMMON_SH}" ];
   then
@@ -181,28 +188,8 @@ resetKeycloakRealm()
   echo "Leaving resetKeycloakRealm()."
 }
 
-# Download the IdP SAML metadata (descriptor) from the LOCAL Keycloak to a file,
-# so the SAML tests UPLOAD it into saml_tools.html instead of having the browser
-# fetch it. Against the deployed HTTPS site the browser can't fetch the local
-# http://localhost:8080 descriptor (mixed content / cross-origin CORS), so
-# upload-from-file is the reliable path. Must run AFTER configureKeycloak (the
-# debugger-testing realm has to exist for the descriptor to resolve).
-downloadSamlMetadata()
-{
-  echo "Entering downloadSamlMetadata()."
-  local url="${KEYCLOAK_LOCALHOST_BASE_URL}/realms/debugger-testing/protocol/saml/descriptor"
-  SAML_METADATA_FILE="${CURRENT_DIR}/tests/saml-idp-metadata.xml"
-  echo "Downloading SAML IdP metadata from ${url}"
-  curl -sf "${url}" -o "${SAML_METADATA_FILE}"
-  check_return_code $?
-  if [ ! -s "${SAML_METADATA_FILE}" ]; then
-    echo "ERROR: downloaded SAML metadata is empty (${url})." >&2
-    exit 1
-  fi
-  export SAML_METADATA_FILE
-  echo "SAML IdP metadata saved to ${SAML_METADATA_FILE}."
-  echo "Leaving downloadSamlMetadata()."
-}
+# SAML IdP metadata is downloaded to a file inside configureKeycloak (gated by
+# SAML_METADATA_UPLOAD, set in init) — see common.sh download_saml_metadata().
 
 runReport()
 {
@@ -221,8 +208,6 @@ check_return_code $?
 resetKeycloakRealm
 check_return_code $?
 configureKeycloak
-check_return_code $?
-downloadSamlMetadata
 check_return_code $?
 runReport
 check_return_code $?

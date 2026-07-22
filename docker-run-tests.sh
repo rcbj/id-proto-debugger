@@ -1,87 +1,64 @@
 #!/bin/bash
 set -x
+#
+# HOST launcher for the fully-containerized test suite.
+#
+# Builds and brings up the whole stack on a private compose network
+# (docker-compose-run-tests.yml): postgres + keycloak + api + client + tests.
+# The tests container runs the Selenium suite (tests/run-tests-in-container.sh)
+# and compose exits when it does; this script's exit code reflects whether the
+# tests passed (--exit-code-from tests). The stack is always torn down at the end.
+#
+# This is the command CLAUDE.md documents. To run the suite from a local shell
+# with only the dependencies in containers, use ./local-run-tests.sh instead;
+# to run against an already-deployed site, use ./remote-run-tests.sh.
+#
+# Usage:
+#   ./docker-run-tests.sh
+#   CONFIG_FILE=./env/docker-tests.js ./docker-run-tests.sh
+#
 
-init()
-{
-  # Defaults target the fully-containerized stack (client + keycloak on the
-  # compose network). They can be overridden via the environment to run the
-  # SAME suite against a deployed site while talking to a locally-spun-up
-  # Keycloak — see docker-compose-live-tests.yml (e.g. DEBUGGER_BASE_URL set to
-  # https://test.idptools.com with KEYCLOAK_BASE_URL=http://localhost:8080).
-  DEBUGGER_BASE_URL="${DEBUGGER_BASE_URL:-http://client:3000}"
-  KEYCLOAK_BASE_URL="${KEYCLOAK_BASE_URL:-http://keycloak:8080}"
-  KEYCLOAK_LOCALHOST_BASE_URL="${KEYCLOAK_LOCALHOST_BASE_URL:-http://keycloak:8080}"
-  # SAML: must match the client bundle's baked env (service DNS names).
-  API_BASE_URL="${API_BASE_URL:-http://api:4000}"
-  SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://client:3000/saml/sp}"
-  CONFIG_FILE="${CONFIG_FILE:-./env/local.js}"
-  CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
-  # SP signing cert (base64 DER) registered on the Keycloak SAML client so it can
-  # validate the AuthnRequest signature. Fixtures are copied next to this script
-  # in the tests image (see tests/Dockerfile).
-  SAML_SP_SIGNING_CERT=$(grep -v -- '-----' "${CURRENT_DIR}/fixtures/sp-cert.pem" | tr -d '\n\r')
-  export SAML_SP_SIGNING_CERT
-  COMMON_SH=${CURRENT_DIR}/common.sh
-  if [ -r "${COMMON_SH}" ];
-  then
-    . ${COMMON_SH}
-  else
-    echo "Cannot find ${COMMON_SH}."
-    exit 1
-  fi
-  common_setup
-  check_return_code $?
-  NODEJS_BASE_DIR=.
-}
+# CONFIG_FILE selects the api/client build-time config baked into their images.
+# The whole stack runs on a private compose network, so the browser (running
+# INSIDE the tests container) reaches the api/client by their compose DNS names.
+# That requires ./env/docker-tests.js (apiUrl=http://api:4000, uiUrl=
+# http://client:3000, spEntityId=http://client:3000/saml/sp) — NOT ./env/local.js,
+# whose localhost URLs only work when the browser runs on the host (see
+# ./local-run-tests.sh). It must also match the runtime CONFIG_FILE the compose
+# file pins for the api/client services. Baking local.js here made the SAML
+# metadata load hit http://localhost:4000 from inside the container → connection
+# refused. The tests container sets its own correct in-container SAML defaults
+# (SAML_SP_ENTITY_ID, API_BASE_URL, ...) in tests/run-tests-in-container.sh, so
+# no SAML env exports are needed (or reachable) from this host launcher.
+CONFIG_FILE="${CONFIG_FILE:-./env/docker-tests.js}"
+export CONFIG_FILE
 
-# Run the suite via the report generator instead of runTests(). It executes
-# the same tests once, continues past failures, and writes a timestamped
-# HTML + JUnit + per-test log set under ./report. It exits non-zero if any
-# test failed, so the check_return_code below still gates the success banner.
-runReport()
-{
-  export DEBUGGER_BASE_URL
-  # Export so run-report.js (and the test scripts it spawns) can
-  # require(process.env.CONFIG_FILE) for centralized config (e.g. waitTime).
-  export CONFIG_FILE
-  node "${NODEJS_BASE_DIR}/run-report.js"
-}
+COMPOSE_FILE="${COMPOSE_FILE:-docker-compose-run-tests.yml}"
 
-# Poll until Keycloak answers before configuring it. In the fully-containerized
-# stack Keycloak is already up (compose depends_on: service_healthy), so this
-# returns immediately; in the live-site stack (host networking, no healthcheck
-# gate) this is what actually waits for Keycloak to come up.
-waitForKeycloak()
-{
-  echo "Waiting for Keycloak at ${KEYCLOAK_LOCALHOST_BASE_URL} ..."
-  local i=0
-  local max=60
-  local code
-  while [ $i -lt $max ];
-  do
-    code=$(curl -s -o /dev/null -w '%{http_code}' \
-      "${KEYCLOAK_LOCALHOST_BASE_URL}/realms/master/.well-known/openid-configuration" || true)
-    if [ "${code}" = "200" ];
-    then
-      echo "Keycloak is ready."
-      return 0
-    fi
-    i=$((i + 1))
-    sleep 3
-  done
-  echo "ERROR: Keycloak did not become ready at ${KEYCLOAK_LOCALHOST_BASE_URL} within timeout." >&2
+CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
+# Reuse the shared docker_compose() (handles sudo + docker-compose vs
+# `docker compose` and propagates the real exit code) and check_return_code().
+COMMON_SH=${CURRENT_DIR}/common/common.sh
+if [ -r "${COMMON_SH}" ];
+then
+  . ${COMMON_SH}
+else
+  echo "Cannot find ${COMMON_SH}."
   exit 1
-}
+fi
 
-init
-check_return_code $?
-waitForKeycloak
-check_return_code $?
-configureKeycloak
-check_return_code $?
-runReport
-check_return_code $?
-node --version
+# Always tear the stack down, even if the tests fail, so the next run starts clean.
+teardown()
+{
+  docker_compose -f "${COMPOSE_FILE}" down
+}
+trap teardown EXIT
+
+# Build fresh images (so code changes are picked up), bring the stack up, and let
+# the tests container drive the run. --abort-on-container-exit stops the stack as
+# soon as the tests finish; --exit-code-from tests makes compose (and therefore
+# this script) exit with the tests container's status.
+docker_compose -f "${COMPOSE_FILE}" up --build --abort-on-container-exit --exit-code-from tests
 check_return_code $?
 
 cat <<'EOF'

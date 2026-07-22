@@ -26,7 +26,7 @@ WORKDIR /usr/src/app
 # A wildcard is used to ensure both package.json AND package-lock.json are copied
 # where available (npm@5+)
 COPY tests/package*.json ./
-COPY docker-run-tests.sh .
+COPY tests/run-tests-in-container.sh .
 COPY common/common.sh .
 
 # Install NVM
@@ -74,4 +74,4 @@ RUN . $NVM_DIR/nvm.sh && npm install chromedriver
 # Install modules needed for the test scripts
 RUN . $NVM_DIR/nvm.sh && npm install
 
-CMD [ "./docker-run-tests.sh"]
+CMD [ "./run-tests-in-container.sh"]

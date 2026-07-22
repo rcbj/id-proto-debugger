@@ -53,6 +53,32 @@ docker_compose() {
   return ${rc}
 }
 
+# Download the Keycloak SAML IdP descriptor to a local file and export
+# SAML_METADATA_FILE, so the SAML tests UPLOAD it into saml_tools.html rather
+# than having the browser fetch it. Required against a backend-less deployed site
+# (e.g. https://test.idptools.com): the HTTPS page can't fetch the local http
+# Keycloak descriptor cross-origin (blocked by CORS). Uses
+# KEYCLOAK_LOCALHOST_BASE_URL (reachable from THIS shell), not the browser-facing
+# KEYCLOAK_BASE_URL. Gated by SAML_METADATA_UPLOAD; called from configureKeycloak
+# after the debugger-testing realm exists, so the descriptor resolves.
+download_saml_metadata()
+{
+  echo "Entering download_saml_metadata()."
+  local url="${KEYCLOAK_LOCALHOST_BASE_URL}/realms/debugger-testing/protocol/saml/descriptor"
+  local dest="${SAML_METADATA_FILE:-${CURRENT_DIR}/saml-idp-metadata.xml}"
+  echo "Downloading SAML IdP metadata from ${url} to ${dest}"
+  curl -sf "${url}" -o "${dest}"
+  check_return_code $?
+  if [ ! -s "${dest}" ];
+  then
+    echo "ERROR: downloaded SAML metadata is empty (${url})." >&2
+    exit 1
+  fi
+  declare -gx SAML_METADATA_FILE="${dest}"
+  echo "SAML IdP metadata saved to ${SAML_METADATA_FILE}."
+  echo "Leaving download_saml_metadata()."
+}
+
 configureKeycloak()
 {
   echo "Entering configureKeycloak()."
@@ -591,7 +617,20 @@ configureKeycloak()
     -d '{ "type": "password", "value": "saml", "temporary": false }'
   check_return_code $?
 
+  # SAML IdP metadata. By default the SAML tests drive metadata loading BY URL
+  # (the page fetches the descriptor itself — directly in the browser, or via the
+  # API metadata proxy when a backend is available). When SAML_METADATA_UPLOAD is
+  # set, download the descriptor here and hand the tests a local file to UPLOAD
+  # instead. That is required against a backend-less deployed target (e.g. the
+  # static test.idptools.com site): the HTTPS page has no API proxy and can't
+  # fetch the local http Keycloak descriptor cross-origin (blocked by CORS), so
+  # an in-browser URL load can never succeed there.
   declare -gx SAML_METADATA_URL="${KEYCLOAK_BASE_URL}/realms/debugger-testing/protocol/saml/descriptor"
+  if [ -n "${SAML_METADATA_UPLOAD}" ];
+  then
+    download_saml_metadata
+    check_return_code $?
+  fi
   declare -gx SAML_SP_ENTITY_ID
   declare -gx SAML_ACS_URL
   declare -gx SAML_SLO_URL

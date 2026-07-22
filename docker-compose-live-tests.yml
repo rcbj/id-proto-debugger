@@ -15,7 +15,7 @@
 # Keycloak uses in-memory H2 for throwaway test data.)
 #
 # Readiness: instead of a Docker healthcheck (flaky under host networking), the
-# tests container waits for Keycloak itself (docker-run-tests.sh waitForKeycloak).
+# tests container waits for Keycloak itself (run-tests-in-container.sh waitForKeycloak).
 #
 # Override the target via the environment:
 #   LIVE_DEBUGGER_BASE_URL (default https://test.idptools.com)
@@ -46,6 +46,30 @@ services:
       - KEYCLOAK_BASE_URL=http://localhost:8080
       - KEYCLOAK_LOCALHOST_BASE_URL=http://localhost:8080
       - CONFIG_FILE=${LIVE_CONFIG_FILE:-./env/test-idptools-com.js}
+      # The deployed site is backend-less: the HTTPS page can't fetch the local
+      # http Keycloak descriptor cross-origin (CORS). Download it and have the
+      # SAML tests UPLOAD it from a file instead (see common.sh).
+      - SAML_METADATA_UPLOAD=1
+      # SAML config for a deployed, BACKENDLESS target. These MIRROR the
+      # non-localhost branch of remote-run-tests.sh; without them the container
+      # entrypoint (tests/run-tests-in-container.sh) + common.sh fall back to the
+      # CONTAINERIZED-stack defaults (API_BASE_URL=http://api:4000,
+      # SAML_SP_ENTITY_ID=http://client:3000/saml/sp, ACS/SLO=api:4000/samlacs),
+      # which don't match the deployed bundle — so Keycloak's SAML client is
+      # registered with the wrong entityID/ACS and the flow fails. All derive from
+      # the same LIVE_DEBUGGER_BASE_URL the workflows set.
+      - API_BASE_URL=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}
+      # The SP entityID equals the AuthnRequest Issuer and must match the deployed
+      # client bundle's baked spEntityId.
+      - SAML_SP_ENTITY_ID=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}/saml/sp
+      # Backendless: no server to receive the IdP's POST, so the ACS/SLO are the
+      # static saml_response.html page (the client requests the Redirect binding so
+      # the browser reads the response from the URL).
+      - SAML_ACS_URL=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}/saml_response.html
+      - SAML_SLO_URL=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}/saml_response.html
+      # No API backend → run-report.js skips the HTTP-Artifact test (which needs
+      # the server-side SOAP ArtifactResolve back-channel).
+      - SAML_BACKEND_AVAILABLE=false
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report

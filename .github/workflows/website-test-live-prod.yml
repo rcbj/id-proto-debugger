@@ -39,6 +39,10 @@ jobs:
         with:
           version: '5.2.0'
 
+      # Target the deployed PROD site. docker-compose-live-tests.yml derives the
+      # SAML/API env the suite needs (API_BASE_URL, SAML_SP_ENTITY_ID, ACS/SLO,
+      # SAML_BACKEND_AVAILABLE) from LIVE_DEBUGGER_BASE_URL — mirroring the
+      # non-localhost branch of remote-run-tests.sh — so setting it here is enough.
       - name: Run Selenium suite against the live PROD site
         run: |
           sudo LIVE_DEBUGGER_BASE_URL=https://idptools.com \

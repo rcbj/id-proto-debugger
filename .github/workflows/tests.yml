@@ -15,6 +15,9 @@ permissions:
   contents: read
 
 jobs:
+  # Plain suite: full battery in containers, no coverage. Wraps
+  # ./docker-run-tests.sh, which builds the stack (docker-compose-run-tests.yml),
+  # runs the Selenium suite, and always tears the stack down.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -24,29 +27,42 @@ jobs:
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:
           version: '5.2.0'
-      - name: Run Tests with coverage
-        run: |
-          mkdir -p coverage/frontend/.nyc_output coverage/api
-          sudo CONFIG_FILE=./env/docker-tests.js docker compose \
-            -f docker-compose-run-tests.yml -f docker-compose-coverage.yml \
-            up --build --abort-on-container-exit --exit-code-from tests
-      - name: Generate frontend coverage report
+      # The script's docker_compose() (common/common.sh) invokes compose with
+      # sudo itself, so it runs unprivileged here.
+      - name: Run Selenium test suite
+        run: ./docker-run-tests.sh
+      # The tests container writes tests/report as root via a bind mount; hand it
+      # back to the runner user before the upload step reads it.
+      - name: Normalize report permissions
         if: always()
-        run: |
-          sudo CONFIG_FILE=./env/docker-tests.js docker compose \
-            -f docker-compose-run-tests.yml -f docker-compose-coverage.yml \
-            run --rm --no-deps client \
-            npx nyc report --temp-dir /coverage/frontend/.nyc_output \
-                           --report-dir /coverage/frontend/report \
-                           --reporter=html --reporter=lcov --reporter=text-summary
-      - name: Tear down the stack
+        run: sudo chown -R "$(id -u):$(id -g)" tests/report || true
+      - name: Upload Test Report
         if: always()
-        run: |
-          sudo CONFIG_FILE=./env/docker-tests.js docker compose \
-            -f docker-compose-run-tests.yml -f docker-compose-coverage.yml down
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-report
+          path: tests/report/latest
+          if-no-files-found: warn
+          retention-days: 30
+
+  # Coverage suite: same battery WITH frontend (Istanbul) + API (c8) coverage.
+  # Wraps ./run-coverage.sh, which layers docker-compose-coverage.yml on top,
+  # runs the suite, renders the coverage reports, and tears the stack down.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+      - name: Install docker-compose
+        uses: KengoTODA/actions-setup-docker-compose@v1
+        with:
+          version: '5.2.0'
+      - name: Run test suite with coverage
+        run: ./run-coverage.sh
+      # coverage/ and tests/report are written as root inside the containers.
       - name: Normalize coverage permissions
         if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" coverage || true
+        run: sudo chown -R "$(id -u):$(id -g)" coverage tests/report || true
       - name: Upload coverage report
         if: always()
         uses: actions/upload-artifact@v7
@@ -55,11 +71,13 @@ jobs:
           path: coverage/
           if-no-files-found: warn
           retention-days: 30
+      # Distinct artifact name from the test job (artifact names must be unique
+      # across a workflow run).
       - name: Upload Test Report
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: test-report
+          name: coverage-test-report
           path: tests/report/latest
           if-no-files-found: warn
           retention-days: 30
