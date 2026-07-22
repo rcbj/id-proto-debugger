@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="docs/images/oauth2oidcdebugger+iyasec-logo.png" alt="OAuth2 + OpenID Connect (OIDC) Debugger — iyasec" width="640">
-</p>
+![OAuth2 / OIDC / SAML2 Debugger](docs/images/oauth2oidcdebugger+iyasec-logo.png)
 
 # OAuth2 + OpenID Connect (OIDC) Debugger
 [This](https://github.com/rcbj/oauth2-oidc-debugger) is the official home of the community Project.
@@ -15,6 +13,8 @@ This project currently supports the following specs & features:
 * [OpenID Connect Core 1](https://openid.net/specs/openid-connect-core-1_0.html)
 * [OpenID Connect Discovery v1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
 * [JWT RFC](https://tools.ietf.org/html/rfc7519)
+* [JWS JSON Web Signature](https://www.rfc-editor.org/info/rfc7515/)
+* [JWE JSON Web Encryption](https://www.rfc-editor.org/rfc/rfc7516.html)
 * [PKCE - RFC 7636](https://www.rfc-editor.org/rfc/rfc7636)
 * [OIDC RP-Initiated Logout v1.0](https://openid.net/specs/openid-connect-rpinitiated-1_0.html)
 * [OAuth2 Token Introspection Endpoint (RFC7662)](https://www.rfc-editor.org/rfc/rfc7662) -- client_credentials (basic auth) or bearer token [RFC6750](https://www.rfc-editor.org/rfc/rfc6750) authentication.
@@ -22,6 +22,11 @@ This project currently supports the following specs & features:
 * [OAuth2 Token Exchange - RFC8693](https://www.rfc-editor.org/rfc/rfc8693.html) -- Basic support. Currently only tested  with Keycloak v26.x.
 * [OAuth2 Token Revocation - RFC7009](https://www.rfc-editor.org/info/rfc7009/)
 * [OIDC Dynamic Client Registration spec and RFC 7591 / RFC 7592)](https://www.rfc-editor.org/info/rfc7591/)
+* [SAML2](https://www.oasis-open.org/standard/saml/)
+* [XML Signature](https://www.w3.org/TR/xmldsig-core/)
+* [XML Encryption](https://www.w3.org/TR/xmlenc-core1/)
+* [Base64 Encoding](https://www.rfc-editor.org/info/rfc4648/)
+* [X.509 Public-Key and Attributes Certificate Framework](https://www.itu.int/rec/t-rec-x.509/en)
 * With the ability to add custom parameters to the Authorization Endpoint call and Token Endpoint call, numerous other protocols can be supported. We'll eventually get around to adding direct support.
 * Token Endpoint calls can be initiated from the front-end or back-end depending on what the IdP requires in various use cases.
 * The client_id and client_secret can be submitted to the Token Endpoint via POST body or Authorization Request Header.
