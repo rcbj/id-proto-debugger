@@ -15,153 +15,9 @@ var logout_post_redirect_uri_value = baseUrl + "/logout.html";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-async function populateMetadata(driver, discovery_endpoint) {
-  oidc_discovery_endpoint = By.id("oidc_discovery_endpoint");
-  btn_oidc_discovery_endpoint = By.className("btn_oidc_discovery_endpoint");
-  btn_oidc_populate_meta_data = By.className("btn_oidc_populate_meta_data");
+const { populateMetadata, getAccessTokenImplicit, verifyAccessToken } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
 
-  // Wait until page is loaded
-  await driver.wait(until.elementLocated(oidc_discovery_endpoint), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(oidc_discovery_endpoint)), waitTime);
 
-  // Enter discovery endpoint
-  await driver.findElement(oidc_discovery_endpoint).clear();
-  await driver.findElement(oidc_discovery_endpoint).sendKeys(discovery_endpoint); 
-  await driver.findElement(btn_oidc_discovery_endpoint).click();
-
-  // Populate metadata
-  await driver.wait(until.elementLocated(btn_oidc_populate_meta_data), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(btn_oidc_populate_meta_data)), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", await driver.findElement(btn_oidc_populate_meta_data));
-  await driver.findElement(btn_oidc_populate_meta_data).click();
-}
-
-async function getAccessToken(driver, client_id, scope) {
-  // Resolve locators for the authorization form, the Keycloak login form, and the token/error result fields
-  log.info("Entering getAccessToken().");
-  log.info("Find authorization_grant_type.");
-  authorization_grant_type = By.id("authorization_grant_type");
-  log.info("Find authz_expand_button");
-  authz_expand_button = By.id("authz_expand_button");
-  log.info("Find client_id.");
-  client_id_ = By.id("client_id");
-  log.info("Find scope.");
-  scope_ = By.id("scope");
-  log.info("find token_client_id.");
-  token_client_id = By.id("token_client_id");
-  log.info("Find token_scope.");
-  token_scope = By.id("token_scope");
-  log.info("Find btn_authorize.");
-  btn_authorize = By.css("input[type=\"submit\"][value=\"Authorize\"]");
-  log.info("Find username.");
-  keycloak_username = By.id("username");
-  log.info("Find password.");
-  keycloak_password = By.id("password");
-  log.info("Find kc-login");
-  keycloak_kc_login = By.id("kc-login");
-  log.info("Find token_access_token.");
-  token_access_token = By.id("token_access_token");
-  log.info("Find display_token_error_form_texarea1.");
-  display_token_error_form_textarea1 = By.id("display_token_error_form_textarea1");
-
-  // Select OAuth2 Implicit Grant 
-  log.info("Set authorization_grant_type to OAuth2 Implicit Grant.");
-  await new Select(await driver.findElement(authorization_grant_type)).selectByVisibleText('OAuth2 Implicit Grant');
-
-  // Expand the authorization section and wait for the client_id field to render
-  log.info("Find authz_expand_button.");
-  await driver.wait(until.elementLocated(authz_expand_button), waitTime);
-  log.info("Waiting for authz_expand_button to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(authz_expand_button)), waitTime);
-  log.info("Click authz_expand_button.");
-  await driver.findElement(authz_expand_button).click();
-  log.info("Locate client_id_.");
-  await driver.wait(until.elementLocated(client_id_), waitTime);
-  log.info("Find client_id_.");
-  await driver.wait(until.elementIsVisible(driver.findElement(client_id_)), waitTime);
-
-  // Fill in the client_id, scope, and redirect_uri, then submit the authorization request
-  log.info("Clear client_id_.");
-  await driver.findElement(client_id_).clear();
-  log.info("Set client_id value.");
-  await driver.findElement(client_id_).sendKeys(client_id);
-  log.info("Clear scope_.");
-  await driver.findElement(scope_).clear();
-  log.info("Set scope value.");
-  await driver.findElement(scope_).sendKeys(scope);
-  log.info("Find token_redirect_uri.");
-  redirect_uri = By.id("redirect_uri");
-  log.info("Clear redirect_uri.");
-  await driver.findElement(redirect_uri).clear();
-  log.info("Set redirect_uri value: redirect_uri=" + redirect_uri + ", redirect_uri=" + baseUrl + "/callback");
-  await driver.findElement(redirect_uri).sendKeys(baseUrl + "/callback");
-  log.info("Click btn_authorize button.");
-  await driver.findElement(btn_authorize).click();
-
-  // Wait for the Keycloak login form, reporting any authorization error if it never appears
-  try {
-    log.info("Wait for keycloak_username.");
-    await driver.wait(until.elementLocated(keycloak_username), waitTime);
-    log.info("Wait for keycloak_username to be visible.");
-    await driver.wait(until.elementIsVisible(driver.findElement(keycloak_username)), waitTime);
-  } catch (error) {
-    log.error("Unable to log into keycloak.");
-    authz_error_report = await driver.findElement(By.id("authz-error-report"));
-    authz_error_report_paragraphs = await authz_error_report.findElements(By.css("p"));
-    throw new Error(await authz_error_report_paragraphs[authz_error_report_paragraphs.length - 1].getText());
-  }
-
-  // Enter the Keycloak username/password and submit the login form
-  log.info("Clear keycloak_username.");
-  await driver.findElement(keycloak_username).clear();
-  log.info("Set keycloak_username value.");
-  await driver.findElement(keycloak_username).sendKeys(client_id);
-  log.info("Clear keycloak_password.");
-  await driver.findElement(keycloak_password).clear();
-  log.info("Set client_id value.");
-  await driver.findElement(keycloak_password).sendKeys(client_id);
-  log.info("Click keycloak_kc_login button.");
-  await driver.findElement(keycloak_kc_login).click();
-
-  
-  // Wait for whichever appears first: the access token field or the token error field, then return its value
-  async function waitForVisibility(element) {
-    log.info("Waiting for " + element);
-    await driver.wait(until.elementLocated(element), waitTime);
-    log.info("Waiting for " + element + "is visible.");
-    await driver.wait(until.elementIsVisible(driver.findElement(element)), waitTime);
-    log.info("Returning " + element);
-    return element;
-  }
-
-  let visibleAccessTokenElement = await Promise.any([
-    waitForVisibility(token_access_token),
-    waitForVisibility(display_token_error_form_textarea1)
-  ]);
-
-  log.info("Begin returning token.");
-  return await driver.findElement(visibleAccessTokenElement).getAttribute("value");
-}
-
-async function verifyAccessToken(access_token, client_id, scope, user) {
-  async function compareScopes(scope1, scope2) {
-    scope1 = scope1.split(" ");
-    scope2 = scope2.split(" ");
-
-    return scope2.every(element => scope1.includes(element));
-  }
-
-  let decoded_access_token = jwt.decode(access_token, { complete: true });
-  let response_text = access_token.match(/responseText: (.*)/);
-
-  assert.notStrictEqual(decoded_access_token, null, "Cannot decode access token. Request result: " + (response_text ? response_text[1] : "no response text"));
-  assert.strictEqual(decoded_access_token.payload.azp, client_id, "Access token AZP does not match client ID.");
-  assert.strictEqual(await compareScopes(decoded_access_token.payload.scope, scope), true, "Access token scope does not match scope.");
-  assert.strictEqual(decoded_access_token.payload.sub, user, "Access token SUB does not match user ID.");
-  assert.strictEqual(decoded_access_token.payload.given_name, client_id, "Access token given_name does not match.");
-  assert.strictEqual(decoded_access_token.payload.family_name, client_id, "Access token family_name does not match.");
-  assert.strictEqual(decoded_access_token.payload.email, `${client_id}@iyasec.io`, "Access token email does not match.");
-}
 
 async function logout(driver) {
   // Set the post-logout redirect URI and trigger the OIDC logout
@@ -251,10 +107,10 @@ async function test() {
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");
-    let access_token = await getAccessToken(driver, client_id, scope);
+    let access_token = await getAccessTokenImplicit(driver, client_id, scope, { baseUrl });
     log.info("Access token: " + access_token);
     log.info("Calling verifyAccessToken().");
-    await verifyAccessToken(access_token, client_id, scope, user);
+    await verifyAccessToken(access_token, client_id, scope, { user });
     log.info("Logging out.");
     await logout(driver);
     log.info("Test completed successfully.")

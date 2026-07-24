@@ -13,6 +13,10 @@ log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
+
+const { populateMetadata, getAccessTokenAuthCode } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+
+
 // Client-side crypto (key generation, signing, JWE, format conversion) is fast
 // but can exceed the 2s element-wait on a busy CI host, so results get a
 // generous, separate timeout.
@@ -26,121 +30,6 @@ function decodeJWT(jwt_) {
 // OIDC Authorization Code flow (adapted from oidc_authorization_code.js) — used
 // only to obtain a real ID Token to feed into the JWT Tools "Encoded JWT" box.
 // ===========================================================================
-async function populateMetadata(driver, discovery_endpoint) {
-  var oidc_discovery_endpoint = By.id("oidc_discovery_endpoint");
-  var btn_oidc_discovery_endpoint = By.className("btn_oidc_discovery_endpoint");
-  var btn_oidc_populate_meta_data = By.className("btn_oidc_populate_meta_data");
-
-  await driver.wait(until.elementLocated(oidc_discovery_endpoint), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(oidc_discovery_endpoint)), waitTime);
-
-  await driver.findElement(oidc_discovery_endpoint).clear();
-  await driver.findElement(oidc_discovery_endpoint).sendKeys(discovery_endpoint);
-  await driver.findElement(btn_oidc_discovery_endpoint).click();
-
-  await driver.wait(until.elementLocated(btn_oidc_populate_meta_data), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(btn_oidc_populate_meta_data)), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", await driver.findElement(btn_oidc_populate_meta_data));
-  await driver.findElement(btn_oidc_populate_meta_data).click();
-}
-
-async function getAccessToken(driver, client_id, client_secret, scope, pkce_enabled) {
-  log.info("Entering getAccessToken().");
-  var authorization_grant_type = By.id("authorization_grant_type");
-  var usePKCE_yes = By.id("usePKCE-yes");
-  var usePKCE_no = By.id("usePKCE-no");
-  var authz_expand_button = By.id("authz_expand_button");
-  var client_id_ = By.id("client_id");
-  var scope_ = By.id("scope");
-  var token_client_id = By.id("token_client_id");
-  var token_client_secret = By.id("token_client_secret");
-  var token_scope = By.id("token_scope");
-  var btn_authorize = By.css("input[type=\"submit\"][value=\"Authorize\"]");
-  var keycloak_username = By.id("username");
-  var keycloak_password = By.id("password");
-  var keycloak_kc_login = By.id("kc-login");
-  var token_btn = By.className("token_btn");
-  var token_access_token = By.id("token_access_token");
-  var display_token_error_form_textarea1 = By.id("display_token_error_form_textarea1");
-
-  // Select OIDC Authorization Code Flow
-  await new Select(await driver.findElement(authorization_grant_type)).selectByVisibleText('OIDC Authorization Code Flow(code)');
-  await driver.wait(until.elementLocated(usePKCE_yes), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(usePKCE_yes)), waitTime);
-  await driver.wait(until.elementLocated(usePKCE_no), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(usePKCE_no)), waitTime);
-
-  if (pkce_enabled) {
-    await driver.findElement(usePKCE_yes).click();
-  } else {
-    await driver.findElement(usePKCE_no).click();
-  }
-
-  await driver.wait(until.elementLocated(authz_expand_button), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(authz_expand_button)), waitTime);
-  await driver.findElement(authz_expand_button).click();
-  await driver.wait(until.elementLocated(client_id_), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(client_id_)), waitTime);
-
-  await driver.findElement(client_id_).clear();
-  await driver.findElement(client_id_).sendKeys(client_id);
-  await driver.findElement(scope_).clear();
-  await driver.findElement(scope_).sendKeys(scope);
-  var redirect_uri = By.id("redirect_uri");
-  await driver.findElement(redirect_uri).clear();
-  await driver.findElement(redirect_uri).sendKeys(baseUrl + "/callback");
-  // Scroll into view and JS-click: a native .click() can fail with "element
-  // click intercepted" because a hidden ".tooltiptext" span still occupies
-  // layout over the button. A JS click bypasses that interception check.
-  var btn_authorize_el = await driver.findElement(btn_authorize);
-  await driver.executeScript(
-    "arguments[0].scrollIntoView({ block: 'center' }); arguments[0].click();",
-    btn_authorize_el);
-
-  // Login to Keycloak
-  try {
-    await driver.wait(until.elementLocated(keycloak_username), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(keycloak_username)), waitTime);
-  } catch (error) {
-    log.error("Unable to log into keycloak.");
-    var authz_error_report = await driver.findElement(By.id("authz-error-report"));
-    var authz_error_report_paragraphs = await authz_error_report.findElements(By.css("p"));
-    throw new Error(await authz_error_report_paragraphs[authz_error_report_paragraphs.length - 1].getText());
-  }
-
-  await driver.findElement(keycloak_username).clear();
-  await driver.findElement(keycloak_username).sendKeys(client_id);
-  await driver.findElement(keycloak_password).clear();
-  await driver.findElement(keycloak_password).sendKeys(client_id);
-  await driver.findElement(keycloak_kc_login).click();
-
-  // Back on debugger2.html — submit the token request
-  await driver.wait(until.elementLocated(token_client_id), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(token_client_id)), waitTime);
-
-  await driver.findElement(token_client_id).clear();
-  await driver.findElement(token_client_id).sendKeys(client_id);
-  await driver.findElement(token_client_secret).clear();
-  await driver.findElement(token_client_secret).sendKeys(client_secret);
-  await driver.findElement(token_scope).clear();
-  await driver.findElement(token_scope).sendKeys(scope);
-  var token_redirect_uri = By.id("token_redirect_uri");
-  await driver.findElement(token_redirect_uri).clear();
-  await driver.findElement(token_redirect_uri).sendKeys(baseUrl + "/callback");
-  await driver.findElement(token_btn).click();
-
-  async function waitForVisibility(element) {
-    await driver.wait(until.elementLocated(element), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(element)), waitTime);
-    return element;
-  }
-
-  let visibleAccessTokenElement = await Promise.any([
-    waitForVisibility(token_access_token),
-    waitForVisibility(display_token_error_form_textarea1)
-  ]);
-  return await driver.findElement(visibleAccessTokenElement).getAttribute("value");
-}
 
 async function getIDToken(driver) {
   log.info("Entering getIDToken().");
@@ -465,7 +354,7 @@ async function test() {
     log.info("Load the debugger and run the OIDC Authorization Code flow.");
     await driver.get(baseUrl + "/debugger.html");
     await populateMetadata(driver, discovery_endpoint);
-    let access_token = await getAccessToken(driver, client_id, client_secret, scope, pkce_enabled);
+    let access_token = await getAccessTokenAuthCode(driver, client_id, client_secret, scope, pkce_enabled, { baseUrl });
     let decoded_access = decodeJWT(access_token);
     assert.notStrictEqual(decoded_access, null, "Could not obtain/decode an access token from the OIDC flow.");
     let id_token = await getIDToken(driver);

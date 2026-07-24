@@ -270,8 +270,8 @@ function buildJobs() {
     script: "digital_signature.js",
     env: {},
   });
-
-  // SAML 2.0 SP-initiated SSO across all three bindings: load IdP metadata, sign
+  
+ // SAML 2.0 SP-initiated SSO across all three bindings: load IdP metadata, sign
   // the AuthnRequest (redirect = query-string sig; post = enveloped XML-DSIG;
   // artifact = redirect send + SOAP ArtifactResolve back-channel), log in at
   // Keycloak (which validates the request signature), and confirm the

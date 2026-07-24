@@ -14,125 +14,9 @@ var baseUrl = "http://localhost:3000"
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-async function populateMetadata(driver, discovery_endpoint) {
-  log.info("Entering populateMetadata().");
-  // Resolve locators for the discovery endpoint field and its action buttons
-  log.info("Find oidc_discovery_endpoint.");
-  oidc_discovery_endpoint = By.id("oidc_discovery_endpoint");
-  log.info("Find btn_oidc_discovery_endpoint.");
-  btn_oidc_discovery_endpoint = By.className("btn_oidc_discovery_endpoint");
-  log.info("Find btn_oidc_populate_meta_data.");
-  btn_oidc_populate_meta_data = By.className("btn_oidc_populate_meta_data");
+const { populateMetadata, getAccessTokenClientCredentials, verifyAccessToken } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
 
-  // Wait until page is loaded
-  log.info("Wait for oidc_discovery_endpoint.");
-  await driver.wait(until.elementLocated(oidc_discovery_endpoint), waitTime);
-  log.info("Wait for oidc_discovery_endpoint.");
-  await driver.wait(until.elementIsVisible(driver.findElement(oidc_discovery_endpoint)), waitTime);
 
-  // Enter discovery endpoint
-  log.info("Find & Clear oidc_discovery_endpoint.");
-  await driver.findElement(oidc_discovery_endpoint).clear();
-  log.info("Find & Send Keys discovery_endpoint.");
-  await driver.findElement(oidc_discovery_endpoint).sendKeys(discovery_endpoint); 
-  log.info("Find & Click btn_oidc_discovery_endpoint.");
-  await driver.findElement(btn_oidc_discovery_endpoint).click();
-
-  // Populate metadata
-  log.info("Find btn_oidc_populate_meta_data.");
-  await driver.wait(until.elementLocated(btn_oidc_populate_meta_data), waitTime);
-  log.info("Find btn_oidc_populate_meta_data.");
-  await driver.wait(until.elementIsVisible(driver.findElement(btn_oidc_populate_meta_data)), waitTime);
-  log.info("Execute script.");
-  await driver.executeScript("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", await driver.findElement(btn_oidc_populate_meta_data));
-  log.info("Find & Click btn_oidc_populate_meta_data.");
-  await driver.findElement(btn_oidc_populate_meta_data).click();
-  log.info("Leaving populateMetadata().");
-}
-
-async function getAccessToken(driver, client_id, client_secret, scope) {
-  log.info("Entering getAccessToken().");
-  // Resolve locators for the grant type selector and client ID field
-  log.info("Find authorization_grant_type.");
-  authorization_grant_type = By.id("authorization_grant_type");
-  log.info("Find token_client_id.");
-  token_client_id = By.id("token_client_id");
-
-  // Select client credential login type
-  log.info("Find visible text 'OAuth2 Client Credential' and select.");
-  await new Select(await driver.findElement(authorization_grant_type)).selectByVisibleText('OAuth2 Client Credential');
-  log.info("Find token_client_id element.");
-
-  log.info("Find token_client_id.");
-  token_client_id = By.id("token_client_id");
-  await driver.wait(until.elementLocated(token_client_id), waitTime);
-  log.info("Switch to client_credential grant.");
-  await new Select(await driver.findElement(authorization_grant_type)).selectByVisibleText('OAuth2 Client Credential');
-  log.info("Wait until element is visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(token_client_id)), waitTime);
-
-  // Resolve locators for the credential inputs, submit button, and result/error fields
-  log.info("Find token_client_secret.")
-  token_client_secret = By.id("token_client_secret");
-  log.info("Find token_scope.");
-  token_scope = By.id("token_scope");
-  log.info("Find token_btn.");
-  token_btn = By.className("token_btn");
-  log.info("Find token_btn.");
-  token_access_token = By.id("token_access_token");
-  log.info("Find display_token_error_form_textarea1.");
-  display_token_error_form_textarea1 = By.id("display_token_error_form_textarea1");
-
-  // Submit credentials
-  log.info("Find token_client_id & clear.");
-  await driver.findElement(token_client_id).clear();
-  log.info("Find token_client_id and send keys.");
-  await driver.findElement(token_client_id).sendKeys(client_id);
-  log.info("Find token_client_secret & clear.");
-  await driver.findElement(token_client_secret).clear();
-  log.info("Find token_client_secret and send keys.");
-  await driver.findElement(token_client_secret).sendKeys(client_secret);
-  log.info("Find token_scope and clear.");
-  await driver.findElement(token_scope).clear();
-  log.info("Find token_scope and send keys.");
-  await driver.findElement(token_scope).sendKeys(scope);
-  log.info("Find token_btn and click().");
-  await driver.findElement(token_btn).click();
-
-  // Get access token result
-  async function waitForVisibility(element) {
-    await driver.wait(until.elementLocated(element), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(element)), waitTime);
-    return element;
-  }
-
-  try {
-    let visibleAccessTokenElement = await Promise.any([
-      waitForVisibility(token_access_token),
-      waitForVisibility(display_token_error_form_textarea1)
-    ]);
-    log.info("Returning visibleAccessTokenElement value.");
-    return await driver.findElement(visibleAccessTokenElement).getAttribute("value");
-  } catch (e) {
-    log.error("An error occurred: " + e.message);
-  }
-}
-
-async function verifyAccessToken(access_token, client_id, scope) {
-  async function compareScopes(scope1, scope2) {
-    scope1 = scope1.split(" ");
-    scope2 = scope2.split(" ");
-
-    return scope2.every(element => scope1.includes(element));
-  }
-
-  let decoded_access_token = jwt.decode(access_token, { complete: true });
-  let response_text = access_token.match(/responseText: (.*)/);
-
-  assert.notStrictEqual(decoded_access_token, null, "Cannot decode access token. Request result: " + (response_text ? response_text[1] : "no response text"));
-  assert.strictEqual(decoded_access_token.payload.client_id, client_id, "Access token client ID does not match client ID.");
-  assert.strictEqual(await compareScopes(decoded_access_token.payload.scope, scope), true, "Access token scope does not match scope.");
-}
 
 async function test() {
   const options = new chrome.Options();
@@ -174,10 +58,10 @@ async function test() {
     await populateMetadata(driver, discovery_endpoint);
     log.info("Completed populateMetadata().");
     log.info("Retrieve access_token.");
-    let access_token = await getAccessToken(driver, client_id, client_secret, scope);
+    let access_token = await getAccessTokenClientCredentials(driver, client_id, client_secret, scope);
     log.info("Obtained token: " + access_token);
     log.info("Validating token.");
-    await verifyAccessToken(access_token, client_id, scope);
+    await verifyAccessToken(access_token, client_id, scope, { clientIdClaim: "client_id", verifyIdentityClaims: false });
     log.info("Token validated.");
     log.info("Test completed successfully.")
   } catch (error) {

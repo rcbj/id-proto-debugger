@@ -27,29 +27,12 @@ function isStaticContentSite(url) {
 var headless = true;
 var waitTime = appconfig.waitTime;
 
+const { populateMetadata } = require("../common/tests.js")({ By, until, waitTime, log });
+
 // Drive the OIDC Discovery pane: enter the discovery endpoint, retrieve the
 // metadata, and click "Populate Meta Data". This also fills the Dynamic Client
 // Registration pane (registration_endpoint + a default client metadata document)
 // from the discovery metadata.
-async function populateMetadata(driver, discovery_endpoint) {
-  log.info("Entering populateMetadata().");
-  const oidc_discovery_endpoint = By.id("oidc_discovery_endpoint");
-  const btn_oidc_discovery_endpoint = By.className("btn_oidc_discovery_endpoint");
-  const btn_oidc_populate_meta_data = By.className("btn_oidc_populate_meta_data");
-
-  await driver.wait(until.elementLocated(oidc_discovery_endpoint), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(oidc_discovery_endpoint)), waitTime);
-
-  await driver.findElement(oidc_discovery_endpoint).clear();
-  await driver.findElement(oidc_discovery_endpoint).sendKeys(discovery_endpoint);
-  await driver.findElement(btn_oidc_discovery_endpoint).click();
-
-  await driver.wait(until.elementLocated(btn_oidc_populate_meta_data), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(btn_oidc_populate_meta_data)), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", await driver.findElement(btn_oidc_populate_meta_data));
-  await driver.findElement(btn_oidc_populate_meta_data).click();
-  log.info("Leaving populateMetadata().");
-}
 
 // Expand the Dynamic Client Registration fieldset if it is collapsed.
 async function expandDcrPane(driver) {
