@@ -19,3 +19,12 @@ services:
       KEYCLOAK_ADMIN: keycloak
       KEYCLOAK_ADMIN_PASSWORD: keycloak
       KC_HEALTH_ENABLED: "true"
+  # WS-Trust STS (mock) for remote-run-tests.sh against a local dev site. The
+  # host-run browser / local api reach it at http://localhost:8081/sts.
+  sts:
+    image: rcbj/sts
+    hostname: sts
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: sts/Dockerfile

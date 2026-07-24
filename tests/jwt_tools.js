@@ -3,6 +3,9 @@ const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const jwt = require("jsonwebtoken");
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -305,7 +308,18 @@ async function idTokenDecodeActivities(driver, id_token) {
 }
 
 async function test() {
+  // JWT Tools clicks key-download buttons. On host runs the browser is the user's
+  // real Chrome (default download dir ~/Downloads); redirect downloads to a
+  // throwaway temp dir (removed below) so nothing lands in the home directory.
+  // The test asserts only on the in-page status, never the downloaded file.
+  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "idptools-selenium-dl-"));
   const options = new chrome.Options();
+  options.setUserPreferences({
+    "download.default_directory": downloadDir,
+    "download.prompt_for_download": false,
+    "download.directory_upgrade": true,
+    "safebrowsing.enabled": true,
+  });
   if (headless) {
     // Use "new" headless: unlike the legacy --headless mode, it honors the
     // --unsafely-treat-insecure-origin-as-secure override below, which is what
@@ -328,6 +342,14 @@ async function test() {
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" + secureOrigin);
   options.addArguments("--user-data-dir=/tmp/jwt-tools-chrome-" + Date.now());
   const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+
+  // Belt-and-suspenders: also pin the download dir via CDP (independent of the
+  // profile prefs, which a custom --user-data-dir can bypass), so downloads never
+  // fall back to ~/Downloads.
+  try {
+    await driver.sendDevToolsCommand("Browser.setDownloadBehavior",
+      { behavior: "allow", downloadPath: downloadDir, eventsEnabled: false });
+  } catch (e) { /* older Chrome/driver — the user-preferences download dir applies */ }
 
   try {
     log.info("Starting Test run.");
@@ -373,6 +395,7 @@ async function test() {
     process.exit(1);
   } finally {
     await driver.quit();
+    try { fs.rmSync(downloadDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
   }
 }
 

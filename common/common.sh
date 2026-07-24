@@ -636,6 +636,58 @@ configureKeycloak()
   declare -gx SAML_SLO_URL
   declare -gx SAML_USER="saml"
 
+  # ---- SAML 2.0 ENCRYPTED client (saml.encrypt=true) ------------------------
+  # A SECOND SAML SP client used by tests/saml_encrypted_sso.js to exercise the
+  # SAML Response page's EncryptedAssertion DECRYPTION. saml.encrypt is a
+  # per-client attribute (no separate Keycloak needed): this client is identical
+  # to the one above but adds saml.encrypt=true + saml.encryption.certificate set
+  # to the SAME fixed test SP certificate. Keycloak therefore encrypts the
+  # assertion to that cert; the Response page decrypts it with the matching
+  # private key (tests/fixtures/sp-key.pem). Only provisioned when the SP cert is
+  # available (i.e. signature validation is enabled).
+  SAML_ENC_SP_ENTITY_ID="${SAML_ENC_SP_ENTITY_ID:-${SAML_SP_ENTITY_ID}-enc}"
+  if [ -n "${SAML_SP_SIGNING_CERT}" ];
+  then
+    KEYCLOAK_ACCESS_TOKEN=$(curl \
+      -X POST "${KEYCLOAK_LOCALHOST_BASE_URL}/realms/master/protocol/openid-connect/token" \
+      -H "Content-Type: application/x-www-form-urlencoded" \
+      -d "client_id=admin-cli" -d "username=keycloak" -d "password=keycloak" \
+      -d "grant_type=password" | jq -r '.access_token')
+    if [ -z "${KEYCLOAK_ACCESS_TOKEN}" ]; then
+      echo "KEYCLOAK_ACCESS_TOKEN is blank (SAML encrypted client)."
+      exit 1
+    fi
+    curl -X POST "${KEYCLOAK_LOCALHOST_BASE_URL}/admin/realms/debugger-testing/clients" \
+      -H "Authorization: Bearer ${KEYCLOAK_ACCESS_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{
+            "clientId": "'"${SAML_ENC_SP_ENTITY_ID}"'",
+            "name": "saml-enc",
+            "protocol": "saml",
+            "enabled": true,
+            "frontchannelLogout": true,
+            "redirectUris": ["'"${SAML_ACS_URL}"'", "'"${SAML_API_BASE_URL}"'/*"],
+            "attributes": {
+              '"${SAML_SIG_ATTRS}"'
+              "saml.server.signature": "true",
+              "saml.assertion.signature": "true",
+              "saml.encrypt": "true",
+              "saml.encryption.certificate": "'"${SAML_SP_SIGNING_CERT}"'",
+              "saml_name_id_format": "username",
+              "saml.force.post.binding": "true",
+              "saml_assertion_consumer_url_post": "'"${SAML_ACS_URL}"'",
+              "saml_assertion_consumer_url_redirect": "'"${SAML_ACS_URL}"'",
+              "saml_single_logout_service_url_post": "'"${SAML_SLO_URL}"'",
+              "saml_single_logout_service_url_redirect": "'"${SAML_SLO_URL}"'"
+            }
+         }'
+    check_return_code $?
+    echo "SAML encrypted client provisioned: ${SAML_ENC_SP_ENTITY_ID}"
+  else
+    echo "SAML_SP_SIGNING_CERT is blank — skipping the encrypted SAML client (needs the SP encryption certificate)."
+  fi
+  declare -gx SAML_ENC_SP_ENTITY_ID
+
   # ---- OIDC Dynamic Client Registration --------------------------------------
   # Mint an initial access token so the Dynamic Client Registration test can
   # create clients. Keycloak requires an initial access token for authenticated

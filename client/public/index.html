@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>IDPTools — Choose a Debugger</title>
+    <title>IDPTools — Choose a Debugger Protocol</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,7 +21,7 @@
     <div class="container">
 
 <div class="landing">
-  <h1 class="landing-title">Choose a debugger</h1>
+  <h1 class="landing-title">Choose a debugger Protocol</h1>
   <p class="landing-sub">Which identity protocol do you want to debug?</p>
 
   <div class="landing-choices">
@@ -34,7 +34,7 @@
           <path d="M15.5 15.5 18 13"/>
         </svg>
       </span>
-      <span class="landing-card-title">OAuth2 / OIDC Debugger</span>
+      <span class="landing-card-title">OAuth2 / OIDC Protocol</span>
       <span class="landing-card-desc">Authorization Code, Implicit, Client Credentials, Resource Owner, Device, and Token Exchange grants plus all OIDC flows &mdash; with JWT, JWKS, introspection, and userinfo tools.</span>
     </a>
 
@@ -45,8 +45,22 @@
           <path d="M8.5 12 11 14.5 15.5 10"/>
         </svg>
       </span>
-      <span class="landing-card-title">SAML Debugger</span>
+      <span class="landing-card-title">SAML Protocol</span>
       <span class="landing-card-desc">SAML 2.0 SP-initiated SSO: load IdP metadata, build and sign an AuthnRequest, capture the SAMLResponse at the ACS, and inspect the assertion and its attributes.</span>
+    </a>
+
+    <a class="landing-card" href="/wstrust_tools.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="7" cy="15" r="4"/>
+          <path d="M9.8 12.2 20 2"/>
+          <path d="M15 7l3 3"/>
+          <path d="M18 4l3 3"/>
+          <path d="M6 15h.01"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">WS-Trust Protocol</span>
+      <span class="landing-card-desc">WS-Trust (all protocol versions)  against an STS: build a SOAP RequestSecurityToken for Issue, Renew, Validate, or Cancel with WS-Security and WS-Addressing, sign/encrypt it, and inspect the issued token in the response.</span>
     </a>
   </div>
 </div>

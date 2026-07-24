@@ -60,6 +60,24 @@
   <div id="tab_attrs" class="saml-tabcontent">
     <div id="saml_attrs_table">&nbsp;</div>
   </div>
+  <div class="saml-row" style="margin-top:8px;">
+    <input type="button" class="saml-btn" value="Validate Signature" onclick="return saml_response.validateAssertionSignature();" title="Verify the enveloped XML digital signature on the assertion (reference digests + SignatureValue) using the certificate in the signature's KeyInfo." />
+    <input class="saml-status saml-grow" type="text" id="saml_sig_status" readonly />
+  </div>
+  <div id="saml_sig_details"></div>
+
+  <div class="saml-sub">
+    <div class="saml-sub-title">Decrypt (EncryptedAssertion / EncryptedData)</div>
+    <p class="saml-note">If the response carries a <code>&lt;saml:EncryptedAssertion&gt;</code> (or a message-level <code>&lt;xenc:EncryptedData&gt;</code>), decrypt it in the browser with the recipient (SP) private key. Prefilled from the SP key on the SAML Test Tools page.</p>
+    <div class="saml-field">
+      <label class="saml-has-copy" title="Recipient (SP) private key (PKCS#8 PEM).">Decryption Key <button type="button" class="saml-copy" onclick="return saml_response.copyField('saml_dec_key');">Copy</button></label>
+      <textarea rows="3" id="saml_dec_key" name="saml_dec_key"></textarea>
+    </div>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Decrypt" onclick="return saml_response.decryptAssertion();" title="Decrypt the EncryptedAssertion / EncryptedData in the response and show the plaintext assertion." />
+      <input class="saml-status saml-grow" type="text" id="saml_dec_status" readonly />
+    </div>
+  </div>
 </fieldset>
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">

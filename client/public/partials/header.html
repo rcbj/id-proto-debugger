@@ -1,4 +1,4 @@
-  <a id="brand_logo" href="/debugger.html" class="logo"><img src="/images/oauth2oidcdebugger+iyasec-logo-transparent.png" alt="OAuth2 + OIDC Debugger — iyasec"></a>
+  <a id="brand_logo" href="/debugger.html" class="logo"><img src="/images/oauth2oidcdebugger+iyasec-logo-transparent.png" alt="Identity Protocol Debugger — iyasec"></a>
   <div class="header-right">
     <a class="active" href="/index.html">Home</a>
     <a href="/terms.html">Terms &amp; Conditions</a>
@@ -9,13 +9,17 @@
   </div>
   <script>
   // The brand logo returns to the home page of the debugger family the user is
-  // currently in: SAML pages (saml_*) -> the SAML home, everything else -> the
-  // OAuth2/OIDC home. The "Home" nav link (above) goes to the landing page
-  // (index.html) so the user can switch protocols.
+  // currently in: SAML pages (saml_*) -> the SAML home, WS-Trust pages
+  // (wstrust_*) -> the WS-Trust home, everything else -> the OAuth2/OIDC home.
+  // The "Home" nav link (above) goes to the landing page (index.html) so the
+  // user can switch protocols.
   (function () {
     var logo = document.getElementById('brand_logo');
     if (!logo) return;
-    var isSaml = window.location.pathname.indexOf('/saml_') === 0;
-    logo.setAttribute('href', isSaml ? '/saml_tools.html' : '/debugger.html');
+    var p = window.location.pathname;
+    var href = '/debugger.html';
+    if (p.indexOf('/saml_') === 0) href = '/saml_tools.html';
+    else if (p.indexOf('/wstrust_') === 0) href = '/wstrust_tools.html';
+    logo.setAttribute('href', href);
   })();
   </script>

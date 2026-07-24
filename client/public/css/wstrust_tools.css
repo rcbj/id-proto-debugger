@@ -1,0 +1,26 @@
+/* WS-Trust Test Tools — small additions on top of saml_tools.css (which the
+   WS-Trust pages also link and whose .saml-* pane/field/tab/table classes they
+   reuse). Only WS-Trust-specific bits live here. */
+
+/* Frontend/backend radio group (mirrors the OAuth2 debugger's "Initiate ... Call
+   From" control). Takes the value column of a .saml-field row. */
+.wst-radio-group {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 0.82em;
+}
+.wst-radio-group label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  cursor: pointer;
+}
+.wst-radio-group input[type="radio"] { margin: 0; }
+/* A disabled radio (static build: backend routing unavailable) is grayed out. */
+.wst-radio-group input[type="radio"]:disabled + span,
+.wst-radio-group label:has(input:disabled) { color: #999; cursor: not-allowed; }

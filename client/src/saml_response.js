@@ -11,6 +11,7 @@
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
+var xd = require("./xmldsig");
 var log = bunyan.createLogger({ name: 'saml_response', level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
@@ -22,6 +23,15 @@ var responseSignerCertPem = '';
 // localStorage so returning to this page (e.g. from the certificate-details
 // page, which drops the ?id= query param) can repopulate the fields.
 var SAML_RESP_KEY = 'saml_last_response';
+
+// The extracted <Assertion> as originally serialized (NOT the pretty-printed
+// textarea value, whose added whitespace would break canonicalization) — used
+// by the signature-validation option.
+var lastAssertionXml = '';
+
+// The first <xenc:EncryptedData> in the response (an EncryptedAssertion, or a
+// message/wrapper-level EncryptedData), serialized — used by the decrypt option.
+var lastEncryptedXml = '';
 
 function el(id) { return document.getElementById(id); }
 function setVal(id, v) { var e = el(id); if (e) e.value = (v == null ? '' : v); }
@@ -121,6 +131,18 @@ function render(responseXml) {
 
   var assertion = tags(doc, 'Assertion')[0];
   var assertionXml = assertion ? serialize(assertion) : '';
+  lastAssertionXml = assertionXml;
+
+  // Detect an encrypted assertion / message-level EncryptedData for the decrypt
+  // option (the response may carry <saml:EncryptedAssertion> instead of a
+  // plaintext <Assertion>).
+  // Prefer the <saml:EncryptedAssertion> wrapper (it also contains any sibling
+  // <xenc:EncryptedKey> referenced by RetrievalMethod), else the bare EncryptedData.
+  var encEl = tags(doc, 'EncryptedAssertion')[0] || tags(doc, 'EncryptedData')[0];
+  lastEncryptedXml = encEl ? serialize(encEl) : '';
+  if (encEl && !assertion) {
+    setVal('saml_dec_status', 'Response contains encrypted content — paste/confirm the recipient key and click Decrypt.');
+  }
   var noAssertionNote = isLogout
     ? '(LogoutResponse carries no assertion — see the Details tab for the logout status.)'
     : '(no <Assertion> — the response may be an error or encrypted)';
@@ -350,7 +372,71 @@ function renderFromStorage(msgIfMissing) {
   return false;
 }
 
+// Render a signature-verification result (from xd.verifyXmlSignature) as a table.
+function formatSigResult(res) {
+  if (res.error) return '<span style="color:#b00;">Cannot validate: ' + esc(res.error) + '</span>';
+  var color = res.valid ? '#2e7d32' : '#b00';
+  var refs = (res.references || []).length;
+  var html = '<table class="saml-table">';
+  html += '<tr><td class="saml-key">Signature</td><td><strong style="color:' + color + ';">' + (res.valid ? 'VALID' : 'INVALID') + '</strong></td></tr>';
+  html += '<tr><td class="saml-key">SignatureValue</td><td>' + (res.signatureValid ? 'verified' : 'FAILED') + '</td></tr>';
+  html += '<tr><td class="saml-key">Reference digests</td><td>' + (res.referencesValid ? 'match' : 'MISMATCH') + ' (' + refs + ')</td></tr>';
+  html += '<tr><td class="saml-key">Signature Method</td><td>' + esc(res.signatureMethod || '') + '</td></tr>';
+  html += '<tr><td class="saml-key">Canonicalization</td><td>' + esc(res.canonicalization || '') + '</td></tr>';
+  html += '<tr><td class="saml-key">Signer (cert CN)</td><td>' + esc(res.signerSubject || '(from KeyInfo)') + '</td></tr>';
+  html += '</table>';
+  return html;
+}
+
+// Validate the enveloped XML digital signature on the extracted assertion, using
+// the certificate embedded in the signature's KeyInfo. Reuses xmldsig.js.
+function validateAssertionSignature() {
+  var details = el('saml_sig_details');
+  if (!lastAssertionXml || lastAssertionXml.indexOf('<') < 0) {
+    setVal('saml_sig_status', 'No assertion available to validate.');
+    if (details) details.innerHTML = '';
+    return false;
+  }
+  var res;
+  try { res = xd.verifyXmlSignature(lastAssertionXml); }
+  catch (e) { setVal('saml_sig_status', 'Validation error: ' + e.message); return false; }
+  setVal('saml_sig_status', res.error ? ('Cannot validate: ' + res.error) : (res.valid ? 'Assertion signature VALID.' : 'Assertion signature INVALID.'));
+  if (details) details.innerHTML = formatSigResult(res);
+  return false;
+}
+
+// Decrypt an <xenc:EncryptedData> / <saml:EncryptedAssertion> in the response
+// with the recipient (SP) private key, then show + re-render the plaintext
+// assertion. Reuses xmldsig.js decryptXml.
+function decryptAssertion() {
+  if (!lastEncryptedXml) { setVal('saml_dec_status', 'No <xenc:EncryptedData> / <saml:EncryptedAssertion> found in this response.'); return false; }
+  var keyEl = el('saml_dec_key');
+  var key = keyEl ? keyEl.value : '';
+  if (!key.trim()) { setVal('saml_dec_status', 'Paste the recipient (SP) private key to decrypt.'); return false; }
+  var plaintext;
+  try { plaintext = xd.decryptXml(lastEncryptedXml, { privateKeyPem: key }); }
+  catch (e) { setVal('saml_dec_status', 'Decryption failed: ' + e.message); return false; }
+  lastAssertionXml = plaintext;
+  setVal('saml_assertion_xml', formatXml(plaintext));
+  try {
+    var adoc = new DOMParser().parseFromString(plaintext, 'application/xml');
+    var a = tags(adoc, 'Assertion')[0] || null;
+    buildAttributesTable(a);
+    saveSubjectForLogout(a);
+  } catch (e) { log.error('decrypt render: ' + e.message); }
+  setVal('saml_dec_status', 'Decrypted. The assertion is shown in the XML tab; use Validate Signature to verify it.');
+  return false;
+}
+
 window.onload = function () {
+  // Prefill the decryption key from the SP private key stored by the SAML Test
+  // Tools page (the IdP encrypts to the SP's certificate).
+  try {
+    var dk = el('saml_dec_key');
+    var sk = window.localStorage && localStorage.getItem('samltools_saml_sp_private_key');
+    if (dk && !dk.value && sk) dk.value = sk;
+  } catch (e) { /* ignore */ }
+
   var id = qp('id');
   var direct = qp('SAMLResponse');
   if (id) {
@@ -387,5 +473,7 @@ window.onload = function () {
 module.exports = {
   showTab,
   viewSignerCert,
-  copyField
+  copyField,
+  validateAssertionSignature,
+  decryptAssertion
 };

@@ -125,6 +125,8 @@ function setReturnLink() {
   var allowed = {
     'saml_tools.html': '/saml_tools.html',
     'saml_response.html': '/saml_response.html',
+    'wstrust_tools.html': '/wstrust_tools.html',
+    'wstrust_response.html': '/wstrust_response.html',
     'digital_signature.html': '/digital_signature.html',
     'jwt_tools.html': '/jwt_tools.html'
   };

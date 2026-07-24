@@ -46,6 +46,7 @@
 .landing-icon svg { width: 84px; height: 84px; }
 .landing-card:nth-child(1) .landing-icon { color: #2680eb; }
 .landing-card:nth-child(2) .landing-icon { color: #5a2a8f; }
+.landing-card:nth-child(3) .landing-icon { color: #0a7d63; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

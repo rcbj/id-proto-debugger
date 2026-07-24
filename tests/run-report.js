@@ -300,6 +300,28 @@ function buildJobs() {
     jobs.push(job);
   }
 
+  // SAML 2.0 EncryptedAssertion decryption: SSO against a SAML client with
+  // saml.encrypt=true (provisioned in common.sh), so Keycloak returns an
+  // <saml:EncryptedAssertion>; the Response page decrypts it in-browser with the
+  // SP private key and renders the plaintext assertion. Needs the API ACS
+  // (POST binding), so it's skipped on a backend-less (static) deployment.
+  {
+    const encJob = {
+      name: "SAML 2.0 EncryptedAssertion — decrypt on Response page",
+      script: "saml_encrypted_sso.js",
+      env: {
+        SAML_METADATA_URL: env.SAML_METADATA_URL,
+        SAML_METADATA_FILE: env.SAML_METADATA_FILE,
+        SAML_ENC_SP_ENTITY_ID: env.SAML_ENC_SP_ENTITY_ID,
+        SAML_USER: env.SAML_USER,
+      },
+    };
+    if (!samlBackendAvailable) {
+      encJob.skip = "EncryptedAssertion decryption uses the POST binding + API ACS; unavailable on the static deployment.";
+    }
+    jobs.push(encJob);
+  }
+
   // SAML 2.0 Single Logout: log in via SSO (to establish the Keycloak session and
   // capture the NameID/SessionIndex), then send a signed LogoutRequest and confirm
   // the LogoutResponse renders with a Success status on the response page.
@@ -314,6 +336,105 @@ function buildJobs() {
       SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
       SAML_USER: env.SAML_USER,
     },
+  });
+
+  // WS-Trust 1.4 against the STS (the mock STS service, or a real Apache CXF STS
+  // if WSTRUST_STS_URL points at one). Exercises all four operations — Issue,
+  // Renew, Validate, Cancel — plus a signed Issue (WS-Security XML-DSIG). Each
+  // job builds a SOAP RequestSecurityToken, sends it through the backend proxy
+  // (POST /wstrust), and asserts the RSTR / issued token / status renders on the
+  // response page. Renew/Validate/Cancel first Issue a token to act on.
+  //
+  // Skipped when no STS is reachable (WSTRUST_STS_URL unset) — e.g. the deployed
+  // static site, which has no STS and no backend proxy — rather than failing.
+  // Routing is exercised both ways: "back" sends through the API proxy
+  // (POST /wstrust); "front" makes the browser call the STS directly. Issue runs
+  // once per route; the other operations use backend routing.
+  var wstrustStsUrl = env.WSTRUST_STS_URL || "";
+  var wstrustJobs = [
+    { op: "issue", sign: "false", route: "back", label: "Issue (backend routing)" },
+    { op: "issue", sign: "false", route: "front", label: "Issue (frontend routing)" },
+    { op: "issue", sign: "true", route: "back", label: "Issue (signed, WS-Security XML-DSIG)" },
+    { op: "renew", sign: "false", route: "back", label: "Renew" },
+    { op: "validate", sign: "false", route: "back", label: "Validate" },
+    { op: "cancel", sign: "false", route: "back", label: "Cancel" },
+  ];
+  for (const wj of wstrustJobs) {
+    const job = {
+      name: "WS-Trust 1.4 — " + wj.label,
+      script: "wstrust.js",
+      env: {
+        WSTRUST_STS_URL: wstrustStsUrl,
+        WSTRUST_OP: wj.op,
+        WSTRUST_SIGN: wj.sign,
+        WSTRUST_ROUTE: wj.route,
+      },
+    };
+    if (!wstrustStsUrl) {
+      job.skip = "WS-Trust needs an STS (WSTRUST_STS_URL) — unavailable on this target (e.g. the backend-less static deployment).";
+    }
+    jobs.push(job);
+  }
+
+  // Encrypted-token round-trip: sign the request, ask the STS to encrypt the
+  // issued assertion (?encrypt=1) to the requestor cert, then DECRYPT it on the
+  // response page and confirm a plaintext assertion (exercises decryptXml).
+  var encJob = {
+    name: "WS-Trust 1.4 — Issue (encrypted token, decrypt)",
+    script: "wstrust.js",
+    env: {
+      WSTRUST_STS_URL: wstrustStsUrl,
+      WSTRUST_OP: "issue",
+      WSTRUST_SIGN: "true",
+      WSTRUST_ROUTE: "back",
+      WSTRUST_ENCRYPT: "true",
+    },
+  };
+  if (!wstrustStsUrl) {
+    encJob.skip = "WS-Trust needs an STS (WSTRUST_STS_URL) — unavailable on this target (e.g. the backend-less static deployment).";
+  }
+  jobs.push(encJob);
+
+  // Cycle the WS-Trust protocol version (1.0–1.4) with an Issue each, so each
+  // version's trust namespace and option-gating (Bearer key type is 1.3+,
+  // ActAs is 1.4) is exercised end to end against the STS.
+  for (const wv of ["1.0", "1.1", "1.2", "1.3", "1.4"]) {
+    const job = {
+      name: "WS-Trust " + wv + " — Issue",
+      script: "wstrust.js",
+      env: {
+        WSTRUST_STS_URL: wstrustStsUrl,
+        WSTRUST_OP: "issue",
+        WSTRUST_SIGN: "false",
+        WSTRUST_ROUTE: "back",
+        WSTRUST_VERSION: wv,
+      },
+    };
+    if (!wstrustStsUrl) {
+      job.skip = "WS-Trust needs an STS (WSTRUST_STS_URL) — unavailable on this target (e.g. the backend-less static deployment).";
+    }
+    jobs.push(job);
+  }
+
+  // XML Signature & XML Encryption interop. A pure-Node test (no browser, no IdP)
+  // that runs the WS-Trust workflow's in-browser crypto (client/src/xmldsig.js)
+  // and validates its output against official libraries: xml-crypto verifies the
+  // WS-Security signature; xml-encryption decrypts the XML-Encryption output.
+  jobs.push({
+    name: "XML Signature & Encryption interop (xml-crypto / xml-encryption)",
+    script: "xmlsec_interop.js",
+    env: {},
+  });
+
+  // WS-Trust message schema validation. A pure-Node test that builds the RST for
+  // every scenario (each version × operation) with the real generator and
+  // validates it against a schema derived from the official OASIS WS-Trust 1.3
+  // XSD (libxmljs2/libxml2). Self-skips (exit 0) if libxmljs2 — an optional
+  // native dependency — isn't installed on the platform.
+  jobs.push({
+    name: "WS-Trust message schema validation (RST vs OASIS-derived XSD)",
+    script: "wstrust_schema_validate.js",
+    env: {},
   });
 
   return jobs;

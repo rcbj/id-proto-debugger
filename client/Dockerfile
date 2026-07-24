@@ -76,6 +76,8 @@ RUN browserify src/digital_signature.js -o public/js/digital_signature.js --debu
 RUN browserify src/saml_tools.js -o public/js/saml_tools.js --debug --standalone saml_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/saml_cert.js -o public/js/saml_cert.js --debug --standalone saml_cert -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/saml_response.js -o public/js/saml_response.js --debug --standalone saml_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/wstrust_tools.js -o public/js/wstrust_tools.js --debug --standalone wstrust_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/wstrust_response.js -o public/js/wstrust_response.js --debug --standalone wstrust_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----
@@ -88,7 +90,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_tools:saml_tools" "saml_cert:saml_cert" "saml_response:saml_response"; do \
+      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_tools:saml_tools" "saml_cert:saml_cert" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response"; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

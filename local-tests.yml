@@ -97,6 +97,20 @@ services:
     depends_on:
      keycloak:
         condition: service_healthy
+  sts:
+    container_name: sts
+    hostname: sts
+    image: rcbj/sts
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: sts/Dockerfile
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8081/healthcheck',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   postgres_data:

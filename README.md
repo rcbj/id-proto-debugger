@@ -23,6 +23,7 @@ This project currently supports the following specs & features:
 * [OAuth2 Token Revocation - RFC7009](https://www.rfc-editor.org/info/rfc7009/)
 * [OIDC Dynamic Client Registration spec and RFC 7591 / RFC 7592)](https://www.rfc-editor.org/info/rfc7591/)
 * [SAML2](https://www.oasis-open.org/standard/saml/)
+* [WS-Trust 1.0–1.4](https://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html) -- Issue / Renew / Validate / Cancel against an STS, selectable protocol version (1.0/1.1/1.2 pre-OASIS, 1.3/1.4 OASIS ws-sx), with WS-Security (UsernameToken / SAML token), WS-Addressing, and optional XML Signature / XML Encryption. See the WS-Trust Test Tools section below.
 * [XML Signature](https://www.w3.org/TR/xmldsig-core/)
 * [XML Encryption](https://www.w3.org/TR/xmlenc-core1/)
 * [Base64 Encoding](https://www.rfc-editor.org/info/rfc4648/)
@@ -514,6 +515,37 @@ An optional password encrypts the private material: PBES2 for PEM/DER (RSA), a P
 * **Interoperability** — standard combinations (RSA/ECDSA with SHA-2/SHA-3, EdDSA, HMAC/KMAC) verify against other tools; exotic ones (RIPEMD-160, BLAKE2b, BLAKE3, keyed-BLAKE MACs, some curve+hash pairings) may not be accepted elsewhere, as they go beyond the JOSE/PKIX registries.
 * **Not offered** (no maintained pure-JS/CJS support): Falcon/FN-DSA, finite-field DSA, Brainpool curves, SM2, GOST (signatures); UMAC, VMAC, PMAC (MACs).
 * **No persistence** — keys, signatures, and MACs live only in the page for the current session.
+
+## WS-Trust Test Tools
+Drive a [WS-Trust 1.4](https://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html) exchange against a Security Token Service (STS). Chosen from the landing page (the **WS-Trust Debugger** card), it builds a SOAP `RequestSecurityToken` (RST) in the browser, sends it to an STS, and shows the `RequestSecurityTokenResponse` (RSTR) on a dedicated response page. It is modeled on the SAML Test Tools workflow and reuses the same in-browser XML Signature / XML Encryption engine.
+
+### Operations
+All four WS-Trust operations are supported (via `wst:RequestType` + the matching `wsa:Action`):
+* **Issue** — request a new token for a relying party (`wsp:AppliesTo`).
+* **Renew** — renew an existing token (`wst:RenewTarget`).
+* **Validate** — validate a token; the response carries `wst:Status`/`wst:Code` (`.../status/valid` or `.../status/invalid`).
+* **Cancel** — cancel a token; the response carries `wst:RequestedTokenCancelled`.
+
+Renew, Validate, and Cancel act on an existing token pasted into the **Target Token** field (e.g. the assertion from a prior Issue).
+
+### Protocol versions
+A **WS-Trust Version** selector (1.0 / 1.1 / 1.2 / 1.3 / 1.4) sets the trust namespace used to build the request — `http://schemas.xmlsoap.org/ws/2004/04/trust` (1.0), `http://schemas.xmlsoap.org/ws/2005/02/trust` (1.1/1.2), or `http://docs.oasis-open.org/ws-sx/ws-trust/200512` (1.3/1.4) — and gates the version-specific options: the **Bearer** key type appears only for 1.3+ (1.0–1.2 offer SymmetricKey / PublicKey), and **ActAs** delegation appears only for 1.4. Options that do not apply to the selected version are hidden.
+
+### Configuration (wstrust_tools.html)
+* **STS Endpoint** — the STS URL and the SOAP version (1.1 or 1.2).
+* **WS-Trust Version** — the protocol version (see above).
+* **Request Parameters** — operation, requested `wst:TokenType` (SAML 2.0, SAML 1.1, JWT, UsernameToken, Status), `wst:KeyType` (Bearer / SymmetricKey / PublicKey) and key size, `wsp:AppliesTo`, `wst:Lifetime`, requested `wst:Claims`, and delegation via `wst:OnBehalfOf` / `wst14:ActAs` (WS-Trust 1.4).
+* **Credentials / WS-Security** — a `wsse:Security` header with an optional `wsu:Timestamp` and a credential: a `wsse:UsernameToken` (PasswordText or PasswordDigest) or a **SAML token** (import the assertion from the SAML workflow, or paste one).
+* **Message Protection** — optionally sign the request (a WS-Security enveloped XML digital signature over the SOAP Body and, optionally, the Timestamp; RSA-SHA1/256/384/512) and/or encrypt the request body (W3C XML Encryption) — the same options as the SAML AuthnRequest.
+* **WS-Addressing** — `wsa:Action` (auto-derived from the operation), `wsa:To`, `wsa:MessageID`, `wsa:ReplyTo`, `wsa:From`.
+* **Routing** — a radio to originate the STS call from the **frontend** (browser) or the **backend** (the API proxy `POST /wstrust`), exactly like the OAuth2 token call. A SOAP STS rarely permits cross-origin browser calls (CORS), so backend routing is the reliable path. On the static (backend-less) build the backend option is disabled.
+
+### Response (wstrust_response.html)
+* **Exchange** pane — the SOAP request (RST) as pretty-printed XML, the full response (RSTR) as pretty-printed XML, and a **Fields** tab with the important values (operation, response `wsa:Action`, token type, key type, lifetime, AppliesTo, and — for Validate/Cancel — the status / cancelled marker).
+* **Issued Token** pane — the security token extracted from `wst:RequestedSecurityToken`, as XML and (for a SAML assertion or a JWT) decoded details including the signer certificate. Two in-browser options act on the token: **Validate Signature** verifies the enveloped XML digital signature on the assertion (reference digests + `SignatureValue`) using the certificate in `KeyInfo`; **Decrypt** decrypts an encrypted token — a `<xenc:EncryptedData>` / `<saml:EncryptedAssertion>` in the RSTR (or a message-level EncryptedData) — with the requestor private key. The SAML Response page (`saml_response.html`) offers the same Validate Signature / Decrypt options for the SAML assertion. Both reuse the shared XML-DSIG / XML-Encryption engine (`client/src/xmldsig.js`).
+
+### STS for testing
+The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite this repository also ships a small **WS-Trust STS mock** (`sts/`) that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. When no STS is reachable (the deployed static site), the WS-Trust tests skip rather than fail.
 
 ## Version History
 * v0.1 - Red Hat SSO support including all OAuth2 Grants and OIDC Authorization Code Flow

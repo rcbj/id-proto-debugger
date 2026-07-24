@@ -1,0 +1,20 @@
+{
+  "name": "wstrust-sts-mock",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lightweight WS-Trust 1.4 STS mock (Issue/Renew/Validate/Cancel) used to exercise the OAuth2/OIDC Debugger's WS-Trust workflow in the test suite. Not a production STS.",
+  "author": "Robert C. Broeckelmann Jr.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "^0.9.8",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.5",
+    "express": "^4.22.2",
+    "jsonwebtoken": "^9.0.2",
+    "node-forge": "^1.3.1",
+    "xml-crypto": "^6.0.0"
+  }
+}

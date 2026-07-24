@@ -45,6 +45,10 @@ init()
   # SAML: must match the client bundle's baked env (client/src/env/local.js).
   API_BASE_URL=http://localhost:4000
   SAML_SP_ENTITY_ID=http://localhost:3000/saml/sp
+  # WS-Trust STS (mock) on the host (local-tests.yml, host networking). Must match
+  # the client bundle's baked wstrustStsUrlDefault (local.js).
+  WSTRUST_STS_URL=http://localhost:8081/sts
+  export WSTRUST_STS_URL
   CONFIG_FILE=./env/local.js
   CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
   # SP signing cert (base64 DER) registered on the Keycloak SAML client so it can

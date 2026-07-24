@@ -56,6 +56,8 @@ const BUNDLES = [
   ['saml_tools', 'saml_tools'],
   ['saml_cert', 'saml_cert'],
   ['saml_response', 'saml_response'],
+  ['wstrust_tools', 'wstrust_tools'],
+  ['wstrust_response', 'wstrust_response'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>

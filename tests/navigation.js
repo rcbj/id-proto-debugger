@@ -14,6 +14,7 @@ var waitTime = appconfig.waitTime;
 // Landing page: the two protocol-choice cards.
 var OAUTH2_CARD = By.css('a.landing-card[href="/debugger.html"]');
 var SAML_CARD = By.css('a.landing-card[href="/saml_tools.html"]');
+var WSTRUST_CARD = By.css('a.landing-card[href="/wstrust_tools.html"]');
 var CHOICES = By.css('.landing-choices');
 // The header "Home" nav link (returns to the landing page).
 var HOME_LINK = By.css('.header_debugger a[href="/index.html"]');
@@ -58,6 +59,19 @@ async function navigationActivities(driver) {
   log.info("Landed on saml_tools.html.");
 
   // 5. Return to Home -> landing page.
+  log.info("Click Home -> landing page.");
+  await click(driver, HOME_LINK);
+  await waitVisible(driver, CHOICES);
+  log.info("Back on the landing page.");
+
+  // 6. Choose the WS-Trust debugger -> wstrust_tools.html.
+  log.info("Click the WS-Trust debugger card.");
+  await click(driver, WSTRUST_CARD);
+  await driver.wait(until.urlContains("wstrust_tools.html"), waitTime);
+  await driver.wait(until.elementLocated(By.id("wst_sts_url")), waitTime);
+  log.info("Landed on wstrust_tools.html.");
+
+  // 7. Return to Home -> landing page.
   log.info("Click Home -> landing page.");
   await click(driver, HOME_LINK);
   await waitVisible(driver, CHOICES);

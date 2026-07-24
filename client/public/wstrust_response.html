@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — WS-Trust Response</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/saml_tools.css" rel="stylesheet">
+    <link href="/css/wstrust_tools.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/wstrust_response.js">
+</script>
+
+<p class="saml-return"><a id="return_link" href="/wstrust_tools.html">&larr; Return to WS-Trust Test Tools</a></p>
+
+<p class="saml-intro">The WS-Trust exchange with the STS. The <strong>Exchange</strong> pane shows the SOAP <code>RequestSecurityToken</code> that was sent, the full <code>RequestSecurityTokenResponse</code> reply, and the important WS-Trust fields. The <strong>Issued Token</strong> pane shows the security token extracted from <code>wst:RequestedSecurityToken</code>, as XML and (for SAML/JWT) decoded details.</p>
+
+<input class="saml-status" type="text" id="wst_resp_status" name="wst_resp_status" readonly />
+
+<fieldset class="saml-pane">
+  <legend>Exchange</legend>
+  <div class="saml-tab">
+    <button id="tab_req_btn" class="tablinks active" onclick="return wstrust_response.showTab(event, 'tab_req');">Request (RST)</button>
+    <button id="tab_resp_btn" class="tablinks" onclick="return wstrust_response.showTab(event, 'tab_resp');">Response (RSTR)</button>
+    <button id="tab_fields_btn" class="tablinks" onclick="return wstrust_response.showTab(event, 'tab_fields');">Fields</button>
+  </div>
+  <div id="tab_req" class="saml-tabcontent" style="display:block;">
+    <div class="saml-field">
+      <label class="saml-has-copy">Request (SOAP RST) <button type="button" class="saml-copy" onclick="return wstrust_response.copyField('wst_request_xml');">Copy</button></label>
+      <textarea rows="16" id="wst_request_xml" name="wst_request_xml" readonly></textarea>
+    </div>
+  </div>
+  <div id="tab_resp" class="saml-tabcontent">
+    <div class="saml-field">
+      <label class="saml-has-copy">Response (SOAP RSTR) <button type="button" class="saml-copy" onclick="return wstrust_response.copyField('wst_response_xml');">Copy</button></label>
+      <textarea rows="16" id="wst_response_xml" name="wst_response_xml" readonly></textarea>
+    </div>
+  </div>
+  <div id="tab_fields" class="saml-tabcontent">
+    <div id="wst_fields_table">&nbsp;</div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane">
+  <legend>Issued Token</legend>
+  <div class="saml-tab">
+    <button id="tab_token_xml_btn" class="tablinks active" onclick="return wstrust_response.showTab(event, 'tab_token_xml');">Token XML</button>
+    <button id="tab_token_details_btn" class="tablinks" onclick="return wstrust_response.showTab(event, 'tab_token_details');">Token Details</button>
+  </div>
+  <div id="tab_token_xml" class="saml-tabcontent" style="display:block;">
+    <div class="saml-field">
+      <label class="saml-has-copy">Extracted Token <button type="button" class="saml-copy" onclick="return wstrust_response.copyField('wst_token_xml');">Copy</button></label>
+      <textarea rows="14" id="wst_token_xml" name="wst_token_xml" readonly></textarea>
+    </div>
+  </div>
+  <div id="tab_token_details" class="saml-tabcontent">
+    <div id="wst_token_details">&nbsp;</div>
+  </div>
+  <div class="saml-row" style="margin-top:8px;">
+    <input type="button" class="saml-btn" value="Validate Signature" onclick="return wstrust_response.validateTokenSignature();" title="Verify the enveloped XML digital signature on the issued SAML assertion (reference digests + SignatureValue) using the certificate in the signature's KeyInfo." />
+    <input class="saml-status saml-grow" type="text" id="wst_sig_status" readonly />
+  </div>
+  <div id="wst_sig_details"></div>
+
+  <div class="saml-sub">
+    <div class="saml-sub-title">Decrypt (EncryptedData / EncryptedAssertion)</div>
+    <p class="saml-note">If the STS returns an encrypted token (a <code>&lt;xenc:EncryptedData&gt;</code> / <code>&lt;saml:EncryptedAssertion&gt;</code> in the RSTR, or a message-level EncryptedData), decrypt it in the browser with the requestor private key. Prefilled from the signing key on the WS-Trust Test Tools page.</p>
+    <div class="saml-field">
+      <label class="saml-has-copy" title="Requestor private key (PKCS#8 PEM).">Decryption Key <button type="button" class="saml-copy" onclick="return wstrust_response.copyField('wst_dec_key');">Copy</button></label>
+      <textarea rows="3" id="wst_dec_key" name="wst_dec_key"></textarea>
+    </div>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Decrypt" onclick="return wstrust_response.decryptToken();" title="Decrypt the EncryptedData / EncryptedAssertion in the response and show the plaintext token." />
+      <input class="saml-status saml-grow" type="text" id="wst_dec_status" readonly />
+    </div>
+  </div>
+</fieldset>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

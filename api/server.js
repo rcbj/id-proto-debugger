@@ -493,6 +493,71 @@ app.get('/samlresponse', function (req, res) {
   res.json({ responseXml: ex.responseXml, relayState: ex.relayState });
 });
 
+// ---------------------------------------------------------------------------
+// WS-Trust STS SOAP proxy.
+//
+// The WS-Trust workflow builds a SOAP RequestSecurityToken (RST) in the browser
+// and can send it to the STS one of two ways (a radio, like the OAuth2 token
+// call): directly from the browser, or through this backend proxy. The proxy
+// path exists because a SOAP STS endpoint almost never sends the CORS headers a
+// cross-origin browser fetch requires — the same reason the token call is
+// proxied. It also allows disabling TLS validation for a self-signed STS in dev.
+//
+// The browser posts { url, soap, soapVersion, action, sslValidate }; the proxy
+// forwards the SOAP body with the correct content-type/SOAPAction for the SOAP
+// version and returns { status, body } (the raw RSTR envelope) for the client to
+// render. Like the token / metadata proxies, it POSTs to a caller-supplied URL,
+// so it is a dev/debugger-only tool (SSRF by design) — do not expose publicly.
+// ---------------------------------------------------------------------------
+/**
+ * Proxy a WS-Trust RequestSecurityToken to an STS (dodges CORS).
+ * @route POST /wstrust
+ * @group WS-Trust - WS-Trust support operations
+ * @returns {object} 200 - { status, body } from the STS
+ * @returns {Error.model} 400 - Missing url/soap
+ * @returns {Error.model} 500 - STS call error
+ */
+app.post('/wstrust', function (req, res) {
+  log.debug('Entering POST /wstrust.');
+  var b = req.body || {};
+  var url = b.url;
+  var soap = b.soap;
+  var soapVersion = String(b.soapVersion || '1.2');
+  var action = b.action || '';
+  // Default to validating TLS; only skip it when the caller explicitly opts out.
+  var sslValidate = (b.sslValidate === false || b.sslValidate === 'false') ? false : true;
+  if (!url || !soap) {
+    return res.status(STATUS_400).json({ error: 'url and soap are required.' });
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    return res.status(STATUS_400).json({ error: 'url must be an absolute http(s) URL.' });
+  }
+  // SOAP 1.2 carries the action inside the content-type; SOAP 1.1 uses a separate
+  // SOAPAction header with a text/xml body.
+  var headers;
+  if (soapVersion === '1.1') {
+    headers = { 'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '"' + action + '"' };
+  } else {
+    headers = { 'Content-Type': 'application/soap+xml; charset=utf-8' + (action ? ('; action="' + action + '"') : '') };
+  }
+  axios.post(url, soap, {
+    responseType: 'text',
+    transformResponse: [function (d) { return d; }],
+    // The STS may return a SOAP Fault with a 4xx/5xx status; capture the body
+    // rather than throwing so the client can display the fault.
+    validateStatus: function () { return true; },
+    httpsAgent: new (require('https').Agent)({ rejectUnauthorized: sslValidate }),
+    headers: headers
+  })
+  .then(function (response) {
+    res.status(STATUS_200).json({ status: response.status, body: String(response.data == null ? '' : response.data) });
+  })
+  .catch(function (error) {
+    log.error('wstrust proxy error to ' + url + ': ' + (error && error.stack ? error.stack : error));
+    res.status(STATUS_500).json({ error: 'STS call failed: ' + (error && error.message ? error.message : String(error)) });
+  });
+});
+
 /**
  * @typedef TokenRequest
  * @property {string} grant_type.required - The OAuth2 / OIDC Grant / Flow Type

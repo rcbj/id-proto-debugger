@@ -21,7 +21,10 @@ var config = {
   spEntityId: "https://idptools.com/saml/sp",
   acsUrl: "https://idptools.com/samlacs",
   sloUrl: "https://idptools.com/samlslo",
-  samlMetadataUrlDefault: ""
+  samlMetadataUrlDefault: "",
+  // WS-Trust STS: no STS is bundled with the static deployment, so this is blank
+  // (the user supplies an STS URL). The backend routing option is disabled here.
+  wstrustStsUrlDefault: ""
 };
 
 module.exports = config;

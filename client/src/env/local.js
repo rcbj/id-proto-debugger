@@ -10,7 +10,9 @@ var config = {
   spEntityId: "http://localhost:3000/saml/sp",
   acsUrl: "http://localhost:4000/samlacs",
   sloUrl: "http://localhost:4000/samlslo",
-  samlMetadataUrlDefault: "http://localhost:8080/realms/debugger-testing/protocol/saml/descriptor"
+  samlMetadataUrlDefault: "http://localhost:8080/realms/debugger-testing/protocol/saml/descriptor",
+  // Default WS-Trust STS endpoint (the mock STS service on :8081).
+  wstrustStsUrlDefault: "http://localhost:8081/sts"
 };
 
 module.exports = config;

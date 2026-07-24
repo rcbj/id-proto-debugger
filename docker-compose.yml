@@ -19,8 +19,16 @@ services:
       - CONFIG_FILE=./env/local.js
     build:
       context: .
-      dockerfile: ./client/Dockerfile 
+      dockerfile: ./client/Dockerfile
       args:
         CONFIG_FILE: ${CONFIG_FILE}
     ports:
       - "3000:3000"
+  sts:
+    container_name: sts
+    image: rcbj/sts
+    build:
+      context: .
+      dockerfile: ./sts/Dockerfile
+    ports:
+      - "8081:8081"

@@ -78,6 +78,9 @@ init()
       API_BASE_URL="${API_BASE_URL:-http://localhost:4000}"
       SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://localhost:3000/saml/sp}"
       SAML_BACKEND_AVAILABLE="${SAML_BACKEND_AVAILABLE:-true}"
+      # WS-Trust STS (mock) started on the host (keycloak-tests.yml). A local dev
+      # site has the api backend, so the WS-Trust jobs can run here.
+      WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://localhost:8081/sts}"
       ;;
     *)
       API_BASE_URL="${API_BASE_URL:-${DEBUGGER_BASE_URL}}"
@@ -85,6 +88,9 @@ init()
       SAML_ACS_URL="${SAML_ACS_URL:-${DEBUGGER_BASE_URL}/saml_response.html}"
       SAML_SLO_URL="${SAML_SLO_URL:-${DEBUGGER_BASE_URL}/saml_response.html}"
       SAML_BACKEND_AVAILABLE="${SAML_BACKEND_AVAILABLE:-false}"
+      # A deployed static site has no api proxy and no STS; leave WSTRUST_STS_URL
+      # unset so run-report.js skips the WS-Trust jobs (as it does the SAML
+      # Artifact job) rather than failing.
       ;;
   esac
 
@@ -98,6 +104,9 @@ init()
   # Only exported when set (backendless targets); otherwise common.sh derives them.
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL
+  # Only set for local-dev targets (see above); unset for deployed sites so the
+  # WS-Trust jobs skip.
+  [ -n "${WSTRUST_STS_URL:-}" ] && export WSTRUST_STS_URL
 
   # The target is a deployed HTTPS site with no API proxy: the browser can't fetch
   # the local http Keycloak descriptor cross-origin (CORS). Have common.sh's

@@ -10,7 +10,10 @@ var config = {
   spEntityId: "http://client:3000/saml/sp",
   acsUrl: "http://api:4000/samlacs",
   sloUrl: "http://api:4000/samlslo",
-  samlMetadataUrlDefault: "http://keycloak:8080/realms/debugger-testing/protocol/saml/descriptor"
+  samlMetadataUrlDefault: "http://keycloak:8080/realms/debugger-testing/protocol/saml/descriptor",
+  // Default WS-Trust STS endpoint (the mock STS service, reachable by its
+  // compose DNS name inside the test network).
+  wstrustStsUrlDefault: "http://sts:8081/sts"
 };
 
 module.exports = config;

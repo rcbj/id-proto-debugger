@@ -24,6 +24,10 @@ init()
   # SAML: must match the client bundle's baked env (service DNS names).
   API_BASE_URL="${API_BASE_URL:-http://api:4000}"
   SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://client:3000/saml/sp}"
+  # WS-Trust STS (mock) reachable by its compose DNS name on the test network.
+  # Must match the client bundle's baked wstrustStsUrlDefault (docker-tests.js).
+  WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://sts:8081/sts}"
+  export WSTRUST_STS_URL
   CONFIG_FILE="${CONFIG_FILE:-./env/local.js}"
   CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
   # SP signing cert (base64 DER) registered on the Keycloak SAML client so it can

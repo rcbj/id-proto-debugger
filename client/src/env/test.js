@@ -10,7 +10,8 @@ var config = {
   spEntityId: "https://tools.test.idptools.io/saml/sp",
   acsUrl: "https://api.tools.test.idptools.io/samlacs",
   sloUrl: "https://api.tools.test.idptools.io/samlslo",
-  samlMetadataUrlDefault: ""
+  samlMetadataUrlDefault: "",
+  wstrustStsUrlDefault: ""
 }
 
 module.exports = config;

@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — WS-Trust Test Tools</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/saml_tools.css" rel="stylesheet">
+    <link href="/css/wstrust_tools.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/wstrust_tools.js">
+</script>
+
+<p class="saml-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<p class="saml-intro">Drive a <strong>WS-Trust 1.4</strong> exchange against a Security Token Service (STS). Build a SOAP <code>RequestSecurityToken</code> (RST) for the <strong>Issue</strong>, <strong>Renew</strong>, <strong>Validate</strong>, or <strong>Cancel</strong> operation, authenticate with a WS-Security <code>UsernameToken</code> or a SAML token, optionally sign and/or encrypt the request, add WS-Addressing headers, and send it. The STS <code>RequestSecurityTokenResponse</code> (RSTR) is shown on the <a href="/wstrust_response.html">WS-Trust Response</a> page.</p>
+
+<p id="wst_backend_notice" class="saml-notice saml-hidden">This is the static (backend-less) deployment. There is no API proxy, so the STS call must be made <strong>directly from the browser</strong> (the backend routing option is disabled below). A cross-origin SOAP STS commonly blocks direct browser calls (CORS); an STS that returns permissive CORS headers, or one on the same origin, is required here. Building, signing, and encrypting the request all run entirely in the browser.</p>
+
+<p class="saml-controls">
+  <label class="saml-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="wst_toggle_all" checked="checked" onchange="wstrustSetAllPanes(this.checked);" />
+    <span class="saml-toggle-slider"></span>
+    <span class="saml-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="saml-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function wstrustSetAllPanes(expand) {
+  var bodies = ['pane_sts_body', 'pane_request_body'];
+  for (var i = 0; i < bodies.length; i++) {
+    var b = document.getElementById(bodies[i]);
+    if (b) b.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.saml-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<div class="saml-cols">
+
+  <!-- ===================== Pane 1: STS Endpoint ===================== -->
+  <fieldset class="saml-pane" id="pane_sts">
+    <legend class="saml-legend" onclick="return wstrust_tools.togglePane('pane_sts_body');">STS Endpoint</legend>
+    <div class="saml-pane-body" id="pane_sts_body">
+      <div class="saml-field">
+        <label class="saml-has-copy" title="The WS-Trust Security Token Service endpoint URL.">STS URL <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_sts_url');">Copy</button></label>
+        <input class="stored" type="text" id="wst_sts_url" name="wst_sts_url" title="e.g. http://localhost:8081/sts" />
+      </div>
+      <div class="saml-field">
+        <label for="wst_soap_version" title="SOAP version of the envelope. SOAP 1.2 uses application/soap+xml with the action in the content-type; SOAP 1.1 uses text/xml with a SOAPAction header.">SOAP Version</label>
+        <select class="stored" id="wst_soap_version" name="wst_soap_version">
+          <option value="1.2" selected="selected">SOAP 1.2</option>
+          <option value="1.1">SOAP 1.1</option>
+        </select>
+      </div>
+      <input class="saml-status" type="text" id="wst_sts_status" name="wst_sts_status" readonly />
+    </div>
+  </fieldset>
+
+  <!-- ===================== Pane 2: Request (combined) ===================== -->
+  <fieldset class="saml-pane" id="pane_request">
+    <legend class="saml-legend" onclick="return wstrust_tools.togglePane('pane_request_body');">Request</legend>
+    <div class="saml-pane-body" id="pane_request_body">
+
+      <!-- ----- Request Parameters ----- -->
+      <div class="saml-field">
+        <label for="wst_trust_version" title="WS-Trust protocol version. Sets the trust namespace and which options apply: Bearer key type is WS-Trust 1.3+, ActAs delegation is WS-Trust 1.4.">WS-Trust Version</label>
+        <select class="stored" id="wst_trust_version" name="wst_trust_version" onchange="return wstrust_tools.onVersionChange();">
+          <option value="1.0">WS-Trust 1.0 (ws/2004/04/trust)</option>
+          <option value="1.1">WS-Trust 1.1 (ws/2005/02/trust)</option>
+          <option value="1.2">WS-Trust 1.2 (ws/2005/02/trust)</option>
+          <option value="1.3">WS-Trust 1.3 (ws-sx 200512)</option>
+          <option value="1.4" selected="selected">WS-Trust 1.4 (ws-sx 200512)</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="wst_operation" title="WS-Trust operation (RequestType).">Operation</label>
+        <select class="stored" id="wst_operation" name="wst_operation" onchange="return wstrust_tools.onOperationChange();">
+          <option value="issue" selected="selected">Issue</option>
+          <option value="renew">Renew</option>
+          <option value="validate">Validate</option>
+          <option value="cancel">Cancel</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="wst_token_type" title="Requested token type (wst:TokenType).">Token Type</label>
+        <select class="stored" id="wst_token_type" name="wst_token_type">
+          <option value="saml2" selected="selected">SAML 2.0</option>
+          <option value="saml11">SAML 1.1</option>
+          <option value="jwt">JWT</option>
+          <option value="usernametoken">UsernameToken</option>
+          <option value="status">Status (RSTR/Status)</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="wst_key_type" title="Requested proof-of-possession key type (wst:KeyType).">Key Type</label>
+        <select class="stored" id="wst_key_type" name="wst_key_type">
+          <option value="bearer" selected="selected">Bearer</option>
+          <option value="symmetric">SymmetricKey</option>
+          <option value="public">PublicKey</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="wst_key_size" title="Symmetric key size in bits (only sent for KeyType=SymmetricKey).">Key Size (symmetric)</label>
+        <input class="stored" type="text" id="wst_key_size" name="wst_key_size" value="256" />
+      </div>
+      <div class="saml-field">
+        <label for="wst_applies_to" title="Relying-party endpoint the token is for (wsp:AppliesTo / EndpointReference/Address).">AppliesTo (RP endpoint)</label>
+        <input class="stored" type="text" id="wst_applies_to" name="wst_applies_to" value="urn:wstrust:test:rp" />
+      </div>
+      <div class="saml-field">
+        <label for="wst_lifetime_minutes" title="Requested token lifetime in minutes (wst:Lifetime Created/Expires). 0 = omit.">Lifetime (minutes)</label>
+        <input class="stored" type="text" id="wst_lifetime_minutes" name="wst_lifetime_minutes" value="60" />
+      </div>
+      <div class="saml-field">
+        <label for="wst_claims" title="Optional requested claim type URIs (one per line or comma-separated), sent as wst:Claims.">Requested Claims (optional)</label>
+        <textarea class="stored" rows="4" id="wst_claims" name="wst_claims" placeholder="http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress">http://schemas.xmlsoap.org/ws/2005/05/identity/claims/name
+http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress
+http://schemas.xmlsoap.org/ws/2005/05/identity/claims/givenname
+http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname</textarea>
+      </div>
+
+      <div class="saml-field saml-check">
+        <input class="stored" type="checkbox" id="wst_use_onbehalfof" name="wst_use_onbehalfof" onchange="return wstrust_tools.onOnBehalfOfChange();" />
+        <label for="wst_use_onbehalfof" title="Include a wst:OnBehalfOf token (delegation).">OnBehalfOf (delegation)</label>
+      </div>
+      <div class="saml-field" id="wst_onbehalfof_row">
+        <label title="Token XML placed inside wst:OnBehalfOf.">OnBehalfOf token</label>
+        <textarea class="stored" rows="3" id="wst_onbehalfof" name="wst_onbehalfof" placeholder="paste a token (e.g. a SAML assertion) or a SecurityTokenReference"></textarea>
+      </div>
+      <div class="saml-field saml-check" id="wst_actas_check_row">
+        <input class="stored" type="checkbox" id="wst_use_actas" name="wst_use_actas" onchange="return wstrust_tools.onActAsChange();" />
+        <label for="wst_use_actas" title="Include a wst14:ActAs token (WS-Trust 1.4 composite delegation).">ActAs (WS-Trust 1.4)</label>
+      </div>
+      <div class="saml-field" id="wst_actas_row">
+        <label title="Token XML placed inside wst14:ActAs.">ActAs token</label>
+        <textarea class="stored" rows="3" id="wst_actas" name="wst_actas" placeholder="paste a token (e.g. a SAML assertion)"></textarea>
+      </div>
+
+      <div class="saml-sub" id="wst_target_section">
+        <div class="saml-sub-title">Target Token (Renew / Validate / Cancel)</div>
+        <p class="saml-note">Renew, Validate, and Cancel act on an existing token. Paste the token here (e.g. the assertion from a prior <strong>Issue</strong> — the WS-Trust Response page's Token tab). It is placed inside <code>wst:RenewTarget</code> / <code>wst:ValidateTarget</code> / <code>wst:CancelTarget</code>.</p>
+        <div class="saml-field">
+          <label class="saml-has-copy" title="The existing token to renew/validate/cancel.">Target Token <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_target_token');">Copy</button></label>
+          <textarea class="stored" rows="5" id="wst_target_token" name="wst_target_token"></textarea>
+        </div>
+      </div>
+
+      <input class="saml-status" type="text" id="wst_config_status" name="wst_config_status" readonly />
+
+      <!-- ----- Credentials / WS-Security ----- -->
+      <div class="saml-sub">
+        <div class="saml-sub-title">Credentials / WS-Security</div>
+        <div class="saml-field saml-check">
+          <input class="stored" type="checkbox" id="wst_add_timestamp" name="wst_add_timestamp" checked="checked" onchange="return wstrust_tools.buildRequestUi();" />
+          <label for="wst_add_timestamp" title="Add a wsu:Timestamp to the WS-Security header.">Add wsu:Timestamp</label>
+        </div>
+        <div class="saml-field">
+          <label for="wst_cred_mode" title="Credential presented in the WS-Security header.">Credential</label>
+          <select class="stored" id="wst_cred_mode" name="wst_cred_mode" onchange="return wstrust_tools.onCredModeChange();">
+            <option value="usernametoken" selected="selected">UsernameToken</option>
+            <option value="saml">SAML token</option>
+            <option value="none">None</option>
+          </select>
+        </div>
+
+        <div class="saml-sub" id="wst_ut_section">
+          <div class="saml-sub-title">UsernameToken</div>
+          <div class="saml-field">
+            <label for="wst_username">Username</label>
+            <input class="stored" type="text" id="wst_username" name="wst_username" value="wstrust" />
+          </div>
+          <div class="saml-field">
+            <label for="wst_password">Password</label>
+            <input type="password" id="wst_password" name="wst_password" value="wstrust" />
+          </div>
+          <div class="saml-field">
+            <label for="wst_password_type" title="PasswordText sends the password as-is; PasswordDigest sends Base64(SHA1(nonce+created+password)).">Password Type</label>
+            <select class="stored" id="wst_password_type" name="wst_password_type">
+              <option value="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText" selected="selected">PasswordText</option>
+              <option value="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest">PasswordDigest</option>
+            </select>
+          </div>
+          <p class="saml-note">The password is intentionally <strong>not</strong> persisted to localStorage.</p>
+        </div>
+
+        <div class="saml-sub" id="wst_samltoken_section">
+          <div class="saml-sub-title">SAML token</div>
+          <div class="saml-row">
+            <input type="button" class="saml-btn" value="Import from SAML workflow" onclick="return wstrust_tools.importSamlAssertion();" title="Load the assertion from the last SAML SSO response (SAML Debugger)." />
+          </div>
+          <div class="saml-field">
+            <label class="saml-has-copy" title="A SAML assertion presented as the WS-Security credential. Import it from the SAML workflow or paste it here.">SAML assertion <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_saml_token');">Copy</button></label>
+            <textarea class="stored" rows="6" id="wst_saml_token" name="wst_saml_token" placeholder="paste a SAML assertion, or use Import from SAML workflow"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- ----- Message Protection ----- -->
+      <div class="saml-sub">
+        <div class="saml-sub-title">Message Protection</div>
+        <div class="saml-field saml-check">
+          <input class="stored" type="checkbox" id="wst_sign_request" name="wst_sign_request" onchange="return wstrust_tools.onSignChange();" />
+          <label for="wst_sign_request" title="Sign the SOAP Body (and optionally the Timestamp) with a WS-Security XML digital signature.">Digitally sign the request</label>
+        </div>
+        <div class="saml-sub" id="wst_signing_section">
+          <div class="saml-sub-title">Signing Key Pair (X.509 / RSA)</div>
+          <div class="saml-field saml-check">
+            <input class="stored" type="checkbox" id="wst_sign_timestamp" name="wst_sign_timestamp" checked="checked" onchange="return wstrust_tools.buildRequestUi();" />
+            <label for="wst_sign_timestamp" title="Also sign the wsu:Timestamp (in addition to the SOAP Body).">Also sign the Timestamp</label>
+          </div>
+          <div class="saml-field">
+            <label for="wst_sig_alg" title="XML Signature algorithm (SignatureMethod). The key pair is RSA.">Signature Algorithm</label>
+            <select class="stored" id="wst_sig_alg" name="wst_sig_alg">
+              <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" selected="selected">RSA-SHA256</option>
+              <option value="http://www.w3.org/2000/09/xmldsig#rsa-sha1">RSA-SHA1</option>
+              <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha384">RSA-SHA384</option>
+              <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512">RSA-SHA512</option>
+            </select>
+          </div>
+          <div class="saml-row">
+            <div class="saml-grow">
+              <label for="wst_key_bits" title="RSA modulus size for a generated key pair.">Key Size</label>
+              <select class="stored" id="wst_key_bits" name="wst_key_bits">
+                <option value="2048" selected="selected">2048</option>
+                <option value="3072">3072</option>
+                <option value="4096">4096</option>
+              </select>
+            </div>
+            <input type="button" class="saml-btn" value="Generate Keys" onclick="return wstrust_tools.generateKeys();" title="Generate a fresh RSA key pair + self-signed certificate." />
+            <input type="button" class="saml-btn" value="Download" onclick="return wstrust_tools.downloadKeys();" title="Download the key pair as PEM." />
+          </div>
+          <div class="saml-field">
+            <label class="saml-has-copy" title="Client private signing key (PKCS#8 PEM).">Private Key <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_sp_private_key');">Copy</button></label>
+            <textarea class="stored" rows="4" id="wst_sp_private_key" name="wst_sp_private_key"></textarea>
+          </div>
+          <div class="saml-field">
+            <label class="saml-has-copy" title="Client signing certificate (self-signed X.509 PEM). Carried in the signature KeyInfo.">Certificate <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_sp_cert');">Copy</button></label>
+            <textarea class="stored" rows="4" id="wst_sp_cert" name="wst_sp_cert"></textarea>
+          </div>
+          <div class="saml-row">
+            <a href="/saml_cert.html?from=wstrust_tools.html" onclick="return wstrust_tools.viewCertificate('wst_sp_cert');" title="Show full details of the signing certificate.">View certificate details &rarr;</a>
+          </div>
+        </div>
+
+        <div class="saml-field saml-check">
+          <input class="stored" type="checkbox" id="wst_encrypt_request" name="wst_encrypt_request" onchange="return wstrust_tools.onEncryptChange();" />
+          <label for="wst_encrypt_request" title="Encrypt the SOAP Body content with XML Encryption (applied after signing).">Encrypt the request body</label>
+        </div>
+        <div class="saml-sub" id="wst_encryption_section">
+          <div class="saml-sub-title">Request Body Encryption (XML-Enc)</div>
+          <p class="saml-note"><strong>Note:</strong> most STSes will <em>not</em> process an encrypted request body; this is provided for inspection/education. Encryption is performed in the browser, always <strong>after</strong> any signature (sign-then-encrypt).</p>
+          <div class="saml-field">
+            <label class="saml-has-copy" title="Recipient (STS) certificate whose public key wraps the session key.">Encryption Certificate <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_enc_cert');">Copy</button></label>
+            <textarea class="stored" rows="5" id="wst_enc_cert" name="wst_enc_cert" title="Recipient certificate (PEM or bare base64 DER)."></textarea>
+          </div>
+          <div class="saml-row">
+            <a href="/saml_cert.html?from=wstrust_tools.html" onclick="return wstrust_tools.viewCertificate('wst_enc_cert');" title="Show full details of the encryption certificate.">View certificate details &rarr;</a>
+          </div>
+          <div class="saml-field">
+            <label for="wst_enc_type" title="XML-Enc Type.">Encrypted Type</label>
+            <select class="stored" id="wst_enc_type" name="wst_enc_type">
+              <option value="http://www.w3.org/2001/04/xmlenc#Element" selected="selected">Element (whole RST)</option>
+              <option value="http://www.w3.org/2001/04/xmlenc#Content">Content (children only)</option>
+            </select>
+          </div>
+          <div class="saml-field">
+            <label for="wst_enc_c14n" title="How the target is serialized to octets before encryption.">Canonicalization</label>
+            <select class="stored" id="wst_enc_c14n" name="wst_enc_c14n">
+              <option value="none" selected="selected">None (serialize as-is)</option>
+              <option value="exc-c14n">Exclusive XML Canonicalization 1.0</option>
+              <option value="c14n">Inclusive XML Canonicalization 1.0</option>
+            </select>
+          </div>
+          <div class="saml-field">
+            <label for="wst_enc_data_alg" title="Symmetric block cipher for the element data.">Data Encryption Algorithm</label>
+            <select class="stored" id="wst_enc_data_alg" name="wst_enc_data_alg">
+              <option value="http://www.w3.org/2009/xmlenc11#aes256-gcm" selected="selected">AES-256-GCM</option>
+              <option value="http://www.w3.org/2009/xmlenc11#aes192-gcm">AES-192-GCM</option>
+              <option value="http://www.w3.org/2009/xmlenc11#aes128-gcm">AES-128-GCM</option>
+              <option value="http://www.w3.org/2001/04/xmlenc#aes256-cbc">AES-256-CBC</option>
+              <option value="http://www.w3.org/2001/04/xmlenc#aes192-cbc">AES-192-CBC</option>
+              <option value="http://www.w3.org/2001/04/xmlenc#aes128-cbc">AES-128-CBC</option>
+              <option value="http://www.w3.org/2001/04/xmlenc#tripledes-cbc">Triple DES CBC</option>
+            </select>
+          </div>
+          <div class="saml-field">
+            <label for="wst_enc_key_alg" title="Public-key algorithm that wraps the session key.">Key Transport Algorithm</label>
+            <select class="stored" id="wst_enc_key_alg" name="wst_enc_key_alg">
+              <option value="http://www.w3.org/2009/xmlenc11#rsa-oaep" selected="selected">RSA-OAEP (xmlenc11 — MGF configurable)</option>
+              <option value="http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p">RSA-OAEP-MGF1P (xmlenc — MGF1-SHA1)</option>
+              <option value="http://www.w3.org/2001/04/xmlenc#rsa-1_5">RSA-1_5 (PKCS#1 v1.5)</option>
+            </select>
+          </div>
+          <div class="saml-field">
+            <label for="wst_enc_digest" title="Digest used by RSA-OAEP key transport.">Key Transport Digest (OAEP)</label>
+            <select class="stored" id="wst_enc_digest" name="wst_enc_digest">
+              <option value="http://www.w3.org/2001/04/xmlenc#sha256" selected="selected">SHA-256</option>
+              <option value="http://www.w3.org/2000/09/xmldsig#sha1">SHA-1</option>
+              <option value="http://www.w3.org/2001/04/xmldsig-more#sha384">SHA-384</option>
+              <option value="http://www.w3.org/2001/04/xmlenc#sha512">SHA-512</option>
+            </select>
+          </div>
+          <div class="saml-field">
+            <label for="wst_enc_mgf" title="Mask generation function for RSA-OAEP (xmlenc11 only).">MGF (RSA-OAEP xmlenc11)</label>
+            <select class="stored" id="wst_enc_mgf" name="wst_enc_mgf">
+              <option value="http://www.w3.org/2009/xmlenc11#mgf1sha256" selected="selected">MGF1 with SHA-256</option>
+              <option value="http://www.w3.org/2009/xmlenc11#mgf1sha1">MGF1 with SHA-1</option>
+              <option value="http://www.w3.org/2009/xmlenc11#mgf1sha384">MGF1 with SHA-384</option>
+              <option value="http://www.w3.org/2009/xmlenc11#mgf1sha512">MGF1 with SHA-512</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- ----- WS-Addressing ----- -->
+      <div class="saml-sub">
+        <div class="saml-sub-title">WS-Addressing</div>
+        <div class="saml-field saml-check">
+          <input class="stored" type="checkbox" id="wst_wsa_support" name="wst_wsa_support" checked="checked" onchange="return wstrust_tools.onWsaChange();" />
+          <label for="wst_wsa_support" title="Add WS-Addressing headers (wsa:Action/To/MessageID/ReplyTo/From) to the SOAP header.">Add WS-Addressing headers</label>
+        </div>
+        <div class="saml-sub" id="wst_wsa_section">
+          <div class="saml-field">
+            <label for="wst_wsa_action" title="wsa:Action — auto-derived from the operation (RST/Issue, RST/Renew, …). Edit to override.">wsa:Action</label>
+            <input class="stored" type="text" id="wst_wsa_action" name="wst_wsa_action" />
+          </div>
+          <div class="saml-field">
+            <label for="wst_wsa_to" title="wsa:To — destination endpoint. Defaults to the STS URL.">wsa:To</label>
+            <input class="stored" type="text" id="wst_wsa_to" name="wst_wsa_to" placeholder="(defaults to the STS URL)" />
+          </div>
+          <div class="saml-field">
+            <label for="wst_wsa_messageid" title="wsa:MessageID — a unique message identifier. Auto-generated (urn:uuid:...) if blank.">wsa:MessageID</label>
+            <input class="stored" type="text" id="wst_wsa_messageid" name="wst_wsa_messageid" placeholder="(auto-generated if blank)" />
+          </div>
+          <div class="saml-field">
+            <label for="wst_wsa_replyto" title="wsa:ReplyTo Address. Defaults to the anonymous URI (synchronous response).">wsa:ReplyTo (Address)</label>
+            <input class="stored" type="text" id="wst_wsa_replyto" name="wst_wsa_replyto" placeholder="http://www.w3.org/2005/08/addressing/anonymous" />
+          </div>
+          <div class="saml-field">
+            <label for="wst_wsa_from" title="wsa:From Address (optional).">wsa:From (Address)</label>
+            <input class="stored" type="text" id="wst_wsa_from" name="wst_wsa_from" placeholder="(optional)" />
+          </div>
+        </div>
+      </div>
+
+      <!-- ----- Generated Request &amp; Send ----- -->
+      <div class="saml-sub">
+        <div class="saml-sub-title">Generated Request &amp; Send</div>
+        <div class="saml-field">
+          <label title="Where the STS call originates. The backend proxy (POST /wstrust) avoids CORS; direct browser calls are subject to the STS's CORS policy. Disabled on the static build (no backend).">Initiate STS Call From</label>
+          <span class="wst-radio-group">
+            <label><input type="radio" id="wst_initiateFromFrontEnd" name="wst_initiate" value="front" /> Frontend (browser)</label>
+            <label><input type="radio" id="wst_initiateFromBackEnd" name="wst_initiate" value="back" checked="checked" /> Backend (proxy)</label>
+          </span>
+        </div>
+        <div class="saml-field saml-check">
+          <input class="stored" type="checkbox" id="wst_ssl_validate" name="wst_ssl_validate" checked="checked" />
+          <label for="wst_ssl_validate" title="Validate the STS TLS certificate when calling via the backend proxy. Uncheck for a self-signed STS.">Validate STS TLS certificate (backend)</label>
+        </div>
+
+        <div class="saml-field">
+          <label class="saml-has-copy" title="The SOAP RequestSecurityToken that will be sent — regenerated automatically when a setting changes.">Generated Request <button type="button" class="saml-copy" onclick="return wstrust_tools.copyField('wst_generated_request');">Copy</button></label>
+          <textarea rows="14" id="wst_generated_request" name="wst_generated_request" readonly></textarea>
+        </div>
+
+        <div class="saml-row">
+          <input type="button" class="saml-btn" value="Send Request" onclick="return wstrust_tools.callSts();" title="Send the RequestSecurityToken to the STS and show the response." />
+          <input type="button" class="saml-btn" value="Rebuild" onclick="return wstrust_tools.buildRequestUi();" title="Regenerate the request from the current settings." />
+        </div>
+        <input class="saml-status" type="text" id="wst_call_status" name="wst_call_status" readonly title="Status of the last build/send." />
+      </div>
+
+    </div>
+  </fieldset>
+
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

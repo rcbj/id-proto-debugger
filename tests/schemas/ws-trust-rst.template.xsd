@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  WS-Trust RequestSecurityToken (RST) schema — DERIVED from the official OASIS
+  WS-Trust 1.3 schema (ws-trust-1.3.xsd, namespace ...ws-sx/ws-trust/200512).
+
+  Why derived rather than the verbatim official schema: the official ws-trust
+  schema imports the OASIS WS-Security (wss-secext) and WS-Policy schemas, and
+  libxml2 — the XSD engine behind every Node validator (libxmljs2) — cannot
+  COMPILE those two schemas (a known libxml2 limitation; Xerces/Java can). So
+  the official schema cannot be used as a validator under Node.
+
+  This schema reproduces the official RST content model faithfully: RST is an
+  open (lax) content model, and each wst: child element is declared with the
+  same type the official schema gives it (RequestType/TokenType/KeyType are
+  anyURI, KeySize is unsignedInt, Status has Code+Reason, etc.). Foreign-
+  namespace children (wsp:AppliesTo, the SAML/JWT tokens inside *Target /
+  OnBehalfOf / ActAs, auth:ClaimType) are accepted via lax wildcards exactly as
+  the official schema does. It therefore validates element vocabulary, typing,
+  and structure of the WS-Trust payload the debugger generates.
+
+  {{NS}} is substituted with the selected version's trust namespace
+  (2004/04 for 1.0, 2005/02 for 1.1/1.2, ws-sx/200512 for 1.3/1.4) so the same
+  grammar validates every WS-Trust version.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           xmlns:wst="{{NS}}"
+           targetNamespace="{{NS}}"
+           elementFormDefault="qualified"
+           attributeFormDefault="unqualified">
+
+  <!-- The RST: an open content model (lax), per the official schema. Known
+       wst: children validate against their global declarations below; foreign
+       elements (wsp:AppliesTo, embedded tokens, auth:ClaimType) are lax. -->
+  <xs:element name="RequestSecurityToken" type="wst:RequestSecurityTokenType"/>
+  <xs:complexType name="RequestSecurityTokenType">
+    <xs:sequence>
+      <xs:any namespace="##any" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="Context" type="xs:anyURI" use="optional"/>
+    <xs:anyAttribute namespace="##other" processContents="lax"/>
+  </xs:complexType>
+
+  <!-- Open "wrapper" content model reused by *Target / OnBehalfOf. -->
+  <xs:complexType name="AnyContentType">
+    <xs:sequence>
+      <xs:any namespace="##any" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:anyAttribute namespace="##any" processContents="lax"/>
+  </xs:complexType>
+
+  <xs:element name="RequestType" type="xs:anyURI"/>
+  <xs:element name="TokenType" type="xs:anyURI"/>
+  <xs:element name="KeyType" type="xs:anyURI"/>
+  <xs:element name="KeySize" type="xs:unsignedInt"/>
+
+  <xs:element name="Lifetime" type="wst:AnyContentType"/>
+  <xs:element name="Entropy" type="wst:AnyContentType"/>
+  <xs:element name="BinarySecret">
+    <xs:complexType>
+      <xs:simpleContent>
+        <xs:extension base="xs:base64Binary">
+          <xs:attribute name="Type" type="xs:anyURI" use="optional"/>
+        </xs:extension>
+      </xs:simpleContent>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="Claims">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:any namespace="##any" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="Dialect" type="xs:anyURI" use="optional"/>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="OnBehalfOf" type="wst:AnyContentType"/>
+  <xs:element name="RenewTarget" type="wst:AnyContentType"/>
+  <xs:element name="ValidateTarget" type="wst:AnyContentType"/>
+  <xs:element name="CancelTarget" type="wst:AnyContentType"/>
+
+  <!-- Validate response status (also useful for round-trip checks). -->
+  <xs:element name="Status">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="wst:Code"/>
+        <xs:element ref="wst:Reason" minOccurs="0"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  <xs:element name="Code" type="xs:anyURI"/>
+  <xs:element name="Reason" type="xs:string"/>
+
+</xs:schema>

@@ -97,6 +97,25 @@ services:
       - keycloak
     ports:
       - 3000:3000
+  # WS-Trust STS (mock) for the WS-Trust workflow tests. The browser (in the
+  # tests container) and the api /wstrust proxy reach it by its compose DNS name
+  # sts:8081 — matching env/docker-tests.js wstrustStsUrlDefault.
+  sts:
+    container_name: sts
+    image: rcbj/sts
+    build:
+      context: .
+      dockerfile: sts/Dockerfile
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8081/healthcheck',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - keycloak
+    ports:
+      - 8081:8081
   tests:
     container_name: tests
     image: rcbj/test
@@ -116,6 +135,8 @@ services:
       api:
         condition: service_healthy
       keycloak:
+        condition: service_healthy
+      sts:
         condition: service_healthy
     networks:
      - keycloak
