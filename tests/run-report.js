@@ -345,14 +345,26 @@ function buildJobs() {
   // (POST /wstrust), and asserts the RSTR / issued token / status renders on the
   // response page. Renew/Validate/Cancel first Issue a token to act on.
   //
-  // Skipped when no STS is reachable (WSTRUST_STS_URL unset) — e.g. the deployed
-  // static site, which has no STS and no backend proxy — rather than failing.
+  // Skipped when no STS is reachable (WSTRUST_STS_URL unset) rather than failing.
   // Routing is exercised both ways: "back" sends through the API proxy
   // (POST /wstrust); "front" makes the browser call the STS directly. Issue runs
   // once per route; the other operations use backend routing.
+  //
+  // On a BACKEND-LESS target (the deployed static site: samlBackendAvailable
+  // false) there is no /wstrust proxy — the page disables backend routing and
+  // sends every request from the browser. So rewrite "back" to "front" there
+  // (rather than letting the report claim backend routing it never used) and skip
+  // the one job whose entire subject is backend routing. The live-site stack
+  // supplies a loopback STS the browser can reach; see docker-compose-live-tests.yml.
   var wstrustStsUrl = env.WSTRUST_STS_URL || "";
+  var wstrustSkip = "WS-Trust needs an STS (WSTRUST_STS_URL) — none reachable from this target.";
+  var wstrustNoBackendSkip = "This target has no API proxy (POST /wstrust) — backend routing cannot be exercised; the frontend-routing jobs cover the exchange.";
+  // Effective routing for a job that asks for the backend proxy.
+  var wstrustRoute = function (route) {
+    return (route === "back" && !samlBackendAvailable) ? "front" : route;
+  };
   var wstrustJobs = [
-    { op: "issue", sign: "false", route: "back", label: "Issue (backend routing)" },
+    { op: "issue", sign: "false", route: "back", label: "Issue (backend routing)", backendOnly: true },
     { op: "issue", sign: "false", route: "front", label: "Issue (frontend routing)" },
     { op: "issue", sign: "true", route: "back", label: "Issue (signed, WS-Security XML-DSIG)" },
     { op: "renew", sign: "false", route: "back", label: "Renew" },
@@ -367,11 +379,13 @@ function buildJobs() {
         WSTRUST_STS_URL: wstrustStsUrl,
         WSTRUST_OP: wj.op,
         WSTRUST_SIGN: wj.sign,
-        WSTRUST_ROUTE: wj.route,
+        WSTRUST_ROUTE: wstrustRoute(wj.route),
       },
     };
     if (!wstrustStsUrl) {
-      job.skip = "WS-Trust needs an STS (WSTRUST_STS_URL) — unavailable on this target (e.g. the backend-less static deployment).";
+      job.skip = wstrustSkip;
+    } else if (wj.backendOnly && !samlBackendAvailable) {
+      job.skip = wstrustNoBackendSkip;
     }
     jobs.push(job);
   }
@@ -386,12 +400,12 @@ function buildJobs() {
       WSTRUST_STS_URL: wstrustStsUrl,
       WSTRUST_OP: "issue",
       WSTRUST_SIGN: "true",
-      WSTRUST_ROUTE: "back",
+      WSTRUST_ROUTE: wstrustRoute("back"),
       WSTRUST_ENCRYPT: "true",
     },
   };
   if (!wstrustStsUrl) {
-    encJob.skip = "WS-Trust needs an STS (WSTRUST_STS_URL) — unavailable on this target (e.g. the backend-less static deployment).";
+    encJob.skip = wstrustSkip;
   }
   jobs.push(encJob);
 
@@ -406,12 +420,12 @@ function buildJobs() {
         WSTRUST_STS_URL: wstrustStsUrl,
         WSTRUST_OP: "issue",
         WSTRUST_SIGN: "false",
-        WSTRUST_ROUTE: "back",
+        WSTRUST_ROUTE: wstrustRoute("back"),
         WSTRUST_VERSION: wv,
       },
     };
     if (!wstrustStsUrl) {
-      job.skip = "WS-Trust needs an STS (WSTRUST_STS_URL) — unavailable on this target (e.g. the backend-less static deployment).";
+      job.skip = wstrustSkip;
     }
     jobs.push(job);
   }

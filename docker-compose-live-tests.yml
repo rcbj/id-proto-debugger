@@ -1,8 +1,8 @@
 # Runs the Selenium suite against a DEPLOYED debugger site (default:
-# https://test.idptools.com) while talking to a throwaway Keycloak spun up
-# locally. Same idea as docker-compose-run-tests.yml, but the debugger under
-# test is the hosted site instead of a containerized client — only Keycloak and
-# the test runner are started here.
+# https://test.idptools.com) while talking to a throwaway Keycloak (and WS-Trust
+# STS mock) spun up locally. Same idea as docker-compose-run-tests.yml, but the
+# debugger under test is the hosted site instead of a containerized client — only
+# Keycloak, the STS mock and the test runner are started here.
 #
 # HOST NETWORKING is required (not the bridge network the containerized suite
 # uses): the browser drives the public HTTPS site and must call the local
@@ -14,12 +14,22 @@
 # proves. (No user-defined networks or volumes: host net needs neither, and
 # Keycloak uses in-memory H2 for throwaway test data.)
 #
+# The SAME loopback argument lets the WS-Trust jobs run here: the deployed site
+# is backend-less (no /wstrust proxy), so the browser must call the STS DIRECTLY.
+# A bridge name like "sts:8081" is blocked from an HTTPS page (mixed content), but
+# http://localhost:8081 is a potentially-trustworthy origin, and the mock STS
+# sends permissive CORS + Private-Network-Access headers. Hence the sts service
+# below runs on the host network too.
+#
 # Readiness: instead of a Docker healthcheck (flaky under host networking), the
-# tests container waits for Keycloak itself (run-tests-in-container.sh waitForKeycloak).
+# tests container waits for Keycloak and the STS itself (run-tests-in-container.sh
+# waitForKeycloak / waitForSts).
 #
 # Override the target via the environment:
 #   LIVE_DEBUGGER_BASE_URL (default https://test.idptools.com)
 #   LIVE_CONFIG_FILE        (default ./env/test-idptools-com.js)
+#   LIVE_WSTRUST_STS_URL    (default http://localhost:8081/sts — the mock below;
+#                            set empty to skip the WS-Trust jobs entirely)
 services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.6.4
@@ -33,6 +43,16 @@ services:
       KEYCLOAK_ADMIN: keycloak
       KEYCLOAK_ADMIN_PASSWORD: keycloak
       KC_HEALTH_ENABLED: "true"
+
+  # WS-Trust STS (mock) for the WS-Trust jobs. On the host network so the browser
+  # can reach it at http://localhost:8081 from the deployed HTTPS page (see the
+  # loopback note above) — a bridge DNS name would be mixed-content-blocked.
+  sts:
+    image: rcbj/sts
+    build:
+      context: .
+      dockerfile: sts/Dockerfile
+    network_mode: "host"
 
   tests:
     image: rcbj/test-live
@@ -70,10 +90,18 @@ services:
       # No API backend → run-report.js skips the HTTP-Artifact test (which needs
       # the server-side SOAP ArtifactResolve back-channel).
       - SAML_BACKEND_AVAILABLE=false
+      # WS-Trust: the STS mock started above, reached over LOOPBACK so the HTTPS
+      # page isn't mixed-content-blocked. It must be given explicitly — the
+      # entrypoint only defaults to the bridge name http://sts:8081/sts for the
+      # containerized target (tests/run-tests-in-container.sh). Because the target
+      # has no /wstrust proxy, run-report.js routes these jobs through the browser
+      # (frontend) instead of the backend. Set this to empty to skip WS-Trust.
+      - WSTRUST_STS_URL=${LIVE_WSTRUST_STS_URL-http://localhost:8081/sts}
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report
     # Start-order only (host-networking healthchecks are unreliable); the test
-    # runner waits for Keycloak to answer before configuring it.
+    # runner waits for Keycloak and the STS to answer before running.
     depends_on:
       - keycloak
+      - sts

@@ -70,9 +70,10 @@ async function configureAndSend(driver, stsUrl, op, opts) {
 
   // Routing: "back" (default) sends through the API proxy (POST /wstrust);
   // "front" makes the browser call the STS directly (the mock STS returns
-  // permissive CORS headers so this works in the suite). Both are available
-  // wherever the WS-Trust jobs run (they are skipped on the backend-less static
-  // deployment, where only frontend routing exists).
+  // permissive CORS headers so this works in the suite). On a backend-less target
+  // the page ignores the backend radio entirely (appconfig.backendAvailable ===
+  // false disables it), so run-report.js asks for "front" there — see its
+  // wstrustRoute().
   var useBackend = (opts.route || "back") !== "front";
   await setChecked(driver, "wst_initiateFromBackEnd", useBackend);
   await setChecked(driver, "wst_initiateFromFrontEnd", !useBackend);
@@ -118,10 +119,11 @@ async function wstrustActivities(driver, stsUrl, op, sign, route, version, encry
   var targetToken = null;
 
   // Renew/Validate/Cancel need an existing token: Issue one first and capture it.
-  // The pre-step always uses backend routing (reliable) just to mint a token.
+  // The pre-step mints it over the same route as the test itself, so a
+  // backend-less target (where only frontend routing exists) works unchanged.
   if (op !== "issue") {
     log.info("Pre-step: Issue a token to " + op + ".");
-    await configureAndSend(driver, stsUrl, "issue", { route: "back" });
+    await configureAndSend(driver, stsUrl, "issue", { route: route });
     var respXml = await textOf(driver, "wst_response_xml");
     log.info("Issue RSTR (first 800 chars):\n" + (respXml || "").substring(0, 800));
     targetToken = await textOf(driver, "wst_token_xml");

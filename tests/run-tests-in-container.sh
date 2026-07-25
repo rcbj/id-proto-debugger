@@ -26,7 +26,23 @@ init()
   SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://client:3000/saml/sp}"
   # WS-Trust STS (mock) reachable by its compose DNS name on the test network.
   # Must match the client bundle's baked wstrustStsUrlDefault (docker-tests.js).
-  WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://sts:8081/sts}"
+  #
+  # ONLY default this for the containerized stack: the bridge DNS name is valid
+  # only there. On a DEPLOYED (HTTPS, backend-less) target the browser calls the
+  # STS directly, and Chrome blocks http://sts:8081/sts as mixed content — every
+  # WS-Trust job then times out waiting for the response page. The live-site stack
+  # therefore passes WSTRUST_STS_URL explicitly as http://localhost:8081/sts (its
+  # own host-networked sts service, loopback = potentially trustworthy); see
+  # docker-compose-live-tests.yml. If it arrives unset/empty, run-report.js SKIPS
+  # the WS-Trust jobs (as it skips the SAML Artifact job on a backend-less target)
+  # rather than failing — mirroring remote-run-tests.sh.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://sts:8081/sts}"
+      ;;
+  esac
+  # Exporting an unset variable passes nothing to children, so run-report.js sees
+  # WSTRUST_STS_URL as undefined on non-containerized targets and skips.
   export WSTRUST_STS_URL
   CONFIG_FILE="${CONFIG_FILE:-./env/local.js}"
   CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
@@ -87,9 +103,43 @@ waitForKeycloak()
   exit 1
 }
 
+# Poll until the WS-Trust STS answers. Like waitForKeycloak, this matters for the
+# live-site stack (host networking, no healthcheck gate); in the containerized
+# stack compose already gated on the sts healthcheck. Any HTTP response counts as
+# ready — WSTRUST_STS_URL may point at a real STS with no /healthcheck route.
+# Non-fatal by design: if nothing answers, the WS-Trust jobs fail on their own with
+# their page source / browser console diagnostics rather than aborting the suite.
+waitForSts()
+{
+  if [ -z "${WSTRUST_STS_URL:-}" ];
+  then
+    echo "WSTRUST_STS_URL is not set — WS-Trust jobs will be skipped."
+    return 0
+  fi
+  echo "Waiting for the WS-Trust STS at ${WSTRUST_STS_URL} ..."
+  local i=0
+  local max=30
+  local code
+  while [ $i -lt $max ];
+  do
+    code=$(curl -s -o /dev/null -w '%{http_code}' "${WSTRUST_STS_URL}" || true)
+    if [ -n "${code}" ] && [ "${code}" != "000" ];
+    then
+      echo "STS is ready (HTTP ${code})."
+      return 0
+    fi
+    i=$((i + 1))
+    sleep 2
+  done
+  echo "WARNING: no response from the STS at ${WSTRUST_STS_URL} — the WS-Trust jobs will likely fail." >&2
+  return 0
+}
+
 init
 check_return_code $?
 waitForKeycloak
+check_return_code $?
+waitForSts
 check_return_code $?
 configureKeycloak
 check_return_code $?

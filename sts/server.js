@@ -350,6 +350,19 @@ function handleRst(rawBody, contentType, options) {
 
 // --- express app -----------------------------------------------------------
 const app = express();
+// Chrome Private Network Access: when a PUBLIC page calls a LOCAL (loopback)
+// server — which is exactly the live-site test setup, an HTTPS page on
+// idptools.com calling this mock at http://localhost:8081 — Chrome may send a
+// CORS preflight carrying Access-Control-Request-Private-Network and require
+// this header on the response. Answer it so the call isn't blocked. Registered
+// BEFORE cors() so the header is set before the preflight response is sent;
+// a no-op for the containerized suite (both sides on the same bridge network).
+app.use(function (req, res, next) {
+  if (req.headers['access-control-request-private-network']) {
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+  }
+  next();
+});
 app.use(cors({ origin: '*' }));
 app.options('*', cors({ origin: '*' }));
 // Accept any content-type as raw text (SOAP arrives as text/xml or

@@ -88,9 +88,13 @@ init()
       SAML_ACS_URL="${SAML_ACS_URL:-${DEBUGGER_BASE_URL}/saml_response.html}"
       SAML_SLO_URL="${SAML_SLO_URL:-${DEBUGGER_BASE_URL}/saml_response.html}"
       SAML_BACKEND_AVAILABLE="${SAML_BACKEND_AVAILABLE:-false}"
-      # A deployed static site has no api proxy and no STS; leave WSTRUST_STS_URL
-      # unset so run-report.js skips the WS-Trust jobs (as it does the SAML
-      # Artifact job) rather than failing.
+      # A deployed static site has no api proxy, so the browser must call the STS
+      # DIRECTLY. That works against the host-run mock STS over LOOPBACK — Chrome
+      # treats http://localhost as potentially trustworthy (no mixed-content block,
+      # unlike a container/bridge name), and the mock sends permissive CORS +
+      # Private-Network-Access headers. run-report.js routes these jobs frontend
+      # when SAML_BACKEND_AVAILABLE=false. Set WSTRUST_STS_URL empty to skip them.
+      WSTRUST_STS_URL="${WSTRUST_STS_URL-http://localhost:8081/sts}"
       ;;
   esac
 
@@ -104,9 +108,13 @@ init()
   # Only exported when set (backendless targets); otherwise common.sh derives them.
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL
-  # Only set for local-dev targets (see above); unset for deployed sites so the
-  # WS-Trust jobs skip.
-  [ -n "${WSTRUST_STS_URL:-}" ] && export WSTRUST_STS_URL
+  # Points at the host-run mock STS (keycloak-tests.yml) for both target kinds —
+  # via localhost either way. Exported only when non-empty: an empty value means
+  # "skip the WS-Trust jobs" (run-report.js).
+  if [ -n "${WSTRUST_STS_URL:-}" ];
+  then
+    export WSTRUST_STS_URL
+  fi
 
   # The target is a deployed HTTPS site with no API proxy: the browser can't fetch
   # the local http Keycloak descriptor cross-origin (CORS). Have common.sh's
