@@ -47,6 +47,36 @@ else
   exit 1
 fi
 
+# walt.id's issuer, and the identity provider it authenticates End-Users at.
+# These are the addresses the BROWSER uses: every URL walt.id publishes in its
+# metadata is built from WALTID_BASE_URL, and the authorize redirect goes to
+# the browser too. renderWaltidConfig writes them into the container's
+# configuration, and configureKeycloak registers the callback under the same
+# base.
+WALTID_BASE_URL=http://waltid-issuer:7005
+# walt.id's verifier, behind its own CORS proxy. Same rule as the issuer: this is
+# the address the BROWSER uses, and every URL the verifier hands the wallet — the
+# request_uri it fetches, the response_uri it POSTs to — is built from it.
+WALTID_VERIFIER_BASE_URL=http://waltid-verifier:7003
+WALTID_VERIFIER_CLIENT_ID=verifier2
+WALTID_KEYCLOAK_AUTHORIZE_URL=http://keycloak:8080/realms/debugger-testing/protocol/openid-connect/auth
+WALTID_KEYCLOAK_TOKEN_URL=http://keycloak:8080/realms/debugger-testing/protocol/openid-connect/token
+WALTID_KEYCLOAK_CLIENT_ID=waltid-issuer
+WALTID_KEYCLOAK_CLIENT_SECRET=waltid-issuer-test-secret
+export WALTID_BASE_URL WALTID_KEYCLOAK_AUTHORIZE_URL WALTID_KEYCLOAK_TOKEN_URL
+export WALTID_KEYCLOAK_CLIENT_ID WALTID_KEYCLOAK_CLIENT_SECRET
+export WALTID_VERIFIER_BASE_URL WALTID_VERIFIER_CLIENT_ID
+
+# The walt.id issuer's configuration is rendered before compose brings the stack
+# up: the container mounts the result, and the signing key it contains is
+# generated per run and gitignored. See common/common.sh.
+generateWaltidIssuerKey
+check_return_code $?
+generateWaltidVerifierKey
+check_return_code $?
+renderWaltidConfig "${CURRENT_DIR}"
+check_return_code $?
+
 # Always tear the stack down, even if the tests fail, so the next run starts clean.
 teardown()
 {
@@ -54,10 +84,50 @@ teardown()
 }
 trap teardown EXIT
 
+# Start from a clean slate: remove leftover containers AND the Keycloak DB volume
+# from a previous run before bringing the stack up. The test data is disposable
+# and recreated by configureKeycloak each run; a persisted volume leaves a stale
+# 'debugger-testing' realm, so re-provisioning 409s ("Failed to create SAML
+# user"). -v also guarantees a fresh DB. This likewise sidesteps a docker-compose
+# v1 recreate bug ("KeyError: 'ContainerConfig'") pre-existing containers trigger.
+docker_compose -f "${COMPOSE_FILE}" down -v --remove-orphans 2>/dev/null || true
+
+# And tear down the LOCAL stack's containers as well, because several services —
+# keycloak-wsfed among them — carry the same hard-coded `container_name` in both
+# compose files while the two files configure them completely differently: the
+# local one runs keycloak-wsfed on host networking with a WildFly port-offset of 2
+# (so it binds 8082/8445), the containerized one on a bridge network with no offset
+# (8080/8443, published as 8082:8080). A container left over from a local run is
+# therefore the wrong container for this run, and the giveaway is a log that shows
+# WildFly binding 8082 when this stack expects 8080. Best-effort and quiet: the
+# file may not exist in a trimmed checkout, and nothing here should fail a run.
+if [ -f "local-tests.yml" ];
+then
+  docker_compose -f local-tests.yml down --remove-orphans 2>/dev/null || true
+fi
+
+# Start the WS-Federation side-car FIRST, on its own, and stop here if it does not
+# stay up.
+#
+# It is separated from the run below for two reasons. It is the slowest and most
+# fragile service in the stack — Keycloak 8.0.1 on WildFly, which aborts its whole
+# boot on a single subsystem failure — and `up` reports success for a container
+# that was created and then exited, so nothing downstream would say why. And the
+# run below uses --abort-on-container-exit: were this side-car to die there, it
+# would tear the entire stack down mid-suite and the exit status would be
+# attributed to the tests container. Failing here instead names the cause and
+# prints the container's own log.
+docker_compose -f "${COMPOSE_FILE}" up --build -d keycloak-wsfed
+check_return_code $?
+requireComposeServiceRunning "${COMPOSE_FILE}" keycloak-wsfed
+check_return_code $?
+
 # Build fresh images (so code changes are picked up), bring the stack up, and let
 # the tests container drive the run. --abort-on-container-exit stops the stack as
 # soon as the tests finish; --exit-code-from tests makes compose (and therefore
-# this script) exit with the tests container's status.
+# this script) exit with the tests container's status. The side-car started above
+# is left alone: compose does not recreate a service whose configuration is
+# unchanged.
 docker_compose -f "${COMPOSE_FILE}" up --build --abort-on-container-exit --exit-code-from tests
 check_return_code $?
 

@@ -53,6 +53,9 @@ services:
       context: .
       dockerfile: sts/Dockerfile
     network_mode: "host"
+    environment:
+      # Log level, chosen the same way as for api and client.
+      - CONFIG_FILE=./env/local.js
 
   tests:
     image: rcbj/test-live

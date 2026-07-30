@@ -3,7 +3,7 @@
 // Shared in-browser XML security primitives used by the WS-Trust workflow
 // (and available to any other page that needs XML-DSIG / XML-Encryption without
 // a server round-trip). The implementations here are lifted from the proven
-// SAML code in saml_tools.js — the same exclusive Canonical XML 1.0, RSA-SHA*
+// SAML code in saml_request.js — the same exclusive Canonical XML 1.0, RSA-SHA*
 // signing, and W3C XML-Encryption (xmlenc / xmlenc11) — but factored into a
 // reusable module whose functions take explicit arguments/options instead of
 // reading specific DOM element ids, so they are not tied to the SAML page.
@@ -11,6 +11,22 @@
 // node-forge does all the crypto (RSA sign/keygen, block ciphers, RSA key wrap).
 // Only browser-native APIs (DOMParser/XMLSerializer, window.crypto) are used
 // besides forge, so this bundles cleanly with browserify + envify.
+
+
+var bunyan = require("bunyan");
+// The log level comes from the same configuration the pages use. A consumer
+// outside the browser bundles (the node-based tests load this module directly)
+// may not have one, so fall back to info rather than failing to load.
+var log = bunyan.createLogger({
+  name: "xmldsig",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).logLevel || "info";
+    } catch (e) {
+      return "info";
+    }
+  })()
+});
 
 var forge = require("node-forge");
 
@@ -64,6 +80,7 @@ function digestBase64(str, mdFactory) {
 // URI. The keys are RSA, so these are the RSA-family methods from xmldsig /
 // xmldsig-more (RFC 6931).
 function sigAlgSpec(uri) {
+  log.debug("Entering sigAlgSpec().");
   switch (uri) {
     case 'http://www.w3.org/2000/09/xmldsig#rsa-sha1':
       return { md: forge.md.sha1.create, digestUri: 'http://www.w3.org/2000/09/xmldsig#sha1' };
@@ -75,16 +92,18 @@ function sigAlgSpec(uri) {
     default:
       return { md: forge.md.sha256.create, digestUri: 'http://www.w3.org/2001/04/xmlenc#sha256' };
   }
+  log.debug("Leaving sigAlgSpec().");
 }
 
 // --- Exclusive Canonical XML 1.0 (omit-comments) over a DOM element ----------
 // Renders on each element only the namespace declarations it *visibly utilizes*
 // (its own prefix + the prefixes of namespace-qualified attributes), so a
 // subtree canonicalizes identically standalone or nested — the property the
-// detached SignedInfo signature relies on. (Verbatim from saml_tools.js.)
+// detached SignedInfo signature relies on. (Verbatim from saml_request.js.)
 function canonicalize(apex) { return c14nSerialize(apex, {}); }
 
 function c14nInScopeNs(el) {
+  log.debug("Entering c14nInScopeNs().");
   var map = {};
   var chain = [], n = el;
   while (n && n.nodeType === 1) { chain.unshift(n); n = n.parentNode; }
@@ -95,6 +114,7 @@ function c14nInScopeNs(el) {
       else if (a.name.indexOf('xmlns:') === 0) map[a.name.slice(6)] = a.value;
     }
   });
+  log.debug("Leaving c14nInScopeNs().");
   return map;
 }
 function c14nTextEscape(s) {
@@ -105,6 +125,7 @@ function c14nAttrEscape(s) {
     .replace(/\t/g, '&#x9;').replace(/\n/g, '&#xA;').replace(/\r/g, '&#xD;');
 }
 function c14nSerialize(el, rendered) {
+  log.debug("Entering c14nSerialize().");
   var inscope = c14nInScopeNs(el);
   var utilized = {};
   utilized[el.prefix || ''] = true;
@@ -151,12 +172,14 @@ function c14nSerialize(el, rendered) {
     else if (child.nodeType === 3 || child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
     child = child.nextSibling;
   }
+  log.debug("Leaving c14nSerialize().");
   return out + '</' + el.nodeName + '>';
 }
 
 // Inclusive Canonical XML 1.0 — only for the encryption "Inclusive C14N" option.
 function canonicalizeInclusive(apex) { return c14nIncl(apex, {}, true); }
 function c14nIncl(el, rendered, isApex) {
+  log.debug("Entering c14nIncl().");
   var nsSource = {};
   if (isApex) { nsSource = c14nInScopeNs(el); }
   else {
@@ -200,6 +223,7 @@ function c14nIncl(el, rendered, isApex) {
     else if (child.nodeType === 3 || child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
     child = child.nextSibling;
   }
+  log.debug("Leaving c14nIncl().");
   return out + '</' + el.nodeName + '>';
 }
 
@@ -235,6 +259,7 @@ function mgfMdFor(uri) {
   }
 }
 function encPlaintext(xml, c14nMode, type) {
+  log.debug("Entering encPlaintext().");
   var isContent = type && type.indexOf('#Content') >= 0;
   if (c14nMode === 'exc-c14n' || c14nMode === 'c14n') {
     var fn = (c14nMode === 'c14n') ? canonicalizeInclusive : canonicalize;
@@ -249,6 +274,7 @@ function encPlaintext(xml, c14nMode, type) {
   var d2 = new DOMParser().parseFromString(xml, 'application/xml');
   var r2 = d2.documentElement, s = '', c = r2.firstChild;
   while (c) { s += new XMLSerializer().serializeToString(c); c = c.nextSibling; }
+  log.debug("Leaving encPlaintext().");
   return s;
 }
 
@@ -256,6 +282,7 @@ function encPlaintext(xml, c14nMode, type) {
 // opts: { certPem, dataAlg, keyAlg, type, c14nMode, digest, mgf } — the same
 // knobs the SAML encryption panel exposes.
 function encryptXml(xml, opts) {
+  log.debug("Entering encryptXml().");
   opts = opts || {};
   var certField = opts.certPem || '';
   if (!String(certField).trim()) throw new Error('No encryption certificate — paste a recipient certificate.');
@@ -298,6 +325,7 @@ function encryptXml(xml, opts) {
   }
   var wrappedB64 = forge.util.encode64(wrapped);
 
+  log.debug("Leaving encryptXml().");
   return '<xenc:EncryptedData xmlns:xenc="' + XENC_NS + '" Type="' + type + '">' +
       '<xenc:EncryptionMethod Algorithm="' + dataAlg + '"/>' +
       '<ds:KeyInfo xmlns:ds="' + DS_NS + '">' +
@@ -325,6 +353,7 @@ function firstByLocal(root, name) {
   return els && els.length ? els[0] : null;
 }
 function signWsSecurity(soapXml, opts) {
+  log.debug("Entering signWsSecurity().");
   opts = opts || {};
   if (!opts.privateKeyPem) throw new Error('signWsSecurity: privateKeyPem is required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
@@ -366,6 +395,99 @@ function signWsSecurity(soapXml, opts) {
     '</ds:Signature>';
   var sigNode = doc.importNode(new DOMParser().parseFromString(signature, 'application/xml').documentElement, true);
   security.insertBefore(sigNode, security.firstChild);
+  log.debug("Leaving signWsSecurity().");
+  return new XMLSerializer().serializeToString(doc);
+}
+
+// --- Enveloped XML Signature (XML-DSIG) -------------------------------------
+// The generic form of saml_request.js's signPostEnveloped(): digest the document
+// element, build a <ds:SignedInfo> referencing it, insert the <ds:Signature>
+// into the document, then sign the canonicalized SignedInfo in place. Same
+// primitives (exclusive C14N + RSA-SHA*, node-forge) — only the reference URI
+// and the placement of the <ds:Signature> are parameterized, because the SAML
+// schemas disagree about both:
+//
+//   SAML 2.0   ID="_x"          Reference URI="#_x"  Signature after <Issuer>
+//   SAML 1.1   AssertionID="_x" Reference URI="#_x"  Signature is the LAST child
+//   SAML 1.0   AssertionID="_x" Reference URI=""     Signature is the LAST child
+//                               (1.0's AssertionID is not an xs:ID, so the
+//                                whole-document reference is the safe form)
+//
+// opts: { privateKeyPem, certPem, sigAlg, digestUri, c14nAlg, refUri,
+//         placement: 'after-issuer' | 'last' | 'first', includeKeyInfo }
+function signEnveloped(xml, opts) {
+  log.debug("Entering signEnveloped().");
+  opts = opts || {};
+  if (!opts.privateKeyPem) throw new Error('signEnveloped: privateKeyPem is required.');
+  var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
+  var spec = sigAlgSpec(sigAlg);
+  var digestUri = opts.digestUri || spec.digestUri;
+  var c14nAlg = opts.c14nAlg || C14N_EXCLUSIVE;
+  var c14nFn = c14nForAlg(c14nAlg);
+
+  var doc = new DOMParser().parseFromString(xml, 'application/xml');
+  if (doc.getElementsByTagName('parsererror').length) throw new Error('malformed XML — cannot sign.');
+  var root = doc.documentElement;
+
+  var refUri = opts.refUri;
+  if (refUri == null) {
+    var id = root.getAttribute('ID') || root.getAttribute('AssertionID') || root.getAttribute('Id') || '';
+    refUri = id ? ('#' + id) : '';
+  }
+
+  // Reference digest: c14n(root) with no <Signature> present — exactly what the
+  // enveloped-signature transform reproduces at verification time.
+  var digest = digestBase64(c14nFn(root), spec.md);
+
+  var signedInfo = '<ds:SignedInfo xmlns:ds="' + DS_NS + '">' +
+    '<ds:CanonicalizationMethod Algorithm="' + c14nAlg + '"/>' +
+    '<ds:SignatureMethod Algorithm="' + sigAlg + '"/>' +
+    '<ds:Reference URI="' + refUri + '">' +
+    '<ds:Transforms>' +
+    '<ds:Transform Algorithm="' + TRANSFORM_ENVELOPED + '"/>' +
+    '<ds:Transform Algorithm="' + c14nAlg + '"/>' +
+    '</ds:Transforms>' +
+    '<ds:DigestMethod Algorithm="' + digestUri + '"/>' +
+    '<ds:DigestValue>' + digest + '</ds:DigestValue>' +
+    '</ds:Reference></ds:SignedInfo>';
+
+  var keyInfo = '';
+  if (opts.includeKeyInfo !== false && opts.certPem) {
+    keyInfo = '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
+      certPemToB64(opts.certPem) + '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>';
+  }
+  // Insert the signature with an empty SignatureValue FIRST, then canonicalize
+  // the SignedInfo in place. Inclusive C14N pulls in every namespace declared by
+  // the ancestors, so a SignedInfo canonicalized while detached would not match
+  // the octets a verifier computes from the finished document. (Exclusive C14N
+  // is unaffected — it only renders visibly-utilized prefixes — so this ordering
+  // is correct for both.)
+  var signature = '<ds:Signature xmlns:ds="' + DS_NS + '">' + signedInfo +
+    '<ds:SignatureValue></ds:SignatureValue>' + keyInfo + '</ds:Signature>';
+  var sigNode = doc.importNode(new DOMParser().parseFromString(signature, 'application/xml').documentElement, true);
+
+  var placement = opts.placement || 'after-issuer';
+  if (placement === 'last') {
+    root.appendChild(sigNode);
+  } else if (placement === 'first') {
+    root.insertBefore(sigNode, root.firstChild);
+  } else {
+    var issuer = null, kids = root.childNodes;
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i].nodeType === 1 && kids[i].localName === 'Issuer') { issuer = kids[i]; break; }
+    }
+    if (issuer) root.insertBefore(sigNode, issuer.nextSibling);
+    else root.insertBefore(sigNode, root.firstChild);
+  }
+
+  var siNode = directChildByLocal(sigNode, 'SignedInfo');
+  var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
+  var md = spec.md();
+  md.update(c14nFn(siNode), 'utf8');
+  directChildByLocal(sigNode, 'SignatureValue')
+    .appendChild(doc.createTextNode(forge.util.encode64(pk.sign(md))));
+
+  log.debug("Leaving signEnveloped().");
   return new XMLSerializer().serializeToString(doc);
 }
 
@@ -380,15 +502,20 @@ function signWsSecurity(soapXml, opts) {
 // Returns { valid, signatureValid, referencesValid, references[], signatureMethod,
 //           canonicalization, signerSubject, signerCertB64 } or { valid:false, error }.
 function findById(root, id) {
+  log.debug("Entering findById().");
   var all = root.getElementsByTagName('*');
   for (var i = 0; i < all.length; i++) {
     var e = all[i];
     for (var j = 0; j < e.attributes.length; j++) {
       var a = e.attributes[j];
       var ln = a.localName || a.name;
-      if ((ln === 'Id' || ln === 'ID' || ln === 'id') && a.value === id) return e;
+      // Id/ID/id cover SAML 2.0 (ID), WS-Security (wsu:Id) and generic ids;
+      // AssertionID is the SAML 1.1 assertion id attribute (WS-Fed tokens are
+      // frequently SAML 1.1), whose enveloped signature references #<AssertionID>.
+      if ((ln === 'Id' || ln === 'ID' || ln === 'id' || ln === 'AssertionID') && a.value === id) return e;
     }
   }
+  log.debug("Leaving findById().");
   return null;
 }
 function c14nForAlg(alg) {
@@ -398,10 +525,16 @@ function c14nForAlg(alg) {
   return canonicalize; // default to exclusive (what SAML/WS-Trust use)
 }
 function certSubjectCN(cert) {
-  try { var f = cert.subject.getField('CN'); return f ? f.value : ''; } catch (e) { return ''; }
+  try {
+    var f = cert.subject.getField('CN');
+    return f ? f.value : '';
+  } catch (e) {
+    return '';
+  }
 }
 
 function verifyXmlSignature(xml, opts) {
+  log.debug("Entering verifyXmlSignature().");
   opts = opts || {};
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) return { valid: false, error: 'malformed XML' };
@@ -425,16 +558,25 @@ function verifyXmlSignature(xml, opts) {
   var certPem = opts.certPem ? pemWrapCert(opts.certPem) : (certB64 ? pemWrapCert(certB64) : '');
   if (!certPem) return { valid: false, error: 'No signing certificate in KeyInfo and none supplied.' };
   var cert, pub;
-  try { cert = forge.pki.certificateFromPem(certPem); pub = cert.publicKey; }
-  catch (e) { return { valid: false, error: 'Could not parse signing certificate: ' + e.message }; }
+  try {
+    cert = forge.pki.certificateFromPem(certPem);
+    pub = cert.publicKey;
+  } catch (e) {
+    return { valid: false, error: 'Could not parse signing certificate: ' + e.message };
+  }
 
   // 1) SignatureValue over C14N(SignedInfo) — compute before detaching the
   //    signature (exclusive C14N is position-independent, but keep it in-tree).
   var siCanon = c14nForAlg(c14nAlg)(si);
   var signatureBytes = forge.util.decode64((svEl.textContent || '').replace(/\s+/g, ''));
   var signatureValid = false;
-  try { var md1 = spec.md(); md1.update(siCanon, 'utf8'); signatureValid = pub.verify(md1.digest().bytes(), signatureBytes); }
-  catch (e) { signatureValid = false; }
+  try {
+    var md1 = spec.md();
+    md1.update(siCanon, 'utf8');
+    signatureValid = pub.verify(md1.digest().bytes(), signatureBytes);
+  } catch (e) {
+    signatureValid = false;
+  }
 
   // 2) Reference digests. Apply the enveloped-signature transform by removing
   //    the <Signature> from the tree, then C14N the referenced element.
@@ -460,6 +602,7 @@ function verifyXmlSignature(xml, opts) {
   }
   var referencesValid = references.length > 0 && references.every(function (r) { return r.ok; });
 
+  log.debug("Leaving verifyXmlSignature().");
   return {
     valid: signatureValid && referencesValid,
     signatureValid: signatureValid,
@@ -494,6 +637,7 @@ function cipherValueOf(container) {
 }
 
 function decryptXml(xml, opts) {
+  log.debug("Entering decryptXml().");
   opts = opts || {};
   if (!opts.privateKeyPem) throw new Error('decryptXml: privateKeyPem is required.');
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
@@ -554,11 +698,13 @@ function decryptXml(xml, opts) {
     decipher.update(forge.util.createBuffer(cipherRaw.substring(spec.ivBytes)));
   }
   if (!decipher.finish()) throw new Error('data decryption failed (wrong key or corrupted ciphertext).');
+  log.debug("Leaving decryptXml().");
   return forge.util.decodeUtf8(decipher.output.getBytes());
 }
 
 // Generate an RSA key pair + self-signed certificate (for a fresh signing key).
 function generateKeyPair(bits, cn) {
+  log.debug("Entering generateKeyPair().");
   var kp = forge.pki.rsa.generateKeyPair({ bits: bits || 2048, e: 0x10001 });
   var cert = forge.pki.createCertificate();
   cert.publicKey = kp.publicKey;
@@ -570,6 +716,7 @@ function generateKeyPair(bits, cn) {
   cert.setSubject(attrs);
   cert.setIssuer(attrs);
   cert.sign(kp.privateKey, forge.md.sha256.create());
+  log.debug("Leaving generateKeyPair().");
   return {
     privateKeyPem: forge.pki.privateKeyToPem(kp.privateKey).trim() + '\n',
     certPem: forge.pki.certificateToPem(cert).trim() + '\n'
@@ -594,6 +741,7 @@ module.exports = {
   canonicalizeInclusive: canonicalizeInclusive,
   encryptXml: encryptXml,
   decryptXml: decryptXml,
+  signEnveloped: signEnveloped,
   signWsSecurity: signWsSecurity,
   verifyXmlSignature: verifyXmlSignature,
   generateKeyPair: generateKeyPair

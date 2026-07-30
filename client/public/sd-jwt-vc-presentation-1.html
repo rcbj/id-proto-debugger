@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Presentation (1 of 3)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/sd_jwt_vc_presentation_1.js">
+</script>
+
+<!--#include file="/partials/sd_jwt_vp_steps.html"-->
+
+<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="vc-title">SD-JWT VC Presentation &mdash; Step 1 of 3: The Verifier&rsquo;s Request</h3>
+
+<p class="vc-intro">A verifier has asked for a presentation. Before any part of the credential is
+disclosed the wallet has to establish three things: <strong>who</strong> is asking (the Client Identifier, and what
+its prefix lets the wallet prove about them), <strong>what</strong> they are asking for (the
+<a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html" target="_blank" rel="noopener noreferrer">DCQL</a>
+query, next to the credential this wallet actually holds), and <strong>how</strong> the answer travels back.
+Nothing is disclosed on this page.</p>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" onchange="vpSetAllPanes(this.checked);" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function vpSetAllPanes(expand) {
+  var fieldsets = ['request_fieldset', 'requested_fieldset', 'receive_fieldset'];
+  for (var i = 0; i < fieldsets.length; i++) {
+    var fs = document.getElementById(fieldsets[i]);
+    if (fs) fs.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<!-- ============ Pane 1: the request ============ -->
+<div class="step0 dbg-pane" id="pane_request">
+  <legend class="dbg-legend" id="request_expand_button" onclick="return sdjwtvp1.togglePane('request_fieldset');">The Verifier's Authorization Request</legend>
+  <fieldset name="request_fieldset" id="request_fieldset" style="display: block;">
+    <p class="vc-note">OID4VP is OAuth 2.0 with a different response type: <code>vp_token</code>. The request
+    below either arrived in the query string (by value) or was fetched from a <code>request_uri</code> where it
+    could be signed &mdash; and if it was signed, the wallet checks that before believing any of it.</p>
+    <div class="vc-status" id="vp_request_status">&nbsp;</div>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Where it came from</label><span class="tooltiptext">By value in the verifier's redirect, fetched from a request_uri, or pasted in from a QR code on the verifier's screen.</span></div></td>
+          <td><code id="vp_source">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>client_id</label><span class="tooltiptext">The Client Identifier: who is asking. It is also the aud of the Key Binding JWT, which is what stops a presentation made for one verifier being replayed at another.</span></div></td>
+          <td><code id="vp_client_id">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Identifier prefix</label><span class="tooltiptext">OID4VP section 5.10. The prefix decides what the wallet may conclude about the verifier's identity and where its metadata and keys come from.</span></div></td>
+          <td><code id="vp_client_prefix">&mdash;</code><p class="vc-note" id="vp_client_note">&nbsp;</p></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Signature</label><span class="tooltiptext">A Request Object fetched by reference can be signed (RFC 9101). Verified here against the keys this wallet trusts for the verifier.</span></div></td>
+          <td><code id="vp_signature_verdict">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>nonce</label><span class="tooltiptext">The freshness of the whole presentation rests on this: the wallet signs it into the Key Binding JWT, so a presentation cannot be replayed for another request.</span></div></td>
+          <td><code id="vp_nonce">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>response_type / mode</label><span class="tooltiptext">vp_token is the response type OID4VP defines. direct_post means the wallet POSTs the presentation to the verifier rather than returning it through the browser.</span></div></td>
+          <td><code id="vp_response_type">&mdash;</code> / <code id="vp_response_mode">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>response_uri</label><span class="tooltiptext">Where the presentation will be POSTed. With the redirect_uri client identifier prefix this URL IS the verifier's identity.</span></div></td>
+          <td><code id="vp_response_uri">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>state</label><span class="tooltiptext">The verifier's own handle for this transaction, echoed back with the presentation so its frontend and its response endpoint can find each other.</span></div></td>
+          <td><code id="vp_state">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>dcql_query</label><span class="tooltiptext">The Digital Credentials Query Language query: which credential, of which format and type, and which claims. A verifier has no way to ask for "everything".</span></div></td>
+          <td><pre class="vc-json" id="vp_dcql">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>client_metadata</label><span class="tooltiptext">The verifier's own metadata, passed in the request: its name, and the credential formats and algorithms it accepts.</span></div></td>
+          <td><pre class="vc-json" id="vp_client_metadata">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>As received</label><span class="tooltiptext">Every parameter this page recognised, exactly as it arrived.</span></div></td>
+          <td><textarea class="vc-token" rows="10" readonly id="vp_request_raw"></textarea></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 2: what is being asked for ============ -->
+<div class="step0 dbg-pane" id="pane_requested">
+  <legend class="dbg-legend" id="requested_expand_button" onclick="return sdjwtvp1.togglePane('requested_fieldset');">What Is Being Asked For</legend>
+  <fieldset name="requested_fieldset" id="requested_fieldset" style="display: block;">
+    <p class="vc-note">The DCQL query, decoded, against the credential this wallet holds: a claim in green is one
+    the credential can disclose, a claim in red is one it cannot &mdash; and a <code>vct</code> in red means the
+    verifier is asking for a different kind of credential altogether.</p>
+    <table class="vc-table" id="vp_requested_table"><tbody></tbody></table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 3: receiving a request by hand ============ -->
+<div class="step0 dbg-pane" id="pane_receive">
+  <legend class="dbg-legend" id="receive_expand_button" onclick="return sdjwtvp1.togglePane('receive_fieldset');">Receive a Request (cross-device)</legend>
+  <fieldset name="receive_fieldset" id="receive_fieldset" style="display: block;">
+    <p class="vc-note">In the cross-device flow the verifier's screen shows a QR code and the wallet is on
+    another device, so nothing navigates here. Paste what the code encodes &mdash; an
+    <code>openid4vp://</code> URI, an <code>https://</code> link carrying the same parameters, or just the query
+    string &mdash; and the wallet will read it, fetching the Request Object if it is passed by reference.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vp_paste_request">Request URI</label><span class="tooltiptext">Whatever the QR code encodes. Nothing is disclosed by reading it.</span></div></td>
+          <td><textarea class="vc-token" rows="4" id="vp_paste_request" name="vp_paste_request"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="vp_verifier_jwks_url">Verifier JWKS URL</label>
+              <span class="tooltiptext">Where this wallet looks for the verifier's keys when a request is signed. For a pre-registered client this is the "out of band" knowledge OID4VP assumes the wallet has.</span>
+            </div>
+          </td>
+          <td><input type="text" id="vp_verifier_jwks_url" name="vp_verifier_jwks_url" size="60"
+                     onchange="return sdjwtvp1.saveVerifierJwksUrl();" /></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vp_use_pasted_button" type="button" value="Read this Request" onclick="return sdjwtvp1.usePastedRequest();" />
+              <span class="tooltiptext">Read the request and show what it asks for. Nothing is sent to the verifier.</span>
+            </div>
+          </td>
+          <td>
+            <input class="btn2" id="vp_continue_button" type="button" value="Choose what to disclose &rarr;" onclick="return sdjwtvp1.continueToDisclose();" />
+            <input class="btn2" id="vp_forget_button" type="button" value="Discard this request" onclick="return sdjwtvp1.forgetRequest();" />
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

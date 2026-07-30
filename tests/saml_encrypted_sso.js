@@ -1,9 +1,11 @@
 const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
-const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require('commander');
+// The SP key pair is generated per run and passed in through the environment;
+// it is deliberately not stored in this repository. See common/sp_keypair.js.
+const { readSpKeyPair } = require("../common/sp_keypair.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -56,15 +58,16 @@ async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
 async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, metadataFile) {
   var loginWait = Math.max(waitTime, 15000);
   log.info("Load the SAML Test Tools page (encrypted SP, POST binding).");
-  await driver.get(baseUrl + "/saml_tools.html");
+  await driver.get(baseUrl + "/saml_request.html");
   await loadIdpMetadata(driver, metadataUrl, metadataFile);
 
-  // Use the ENCRYPTED SP client's entityID and the fixed SP key pair (its cert
+  // Use the ENCRYPTED SP client's entityID and this run's SP key pair (its cert
   // is registered on Keycloak as both the signing AND the encryption cert).
   await driver.findElement(By.id("saml_sp_entity_id")).clear();
   await driver.findElement(By.id("saml_sp_entity_id")).sendKeys(spEntityId);
-  var spKey = fs.readFileSync(path.join(__dirname, "fixtures", "sp-key.pem"), "utf8");
-  var spCert = fs.readFileSync(path.join(__dirname, "fixtures", "sp-cert.pem"), "utf8");
+  var spPair = readSpKeyPair();
+  var spKey = spPair.privateKey;
+  var spCert = spPair.certificate;
   await driver.executeScript(
     "document.getElementById('saml_sp_private_key').value = arguments[0];" +
     "document.getElementById('saml_sp_public_key').value = arguments[1];", spKey, spCert);

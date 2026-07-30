@@ -268,6 +268,99 @@ async function jwtToolsActivities(driver) {
   assert.strictEqual(decrypted.trim(), plaintext,
     "Decryption output does not match the Payload to Encrypt value.");
   log.info("Decryption output matches the Payload to Encrypt value.");
+
+  // ---- every key-management algorithm the pane offers ---------------------
+  // The steps above exercise whichever alg the page defaults to. That leaves the
+  // key-agreement algorithms untested through the page — and they are the ones
+  // with the interesting failure mode: ECDH-ES derives its key through the
+  // Concat KDF (RFC 7518 section 4.6), where a mistake produces a key that is
+  // wrong in a way nothing notices until decryption fails. The JWE code is
+  // shared with the OID4VCI issuance panes (client/src/jose_jwe.js), so a wiring
+  // mistake here would be a wiring mistake there too.
+  var offered = await driver.executeScript(
+    "return Array.prototype.slice.call(document.getElementById('jwe_alg').options)" +
+    "  .map(function (o) { return { value: o.value, disabled: o.disabled, label: o.textContent }; });");
+  var algs = offered.filter(function (o) { return !o.disabled; }).map(function (o) { return o.value; });
+  var unusable = offered.filter(function (o) { return o.disabled; });
+  assert.ok(algs.length >= 3,
+    "the encryption pane should offer several usable key-management algorithms. Got: " +
+    JSON.stringify(offered));
+
+  // RFC 7518 defines AES-192; Chrome's Web Crypto does not implement it. An
+  // option that can only fail should say so rather than producing an
+  // OperationError from inside a key import — and it must be the AES-192 ones
+  // and nothing else that are marked.
+  unusable.forEach(function (o) {
+    assert.ok(/A192/.test(o.value),
+      "only the AES-192 algorithms should be unusable in this browser. Got: " + JSON.stringify(o));
+    assert.ok(/unsupported here/.test(o.label),
+      "an unusable option should say why. Got: " + o.label);
+  });
+  var encOptions = await driver.executeScript(
+    "return Array.prototype.slice.call(document.getElementById('jwe_enc').options)" +
+    "  .map(function (o) { return { value: o.value, disabled: o.disabled, label: o.textContent }; });");
+  var a192 = encOptions.filter(function (o) { return o.value === "A192GCM"; })[0];
+  assert.ok(a192 && a192.disabled && /unsupported here/.test(a192.label),
+    "A192GCM cannot be performed by this browser either, so it should be marked too. Got: " +
+    JSON.stringify(a192));
+  assert.ok(encOptions.filter(function (o) { return !o.disabled; }).length >= 2,
+    "and the content encryption algorithms that DO work should remain available.");
+  log.info("Unusable in this browser, and marked: " +
+           (unusable.map(function (o) { return o.value; }).concat(["A192GCM"]).join(", ") || "none"));
+  log.info("Round-tripping every usable key-management algorithm: " + algs.join(", "));
+
+  for (var i = 0; i < algs.length; i++) {
+    var alg = algs[i];
+    // Fresh key material per algorithm: RSA-OAEP needs an RSA key and ECDH-ES an
+    // EC one, so reusing the previous pair would fail for reasons that have
+    // nothing to do with the encryption.
+    await driver.executeScript(
+      "document.getElementById('jwe_alg').value = arguments[0];", alg);
+    await click(driver, onclickBtn("generateEncryptionKeys"));
+    await waitForValue(driver, By.id("jwe_status"),
+      function (v) { return v.indexOf("Generated") !== -1 || v.indexOf("Error") !== -1; },
+      "Key generation for " + alg + " produced no status.");
+    var keyStatus = await getValue(driver, By.id("jwe_status"));
+    assert.ok(keyStatus.indexOf("Error") === -1,
+      "Key generation failed for " + alg + ": " + keyStatus);
+
+    await driver.executeScript(
+      "document.getElementById('jwe_decrypt_output').value = '';" +
+      "document.getElementById('jwt_tools_jwe').value = '';");
+    await click(driver, onclickBtn("encryptJWT"));
+    var produced = await waitForValue(driver, By.id("jwt_tools_jwe"),
+      function (v) { return v.split(".").length === 5; },
+      "No 5-part JWE was produced for " + alg + ".");
+
+    // ECDH-ES "direct" agrees the content key rather than wrapping one, so its
+    // encrypted_key segment is empty; every other alg carries a wrapped key.
+    var segments = produced.split(".");
+    if (alg === "ECDH-ES") {
+      assert.strictEqual(segments[1], "",
+        "ECDH-ES is direct key agreement, so the encrypted_key segment must be empty. Got: " +
+        segments[1].slice(0, 40));
+    } else {
+      assert.ok(segments[1].length > 0,
+        alg + " wraps a content encryption key, so encrypted_key must not be empty.");
+    }
+    var header = JSON.parse(Buffer.from(segments[0], "base64url").toString("utf8"));
+    assert.strictEqual(header.alg, alg,
+      "the protected header should name the algorithm used. Got: " + JSON.stringify(header));
+    if (alg.indexOf("ECDH-ES") === 0) {
+      assert.ok(header.epk && header.epk.crv,
+        alg + " must publish the ephemeral public key it agreed with (epk). Got: " +
+        JSON.stringify(header));
+    }
+
+    await click(driver, onclickBtn("decryptJWT"));
+    var back = await waitForValue(driver, By.id("jwe_decrypt_output"),
+      function (v) { return v.trim().length > 0; },
+      "No decryption output for " + alg + ".");
+    assert.strictEqual(back.trim(), plaintext,
+      alg + " did not round-trip: the decrypted text differs from what was encrypted.");
+    log.info("  " + alg + ": round-tripped" + (header.epk ? " (epk " + header.epk.crv + ")" : "") + ".");
+  }
+  log.info("Every key-management algorithm the pane offers round-trips.");
 }
 
 // Obtain a real ID Token via the OIDC Authorization Code grant, paste it into

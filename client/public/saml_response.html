@@ -9,7 +9,7 @@
     <link href="/css/footer.css" rel="stylesheet">
     <link href="/css/common.css" rel="stylesheet">
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
-    <link href="/css/saml_tools.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
   </head>
 
   <body>
@@ -22,7 +22,7 @@
 <script type="text/javascript" src="/js/saml_response.js">
 </script>
 
-<p class="saml-return"><a id="return_link" href="/saml_tools.html">&larr; Return to SAML Test Tools</a></p>
+<p class="saml-return"><a id="return_link" href="/saml_request.html">&larr; Return to SAML Test Tools</a></p>
 
 <p class="saml-intro">The IdP's SAML response, captured by the Assertion Consumer Service. The full <code>SAMLResponse</code> is shown below; the extracted <code>Assertion</code> pane has an <strong>XML</strong> view and an <strong>Attributes</strong> view (the assertion attributes, including the NameID, in tabular form).</p>
 
@@ -77,6 +77,36 @@
       <input type="button" class="saml-btn" value="Decrypt" onclick="return saml_response.decryptAssertion();" title="Decrypt the EncryptedAssertion / EncryptedData in the response and show the plaintext assertion." />
       <input class="saml-status saml-grow" type="text" id="saml_dec_status" readonly />
     </div>
+  </div>
+</fieldset>
+
+<!-- ===================== Tools ===================== -->
+<fieldset class="saml-pane" id="pane_tools">
+  <legend>Tools</legend>
+  <div id="pane_tools_body">
+    <p class="saml-note">Standalone utilities for working with SAML and its XML security layers.</p>
+    <table class="saml-table">
+      <tbody>
+        <tr>
+          <td><a href="/saml_tools.html?from=saml_response.html">SAML Assertion Tool</a> &mdash; compose a spec-compliant SAML 1.0/1.1/2.0 assertion (optional elements, NameID, custom attributes), sign it with XML Signature, and encrypt it with XML Encryption.</td>
+        </tr>
+        <tr>
+          <td><a href="/saml_cert.html?from=saml_response.html">Certificate Details</a> &mdash; parse an X.509 certificate (PEM or bare base64 DER) and inspect its subject, issuer, validity, key, extensions, and fingerprints.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</fieldset>
+
+<!-- ===================== Operations History ===================== -->
+<fieldset class="saml-pane" id="pane_history">
+  <legend>Operations History</legend>
+  <div id="pane_history_body">
+    <p class="saml-note">The same log kept on the <a href="/saml_request.html">SAML Test Tools</a> page — every attempted call to the IdP, newest first. This page is where a dispatched call is closed out: when a response is rendered above, its pending <span class="saml-pending">Sent</span> entry becomes <span class="saml-ok">Success</span> or <span class="saml-bad">Failure</span> according to the response's <code>&lt;samlp:StatusCode&gt;</code>.</p>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Clear History" onclick="return saml_response.clearOperationHistory();" title="Discard every recorded operation. The log is shared with the SAML Test Tools page." />
+    </div>
+    <div id="saml_operation_history"></div>
   </div>
 </fieldset>
 

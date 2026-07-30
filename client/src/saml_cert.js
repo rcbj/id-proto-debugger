@@ -53,6 +53,7 @@ function pubKeyInfo(cert) {
 }
 
 function extSummary(ext) {
+  log.debug("Entering extSummary().");
   if (ext.name === 'subjectAltName' && ext.altNames) {
     return ext.altNames.map(function (n) { return (n.value || n.ip || ''); }).filter(Boolean).join(', ');
   }
@@ -65,6 +66,7 @@ function extSummary(ext) {
     return 'cA=' + (!!ext.cA);
   }
   if (typeof ext.value === 'string') return ext.value;
+  log.debug("Leaving extSummary().");
   return '(present)';
 }
 
@@ -73,6 +75,7 @@ function row(k, v) {
 }
 
 function parseCert() {
+  log.debug("Entering parseCert().");
   var pem = toPem(val('saml_cert_input'));
   if (!pem) { setVal('saml_cert_status', 'Paste a certificate first.'); el('saml_cert_details').innerHTML = '&nbsp;'; return false; }
   var cert;
@@ -105,28 +108,41 @@ function parseCert() {
 
   el('saml_cert_details').innerHTML = html;
   setVal('saml_cert_status', 'Parsed.');
+  log.debug("Leaving parseCert().");
   return false;
 }
 
 function copyField(id) {
+  log.debug("Entering copyField().");
   var e = el(id);
   if (!e) return false;
   var text = e.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
   } else {
-    try { e.focus(); e.select(); document.execCommand('copy'); } catch (err) { log.error('copyField fallback: ' + err.message); }
+    try {
+      e.focus();
+      e.select();
+      document.execCommand('copy');
+    } catch (err) {
+      log.error('copyField fallback: ' + err.message);
+    }
   }
+  log.debug("Leaving copyField().");
   return false;
 }
 
 function setReturnLink() {
+  log.debug("Entering setReturnLink().");
   var from = new URLSearchParams(window.location.search).get('from');
   var allowed = {
+    'saml_request.html': '/saml_request.html',
     'saml_tools.html': '/saml_tools.html',
     'saml_response.html': '/saml_response.html',
     'wstrust_tools.html': '/wstrust_tools.html',
     'wstrust_response.html': '/wstrust_response.html',
+    'wsfed_tools.html': '/wsfed_tools.html',
+    'wsfed_response.html': '/wsfed_response.html',
     'digital_signature.html': '/digital_signature.html',
     'jwt_tools.html': '/jwt_tools.html'
   };
@@ -135,6 +151,7 @@ function setReturnLink() {
     link.setAttribute('href', allowed[from]);
     link.textContent = '← Return to ' + from;
   }
+  log.debug("Leaving setReturnLink().");
 }
 
 window.onload = function () {

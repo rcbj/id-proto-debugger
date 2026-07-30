@@ -46,6 +46,10 @@ COPY sts/package*.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
 COPY sts/server.js ./
+# The service selects its configuration (log level) with CONFIG_FILE, the same
+# way api and client do. The compose files override this per stack.
+COPY sts/env ./env
+ENV CONFIG_FILE=./env/local.js
 
 EXPOSE 8081
 CMD [ "node", "server.js" ]

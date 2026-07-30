@@ -35,10 +35,10 @@
         </svg>
       </span>
       <span class="landing-card-title">OAuth2 / OIDC Protocol</span>
-      <span class="landing-card-desc">Authorization Code, Implicit, Client Credentials, Resource Owner, Device, and Token Exchange grants plus all OIDC flows &mdash; with JWT, JWKS, introspection, and userinfo tools.</span>
+      <span class="landing-card-desc">Authorization Code, Implicit, Client Credentials, Resource Owner, Device and Token Exchange grants, all three OIDC flows, plus JWT, JWKS, introspection and userinfo tools.</span>
     </a>
 
-    <a class="landing-card" href="/saml_tools.html">
+    <a class="landing-card" href="/saml_request.html">
       <span class="landing-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 2 20 5v6c0 5-3.5 8.4-8 11-4.5-2.6-8-6-8-11V5l8-3Z"/>
@@ -46,7 +46,7 @@
         </svg>
       </span>
       <span class="landing-card-title">SAML Protocol</span>
-      <span class="landing-card-desc">SAML 2.0 SP-initiated SSO: load IdP metadata, build and sign an AuthnRequest, capture the SAMLResponse at the ACS, and inspect the assertion and its attributes.</span>
+      <span class="landing-card-desc">SAML 2.0 SP-initiated SSO: load IdP metadata, build and sign an AuthnRequest, capture the SAMLResponse at the ACS, and inspect the assertion.</span>
     </a>
 
     <a class="landing-card" href="/wstrust_tools.html">
@@ -60,7 +60,91 @@
         </svg>
       </span>
       <span class="landing-card-title">WS-Trust Protocol</span>
-      <span class="landing-card-desc">WS-Trust (all protocol versions)  against an STS: build a SOAP RequestSecurityToken for Issue, Renew, Validate, or Cancel with WS-Security and WS-Addressing, sign/encrypt it, and inspect the issued token in the response.</span>
+      <span class="landing-card-desc">WS-Trust 1.0&ndash;1.4 against an STS: build a RequestSecurityToken for Issue, Renew, Validate or Cancel, sign or encrypt it, and inspect the issued token.</span>
+    </a>
+
+    <a class="landing-card" href="/sd-jwt-vc-issuance-0.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="5" width="20" height="14" rx="2"/>
+          <circle cx="8" cy="10.5" r="2.2"/>
+          <path d="M4.6 15.8c.5-1.5 1.9-2.3 3.4-2.3s2.9.8 3.4 2.3"/>
+          <path d="M14.5 9.5h5"/>
+          <path d="M14.5 12.5h3.2"/>
+          <path d="M14.6 15.6l1.5 1.5 3.2-3.4"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">SD-JWT VC Issuance</span>
+      <span class="landing-card-desc">Issue an SD-JWT VC (RFC 9901) over OID4VCI: wallet-initiated or from an issuer&rsquo;s Credential Offer, prove possession of a holder key, inspect the disclosures, and refresh it.</span>
+    </a>
+
+    <a class="landing-card" href="/sd-jwt-vc-presentation-0.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2" y="5" width="14" height="10" rx="2"/>
+          <path d="M5 8.5h5"/>
+          <path d="M5 11.5h3"/>
+          <path d="M16 10h6"/>
+          <path d="M19.5 7l2.5 3-2.5 3"/>
+          <circle cx="18.5" cy="17.5" r="3.2"/>
+          <path d="M17.1 17.6l1 1 1.8-2"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">SD-JWT VC Presentation</span>
+      <span class="landing-card-desc">Present an SD-JWT VC over OID4VP: read the verifier&rsquo;s DCQL query, choose which Disclosures to send, sign the Key Binding JWT over its nonce, and read the verdict.</span>
+    </a>
+
+    <!-- Dynamic Client Registration lives on debugger.html, beside the OAuth2 /
+         OIDC workflow it registers a client for. The fragment is the DCR pane's
+         own fieldset, so the card opens that page AT the pane rather than at the
+         top — and it keeps this card's href distinct from the OAuth2 card's,
+         which the navigation test's locators depend on. -->
+    <a class="landing-card" href="/debugger.html#dcr_fieldset">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6.5"/>
+          <path d="M7.5 8h7"/>
+          <path d="M7.5 11.5h5"/>
+          <path d="M7.5 15h3"/>
+          <circle cx="17.5" cy="16.5" r="4.5"/>
+          <path d="M17.5 14.3v4.4"/>
+          <path d="M15.3 16.5h4.4"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">OIDC Dynamic Client Registration</span>
+      <span class="landing-card-desc">Register a Relying Party at the OP&rsquo;s registration endpoint, then read, update or delete it with the Registration Access Token.</span>
+    </a>
+
+    <!-- Token Exchange is the third protocol that lives on the OAuth2 / OIDC
+         pages. Its pane is on debugger2.html, because an exchange needs a subject
+         token to exchange — so the card points at debugger.html, where you get
+         one, and the description says where the pane is. No fragment: there is
+         nothing about token exchange on debugger.html to scroll to. -->
+    <a class="landing-card" href="/debugger.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 8h13"/>
+          <path d="M12.5 4.5 16 8l-3.5 3.5"/>
+          <path d="M21 16H8"/>
+          <path d="M11.5 12.5 8 16l3.5 3.5"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">OAuth2 Token Exchange</span>
+      <span class="landing-card-desc">Exchange one token for another (RFC 8693): impersonation or delegation with a subject_token, an optional actor_token and an audience — on the results page after a flow.</span>
+    </a>
+
+    <a class="landing-card" href="/wsfed_tools.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="5" cy="12" r="2.5"/>
+          <circle cx="19" cy="5" r="2.5"/>
+          <circle cx="19" cy="19" r="2.5"/>
+          <path d="M7.3 10.9 16.7 6.1"/>
+          <path d="M7.3 13.1 16.7 17.9"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">WS-Federation Protocol</span>
+      <span class="landing-card-desc">WS-Federation Passive Requestor Profile: load federation metadata, build a wa=wsignin1.0 sign-in request, and inspect the SAML token in the wresult.</span>
     </a>
   </div>
 </div>

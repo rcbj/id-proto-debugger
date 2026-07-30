@@ -1,21 +1,38 @@
-/* Landing page: choose which protocol to debug (OAuth2/OIDC vs SAML). Two big
-   icon cards laid out in a horizontal row. */
+/* Landing page: choose which protocol to debug. Icon cards in a grid.
+
+   Sized so that EVERY card is visible without scrolling, which is the one thing
+   this page has to get right: it exists to be a choice, and a choice you have to
+   scroll to find is one you do not know you have. That constraint is what fixes
+   the numbers below — three columns rather than the two this had when there were
+   four protocols (six cards two-across is three rows, and the third was below the
+   fold), and an icon, padding and description size small enough that two rows of
+   three fit a 768px-tall viewport under the header. `landingFitsOnOneScreen()` in
+   tests/navigation.js asserts it geometrically, so a seventh protocol that breaks
+   it fails there rather than in someone's browser. */
 
 .landing {
   text-align: center;
-  padding: 36px 12px 56px;
+  padding: 16px 12px 24px;
 }
-.landing-title { font-size: 1.9em; margin: 8px 0 4px; color: #333; }
-.landing-sub { font-size: 1em; color: #666; margin: 0 0 34px; }
+.landing-title { font-size: 1.45em; margin: 2px 0 4px; color: #333; }
+.landing-sub { font-size: .9em; color: #666; margin: 0 0 16px; }
 
-/* Horizontal row of choices; wraps to a column on narrow screens. */
+/* Four across on a full-width container, three when it narrows to Bootstrap's
+   724px, one on a phone — auto-fit does all of it without a media query per
+   breakpoint. The 940px cap is deliberate even though the container is 1170px
+   above 1200px viewport width: it fixes the column count at four everywhere, so
+   the layout does not reshuffle between desktop sizes.
+
+   Four rather than three because there are seven protocols: three columns would
+   be three rows, and the third would be below the fold on a 768px screen — the
+   exact problem two columns had at six cards. 4 x 205px + 3 x 16px = 868px. */
 .landing-choices {
-  display: flex;
-  flex-direction: row;
-  gap: 28px;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
+  gap: 16px;
   align-items: stretch;
-  flex-wrap: wrap;
+  max-width: 940px;
+  margin: 0 auto;
 }
 
 .landing-card {
@@ -23,8 +40,7 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  width: 320px;
-  padding: 30px 24px;
+  padding: 16px 12px 18px;
   border: 1px solid #ccc;
   border-radius: 12px;
   background: #fafafa;
@@ -41,20 +57,31 @@
   outline: none;
 }
 
-/* Big icon. Each card gets its own accent colour; hover inherits the card colour. */
-.landing-icon { margin-bottom: 16px; line-height: 0; }
-.landing-icon svg { width: 84px; height: 84px; }
+/* The icon. Each card gets its own accent colour; hover inherits the card colour.
+   There is one rule per card, so every protocol added here needs one — miss it and
+   that card's icon silently falls back to the text colour, which is what happened
+   to the two newest ones. */
+.landing-icon { margin-bottom: 8px; line-height: 0; }
+.landing-icon svg { width: 48px; height: 48px; }
 .landing-card:nth-child(1) .landing-icon { color: #2680eb; }
 .landing-card:nth-child(2) .landing-icon { color: #5a2a8f; }
 .landing-card:nth-child(3) .landing-icon { color: #0a7d63; }
+.landing-card:nth-child(4) .landing-icon { color: #b05423; }
+.landing-card:nth-child(5) .landing-icon { color: #a3226b; }
+.landing-card:nth-child(6) .landing-icon { color: #1f5f9e; }
+.landing-card:nth-child(7) .landing-icon { color: #7a5c00; }
+.landing-card:nth-child(8) .landing-icon { color: #167a8a; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 
-.landing-card-title { font-size: 1.2em; font-weight: 700; margin-bottom: 10px; }
-.landing-card-desc { font-size: .82em; color: #666; line-height: 1.45; }
+.landing-card-title { font-size: .98em; font-weight: 700; margin-bottom: 6px; }
+.landing-card-desc { font-size: .74em; color: #666; line-height: 1.38; }
 .landing-card:hover .landing-card-desc,
 .landing-card:focus .landing-card-desc { color: inherit; }
 
+/* A phone gets one card per row and the full description; there is nothing to fit
+   on one screen there, so the compaction above is relaxed rather than doubled. */
 @media (max-width: 700px) {
-  .landing-choices { flex-direction: column; align-items: center; }
+  .landing-choices { grid-template-columns: 1fr; max-width: 360px; }
+  .landing-icon svg { width: 64px; height: 64px; }
 }

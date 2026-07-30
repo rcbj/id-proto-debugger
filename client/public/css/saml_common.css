@@ -1,0 +1,274 @@
+/* Shared styling for the SAML Test Tools pages (saml_tools, saml_cert,
+   saml_response). Compact, bordered panes that echo the digital-signature /
+   encoding-tools look. Loaded last so it overrides common.css/bootstrap. */
+
+/* Widen the shared (otherwise narrow) bootstrap container for these pages. */
+.container { width: 96%; max-width: 1500px; }
+
+.saml-return { font-size: 0.85em; margin: 4px 0 2px; }
+.saml-intro {
+  font-size: 0.82em;
+  line-height: 1.35;
+  margin: 6px 0 10px;
+  color: #444;
+}
+.saml-intro strong { color: #b00; }
+
+/* A prominent notice (e.g. "SAML needs the api backend", or the 1.x warning). */
+.saml-notice {
+  font-size: 0.78em;
+  line-height: 1.4;
+  margin: 6px 0 10px;
+  padding: 8px 10px;
+  color: #663c00;
+  background: #fff8e6;
+  border: 1px solid #f0d48a;
+  border-radius: 4px;
+}
+.saml-notice.saml-hidden { display: none; }
+
+/* Explanatory note inside a pane — smaller and quieter than a .saml-notice.
+   Shared: the SAML Assertion Tool and both WS-Federation pages use it. */
+.saml-pane .saml-note {
+  font-size: 0.76em;
+  line-height: 1.4;
+  color: #555;
+  margin: 0 0 8px;
+}
+
+/* Generic hide used by show() for collapsible sections (signing / encryption). */
+.saml-hidden { display: none !important; }
+
+/* Panes. */
+.saml-pane {
+  border: 1px solid #aaa;
+  border-radius: 6px;
+  padding: 6px 12px 12px;
+  margin: 0 0 14px;
+  background: #fafafa;
+}
+.saml-pane > legend,
+.saml-pane-title {
+  width: auto;
+  font-weight: bold;
+  font-size: 0.98em;
+  padding: 0 6px;
+  border: none;
+  margin: 0 0 6px;
+  color: #333;
+}
+
+/* Top-of-page Expand-all / Collapse-all control row. */
+.saml-controls {
+  margin: 6px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.saml-controls-hint { font-size: 0.78em; color: #777; }
+/* Toggle switch that expands/collapses every pane (checked = all expanded). */
+.saml-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.saml-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.saml-toggle-slider {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 20px;
+  background: #bbb;
+  border-radius: 20px;
+  transition: background 0.15s ease;
+}
+.saml-toggle-slider::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+.saml-toggle input:checked + .saml-toggle-slider { background: #2680eb; }
+.saml-toggle input:checked + .saml-toggle-slider::before { transform: translateX(18px); }
+.saml-toggle input:focus-visible + .saml-toggle-slider { outline: 2px solid #2680eb; outline-offset: 2px; }
+.saml-toggle-text { font-size: 0.85em; color: #333; }
+
+/* Clickable pane title carrying a collapse/expand triangle. */
+.saml-legend { cursor: pointer; user-select: none; }
+.saml-legend::before { content: "\25be\00a0"; color: #666; font-size: 0.9em; } /* down triangle = expanded */
+/* Right triangle when this pane's body is collapsed (display:none). :has() keeps
+   the indicator correct regardless of which control last toggled it. */
+.saml-pane:has(.saml-pane-body[style*="display: none"]) > .saml-legend::before { content: "\25b8\00a0"; }
+
+/* Field name and value share one row (label left column, control fills rest) to
+   avoid the wasted vertical space of stacked label-over-input. */
+.saml-field {
+  margin: 0 0 6px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px 8px;
+}
+.saml-field > label {
+  flex: 0 0 40%;
+  max-width: 40%;
+  padding-top: 3px;
+  font-size: 0.74em;
+  font-weight: 600;
+  color: #333;
+  margin: 0;
+}
+.saml-field > label.saml-has-copy {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+}
+/* Controls take the remainder of the row (override the stacked width:100%). */
+.saml-pane .saml-field > input[type="text"],
+.saml-pane .saml-field > input[type="password"],
+.saml-pane .saml-field > select,
+.saml-pane .saml-field > textarea {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+}
+/* The username-hint helper text drops to its own line beneath the input. */
+.saml-field > #saml_hint_help { flex: 1 1 100%; margin-left: calc(40% + 8px); }
+/* Inline checkbox + label (e.g. "Digitally sign the AuthnRequest") stays single-row. */
+.saml-field.saml-check { flex-wrap: nowrap; align-items: center; gap: 6px; }
+.saml-field.saml-check > input[type="checkbox"] { margin: 0; flex: 0 0 auto; }
+.saml-field.saml-check > label {
+  flex: 0 1 auto;
+  max-width: none;
+  padding-top: 0;
+  display: inline;
+  margin: 0;
+  font-size: 0.82em;
+  cursor: pointer;
+}
+.saml-copy {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  line-height: 1.5;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.saml-pane textarea,
+.saml-pane input[type="text"],
+.saml-pane input[type="password"],
+.saml-pane select {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.82em;
+  padding: 3px 5px;
+  margin: 0;
+}
+.saml-pane textarea {
+  font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  resize: vertical;
+  line-height: 1.25;
+}
+
+.saml-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  margin-bottom: 8px;
+}
+.saml-row > * { margin: 0; }
+.saml-grow { flex: 1 1 0; min-width: 0; }
+
+.saml-pane input[type="submit"],
+.saml-pane input[type="button"],
+.saml-btn {
+  font-size: 0.82em;
+  padding: 5px 14px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.saml-sub {
+  border-top: 1px dashed #bbb;
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.saml-sub-title { font-weight: 700; font-size: 0.84em; margin-bottom: 6px; color: #333; }
+
+.saml-status {
+  font-size: 0.74em !important;
+  color: #555;
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  margin-bottom: 0;
+}
+
+/* Two-column layout for the config page (metadata | request) on wide screens. */
+.saml-cols { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.saml-cols > .saml-pane { flex: 1 1 460px; min-width: 320px; }
+
+/* Certificate + attribute tables (mirror token_detail). */
+.saml-table { border-collapse: collapse; width: 100%; font-size: 0.82em; }
+.saml-table td, .saml-table th {
+  border: 1px solid #ccc;
+  padding: 4px 8px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+.saml-table th { background: #f1f1f1; }
+.saml-table td.saml-key { font-weight: 600; white-space: nowrap; width: 22%; }
+
+/* Tabs (mirror token_detail .tab/.tablinks/.tabcontent). */
+.saml-tab { overflow: hidden; border-bottom: 1px solid #ccc; margin-bottom: 8px; }
+.saml-tab button {
+  background: inherit;
+  border: none;
+  outline: none;
+  cursor: pointer;
+  padding: 8px 14px;
+  font-size: 0.85em;
+}
+.saml-tab button:hover { background: #ddd; }
+.saml-tab button.active { background: #ccc; font-weight: 600; }
+.saml-tabcontent { display: none; }
+
+/* Header row (label + Copy) above a full-width document textarea in a tab. */
+.saml-doc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 0.74em;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 3px;
+}
+
+/* Operations History pane (saml_request.html) — a scrollable, newest-first log
+   of every attempted IdP call, mirroring the Operation History pane on the
+   OAuth2 debugger results page. */
+.saml-history-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid #ddd;
+}
+.saml-history-scroll th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.saml-history { border-collapse: collapse; font-size: 0.78em; }
+.saml-history td { vertical-align: top; }
+.saml-history-time { white-space: nowrap; font-size: 0.92em; color: #555; }
+.saml-history-uri { word-break: break-all; font-size: 0.92em; }
+.saml-history-empty { font-size: 0.8em; color: #888; font-style: italic; margin: 4px 0 0; }
+.saml-ok { color: #1a7f37; font-weight: 600; }
+.saml-bad { color: #b00; font-weight: 600; }
+/* Dispatched to the IdP, no answer yet — deliberately not green. */
+.saml-pending { color: #8a6d00; font-weight: 600; }

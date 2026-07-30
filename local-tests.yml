@@ -111,6 +111,119 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+  # WS-Federation IdP side-car (Keycloak 8.0.1 + cloudtrust keycloak-wsfed). Host
+  # networking, so it uses a WildFly port-offset of 2 (HTTP -> 8082) to avoid
+  # colliding with the 26.x Keycloak (8080) and the STS (8081). configureKeycloakWsfed
+  # provisions it; the WS-Fed test reaches it at http://localhost:8082/auth.
+  # No hostname: under host networking Docker adds no /etc/hosts entry for it, so
+  # the name it sets resolves to nothing INSIDE the container — and Keycloak 8's H2
+  # datasource resolves its own hostname (AUTO_SERVER), so the database failed to
+  # open and the whole boot was rolled back. The image now strips AUTO_SERVER as
+  # well; both are needed, because anything else in there that calls
+  # InetAddress.getLocalHost() has the same problem (WildFly's transaction manager
+  # already logs ARJUNA012210 about it). Without this line the container inherits
+  # the host's hostname, which does resolve. The walt.id services here omit it for
+  # the same reason.
+  keycloak-wsfed:
+    container_name: keycloak-wsfed
+    image: rcbj/keycloak-wsfed
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: keycloak-wsfed/Dockerfile
+    command: ["-b", "0.0.0.0", "-Djboss.socket.binding.port-offset=2"]
+    environment:
+      KEYCLOAK_USER: keycloak
+      KEYCLOAK_PASSWORD: keycloak
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8082/auth/realms/master || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 150s
 
+  # walt.id issuer-api2 — the real OpenID4VCI 1.0 Credential Issuer the interop
+  # suite (tests/sd_jwt_vc_waltid.js) runs against, beside our own mock. Host
+  # networking like everything else here, so the host-run browser reaches it at
+  # localhost:7005 and it reaches Keycloak on the same loopback. Its signing key
+  # comes from the environment (generateWaltidIssuerKey in common/common.sh) —
+  # no private key is committed.
+  waltid-issuer-api:
+    image: waltid/issuer-api2:0.23.0
+    # No hostname: under host networking it resolves to nothing, and the
+    # service's logger prints an UnknownHostException stack trace over it.
+    network_mode: "host"
+    volumes:
+      # Rendered by renderWaltidConfig() (common/common.sh) with this run's
+      # values — including its signing key — written in, so nothing here
+      # depends on how walt.id's config loader expands ${...}.
+      - ./waltid/generated-config:/waltid-issuer-api2/config:ro
+
+  # CORS in front of the issuer. walt.id's services send no CORS headers of their
+  # own — they install no CORS plugin, and walt.id's own stack fronts every one of
+  # them for that reason — and a browser-based wallet cannot read a response
+  # without them. This IS the address the wallet uses, and the address the
+  # issuer's baseUrl names, because every URL walt.id publishes is built from it.
+  # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
+  waltid-issuer:
+    image: node:24-alpine
+    command: ["node", "/waltid/cors-proxy.js"]
+    network_mode: "host"
+    environment:
+      - WALTID_UPSTREAM=localhost:7006
+      - WALTID_PROXY_PORT=7005
+    volumes:
+      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+    healthcheck:
+      # The whole chain: this proxy answering, and the issuer behind it serving
+      # the metadata a wallet asks for first. The probe lives here rather than on
+      # the issuer because that image is built with Jib and has no shell for
+      # CMD-SHELL to run — a probe there can never pass, and compose then waits
+      # forever on a service that is working perfectly.
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:7005/.well-known/openid-credential-issuer/openid4vci',function(r){var b='';r.on('data',function(d){b+=d});r.on('end',function(){process.exit(r.statusCode===200&&b.indexOf('credential_issuer')!==-1?0:1)})}).on('error',function(){process.exit(1)})\""]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      waltid-issuer-api:
+        condition: service_started
+
+  # walt.id's VERIFIER (verifier-api2) — the interoperability counterpart for the
+  # PRESENTATION workflow, beside our own mock. Host networking like everything
+  # else here, so the host-run browser reaches the proxy at localhost:7003. Its
+  # request-signing key comes from the environment (generateWaltidVerifierKey in
+  # common/common.sh) — no private key is committed.
+  waltid-verifier-api:
+    image: waltid/verifier-api2:0.23.0
+    # No hostname: under host networking it resolves to nothing, and the
+    # service's logger prints an UnknownHostException stack trace over it.
+    network_mode: "host"
+    volumes:
+      # Rendered by renderWaltidConfig() (common/common.sh). A SEPARATE directory
+      # from the issuer's: walt.id reads whatever conf files are in the directory
+      # it is given, and the two services must not be handed each other's.
+      - ./waltid/generated-verifier-config:/waltid-verifier-api2/config:ro
+
+  # CORS in front of the verifier, for the same reason the issuer has one, and it
+  # IS the address the verifier's urlPrefix names.
+  waltid-verifier:
+    image: node:24-alpine
+    command: ["node", "/waltid/cors-proxy.js"]
+    network_mode: "host"
+    environment:
+      - WALTID_UPSTREAM=localhost:7004
+      - WALTID_PROXY_PORT=7003
+    volumes:
+      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+    healthcheck:
+      # /livez is what walt.id's service-commons registers for every service. The
+      # probe is on the proxy because the verifier image has no shell for
+      # CMD-SHELL to run; this covers the whole chain.
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:7003/livez',function(r){process.exit(r.statusCode<500?0:1)}).on('error',function(){process.exit(1)})\""]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
 volumes:
   postgres_data:

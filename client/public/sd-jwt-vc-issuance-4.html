@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Issuance (4 of 4)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/sd_jwt_vc_issuance_4.js">
+</script>
+
+<!--#include file="/partials/sd_jwt_vc_steps.html"-->
+
+<p class="vc-return"><a id="return_link" href="/sd-jwt-vc-issuance-3.html">&larr; Back to step 3 (the credential)</a></p>
+
+<h3 class="vc-title">SD-JWT VC Issuance &mdash; Step 4 of 4: Refresh the Credential</h3>
+
+
+<p class="vc-intro">A credential does not stay current: its claim values go out of date and its validity window
+runs out. <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a>
+section 14.5, <em>Refreshing Issued Credentials</em>, names two ways to deal with that. The first needs
+<strong>no End-User interaction at all</strong>: the wallet obtains a fresh Access Token with its <strong>Refresh
+Token</strong> (<a href="https://www.rfc-editor.org/rfc/rfc6749.html#section-6" target="_blank" rel="noopener noreferrer">RFC 6749 section 6</a>)
+and asks the Credential Endpoint again. The second is to start the issuance over from step 1, which does involve
+the End-User &mdash; and is the only route left once the Refresh Token has expired too. This page is the
+first: the two calls it is made of, and then what the issuer actually changed.</p>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" onchange="vcSetAllPanes(this.checked);" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function vcSetAllPanes(expand) {
+  var fieldsets = ['current_fieldset', 'history_fieldset', 'refresh_fieldset', 'reissue_fieldset',
+                   'compare_fieldset'];
+  for (var i = 0; i < fieldsets.length; i++) {
+    var fs = document.getElementById(fieldsets[i]);
+    if (fs) fs.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<!-- ============ Pane 1: the credential the wallet holds ============ -->
+<div class="step0 dbg-pane" id="pane_current">
+  <legend class="dbg-legend" id="current_expand_button" onclick="return sdjwtvc4.togglePane('current_fieldset');">The Credential You Hold</legend>
+  <fieldset name="current_fieldset" id="current_fieldset" style="display: block;">
+    <p class="vc-note">What there is to refresh, and why anyone would: the validity window is the usual reason,
+    but not the only one &mdash; a claim the issuer knows has changed is another, and the wallet cannot tell from
+    the credential which of those applies.</p>
+    <div class="vc-status" id="vc_current_status">&nbsp;</div>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Credential type (vct)</label><span class="tooltiptext">What kind of credential this is. A refresh asks for the same one — this is not a way to obtain a different credential.</span></div></td>
+          <td><code id="vc_current_vct">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Validity</label><span class="tooltiptext">nbf and exp from the issuer-signed JWT, next to now. An expired credential is the plainest case for refreshing; a valid one may still be refreshed (section 14.3).</span></div></td>
+          <td><code id="vc_current_validity">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Bound to (cnf.jwk)</label><span class="tooltiptext">The holder key this credential is bound to. Refreshing it in place needs the private half of that key, because the Credential Request has to carry a proof of possession for it.</span></div></td>
+          <td><code id="vc_current_binding">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Obtained</label><span class="tooltiptext">Which credential configuration was asked for, from which issuer, when — and how many times it has been refreshed already.</span></div></td>
+          <td><code id="vc_current_provenance">&mdash;</code></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Credential History ============ -->
+<div class="step0 dbg-pane" id="pane_history">
+  <legend class="dbg-legend" id="history_expand_button" onclick="return sdjwtvc4.togglePane('history_fieldset');">Credential History</legend>
+  <fieldset name="history_fieldset" id="history_fieldset" style="display: block;">
+    <p class="vc-note"><strong>Every attempt</strong> made on this page, newest first &mdash; not only the ones
+    that worked. Each access token refresh, each Credential Request, each poll of the Deferred Credential
+    Endpoint, and what you then decided about what came back, is one row with what the issuer actually said. (It is
+    this workflow's counterpart of the <em>Token History</em> pane on
+    <a href="/debugger2.html">debugger2.html</a>, which does the same for token sets &mdash; and it records more,
+    because &ldquo;I tried to refresh and it did not work&rdquo; is the case a debugger is most needed for.)</p>
+    <p class="vc-note">The <code>#</code> column numbers the attempts in the order they were made, so every row
+    has one; <code>Gen</code> is the generation number, which only the rows the wallet <strong>holds</strong>
+    have &mdash; those are the credentials there is something to go back to. The newest <strong>100</strong>
+    attempts are kept, in a scrolling list of fixed height so the panes below it do not move as the log grows.</p>
+    <p class="vc-note"><strong>Attempt</strong> is what was tried; <strong>Outcome</strong> is what came of it:
+    <code>success</code> (an access token came back), <code>FAILED</code> (with the refusal in the next column),
+    <code>deferred</code> (the issuer needs more time), <code>returned &mdash; not kept yet</code> (a credential is
+    in hand awaiting your decision), <code>kept</code>, or <code>discarded</code>. Only the <code>kept</code> rows
+    are <strong>generations</strong> the wallet holds &mdash; they carry a <code>Gen</code> number and can be
+    activated; everything else is there as a record and says <em>log only</em>.</p>
+    <p class="vc-note"><strong>Activate</strong> makes a generation the credential in hand again, together with the
+    holder key it is bound to (without that key the credential could not be presented at all), so you can move
+    <em>backwards</em> as well as forwards: a refresh that turned out worse than what it replaced is a real
+    outcome, and going back to the credential that was working is what a wallet does about it.</p>
+    <p class="vc-history-nav">
+      <input class="btn2" id="vc_history_oldest_button" type="button" value="&#8676; Oldest" onclick="return sdjwtvc4.historyOldest();" />
+      <input class="btn2" id="vc_history_older_button" type="button" value="&#9664; Older" onclick="return sdjwtvc4.historyOlder();" />
+      <span class="vc-history-position" id="vc_history_position">&mdash;</span>
+      <input class="btn2" id="vc_history_newer_button" type="button" value="Newer &#9654;" onclick="return sdjwtvc4.historyNewer();" />
+      <input class="btn2" id="vc_history_latest_button" type="button" value="Latest &#8677;" onclick="return sdjwtvc4.historyLatest();" />
+      <input class="btn2" id="vc_history_clear_button" type="button" value="Clear History" onclick="return sdjwtvc4.clearHistory();" />
+    </p>
+    <div class="vc-status" id="vc_history_status">&nbsp;</div>
+    <div id="vc_history_table">&nbsp;</div>
+  </fieldset>
+</div>
+
+<!-- ====== Pane 2: the Refresh Token call (RFC 6749 section 6) ====== -->
+<div class="step0 dbg-pane" id="pane_refresh">
+  <legend class="dbg-legend" id="refresh_expand_button" onclick="return sdjwtvc4.togglePane('refresh_fieldset');">Refresh the Access Token</legend>
+  <fieldset name="refresh_fieldset" id="refresh_fieldset" style="display: block;">
+    <p class="vc-note">Plain OAuth 2.0: <code>grant_type=refresh_token</code> at the authorization server's Token
+    Endpoint. Nothing about this call is OID4VCI-specific &mdash; which is section 14.5's point. What is specific
+    is what the token is for: it is about to be spent on the Credential Endpoint again. If the access token in
+    hand has not expired, this step can be skipped entirely; section 14.3 permits asking the Credential Endpoint
+    again with the token you already have.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Token Endpoint</label><span class="tooltiptext">token_endpoint from the authorization server metadata retrieved in step 1 — the same endpoint the OIDC leg used to exchange the authorization code.</span></div></td>
+          <td><code id="vc_refresh_endpoint">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Access token in hand</label><span class="tooltiptext">The access token the workflow currently holds, with its own expiry — the thing this call is about to replace.</span></div></td>
+          <td><code id="vc_refresh_current_access_token">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Refresh Token</label><span class="tooltiptext">Issued alongside the access token, and the whole reason a credential can be refreshed without troubling the End-User. An authorization server is not obliged to issue one.</span></div>
+            <p style="font-size:80%;"><a href="/token_detail.html?type=refresh&amp;from=sd-jwt-vc-issuance-4.html">Inspect</a></p>
+          </td>
+          <td><textarea class="vc-token" rows="4" readonly id="vc_refresh_token_value"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="vc_refresh_scope">scope</label>
+              <span class="tooltiptext">OPTIONAL, and narrowing only: RFC 6749 section 6 allows a scope no broader than the one originally granted. Leave it empty to keep the scope the credential was authorized with.</span>
+            </div>
+          </td>
+          <td>
+            <input type="text" id="vc_refresh_scope" name="vc_refresh_scope" size="40" autocomplete="off"
+                   placeholder="(empty — keep the scope originally granted)"
+                   oninput="return sdjwtvc4.onRefreshScopeChange();" />
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>The call</label><span class="tooltiptext">The Token Request exactly as it will be sent: method, URL, and the form-encoded body. A confidential client's client_secret appears here too, because it is part of the call.</span></div></td>
+          <td><textarea class="vc-token" rows="9" readonly id="vc_refresh_request"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vc_refresh_button" type="button" value="Send the Refresh Request" onclick="return sdjwtvc4.sendRefreshRequest();" />
+              <span class="tooltiptext">Exchange the refresh token for a fresh access token. No credential is issued by this call — that is the pane below.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="vc_refresh_status">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Response</label><span class="tooltiptext">The token endpoint's answer, verbatim. Watch whether a new refresh_token comes back: a rotating server invalidates the old one.</span></div></td>
+          <td><pre class="vc-json" id="vc_refresh_response" style="display: none;">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ====== Pane 3: the Credential Request, again ====== -->
+<div class="step0 dbg-pane" id="pane_reissue">
+  <legend class="dbg-legend" id="reissue_expand_button" onclick="return sdjwtvc4.togglePane('reissue_fieldset');">Ask the Credential Endpoint Again</legend>
+  <fieldset name="reissue_fieldset" id="reissue_fieldset" style="display: block;">
+    <p class="vc-note">The same Credential Request step 2 makes &mdash; a fresh <code>c_nonce</code>, a proof of
+    possession signed by the holder key, the credential named the way section 8.2 requires &mdash; sent with the
+    access token from above. Section 14.3 is explicit that the endpoint <em>may</em> be asked again, and equally
+    explicit that the issuer decides what comes back: the same credential, or an updated one. It may also decide
+    the access token is no longer good enough and answer <code>401</code>, which is its right.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Credential Endpoint</label><span class="tooltiptext">credential_endpoint from the credential issuer metadata retrieved in step 1.</span></div></td>
+          <td><code id="vc_reissue_endpoint">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Presenting</label><span class="tooltiptext">The access token this request will carry as a Bearer credential — the refreshed one if the pane above produced one.</span></div></td>
+          <td><code id="vc_reissue_access_token">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="vc_refresh_key_mode">Holder key</label>
+              <span class="tooltiptext">A refreshed credential normally stays bound to the key the old one used, which is what makes it a replacement. Binding a new key produces a credential a verifier will demand a different proof of possession for — a legitimate thing to want, but not a replacement.</span>
+            </div>
+          </td>
+          <td>
+            <select id="vc_refresh_key_mode" name="vc_refresh_key_mode" onchange="return sdjwtvc4.onKeyModeChange();">
+              <option value="reuse" selected="selected">Reuse the key the credential is already bound to</option>
+              <option value="new">Generate a new holder key pair</option>
+            </select>
+            <span class="vc-note" id="vc_refresh_key_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>c_nonce</label><span class="tooltiptext">A fresh nonce from the issuer's Nonce Endpoint. The one step 2 used was spent on the original issuance — a c_nonce is single use.</span></div></td>
+          <td><code id="vc_reissue_nonce">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Proof of possession</label><span class="tooltiptext">typ openid4vci-proof+jwt, signed by the holder key, naming the credential issuer as its audience and carrying the c_nonce above.</span></div></td>
+          <td><textarea class="vc-token" rows="4" readonly id="vc_reissue_proof"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Request body</label><span class="tooltiptext">The JSON that will be POSTed. Identical in shape to step 2's — a refresh is not a different request, it is the same request made again.</span></div></td>
+          <td><pre class="vc-json" id="vc_reissue_body">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>The call</label><span class="tooltiptext">The fully assembled HTTP request: method, full URL, headers including the Bearer access token, and the body.</span></div></td>
+          <td><textarea class="vc-token" rows="12" readonly id="vc_reissue_request"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vc_reissue_button" type="button" value="Request a Refreshed Credential" onclick="return sdjwtvc4.requestRefreshedCredential();" />
+              <span class="tooltiptext">Send it. Nothing the wallet already holds is touched by this: what comes back is compared with the credential in hand, and replaces it only if you say so.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="vc_reissue_status">&nbsp;</div></td>
+        </tr>
+        <tr id="vc_reissue_deferred_row" style="display: none;">
+          <td>
+            <div class="tooltip"><label>Deferred</label>
+              <span class="tooltiptext">The issuer answered 202 with a transaction_id instead of a credential (section 9): the refreshed credential is not ready yet, and is collected from the Deferred Credential Endpoint. A refresh is nothing anyone is waiting on, so this page does not poll on a timer — it asks when you do.</span>
+            </div>
+          </td>
+          <td>
+            <code id="vc_reissue_transaction_id">&mdash;</code>
+            <p><input class="btn2" id="vc_reissue_deferred_button" type="button" value="Check for it now" onclick="return sdjwtvc4.pollDeferred();" /></p>
+            <pre class="vc-json" id="vc_reissue_deferred_attempts">&mdash;</pre>
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Response</label><span class="tooltiptext">The Credential Response, verbatim.</span></div></td>
+          <td><pre class="vc-json" id="vc_reissue_response" style="display: none;">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ====== Pane 4: what the issuer changed ====== -->
+<div class="step0 dbg-pane" id="pane_compare" style="display: none;">
+  <legend class="dbg-legend" id="compare_expand_button" onclick="return sdjwtvc4.togglePane('compare_fieldset');">What Changed</legend>
+  <fieldset name="compare_fieldset" id="compare_fieldset" style="display: block;">
+    <p class="vc-note">Section 14.5 leaves it to the issuer <em>&ldquo;whether to update both the signature and
+    the claim values, or only the signature&rdquo;</em>, and section 14.3 allows the answer to be the same
+    credential over again. None of that can be assumed from the wallet's side, so it is read off the two
+    credentials here. Note that the <strong>salts, Disclosures and digests are new every time</strong> whatever
+    the issuer decided &mdash; that is how SD-JWT works, not evidence of a change &mdash; which is why the claim
+    comparison is of values.</p>
+    <div class="vc-status" id="vc_compare_status">&nbsp;</div>
+    <table class="vc-table" id="vc_compare_table"><tbody></tbody></table>
+    <p class="vc-note">Disclosed claim values:</p>
+    <table class="vc-table" id="vc_compare_claims"><tbody></tbody></table>
+    <div class="vc-approval">
+      <h4>Keep which one?</h4>
+      <p>Section 14.5: <em>&ldquo;the Wallet might need to check if it already has a Credential of the same type
+      and, if necessary, delete the old Credential. Otherwise, the Wallet might end up with more than one
+      Credential of the same type, without knowing which one is the latest.&rdquo;</em> Nothing has been replaced
+      yet &mdash; that decision is the wallet's, so it is put here rather than made quietly.</p>
+      <p class="vc-note" id="vc_compare_refreshed_meta">&mdash;</p>
+      <textarea class="vc-token" rows="5" readonly id="vc_compare_refreshed_raw"></textarea>
+      <p>
+        <input class="btn2" id="vc_replace_button" type="button" value="Replace the credential I hold" onclick="return sdjwtvc4.replaceCredential();" />
+        <input class="btn2" id="vc_discard_button" type="button" value="Discard the refreshed one" onclick="return sdjwtvc4.discardRefreshed();" />
+        <input class="btn2" id="vc_compare_copy_button" type="button" value="Copy Credential" onclick="return sdjwtvc4.copyRefreshed();" />
+        <input class="btn2" id="vc_goto_step3_button" type="button" value="Verify in step 3" onclick="return sdjwtvc4.verifyInStepThree();" />
+      </p>
+      <p class="vc-note">Keeping it does not navigate anywhere: the
+      <strong>Credential History</strong> pane above gains the new generation and marks it as the one in hand, and
+      <em>Verify in step 3</em> is there when you want the full check of it.</p>
+    </div>
+  </fieldset>
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

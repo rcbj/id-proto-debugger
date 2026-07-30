@@ -7,10 +7,26 @@
 // URI helpers (RequestType / Action / KeyType / Status) live here too, since
 // they drive construction. No DOM, no crypto — safe to require from Node.
 
+var bunyan = require("bunyan");
+// The log level comes from the same configuration the pages use. A consumer
+// outside the browser bundles (the node-based tests load this module directly)
+// may not have one, so fall back to info rather than failing to load.
+var log = bunyan.createLogger({
+  name: "wstrust_msg",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).logLevel || "info";
+    } catch (e) {
+      return "info";
+    }
+  })()
+});
+
 // WS-Trust protocol versions. The RequestType / Action / KeyType / Status URIs
 // are namespace-relative, so the selected version's trust namespace (ns) drives
 // construction. Feature gates: `bearer` — the Bearer KeyType is WS-Trust 1.3+;
 // `actas` — wst14:ActAs (composite delegation) is WS-Trust 1.4 only.
+
 var TRUST_VERSIONS = {
   "1.0": { ns: "http://schemas.xmlsoap.org/ws/2004/04/trust", bearer: false, actas: false },
   "1.1": { ns: "http://schemas.xmlsoap.org/ws/2005/02/trust", bearer: false, actas: false },
@@ -60,6 +76,7 @@ function tokenTypeUri(tokenType, version) {
 //   lifetimeMinutes, claims, useOnBehalfOf, onBehalfOf, useActAs, actAs,
 //   targetToken
 function buildRst(o) {
+  log.debug("Entering buildRst().");
   o = o || {};
   var version = o.version;
   var op = o.operation;
@@ -107,6 +124,7 @@ function buildRst(o) {
     parts.push('<wst:' + wrap + '>' + (target || '<!-- paste the target token above -->') + '</wst:' + wrap + '>');
   }
 
+  log.debug("Leaving buildRst().");
   return '<wst:RequestSecurityToken xmlns:wst="' + versionNs(version) + '"' +
     ' xmlns:wsp="' + WSP_NS + '" xmlns:wsa="' + WSA_NS + '" xmlns:wsu="' + WSU_NS + '">' +
     parts.join('') +

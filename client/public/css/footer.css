@@ -72,6 +72,18 @@
   color: #555;
 }
 
+/* Application version (M.N.O), under the copyright on every page. Quiet: it is
+   provenance, not content. Hovering shows the build number, build time, and
+   commit. */
+.footer-version {
+  text-align: center;
+  padding: 2px 12px 10px;
+  font-size: 11px;
+  color: #999;
+  letter-spacing: 0.02em;
+  cursor: help;
+}
+
 /* Add media queries for responsiveness - when the screen is 500px wide or less, stack the links on top of each other */
 @media screen and (max-width: 500px) {
   .footer_debugger a {

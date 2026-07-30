@@ -25,6 +25,55 @@ services:
     image: rcbj/sts
     hostname: sts
     network_mode: "host"
+    environment:
+      # Log level, chosen the same way as for api and client.
+      - CONFIG_FILE=./env/local.js
+      # Host networking: Keycloak is on the same loopback.
     build:
       context: .
       dockerfile: sts/Dockerfile
+  # walt.id issuer-api2 — the real OpenID4VCI issuer the interop suite
+  # (tests/sd_jwt_vc_waltid.js) runs against. Host networking, so the host-run
+  # browser reaches it at localhost:7005 and it reaches Keycloak on the same
+  # loopback. Its signing key comes from the environment
+  # (generateWaltidIssuerKey in common/common.sh); no private key is committed.
+  waltid-issuer-api:
+    image: waltid/issuer-api2:0.23.0
+    # No hostname: under host networking it resolves to nothing, and the
+    # service's logger prints an UnknownHostException stack trace over it.
+    network_mode: "host"
+    volumes:
+      # Rendered by renderWaltidConfig() (common/common.sh) with this run's
+      # values — including its signing key — written in, so nothing here
+      # depends on how walt.id's config loader expands ${...}.
+      - ./waltid/generated-config:/waltid-issuer-api2/config:ro
+
+  # CORS in front of the issuer. walt.id's services send no CORS headers of their
+  # own — they install no CORS plugin, and walt.id's own stack fronts every one of
+  # them for that reason — and a browser-based wallet cannot read a response
+  # without them. This IS the address the wallet uses, and the address the
+  # issuer's baseUrl names, because every URL walt.id publishes is built from it.
+  # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
+  waltid-issuer:
+    image: node:24-alpine
+    command: ["node", "/waltid/cors-proxy.js"]
+    network_mode: "host"
+    environment:
+      - WALTID_UPSTREAM=localhost:7006
+      - WALTID_PROXY_PORT=7005
+    volumes:
+      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+    healthcheck:
+      # The whole chain: this proxy answering, and the issuer behind it serving
+      # the metadata a wallet asks for first. The probe lives here rather than on
+      # the issuer because that image is built with Jib and has no shell for
+      # CMD-SHELL to run — a probe there can never pass, and compose then waits
+      # forever on a service that is working perfectly.
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:7005/.well-known/openid-credential-issuer/openid4vci',function(r){var b='';r.on('data',function(d){b+=d});r.on('end',function(){process.exit(r.statusCode===200&&b.indexOf('credential_issuer')!==-1?0:1)})}).on('error',function(){process.exit(1)})\""]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      waltid-issuer-api:
+        condition: service_started

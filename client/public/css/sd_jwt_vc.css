@@ -1,0 +1,295 @@
+/* SD-JWT VC issuance workflow — the three pages share this sheet on top of
+   debugger.css, so the panes, tooltips and buttons look exactly like the rest
+   of the OAuth2 / OIDC debugger and only the credential-specific parts are new. */
+
+.vc-return { margin: 8px 0 2px; font-size: 0.9em; }
+.vc-title { margin: 6px 0 10px; }
+.vc-intro, .vc-note { max-width: 1100px; line-height: 1.45; }
+.vc-note { font-size: 0.9em; color: #333; }
+
+/* --- step indicator (partials/sd_jwt_vc_steps.html) ---
+   Every page of the workflow carries the same row of links to every step, at the
+   top. It is ONE row: `nowrap` plus items that may shrink (flex-basis 0,
+   min-width 0), so five steps share the width instead of the last one dropping
+   onto a second line — which is what happened when step 4 was added. */
+ol.vc-steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 6px;
+  margin: 10px 0 12px;
+  padding: 0;
+}
+ol.vc-steps li {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid #ccc;
+  border-left: 4px solid #ccc;
+  border-radius: 3px;
+  padding: 5px 8px;
+  background: #fafafa;
+  overflow-wrap: anywhere;
+}
+ol.vc-steps li a { font-weight: bold; text-decoration: none; font-size: 0.9em; }
+ol.vc-steps li span { display: block; font-size: 0.72em; color: #666; line-height: 1.3; }
+ol.vc-steps li.vc-step-current { border-left-color: #12107c; background: #eef; }
+ol.vc-steps li.vc-step-done { border-left-color: #2e7d32; }
+
+/* --- step 0: the use-case chooser ---
+   Big, calm buttons: a full-width card each, so the choice reads as "which of
+   these situations are you in" rather than "pick a protocol variant". */
+.vc-usecases {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 1100px;
+  margin: 18px 0 10px;
+}
+button.vc-usecase {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 18px 22px;
+  border: 1px solid #c9c9d4;
+  border-left: 6px solid #12107c;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  color: #222;
+  transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease;
+}
+button.vc-usecase:hover,
+button.vc-usecase:focus {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .10);
+  transform: translateY(-2px);
+  border-color: #12107c;
+  outline: none;
+}
+button.vc-usecase-current { background: #f4f4ff; }
+button.vc-usecase-soon {
+  border-left-color: #b9b9c4;
+  background: #fafafa;
+  color: #777;
+  cursor: not-allowed;
+}
+button.vc-usecase-soon:hover { box-shadow: none; transform: none; border-color: #c9c9d4; }
+.vc-usecase-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.vc-usecase-spec {
+  font-size: .72em;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: #12107c;
+  background: #ececff;
+  border-radius: 3px;
+  padding: 2px 7px;
+}
+button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
+.vc-usecase-title { font-size: 1.18em; font-weight: 700; }
+.vc-usecase-flag {
+  font-size: .72em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: #2e7d32;
+}
+.vc-usecase-flag-soon { color: #8a6d00; }
+.vc-usecase-summary { display: block; margin-top: 8px; font-size: .95em; line-height: 1.45; }
+.vc-usecase-detail { display: block; margin-top: 6px; font-size: .85em; color: #555; line-height: 1.45; }
+.vc-usecase-mechanics {
+  display: block;
+  margin-top: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .76em;
+  color: #666;
+}
+.vc-usecase-cta { display: block; margin-top: 12px; font-weight: 700; color: #12107c; }
+
+/* Which use case is running, under the step indicator on every page. */
+.vc-use-case-badge {
+  margin: -6px 0 14px;
+  font-size: .82em;
+  color: #555;
+}
+.vc-use-case-badge strong { color: #12107c; }
+
+/* --- status lines --- */
+.vc-status { font-size: 0.9em; }
+.vc-status.vc-ok { color: #2e7d32; }
+.vc-status.vc-bad { color: #b00020; }
+.vc-status.vc-pending { color: #8a6d00; }
+.not-defined-sample { color: #999; font-style: italic; }
+
+/* --- generated Configuration Parameters rows --- */
+#config_table td { padding: 1px 6px; vertical-align: top; }
+#config_table input[type="text"] { width: 42em; max-width: 100%; }
+tr.vc-group-heading td {
+  padding-top: 12px;
+  font-weight: bold;
+  border-bottom: 1px solid #ddd;
+}
+tr.vc-group-heading td span { font-weight: normal; font-size: 0.85em; color: #666; }
+
+/* --- token / credential text areas ---
+   table-layout: fixed, the same way the disclosure tables below do it. Without
+   it the browser sizes each column to its content's min-content width, and this
+   pane's content is base64url: a c_nonce, a JWK's modulus or a pretty-printed
+   request body has no break opportunity in it, so the column grows to fit the
+   longest line and the whole table pushes out past the edge of the pane. Fixed
+   layout makes the cell the authority on width and the content wrap inside it,
+   which is also what keeps every box in the pane aligned on BOTH edges. */
+.vc-token-table { width: 100%; max-width: 1100px; table-layout: fixed; }
+.vc-token-table td {
+  vertical-align: top;
+  padding: 4px 6px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.vc-token-table td:first-child { width: 12em; }
+/* A single long unbroken value shown as <code> — a c_nonce, an endpoint, an
+   access token, a key thumbprint. It has to be allowed to break: monospace with
+   no space in it is exactly what pushed the pane (and on the Approve pane, the
+   whole page) out to the right. Every pane on these pages, not only the tables:
+   the same values appear in the Approve pane's list, where there is no cell to
+   constrain them. */
+.dbg-pane code {
+  /* bootstrap.css sets `code { white-space: nowrap }`. THAT is what let a long
+     c_nonce or access token run off to the right of the pane instead of
+     wrapping, so it has to be overridden before the break rules can do
+     anything. */
+  white-space: normal;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+}
+/* The Approve pane's bullet list and prose hold the same values inline. */
+.vc-approval li, .vc-approval p, .dbg-pane p.vc-note {
+  overflow-wrap: anywhere;
+}
+textarea.vc-token {
+  width: 100%;
+  /* The cell decides how wide, so every box in the pane lines up. */
+  max-width: 100%;
+  box-sizing: border-box;
+  font-family: monospace;
+  font-size: 0.8em;
+  word-break: break-all;
+}
+pre.vc-json {
+  background: #f7f7f7;
+  border: 1px solid #ddd;
+  padding: 8px;
+  /* width AND box-sizing, so a <pre> and a <textarea> in the same pane come out
+     the same size to the pixel — bootstrap's own pre rules would otherwise leave
+     them a few pixels apart, which is visible as a ragged right edge. */
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* Wrap rather than run off to the right; overflow-x stays as a fallback for
+     content with no break opportunity at all. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow-x: auto;
+  font-size: 0.8em;
+}
+
+/* --- the approval box on step 2 --- */
+.vc-approval {
+  border: 2px solid #12107c;
+  border-radius: 4px;
+  padding: 10px 14px;
+  max-width: 1100px;
+  background: #f4f4ff;
+}
+.vc-approval h4 { margin-top: 0; }
+.vc-approval ul { margin: 6px 0 10px 18px; }
+/* "The call this will make" — the assembled HTTP request, above the buttons. */
+.vc-approval-request { display: block; margin: 10px 0 4px; }
+.vc-approval-request label { font-weight: 600; font-size: 0.9em; }
+.vc-approval textarea.vc-token { background: #fff; }
+.vc-approval .btn2 { margin-right: 8px; }
+
+/* --- disclosure / claim tables on step 3 --- */
+table.vc-table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 1100px;
+  table-layout: fixed;
+  font-size: 0.85em;
+}
+table.vc-table th, table.vc-table td {
+  border: 1px solid #ccc;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+table.vc-table th { background: #f0f0f0; }
+table.vc-table td.vc-mono { font-family: monospace; font-size: 0.9em; }
+td.vc-ok, span.vc-ok { color: #2e7d32; }
+td.vc-bad, span.vc-bad { color: #b00020; }
+.vc-decoy { color: #888; font-style: italic; }
+
+/* The compact serialization, with the ~ separators called out. */
+.vc-serialized {
+  font-family: monospace;
+  font-size: 0.75em;
+  word-break: break-all;
+  background: #f7f7f7;
+  border: 1px solid #ddd;
+  padding: 8px;
+  max-width: 1100px;
+}
+.vc-serialized .vc-part-jwt { color: #12107c; }
+.vc-serialized .vc-part-disclosure { color: #2e7d32; }
+.vc-serialized .vc-tilde { color: #b00020; font-weight: bold; }
+/* The Key Binding JWT: the last element of a PRESENTATION, and the part the
+   holder signs rather than the issuer — so it gets its own colour. */
+.vc-serialized .vc-part-kb, .vc-part-kb { color: #8a4b00; }
+span.vc-part-jwt, span.vc-part-disclosure, span.vc-part-kb { font-weight: 600; }
+
+/* --- step 4: the credential history ---
+   The row for the generation in hand is marked the way debugger2.html marks the
+   active token set, so the two panes read the same way.
+
+   The list is a FIXED-height scrolling window (debugger2's Token History scrolls
+   too): a log of up to 100 attempts would otherwise push the panes below it off
+   the screen, and the pane's height would jump every time an attempt was made. */
+#vc_history_table {
+  height: 420px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid #ddd;
+  background: #fff;
+}
+/* The header stays put while the rows scroll under it — with 100 rows, a header
+   that scrolls away makes the columns unreadable. */
+#vc_history_table table.vc-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* thead cells need their own background once they overlap the rows. */
+  background: #f0f0f0;
+}
+.vc-history-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 10px 0 6px;
+}
+.vc-history-nav .btn2 { margin: 0; }
+.vc-history-position {
+  font-size: 0.9em;
+  font-weight: 600;
+  color: #12107c;
+  min-width: 16em;
+  text-align: center;
+}
+table.vc-table tr.vc-history-active { background-color: #d4edda; }
+table.vc-table tr.vc-history-active td { font-weight: 600; }
+/* A credential the issuer has just returned: in the list, visibly not part of it
+   until it is kept. */
+table.vc-table tr.vc-history-pending { background-color: #fff8e1; }
+table.vc-table tr.vc-history-pending td { font-style: italic; }

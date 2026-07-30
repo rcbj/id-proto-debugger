@@ -1,9 +1,11 @@
 const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
-const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require('commander');
+// The SP key pair is generated per run and passed in through the environment;
+// it is deliberately not stored in this repository. See common/sp_keypair.js.
+const { readSpKeyPair } = require("../common/sp_keypair.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -78,7 +80,7 @@ async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
 // SessionIndex to localStorage, both of which the subsequent LogoutRequest needs.
 async function ssoLogin(driver, metadataUrl, spEntityId, user, binding, loginWait, metadataFile) {
   log.info("SLO test — step 1: SSO login (binding=" + binding + ").");
-  await driver.get(baseUrl + "/saml_tools.html");
+  await driver.get(baseUrl + "/saml_request.html");
 
   // Load + parse the IdP metadata (URL fetch, or file upload when metadataFile set).
   await loadIdpMetadata(driver, metadataUrl, metadataFile);
@@ -87,10 +89,11 @@ async function ssoLogin(driver, metadataUrl, spEntityId, user, binding, loginWai
   await driver.findElement(spField).clear();
   await driver.findElement(spField).sendKeys(spEntityId);
 
-  // Fixed SP signing key pair (its cert is registered on the Keycloak client, so
-  // both the AuthnRequest and the LogoutRequest signatures validate).
-  var spKey = fs.readFileSync(path.join(__dirname, "fixtures", "sp-key.pem"), "utf8");
-  var spCert = fs.readFileSync(path.join(__dirname, "fixtures", "sp-cert.pem"), "utf8");
+  // This run's SP signing key pair (its cert is registered on the Keycloak
+  // client, so both the AuthnRequest and the LogoutRequest signatures validate).
+  var spPair = readSpKeyPair();
+  var spKey = spPair.privateKey;
+  var spCert = spPair.certificate;
   await driver.executeScript(
     "document.getElementById('saml_sp_private_key').value = arguments[0];" +
     "document.getElementById('saml_sp_public_key').value = arguments[1];",
@@ -127,7 +130,7 @@ async function samlLogout(driver, metadataUrl, spEntityId, user, binding, metada
 
   // ---- step 2: Single Logout ----
   log.info("SLO test — step 2: return to SAML Test Tools and trigger Single Logout.");
-  await driver.get(baseUrl + "/saml_tools.html");
+  await driver.get(baseUrl + "/saml_request.html");
   await driver.wait(until.elementLocated(By.id("saml_binding")), waitTime);
   await driver.executeScript(
     "var s=document.getElementById('saml_binding'); if(s){ s.value = arguments[0]; }", binding);
@@ -156,7 +159,7 @@ async function samlLogout(driver, metadataUrl, spEntityId, user, binding, metada
   // onclick handler). A Selenium native .click() here is intermittently swallowed
   // — the on-load auto-build re-renders the Generated AuthnRequest field, so the
   // button can shift between click-point computation and dispatch and the handler
-  // never fires (leaving the browser on saml_tools.html). element.click() in the
+  // never fires (leaving the browser on saml_request.html). element.click() in the
   // page is immune to that and reliably invokes singleLogout().
   var lb = await driver.findElement(By.xpath("//input[contains(@onclick,'singleLogout')]"));
   await driver.wait(until.elementIsVisible(lb), waitTime);

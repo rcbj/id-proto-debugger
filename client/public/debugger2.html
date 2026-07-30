@@ -172,6 +172,348 @@ function dbgSetAllPanes(expand) {
             </td>
           </tr>
           <tr>
+            <td colspan="2">
+              <div class="tooltip"><label><strong>OpenID Provider Metadata (OIDC Discovery 1.0 &sect;3)</strong></label><span class="tooltiptext">Every member the OpenID Connect Discovery 1.0 specification defines for the OpenID Provider Metadata document. Each is pre-filled with a dummy default, is populated from the discovery document by "Populate Meta Data", and can be overridden here. Values that are JSON arrays in the document are shown comma-separated.</span>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>issuer: </label><span class="tooltiptext">URL the OP asserts as its Issuer Identifier. MUST be identical to the iss claim in issued ID Tokens. (REQUIRED)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="issuer" name="issuer" type="text" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>scopes supported: </label><span class="tooltiptext">OAuth 2.0 scope values this server supports. Comma-separated. (RECOMMENDED)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="scopes_supported" name="scopes_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>response types supported: </label><span class="tooltiptext">OAuth 2.0 response_type values this OP supports. Comma-separated (a value may itself contain spaces, e.g. “code id_token”). (REQUIRED)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="response_types_supported" name="response_types_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>response modes supported: </label><span class="tooltiptext">OAuth 2.0 response_mode values this OP supports. Comma-separated. Default: query, fragment. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="response_modes_supported" name="response_modes_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>grant types supported: </label><span class="tooltiptext">OAuth 2.0 grant type values this OP supports. Comma-separated. Default: authorization_code, implicit. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="grant_types_supported" name="grant_types_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>acr values supported: </label><span class="tooltiptext">Authentication Context Class References this OP supports. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="acr_values_supported" name="acr_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>subject types supported: </label><span class="tooltiptext">Subject Identifier types this OP supports — pairwise and/or public. Comma-separated. (REQUIRED)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="subject_types_supported" name="subject_types_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>id token signing alg values supported: </label><span class="tooltiptext">JWS alg values supported for the ID Token. Comma-separated. RS256 MUST be included. (REQUIRED)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="id_token_signing_alg_values_supported" name="id_token_signing_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>id token encryption alg values supported: </label><span class="tooltiptext">JWE alg values supported for the ID Token. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="id_token_encryption_alg_values_supported" name="id_token_encryption_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>id token encryption enc values supported: </label><span class="tooltiptext">JWE enc values supported for the ID Token. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="id_token_encryption_enc_values_supported" name="id_token_encryption_enc_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>userinfo signing alg values supported: </label><span class="tooltiptext">JWS alg values supported by the UserInfo Endpoint. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="userinfo_signing_alg_values_supported" name="userinfo_signing_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>userinfo encryption alg values supported: </label><span class="tooltiptext">JWE alg values supported by the UserInfo Endpoint. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="userinfo_encryption_alg_values_supported" name="userinfo_encryption_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>userinfo encryption enc values supported: </label><span class="tooltiptext">JWE enc values supported by the UserInfo Endpoint. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="userinfo_encryption_enc_values_supported" name="userinfo_encryption_enc_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>request object signing alg values supported: </label><span class="tooltiptext">JWS alg values supported for Request Objects. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="request_object_signing_alg_values_supported" name="request_object_signing_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>request object encryption alg values supported: </label><span class="tooltiptext">JWE alg values supported for Request Objects. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="request_object_encryption_alg_values_supported" name="request_object_encryption_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>request object encryption enc values supported: </label><span class="tooltiptext">JWE enc values supported for Request Objects. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="request_object_encryption_enc_values_supported" name="request_object_encryption_enc_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>token endpoint auth methods supported: </label><span class="tooltiptext">Client authentication methods supported by the Token Endpoint. Comma-separated. Default: client_secret_basic. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="token_endpoint_auth_methods_supported" name="token_endpoint_auth_methods_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>token endpoint auth signing alg values supported: </label><span class="tooltiptext">JWS alg values supported by the Token Endpoint for the private_key_jwt / client_secret_jwt assertion. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="token_endpoint_auth_signing_alg_values_supported" name="token_endpoint_auth_signing_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>display values supported: </label><span class="tooltiptext">display parameter values this OP supports. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="display_values_supported" name="display_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>claim types supported: </label><span class="tooltiptext">Claim Types this OP supports. Comma-separated. Default: normal. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="claim_types_supported" name="claim_types_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>claims supported: </label><span class="tooltiptext">Claim Names this OP may supply values for. Comma-separated. (RECOMMENDED)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="claims_supported" name="claims_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>service documentation: </label><span class="tooltiptext">URL of human-readable developer documentation for this OP. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="service_documentation" name="service_documentation" type="text" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>claims locales supported: </label><span class="tooltiptext">BCP47 language tags supported for Claim values. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="claims_locales_supported" name="claims_locales_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>ui locales supported: </label><span class="tooltiptext">BCP47 language tags supported for the user interface. Comma-separated. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="ui_locales_supported" name="ui_locales_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>claims parameter supported: </label><span class="tooltiptext">Whether the OP supports the claims request parameter. Spec default: false. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <select class="stored" id="claims_parameter_supported" name="claims_parameter_supported">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>request parameter supported: </label><span class="tooltiptext">Whether the OP supports the request parameter. Spec default: false. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <select class="stored" id="request_parameter_supported" name="request_parameter_supported">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>request uri parameter supported: </label><span class="tooltiptext">Whether the OP supports the request_uri parameter. Spec default: true. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <select class="stored" id="request_uri_parameter_supported" name="request_uri_parameter_supported">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>require request uri registration: </label><span class="tooltiptext">Whether request_uri values must be pre-registered. Spec default: false. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <select class="stored" id="require_request_uri_registration" name="require_request_uri_registration">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>op policy uri: </label><span class="tooltiptext">URL the OP provides to read about its requirements on how the Relying Party can use the data provided. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="op_policy_uri" name="op_policy_uri" type="text" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>op tos uri: </label><span class="tooltiptext">URL the OP provides to read about the OpenID Provider's terms of service. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="op_tos_uri" name="op_tos_uri" type="text" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>revocation endpoint auth methods supported: </label><span class="tooltiptext">Client authentication methods the Revocation Endpoint supports (RFC 8414 / RFC 7009). Comma-separated. Defined by RFC 8414, not by OpenID Connect Discovery 1.0. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="revocation_endpoint_auth_methods_supported" name="revocation_endpoint_auth_methods_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>revocation endpoint auth signing alg values supported: </label><span class="tooltiptext">JWS algorithms the Revocation Endpoint supports for the private_key_jwt / client_secret_jwt assertion. Comma-separated. RFC 8414 only. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="revocation_endpoint_auth_signing_alg_values_supported" name="revocation_endpoint_auth_signing_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>introspection endpoint auth methods supported: </label><span class="tooltiptext">Client authentication methods the Introspection Endpoint supports (RFC 8414 / RFC 7662). Comma-separated. RFC 8414 only. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="introspection_endpoint_auth_methods_supported" name="introspection_endpoint_auth_methods_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>introspection endpoint auth signing alg values supported: </label><span class="tooltiptext">JWS algorithms the Introspection Endpoint supports for the private_key_jwt / client_secret_jwt assertion. Comma-separated. RFC 8414 only. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="introspection_endpoint_auth_signing_alg_values_supported" name="introspection_endpoint_auth_signing_alg_values_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>code challenge methods supported: </label><span class="tooltiptext">PKCE code challenge methods the authorization server supports (RFC 7636), e.g. S256, plain. Comma-separated. RFC 8414 only. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="code_challenge_methods_supported" name="code_challenge_methods_supported" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>signed metadata: </label><span class="tooltiptext">A JWT of this metadata document signed by the issuer (RFC 8414 section 2.1). Use Validate Signature in the Metadata Retrieval pane to verify it. RFC 8414 only. (OPTIONAL)</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="signed_metadata" name="signed_metadata" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
             <td>
               <div class="tooltip"><label>Display OIDC Related Artifacts? </label><span class="tooltiptext">Some OAuth2 identity providers return OIDC-related tokens even for plain OAuth2 calls. This option will display tokens in this case.</span>
               </div>

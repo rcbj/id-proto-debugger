@@ -9,7 +9,7 @@
     <link href="/css/footer.css" rel="stylesheet">
     <link href="/css/common.css" rel="stylesheet">
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
-    <link href="/css/saml_tools.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
     <link href="/css/wstrust_tools.css" rel="stylesheet">
   </head>
 
@@ -40,7 +40,7 @@
 
 <script type="text/javascript">
 function wstrustSetAllPanes(expand) {
-  var bodies = ['pane_sts_body', 'pane_request_body'];
+  var bodies = ['pane_sts_body', 'pane_request_body', 'pane_history_body'];
   for (var i = 0; i < bodies.length; i++) {
     var b = document.getElementById(bodies[i]);
     if (b) b.style.display = expand ? 'block' : 'none';
@@ -390,6 +390,19 @@ http://schemas.xmlsoap.org/ws/2005/05/identity/claims/surname</textarea>
   </fieldset>
 
 </div>
+
+
+<!-- ===================== Operations History ===================== -->
+<fieldset class="saml-pane" id="pane_history">
+  <legend class="saml-legend" onclick="return wstrust_tools.togglePane('pane_history_body');" title="Click to collapse or expand this pane.">Operations History</legend>
+  <div class="saml-pane-body" id="pane_history_body">
+    <p class="saml-note">Chronological history of every attempted call to the STS from this page, newest first — the time, the WS-Trust version, the operation, the user the request was made as, and the result. <strong>Result</strong> is one of: <span class="saml-bad">Failure</span>, the request never left the browser (no endpoint, a build error, a network/CORS failure) or the STS refused it with a SOAP Fault; <span class="saml-pending">Sent</span>, the request went out and no answer has been rendered yet; <span class="saml-ok">Success</span>, the STS answered with a token or a status. A <em>Sent</em> entry is closed out when the response is rendered on the <a href="/wstrust_response.html">WS-Trust Response</a> page. The history is kept in this browser's local storage and survives a reload.</p>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Clear History" onclick="return wstrust_tools.clearOperationHistory();" title="Discard every recorded operation." />
+    </div>
+    <div id="wst_operation_history"></div>
+  </div>
+</fieldset>
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">

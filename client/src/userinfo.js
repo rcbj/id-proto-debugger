@@ -98,6 +98,7 @@ function callUserInfoEndpoint()
 }
 
 function ajaxSuccessFunction(data, textStatus, jqXHR) {
+  log.debug("Entering ajaxSuccessFunction().");
   log.debug('Entering ajax success function for Access Token call.');
   log.debug('UserInfo textStatus: ' + JSON.stringify(textStatus));
   log.debug('UserInfo Endpoint Response: ' + JSON.stringify(data));
@@ -112,6 +113,7 @@ function ajaxSuccessFunction(data, textStatus, jqXHR) {
   } else {
     log.error('Unknown response format.');
   }
+  log.debug("Leaving ajaxSuccessFunction().");
 }
 
 function ajaxErrorFunction(request, status, error) {

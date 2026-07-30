@@ -41,6 +41,7 @@ function decodeJWT(jwt_) {
 }
 
 function resolveTokenFromParams() {
+  log.debug("Entering resolveTokenFromParams().");
   var type = getParameterByName('type');
   if (type === 'access') {
     return localStorage.getItem('token_access_token');
@@ -75,9 +76,11 @@ function resolveTokenFromParams() {
     log.error('Unknown token type: ' + type);
     return null;
   }
+  log.debug("Leaving resolveTokenFromParams().");
 }
 
 async function verifyJWT() {
+  log.debug("Entering verifyJWT().");
   var jwt_verification_type = document.getElementById("jwt_verification_type").value;
   var jwt_verification_key = document.getElementById("jwt_verification_key").value;
   var jwt_ = resolveTokenFromParams();
@@ -106,6 +109,7 @@ async function verifyJWT() {
   }
 
   document.getElementById('jwt_verification_output').value = "Signature Verified: " + isValid;
+  log.debug("Leaving verifyJWT().");
 }
 
 function atobUrl(input) {
@@ -137,6 +141,7 @@ function pemToArrayBuffer(pem) {
 }
 
 async function verifyHMAC(jwt_, secret, alg = 'HS256') {
+  log.debug("Entering verifyHMAC().");
   const encoder = new TextEncoder();
   const algo = { HS256: 'SHA-256', HS384: 'SHA-384', HS512: 'SHA-512' }[alg];
   if (!algo) throw new Error('Unsupported HMAC algorithm: ' + alg);
@@ -151,10 +156,12 @@ async function verifyHMAC(jwt_, secret, alg = 'HS256') {
   const data = encoder.encode(jwt_.split('.').slice(0, 2).join('.'));
   const signature = base64UrlToUint8Array(jwt_.split('.')[2]);
 
+  log.debug("Leaving verifyHMAC().");
   return await crypto.subtle.verify('HMAC', key, signature, data);
 }
 
 async function verifyX509(jwt_, pem, alg = 'RS256') {
+  log.debug("Entering verifyX509().");
   const encoder = new TextEncoder();
   const algo = { RS256: 'SHA-256', RS384: 'SHA-384', RS512: 'SHA-512' }[alg];
   if (!algo) throw new Error('Unsupported RSA algorithm: ' + alg);
@@ -169,10 +176,12 @@ async function verifyX509(jwt_, pem, alg = 'RS256') {
   const data = encoder.encode(jwt_.split('.').slice(0, 2).join('.'));
   const signature = base64UrlToUint8Array(jwt_.split('.')[2]);
 
+  log.debug("Leaving verifyX509().");
   return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, data);
 }
 
 async function verifyJWKS(jwt_, jwks) {
+  log.debug("Entering verifyJWKS().");
   const header = JSON.parse(atobUrl(jwt_.split('.')[0]));
   if (!header.kid) throw new Error('No "kid" found in JWT header.');
 
@@ -194,10 +203,12 @@ async function verifyJWKS(jwt_, jwks) {
   const data = encoder.encode(jwt_.split('.').slice(0, 2).join('.'));
   const signature = base64UrlToUint8Array(jwt_.split('.')[2]);
 
+  log.debug("Leaving verifyJWKS().");
   return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, data);
 }
 
 async function computeAtHash(value, alg) {
+  log.debug("Entering computeAtHash().");
   const hashAlgoMap = {
     RS256: 'SHA-256', RS384: 'SHA-384', RS512: 'SHA-512',
     ES256: 'SHA-256', ES384: 'SHA-384', ES512: 'SHA-512',
@@ -211,10 +222,12 @@ async function computeAtHash(value, alg) {
   const leftHalf = hashArray.slice(0, hashArray.length / 2);
   let binary = '';
   leftHalf.forEach(b => binary += String.fromCharCode(b));
+  log.debug("Leaving computeAtHash().");
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
 async function validateClaims() {
+  log.debug("Entering validateClaims().");
   const results = [];
   const now = Math.floor(Date.now() / 1000);
   const clockSkew = parseInt(document.getElementById('jwt_clock_skew').value) || 0;
@@ -541,6 +554,7 @@ async function validateClaims() {
   if (ageLine) output += '\n\n' + ageLine;
   output += '\n\n' + (failCount === 0 ? 'All checks passed.' : failCount + ' check(s) failed.');
   document.getElementById('jwt_claims_validation_output').value = output;
+  log.debug("Leaving validateClaims().");
   return false;
 }
 
@@ -569,8 +583,45 @@ $(document).on("change", "#jwt_verification_type", function() {
   }
 });
 
+// ---------------------------------------------------------------------------
+// "Return to debugger" — point back at whichever page sent us here, named by a
+// ?from= parameter (the same convention the tools pages use). Only known pages
+// are honoured, so the parameter cannot become an open redirect.
+//
+// debugger2.html additionally wants redirectFromTokenDetail=true: it is what
+// tells that page to re-render the token panes it had before the detour.
+// ---------------------------------------------------------------------------
+var RETURN_TARGETS = {
+  'debugger.html': '/debugger.html',
+  'debugger2.html': '/debugger2.html?redirectFromTokenDetail=true',
+  'sd-jwt-vc-issuance-1.html': '/sd-jwt-vc-issuance-1.html',
+  'sd-jwt-vc-issuance-2.html': '/sd-jwt-vc-issuance-2.html',
+  'sd-jwt-vc-issuance-3.html': '/sd-jwt-vc-issuance-3.html',
+  'sd-jwt-vc-issuance-4.html': '/sd-jwt-vc-issuance-4.html'
+};
+var RETURN_LABELS = {
+  'sd-jwt-vc-issuance-1.html': 'Return to SD-JWT VC issuance (step 1)',
+  'sd-jwt-vc-issuance-2.html': 'Return to SD-JWT VC issuance (step 2)',
+  'sd-jwt-vc-issuance-3.html': 'Return to SD-JWT VC issuance (step 3)',
+  'sd-jwt-vc-issuance-4.html': 'Return to SD-JWT VC issuance (step 4)'
+};
+
+function setReturnLinks() {
+  var from = getParameterByName('from');
+  var target = RETURN_TARGETS[from];
+  if (!target) return;                       // no (or unknown) origin: leave the default
+  var label = RETURN_LABELS[from];
+  var links = document.querySelectorAll('a.return_link');
+  for (var i = 0; i < links.length; i++) {
+    links[i].setAttribute('href', target);
+    if (label) links[i].textContent = label;
+  }
+  log.debug('Return link points back at ' + target + '.');
+}
+
 window.onload = function() {
   log.debug("Entering onload function.");
+  setReturnLinks();
 
   // Restore claims validation fields from localStorage
   const storedPurpose = localStorage.getItem('jwt_purpose');
@@ -698,6 +749,7 @@ window.onload = function() {
 }
 
 function populateTable(evt, tabName) {
+  log.debug("Entering populateTable().");
   var i, tabcontent, tablinks;
   tabcontent = document.getElementsByClassName("tabcontent");
   for (i = 0; i < tabcontent.length; i++) {
@@ -709,6 +761,7 @@ function populateTable(evt, tabName) {
   }
   document.getElementById(tabName).style.display = "block";
   evt.currentTarget.className += " active";
+  log.debug("Leaving populateTable().");
 }
 
 function copyHtmlToClipboard(elementId) {
@@ -725,6 +778,7 @@ function copyHtmlToClipboard(elementId) {
 }
 
 function buildClaimSourcesFootnote() {
+  log.debug("Entering buildClaimSourcesFootnote().");
   var html = '<p><sup>†</sup> <strong>Claim descriptions were gathered from the following sources:</strong></p>';
   Object.keys(vendorClaims).forEach(function(vendor) {
     var data = vendorClaims[vendor];
@@ -738,6 +792,7 @@ function buildClaimSourcesFootnote() {
     html += '</ul>';
   });
   document.getElementById('claim-sources').innerHTML = html;
+  log.debug("Leaving buildClaimSourcesFootnote().");
 }
 
 function copyToClipboard(elementId) {
@@ -756,6 +811,7 @@ function copyToClipboard(elementId) {
   navigator.clipboard.writeText(text).catch(function(err) {
     log.error("copyToClipboard: failed to write to clipboard: " + err);
   });
+  log.debug("Leaving copyToClipboard().");
   return false;
 }
 

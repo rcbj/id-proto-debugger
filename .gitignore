@@ -10,3 +10,16 @@ coverage/
 # Downloaded IdP metadata (remote-run-tests.sh / common.sh download_saml_metadata)
 tests/saml-idp-metadata.xml
 saml-idp-metadata.xml
+
+# The SAML SP key pair is generated per test run (common/common.sh
+# generateSpKeyPair) and lives only in the run's environment. These names are
+# listed so a stray copy can never be committed.
+tests/fixtures/
+sp-key.pem
+sp-cert.pem
+
+# walt.id's configuration rendered per run: it contains that run's issuer key.
+waltid/generated-config/
+waltid/generated-verifier-config/
+
+*.swp

@@ -2,9 +2,9 @@
 set -x
 #
 # IN-CONTAINER entrypoint for the tests image (tests/Dockerfile CMD). It runs
-# INSIDE the tests container on the compose network, where common.sh and
-# fixtures/ have been copied next to it and the debugger/keycloak/api services
-# are reachable by their compose DNS names (client:3000, keycloak:8080, ...).
+# INSIDE the tests container on the compose network, where common.sh has been
+# copied next to it and the debugger/keycloak/api services are reachable by their
+# compose DNS names (client:3000, keycloak:8080, ...).
 #
 # Do NOT run this from the host — use ./docker-run-tests.sh (repo root), which
 # builds and brings up the whole containerized stack (docker-compose-run-tests.yml)
@@ -44,13 +44,30 @@ init()
   # Exporting an unset variable passes nothing to children, so run-report.js sees
   # WSTRUST_STS_URL as undefined on non-containerized targets and skips.
   export WSTRUST_STS_URL
+  # walt.id's issuer-api2 — the real OpenID4VCI issuer the interoperability job
+  # runs against. Same reasoning as the STS above: the compose DNS name is only
+  # valid on the containerized stack, and the BROWSER has to reach it, because
+  # every URL walt.id publishes is built from the base URL it was configured
+  # with. Unset elsewhere, so run-report.js skips that job rather than failing.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      WALTID_ISSUER_URL="${WALTID_ISSUER_URL:-http://waltid-issuer:7005}"
+      # walt.id's verifier-api2, behind its own CORS proxy, for the PRESENTATION
+      # interoperability job. Same rule again: the browser reaches it by this
+      # name, and every URL the verifier hands the wallet is built from it.
+      WALTID_VERIFIER_URL="${WALTID_VERIFIER_URL:-http://waltid-verifier:7003}"
+      ;;
+  esac
+  export WALTID_ISSUER_URL WALTID_VERIFIER_URL
+  # WS-Federation IdP side-car (Keycloak 8.0.1 + wsfed). Only the fully-containerized
+  # run-tests stack provides it — it sets these on the tests service to its compose
+  # DNS name (keycloak-wsfed:8080). Default EMPTY so deployed-site runs (live-tests,
+  # no side-car) skip WS-Fed immediately instead of polling a missing host.
+  KEYCLOAK_WSFED_BASE_URL="${KEYCLOAK_WSFED_BASE_URL:-}"
+  KEYCLOAK_WSFED_LOCALHOST_BASE_URL="${KEYCLOAK_WSFED_LOCALHOST_BASE_URL:-}"
+  export KEYCLOAK_WSFED_BASE_URL KEYCLOAK_WSFED_LOCALHOST_BASE_URL
   CONFIG_FILE="${CONFIG_FILE:-./env/local.js}"
   CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
-  # SP signing cert (base64 DER) registered on the Keycloak SAML client so it can
-  # validate the AuthnRequest signature. Fixtures are copied next to this script
-  # in the tests image (see tests/Dockerfile).
-  SAML_SP_SIGNING_CERT=$(grep -v -- '-----' "${CURRENT_DIR}/fixtures/sp-cert.pem" | tr -d '\n\r')
-  export SAML_SP_SIGNING_CERT
   COMMON_SH=${CURRENT_DIR}/common.sh
   if [ -r "${COMMON_SH}" ];
   then
@@ -60,6 +77,11 @@ init()
     exit 1
   fi
   common_setup
+  check_return_code $?
+  # A fresh SP key pair for this run, generated inside this container: the tests
+  # sign and decrypt with the private key, and configureKeycloak registers the
+  # certificate on the SAML client. Nothing is baked into the image.
+  generateSpKeyPair
   check_return_code $?
   NODEJS_BASE_DIR=.
 }
@@ -71,6 +93,11 @@ init()
 runReport()
 {
   export DEBUGGER_BASE_URL
+  # The SD-JWT VC issuance job needs to know where Keycloak is: it retrieves the
+  # realm's RFC 8414 metadata document to configure the OIDC leg, and the URL
+  # must be the one the BROWSER can reach (keycloak:8080 on the compose network,
+  # localhost:8080 against a live site).
+  export KEYCLOAK_BASE_URL
   # Export so run-report.js (and the test scripts it spawns) can
   # require(process.env.CONFIG_FILE) for centralized config (e.g. waitTime).
   export CONFIG_FILE
@@ -140,8 +167,17 @@ check_return_code $?
 waitForKeycloak
 check_return_code $?
 waitForSts
+# Delete any pre-existing debugger-testing realm so provisioning is idempotent.
+# docker-run-tests.sh's startup `down -v` is meant to give us a fresh DB, but it
+# is best-effort (swallowed under docker-compose v1); if a stale realm survives,
+# configureKeycloak would 409 ("Failed to create SAML user"). See common.sh.
+resetKeycloakRealm
 check_return_code $?
 configureKeycloak
+check_return_code $?
+# Provision the WS-Federation side-car (no-op unless KEYCLOAK_WSFED_LOCALHOST_BASE_URL
+# is set by the run-tests compose; skips gracefully if it isn't reachable).
+configureKeycloakWsfed
 check_return_code $?
 runReport
 check_return_code $?

@@ -43,6 +43,13 @@ if (process.env.COVERAGE === 'true') {
   log.info('Coverage collection enabled: POST /coverage -> ' + COVERAGE_DIR);
 }
 
+// Application version (M.N.O). Read once: the build number identifies the
+// build this server is serving, so it must not change between requests.
+const appversion = require('./version');
+const APP_VERSION = appversion.load(path.join(__dirname, 'public'));
+const APP_BUILD_INFO = appversion.buildInfo(APP_VERSION);
+log.info('Serving version ' + APP_VERSION.version + ' (' + APP_BUILD_INFO + ')');
+
 app.use(function(req, res, next) {
   // Treat the site root as index.html so the landing page's SSI includes
   // (header/footer) are resolved; otherwise express.static would serve it raw.
@@ -59,6 +66,11 @@ app.use(function(req, res, next) {
     // The static build (build.js) does this at build time; do it here at request
     // time for the local (non-built) server so the year is always current.
     processed = processed.split('{{YEAR}}').join(String(new Date().getFullYear()));
+    // ... and the M.N.O version. APP_VERSION is read once at startup from the
+    // record stamped into public/ during the image build, so every page of a
+    // deployment reports the same build number.
+    processed = processed.split('{{VERSION}}').join(APP_VERSION.version);
+    processed = processed.split('{{BUILD_INFO}}').join(APP_BUILD_INFO);
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(processed);
   });

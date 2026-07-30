@@ -270,6 +270,145 @@ function buildJobs() {
     script: "digital_signature.js",
     env: {},
   });
+
+  // SAML Assertion Tool. Another fully client-side page needing no IdP: compose
+  // an assertion for each SAML version (2.0 / 1.1 / 1.0) with its version-specific
+  // structure, toggle the optional elements, add typed + URI-prefixed custom
+  // attributes, run the spec-compliance check, then sign it with an enveloped XML
+  // Signature (whose placement and Reference URI differ per version), verify it,
+  // reject a tampered copy, and round-trip it through XML Encryption. Also checks
+  // the Tools pane on the SAML Test Tools page links here.
+  // Operations History pane on the SAML request page: records every attempted
+  // IdP call (AuthnRequest / Single Logout / metadata load) with its binding,
+  // SAML version, entity IDs, and result. Needs no IdP — the failure paths come
+  // from the page's own pre-flight checks and the dispatch is aimed at a URL on
+  // the site itself.
+  // RFC 8414 (OAuth 2.0 Authorization Server Metadata): the document the STS
+  // mock serves at /.well-known/oauth-authorization-server (all 23 members,
+  // host-derived issuer, verifiable signed_metadata, resolvable jwks_uri) and
+  // the Metadata Source selector on debugger.html that retrieves it. Needs the
+  // STS mock, like the WS-Trust jobs.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "OAuth2 Authorization Server Metadata (RFC 8414 endpoint + debugger Metadata Source)",
+      script: "oauth2_metadata_rfc8414.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
+  // The mock authorization server the STS service hosts: every endpoint its
+  // RFC 8414 document advertises answers, with real RS256 tokens that verify
+  // against the advertised JWKS. No browser — it drives the endpoints directly.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "OAuth2 Authorization Server endpoints (the STS mock's authorize / token / introspect / revoke / register)",
+      script: "oauth2_sts_endpoints.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
+  // The shared in-browser JWE implementation, tested directly: every alg/enc
+  // pair round-trips, and the Concat KDF is checked against an implementation
+  // written from RFC 7518 section 4.6 that shares no code with it. Needs no
+  // services — node's Web Crypto is enough — so it is never skipped.
+  jobs.push({
+    name: "JOSE JWE module (RFC 7516/7518: RSA-OAEP, ECDH-ES, Concat KDF)",
+    script: "jose_jwe.js",
+    env: {},
+  });
+
+  // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
+  // Issuer the STS service hosts, the three sd-jwt-vc-issuance pages, and the
+  // ?sdjwtvc=1 hand-off through debugger.html / debugger2.html. Needs both the
+  // STS mock (which is the credential issuer) and Keycloak (which authorizes
+  // the issuance), so it is gated on the STS like the other STS-backed jobs.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "SD-JWT VC Issuance (OID4VCI credential issuance end to end)",
+      script: "sd_jwt_vc_issuance.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+  }
+
+  // The SD-JWT VC PRESENTATION workflow (OID4VP 1.0 + RFC 9901 section 4.3): the
+  // mock Verifier the STS service hosts, the four sd-jwt-vc-presentation pages,
+  // and the presentation itself — an SD-JWT+KB whose Key Binding JWT is signed
+  // over the request's nonce. Needs only the STS (issuer AND verifier), so no
+  // identity provider is involved. Carries its own negatives: a replayed
+  // presentation, a KB-JWT signed by the wrong key, an invented Disclosure, one
+  // removed after signing, and a claim the verifier asked for withheld.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "SD-JWT VC Presentation (OID4VP: selective disclosure end to end, positive and negative)",
+      script: "sd_jwt_vc_presentation.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+  }
+
+  // The same SD-JWT VC issuance workflow, driven against walt.id's issuer-api2
+  // instead of our mock: a real, independently written OpenID4VCI 1.0
+  // Credential Issuer. This is the interoperability check — same pages, same
+  // buttons, someone else's implementation on the other end — so it is gated on
+  // that container being up rather than on the STS.
+  if (env.WALTID_ISSUER_URL) {
+    jobs.push({
+      name: "SD-JWT VC Issuance against walt.id (OID4VCI interoperability)",
+      script: "sd_jwt_vc_waltid.js",
+      env: {
+        WALTID_ISSUER_URL: env.WALTID_ISSUER_URL,
+        KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+      },
+    });
+  }
+
+  // The SD-JWT VC PRESENTATION workflow driven against walt.id's verifier-api2 —
+  // an independently written OpenID4VP 1.0 verifier with DCQL — instead of our own
+  // mock. The credential it presents is ISSUED BY walt.id in the same run through
+  // our issuance pages, so neither end of the exchange is ours. Gated on that
+  // container being up, like the issuer's interoperability job; it also needs the
+  // walt.id issuer and Keycloak, because that is where the credential comes from.
+  if (env.WALTID_VERIFIER_URL) {
+    jobs.push({
+      name: "SD-JWT VC Presentation against walt.id (OID4VP interoperability, positive and negative)",
+      script: "sd_jwt_vc_presentation_waltid.js",
+      env: {
+        WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
+        WALTID_ISSUER_URL: env.WALTID_ISSUER_URL || "",
+        KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+      },
+    });
+  }
+
+  // Operations History pane on the WS-Trust pages: records every attempted STS
+  // call (timestamp, WS-Trust version, operation, user, result), dispatched as
+  // "Sent" and resolved from the RSTR — or the SOAP Fault — on the response
+  // page. Needs the STS mock (WSTRUST_STS_URL), like the other WS-Trust jobs.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "WS-Trust Operations History (attempted STS calls: version, operation, user, result)",
+      script: "wstrust_operation_history.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
+  jobs.push({
+    name: "SAML Operations History (attempted IdP calls: binding, version, entity IDs, result)",
+    script: "saml_operation_history.js",
+    env: {},
+  });
+
+  jobs.push({
+    name: "SAML Assertion Tool (compose 1.0/1.1/2.0, XML-DSIG sign + verify, XML-Enc round-trip)",
+    script: "saml_tools.js",
+    env: {},
+  });
   
  // SAML 2.0 SP-initiated SSO across all three bindings: load IdP metadata, sign
   // the AuthnRequest (redirect = query-string sig; post = enveloped XML-DSIG;
@@ -337,6 +476,27 @@ function buildJobs() {
       SAML_USER: env.SAML_USER,
     },
   });
+
+  // WS-Federation Passive Requestor Profile SSO against the dedicated Keycloak
+  // 8.0.1 + cloudtrust keycloak-wsfed side-car (the 26.x Keycloak has no WS-Fed
+  // support). Gated on WSFED_METADATA_URL, which common.sh's configureKeycloakWsfed
+  // exports only when the side-car is provisioned — so this SKIPS (not fails) on
+  // runs without it (remote/live, or a static deployment).
+  {
+    const wsfedJob = {
+      name: "WS-Federation Passive SSO + Sign-out (Call IdP → Keycloak login → wsfed_response → wsignout1.0)",
+      script: "wsfed_sso.js",
+      env: {
+        WSFED_METADATA_URL: env.WSFED_METADATA_URL,
+        WSFED_REALM: env.WSFED_REALM,
+        WSFED_USER: env.WSFED_USER,
+      },
+    };
+    if (!env.WSFED_METADATA_URL) {
+      wsfedJob.skip = "WS-Federation side-car (Keycloak 8.0.1 + wsfed) not provisioned (WSFED_METADATA_URL unset).";
+    }
+    jobs.push(wsfedJob);
+  }
 
   // WS-Trust 1.4 against the STS (the mock STS service, or a real Apache CXF STS
   // if WSTRUST_STS_URL points at one). Exercises all four operations — Issue,

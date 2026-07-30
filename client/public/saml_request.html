@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 & OpenID Connect Debugger — SAML Test Tools</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/saml_request.js">
+</script>
+
+<p class="saml-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<p class="saml-intro">Drive a <strong>SAML 2.0</strong> SP-initiated SSO round-trip against an Identity Provider. Load the IdP's metadata, configure the Service Provider request, generate an SP signing key pair, and send a digitally signed <code>AuthnRequest</code>. The IdP's response is captured by the ACS endpoint and shown on the <a href="/saml_response.html">SAML Response</a> page. <strong>Note:</strong> SAML 1.0/1.1 are provided for reference only &mdash; they are IdP-initiated with no signed SP request and are <em>not</em> accepted by SAML 2.0 IdPs such as Keycloak.</p>
+
+<p id="saml_backend_notice" class="saml-notice saml-hidden">This is the static (backend-less) deployment. Loading IdP metadata, building/signing the <code>AuthnRequest</code>, and capturing the IdP's response all run entirely in the browser: with no ACS server to receive a POST, the request asks the IdP to return its response over the <strong>HTTP-Redirect</strong> binding, which <a href="/saml_response.html">SAML Response</a> reads from the URL. This requires the IdP to permit the Redirect binding for a signed login response, and the response must fit browser/CDN URL-length limits (a large or encrypted assertion may not). The <strong>HTTP-Artifact</strong> binding needs the server-side SOAP back-channel and is unavailable here.</p>
+
+<p class="saml-controls">
+  <label class="saml-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="saml_toggle_all" checked="checked" onchange="samlSetAllPanes(this.checked);" />
+    <span class="saml-toggle-slider"></span>
+    <span class="saml-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="saml-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+// Expand / collapse every pane by toggling the inline display of its body (the
+// same state a pane's clickable title toggles). Each pane's triangle tracks this
+// via a CSS :has() rule. The switch label flips to reflect its current action.
+function samlSetAllPanes(expand) {
+  var bodies = ['pane_metadata_body', 'pane_config_body', 'pane_request_body', 'pane_tools_body',
+                'pane_history_body'];
+  for (var i = 0; i < bodies.length; i++) {
+    var b = document.getElementById(bodies[i]);
+    if (b) b.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.saml-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<div class="saml-cols">
+
+  <!-- ===================== Pane 1: IdP Metadata ===================== -->
+  <fieldset class="saml-pane" id="pane_metadata">
+    <legend class="saml-legend" onclick="return saml_request.togglePane('pane_metadata_body');">IdP Metadata</legend>
+    <div class="saml-pane-body" id="pane_metadata_body">
+
+    <div class="saml-field">
+      <label for="saml_metadata_url" title="URL of the IdP's SAML 2.0 metadata (descriptor) document.">Metadata Document URL</label>
+      <input class="stored" type="text" id="saml_metadata_url" name="saml_metadata_url" title="e.g. http://localhost:8080/realms/debugger-testing/protocol/saml/descriptor" />
+    </div>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Load Metadata" onclick="return saml_request.loadMetadata();" title="Fetch and parse the metadata document from the URL above. The parsed values populate the Configuration Parameters pane." />
+      <input type="button" class="saml-btn" value="Upload Metadata" onclick="return saml_request.uploadMetadata();" title="Load and parse a metadata document from a local file (no URL fetch required)." />
+      <input type="file" id="saml_metadata_file" name="saml_metadata_file" accept=".xml,application/xml,text/xml" style="display:none;" onchange="return saml_request.onMetadataFileChange(event);" />
+    </div>
+
+    <div class="saml-tab">
+      <button id="tab_metadata_doc_btn" class="tablinks active" onclick="return saml_request.showTab(event, 'tab_metadata_doc');" title="The raw metadata document.">Metadata Document</button>
+    </div>
+    <div id="tab_metadata_doc" class="saml-tabcontent" style="display:block;">
+      <div class="saml-doc-head">Document (raw XML)
+        <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_metadata_doc');">Copy</button>
+      </div>
+      <textarea class="stored" rows="18" id="saml_metadata_doc" name="saml_metadata_doc" readonly title="The metadata document as fetched from the URL above."></textarea>
+    </div>
+
+    <input class="saml-status" type="text" id="saml_metadata_status" name="saml_metadata_status" readonly title="Status of the last metadata load." />
+    </div>
+  </fieldset>
+
+  <!-- ================= Pane 2: Configuration Parameters ================= -->
+  <fieldset class="saml-pane" id="pane_config">
+    <legend class="saml-legend" onclick="return saml_request.togglePane('pane_config_body');">Configuration Parameters</legend>
+    <div class="saml-pane-body" id="pane_config_body">
+
+    <div class="saml-field">
+      <label class="saml-has-copy" title="The IdP entityID from EntityDescriptor/@entityID.">IdP entityID <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_idp_entity_id');">Copy</button></label>
+      <input class="stored" type="text" id="saml_idp_entity_id" name="saml_idp_entity_id" value="http://localhost:8080/samlp/metadata" />
+    </div>
+
+    <div class="saml-sub">
+      <div class="saml-sub-title">Single Sign-On (SSO) Endpoints</div>
+      <div class="saml-field">
+        <label title="SingleSignOnService with Binding urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST.">HTTP-POST binding URL</label>
+        <input class="stored" type="text" id="saml_sso_post" name="saml_sso_post" value="http://localhost:8080/samlp/sso/post" />
+      </div>
+      <div class="saml-field">
+        <label title="SingleSignOnService with Binding urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect.">HTTP-Redirect (GET) binding URL</label>
+        <input class="stored" type="text" id="saml_sso_redirect" name="saml_sso_redirect" value="http://localhost:8080/samlp/sso/redirect" />
+      </div>
+      <div class="saml-field">
+        <label title="SingleSignOnService with Binding urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact.">HTTP-Artifact binding URL</label>
+        <input class="stored" type="text" id="saml_sso_artifact" name="saml_sso_artifact" value="http://localhost:8080/samlp/sso/artifact" />
+      </div>
+      <div class="saml-field">
+        <label title="ArtifactResolutionService Location (SOAP back-channel used to resolve artifacts).">Artifact Resolution Service (SOAP)</label>
+        <input class="stored" type="text" id="saml_ars" name="saml_ars" value="http://localhost:8080/samlp/ars" />
+      </div>
+    </div>
+
+    <div class="saml-sub">
+      <div class="saml-sub-title">Single Logout (SLO) Endpoints</div>
+      <div class="saml-field">
+        <label title="SingleLogoutService HTTP-POST Location.">HTTP-POST logout URL</label>
+        <input class="stored" type="text" id="saml_slo_post" name="saml_slo_post" value="http://localhost:8080/samlp/slo/post" />
+      </div>
+      <div class="saml-field">
+        <label title="SingleLogoutService HTTP-Redirect Location.">HTTP-Redirect (GET) logout URL</label>
+        <input class="stored" type="text" id="saml_slo_redirect" name="saml_slo_redirect" value="http://localhost:8080/samlp/slo/redirect" />
+      </div>
+      <div class="saml-field">
+        <label title="SingleLogoutService HTTP-Artifact Location.">HTTP-Artifact logout URL</label>
+        <input class="stored" type="text" id="saml_slo_artifact" name="saml_slo_artifact" value="http://localhost:8080/samlp/slo/artifact" />
+      </div>
+    </div>
+
+    <div class="saml-sub">
+      <div class="saml-sub-title">Identity</div>
+      <div class="saml-field">
+        <label for="saml_nameid_format" title="NameIDFormat values advertised in the IdP metadata. Restricts the username hint format below.">Supported NameIDFormat</label>
+        <select class="stored" id="saml_nameid_format" name="saml_nameid_format" onchange="return saml_request.onNameIdFormatChange();"></select>
+      </div>
+      <div class="saml-field">
+        <label class="saml-has-copy" title="The IdP's signing certificate from KeyDescriptor[use=signing] (base64 DER, no PEM header).">Signer Certificate <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_signer_cert');">Copy</button></label>
+        <textarea class="stored" rows="5" id="saml_signer_cert" name="saml_signer_cert" title="IdP signing certificate. Used by the IdP to sign responses/assertions.">MIIDITCCAgmgAwIBAgIUd1iAcU9P5oRq5oHfCbNaAY+oWEwwDQYJKoZIhvcNAQELBQAwIDEeMBwGA1UEAwwVc2FtbC1kZWJ1Z2dlci1zcC10ZXN0MB4XDTI2MDcyMDAzMDI0MloXDTQ2MDcxNTAzMDI0MlowIDEeMBwGA1UEAwwVc2FtbC1kZWJ1Z2dlci1zcC10ZXN0MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAxzBgTVdfPjBKOcMlbKnj46Bi2PqOvedjwuCvcqzVSwBqbP0yarpI1+FRgpkKgJyFWvRbZOHt+lvTPma5oYp1pEkrzLT8ZY0+ASkrSdJd+V6SYAo++grrEs60C5nprE1hBwGG8NOHrALHUd1I6tAMeTn/BlDQ1h2M1sl1Kna3iX4CMcGQSGBoCbGiMOZ+bF2IgdBK67/jChBvgSWHKMCJrsZYo1gOF+7USDLflhQ8N5zr606B81iE+uXZ6OeZeR8bquuSzH0cmLrn+2TagYmMdHVDr8ijF0a0ck3G4wslpx0HAk6SCRbfVClTRvffygFtoQw6+YJZSQE4KWd0nvOzLwIDAQABo1MwUTAdBgNVHQ4EFgQUyewWq8ESMbfLe88jElPZbraBDmswHwYDVR0jBBgwFoAUyewWq8ESMbfLe88jElPZbraBDmswDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEAQpLr7VVH9t6LUjwANjBjyd/LTgl6APZFRDosPAg39AJMr46tIf3DrcljcpWCOFKjLeuhzwThT15mZ2EX/wmifu/Tj8xk4caiz9kPE/djhmKbQn+pip2nTriJmG1B7rnOHgaUoyOBNf1A0D8qAZMWe9DoGNHfyfG9zFUL3VfGfbpHZqlEV3HmV1qF8zYh4pf8tOfOY+GhidAwt7S/Ur2NDxK3LBJM/fgnAqmT73t3WJOVmn6PpiPheitXMllB5b41TXYBedRyZCcxyv8GAEk1x1G2lVCSUap6BWbkKVP/d36iompVC7+iTYJNCUqZtc732hzkWSHSo+hmSZFSq5S46w==</textarea>
+      </div>
+      <div class="saml-row">
+        <a id="saml_cert_link" href="/saml_cert.html?from=saml_request.html" onclick="return saml_request.viewCertificate('saml_signer_cert');" title="Show full details of the IdP signer certificate.">View signer certificate details &rarr;</a>
+      </div>
+    </div>
+
+    <input class="saml-status" type="text" id="saml_config_status" name="saml_config_status" readonly title="Validation status for the configuration URL fields." />
+    </div>
+  </fieldset>
+
+  <!-- ===================== Pane 3: SP / Request Settings ===================== -->
+  <fieldset class="saml-pane" id="pane_request">
+    <legend class="saml-legend" onclick="return saml_request.togglePane('pane_request_body');">SP / Request Settings</legend>
+    <div class="saml-pane-body" id="pane_request_body">
+
+    <div class="saml-field">
+      <label for="saml_version" title="SAML protocol version. Only 2.0 is functional against modern IdPs (Keycloak).">Protocol Version</label>
+      <select class="stored" id="saml_version" name="saml_version" onchange="return saml_request.onVersionChange();">
+        <option value="2.0" selected="selected">SAML 2.0</option>
+        <option value="1.1">SAML 1.1 (reference only)</option>
+        <option value="1.0">SAML 1.0 (reference only)</option>
+      </select>
+    </div>
+    <p id="saml_version_warning" class="saml-notice saml-hidden">SAML 1.0/1.1 Web SSO is IdP-initiated and has no signed SP request; SAML 2.0 IdPs (including Keycloak) will not accept a 1.x request. This option builds a reference request only.</p>
+
+    <div class="saml-field">
+      <label for="saml_binding" title="Binding used to deliver the AuthnRequest to the IdP.">Binding</label>
+      <select class="stored" id="saml_binding" name="saml_binding">
+        <option value="redirect" selected="selected">HTTP-Redirect (GET)</option>
+        <option value="post">HTTP-POST</option>
+        <option value="artifact">HTTP-Artifact</option>
+      </select>
+    </div>
+
+    <div class="saml-field">
+      <label for="saml_username_hint" title="Optional subject hint. Its allowed structure is constrained by the selected NameIDFormat.">Username hint (optional)</label>
+      <input class="stored" type="text" id="saml_username_hint" name="saml_username_hint" oninput="return saml_request.validateHint();" />
+      <div id="saml_hint_help" class="saml-status" style="border:none;background:none;padding-left:0;"></div>
+    </div>
+
+    <div class="saml-field">
+      <label class="saml-has-copy" title="This SP's entityID (Issuer of the AuthnRequest).">SP entityID <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_sp_entity_id');">Copy</button></label>
+      <input class="stored" type="text" id="saml_sp_entity_id" name="saml_sp_entity_id" />
+    </div>
+    <div class="saml-field">
+      <label class="saml-has-copy" title="Assertion Consumer Service URL (where the IdP posts the SAMLResponse). Hosted by the API layer.">ACS URL <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_acs_url');">Copy</button></label>
+      <input class="stored" type="text" id="saml_acs_url" name="saml_acs_url" />
+    </div>
+
+    <div class="saml-field saml-check">
+      <input class="stored" type="checkbox" id="saml_sign_request" name="saml_sign_request" checked="checked" onchange="return saml_request.onSignChange();" />
+      <label for="saml_sign_request" title="When enabled, the AuthnRequest is digitally signed with the SP signing key pair below. Disable to hide the SP Signing Key Pair fields.">Digitally sign the AuthnRequest</label>
+    </div>
+
+    <div class="saml-sub" id="saml_signing_section">
+      <div class="saml-sub-title">SP Signing Key Pair (X.509 / RSA)</div>
+      <div class="saml-field">
+        <label for="saml_sig_alg" title="XML Signature algorithm (SignatureMethod) — the public-key algorithm plus digest — used to sign the AuthnRequest. Applies to both the HTTP-Redirect query-string signature (SigAlg) and the HTTP-POST enveloped signature. The SP key pair is RSA, so the RSA-based methods apply.">Signature Algorithm</label>
+        <select class="stored" id="saml_sig_alg" name="saml_sig_alg">
+          <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" selected="selected">RSA-SHA256</option>
+          <option value="http://www.w3.org/2000/09/xmldsig#rsa-sha1">RSA-SHA1</option>
+          <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha384">RSA-SHA384</option>
+          <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512">RSA-SHA512</option>
+        </select>
+      </div>
+      <div class="saml-row">
+        <div class="saml-grow">
+          <label for="saml_key_bits" title="RSA modulus size. Larger sizes take longer to generate in pure JS.">Key Size</label>
+          <select class="stored" id="saml_key_bits" name="saml_key_bits">
+            <option value="2048" selected="selected">2048</option>
+            <option value="3072">3072</option>
+            <option value="4096">4096</option>
+          </select>
+        </div>
+        <input type="button" class="saml-btn" value="Generate Keys" onclick="return saml_request.generateKeys();" title="Generate a fresh RSA key pair + self-signed SP certificate." />
+        <input type="button" class="saml-btn" value="Download" onclick="return saml_request.downloadKeys();" title="Download the key pair as PEM." />
+      </div>
+      <div class="saml-field">
+        <label class="saml-has-copy" title="SP private signer key (PKCS#8 PEM). Signs the AuthnRequest.">Private Signer Key <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_sp_private_key');">Copy</button></label>
+        <textarea class="stored" rows="4" id="saml_sp_private_key" name="saml_sp_private_key"></textarea>
+      </div>
+      <div class="saml-field">
+        <label class="saml-has-copy" title="SP public signer certificate (self-signed X.509 PEM). Register it on the IdP client so it can verify the signed request.">Public Signer Certificate <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_sp_public_key');">Copy</button></label>
+        <textarea class="stored" rows="4" id="saml_sp_public_key" name="saml_sp_public_key"></textarea>
+      </div>
+      <div class="saml-row">
+        <a href="/saml_cert.html?from=saml_request.html" onclick="return saml_request.viewCertificate('saml_sp_public_key');" title="Show full details of the SP signer certificate.">View certificate details &rarr;</a>
+      </div>
+    </div>
+
+    <div class="saml-field saml-check">
+      <input class="stored" type="checkbox" id="saml_encrypt_request" name="saml_encrypt_request" onchange="return saml_request.onEncryptChange();" />
+      <label for="saml_encrypt_request" title="Encrypt the AuthnRequest with XML Encryption. Applied AFTER any digital signature (sign-then-encrypt). Encryption without a signature is allowed but unusual.">Encrypt the AuthnRequest</label>
+    </div>
+
+    <div class="saml-sub" id="saml_encryption_section">
+      <div class="saml-sub-title">AuthnRequest Encryption (XML-Enc)</div>
+      <p class="saml-note"><strong>Note:</strong> Keycloak (and most IdPs) do <em>not</em> accept an encrypted <code>AuthnRequest</code> &mdash; there is no standard element to carry one, so this is provided for inspection/education. All encryption is performed in the browser and is always applied <strong>after</strong> the digital signature (sign-then-encrypt).</p>
+
+      <div class="saml-field">
+        <label class="saml-has-copy" title="Recipient (IdP) certificate whose public key wraps the random session key. Defaults to the signer certificate from the loaded metadata; edit if the IdP uses a separate encryption certificate.">Encryption Certificate <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_enc_cert');">Copy</button></label>
+        <textarea class="stored" rows="5" id="saml_enc_cert" name="saml_enc_cert" title="Recipient certificate (PEM or bare base64 DER)."></textarea>
+      </div>
+      <div class="saml-row">
+        <a href="/saml_cert.html?from=saml_request.html" onclick="return saml_request.viewCertificate('saml_enc_cert');" title="Show full details of the encryption certificate.">View certificate details &rarr;</a>
+      </div>
+
+      <div class="saml-field">
+        <label for="saml_enc_type" title="XML-Enc Type: encrypt the whole target element or only its content.">Encrypted Type (transformation)</label>
+        <select class="stored" id="saml_enc_type" name="saml_enc_type">
+          <option value="http://www.w3.org/2001/04/xmlenc#Element" selected="selected">Element (whole AuthnRequest)</option>
+          <option value="http://www.w3.org/2001/04/xmlenc#Content">Content (children only)</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="saml_enc_c14n" title="How the target is serialized to octets before encryption. XML-Enc encrypts octets, so canonicalization is optional.">Canonicalization</label>
+        <select class="stored" id="saml_enc_c14n" name="saml_enc_c14n">
+          <option value="none" selected="selected">None (serialize as-is)</option>
+          <option value="exc-c14n">Exclusive XML Canonicalization 1.0</option>
+          <option value="c14n">Inclusive XML Canonicalization 1.0</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="saml_enc_data_alg" title="Symmetric block cipher that encrypts the element data with a random session key.">Data Encryption Algorithm</label>
+        <select class="stored" id="saml_enc_data_alg" name="saml_enc_data_alg">
+          <option value="http://www.w3.org/2009/xmlenc11#aes256-gcm" selected="selected">AES-256-GCM</option>
+          <option value="http://www.w3.org/2009/xmlenc11#aes192-gcm">AES-192-GCM</option>
+          <option value="http://www.w3.org/2009/xmlenc11#aes128-gcm">AES-128-GCM</option>
+          <option value="http://www.w3.org/2001/04/xmlenc#aes256-cbc">AES-256-CBC</option>
+          <option value="http://www.w3.org/2001/04/xmlenc#aes192-cbc">AES-192-CBC</option>
+          <option value="http://www.w3.org/2001/04/xmlenc#aes128-cbc">AES-128-CBC</option>
+          <option value="http://www.w3.org/2001/04/xmlenc#tripledes-cbc">Triple DES CBC</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="saml_enc_key_alg" title="Public-key algorithm that wraps (encrypts) the session key with the recipient certificate.">Key Transport Algorithm</label>
+        <select class="stored" id="saml_enc_key_alg" name="saml_enc_key_alg">
+          <option value="http://www.w3.org/2009/xmlenc11#rsa-oaep" selected="selected">RSA-OAEP (xmlenc11 — MGF configurable)</option>
+          <option value="http://www.w3.org/2001/04/xmlenc#rsa-oaep-mgf1p">RSA-OAEP-MGF1P (xmlenc — MGF1-SHA1)</option>
+          <option value="http://www.w3.org/2001/04/xmlenc#rsa-1_5">RSA-1_5 (PKCS#1 v1.5)</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="saml_enc_digest" title="Digest used by RSA-OAEP key transport (ignored for RSA-1_5).">Key Transport Digest (OAEP)</label>
+        <select class="stored" id="saml_enc_digest" name="saml_enc_digest">
+          <option value="http://www.w3.org/2001/04/xmlenc#sha256" selected="selected">SHA-256</option>
+          <option value="http://www.w3.org/2000/09/xmldsig#sha1">SHA-1</option>
+          <option value="http://www.w3.org/2001/04/xmldsig-more#sha384">SHA-384</option>
+          <option value="http://www.w3.org/2001/04/xmlenc#sha512">SHA-512</option>
+        </select>
+      </div>
+      <div class="saml-field">
+        <label for="saml_enc_mgf" title="Mask generation function for RSA-OAEP (xmlenc11 key transport only).">MGF (RSA-OAEP xmlenc11)</label>
+        <select class="stored" id="saml_enc_mgf" name="saml_enc_mgf">
+          <option value="http://www.w3.org/2009/xmlenc11#mgf1sha256" selected="selected">MGF1 with SHA-256</option>
+          <option value="http://www.w3.org/2009/xmlenc11#mgf1sha1">MGF1 with SHA-1</option>
+          <option value="http://www.w3.org/2009/xmlenc11#mgf1sha384">MGF1 with SHA-384</option>
+          <option value="http://www.w3.org/2009/xmlenc11#mgf1sha512">MGF1 with SHA-512</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="saml-field saml-check">
+      <input class="stored" type="checkbox" id="saml_wsa_support" name="saml_wsa_support" onchange="return saml_request.onWsaChange();" />
+      <label for="saml_wsa_support" title="Add WS-Addressing headers to the SOAP ArtifactResolve envelope (HTTP-Artifact back-channel only).">Add WS-Addressing headers</label>
+    </div>
+
+    <div class="saml-sub" id="saml_wsa_section">
+      <div class="saml-sub-title">WS-Addressing (SOAP / HTTP-Artifact back-channel)</div>
+      <p class="saml-note">WS-Addressing is a <strong>SOAP header</strong> mechanism &mdash; it is <em>not</em> part of the <code>AuthnRequest</code> and has no effect on the HTTP-Redirect/POST bindings. These values are added to the SOAP envelope of the <code>&lt;ArtifactResolve&gt;</code> the API sends to the IdP's Artifact Resolution Service, so they apply <strong>only when the HTTP-Artifact binding is used</strong>.</p>
+      <div class="saml-field">
+        <label for="saml_wsa_to" title="wsa:To — destination endpoint. Defaults to the Artifact Resolution Service URL.">wsa:To</label>
+        <input class="stored" type="text" id="saml_wsa_to" name="saml_wsa_to" placeholder="(defaults to the ARS URL)" />
+      </div>
+      <div class="saml-field">
+        <label for="saml_wsa_action" title="wsa:Action — the action URI for the message (required by WS-Addressing when engaged).">wsa:Action</label>
+        <input class="stored" type="text" id="saml_wsa_action" name="saml_wsa_action" placeholder="e.g. http://www.oasis-open.org/committees/security" />
+      </div>
+      <div class="saml-field">
+        <label for="saml_wsa_replyto" title="wsa:ReplyTo endpoint address. Use the anonymous URI for a synchronous SOAP response.">wsa:ReplyTo (Address)</label>
+        <input class="stored" type="text" id="saml_wsa_replyto" name="saml_wsa_replyto" placeholder="http://www.w3.org/2005/08/addressing/anonymous" />
+      </div>
+      <div class="saml-field">
+        <label for="saml_wsa_from" title="wsa:From endpoint address (optional).">wsa:From (Address)</label>
+        <input class="stored" type="text" id="saml_wsa_from" name="saml_wsa_from" placeholder="(optional)" />
+      </div>
+      <div class="saml-field">
+        <label for="saml_wsa_messageid" title="wsa:MessageID — a unique message identifier. Auto-generated (urn:uuid:...) if left blank.">wsa:MessageID</label>
+        <input class="stored" type="text" id="saml_wsa_messageid" name="saml_wsa_messageid" placeholder="(auto-generated if blank)" />
+      </div>
+    </div>
+
+    <div class="saml-field">
+      <label class="saml-has-copy" title="The AuthnRequest that will be sent — regenerated automatically whenever a setting above changes.">Generated AuthnRequest <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_authn_request');">Copy</button></label>
+      <textarea rows="6" id="saml_authn_request" name="saml_authn_request" readonly></textarea>
+    </div>
+
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Call IdP" onclick="return saml_request.callIdp();" title="Sign the AuthnRequest and send it to the IdP SSO endpoint." />
+      <input type="button" class="saml-btn" value="Logout" onclick="return saml_request.singleLogout();" title="Build and send a signed LogoutRequest for the last-authenticated session." />
+      <input type="button" class="saml-btn" value="Download SP Metadata" onclick="return saml_request.downloadSpMetadata();" title="Download this Service Provider's SAML EntityDescriptor (metadata) to register on the IdP." />
+    </div>
+    <input class="saml-status" type="text" id="saml_call_status" name="saml_call_status" readonly title="Status of the last build/call." />
+    </div>
+  </fieldset>
+
+  <!-- ===================== Pane 4: Tools ===================== -->
+  <fieldset class="saml-pane" id="pane_tools">
+    <legend class="saml-legend" onclick="return saml_request.togglePane('pane_tools_body');">Tools</legend>
+    <div class="saml-pane-body" id="pane_tools_body">
+
+    <p class="saml-note">Standalone utilities for working with SAML and its XML security layers.</p>
+    <table class="saml-table">
+      <tbody>
+        <tr>
+          <td><a href="/saml_tools.html?from=saml_request.html">SAML Assertion Tool</a> &mdash; compose a spec-compliant SAML 1.0/1.1/2.0 assertion (optional elements, NameID, custom attributes), sign it with XML Signature, and encrypt it with XML Encryption.</td>
+        </tr>
+        <tr>
+          <td><a href="/saml_cert.html?from=saml_request.html">Certificate Details</a> &mdash; parse an X.509 certificate (PEM or bare base64 DER) and inspect its subject, issuer, validity, key, extensions, and fingerprints.</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </fieldset>
+
+</div>
+
+<!-- ===================== Operations History ===================== -->
+<fieldset class="saml-pane" id="pane_history">
+  <legend class="saml-legend" onclick="return saml_request.togglePane('pane_history_body');" title="Click to collapse or expand this pane.">Operations History</legend>
+  <div class="saml-pane-body" id="pane_history_body">
+    <p class="saml-note">Chronological history of every attempted call to the IdP from this page — the <code>AuthnRequest</code>, a Single Logout, and each metadata load — newest first. <strong>Result</strong> is one of: <span class="saml-bad">Failure</span>, the call never left the browser (no key, no endpoint, a signing or encryption error, a metadata fetch that did not land) or the IdP refused it; <span class="saml-pending">Sent</span>, the request was built, signed, and dispatched and no answer has come back yet — an entry that stays <em>Sent</em> means the IdP never answered this debugger, so check the IdP's own error page; <span class="saml-ok">Success</span>, the IdP answered with a <code>Success</code> status. A <em>Sent</em> entry is closed out when the response is rendered on the <a href="/saml_response.html">SAML Response</a> page. The history is kept in this browser's local storage and survives a reload.</p>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Clear History" onclick="return saml_request.clearOperationHistory();" title="Discard every recorded operation." />
+    </div>
+    <div id="saml_operation_history"></div>
+  </div>
+</fieldset>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

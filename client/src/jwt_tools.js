@@ -9,6 +9,8 @@
 //
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
+// JWE, and the byte helpers it needs, shared with the OID4VCI issuance panes.
+var jose = require("./jose_jwe");
 var pkijs = require("pkijs");
 var asn1js = require("asn1js");
 var log = bunyan.createLogger({ name: 'jwt_tools',
@@ -41,64 +43,22 @@ function setVal(id, v) {
 }
 
 // ---------------------------------------------------------------------------
-// Base64url / PEM / byte helpers
+// Base64url / PEM / byte helpers, and everything JWE.
+//
+// These live in client/src/jose_jwe.js, which this page and the OID4VCI issuance
+// panes share: OID4VCI section 10 has a Credential Issuer and a Wallet
+// encrypting to each other, and the Concat KDF in particular must exist exactly
+// once — two independent readings of RFC 7518 section 4.6 can agree with each
+// other and still be wrong.
 // ---------------------------------------------------------------------------
-function bytesToB64u(input) {
-  var bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-  var bin = '';
-  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function strToB64u(str) {
-  return bytesToB64u(new TextEncoder().encode(str));
-}
-
-function b64uToBytes(b64u) {
-  var s = String(b64u).replace(/-/g, '+').replace(/_/g, '/');
-  var pad = '==='.slice(0, (4 - s.length % 4) % 4);
-  var bin = atob(s + pad);
-  var bytes = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
-}
-
-function b64uToStr(b64u) {
-  return new TextDecoder().decode(b64uToBytes(b64u));
-}
-
-function derToPem(der, label) {
-  var bytes = new Uint8Array(der);
-  var bin = '';
-  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  var b64 = btoa(bin);
-  var lines = b64.match(/.{1,64}/g).join('\n');
-  return '-----BEGIN ' + label + '-----\n' + lines + '\n-----END ' + label + '-----\n';
-}
-
-function pemToDer(pem) {
-  var b64 = String(pem).replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
-  var bin = atob(b64);
-  var bytes = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes.buffer;
-}
-
-function concatBytes() {
-  var total = 0, i;
-  for (i = 0; i < arguments.length; i++) total += arguments[i].length;
-  var out = new Uint8Array(total);
-  var offset = 0;
-  for (i = 0; i < arguments.length; i++) {
-    out.set(arguments[i], offset);
-    offset += arguments[i].length;
-  }
-  return out;
-}
-
-function uint32be(n) {
-  return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
-}
+var bytesToB64u = jose.bytesToB64u;
+var strToB64u = jose.strToB64u;
+var b64uToBytes = jose.b64uToBytes;
+var b64uToStr = jose.b64uToStr;
+var derToPem = jose.derToPem;
+var pemToDer = jose.pemToDer;
+var concatBytes = jose.concatBytes;
+var uint32be = jose.uint32be;
 
 // ---------------------------------------------------------------------------
 // Algorithm metadata
@@ -122,16 +82,11 @@ var SIGN_ALGS = {
   EdDSA: { kind: 'okp', name: 'Ed25519' }
 };
 
-// JWE content-encryption key sizes (bytes)
-var ENC_KEY_BYTES = { A128GCM: 16, A192GCM: 24, A256GCM: 32 };
-
-// JWE key-management (asymmetric) hash for RSA-OAEP variants
-var JWE_RSA_HASH = { 'RSA-OAEP': 'SHA-1', 'RSA-OAEP-256': 'SHA-256' };
-
-// ECDH-ES key-agreement key-wrap variants (RFC 7518 §4.6) -> AES key-wrap size
-// in bytes. Plain "ECDH-ES" (direct key agreement) is handled separately.
-var ECDH_KW_BYTES = { 'ECDH-ES+A128KW': 16, 'ECDH-ES+A192KW': 24, 'ECDH-ES+A256KW': 32 };
-function isEcdh(alg) { return alg === 'ECDH-ES' || ECDH_KW_BYTES[alg] !== undefined; }
+// JWE algorithm tables, from the shared module.
+var ENC_KEY_BYTES = jose.ENC_KEY_BYTES;
+var JWE_RSA_HASH = jose.JWE_RSA_HASH;
+var ECDH_KW_BYTES = jose.ECDH_KW_BYTES;
+var isEcdh = jose.isEcdh;
 
 // ---------------------------------------------------------------------------
 // Composition: keep header / payload / encoded in sync
@@ -166,6 +121,7 @@ function updateEncoded() {
 // "JWT to Verify" fields. Programmatic setVal() does not fire oninput, so this
 // does not loop with updateEncoded().
 function onEncodedInput() {
+  log.debug("Entering onEncodedInput().");
   var encoded = val('jwt_tools_encoded').trim();
   if (!encoded) {
     setVal('jwt_tools_sync_status', 'Encoded JWT is empty.');
@@ -194,11 +150,13 @@ function onEncodedInput() {
   } catch (e) {
     setVal('jwt_tools_sync_status', 'Cannot decode JWT: ' + e.message);
   }
+  log.debug("Leaving onEncodedInput().");
   return false;
 }
 
 // Add a custom claim to either the Header or the Payload object.
 function addClaim() {
+  log.debug("Entering addClaim().");
   var name = val('custom_claim_name').trim();
   var rawValue = val('custom_claim_value');
   var type = val('custom_claim_type');
@@ -240,12 +198,14 @@ function addClaim() {
   } catch (e) {
     setVal('jwt_tools_sync_status', 'Cannot add claim: ' + e.message);
   }
+  log.debug("Leaving addClaim().");
   return false;
 }
 
 // Confirm the composed header/payload are still spec-compliant (RFC 7519 /
 // RFC 7515 for the JOSE header). Reports PASS/FAIL/SKIP per check.
 function checkCompliance() {
+  log.debug("Entering checkCompliance().");
   var results = [];
   function pass(c, m) { results.push('PASS  ' + c + ': ' + m); }
   function fail(c, m) { results.push('FAIL  ' + c + ': ' + m); }
@@ -321,6 +281,7 @@ function checkCompliance() {
   checkString('jti');
 
   setVal('compliance_output', results.join('\n'));
+  log.debug("Leaving checkCompliance().");
   return false;
 }
 
@@ -331,6 +292,7 @@ function checkCompliance() {
 // sub, client_id, iat, jti. scope is conditionally recommended (§2.2.3);
 // auth_time/acr/amr are optional (§2.2.1) and only type-checked if present.
 function checkRfc9068Compliance() {
+  log.debug("Entering checkRfc9068Compliance().");
   var results = [];
   function pass(c, m) { results.push('PASS  ' + c + ': ' + m); }
   function fail(c, m) { results.push('FAIL  ' + c + ': ' + m); }
@@ -431,6 +393,7 @@ function checkRfc9068Compliance() {
   }
 
   setVal('compliance_output', results.join('\n'));
+  log.debug("Leaving checkRfc9068Compliance().");
   return false;
 }
 
@@ -439,6 +402,7 @@ function checkRfc9068Compliance() {
 // (iss, exp, aud, sub, client_id, iat, jti) plus a scope. Produced unsigned
 // (header.payload.) — sign it in the Sign pane to complete it.
 function generateRfc9068Token() {
+  log.debug("Entering generateRfc9068Token().");
   var now = Math.floor(Date.now() / 1000);
   var header = { alg: 'RS256', typ: 'at+jwt' };
   var payload = {
@@ -455,6 +419,7 @@ function generateRfc9068Token() {
   setVal('jwt_tools_payload', JSON.stringify(payload, null, 2));
   updateEncoded(); // fills the Encoded JWT field (header.payload.) from the above
   setVal('jwt_tools_sync_status', 'Generated a sample RFC 9068 access token (unsigned). Sign it in the Sign (JWS) pane to complete it.');
+  log.debug("Leaving generateRfc9068Token().");
   return false;
 }
 
@@ -462,6 +427,7 @@ function generateRfc9068Token() {
 // Digital signatures (JWS)
 // ---------------------------------------------------------------------------
 async function generateSigningKeys() {
+  log.debug("Entering generateSigningKeys().");
   var alg = val('sign_alg');
   var meta = SIGN_ALGS[alg];
   setVal('sign_status', 'Generating ' + alg + ' key material...');
@@ -495,10 +461,12 @@ async function generateSigningKeys() {
     log.error('generateSigningKeys: ' + e.message);
     setVal('sign_status', 'Error: ' + e.message);
   }
+  log.debug("Leaving generateSigningKeys().");
   return false;
 }
 
 async function importSigningKey(meta, keyText) {
+  log.debug("Entering importSigningKey().");
   if (meta.kind === 'hmac') {
     var secret = isJwk(keyText) ? (JSON.parse(keyText).k || '') : keyText.trim();
     return crypto.subtle.importKey('raw', b64uToBytes(secret),
@@ -509,10 +477,12 @@ async function importSigningKey(meta, keyText) {
     : meta.kind === 'okp'
       ? { name: meta.name }
       : { name: 'ECDSA', namedCurve: meta.namedCurve };
+  log.debug("Leaving importSigningKey().");
   return importKeyFlexible(keyText, 'pkcs8', params, ['sign']);
 }
 
 async function signJWT() {
+  log.debug("Entering signJWT().");
   var alg = val('sign_alg');
   var meta = SIGN_ALGS[alg];
   setVal('sign_status', 'Signing with ' + alg + '...');
@@ -547,6 +517,7 @@ async function signJWT() {
     log.error('signJWT: ' + e.message);
     setVal('sign_status', 'Error: ' + e.message);
   }
+  log.debug("Leaving signJWT().");
   return false;
 }
 
@@ -561,6 +532,7 @@ async function verifyHMAC(jwt_, secret, alg) {
 }
 
 async function verifyX509(jwt_, pem, alg) {
+  log.debug("Entering verifyX509().");
   var meta = SIGN_ALGS[alg];
   if (!meta || (meta.kind !== 'rsa' && meta.kind !== 'ec' && meta.kind !== 'okp')) {
     throw new Error('Unsupported asymmetric algorithm: ' + alg);
@@ -578,10 +550,12 @@ async function verifyX509(jwt_, pem, alg) {
   }
   var key = await crypto.subtle.importKey('spki', pemToDer(pem), importParams, false, ['verify']);
   var data = new TextEncoder().encode(jwt_.split('.').slice(0, 2).join('.'));
+  log.debug("Leaving verifyX509().");
   return crypto.subtle.verify(verifyParams, key, b64uToBytes(jwt_.split('.')[2]), data);
 }
 
 async function verifyJWKS(jwt_, jwks) {
+  log.debug("Entering verifyJWKS().");
   var header = JSON.parse(b64uToStr(jwt_.split('.')[0]));
   if (!header.kid) throw new Error('No "kid" found in JWT header.');
   var jwk = jwks.keys.find(function (k) { return k.kid === header.kid; });
@@ -593,10 +567,12 @@ async function verifyJWKS(jwt_, jwks) {
     { name: meta.name, hash: meta.hash }, false, ['verify']);
   var data = new TextEncoder().encode(jwt_.split('.').slice(0, 2).join('.'));
   var verifyParams = meta.name === 'RSA-PSS' ? { name: 'RSA-PSS', saltLength: meta.saltLength } : { name: 'RSASSA-PKCS1-v1_5' };
+  log.debug("Leaving verifyJWKS().");
   return crypto.subtle.verify(verifyParams, key, b64uToBytes(jwt_.split('.')[2]), data);
 }
 
 async function verifyJWT() {
+  log.debug("Entering verifyJWT().");
   var type = val('jwt_verification_type');
   var key = val('jwt_verification_key');
   var jwt_ = val('verify_input').trim();
@@ -618,6 +594,7 @@ async function verifyJWT() {
     log.error('verifyJWT: ' + err.message);
     setVal('jwt_verification_output', 'Error: ' + err.message);
   }
+  log.debug("Leaving verifyJWT().");
   return false;
 }
 
@@ -625,10 +602,10 @@ async function verifyJWT() {
 // Encryption (JWE) — compact serialization, RFC 7516 / 7518
 // ---------------------------------------------------------------------------
 // ECDH-ES key agreement is limited to the P-256 curve in this tool.
-var ECDH_CURVE = 'P-256';
-var ECDH_CURVE_BITS = 256;
+var ECDH_CURVE = jose.ECDH_CURVE;
 
 async function generateEncryptionKeys() {
+  log.debug("Entering generateEncryptionKeys().");
   var alg = val('jwe_alg');
   setVal('jwe_status', 'Generating ' + alg + ' key material...');
   try {
@@ -649,60 +626,12 @@ async function generateEncryptionKeys() {
     log.error('generateEncryptionKeys: ' + e.message);
     setVal('jwe_status', 'Error: ' + e.message);
   }
+  log.debug("Leaving generateEncryptionKeys().");
   return false;
 }
 
-// NIST SP 800-56A Concat KDF with SHA-256 (RFC 7518 §4.6) for ECDH-ES "direct".
-async function concatKdf(z, keyBytes, algId) {
-  var algBytes = new TextEncoder().encode(algId);
-  var otherInfo = concatBytes(
-    uint32be(algBytes.length), algBytes, // AlgorithmID
-    uint32be(0),                         // PartyUInfo (empty)
-    uint32be(0),                         // PartyVInfo (empty)
-    uint32be(keyBytes * 8)               // SuppPubInfo = keydatalen in bits
-  );                                     // SuppPrivInfo omitted
-  // One SHA-256 round covers up to 32 bytes, enough for A128/A192/A256GCM.
-  var input = concatBytes(uint32be(1), new Uint8Array(z), otherInfo);
-  var hash = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
-  return hash.slice(0, keyBytes);
-}
-
-async function deriveEncryptionCek(alg, enc, protectedHeader, recipientPublicPem) {
-  var keyBytes = ENC_KEY_BYTES[enc];
-  if (isEcdh(alg)) {
-    var recipientPub = await importKeyFlexible(recipientPublicPem, 'spki',
-      { name: 'ECDH', namedCurve: ECDH_CURVE }, []);
-    var ephemeral = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: ECDH_CURVE }, true, ['deriveBits']);
-    var z = await crypto.subtle.deriveBits({ name: 'ECDH', public: recipientPub }, ephemeral.privateKey, ECDH_CURVE_BITS);
-    var epk = await crypto.subtle.exportKey('jwk', ephemeral.publicKey);
-    protectedHeader.epk = { kty: epk.kty, crv: epk.crv, x: epk.x, y: epk.y };
-    if (alg === 'ECDH-ES') {
-      // "direct": the agreed key IS the CEK; encrypted_key is empty. The Concat
-      // KDF AlgorithmID is the content-encryption "enc" value.
-      var cekBytes = await concatKdf(z, keyBytes, enc);
-      var cek = await crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false, ['encrypt']);
-      return { cek: cek, encryptedKey: '' };
-    }
-    // ECDH-ES+A*KW: derive a key-wrapping key (Concat KDF AlgorithmID is the
-    // full "alg", keydatalen is the AES-KW size), then wrap a fresh random CEK.
-    var kwBytes = ECDH_KW_BYTES[alg];
-    var kekBytes = await concatKdf(z, kwBytes, alg);
-    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' }, false, ['wrapKey']);
-    var cekKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: keyBytes * 8 }, true, ['encrypt']);
-    var wrapped = await crypto.subtle.wrapKey('raw', cekKey, kek, 'AES-KW');
-    return { cek: cekKey, encryptedKey: bytesToB64u(wrapped) };
-  }
-  // RSA-OAEP / RSA-OAEP-256: random CEK wrapped with the recipient public key.
-  var cekBytes2 = new Uint8Array(keyBytes);
-  crypto.getRandomValues(cekBytes2);
-  var rsaPub = await importKeyFlexible(recipientPublicPem, 'spki',
-    { name: 'RSA-OAEP', hash: JWE_RSA_HASH[alg] }, ['encrypt']);
-  var wrapped = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, rsaPub, cekBytes2);
-  var cek2 = await crypto.subtle.importKey('raw', cekBytes2, { name: 'AES-GCM' }, false, ['encrypt']);
-  return { cek: cek2, encryptedKey: bytesToB64u(wrapped) };
-}
-
 async function encryptJWT() {
+  log.debug("Entering encryptJWT().");
   var alg = val('jwe_alg');
   var enc = val('jwe_enc');
   var plaintext = val('jwe_plaintext').trim();
@@ -715,7 +644,7 @@ async function encryptJWT() {
     // A nested JWT (a JWS as the plaintext) is signalled with cty:"JWT" (RFC 7519 §5.2).
     if (plaintext.split('.').length === 3) protectedHeader.cty = 'JWT';
 
-    var derived = await deriveEncryptionCek(alg, enc, protectedHeader, val('jwe_public_key'));
+    var derived = await jose.deriveCek(alg, enc, protectedHeader, val('jwe_public_key'));
     var protectedB64 = strToB64u(JSON.stringify(protectedHeader));
     var aad = new TextEncoder().encode(protectedB64); // ASCII(BASE64URL(protected header))
 
@@ -760,37 +689,12 @@ async function encryptJWT() {
     log.error('encryptJWT: ' + e.message);
     setVal('jwe_status', 'Error: ' + e.message);
   }
+  log.debug("Leaving encryptJWT().");
   return false;
 }
 
-async function decryptCek(alg, enc, protectedHeader, encryptedKey, recipientPrivatePem) {
-  var keyBytes = ENC_KEY_BYTES[enc];
-  if (isEcdh(alg)) {
-    if (!protectedHeader.epk) throw new Error('ECDH-ES JWE is missing the "epk" header.');
-    var recipientPriv = await importKeyFlexible(recipientPrivatePem, 'pkcs8',
-      { name: 'ECDH', namedCurve: protectedHeader.epk.crv }, ['deriveBits']);
-    var epk = await crypto.subtle.importKey('jwk', protectedHeader.epk,
-      { name: 'ECDH', namedCurve: protectedHeader.epk.crv }, false, []);
-    var bits = protectedHeader.epk.crv === 'P-256' ? 256 : (protectedHeader.epk.crv === 'P-384' ? 384 : 521);
-    var z = await crypto.subtle.deriveBits({ name: 'ECDH', public: epk }, recipientPriv, bits);
-    if (alg === 'ECDH-ES') {
-      var cekBytes = await concatKdf(z, keyBytes, enc);
-      return crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false, ['decrypt']);
-    }
-    // ECDH-ES+A*KW: re-derive the key-wrapping key and AES-KW unwrap the CEK.
-    var kwBytes = ECDH_KW_BYTES[alg];
-    var kekBytes = await concatKdf(z, kwBytes, alg);
-    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' }, false, ['unwrapKey']);
-    return crypto.subtle.unwrapKey('raw', b64uToBytes(encryptedKey), kek, 'AES-KW',
-      { name: 'AES-GCM' }, false, ['decrypt']);
-  }
-  var rsaPriv = await importKeyFlexible(recipientPrivatePem, 'pkcs8',
-    { name: 'RSA-OAEP', hash: JWE_RSA_HASH[alg] }, ['decrypt']);
-  var cek = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, rsaPriv, b64uToBytes(encryptedKey));
-  return crypto.subtle.importKey('raw', new Uint8Array(cek), { name: 'AES-GCM' }, false, ['decrypt']);
-}
-
 async function decryptJWT() {
+  log.debug("Entering decryptJWT().");
   var jwe = val('jwe_decrypt_input').trim();
   setVal('jwe_status', 'Decrypting...');
   try {
@@ -801,7 +705,7 @@ async function decryptJWT() {
     var enc = protectedHeader.enc;
     if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content encryption: ' + enc);
 
-    var cekKey = await decryptCek(alg, enc, protectedHeader, parts[1], val('jwe_private_key'));
+    var cekKey = await jose.unwrapCek(alg, enc, protectedHeader, parts[1], val('jwe_private_key'));
     var aad = new TextEncoder().encode(parts[0]);
     var iv = b64uToBytes(parts[2]);
     var ctPlusTag = concatBytes(b64uToBytes(parts[3]), b64uToBytes(parts[4]));
@@ -815,6 +719,7 @@ async function decryptJWT() {
     setVal('jwe_status', 'Error: ' + e.message);
     setVal('jwe_decrypt_output', '');
   }
+  log.debug("Leaving decryptJWT().");
   return false;
 }
 
@@ -887,14 +792,16 @@ async function pubToPem(jwkText, desc) {
   return derToPem(await crypto.subtle.exportKey('spki', key), 'PUBLIC KEY');
 }
 
-// Import a key that may be PEM or JWK, under the given params/usages.
-async function importKeyFlexible(text, format, params, usages) {
-  if (isJwk(text)) return crypto.subtle.importKey('jwk', stripJwkForImport(JSON.parse(text)), params, false, usages);
-  return crypto.subtle.importKey(format, pemToDer(text), params, false, usages);
+// Import a key that may be PEM or JWK, under the given params/usages. The shared
+// module does exactly this (and also accepts a JWK object or an already-imported
+// CryptoKey), so this is its name on this page rather than a second copy.
+function importKeyFlexible(text, format, params, usages) {
+  return jose.importKey(text, format, params, usages);
 }
 
 // Make both key fields of a step match the current toggle (PEM or JWK).
 async function applyKeyFormat(step) {
+  log.debug("Entering applyKeyFormat().");
   var s = step === 'sign';
   var toJwk = document.getElementById(s ? 'sign_key_jwk' : 'jwe_key_jwk').checked;
   var alg = val(s ? 'sign_alg' : 'jwe_alg');
@@ -925,6 +832,7 @@ async function applyKeyFormat(step) {
     log.error('applyKeyFormat(' + step + '): ' + e.message);
     setVal(statusId, 'Key format conversion error: ' + e.message);
   }
+  log.debug("Leaving applyKeyFormat().");
   return false;
 }
 function toggleKeyFormat(step) { return applyKeyFormat(step); }
@@ -933,6 +841,7 @@ function toggleKeyFormat(step) { return applyKeyFormat(step); }
 // verification key to the step's generated public key (as SPKI PEM). Converts
 // from JWK if the key fields are in JWK mode. No-op for other types / HMAC.
 async function syncVerificationKey() {
+  log.debug("Entering syncVerificationKey().");
   try {
     if (val('jwt_verification_type') !== 'x509') return false;
     if (val('jwt_verification_key').trim()) return false; // don't clobber a manual entry
@@ -944,6 +853,7 @@ async function syncVerificationKey() {
   } catch (e) {
     log.error('syncVerificationKey: ' + e.message);
   }
+  log.debug("Leaving syncVerificationKey().");
   return false;
 }
 
@@ -962,6 +872,7 @@ async function importCertPublicKey(pubPem, desc) {
 }
 
 async function buildSelfSignedCert(privPem, pubPem, desc) {
+  log.debug("Entering buildSelfSignedCert().");
   var privKey = await importCertSigningKey(privPem, desc);
   var pubKey = await importCertPublicKey(pubPem, desc);
   var cert = new pkijs.Certificate();
@@ -974,12 +885,14 @@ async function buildSelfSignedCert(privPem, pubPem, desc) {
   cert.notAfter.value = new Date(Date.UTC(2035, 0, 1));
   await cert.subjectPublicKeyInfo.importKey(pubKey);
   await cert.sign(privKey, desc.hash);
+  log.debug("Leaving buildSelfSignedCert().");
   return cert;
 }
 
 // Build a self-signed cert from the current signing key pair and open the
 // certificate-details page (saml_cert.html) in a new tab. HMAC has no cert.
 async function viewSigningCert() {
+  log.debug("Entering viewSigningCert().");
   var desc = certDescriptor(val('sign_alg'));
   if (desc.kind === 'hmac') { setVal('sign_status', 'HMAC is symmetric — there is no X.509 certificate.'); return false; }
   var priv = val('sign_private_key'), pub = val('sign_public_key');
@@ -995,6 +908,7 @@ async function viewSigningCert() {
     log.error('viewSigningCert: ' + e.message);
     setVal('sign_status', 'Certificate error: ' + e.message);
   }
+  log.debug("Leaving viewSigningCert().");
   return false;
 }
 
@@ -1014,6 +928,7 @@ async function encryptedPkcs8Der(privDer, password) {
 }
 
 async function buildPkcs12(privPem, pubPem, desc, password) {
+  log.debug("Entering buildPkcs12().");
   var cert = await buildSelfSignedCert(privPem, pubPem, desc);
   var privDer = pemToDer(privPem);
   var keyId = crypto.getRandomValues(new Uint8Array(20));
@@ -1042,10 +957,12 @@ async function buildPkcs12(privPem, pubPem, desc, password) {
   });
   await pfx.parsedValue.authenticatedSafe.makeInternalValues({ safeContents: [{}, {}] });
   await pfx.makeInternalValues({ password: strBuf(password), iterations: 100000, pbkdf2HashAlgorithm: 'SHA-256', hmacHashAlgorithm: 'SHA-256' });
+  log.debug("Leaving buildPkcs12().");
   return new Uint8Array(pfx.toSchema().toBER(false));
 }
 
 async function keysToJwk(privPem, pubPem, desc, jwtAlg, use) {
+  log.debug("Entering keysToJwk().");
   var importParams = desc.kind === 'rsa'
     ? { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }
     : desc.kind === 'okp'
@@ -1056,11 +973,13 @@ async function keysToJwk(privPem, pubPem, desc, jwtAlg, use) {
   var jp = await crypto.subtle.exportKey('jwk', privKey);
   var jpub = await crypto.subtle.exportKey('jwk', pubKey);
   [jp, jpub].forEach(function (j) { delete j.key_ops; delete j.ext; j.alg = jwtAlg; j.use = use; });
+  log.debug("Leaving keysToJwk().");
   return { publicKey: jpub, privateKey: jp };
 }
 
 // Password-protect an arbitrary string as a compact PBES2 JWE (RFC 7518 §4.8).
 async function pbes2JweEncrypt(plaintext, password) {
+  log.debug("Entering pbes2JweEncrypt().");
   var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
   var p2s = crypto.getRandomValues(new Uint8Array(16));
   var p2c = 100000;
@@ -1078,6 +997,7 @@ async function pbes2JweEncrypt(plaintext, password) {
     cek, new TextEncoder().encode(plaintext)));
   var ct = full.slice(0, full.length - 16);
   var tag = full.slice(full.length - 16);
+  log.debug("Leaving pbes2JweEncrypt().");
   return [phB64, bytesToB64u(wrapped), bytesToB64u(iv), bytesToB64u(ct), bytesToB64u(tag)].join('.');
 }
 
@@ -1095,6 +1015,7 @@ function triggerDownload(filename, data, mime) {
 
 // step === 'sign' | 'enc'
 async function downloadKeys(step) {
+  log.debug("Entering downloadKeys().");
   var cfg = step === 'sign'
     ? { alg: val('sign_alg'), priv: val('sign_private_key'), pub: val('sign_public_key'),
         fmt: val('sign_ks_format'), pw: val('sign_ks_password'), status: 'sign_status', base: 'jwt-tools-signing-key', use: 'sig' }
@@ -1167,6 +1088,7 @@ async function downloadKeys(step) {
     log.error('downloadKeys(' + step + '): ' + e.message);
     setVal(cfg.status, 'Error: ' + e.message);
   }
+  log.debug("Leaving downloadKeys().");
   return false;
 }
 
@@ -1177,6 +1099,7 @@ function downloadEncryptionKeys() { return downloadKeys('enc'); }
 // Copy a field's contents to the clipboard.
 // ---------------------------------------------------------------------------
 function copyField(elementId) {
+  log.debug("Entering copyField().");
   var el = document.getElementById(elementId);
   if (!el) { log.error('copyField: element not found: ' + elementId); return false; }
   var text = el.value || '';
@@ -1184,8 +1107,15 @@ function copyField(elementId) {
     navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
   } else {
     // Fallback for browsers without the async clipboard API.
-    try { el.focus(); el.select(); document.execCommand('copy'); } catch (e) { log.error('copyField fallback: ' + e.message); }
+    try {
+      el.focus();
+      el.select();
+      document.execCommand('copy');
+    } catch (e) {
+      log.error('copyField fallback: ' + e.message);
+    }
   }
+  log.debug("Leaving copyField().");
   return false;
 }
 
@@ -1216,9 +1146,42 @@ function setReturnLink() {
 // ---------------------------------------------------------------------------
 // Initial (garbage) values
 // ---------------------------------------------------------------------------
+// Mark the JWE options this browser cannot perform. RFC 7518 defines AES-192,
+// Chrome's Web Crypto does not implement it, and offering an option that can only
+// fail is worse than not offering it — the failure arrives as an OperationError
+// from inside a key import, which explains nothing.
+async function annotateUnsupportedJweOptions() {
+  log.debug("Entering annotateUnsupportedJweOptions().");
+  var support = await jose.probeAesSupport();
+  [['jwe_alg', jose.algUnsupportedReason], ['jwe_enc', jose.encUnsupportedReason]].forEach(function (pair) {
+    var select = document.getElementById(pair[0]);
+    if (!select) return;
+    Array.prototype.slice.call(select.options).forEach(function (option) {
+      var reason = pair[1](option.value, support);
+      if (!reason) return;
+      option.disabled = true;
+      if (option.textContent.indexOf("unsupported") === -1) {
+        option.textContent = option.textContent + " — unsupported here (" + reason + ")";
+      }
+      log.debug("annotateUnsupportedJweOptions(): " + option.value + " is unusable: " + reason);
+    });
+    // If the page defaulted to one of them, move to something that works.
+    if (select.selectedOptions.length && select.selectedOptions[0].disabled) {
+      var usable = Array.prototype.slice.call(select.options).filter(function (o) { return !o.disabled; })[0];
+      if (usable) select.value = usable.value;
+    }
+  });
+  log.debug("Leaving annotateUnsupportedJweOptions().");
+}
+
 window.onload = function () {
   log.debug('Entering onload function.');
   setReturnLink();
+  annotateUnsupportedJweOptions().catch(function (e) {
+    // Not being able to probe is not a reason to fail the page; the options stay
+    // as they are and an attempt will report its own error.
+    log.debug('annotateUnsupportedJweOptions: ' + e.message);
+  });
   var now = Math.floor(Date.now() / 1000);
   var header = { alg: 'RS256', typ: 'JWT', kid: 'garbage-key-id-0001' };
   var payload = {

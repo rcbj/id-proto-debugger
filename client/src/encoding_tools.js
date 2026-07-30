@@ -57,6 +57,7 @@ function bytesToHex(bytes) {
 // 1. Base64
 // ---------------------------------------------------------------------------
 function base64Encode() {
+  log.debug("Entering base64Encode().");
   try {
     var bytes = strToBytes(val('b64_unencoded'));
     var bin = '';
@@ -67,10 +68,12 @@ function base64Encode() {
     log.error('base64Encode: ' + e.message);
     setStatus('b64_status', 'Encode error: ' + e.message);
   }
+  log.debug("Leaving base64Encode().");
   return false;
 }
 
 function base64Decode() {
+  log.debug("Entering base64Decode().");
   try {
     var bin = atob(val('b64_encoded').replace(/\s+/g, ''));
     var bytes = new Uint8Array(bin.length);
@@ -81,6 +84,7 @@ function base64Decode() {
     log.error('base64Decode: ' + e.message);
     setStatus('b64_status', 'Decode error: not valid Base64.');
   }
+  log.debug("Leaving base64Decode().");
   return false;
 }
 
@@ -149,6 +153,7 @@ function checksum() {
 // 4. SHA hashing (Web Crypto API)
 // ---------------------------------------------------------------------------
 function shaHash() {
+  log.debug("Entering shaHash().");
   var alg = val('sha_size') || 'SHA-256';
   try {
     if (!(typeof crypto !== 'undefined' && crypto.subtle)) {
@@ -168,6 +173,7 @@ function shaHash() {
     log.error('shaHash: ' + e.message);
     setStatus('sha_status', 'Hash error: ' + e.message);
   }
+  log.debug("Leaving shaHash().");
   return false;
 }
 
@@ -175,14 +181,22 @@ function shaHash() {
 // Copy a field's contents to the clipboard.
 // ---------------------------------------------------------------------------
 function copyField(elementId) {
+  log.debug("Entering copyField().");
   var el = document.getElementById(elementId);
   if (!el) { log.error('copyField: element not found: ' + elementId); return false; }
   var text = el.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
   } else {
-    try { el.focus(); el.select(); document.execCommand('copy'); } catch (e) { log.error('copyField fallback: ' + e.message); }
+    try {
+      el.focus();
+      el.select();
+      document.execCommand('copy');
+    } catch (e) {
+      log.error('copyField fallback: ' + e.message);
+    }
   }
+  log.debug("Leaving copyField().");
   return false;
 }
 

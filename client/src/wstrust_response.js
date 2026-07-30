@@ -14,6 +14,7 @@
 //                       decoded details.
 
 var appconfig = require(process.env.CONFIG_FILE);
+var history = require("./wstrust_history");
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
 var log = bunyan.createLogger({ name: 'wstrust_response', level: appconfig.logLevel });
@@ -42,6 +43,7 @@ function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').repla
 function tags(root, localName) { return root.getElementsByTagNameNS('*', localName); }
 
 function formatXml(xml) {
+  log.debug("Entering formatXml().");
   if (!xml) return '';
   xml = xml.replace(/(>)(<)(\/*)/g, '$1\n$2$3');
   var pad = 0, out = '';
@@ -52,9 +54,15 @@ function formatXml(xml) {
     out += new Array(pad + 1).join('  ') + node + '\n';
     pad += indent;
   });
+  log.debug("Leaving formatXml().");
   return out.trim();
 }
-function serialize(node) { try { return new XMLSerializer().serializeToString(node); } catch (e) { return ''; } }
+function serialize(node) {
+try {
+  return new XMLSerializer().serializeToString(node);
+} catch (e) {
+  return '';
+} }
 function row(k, v) { return '<tr><td class="saml-key">' + esc(k) + '</td><td>' + v + '</td></tr>'; }
 function firstText(root, localName) { var e = tags(root, localName)[0]; return e ? (e.textContent || '').trim() : ''; }
 
@@ -71,13 +79,25 @@ function extractToken(doc) {
 
 // base64url / base64 JWT segment decode.
 function b64urlDecode(s) {
+  log.debug("Entering b64urlDecode().");
   s = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
   while (s.length % 4) s += '=';
-  try { return decodeURIComponent(escape(atob(s))); } catch (e) { try { return atob(s); } catch (e2) { return ''; } }
+  try {
+    return decodeURIComponent(escape(atob(s)));
+  } catch (e) {
+    try {
+      return atob(s);
+    } catch (e2) {
+      // Not base64 either: there is nothing to show.
+      return '';
+    }
+  }
+  log.debug("Leaving b64urlDecode().");
 }
 function looksLikeJwt(s) { return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$/.test(String(s || '').trim()); }
 
 function buildFieldsTable(doc, meta) {
+  log.debug("Entering buildFieldsTable().");
   var container = el('wst_fields_table');
   var root = doc.documentElement;
   if (!root) { container.innerHTML = '<em>No SOAP response to parse.</em>'; return; }
@@ -134,9 +154,11 @@ function buildFieldsTable(doc, meta) {
 
   html += '</table>';
   container.innerHTML = html;
+  log.debug("Leaving buildFieldsTable().");
 }
 
 function buildTokenDetails(tokenEl) {
+  log.debug("Entering buildTokenDetails().");
   var container = el('wst_token_details');
   if (!tokenEl) { container.innerHTML = '<em>No token in the response.</em>'; return; }
 
@@ -221,13 +243,19 @@ function buildTokenDetails(tokenEl) {
   }
 
   container.innerHTML = '<em>Token type &lt;' + esc(local || '?') + '&gt; — see the Token XML tab.</em>';
+  log.debug("Leaving buildTokenDetails().");
 }
 
 function prettyJson(s) {
-  try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; }
+  try {
+    return JSON.stringify(JSON.parse(s), null, 2);
+  } catch (e) {
+    return s;
+  }
 }
 
 function render(requestXml, responseXml, meta) {
+  log.debug("Entering render().");
   meta = meta || {};
   setVal('wst_request_xml', formatXml(requestXml));
   setVal('wst_response_xml', formatXml(responseXml));
@@ -269,17 +297,26 @@ function render(requestXml, responseXml, meta) {
   }
 
   setStatus((meta.operation || 'WS-Trust') + ' response loaded (HTTP ' + (meta.httpStatus == null ? '?' : meta.httpStatus) + ').');
+  log.debug("Leaving render().");
 }
 
 function copyField(id) {
+  log.debug("Entering copyField().");
   var e = el(id);
   if (!e) return false;
   var text = e.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
   } else {
-    try { e.focus(); e.select(); document.execCommand('copy'); } catch (err) { log.error('copyField fallback: ' + err.message); }
+    try {
+      e.focus();
+      e.select();
+      document.execCommand('copy');
+    } catch (err) {
+      log.error('copyField fallback: ' + err.message);
+    }
   }
+  log.debug("Leaving copyField().");
   return false;
 }
 
@@ -288,7 +325,11 @@ function copyField(id) {
 // and shown in a new tab — same mechanism the SAML pages use.
 function viewSignerCert() {
   if (!tokenSignerCertB64) return false;
-  try { if (window.localStorage) localStorage.setItem('saml_cert_view', tokenSignerCertB64); } catch (e) { /* ignore */ }
+  try {
+    if (window.localStorage) localStorage.setItem('saml_cert_view', tokenSignerCertB64);
+  } catch (e) {
+    // No storage available in this context.
+  }
   window.open('/saml_cert.html?from=wstrust_response.html', '_blank');
   return false;
 }
@@ -307,6 +348,7 @@ function showTab(evt, tabId) {
 
 // Render a signature-verification result (from xd.verifyXmlSignature) as a table.
 function formatSigResult(res) {
+  log.debug("Entering formatSigResult().");
   if (res.error) return '<span style="color:#b00;">Cannot validate: ' + esc(res.error) + '</span>';
   var color = res.valid ? '#2e7d32' : '#b00';
   var refs = (res.references || []).length;
@@ -318,12 +360,14 @@ function formatSigResult(res) {
   html += '<tr><td class="saml-key">Canonicalization</td><td>' + esc(res.canonicalization || '') + '</td></tr>';
   html += '<tr><td class="saml-key">Signer (cert CN)</td><td>' + esc(res.signerSubject || '(from KeyInfo)') + '</td></tr>';
   html += '</table>';
+  log.debug("Leaving formatSigResult().");
   return html;
 }
 
 // Validate the enveloped XML digital signature on the issued token (a SAML
 // assertion), using the certificate embedded in the signature's KeyInfo.
 function validateTokenSignature() {
+  log.debug("Entering validateTokenSignature().");
   var details = el('wst_sig_details');
   if (!lastTokenXml || lastTokenXml.indexOf('<') < 0) {
     setVal('wst_sig_status', 'No XML token available to validate.');
@@ -331,10 +375,15 @@ function validateTokenSignature() {
     return false;
   }
   var res;
-  try { res = xd.verifyXmlSignature(lastTokenXml); }
-  catch (e) { setVal('wst_sig_status', 'Validation error: ' + e.message); return false; }
+  try {
+    res = xd.verifyXmlSignature(lastTokenXml);
+  } catch (e) {
+    setVal('wst_sig_status', 'Validation error: ' + e.message);
+    return false;
+  }
   setVal('wst_sig_status', res.error ? ('Cannot validate: ' + res.error) : (res.valid ? 'Token signature VALID.' : 'Token signature INVALID.'));
   if (details) details.innerHTML = formatSigResult(res);
+  log.debug("Leaving validateTokenSignature().");
   return false;
 }
 
@@ -342,41 +391,136 @@ function validateTokenSignature() {
 // or a message-level EncryptedData) with the requestor private key, then show +
 // re-render the plaintext token. Reuses xmldsig.js decryptXml.
 function decryptToken() {
+  log.debug("Entering decryptToken().");
   if (!lastEncryptedXml) { setVal('wst_dec_status', 'No <xenc:EncryptedData> found in this response.'); return false; }
   var keyEl = el('wst_dec_key');
   var key = keyEl ? keyEl.value : '';
   if (!key.trim()) { setVal('wst_dec_status', 'Paste the requestor private key to decrypt.'); return false; }
   var plaintext;
-  try { plaintext = xd.decryptXml(lastEncryptedXml, { privateKeyPem: key }); }
-  catch (e) { setVal('wst_dec_status', 'Decryption failed: ' + e.message); return false; }
+  try {
+    plaintext = xd.decryptXml(lastEncryptedXml, { privateKeyPem: key });
+  } catch (e) {
+    setVal('wst_dec_status', 'Decryption failed: ' + e.message);
+    return false;
+  }
   lastTokenXml = plaintext;
   setVal('wst_token_xml', formatXml(plaintext));
   try {
     var d = new DOMParser().parseFromString(plaintext, 'application/xml');
     if (!d.getElementsByTagName('parsererror').length && d.documentElement) buildTokenDetails(d.documentElement);
-  } catch (e) { log.error('decrypt render: ' + e.message); }
+  } catch (e) {
+    log.error('decrypt render: ' + e.message);
+  }
   setVal('wst_dec_status', 'Decrypted. Token shown in the Token XML tab; use Validate Signature to verify it.');
+  log.debug("Leaving decryptToken().");
+  return false;
+}
+
+
+// ---------------------------------------------------------------------------
+// Operations History (shared with wstrust_tools.html): the tools page can only
+// record that a request was dispatched — whether the STS issued a token or
+// refused is known here. Close out the pending entry from the response.
+//
+// meta.historyId names the exact entry this exchange answers; it is cleared
+// from the stored exchange once resolved, so redisplaying this page later
+// cannot pin an old answer on a newer pending call.
+// ---------------------------------------------------------------------------
+function resolveHistory(doc, meta, parseError) {
+  log.debug("Entering resolveHistory().");
+  if (!meta || !meta.historyId) return;
+  var result = history.SUCCESS;
+  var detail = '';
+  var status = (meta.httpStatus == null) ? '?' : meta.httpStatus;
+
+  if (parseError || !doc) {
+    result = history.FAILURE;
+    detail = 'HTTP ' + status + ' — the response could not be parsed as XML';
+  } else {
+    var fault = tags(doc, 'Fault')[0];
+    if (fault) {
+      var code = firstText(fault, 'Value') || firstText(fault, 'faultcode');
+      var reason = firstText(fault, 'Reason') || firstText(fault, 'faultstring') || firstText(fault, 'Text');
+      result = history.FAILURE;
+      detail = 'SOAP Fault' + (code ? ' ' + code : '') + (reason ? ' — ' + reason : '');
+    } else if (typeof status === 'number' && status >= 400) {
+      result = history.FAILURE;
+      detail = 'HTTP ' + status;
+    } else {
+      // Issue/Renew must carry a token; Validate/Cancel answer with a status.
+      var token = tags(doc, 'RequestedSecurityToken')[0];
+      var statusEl = tags(doc, 'Status')[0];
+      if (token) detail = 'HTTP ' + status + ' — token issued';
+      else if (statusEl) detail = 'HTTP ' + status + ' — ' + (firstText(statusEl, 'Code') || 'status returned').split('/').pop();
+      else {
+        result = history.FAILURE;
+        detail = 'HTTP ' + status + ' — no RequestedSecurityToken and no Status in the RSTR';
+      }
+    }
+  }
+  history.update(meta.historyId, result, detail);
+  renderOperationHistory();
+
+  // One answer resolves one call: forget the id so a later visit to this page
+  // (which redisplays the same stored exchange) cannot resolve anything else.
+  try {
+    if (window.localStorage) {
+      var raw = localStorage.getItem(EXCHANGE_KEY);
+      if (raw) {
+        var ex = JSON.parse(raw);
+        if (ex && ex.meta) { ex.meta.historyId = null; localStorage.setItem(EXCHANGE_KEY, JSON.stringify(ex)); }
+      }
+    }
+  } catch (e) {
+    // leave it; update() is idempotent for an already-resolved id
+  }
+  log.debug("Leaving resolveHistory().");
+}
+
+function renderOperationHistory() { history.render(el('wst_operation_history')); }
+
+function clearOperationHistory() {
+  history.clear();
+  renderOperationHistory();
   return false;
 }
 
 window.onload = function () {
+  renderOperationHistory();
   // Prefill the decryption key from the requestor private key stored by the
   // WS-Trust Test Tools page (the STS encrypts to the requestor's certificate).
   try {
     var dk = el('wst_dec_key');
     var sk = window.localStorage && localStorage.getItem('wstrust_wst_sp_private_key');
     if (dk && !dk.value && sk) dk.value = sk;
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    // No storage, or nothing stashed by the WS-Trust Test Tools page: the field
+    // is simply left for the user to paste into.
+  }
 
   var saved = null;
-  try { saved = window.localStorage && localStorage.getItem(EXCHANGE_KEY); } catch (e) { saved = null; }
+  try {
+    saved = window.localStorage && localStorage.getItem(EXCHANGE_KEY);
+  } catch (e) {
+    saved = null;
+  }
   if (!saved) {
     setStatus('No WS-Trust exchange found. Start from the WS-Trust Test Tools page and click "Send Request".');
     return;
   }
   try {
     var ex = JSON.parse(saved);
-    render(ex.requestXml || '', ex.responseXml || '', ex.meta || {});
+    var meta = ex.meta || {};
+    render(ex.requestXml || '', ex.responseXml || '', meta);
+    // Close out the Operations History entry for this exchange.
+    var doc = null, parseError = false;
+    try {
+      doc = new DOMParser().parseFromString(ex.responseXml || '', 'application/xml');
+      if (!ex.responseXml || doc.getElementsByTagName('parsererror').length) { doc = null; parseError = true; }
+    } catch (pe) {
+      parseError = true;
+    }
+    resolveHistory(doc, meta, parseError);
   } catch (e) {
     log.error('parse exchange: ' + e.message);
     setStatus('Could not read the stored exchange: ' + e.message);
@@ -386,6 +530,7 @@ window.onload = function () {
 module.exports = {
   showTab,
   copyField,
+  clearOperationHistory,
   viewSignerCert,
   validateTokenSignature,
   decryptToken

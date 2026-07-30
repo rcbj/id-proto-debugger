@@ -1,4 +1,9 @@
 var appconfig = require(process.env.CONFIG_FILE);
+// OpenID Provider Metadata (Discovery 1.0 s3) — the table and its
+// defaults/persistence/populate helpers, shared with debugger2.js.
+var opMetadata = require("./op_metadata");
+var metadataClient = require("./metadata_client");
+var sdJwtVc = require("./sd_jwt_vc");
 var bunyan = require("bunyan");
 var DOMPurify = require("dompurify");
 var $ = require("jquery");
@@ -310,8 +315,10 @@ function writeValuesToLocalStorage()
       localStorage.setItem("useRefreshToken_no", $("#useRefreshToken-no").is(":checked"));
       localStorage.setItem("usePKCE_no", $("#usePKCE-no").is(":checked"));
       localStorage.setItem("oidc_discovery_endpoint", $("#oidc_discovery_endpoint").val());
+      localStorage.setItem("metadata_source", metadataSource());
       localStorage.setItem("oidc_userinfo_endpoint", $("#oidc_userinfo_endpoint").val());
       localStorage.setItem("jwks_endpoint", $("#jwks_endpoint").val());
+      opMetadata.writeToLocalStorage();
       localStorage.setItem("authzcustomParametersCheck-yes", $("#authzcustomParametersCheck-yes").is(":checked"));
       localStorage.setItem("authzcustomParametersCheck-no", $("#authzcustomParametersCheck-no").is(":checked"));
       localStorage.setItem("authzNumberCustomParameters", $("#authzNumberCustomParameters").val());
@@ -359,9 +366,10 @@ function initValuesToLocalStorage()
       localStorage.setItem("scope", "openid profile");
       localStorage.setItem("useRefreshToken_no", false);
       localStorage.setItem("usePKCE_no", false);
-      localStorage.setItem("oidc_discovery_endpoint", "https://localhost/oidc/.well-known");
+      localStorage.setItem("oidc_discovery_endpoint", METADATA_SOURCES[defaultMetadataSource()].defaultUrl);
       localStorage.setItem("oidc_userinfo_endpoint", "https://localhost/oidc/userinfo");
       localStorage.setItem("jwks_endpoint", "https://localhost/oidc/.well-known/jwks");
+      opMetadata.initDefaults();
       localStorage.setItem("authzcustomParametersCheck-yes", false);
       localStorage.setItem("authzcustomParametersCheck-no", true);
       localStorage.setItem("authzNumberCustomParameters", 1);
@@ -455,8 +463,14 @@ function loadValuesFromLocalStorage()
   $("#usePKCE-yes").prop("checked", getLSBooleanItem("usePKCE_yes"));
   $("#usePKCE-no").prop("checked", getLSBooleanItem("usePKCE_no"));
   $("#oidc_discovery_endpoint").val(localStorage.getItem("oidc_discovery_endpoint"));
+  var savedSource = localStorage.getItem("metadata_source");
+  $("#metadata_source_rfc8414").prop("checked", savedSource === "rfc8414");
+  $("#metadata_source_oidc").prop("checked", savedSource !== "rfc8414");
+  // Source-dependent UI only: never rewrite a stored URL on load.
+  updateMetadataSourceUi();
   $("#oidc_userinfo_endpoint").val(localStorage.getItem("oidc_userinfo_endpoint"));
   $("#jwks_endpoint").val(localStorage.getItem("jwks_endpoint"));
+  opMetadata.loadFromLocalStorage();
   $("#authzcustomParametersCheck-yes").prop("checked", getLSBooleanItem("authzcustomParametersCheck-yes"));
   $("#authzcustomParametersCheck-no").prop("checked", getLSBooleanItem("authzcustomParametersCheck-no"));
   $("#authzNumberCustomParameters").val(localStorage.getItem("authzNumberCustomParameters")? localStorage.getItem("authzNumberCustomParameters") : 1);
@@ -758,6 +772,23 @@ function recalculateAuthorizationRequestDescription()
          $("#display_authz_request_form_textarea1").val( $("#display_authz_request_form_textarea1").val() + "&\n" + "code_challenge=" + $("#authz_pkce_code_challenge").val()  + "&\n" +
                                                                                           "code_challenge_method=" + $("#authz_pkce_code_method").val());
        }
+       // OID4VCI: an authorization request that follows a Credential Offer sends
+       // the offer's issuer_state back (section 4.1.1).
+       var sdJwtVcIssuerState = sdJwtVc.get("sdjwtvc_issuer_state");
+       if (sdJwtVcIssuerState) {
+         $("#display_authz_request_form_textarea1").val(
+           $("#display_authz_request_form_textarea1").val() + "&\n" +
+           "issuer_state=" + encodeURIComponent(sdJwtVcIssuerState));
+       }
+       // And OID4VCI's other way of saying which credential is wanted: RFC 9396
+       // authorization_details of type openid_credential, instead of relying on
+       // the scope. The workflow decides which; this page only carries it.
+       var sdJwtVcAuthzDetails = sdJwtVc.get("sdjwtvc_authorization_details");
+       if (sdJwtVcAuthzDetails) {
+         $("#display_authz_request_form_textarea1").val(
+           $("#display_authz_request_form_textarea1").val() + "&\n" +
+           "authorization_details=" + encodeURIComponent(sdJwtVcAuthzDetails));
+       }
     } else if (	grant_type == "token" || 
 		grant_type == "id_token token" || 
 		grant_type == "id_token") {
@@ -834,6 +865,7 @@ function triggerDeviceAuthorizationCall()
     window.location.href = "/debugger2.html";
   };
   var onDeviceError = function(request, status, error) {
+    log.debug("Entering onDeviceError().");
     log.error("An error occurred calling the device authorization endpoint.");
     log.error("request: " + JSON.stringify(request));
     log.error("status: " + JSON.stringify(status));
@@ -847,6 +879,7 @@ function triggerDeviceAuthorizationCall()
     $("#device_authz_error_textarea").val(
       "HTTP Status: " + (request ? request.status : "") + " " + (request ? request.statusText : "") + "\n" +
       "Response Body: " + (request ? request.responseText : ""));
+    log.debug("Leaving onDeviceError().");
   };
 
   if (appconfig.backendAvailable === false) {
@@ -879,6 +912,7 @@ function triggerDeviceAuthorizationCall()
 }
 
 function onload() {
+  log.debug("Entering onload().");
   log.debug("Entering onload function.");
   $("#password-form-group1").hide();
   $("#password-form-group2").hide();
@@ -974,6 +1008,7 @@ function onload() {
     });
   }
   loadValuesFromLocalStorage();
+  restoreDiscoveryInfo();
   generateCustomParametersListUI
   recalculateAuthorizationRequestDescription();
   recalculateAuthorizationErrorDescription();
@@ -1010,7 +1045,63 @@ function onload() {
     writeValuesToLocalStorage();
     window.location.href = "/debugger2.html";
   }
+  maybeStartSdJwtVcFlow();
   log.debug("Leaving onload().");
+  log.debug("Leaving onload().");
+}
+
+// ---------------------------------------------------------------------------
+// SD-JWT VC issuance (?sdjwtvc=1).
+//
+// OID4VCI authorizes credential issuance with an ordinary OAuth 2.0 / OIDC
+// Authorization Code flow, so the SD-JWT VC workflow reuses this page rather
+// than reimplementing it. The query parameter is what says so: it marks the
+// workflow active (which is what tells debugger2.html to come back to it once
+// it has the tokens) and starts the authorization request with whatever the
+// Configuration Parameters pane currently holds — which step 1 of the workflow
+// has just written, since both pages keep it under the same names.
+//
+// Without the parameter none of this runs, so every other flow on this page is
+// untouched.
+// ---------------------------------------------------------------------------
+function maybeStartSdJwtVcFlow() {
+  if (getParameterByName("sdjwtvc") !== "1") return false;
+  log.debug("Entering maybeStartSdJwtVcFlow().");
+  sdJwtVc.startFlow();
+  var banner = "<div class='vc-handoff-banner' id='sdjwtvc_banner'>" +
+               "<strong>SD-JWT VC issuance</strong> — authorizing credential issuance through the OIDC " +
+               "Authorization Code flow. You will be sent to the identity provider to authenticate, and back " +
+               "to <a href='" + sdJwtVc.STEP2_URL + "'>step 2</a> afterwards." +
+               "</div>";
+  $(".container").prepend(banner);
+  if (!$("#authorization_endpoint").val() || !$("#client_id").val()) {
+    $("#sdjwtvc_banner").append(
+      "<p class='vc-bad'>The authorization endpoint or client id is not configured, so the flow was not " +
+      "started. Go back to <a href='/sd-jwt-vc-issuance-1.html'>step 1</a> and retrieve the metadata.</p>");
+    return false;
+  }
+  // An issuer-initiated issuance (OID4VCI Appendix H.1) carries an issuer_state
+  // from the Credential Offer; the authorization request has to send it back so
+  // the issuer can tie the two together. It rides in as a custom authorization
+  // parameter, which this page already knows how to append.
+  var issuerState = sdJwtVc.get("sdjwtvc_issuer_state");
+  if (issuerState) {
+    log.debug("SD-JWT VC issuance: adding issuer_state to the authorization request.");
+    $("#sdjwtvc_banner").append(
+      "<p>The Credential Offer's <code>issuer_state</code> is being sent with the authorization request.</p>");
+  }
+  var authzDetails = sdJwtVc.get("sdjwtvc_authorization_details");
+  if (authzDetails) {
+    log.debug("SD-JWT VC issuance: adding authorization_details to the authorization request.");
+    $("#sdjwtvc_banner").append(
+      "<p>The credential is being asked for with <code>authorization_details</code> (RFC 9396) rather than a " +
+      "scope, so the token response should grant a <code>credential_identifiers</code> value to name it with.</p>");
+  }
+
+  // Let the rest of onload() finish laying the page out before navigating.
+  window.setTimeout(triggerAuthZEndpointCall, 250);
+  log.debug("Leaving maybeStartSdJwtVcFlow().");
+  return true;
 }
 
 function generateUUID () { // Public Domain/MIT
@@ -1304,9 +1395,131 @@ $("#tipText").hover(
        $("#tooltip").hide();
   });
 
+// ---------------------------------------------------------------------------
+// RFC 8414 section 2.1 — signed_metadata.
+//
+// The metadata document may carry a JWT of itself, signed by the issuer. This
+// verifies it in the browser with the Web Crypto API against a key from the
+// document's own jwks_uri, and reports what RFC 8414 asks a client to check:
+// the signature, that the iss claim is the issuer, and whether any signed claim
+// disagrees with the plain JSON member (the signed claim takes precedence, so a
+// disagreement means the JSON cannot be trusted).
+// ---------------------------------------------------------------------------
+var b64uToBytes = metadataClient.b64uToBytes;
+var b64uToJson = metadataClient.b64uToJson;
+var verifyJwsWithJwks = metadataClient.verifyJwsWithJwks;
+
+// Button handler in the discovery pane.
+function validateSignedMetadata(evt) {
+  // Keep the click off the form's onclick, which would fire a retrieval.
+  if (evt && evt.stopPropagation) evt.stopPropagation();
+  var out = function (text) { $("#signed_metadata_status").text(text); };
+  metadataClient.validateSignedMetadata(discoveryInfo || {}, {
+    issuerMember: "issuer",
+    noSignedMetadataNote: "(signed_metadata is an RFC 8414 member; OIDC Discovery does not define it.)",
+    progress: out
+  }).then(out);
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Metadata source: OpenID Connect Discovery 1.0 or RFC 8414 (OAuth 2.0
+// Authorization Server Metadata).
+//
+// The two documents are fetched, stored, tabulated, and populated by exactly
+// the same code — an RFC 8414 document is largely a subset of Discovery 1.0
+// with the same member names, so populateFromDiscovery() maps it as-is, and any
+// member the document omits gets the usual -->not defined<-- note. The source
+// only decides which well-known path the URL should end in and which spec to
+// point at.
+// ---------------------------------------------------------------------------
+var METADATA_SOURCES = {
+  oidc: {
+    wellKnown: "/.well-known/openid-configuration",
+    // The dummy default this pane has always offered for an OIDC Discovery URL.
+    defaultUrl: "https://localhost/oidc/.well-known",
+    label: "An OIDC Discovery endpoint uses a path that ends in ",
+    specUrl: "https://openid.net/specs/openid-connect-discovery-1_0.html",
+    specText: "OpenID Connect Discovery 1.0",
+    docLabel: "OpenID Connect Discovery 1.0"
+  },
+  rfc8414: {
+    wellKnown: "/.well-known/oauth-authorization-server",
+    // The mock authorization server the STS service publishes (empty on a
+    // deployment that has no such service — the user supplies the URL).
+    defaultUrl: appconfig.rfc8414MetadataUrlDefault || "",
+    label: "An OAuth 2.0 Authorization Server Metadata endpoint uses a path that ends in ",
+    specUrl: "https://www.rfc-editor.org/rfc/rfc8414.html",
+    specText: "RFC 8414",
+    docLabel: "OAuth 2.0 Authorization Server Metadata (RFC 8414)"
+  }
+};
+
+// The source a browser with nothing stored starts on.
+function defaultMetadataSource() { return "oidc"; }
+
+function metadataSource() {
+  return $("#metadata_source_rfc8414").is(":checked") ? "rfc8414" : "oidc";
+}
+
+// Everything in the pane that depends on which source is selected: the hint
+// (static text only — no document data goes near this markup) and the Validate
+// Signature button, which only means something for RFC 8414 (signed_metadata is
+// an RFC 8414 member; OIDC Discovery does not define it).
+function updateMetadataSourceUi() {
+  log.debug("Entering updateMetadataSourceUi().");
+  var which = metadataSource();
+  var src = METADATA_SOURCES[which];
+  $("#metadata_source_hint").html(
+    src.label + "<code>" + src.wellKnown + "</code>. See the " +
+    '<a href="' + src.specUrl + '" target="_blank" rel="noopener noreferrer">' + src.specText + "</a> spec.");
+  if (which === "rfc8414") {
+    $("#signed_metadata_row").show();
+  } else {
+    $("#signed_metadata_row").hide();
+    $("#signed_metadata_status").text("");
+  }
+  log.debug("Leaving updateMetadataSourceUi().");
+}
+
+// Picking a source retunes the hint and offers that source's URL:
+//
+//   * a URL ending in the other source's well-known path has just that suffix
+//     swapped, so the host the user is pointed at is kept;
+//   * a field still holding the OTHER source's default (or nothing) is replaced
+//     with this source's default — that is what makes the RFC 8414 endpoint the
+//     default value of the field when RFC 8414 is what you asked for;
+//   * anything else the user typed is left alone.
+function onMetadataSourceChange(evt) {
+  log.debug("Entering onMetadataSourceChange().");
+  // The enclosing <form> carries onclick="return OnSubmitOIDCDiscoveryEndpointForm()",
+  // so a click on these radios would otherwise bubble up, retrieve the document
+  // before the source had changed, and — because that handler returns false —
+  // cancel the click's default action, leaving the radio unchecked.
+  if (evt && evt.stopPropagation) evt.stopPropagation();
+  var src = metadataSource();
+  updateMetadataSourceUi();
+  var url = $("#oidc_discovery_endpoint").val() || "";
+  var otherSource = METADATA_SOURCES[src === "oidc" ? "rfc8414" : "oidc"];
+  if (url.length >= otherSource.wellKnown.length &&
+      url.slice(-otherSource.wellKnown.length) === otherSource.wellKnown) {
+    // A real endpoint: keep the host the user is pointed at, swap the path.
+    $("#oidc_discovery_endpoint").val(
+      url.slice(0, url.length - otherSource.wellKnown.length) + METADATA_SOURCES[src].wellKnown);
+  } else if ((!url || url === otherSource.defaultUrl) && METADATA_SOURCES[src].defaultUrl) {
+    $("#oidc_discovery_endpoint").val(METADATA_SOURCES[src].defaultUrl);
+  }
+  if (localStorage) localStorage.setItem("metadata_source", src);
+  // NOT false: this is a radio's onclick, and returning false would cancel the
+  // default action, leaving the button unchecked while the rest of the page
+  // acted on the new source.
+  log.debug("Leaving onMetadataSourceChange().");
+  return true;
+}
+
 function OnSubmitOIDCDiscoveryEndpointForm()
 {
-  log.debug("Entering OnSubmitOIDCDiscoveryEndpointForm().");
+  log.debug("Entering OnSubmitOIDCDiscoveryEndpointForm(). source=" + metadataSource());
   writeValuesToLocalStorage();
   var oidcDiscoveryEndpoint = $("#oidc_discovery_endpoint").val();
   log.debug('URL: ' + oidcDiscoveryEndpoint);
@@ -1318,6 +1531,7 @@ function OnSubmitOIDCDiscoveryEndpointForm()
              success: function(result) {
                log.debug("OIDC Discovery Endpoint Result: " + JSON.stringify(result));
                discoveryInfo = result;
+               saveDiscoveryInfo(result);
                parseDiscoveryInfo(result);
                buildDiscoveryInfoTable(result);
              },
@@ -1378,36 +1592,100 @@ function parseDiscoveryInfo(discoveryInfo) {
   log.debug("Leaving parseDiscoveryInfo()."); 
 }
 
+// Escapes a discovery value before it goes into the table markup, which is
+// built by string concatenation from a document fetched off the network.
+var escapeHtmlText = metadataClient.escapeHtmlText;
+
+// ---------------------------------------------------------------------------
+// The fetched discovery document is kept in local storage so the table it is
+// rendered into survives a page reload. The DOCUMENT is stored, not the table
+// markup: the table is rebuilt from it on load, which also restores the
+// in-memory copy that "Populate Meta Data" reads — so that button keeps working
+// after a refresh instead of silently populating nothing.
+// ---------------------------------------------------------------------------
+var DISCOVERY_INFO_KEY = opMetadata.DISCOVERY_INFO_KEY;
+var DISCOVERY_SOURCE_KEY = "discovery_info_source";
+// { source: "oidc" | "rfc8414", url: "<where it was fetched from>" }
+var discoveryProvenance = null;
+
+function saveDiscoveryInfo(info) {
+  discoveryProvenance = { source: metadataSource(), url: $("#oidc_discovery_endpoint").val() || "" };
+  if (!localStorage) return;
+  try {
+    localStorage.setItem(DISCOVERY_INFO_KEY, JSON.stringify(info));
+    localStorage.setItem(DISCOVERY_SOURCE_KEY, JSON.stringify(discoveryProvenance));
+  } catch (e) {
+    log.error("Could not store the discovery document: " + e.message);
+  }
+}
+
+// Take the table off the screen. Safe during page load: restoreDiscoveryInfo()
+// puts it back from storage afterwards.
+function clearDiscoveryInfoTable() {
+  $("#discovery_info_table").html("");
+  // The "Populate Meta Data" button is rendered with the table; with no
+  // document behind it there is nothing for it to populate from.
+  $("#discovery_info_meta_data_populate").html("");
+}
+
+// Drop the document for good — Clear button only.
+function forgetDiscoveryInfo() {
+  discoveryInfo = {};
+  discoveryProvenance = null;
+  opMetadata.clearNotes();
+  if (localStorage) {
+    localStorage.removeItem(DISCOVERY_INFO_KEY);
+    localStorage.removeItem(DISCOVERY_SOURCE_KEY);
+  }
+  clearDiscoveryInfoTable();
+}
+
+function restoreDiscoveryInfo() {
+  log.debug("Entering restoreDiscoveryInfo().");
+  if (!localStorage) return;
+  var saved = localStorage.getItem(DISCOVERY_INFO_KEY);
+  if (!saved) return;
+  try {
+    discoveryProvenance = JSON.parse(localStorage.getItem(DISCOVERY_SOURCE_KEY) || "null");
+  } catch (e) {
+    discoveryProvenance = null;
+  }
+  try {
+    var info = JSON.parse(saved);
+    if (!info || typeof info !== "object") return;
+    discoveryInfo = info;
+    buildDiscoveryInfoTable(info);
+    // Re-apply the -->not defined<-- notes for members this document omits.
+    opMetadata.applyNotes(info);
+    log.debug("Restored the discovery document from local storage.");
+  } catch (e) {
+    log.error("Could not read the stored discovery document: " + e.message);
+    localStorage.removeItem(DISCOVERY_INFO_KEY);
+  }
+  log.debug("Leaving restoreDiscoveryInfo().");
+}
+
 function buildDiscoveryInfoTable(discoveryInfo) {
   log.debug("Entering buildDiscoveryInfoTable().");
-  var discovery_info_table_html = "<table border='2' style='border:2px;'>" +
-                                    "<tr>" +
-                                      "<td><strong>Attribute</strong></td>" +
-                                      "<td><strong>Value</strong></td>" +
-                                    "</tr>";
-   Object.keys(discoveryInfo).forEach( (key) => {
-     discovery_info_table_html = discovery_info_table_html +
-                                 "<tr>" +
-                                   "<td>" + key + "</td>" +
-                                   "<td>" + discoveryInfo[key] + "</td>" +
-                                 "</tr>";
-   });
-
-   discovery_info_table_html = discovery_info_table_html +
-                              "</table>";
-
-   var discovery_info_meta_data_html = '<table>' +
-                                       '<form>' +
-                                         '<td>' +
-                                           '<input class="btn_oidc_populate_meta_data" type="button" value="Populate Meta Data" onclick="return debug.onSubmitPopulateFormsWithDiscoveryInformation();"/>' +
-                                         '</td>' +
-                                       '</form>' +
-                                       '</table>';
+  var src = discoveryProvenance ? METADATA_SOURCES[discoveryProvenance.source] : null;
+  var html = metadataClient.buildInfoTable(discoveryInfo, discoveryProvenance && {
+    docLabel: (src || METADATA_SOURCES.oidc).docLabel,
+    url: discoveryProvenance.url
+  });
+  var discovery_info_meta_data_html = '<table>' +
+                                      '<form>' +
+                                        '<td>' +
+                                          '<input class="btn_oidc_populate_meta_data" type="button" value="Populate Meta Data" onclick="return debug.onSubmitPopulateFormsWithDiscoveryInformation();"/>' +
+                                        '</td>' +
+                                      '</form>' +
+                                      '</table>';
   $("#discovery_info_meta_data_populate").html(discovery_info_meta_data_html);
-  $("#discovery_info_table").html(discovery_info_table_html);
+  $("#discovery_info_table").html(html);
+  log.debug("Leaving buildDiscoveryInfoTable().");
 }
 
 function onSubmitPopulateFormsWithDiscoveryInformation() {
+  log.debug("Entering onSubmitPopulateFormsWithDiscoveryInformation().");
   log.debug('Entering OnSubmitPopulateFormsWithDiscoveryInformation().');
   var authorizationEndpoint = discoveryInfo["authorization_endpoint"];
   var idTokenSigningAlgValuesSupported = discoveryInfo["id_token_signing_alg_values_supported"];
@@ -1463,6 +1741,8 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   $("#scope").val(scopesSupported);
   $("#oidc_userinfo_endpoint").val(userInfoEndpoint);
   $("#jwks_endpoint").val(jwksUri);
+  // Every remaining OpenID Provider Metadata member (Discovery 1.0 section 3).
+  opMetadata.populateFromDiscovery(discoveryInfo);
   if (localStorage) {
       log.debug('Adding to local storage.');
       localStorage.setItem("authorization_endpoint", authorizationEndpoint );
@@ -1503,10 +1783,56 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   // default client metadata document) from the discovery metadata.
   populateClientMetadataFromDiscovery();
   log.debug('Leaving OnSubmitPopulateFormsWithDiscoveryInformation().');
+  log.debug("Leaving onSubmitPopulateFormsWithDiscoveryInformation().");
   return true;
 }
 
 // Reset all forms and clear local storage
+// The Clear button in the Metadata Retrieval pane.
+//
+// Distinct from onSubmitClearAllForms(), which only resets the DOM and IS CALLED
+// ON EVERY PAGE LOAD to put the pane in a known state before the stored values
+// are read back into it. Clearing storage there would wipe the user's
+// configuration on every refresh — so it happens here, on the click, only.
+function onClickClearAllForms() {
+  log.debug("Entering onClickClearAllForms().");
+  onSubmitClearAllForms();
+  clearConfigurationStorage();
+  forgetDiscoveryInfo();
+  log.debug("Leaving onClickClearAllForms().");
+  return false;
+}
+
+// Mirror the cleared pane into local storage, so the next page load does not
+// restore what was just cleared.
+function clearConfigurationStorage() {
+  log.debug("Entering clearConfigurationStorage().");
+  if (!localStorage) return;
+  ["authorization_endpoint", "token_endpoint", "introspection_endpoint",
+   "revocation_endpoint", "device_authorization_endpoint", "registration_endpoint",
+   "oidc_userinfo_endpoint", "jwks_endpoint", "oidc_discovery_endpoint",
+   "client_id", "scope", "resource", "redirect_uri",
+   "registration_client_uri", "registration_access_token",
+   "dcr_initial_access_token", "dcr_client_metadata"].forEach(function (key) {
+    localStorage.setItem(key, "");
+  });
+  // The select and the radio pairs are RESET rather than blanked, so store the
+  // value they were reset to (their storage keys differ from the element ids).
+  localStorage.setItem("authorization_grant_type", "oidc_authorization_code_flow");
+  localStorage.setItem("yesCheck", true);
+  localStorage.setItem("noCheck", false);
+  localStorage.setItem("yesCheckOIDCArtifacts", true);
+  localStorage.setItem("noCheckOIDCArtifacts", false);
+  localStorage.setItem("useRefreshToken_yes", true);
+  localStorage.setItem("useRefreshToken_no", false);
+  localStorage.setItem("usePKCE_yes", true);
+  localStorage.setItem("usePKCE_no", false);
+  localStorage.setItem("authzcustomParametersCheck-yes", true);
+  localStorage.setItem("authzcustomParametersCheck-no", false);
+  opMetadata.clearStorage();
+  log.debug("Leaving clearConfigurationStorage().");
+}
+
 function onSubmitClearAllForms() {
   log.debug("Entering onSubmitClearAllForms().");
   if ($("#authorization_endpoint")) {
@@ -1579,6 +1905,9 @@ function onSubmitClearAllForms() {
   if ( $("#oidc_discovery_endpoint")) {
     $("#oidc_discovery_endpoint").val("");
   }
+  $("#metadata_source_oidc").prop("checked", true);
+  $("#metadata_source_rfc8414").prop("checked", false);
+  updateMetadataSourceUi();
   if ( $("#client_id")) {
     $("#client_id").val("");
   }
@@ -1596,9 +1925,6 @@ function onSubmitClearAllForms() {
   }
   if ( $("#jwks_endpoint")) {
     $("#jwks_endpoint").val("");
-  }
-  if ( $("#discovery_info_table") ) {
-    $("#discovery_info_table").html("");
   }
   if ( $("#registration_endpoint") ) {
     $("#registration_endpoint").val("");
@@ -1624,6 +1950,11 @@ function onSubmitClearAllForms() {
   if ( $("#dcr_response_textarea") ) {
     $("#dcr_response_textarea").val("");
   }
+
+  // Every OpenID Provider Metadata member (Discovery 1.0 section 3), on screen.
+  opMetadata.clearFields();
+  clearDiscoveryInfoTable();
+
   log.debug("Leaving onSubmitClearAllForms().");
 }
 
@@ -1739,10 +2070,12 @@ function onClickShowAuthzFieldSet(id) {
     }
   }
   log.debug('Leaving onClickShowAuthzFieldSet().');
+  log.debug("Leaving onClickShowAuthzFieldSet().");
   return false;
 }
 
 function onClickShowGenericFieldSet(id) {
+  log.debug("Entering onClickShowGenericFieldSet().");
   log.debug('Entering onClickShowConfigFieldSet(). id=' 
             + id + ', style.display='
             + $("#" + id).css("display"));
@@ -1755,6 +2088,7 @@ function onClickShowGenericFieldSet(id) {
     $(jid).show();
   }
   log.debug('Leaving onClickShowGenericFieldSet().');
+  log.debug("Leaving onClickShowGenericFieldSet().");
   return false;
 }
 
@@ -1974,6 +2308,7 @@ function registerClient() {
   if (!md) {
     return false;
   }
+  log.debug("Leaving registerClient().");
   return callRegistrationProxy("POST", $("#dcr_registration_endpoint").val(),
     $("#dcr_initial_access_token").val(), md, function (data) {
       // Capture the issued credentials and the client configuration endpoint.
@@ -2016,6 +2351,7 @@ function updateClient() {
   if (!md) {
     return false;
   }
+  log.debug("Leaving updateClient().");
   return callRegistrationProxy("PUT", $("#registration_client_uri").val(),
     $("#registration_access_token").val(), md, function (data) {
       // Reflect the updated registration and pick up any rotated token.
@@ -2039,6 +2375,7 @@ function displayDcrResponse(data) {
 }
 
 function displayDcrError(request, message) {
+  log.debug("Entering displayDcrError().");
   var text;
   if (message) {
     text = message;
@@ -2056,9 +2393,11 @@ function displayDcrError(request, message) {
                   "</fieldset>";
   $("#display_dcr_error_class").html(DOMPurify.sanitize(errorHtml));
   $("#dcr_error_textarea").val(text);
+  log.debug("Leaving displayDcrError().");
 }
 
 function writeDcrValuesToLocalStorage() {
+  log.debug("Entering writeDcrValuesToLocalStorage().");
   if (localStorage) {
     // The Registration Endpoint shares the "registration_endpoint" key with the
     // Configuration pane; only persist it when set so a blank DCR copy does not
@@ -2072,9 +2411,11 @@ function writeDcrValuesToLocalStorage() {
     localStorage.setItem("dcr_initial_access_token", $("#dcr_initial_access_token").val());
     localStorage.setItem("dcr_client_metadata", $("#dcr_client_metadata").val());
   }
+  log.debug("Leaving writeDcrValuesToLocalStorage().");
 }
 
 function loadDcrValuesFromLocalStorage() {
+  log.debug("Entering loadDcrValuesFromLocalStorage().");
   if (localStorage) {
     if (localStorage.getItem("registration_endpoint")) {
       $("#dcr_registration_endpoint").val(localStorage.getItem("registration_endpoint"));
@@ -2096,12 +2437,14 @@ function loadDcrValuesFromLocalStorage() {
     $("#dcr_client_metadata").val(clientMetadata);
     localStorage.setItem("dcr_client_metadata", clientMetadata);
   }
+  log.debug("Leaving loadDcrValuesFromLocalStorage().");
 }
 
 // Render a preview of the HTTP request that "Register New Client" will send to
 // the Registration Endpoint (a POST of the client metadata, RFC 7591 Section 3.1),
 // analogous to the request preview in the Request Authorization Code pane.
 function recalculateDcrRequestDescription() {
+  log.debug("Entering recalculateDcrRequestDescription().");
   var ta = $("#dcr_request_textarea");
   if (!ta || ta.length === 0) {
     return;
@@ -2123,6 +2466,7 @@ function recalculateDcrRequestDescription() {
     // Leave the body verbatim so the user can see/fix invalid JSON.
   }
   ta.val(request + body);
+  log.debug("Leaving recalculateDcrRequestDescription().");
 }
 
 module.exports = {
@@ -2141,11 +2485,14 @@ module.exports = {
   displayOIDCArtifacts,
   useRefreshTokens,
   OnSubmitOIDCDiscoveryEndpointForm,
+  onMetadataSourceChange,
+  validateSignedMetadata,
   isUrl,
   parseDiscoveryInfo,
   buildDiscoveryInfoTable,
   onSubmitPopulateFormsWithDiscoveryInformation,
   onSubmitClearAllForms,
+  onClickClearAllForms,
   regenerateState,
   regenerateNonce,
   displayAuthzCustomParametersCheck,

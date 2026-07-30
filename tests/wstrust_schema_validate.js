@@ -9,22 +9,93 @@
 // behind every Node XSD validator, cannot compile the official schema's WS-Security
 // / WS-Policy imports).
 //
-// libxmljs2 (native libxml2 binding) is an OPTIONAL dependency: if it isn't
-// installed (e.g. no prebuilt binary for the platform and no build toolchain),
-// this test SKIPS with exit 0 rather than failing the suite. run-report spawns it
-// with a --url argument, which it ignores.
+// Validation runs on libxml2 either way, reached by whichever binding is usable:
+//
+//   1. libxmljs2 — the native Node binding. It is an OPTIONAL dependency and is
+//      frequently unusable: there may be no prebuilt binary for the running ABI
+//      and no build toolchain to compile one, or (the common case here) a binary
+//      built for a different Node version, which fails to load with a
+//      NODE_MODULE_VERSION mismatch.
+//   2. the xmllint CLI — same libxml2, no native module and no ABI coupling.
+//      Shipped by the libxml2-utils package, installed in tests/Dockerfile.
+//
+// Only when neither is available does this test SKIP with exit 0 rather than
+// failing the suite. run-report spawns it with a --url argument, which it ignores.
 
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
+const { spawnSync } = require("child_process");
 
 function log(m) { console.log(m); }
 
-// libxmljs2 is optional — skip cleanly if unavailable.
-let lib;
-try { lib = require("libxmljs2"); }
-catch (e) {
-  log("SKIP: libxmljs2 is not installed (optional native dependency) — cannot run XSD validation here.");
-  log("      Install it (npm i libxmljs2) to enable WS-Trust message schema validation.");
+// --- validation engine ------------------------------------------------------
+// Both engines expose validate(xml, schemaXsd) -> { ok, detail }, caching the
+// compiled/written schema per distinct schema text.
+let engine = null;
+
+let lib = null;
+try {
+  lib = require("libxmljs2");
+} catch (e) {
+  log("note: libxmljs2 unavailable (" + e.message.split("\n")[0].trim() + ")");
+}
+
+if (lib) {
+  const compiled = {};
+  engine = {
+    name: "libxmljs2 (native libxml2 binding)",
+    validate(xml, xsd) {
+      if (!compiled[xsd]) compiled[xsd] = lib.parseXml(xsd);
+      const doc = lib.parseXml(xml);
+      let ok;
+      try {
+        ok = doc.validate(compiled[xsd]);
+      } catch (e) {
+        return { ok: false, detail: "validate threw: " + e.message };
+      }
+      return { ok, detail: ok ? "" : doc.validationErrors.map(e => e.message.trim()).join("; ") };
+    },
+  };
+} else {
+  const probe = spawnSync("xmllint", ["--version"], { encoding: "utf8" });
+  if (!probe.error && probe.status === 0) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wstrust-xsd-"));
+    process.on("exit", () => {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch (e) {
+        // A leftover temp directory is not worth failing the run over.
+      }
+    });
+    const xsdFiles = {};
+    let n = 0;
+    const docFile = path.join(dir, "message.xml");
+    engine = {
+      name: "xmllint CLI (libxml2 " + (probe.stderr || probe.stdout || "").split("\n")[0].replace(/^xmllint:\s*/, "").trim() + ")",
+      validate(xml, xsd) {
+        if (!xsdFiles[xsd]) {
+          const p = path.join(dir, "schema-" + (++n) + ".xsd");
+          fs.writeFileSync(p, xsd);
+          xsdFiles[xsd] = p;
+        }
+        fs.writeFileSync(docFile, xml);
+        const r = spawnSync("xmllint", ["--noout", "--schema", xsdFiles[xsd], docFile], { encoding: "utf8" });
+        if (r.error) return { ok: false, detail: "xmllint failed to run: " + r.error.message };
+        const ok = r.status === 0;
+        // On success xmllint prints "<file> validates"; on failure, the errors.
+        const detail = ok ? "" : (r.stderr || "").split("\n")
+          .filter(l => l.trim() && !/fails to validate$/.test(l.trim()))
+          .map(l => l.replace(docFile + ":", "line ").trim()).join("; ");
+        return { ok, detail };
+      },
+    };
+  }
+}
+
+if (!engine) {
+  log("SKIP: no XSD validator available — libxmljs2 does not load and the xmllint CLI is not on PATH.");
+  log("      Install either (npm i libxmljs2, or the libxml2-utils package) to enable WS-Trust message schema validation.");
   process.exit(0);
 }
 
@@ -32,20 +103,25 @@ function loadFrom(candidates, what) {
   for (const p of candidates) { if (fs.existsSync(p)) return p; }
   throw new Error("could not locate " + what + " (looked in: " + candidates.join(", ") + ")");
 }
-const wm = require(loadFrom([
+// requireSharedModule keeps the tests' dependencies resolvable for a module
+// loaded out of client/src (wstrust_msg.js logs through bunyan) — see
+// module_paths.js.
+const { requireSharedModule } = require("./module_paths.js");
+const wm = requireSharedModule([
   path.join(__dirname, "wstrust_msg.js"),
   path.join(__dirname, "..", "client", "src", "wstrust_msg.js"),
-], "client/src/wstrust_msg.js"));
+], "client/src/wstrust_msg.js");
 const templatePath = loadFrom([
   path.join(__dirname, "schemas", "ws-trust-rst.template.xsd"),
   path.join(__dirname, "..", "tests", "schemas", "ws-trust-rst.template.xsd"),
 ], "ws-trust-rst.template.xsd");
 const template = fs.readFileSync(templatePath, "utf8");
 
-// Compile the derived schema once per distinct trust namespace.
+// The derived schema, specialized per distinct trust namespace. The engine
+// caches the compiled/written form keyed by this text.
 const schemaCache = {};
 function schemaForNs(ns) {
-  if (!schemaCache[ns]) schemaCache[ns] = lib.parseXml(template.split("{{NS}}").join(ns));
+  if (!schemaCache[ns]) schemaCache[ns] = template.split("{{NS}}").join(ns);
   return schemaCache[ns];
 }
 
@@ -80,19 +156,15 @@ function optsFor(version, op) {
 }
 
 function validate(rstXml, ns) {
-  const doc = lib.parseXml(rstXml);
-  let ok, detail = "";
-  try { ok = doc.validate(schemaForNs(ns)); }
-  catch (e) { return { ok: false, detail: "validate threw: " + e.message }; }
-  if (!ok) detail = doc.validationErrors.map(e => e.message.trim()).join("; ");
-  return { ok, detail };
+  return engine.validate(rstXml, schemaForNs(ns));
 }
 
 function main() {
   const versions = ["1.0", "1.1", "1.2", "1.3", "1.4"];
   const ops = ["issue", "renew", "validate", "cancel"];
 
-  log("== WS-Trust RST schema validation (derived from OASIS ws-trust-1.3.xsd, via libxmljs2/libxml2) ==");
+  log("== WS-Trust RST schema validation (derived from OASIS ws-trust-1.3.xsd) ==");
+  log("   engine: " + engine.name);
   for (const version of versions) {
     const ns = wm.versionNs(version);
     for (const op of ops) {

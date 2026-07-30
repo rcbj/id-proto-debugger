@@ -1,4 +1,8 @@
 const appconfig = require(process.env.CONFIG_FILE);
+// OpenID Provider Metadata (Discovery 1.0 s3) — shared with debugger.js so
+// both Configuration Parameters panes carry the same fields and defaults.
+const opMetadata = require("./op_metadata");
+const sdJwtVc = require("./sd_jwt_vc");
 const bunyan = require("bunyan");
 const DOMPurify = require("dompurify");
 const $ = require("jquery");
@@ -41,6 +45,7 @@ function getParameterByName(name, url)
 }
 
 function logoutButtonClick()  {
+  log.debug("Entering logoutButtonClick().");
   log.debug("Logout link clicked.");
   var nameValuePairs = {};
 
@@ -60,10 +65,12 @@ function logoutButtonClick()  {
   clearLocalStorage();
   window.location.href = logoutUrl;
 
+  log.debug("Leaving logoutButtonClick().");
   return false;
 };
 
 function tokenButtonClick() {
+  log.debug("Entering tokenButtonClick().");
   log.debug("Entering token Submit button clicked function.");
   $('#step3').show();
   $('#step4').show();
@@ -104,6 +111,7 @@ function tokenButtonClick() {
       error: errorInternalTokenAPICall
     });
   }
+  log.debug("Leaving tokenButtonClick().");
   return false; // don't reload the page.
 }
 
@@ -286,6 +294,7 @@ function successfulInternalTokenAPICall(data, textStatus, request)
       localStorage.setItem("token_access_token", data.access_token);
       localStorage.setItem("token_refresh_token", data.refresh_token);
       localStorage.setItem("token_id_token", data.id_token);
+      rememberAuthorizationDetails(data);
       saveTokenSetToHistory(data.access_token, data.refresh_token, data.id_token, 'token');
     } else {
       log.debug("Displaying Access Token. No OIDC ID Token: data.access_token=" + data.access_token);
@@ -326,6 +335,7 @@ function successfulInternalTokenAPICall(data, textStatus, request)
                                     "</div>";
       localStorage.setItem("token_access_token", data.access_token);
       localStorage.setItem("token_refresh_token", data.refresh_token);
+      rememberAuthorizationDetails(data);
       saveTokenSetToHistory(data.access_token, data.refresh_token, null, 'token');
     }
     //$("#token_endpoint_result").html(DOMPurify.sanitize(token_endpoint_result_html));
@@ -356,10 +366,21 @@ function successfulInternalTokenAPICall(data, textStatus, request)
       client_id: $("#token_client_id").val(),
       tokenHistoryIndex: getLatestTokenHistoryIndex()
     });
+    // If the SD-JWT VC workflow sent us here, the tokens are what it came for.
+    returnToSdJwtVcFlow();
 }
 
 function errorInternalTokenAPICall(request, status, error) {
+  log.debug("Entering errorInternalTokenAPICall().");
   log.error("An error occurred calling the token endpoint.");
+  if (sdJwtVc.isFlowActive()) {
+    // Stay on this page — the error panes below say what went wrong — but end
+    // the workflow's hold on it.
+    sdJwtVc.endFlow();
+    $("#sdjwtvc_banner").html("<strong>SD-JWT VC issuance</strong> — the token endpoint call failed, so the " +
+      "workflow stopped here. The error is shown below; <a href='/sd-jwt-vc-issuance-1.html'>step 1</a> " +
+      "starts it again.");
+  }
   log.error("request: " + JSON.stringify(request));
   log.error("status: " + JSON.stringify(status));
   log.error("error: " + JSON.stringify(error));
@@ -368,9 +389,11 @@ function errorInternalTokenAPICall(request, status, error) {
     client_id: $("#token_client_id").val(),
     detail: 'error'
   });
+  log.debug("Leaving errorInternalTokenAPICall().");
 }
 
 function buildInternalRefreshAPIRequestMessage() {
+  log.debug("Entering buildInternalRefreshAPIRequestMessage().");
   log.debug("Entering buildInternalTokenAPIRequestMessage()."); 
   // validate and process form here
   var token_endpoint = $("#token_endpoint").val();
@@ -406,10 +429,12 @@ function buildInternalRefreshAPIRequestMessage() {
     formData.client_secret = client_secret
   }
   log.debug("Leaving buildInternalTokenAPIRequestMessage().");
+  log.debug("Leaving buildInternalRefreshAPIRequestMessage().");
   return formData;
 }
 
 function refreshButtonClick() {
+  log.debug("Entering refreshButtonClick().");
   log.debug("Entering refresh Submit button clicked function.");
   log.debug("Write values to local storage.");
   writeValuesToLocalStorage();
@@ -439,10 +464,12 @@ function refreshButtonClick() {
       error: errorInternalRefreshAPICall
     });
   } 
+  log.debug("Leaving refreshButtonClick().");
   return false;
 }
 
 function successfulInternalRefreshAPICall(data, textStatus, request) {
+  log.debug("Entering successfulInternalRefreshAPICall().");
   log.debug("Entering ajax success function for Refresh Token call: data=" 
             + JSON.stringify(data)
             + ", textStatus="
@@ -477,9 +504,11 @@ function successfulInternalRefreshAPICall(data, textStatus, request) {
     tokenHistoryIndex: getLatestTokenHistoryIndex()
   });
   log.debug("Leaving ajax success function for Refresh Token.");
+  log.debug("Leaving successfulInternalRefreshAPICall().");
 }
 
 function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken, currentIDToken) {
+  log.debug("Entering recreateRefreshTokenDisplay().");
   log.debug("Entering displayRefreshTokenPane().");
   var refresh_endpoint_result_html = "";
   log.debug("displayOpenIDConnectArtifacts=" + displayOpenIDConnectArtifacts);
@@ -587,6 +616,7 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken, cu
   populateRevocationTokenWithLatestAccessToken();
   populateTokenExchangeSubjectWithLatestAccessToken();
   log.debug("Leaving displayRefreshTokenPane().");
+  log.debug("Leaving recreateRefreshTokenDisplay().");
 }
 
 function errorInternalRefreshAPICall(request, status, error) {
@@ -756,6 +786,7 @@ function writeValuesToLocalStorage()
       localStorage.setItem("useRefreshToken_no", $("#useRefreshToken-no").is(":checked"));
       localStorage.setItem("oidc_userinfo_endpoint", $("#oidc_userinfo_endpoint").val());
       localStorage.setItem("jwks_endpoint", $("#jwks_endpoint").val());
+      opMetadata.writeToLocalStorage();
       localStorage.setItem("end_session_endpoint", $("#logout_end_session_endpoint").val());
       localStorage.setItem("logout_client_id", $("#logout_client_id").val());
       localStorage.setItem("customTokenParametersCheck-yes", $("#customTokenParametersCheck-yes").is(":checked"));
@@ -959,6 +990,12 @@ function loadValuesFromLocalStorage()
   $("#useRefreshToken-no").prop("checked", getLSBooleanItem("useRefreshToken_no"));
   $("#oidc_userinfo_endpoint").val(localStorage.getItem("oidc_userinfo_endpoint"));
   $("#jwks_endpoint").val(localStorage.getItem("jwks_endpoint"));
+  // Falls back to the dummy defaults for any member not in storage yet (this
+  // page can be the first one loaded, e.g. via the /callback redirect).
+  opMetadata.loadFromLocalStorage();
+  // Show the -->not defined<-- note for members the last loaded discovery
+  // document omitted (it is fetched on debugger.html; the log is shared).
+  opMetadata.applyNotesFromStoredDiscovery();
   $("#logout_end_session_endpoint").val(localStorage.getItem("end_session_endpoint"));
   $("#logout_client_id").val(localStorage.getItem("client_id"));
   $("#customTokenParametersCheck-yes").prop("checked", getLSBooleanItem("customTokenParametersCheck-yes"));
@@ -997,7 +1034,11 @@ function loadValuesFromLocalStorage()
   var savedActiveIndex = parseInt(localStorage.getItem('token_history_active_index'));
   if (!isNaN(savedActiveIndex)) {
     var cvHistory = [];
-    try { cvHistory = JSON.parse(localStorage.getItem('token_history') || '[]'); } catch(e) {}
+    try {
+      cvHistory = JSON.parse(localStorage.getItem('token_history') || '[]');
+    } catch (e) {
+      // Absent or unreadable storage: keep the default.
+    }
     if (savedActiveIndex >= 0 && savedActiveIndex < cvHistory.length) {
       renderCurrentlyViewing(savedActiveIndex, cvHistory[savedActiveIndex]);
     }
@@ -1637,8 +1678,56 @@ $(document).ready(function() {
     $('#operation-history-panel').show();
   }
 
+  maybeContinueSdJwtVcFlow();
   log.debug("Leaving document.ready().");
 });
+
+// ---------------------------------------------------------------------------
+// SD-JWT VC issuance.
+//
+// When the workflow started on sd-jwt-vc-issuance-1.html marked itself active,
+// this page is a waypoint rather than a destination: exchange the authorization
+// code for tokens as usual, then hand the browser back to the workflow, which
+// needs the access token to make its OID4VCI Credential Request.
+//
+// The flag is only ever set by that workflow (and cleared as soon as it is
+// used), so an ordinary visit to this page behaves exactly as before.
+// ---------------------------------------------------------------------------
+function maybeContinueSdJwtVcFlow() {
+  log.debug("Entering maybeContinueSdJwtVcFlow().");
+  if (!sdJwtVc.isFlowActive()) return false;
+  var code = getParameterByName('code');
+  if (!code) {
+    // No authorization code — the flow did not get this far. Say so rather
+    // than silently doing nothing; the error panes above have the detail.
+    $(".container").prepend(
+      "<div class='vc-handoff-banner'><strong>SD-JWT VC issuance</strong> — no authorization code came back " +
+      "from the identity provider, so there are no tokens to carry into the credential request. " +
+      "<a href='/sd-jwt-vc-issuance-1.html'>Return to step 1</a>.</div>");
+    sdJwtVc.endFlow();
+    return false;
+  }
+  $(".container").prepend(
+    "<div class='vc-handoff-banner' id='sdjwtvc_banner'><strong>SD-JWT VC issuance</strong> — exchanging the " +
+    "authorization code for tokens, then returning to <a href='" + sdJwtVc.STEP2_URL + "'>step 2</a> to request " +
+    "the credential.</div>");
+  window.setTimeout(tokenButtonClick, 250);
+  log.debug("Leaving maybeContinueSdJwtVcFlow().");
+  return true;
+}
+
+// Called from the token endpoint's success handler, once the tokens are in
+// local storage where step 2 of the workflow reads them.
+function returnToSdJwtVcFlow() {
+  if (!sdJwtVc.isFlowActive()) return false;
+  var target = sdJwtVc.returnUrl();
+  // Consumed here: a later, unrelated token call on this page must not be
+  // redirected too.
+  sdJwtVc.endFlow();
+  log.debug("SD-JWT VC issuance: returning to " + target);
+  window.location.href = target;
+  return true;
+}
 
 function generateUUID () { // Public Domain/MIT
     log.debug("Entering generateUUID().");
@@ -2012,7 +2101,34 @@ function extractSid(access_token) {
   return null;
 }
 
+// RFC 9396 / OID4VCI section 6.2: when the authorization was expressed as
+// authorization_details rather than a scope, the token response says which
+// Credential Datasets were granted. The SD-JWT VC workflow has to send one of
+// those credential_identifiers in its Credential Request — and MUST NOT send a
+// credential_configuration_id then — so what came back is kept for it. Nothing
+// else on this page uses it, and a response without it clears the key rather
+// than leaving a stale grant behind.
+function rememberAuthorizationDetails(data) {
+  log.debug("Entering rememberAuthorizationDetails().");
+  var details = data && data.authorization_details;
+  try {
+    if (details) {
+      localStorage.setItem("token_authorization_details", JSON.stringify(details));
+      log.debug("The token response granted authorization_details.");
+    } else {
+      localStorage.removeItem("token_authorization_details");
+    }
+  } catch (e) {
+    // No storage, or over quota: the workflow falls back to naming the
+    // credential by its configuration id, which is what an authorization
+    // without authorization_details would have needed anyway.
+    log.debug("rememberAuthorizationDetails(): " + e.message);
+  }
+  log.debug("Leaving rememberAuthorizationDetails().");
+}
+
 function saveTokenSetToHistory(access_token, refresh_token, id_token, source) {
+  log.debug("Entering saveTokenSetToHistory().");
   var history = [];
   try { 
     history = JSON.parse(localStorage.getItem('token_history') || '[]'); 
@@ -2038,9 +2154,11 @@ function saveTokenSetToHistory(access_token, refresh_token, id_token, source) {
   });
   localStorage.setItem('token_history', JSON.stringify(history));
   renderTokenHistory();
+  log.debug("Leaving saveTokenSetToHistory().");
 }
 
 function selectTokenSet(index) {
+  log.debug("Entering selectTokenSet().");
   var history = [];
   try {
     history = JSON.parse(localStorage.getItem('token_history') || '[]'); 
@@ -2063,10 +2181,12 @@ function selectTokenSet(index) {
   }
   renderTokenHistory();
   renderCurrentlyViewing(index, entry);
+  log.debug("Leaving selectTokenSet().");
   return false;
 }
 
 function renderCurrentlyViewing(index, entry) {
+  log.debug("Entering renderCurrentlyViewing().");
   var html = '<div class="dbg-pane">' +
                '<legend class="dbg-legend" data-target="currently_viewing_fieldset">Currently Viewing</legend>' +
                '<fieldset id="currently_viewing_fieldset">' +
@@ -2122,11 +2242,17 @@ function renderCurrentlyViewing(index, entry) {
              '</div>';
   $('#currently-viewing-panel').html(html);
   $('#currently-viewing-panel').show();
+  log.debug("Leaving renderCurrentlyViewing().");
 }
 
 function renderTokenHistory() {
+  log.debug("Entering renderTokenHistory().");
   var history = [];
-  try { history = JSON.parse(localStorage.getItem('token_history') || '[]'); } catch(e) {}
+  try {
+    history = JSON.parse(localStorage.getItem('token_history') || '[]');
+  } catch (e) {
+    // Absent or unreadable storage: keep the default.
+  }
   if (history.length === 0) {
     $("#token-history-panel").hide();
     return;
@@ -2190,6 +2316,7 @@ function renderTokenHistory() {
 
   $("#token-history-panel").html(html);
   $("#token-history-panel").show();
+  log.debug("Leaving renderTokenHistory().");
 }
 
 function regenerateState() {
@@ -2380,6 +2507,7 @@ function generateCustomParametersListUI()
 }
 
 function onClickShowFieldSet(expand_button_id, field_set_id) {
+  log.debug("Entering onClickShowFieldSet().");
   log.debug('Entering onClickShowConfigFieldSet(). expand_button_id='
     + expand_button_id + ', field_set_id=' + field_set_id
     + ', fieldset.style.display=' + $("#" + field_set_id).css("display")
@@ -2397,6 +2525,7 @@ function onClickShowFieldSet(expand_button_id, field_set_id) {
     event.preventDefault();
   });
   log.debug('Leaving onClickShowConfigFieldSet().');
+  log.debug("Leaving onClickShowFieldSet().");
   return false;
 }
 
@@ -2650,6 +2779,7 @@ function getLatestTokenHistoryIndex() {
 // Appends an entry to the cumulative operation history. options may include
 // detail, client_id, nonce, and tokenHistoryIndex.
 function saveOperationToHistory(operation, options) {
+  log.debug("Entering saveOperationToHistory().");
   options = options || {};
   var history = [];
   try {
@@ -2670,9 +2800,11 @@ function saveOperationToHistory(operation, options) {
   });
   localStorage.setItem('operation_history', JSON.stringify(history));
   renderOperationHistory();
+  log.debug("Leaving saveOperationToHistory().");
 }
 
 function renderOperationHistory() {
+  log.debug("Entering renderOperationHistory().");
   var history = [];
   try {
     history = JSON.parse(localStorage.getItem('operation_history') || '[]');
@@ -2709,6 +2841,7 @@ function renderOperationHistory() {
   });
   html += '</table></div></fieldset></div>';
   $("#operation-history-panel").html(html);
+  log.debug("Leaving renderOperationHistory().");
 }
 
 function clearOperationHistory() {
@@ -2877,6 +3010,7 @@ function revokeButtonClick() {
       error: errorRevocationAPICall
     });
   }
+  log.debug("Leaving revokeButtonClick().");
   return false;
 }
 
@@ -2904,6 +3038,7 @@ function successfulRevocationAPICall(data, textStatus, jqXHR) {
 }
 
 function errorRevocationAPICall(jqXHR, status, error) {
+  log.debug("Entering errorRevocationAPICall().");
   log.error("An error occurred calling the revocation endpoint.");
   log.error("status: " + JSON.stringify(status));
   log.error("error: " + JSON.stringify(error));
@@ -2924,6 +3059,7 @@ function errorRevocationAPICall(jqXHR, status, error) {
     client_id: $("#revocation_client_id").val(),
     detail: ($("#revocation_token_type_hint").val() || 'token') + ', error'
   });
+  log.debug("Leaving errorRevocationAPICall().");
 }
 
 function displayRevocationResult(message, isError) {
@@ -3179,6 +3315,7 @@ function tokenExchangeButtonClick() {
       error: errorTokenExchangeAPICall
     });
   }
+  log.debug("Leaving tokenExchangeButtonClick().");
   return false;
 }
 
@@ -3204,6 +3341,7 @@ function successfulTokenExchangeAPICall(data, textStatus, jqXHR) {
 }
 
 function errorTokenExchangeAPICall(jqXHR, status, error) {
+  log.debug("Entering errorTokenExchangeAPICall().");
   log.error("An error occurred calling the token endpoint for token exchange.");
   log.error("status: " + JSON.stringify(status));
   log.error("error: " + JSON.stringify(error));
@@ -3224,6 +3362,7 @@ function errorTokenExchangeAPICall(jqXHR, status, error) {
     client_id: $("#tokenexchange_client_id").val(),
     detail: ($("#tokenexchange_delegation").is(":checked") ? 'delegation' : 'impersonation') + ', error'
   });
+  log.debug("Leaving errorTokenExchangeAPICall().");
 }
 
 function displayTokenExchangeResult(message, isError) {

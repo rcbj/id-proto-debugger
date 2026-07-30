@@ -3,3 +3,5 @@ node_modules
 dist
 # Transient copy of common/data.js staged during the browserify build
 src/data.js
+# Build stamp written by version.js --stamp (ships inside the image / dist)
+public/version.json

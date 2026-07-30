@@ -103,6 +103,24 @@ services:
   sts:
     container_name: sts
     image: rcbj/sts
+    # The mock OID4VCI Credential Issuer this service also hosts advertises
+    # ITSELF as its authorization server, so an issuer-initiated offer can be
+    # walked end to end without a second identity provider. Set
+    # OID4VCI_AUTHORIZATION_SERVER to point it at a real one instead.
+    environment:
+      # Log level, chosen the same way as for api and client.
+      - CONFIG_FILE=./env/docker-tests.js
+      # Where the WALLET lives, as a base URL the BROWSER can use.
+      #
+      # The mock issuer's Credential Offer pages and the mock verifier's request
+      # pages both link the End-User back to the wallet, appending
+      # /sd-jwt-vc-issuance-1.html or /sd-jwt-vc-presentation-1.html to this. It
+      # defaults to http://localhost:3000, which is right for the host-networking
+      # local stack and WRONG here: the browser runs in the tests container, where
+      # localhost:3000 is nothing at all, so those links went nowhere and the H.1
+      # and presentation flows timed out waiting for a page that never loaded.
+      # OID4VP_WALLET_URL falls back to this, so one setting covers both.
+      - OID4VCI_WALLET_URL=http://client:3000
     build:
       context: .
       dockerfile: sts/Dockerfile
@@ -116,9 +134,145 @@ services:
       - keycloak
     ports:
       - 8081:8081
+  # walt.id issuer-api2 — a REAL OpenID4VCI 1.0 Credential Issuer, run beside the
+  # mock one so the SD-JWT VC workflow can be shown to work against an
+  # independent implementation and not only against our own. Its configuration
+  # is in waltid/config (bind-mounted), and its signing key comes from the
+  # environment (generateWaltidIssuerKey in common/common.sh) so no private key
+  # is committed. The browser in the tests container reaches it by its compose
+  # DNS name, which is why WALTID_BASE_URL must be that name: every URL walt.id
+  # publishes in its metadata is built from it.
+  waltid-issuer-api:
+    container_name: waltid-issuer-api
+    image: waltid/issuer-api2:0.23.0
+    volumes:
+      # Rendered by renderWaltidConfig() (common/common.sh) with this run's
+      # values — including its signing key — written in, so nothing here
+      # depends on how walt.id's config loader expands ${...}.
+      - ./waltid/generated-config:/waltid-issuer-api2/config:ro
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    networks:
+      - keycloak
+
+  # CORS in front of the issuer. walt.id's services send no CORS headers of their
+  # own — they install no CORS plugin, and walt.id's own stack fronts every one of
+  # them for that reason — and a browser-based wallet cannot read a response
+  # without them. This IS the address the wallet uses, and the address the
+  # issuer's baseUrl names, because every URL walt.id publishes is built from it.
+  # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
+  waltid-issuer:
+    container_name: waltid-issuer
+    image: node:24-alpine
+    command: ["node", "/waltid/cors-proxy.js"]
+    environment:
+      - WALTID_UPSTREAM=waltid-issuer-api:7006
+      - WALTID_PROXY_PORT=7005
+    volumes:
+      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+    healthcheck:
+      # The whole chain: this proxy answering, and the issuer behind it serving
+      # the metadata a wallet asks for first. The probe lives here rather than on
+      # the issuer because that image is built with Jib and has no shell for
+      # CMD-SHELL to run — a probe there can never pass, and compose then waits
+      # forever on a service that is working perfectly.
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:7005/.well-known/openid-credential-issuer/openid4vci',function(r){var b='';r.on('data',function(d){b+=d});r.on('end',function(){process.exit(r.statusCode===200&&b.indexOf('credential_issuer')!==-1?0:1)})}).on('error',function(){process.exit(1)})\""]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      waltid-issuer-api:
+        condition: service_started
+    networks:
+      - keycloak
+    ports:
+      - 7005:7005
+  # walt.id's VERIFIER (verifier-api2), the other half of the interoperability
+  # story: an independently written OpenID4VP 1.0 verifier with DCQL, so the
+  # presentation workflow is driven against someone else's reading of the spec
+  # rather than only against our own mock. Its configuration is in
+  # waltid/verifier-config (rendered, bind-mounted); its request-signing key comes
+  # from the environment (generateWaltidVerifierKey in common/common.sh) so no
+  # private key is committed.
+  waltid-verifier-api:
+    container_name: waltid-verifier-api
+    image: waltid/verifier-api2:0.23.0
+    volumes:
+      # Rendered by renderWaltidConfig() (common/common.sh) with this run's
+      # values written in, so nothing here depends on how walt.id's config loader
+      # expands ${...}. A SEPARATE directory from the issuer's: walt.id reads
+      # whatever conf files are in the directory it is given, and the two services
+      # must not be handed each other's.
+      - ./waltid/generated-verifier-config:/waltid-verifier-api2/config:ro
+    networks:
+      - keycloak
+
+  # CORS in front of the verifier, for the same reason the issuer has one: walt.id
+  # installs no CORS plugin, and the wallet is a browser page that has to read the
+  # Request Object and POST the presentation. THIS is the address the verifier's
+  # urlPrefix names, so every URL it hands the wallet is one the browser can use.
+  waltid-verifier:
+    container_name: waltid-verifier
+    image: node:24-alpine
+    command: ["node", "/waltid/cors-proxy.js"]
+    environment:
+      - WALTID_UPSTREAM=waltid-verifier-api:7004
+      - WALTID_PROXY_PORT=7003
+    volumes:
+      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+    healthcheck:
+      # /livez is the health endpoint walt.id's service-commons registers for
+      # every service. The probe lives on the proxy, not the verifier, because
+      # that image is built with Jib/Corretto and has no shell for CMD-SHELL to
+      # run — a probe there can never pass and compose would wait forever on a
+      # service that is working perfectly. This one covers the whole chain.
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:7003/livez',function(r){process.exit(r.statusCode<500?0:1)}).on('error',function(){process.exit(1)})\""]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      waltid-verifier-api:
+        condition: service_started
+    networks:
+      - keycloak
+    ports:
+      - 7003:7003
+  # WS-Federation IdP side-car: Keycloak 8.0.1 + cloudtrust keycloak-wsfed module.
+  # The main 26.x Keycloak has no WS-Fed support and the extension only targets
+  # 8.0.1, so WS-Fed gets its own image. Reached by the browser (in the tests
+  # container) and the api /samlmetadata proxy at keycloak-wsfed:8080/auth.
+  keycloak-wsfed:
+    container_name: keycloak-wsfed
+    image: rcbj/keycloak-wsfed
+    build:
+      context: .
+      dockerfile: keycloak-wsfed/Dockerfile
+    hostname: keycloak-wsfed
+    environment:
+      KEYCLOAK_USER: keycloak
+      KEYCLOAK_PASSWORD: keycloak
+    # WildFly Keycloak 8.0.1 has no /health endpoint; probe the master realm.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/auth/realms/master || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 150s
+    networks:
+      - keycloak
+    ports:
+      - "8082:8080"
   tests:
     container_name: tests
     image: rcbj/test
+    # Point the WS-Federation provisioning + test at the side-car by its compose
+    # DNS name (the entrypoint defaults these empty so live-site runs skip WS-Fed).
+    environment:
+      KEYCLOAK_WSFED_BASE_URL: http://keycloak-wsfed:8080
+      KEYCLOAK_WSFED_LOCALHOST_BASE_URL: http://keycloak-wsfed:8080
     # Chrome crashes tabs on heavy pages when limited to Docker's default 64MB
     # /dev/shm. The tests also pass --disable-dev-shm-usage; this raises the cap
     # as a belt-and-suspenders mitigation.
@@ -137,6 +291,12 @@ services:
       keycloak:
         condition: service_healthy
       sts:
+        condition: service_healthy
+      waltid-issuer:
+        condition: service_healthy
+      waltid-verifier:
+        condition: service_healthy
+      keycloak-wsfed:
         condition: service_healthy
     networks:
      - keycloak

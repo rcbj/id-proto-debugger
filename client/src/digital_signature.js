@@ -208,6 +208,7 @@ function triggerDownload(filename, data, mime) {
 }
 
 function generateKeys() {
+  log.debug("Entering generateKeys().");
   var name = val('ds_param');
   setVal('ds_status', 'Generating ' + name + ' key pair…');
   defer(function () {
@@ -223,6 +224,7 @@ function generateKeys() {
       setVal('ds_status', 'Key generation error: ' + e.message);
     }
   });
+  log.debug("Leaving generateKeys().");
   return false;
 }
 
@@ -259,6 +261,7 @@ function bigToBytes(x, len) {
 
 // Password-protect a string as a compact PBES2 JWE (RFC 7518 §4.8), via subtle.
 async function pbes2JweEncrypt(plaintext, password) {
+  log.debug("Entering pbes2JweEncrypt().");
   var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
   var p2s = randomBytes(16), p2c = 100000;
   var pwKey = await crypto.subtle.importKey('raw', strBytes(password), 'PBKDF2', false, ['deriveKey']);
@@ -272,6 +275,7 @@ async function pbes2JweEncrypt(plaintext, password) {
   var iv = randomBytes(12);
   var full = new Uint8Array(await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv: iv, additionalData: strBytes(phB64), tagLength: 128 }, cek, strBytes(plaintext)));
+  log.debug("Leaving pbes2JweEncrypt().");
   return [phB64, b64u(wrapped), b64u(iv), b64u(full.slice(0, full.length - 16)), b64u(full.slice(full.length - 16))].join('.');
 }
 
@@ -292,6 +296,7 @@ async function downloadJwkSet(jwks, password, baseName, statusId) {
 // supported; DER and PKCS#12 have no standard SLH-DSA representation.
 // ---------------------------------------------------------------------------
 async function downloadKeys() {
+  log.debug("Entering downloadKeys().");
   var fmt = val('ds_slh_ks_format') || 'pem', pw = val('ds_slh_ks_password');
   var priv = val('ds_private_key'), pub = val('ds_public_key');
   if (!priv && !pub) { setVal('ds_status', 'Nothing to download — generate a key pair first.'); return false; }
@@ -312,10 +317,12 @@ async function downloadKeys() {
     log.error('downloadKeys: ' + e.message);
     setVal('ds_status', 'Download error: ' + e.message);
   }
+  log.debug("Leaving downloadKeys().");
   return false;
 }
 
 function sign() {
+  log.debug("Entering sign().");
   var name = val('ds_param');
   setVal('ds_status', 'Signing with ' + name + '…');
   defer(function () {
@@ -330,10 +337,12 @@ function sign() {
       setVal('ds_status', 'Sign error: ' + e.message + ' (does the parameter set match the key pair?)');
     }
   });
+  log.debug("Leaving sign().");
   return false;
 }
 
 function validate() {
+  log.debug("Entering validate().");
   var name = val('ds_param');
   setVal('ds_status', 'Validating signature with ' + name + '…');
   defer(function () {
@@ -348,6 +357,7 @@ function validate() {
       setVal('ds_status', 'Validation error: ' + e.message + ' (does the parameter set match the key pair?)');
     }
   });
+  log.debug("Leaving validate().");
   return false;
 }
 
@@ -362,6 +372,7 @@ function currentMldsaAlg() {
 }
 
 function mldsaGenerateKeys() {
+  log.debug("Entering mldsaGenerateKeys().");
   var name = val('ds_ml_param');
   setVal('ds_ml_status', 'Generating ' + name + ' key pair…');
   defer(function () {
@@ -376,10 +387,12 @@ function mldsaGenerateKeys() {
       setVal('ds_ml_status', 'Key generation error: ' + e.message);
     }
   });
+  log.debug("Leaving mldsaGenerateKeys().");
   return false;
 }
 
 function mldsaSign() {
+  log.debug("Entering mldsaSign().");
   var name = val('ds_ml_param');
   setVal('ds_ml_status', 'Signing with ' + name + '…');
   defer(function () {
@@ -392,10 +405,12 @@ function mldsaSign() {
       setVal('ds_ml_status', 'Sign error: ' + e.message + ' (does the parameter set match the key pair?)');
     }
   });
+  log.debug("Leaving mldsaSign().");
   return false;
 }
 
 function mldsaValidate() {
+  log.debug("Entering mldsaValidate().");
   var name = val('ds_ml_param');
   setVal('ds_ml_status', 'Validating signature with ' + name + '…');
   defer(function () {
@@ -409,12 +424,14 @@ function mldsaValidate() {
       setVal('ds_ml_status', 'Validation error: ' + e.message + ' (does the parameter set match the key pair?)');
     }
   });
+  log.debug("Leaving mldsaValidate().");
   return false;
 }
 
 // PEM (raw, unencrypted) and JWK (+password) supported; DER/PKCS#12 have no
 // standard ML-DSA representation.
 async function mldsaDownloadKeys() {
+  log.debug("Entering mldsaDownloadKeys().");
   var fmt = val('ds_ml_ks_format') || 'pem', pw = val('ds_ml_ks_password');
   var priv = val('ds_ml_private_key'), pub = val('ds_ml_public_key');
   if (!priv && !pub) { setVal('ds_ml_status', 'Nothing to download — generate a key pair first.'); return false; }
@@ -435,6 +452,7 @@ async function mldsaDownloadKeys() {
     log.error('mldsaDownloadKeys: ' + e.message);
     setVal('ds_ml_status', 'Download error: ' + e.message);
   }
+  log.debug("Leaving mldsaDownloadKeys().");
   return false;
 }
 
@@ -454,6 +472,7 @@ function modpow(b, e, m) { var r = _B1; b %= m; while (e > _B0) { if (e & _B1) r
 
 // EMSA-PKCS1-v1_5 (RFC 8017 §9.2): 0x00 01 FF..FF 00 || DigestInfo(hash) || H
 function emsaPkcs1v15(msg, hashName, emLen) {
+  log.debug("Entering emsaPkcs1v15().");
   var h = HASHES[hashName];
   if (!h.oid) throw new Error('PKCS#1 v1.5 has no DigestInfo OID for ' + hashName + '. Choose PSS padding instead.');
   var T = concatBytes(hexToBytes(h.oid), digestOf(hashName, msg));
@@ -464,6 +483,7 @@ function emsaPkcs1v15(msg, hashName, emLen) {
   for (var i = 0; i < psLen; i++) em[2 + i] = 0xff;
   em[2 + psLen] = 0x00;
   em.set(T, 3 + psLen);
+  log.debug("Leaving emsaPkcs1v15().");
   return em;
 }
 
@@ -491,6 +511,7 @@ function emsaPssEncode(msg, hashName, emBits) {
   return concatBytes(maskedDB, H, new Uint8Array([0xbc]));
 }
 function emsaPssVerify(msg, em, hashName, emBits) {
+  log.debug("Entering emsaPssVerify().");
   var mHash = digestOf(hashName, msg), hLen = mHash.length, sLen = hLen;
   var emLen = Math.ceil(emBits / 8);
   if (em.length !== emLen || em[em.length - 1] !== 0xbc) return false;
@@ -501,6 +522,7 @@ function emsaPssVerify(msg, em, hashName, emBits) {
   if (DB[emLen - sLen - hLen - 2] !== 0x01) return false;
   var salt = DB.slice(DB.length - sLen);
   var H2 = digestOf(hashName, concatBytes(new Uint8Array(8), mHash, salt));
+  log.debug("Leaving emsaPssVerify().");
   return bytesEqual(H, H2);
 }
 
@@ -508,6 +530,7 @@ function rsaPaddingLabel(p) { return p === 'pss' ? 'PSS' : 'PKCS#1 v1.5'; }
 
 // Generate a 2048-bit RSA key pair with node-forge (pure JS); display as PEM.
 function rsaGenerateKeys() {
+  log.debug("Entering rsaGenerateKeys().");
   var bits = parseInt(val('ds_rsa_bits'), 10) || 2048;
   setVal('ds_rsa_status', 'Generating RSA ' + bits + '-bit key pair… (pure JS — larger sizes take longer)');
   defer(function () {
@@ -521,6 +544,7 @@ function rsaGenerateKeys() {
       setVal('ds_rsa_status', 'Key generation error: ' + e.message);
     }
   });
+  log.debug("Leaving rsaGenerateKeys().");
   return false;
 }
 
@@ -540,6 +564,7 @@ function rsaSelfSignedCert(privateKey, publicKey) {
 // certificate-details page (saml_cert.html) to inspect it. The cert is handed
 // over via localStorage ('saml_cert_view') and shown in a new tab.
 function viewRsaCert() {
+  log.debug("Entering viewRsaCert().");
   var privPem = val('ds_rsa_private_key'), pubPem = val('ds_rsa_public_key');
   if (!privPem.trim() || !pubPem.trim()) { setVal('ds_rsa_status', 'Generate an RSA key pair first.'); return false; }
   try {
@@ -551,10 +576,12 @@ function viewRsaCert() {
     log.error('viewRsaCert: ' + e.message);
     setVal('ds_rsa_status', 'Certificate error: ' + e.message);
   }
+  log.debug("Leaving viewRsaCert().");
   return false;
 }
 
 async function rsaDownloadKeys() {
+  log.debug("Entering rsaDownloadKeys().");
   var fmt = val('ds_rsa_ks_format') || 'pem', pw = val('ds_rsa_ks_password');
   var privPem = val('ds_rsa_private_key'), pubPem = val('ds_rsa_public_key');
   if (!privPem.trim() || !pubPem.trim()) { setVal('ds_rsa_status', 'No key pair to export. Generate a key pair first.'); return false; }
@@ -591,10 +618,12 @@ async function rsaDownloadKeys() {
     log.error('rsaDownloadKeys: ' + e.message);
     setVal('ds_rsa_status', 'Download error: ' + e.message);
   }
+  log.debug("Leaving rsaDownloadKeys().");
   return false;
 }
 
 function rsaSign() {
+  log.debug("Entering rsaSign().");
   var padding = val('ds_rsa_padding'), hashName = val('ds_rsa_hash');
   setVal('ds_rsa_status', 'Signing with RSA ' + rsaPaddingLabel(padding) + ' / ' + hashName + '…');
   try {
@@ -610,10 +639,12 @@ function rsaSign() {
     log.error('rsaSign: ' + e.message);
     setVal('ds_rsa_status', 'Sign error: ' + e.message);
   }
+  log.debug("Leaving rsaSign().");
   return false;
 }
 
 function rsaValidate() {
+  log.debug("Entering rsaValidate().");
   var padding = val('ds_rsa_padding'), hashName = val('ds_rsa_hash');
   setVal('ds_rsa_status', 'Validating RSA ' + rsaPaddingLabel(padding) + ' / ' + hashName + '…');
   try {
@@ -633,6 +664,7 @@ function rsaValidate() {
     log.error('rsaValidate: ' + e.message);
     setVal('ds_rsa_status', 'Validation error: ' + e.message);
   }
+  log.debug("Leaving rsaValidate().");
   return false;
 }
 
@@ -647,6 +679,7 @@ function eccCurve() {
 }
 
 function eccGenerateKeys() {
+  log.debug("Entering eccGenerateKeys().");
   var name = val('ds_ecc_curve');
   setVal('ds_ecc_status', 'Generating ' + name + ' key pair…');
   try {
@@ -660,11 +693,13 @@ function eccGenerateKeys() {
     log.error('eccGenerateKeys: ' + e.message);
     setVal('ds_ecc_status', 'Key generation error: ' + e.message);
   }
+  log.debug("Leaving eccGenerateKeys().");
   return false;
 }
 
 // Build a JWK pair for the current ECC keys (EC for ECDSA curves, OKP for EdDSA).
 function eccJwkSet() {
+  log.debug("Entering eccJwkSet().");
   var c = eccCurve();
   var priv = hexToBytes(val('ds_ecc_private_key')), pubHex = val('ds_ecc_public_key');
   if (c.kind === 'eddsa') {
@@ -676,6 +711,7 @@ function eccJwkSet() {
   }
   var pt = c.curve.ProjectivePoint.fromHex(pubHex).toAffine();
   var x = b64u(bigToBytes(pt.x, c.fieldBytes)), y = b64u(bigToBytes(pt.y, c.fieldBytes));
+  log.debug("Leaving eccJwkSet().");
   return [
     { kty: 'EC', crv: c.jwkCrv, x: x, y: y, use: 'sig' },
     { kty: 'EC', crv: c.jwkCrv, x: x, y: y, d: b64u(priv), use: 'sig' }
@@ -683,6 +719,7 @@ function eccJwkSet() {
 }
 
 async function eccDownloadKeys() {
+  log.debug("Entering eccDownloadKeys().");
   var fmt = val('ds_ecc_ks_format') || 'jwk', pw = val('ds_ecc_ks_password');
   var priv = val('ds_ecc_private_key'), pub = val('ds_ecc_public_key');
   if (!priv && !pub) { setVal('ds_ecc_status', 'Nothing to download — generate a key pair first.'); return false; }
@@ -699,10 +736,12 @@ async function eccDownloadKeys() {
     log.error('eccDownloadKeys: ' + e.message);
     setVal('ds_ecc_status', 'Download error: ' + e.message);
   }
+  log.debug("Leaving eccDownloadKeys().");
   return false;
 }
 
 function eccSign() {
+  log.debug("Entering eccSign().");
   var name = val('ds_ecc_curve'), hashName = val('ds_ecc_hash');
   setVal('ds_ecc_status', 'Signing with ' + name + '…');
   try {
@@ -724,10 +763,12 @@ function eccSign() {
     log.error('eccSign: ' + e.message);
     setVal('ds_ecc_status', 'Sign error: ' + e.message + ' (does the curve match the key pair?)');
   }
+  log.debug("Leaving eccSign().");
   return false;
 }
 
 function eccValidate() {
+  log.debug("Entering eccValidate().");
   var name = val('ds_ecc_curve'), hashName = val('ds_ecc_hash');
   setVal('ds_ecc_status', 'Validating signature with ' + name + '…');
   try {
@@ -745,6 +786,7 @@ function eccValidate() {
     log.error('eccValidate: ' + e.message);
     setVal('ds_ecc_status', 'Validation error: ' + e.message + ' (does the curve/hash match the signature?)');
   }
+  log.debug("Leaving eccValidate().");
   return false;
 }
 
@@ -765,6 +807,7 @@ function shl1(b) { var o = new Uint8Array(16), carry = 0; for (var i = 15; i >= 
 
 // AES-CMAC (RFC 4493), verified against the RFC test vectors.
 function aesCmac(key, msg) {
+  log.debug("Entering aesCmac().");
   var Rb = new Uint8Array(16); Rb[15] = 0x87;
   var L = aesBlock(key, new Uint8Array(16));
   var K1 = shl1(L); if (L[0] & 0x80) K1 = xorBytes(K1, Rb);
@@ -776,6 +819,7 @@ function aesCmac(key, msg) {
   else { var pad = new Uint8Array(16); var rem = msg.slice((n - 1) * 16); pad.set(rem); pad[rem.length] = 0x80; last = xorBytes(pad, K2); }
   var x = new Uint8Array(16);
   for (var i = 0; i < n - 1; i++) x = aesBlock(key, xorBytes(x, msg.slice(i * 16, i * 16 + 16)));
+  log.debug("Leaving aesCmac().");
   return aesBlock(key, xorBytes(x, last));
 }
 
@@ -803,6 +847,7 @@ function aesGmac(key, msg) {
 // Poly1305 (RFC 8439), verified against the RFC vector. One-time authenticator:
 // the 32-byte key MUST be unique per message.
 function poly1305(key, msg) {
+  log.debug("Entering poly1305().");
   var P = (BigInt(1) << BigInt(130)) - BigInt(5), M128 = (BigInt(1) << BigInt(128)) - BigInt(1);
   var r = BigInt(0), i;
   for (i = 15; i >= 0; i--) r = (r << BigInt(8)) | BigInt(key[i]);
@@ -817,11 +862,13 @@ function poly1305(key, msg) {
   }
   acc = (acc + s) & M128;
   var out = new Uint8Array(16); for (i = 0; i < 16; i++) { out[i] = Number(acc & BigInt(0xff)); acc >>= BigInt(8); }
+  log.debug("Leaving poly1305().");
   return out;
 }
 
 // SipHash-2-4 (reference), verified against the reference vector.
 function siphash24(key, msg) {
+  log.debug("Entering siphash24().");
   var M = (BigInt(1) << BigInt(64)) - BigInt(1);
   function rotl(x, b) { return ((x << BigInt(b)) | (x >> BigInt(64 - b))) & M; }
   function rd(b, o) { var v = BigInt(0); for (var i = 7; i >= 0; i--) v = (v << BigInt(8)) | BigInt(b[o + i]); return v; }
@@ -842,6 +889,7 @@ function siphash24(key, msg) {
   v2 ^= BigInt(0xff); round(); round(); round(); round();
   var outv = (v0 ^ v1 ^ v2 ^ v3) & M;
   var o = new Uint8Array(8); for (i = 0; i < 8; i++) { o[i] = Number(outv & BigInt(0xff)); outv >>= BigInt(8); }
+  log.debug("Leaving siphash24().");
   return o;
 }
 
@@ -878,6 +926,7 @@ function macGenerateKey(prefix) {
   return false;
 }
 function macCompute(prefix) {
+  log.debug("Entering macCompute().");
   var alg = val('ds_' + prefix + '_alg');
   try {
     var mac = MACS[alg]; if (!mac) throw new Error('Unknown MAC: ' + alg);
@@ -888,9 +937,11 @@ function macCompute(prefix) {
     log.error('macCompute: ' + e.message);
     setVal('ds_' + prefix + '_status', 'MAC error: ' + e.message + ' (check the key length for this algorithm).');
   }
+  log.debug("Leaving macCompute().");
   return false;
 }
 function macVerify(prefix) {
+  log.debug("Entering macVerify().");
   var alg = val('ds_' + prefix + '_alg');
   try {
     var mac = MACS[alg]; if (!mac) throw new Error('Unknown MAC: ' + alg);
@@ -903,6 +954,7 @@ function macVerify(prefix) {
     log.error('macVerify: ' + e.message);
     setVal('ds_' + prefix + '_status', 'Verify error: ' + e.message);
   }
+  log.debug("Leaving macVerify().");
   return false;
 }
 
@@ -924,14 +976,22 @@ function collapseAll() { return setAllCollapsed(true); }
 // Copy a field's contents to the clipboard.
 // ---------------------------------------------------------------------------
 function copyField(elementId) {
+  log.debug("Entering copyField().");
   var el = document.getElementById(elementId);
   if (!el) { log.error('copyField: element not found: ' + elementId); return false; }
   var text = el.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
   } else {
-    try { el.focus(); el.select(); document.execCommand('copy'); } catch (e) { log.error('copyField fallback: ' + e.message); }
+    try {
+      el.focus();
+      el.select();
+      document.execCommand('copy');
+    } catch (e) {
+      log.error('copyField fallback: ' + e.message);
+    }
   }
+  log.debug("Leaving copyField().");
   return false;
 }
 

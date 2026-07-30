@@ -1,9 +1,11 @@
 const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
-const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require('commander');
+// The SP key pair is generated per run and passed in through the environment;
+// it is deliberately not stored in this repository. See common/sp_keypair.js.
+const { readSpKeyPair } = require("../common/sp_keypair.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -77,7 +79,7 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding, me
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Load the SAML Test Tools page (binding=" + binding + ").");
-  await driver.get(baseUrl + "/saml_tools.html");
+  await driver.get(baseUrl + "/saml_request.html");
 
   // Load + parse the IdP metadata (URL fetch, or file upload when metadataFile set).
   await loadIdpMetadata(driver, metadataUrl, metadataFile);
@@ -92,12 +94,14 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding, me
   // NameID (rather than possibly rejecting a requested format). This exercises
   // the default "nothing chosen" behavior.
 
-  // Load the fixed SP signing key pair. Its certificate is registered on the
-  // Keycloak client, which validates the AuthnRequest signature — so the request
-  // must be signed with THIS key, not a per-session generated one.
-  log.info("Load the fixed SP signing key pair (matches the cert registered on Keycloak).");
-  var spKey = fs.readFileSync(path.join(__dirname, "fixtures", "sp-key.pem"), "utf8");
-  var spCert = fs.readFileSync(path.join(__dirname, "fixtures", "sp-cert.pem"), "utf8");
+  // The SP signing key pair generated for this run. Its certificate is
+  // registered on the Keycloak client, which validates the AuthnRequest
+  // signature — so the request must be signed with THIS key, not one the page
+  // generates for itself.
+  log.info("Load this run's SP signing key pair (matches the cert registered on Keycloak).");
+  var spPair = readSpKeyPair();
+  var spKey = spPair.privateKey;
+  var spCert = spPair.certificate;
   await driver.executeScript(
     "document.getElementById('saml_sp_private_key').value = arguments[0];" +
     "document.getElementById('saml_sp_public_key').value = arguments[1];",

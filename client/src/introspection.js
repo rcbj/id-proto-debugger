@@ -33,6 +33,7 @@ function getCurrentSessionNonce() {
 
 // Appends an entry to the shared operation history shown on the debugger2 page.
 function recordOperation(operation, detail, client_id) {
+  log.debug("Entering recordOperation().");
   var history = [];
   try {
     history = JSON.parse(localStorage.getItem('operation_history') || '[]');
@@ -51,6 +52,7 @@ function recordOperation(operation, detail, client_id) {
     tokenHistoryIndex: null
   });
   localStorage.setItem('operation_history', JSON.stringify(history));
+  log.debug("Leaving recordOperation().");
 }
 
 function getParameterByName(name, url) {
@@ -110,9 +112,11 @@ function callIntrospectionEndpoint() {
   recordOperation('Introspection Endpoint', introspection_token_type_hint || 'token', introspection_client_id);
   writeValuesToLocalStorage();
   log.debug("Entering callIntrospectionEndpoint().");
+  log.debug("Leaving callIntrospectionEndpoint().");
 }
 
 function introspectionError(request, status, error) {
+  log.debug("Entering introspectionError().");
   log.debug("request: " + JSON.stringify(request));
   log.debug("status: " + JSON.stringify(status));
   log.debug("error: " + JSON.stringify(error));
@@ -127,9 +131,11 @@ function introspectionError(request, status, error) {
     log.error("Error occurred while generating error report: " + e.stack);
     $("#introspection_output").val("Error occurred while generating error report: " + e.stack);
   }
+  log.debug("Leaving introspectionError().");
 }
 
 function introspectionSuccess(data, textStatus, jqXHR) {
+  log.debug("Entering introspectionSuccess().");
   log.debug('Entering ajax success function for Introspection Endpoint call.');
   log.debug('Introspection textStatus: ' + JSON.stringify(textStatus));
   log.debug('Introspection Endpoint Response: ' + JSON.stringify(data));
@@ -145,6 +151,7 @@ function introspectionSuccess(data, textStatus, jqXHR) {
     log.error('Unknown response format.');
   }
   log.debug("Leaving ajax success function for Introspection Endpoint call.");
+  log.debug("Leaving introspectionSuccess().");
 }
 
 function loadValuesFromLocalStorage() {

@@ -68,6 +68,25 @@ async function findEls(driver, by) {
 // flow spans several pages (enter user code, login, grant consent) whose order
 // can vary, so this walks the pages, acting on whichever one is shown, until
 // there are no more forms to submit.
+// Block until the consent POST/redirect chain has finished, so the browser is
+// idle before it is sent anywhere else. Settled means the document has finished
+// loading AND we are demonstrably off the consent form (its URL changed, or the
+// form is gone). Best effort: if the IdP does something unexpected, log it and
+// let the assertions that follow report the real problem.
+async function waitForConsentToSettle(driver, urlBeforeConsent) {
+  try {
+    await driver.wait(async function () {
+      var ready = await driver.executeScript("return document.readyState;");
+      if (ready !== "complete") return false;
+      var url = await driver.getCurrentUrl();
+      if (url !== urlBeforeConsent) return true;
+      return (await findEls(driver, By.id("kc-login"))).length === 0;
+    }, waitTime, "the IdP did not finish processing the consent.");
+  } catch (e) {
+    log.info("Consent did not visibly settle (" + e.message + "); continuing.");
+  }
+}
+
 async function approveDeviceAuthorization(driver, verification_uri, user_code, username, password) {
   log.info("Approving device authorization at " + verification_uri);
   await driver.get(verification_uri);
@@ -112,7 +131,14 @@ async function approveDeviceAuthorization(driver, verification_uri, user_code, u
     }
     if (cancelBtn.length > 0 && loginBtn.length > 0) {
       log.info("Device verification: granting consent.");
+      var urlBeforeConsent = await driver.getCurrentUrl();
       await loginBtn[0].click();
+      // Granting consent is a POST that redirects. This is the branch that
+      // LEAVES the loop, so unlike the others it never falls through to the
+      // sleep at the top of the next iteration — without waiting here, the
+      // caller's driver.get() races the redirect and the browser can end up
+      // parked on the IdP's post-consent page instead of the debugger.
+      await waitForConsentToSettle(driver, urlBeforeConsent);
       granted = true;
       continue;
     }

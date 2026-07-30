@@ -360,8 +360,13 @@ app.post('/samlartifactctx', function (req, res) {
 function decodeSamlMessage(b64) {
   var buf = Buffer.from(String(b64 || ''), 'base64');
   if (buf.length && buf[0] === 0x3c /* '<' */) return buf.toString('utf8');
-  try { return zlib.inflateRawSync(buf).toString('utf8'); }
-  catch (e) { return buf.toString('utf8'); }
+  try {
+    return zlib.inflateRawSync(buf).toString('utf8');
+  } catch (e) {
+    // Not DEFLATEd after all (a POST-binding message that did not start with
+    // '<', e.g. leading whitespace): read it as plain XML.
+    return buf.toString('utf8');
+  }
 }
 
 // Pull the <samlp:Response> element out of a SOAP <ArtifactResponse> envelope.
@@ -396,8 +401,11 @@ function resolveArtifact(artifact, relayState) {
              '<samlp:Artifact>' + artifact + '</samlp:Artifact>' +
              '</samlp:ArtifactResolve>';
     var signed;
-    try { signed = signXmlEnveloped(ar, ctx.privateKeyPem, ctx.certPem, 'ArtifactResolve'); }
-    catch (e) { return reject(new Error('signing ArtifactResolve failed: ' + e.message)); }
+    try {
+      signed = signXmlEnveloped(ar, ctx.privateKeyPem, ctx.certPem, 'ArtifactResolve');
+    } catch (e) {
+      return reject(new Error('signing ArtifactResolve failed: ' + e.message));
+    }
 
     // Optional WS-Addressing SOAP headers. WS-Addressing is a SOAP-layer
     // mechanism (not part of the AuthnRequest); it applies only to this SOAP
@@ -487,6 +495,63 @@ app.get('/samlslo', handleSamlAcs);
  * @group SAML - SAML support operations
  */
 app.get('/samlresponse', function (req, res) {
+  sweepSamlExchanges();
+  var ex = samlExchanges.get(String(req.query.id || ''));
+  if (!ex) return res.status(STATUS_404).json({ error: 'not found or expired' });
+  res.json({ responseXml: ex.responseXml, relayState: ex.relayState });
+});
+
+// ---------------------------------------------------------------------------
+// WS-Federation Passive Requestor Profile landing endpoint.
+//
+// In the passive profile the IdP authenticates the user and then auto-POSTs a
+// form (wa=wsignin1.0, wresult, wctx) back to the RP's wreply URL. Point wreply
+// at this endpoint (appconfig.wsfedAcsUrl) so the response is captured
+// server-side and shown in the browser — the same shape as the SAML ACS.
+//
+// wresult is RAW XML (a WS-Trust RequestSecurityTokenResponse[Collection]
+// carrying the issued SAML assertion). Unlike SAMLResponse it is NOT base64 /
+// DEFLATE encoded, so it is stashed verbatim (no decode). Sign-out
+// (wa=wsignout1.0 / wsignoutcleanup1.0) arrives with no wresult; redirect to the
+// viewer with a signout flag. GET is registered too because wsignoutcleanup1.0
+// is delivered as a GET. Reuses the SAML exchange stash.
+// ---------------------------------------------------------------------------
+/**
+ * WS-Federation passive sign-in landing (captures wresult).
+ * @route POST /wsfed
+ * @route GET /wsfed
+ * @group WS-Federation - WS-Federation support operations
+ */
+function handleWsFedLanding(req, res) {
+  log.debug('Entering ' + req.method + ' /wsfed.');
+  try {
+    var wa = (req.body && req.body.wa) || req.query.wa || '';
+    var wresult = (req.body && req.body.wresult) || req.query.wresult;
+    var wctx = (req.body && req.body.wctx) || req.query.wctx || '';
+
+    if (wresult) {
+      // wresult is raw XML (an RSTR envelope) — stash verbatim, do NOT decode.
+      var id = stashSamlResponse(wresult, wctx);
+      res.writeHead(302, { 'Location': uiUrl + '/wsfed_response.html?id=' + encodeURIComponent(id) });
+      return res.end();
+    }
+    // Sign-out (wsignout1.0 / wsignoutcleanup1.0) carries no token.
+    res.writeHead(302, { 'Location': uiUrl + '/wsfed_response.html?signout=' + encodeURIComponent(wa || '1') });
+    res.end();
+  } catch (e) {
+    log.error('wsfed: ' + (e && e.stack ? e.stack : e));
+    res.status(STATUS_500).send('WS-Fed landing error: ' + (e && e.message ? e.message : String(e)));
+  }
+}
+app.post('/wsfed', handleWsFedLanding);
+app.get('/wsfed', handleWsFedLanding);
+
+/**
+ * Fetch a stashed wresult by id (alias of GET /samlresponse; shared stash).
+ * @route GET /wsfedresponse
+ * @group WS-Federation - WS-Federation support operations
+ */
+app.get('/wsfedresponse', function (req, res) {
   sweepSamlExchanges();
   var ex = samlExchanges.get(String(req.query.id || ''));
   if (!ex) return res.status(STATUS_404).json({ error: 'not found or expired' });

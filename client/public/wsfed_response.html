@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — WS-Federation Response</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/wsfed_response.js">
+</script>
+
+<p class="saml-return"><a id="return_link" href="/wsfed_tools.html">&larr; Return to WS-Federation Test Tools</a></p>
+
+<p class="saml-intro">The <strong>wresult</strong> returned by the IdP after a WS-Federation passive sign-in. When a backend is available it is captured automatically by the API landing endpoint; otherwise paste it below. wresult is a WS-Trust <code>RequestSecurityTokenResponse</code> carrying a SAML (1.1 or 2.0) assertion. The <strong>Issued Token</strong> pane extracts the assertion from <code>wst:RequestedSecurityToken</code>, decodes it, and lets you validate its signature and decrypt an encrypted token.</p>
+
+<input class="saml-status" type="text" id="wsfed_resp_status" name="wsfed_resp_status" readonly />
+
+<fieldset class="saml-pane">
+  <legend>Load wresult manually</legend>
+  <div class="saml-pane-body">
+    <p class="saml-note">Static / offline use: paste the raw <code>wresult</code> XML the IdP POSTed (from the browser's network trace or the RP's form), then click <strong>Load wresult</strong>. It is treated as raw XML — do not base64-decode it.</p>
+    <div class="saml-field">
+      <label class="saml-has-copy">wresult (RSTR XML) <button type="button" class="saml-copy" onclick="return wsfed_response.copyField('wsfed_wresult_input');">Copy</button></label>
+      <textarea rows="8" id="wsfed_wresult_input" name="wsfed_wresult_input" placeholder="paste the wresult (RequestSecurityTokenResponse) XML here"></textarea>
+    </div>
+    <div class="saml-field">
+      <label for="wsfed_context_input" title="Optional wctx value that was echoed back.">Context (wctx, optional)</label>
+      <input type="text" id="wsfed_context_input" name="wsfed_context_input" />
+    </div>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Load wresult" onclick="return wsfed_response.loadPasted();" title="Parse the pasted wresult and render the issued token." />
+    </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane">
+  <legend>Response</legend>
+  <div class="saml-tab">
+    <button id="tab_resp_btn" class="tablinks active" onclick="return wsfed_response.showTab(event, 'tab_resp');">Response (wresult)</button>
+    <button id="tab_fields_btn" class="tablinks" onclick="return wsfed_response.showTab(event, 'tab_fields');">Fields</button>
+  </div>
+  <div id="tab_resp" class="saml-tabcontent" style="display:block;">
+    <div class="saml-field">
+      <label class="saml-has-copy">wresult (RSTR) <button type="button" class="saml-copy" onclick="return wsfed_response.copyField('wsfed_response_xml');">Copy</button></label>
+      <textarea rows="16" id="wsfed_response_xml" name="wsfed_response_xml" readonly></textarea>
+    </div>
+  </div>
+  <div id="tab_fields" class="saml-tabcontent">
+    <div id="wsfed_fields_table">&nbsp;</div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane">
+  <legend>Issued Token</legend>
+  <div class="saml-tab">
+    <button id="tab_token_xml_btn" class="tablinks active" onclick="return wsfed_response.showTab(event, 'tab_token_xml');">Token XML</button>
+    <button id="tab_token_details_btn" class="tablinks" onclick="return wsfed_response.showTab(event, 'tab_token_details');">Token Details</button>
+  </div>
+  <div id="tab_token_xml" class="saml-tabcontent" style="display:block;">
+    <div class="saml-field">
+      <label class="saml-has-copy">Extracted Token <button type="button" class="saml-copy" onclick="return wsfed_response.copyField('wsfed_token_xml');">Copy</button></label>
+      <textarea rows="14" id="wsfed_token_xml" name="wsfed_token_xml" readonly></textarea>
+    </div>
+  </div>
+  <div id="tab_token_details" class="saml-tabcontent">
+    <div id="wsfed_token_details">&nbsp;</div>
+  </div>
+  <div class="saml-row" style="margin-top:8px;">
+    <input type="button" class="saml-btn" value="Validate Signature" onclick="return wsfed_response.validateTokenSignature();" title="Verify the enveloped XML digital signature on the issued SAML assertion (reference digests + SignatureValue) using the certificate in the signature's KeyInfo. Algorithms are auto-detected." />
+    <input class="saml-status saml-grow" type="text" id="wsfed_sig_status" readonly />
+  </div>
+  <div id="wsfed_sig_details"></div>
+
+  <div class="saml-sub">
+    <div class="saml-sub-title">Decrypt (EncryptedAssertion / EncryptedData)</div>
+    <p class="saml-note">If the IdP encrypted the token to the RP (a <code>&lt;EncryptedAssertion&gt;</code> / <code>&lt;xenc:EncryptedData&gt;</code>), decrypt it in the browser with the RP private key. Prefilled from the key generated on the WS-Federation Test Tools page. The data/key-transport algorithms are read from the token's <code>EncryptionMethod</code>.</p>
+    <div class="saml-field">
+      <label class="saml-has-copy" title="RP private key (PKCS#8 PEM).">Decryption Key <button type="button" class="saml-copy" onclick="return wsfed_response.copyField('wsfed_dec_key');">Copy</button></label>
+      <textarea rows="3" id="wsfed_dec_key" name="wsfed_dec_key"></textarea>
+    </div>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Decrypt" onclick="return wsfed_response.decryptToken();" title="Decrypt the EncryptedAssertion / EncryptedData and show the plaintext token." />
+      <input class="saml-status saml-grow" type="text" id="wsfed_dec_status" readonly />
+    </div>
+  </div>
+</fieldset>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

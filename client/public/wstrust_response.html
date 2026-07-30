@@ -9,7 +9,7 @@
     <link href="/css/footer.css" rel="stylesheet">
     <link href="/css/common.css" rel="stylesheet">
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
-    <link href="/css/saml_tools.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
     <link href="/css/wstrust_tools.css" rel="stylesheet">
   </head>
 
@@ -85,6 +85,19 @@
       <input type="button" class="saml-btn" value="Decrypt" onclick="return wstrust_response.decryptToken();" title="Decrypt the EncryptedData / EncryptedAssertion in the response and show the plaintext token." />
       <input class="saml-status saml-grow" type="text" id="wst_dec_status" readonly />
     </div>
+  </div>
+</fieldset>
+
+
+<!-- ===================== Operations History ===================== -->
+<fieldset class="saml-pane" id="pane_history">
+  <legend>Operations History</legend>
+  <div id="pane_history_body">
+    <p class="saml-note">The same log kept on the <a href="/wstrust_tools.html">WS-Trust Test Tools</a> page — every attempted call to the STS, newest first. This page is where a dispatched call is closed out: when the exchange above is rendered, its pending <span class="saml-pending">Sent</span> entry becomes <span class="saml-ok">Success</span> (a token or a status came back) or <span class="saml-bad">Failure</span> (a SOAP Fault, an HTTP error, or an unparseable response).</p>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Clear History" onclick="return wstrust_response.clearOperationHistory();" title="Discard every recorded operation. The log is shared with the WS-Trust Test Tools page." />
+    </div>
+    <div id="wst_operation_history"></div>
   </div>
 </fieldset>
 

@@ -1,4 +1,7 @@
 {
+  "name": "idptools-tests",
+  "version": "0.9.0",
+  "private": true,
   "scripts": {
     "report": "node run-report.js",
     "report:demo": "node run-report.js --demo"

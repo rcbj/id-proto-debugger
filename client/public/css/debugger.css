@@ -97,3 +97,104 @@
    (legend, per-pane button, or Expand/Collapse all) last toggled it. Each pane
    holds exactly one fieldset, so the descendant match is unambiguous. */
 .dbg-pane:has(fieldset[style*="display: none"]) .dbg-legend::before { content: "\25b8\00a0"; }
+
+/* Configuration Parameters: a member the loaded discovery document does not
+   define shows a grayed-out note instead of an empty box. The note is a
+   placeholder (or, for the boolean selects, a transient option), never a
+   value, so it is never saved or sent. */
+.not-defined::placeholder {
+  color: #999;
+  font-style: italic;
+}
+select.not-defined {
+  color: #999;
+  font-style: italic;
+}
+
+/* Selected by CLASS, not id: the same pane appears on debugger.html and twice
+   on sd-jwt-vc-issuance-1.html, each with its own id but all carrying
+   .discovery_info_table.
+   The retrieved metadata table is generated from a document we do not control:
+   values are long URLs and long comma-joined lists with no break opportunities,
+   which pushed the table past the right edge of its pane. Fixed layout plus a
+   capped value column keeps it inside, wrapping long values instead of
+   widening. */
+.discovery_info_table table {
+  table-layout: fixed;
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+}
+.discovery_info_table td,
+.discovery_info_table th {
+  padding: 2px 6px;
+  vertical-align: top;
+  text-align: left;
+}
+/* Attribute names are short and known; give them a third and let the value
+   column take the rest. */
+.discovery_info_table td:first-child,
+.discovery_info_table th:first-child {
+  width: 34%;
+  overflow-wrap: anywhere;
+}
+/* max-width:0 with table-layout:fixed is what forces the cell to wrap rather
+   than stretch the table. */
+.discovery_info_table td:nth-child(2),
+.discovery_info_table th:nth-child(2) {
+  max-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.discovery_info_table { max-width: 100%; overflow-x: auto; }
+
+/* Provenance line above the retrieved metadata table: which kind of document it
+   is and where it came from. */
+.discovery-info-note {
+  margin: 6px 0 4px;
+  font-size: 0.85em;
+  color: #555;
+}
+.discovery-info-note code { overflow-wrap: anywhere; }
+
+/* The SD-JWT VC issuance workflow drives debugger.html and debugger2.html
+   through their ordinary OIDC Authorization Code flow (?sdjwtvc=1). This banner
+   is what says so, so a page that suddenly redirects itself is not a mystery. */
+.vc-handoff-banner {
+  border: 1px solid #12107c;
+  border-left: 4px solid #12107c;
+  background: #eef;
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 0.9em;
+}
+.vc-handoff-banner .vc-bad { color: #b00020; }
+
+/* A metadata member whose value is a JSON structure (OID4VCI's
+   credential_configurations_supported, an authorization server's
+   mtls_endpoint_aliases, ...) is shown pretty-printed rather than as one
+   unreadable line — in the retrieved-metadata table as a <pre>, and in the
+   Configuration Parameters pane as a <textarea> that metadata_client swaps in
+   for the usual one-line input.
+
+   pre-wrap, not pre: the table column is fixed-width, and a <pre> that does not
+   wrap would push the table past the edge of its pane. */
+pre.metadata-json {
+  margin: 0;
+  padding: 0;
+  font-size: 0.95em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  background: transparent;
+  border: 0;
+}
+textarea.metadata-json-field {
+  width: 42em;
+  max-width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8em;
+  resize: vertical;
+  white-space: pre;
+  overflow-wrap: normal;
+}

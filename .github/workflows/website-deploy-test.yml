@@ -80,6 +80,36 @@ jobs:
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
+          # Tags are pushed from here; fetch them so an existing tag is seen.
+          fetch-depth: 0
+
+      - name: Compute version
+        id: version
+        run: |
+          set -euo pipefail
+          # One build number for this run: the same value is baked into the
+          # artifact and used for the tag, so they can never disagree.
+          V="$(node client/version.js --json)"
+          VERSION="$(jq -r .version <<<"$V")"
+          BUILD="$(jq -r .build <<<"$V")"
+          MN="$(jq -r '.major + "." + .minor' <<<"$V")"
+          SHA="$(git rev-parse HEAD)"
+          {
+            echo "version=${VERSION}"
+            echo "build=${BUILD}"
+            echo "major_minor=${MN}"
+            echo "sha=${SHA}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Building version ${VERSION} (build ${BUILD}) from ${SHA}"
+          {
+            echo "### Version \`${VERSION}\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version | \`${VERSION}\` |"
+            echo "| Build number | \`${BUILD}\` |"
+            echo "| Commit | \`${SHA}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build deploy image
         run: docker build -t idptools-static-deploy -f deploy/Dockerfile .
@@ -88,12 +118,18 @@ jobs:
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          # The build number computed above, so the deployed site and the tag
+          # report the same M.N.O.
+          BUILD_NUMBER: ${{ steps.version.outputs.build }}
+          GIT_COMMIT: ${{ steps.version.outputs.sha }}
         run: |
           docker run --rm \
             -e AWS_ACCESS_KEY_ID \
             -e AWS_SECRET_ACCESS_KEY \
             -e AWS_REGION=us-west-2 \
             -e DEPLOY_ENV=test \
+            -e BUILD_NUMBER \
+            -e GIT_COMMIT \
             idptools-static-deploy
 
       # Tag the exact commit that was built/deployed, only after a successful
@@ -110,3 +146,30 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "${TAG}" -m "Deployed test.idptools.com from ${SHA} at ${TS} UTC"
           git push origin "${TAG}"
+
+      # Version tags for the same commit: the immutable M.N.O of this build and
+      # the floating M.N pointing at the newest build of the line.
+      - name: Tag this build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MAJOR_MINOR: ${{ steps.version.outputs.major_minor }}
+          BUILD: ${{ steps.version.outputs.build }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse HEAD)"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          # M.N.O — one per build, so it is created once and never moved.
+          if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "::warning::tag ${VERSION} already exists; leaving it as it is"
+          else
+            git tag -a "${VERSION}" -m "Deployed test.idptools.com build ${BUILD} from ${SHA}"
+            git push origin "refs/tags/${VERSION}"
+            echo "Tagged ${SHA} as ${VERSION}"
+          fi
+          # M.N — a floating tag that always points at the newest build of this
+          # line, so it is force-moved on every build.
+          git tag -f -a "${MAJOR_MINOR}" -m "Latest ${MAJOR_MINOR} build: ${VERSION} (Deployed test.idptools.com)"
+          git push -f origin "refs/tags/${MAJOR_MINOR}"
+          echo "Moved ${MAJOR_MINOR} to ${SHA}"
+          echo "Tagged \`${VERSION}\` and moved \`${MAJOR_MINOR}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"

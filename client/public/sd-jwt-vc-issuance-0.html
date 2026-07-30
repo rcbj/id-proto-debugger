@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Issuance (choose a use case)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/sd_jwt_vc_issuance_0.js">
+</script>
+
+<!--#include file="/partials/sd_jwt_vc_steps.html"-->
+
+<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="vc-title">SD-JWT VC Issuance &mdash; How do you want to start?</h3>
+
+
+<p class="vc-intro">There is more than one way for a credential to end up in a wallet, and
+<a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a>
+describes them in its <em>Use Cases</em> appendix. They differ in who starts, how the wallet learns what is on
+offer, and which grant does the authorizing &mdash; so pick one and the rest of the workflow follows it. You can
+come back and change it at any time; nothing you have already configured is lost.</p>
+
+<div class="vc-usecases" id="vc_usecases">
+  <!-- The buttons are generated from the use-case list in sd_jwt_vc.js, so this
+       page and the badge every other page shows can never disagree. -->
+</div>
+
+<p class="vc-note" id="vc_usecase_status">&nbsp;</p>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

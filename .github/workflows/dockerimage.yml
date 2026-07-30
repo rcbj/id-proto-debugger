@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # write is needed to push the version tags back to the repo.
+  contents: write
 
 jobs:
   build:
@@ -16,9 +17,72 @@ jobs:
     steps:
        - name: Checkout Repository
          uses: actions/checkout@v7
+         with:
+           # Tags are pushed from here; fetch them so an existing tag is seen.
+           fetch-depth: 0
+       - name: Compute version
+         id: version
+         run: |
+           set -euo pipefail
+           # One build number for this run: the same value is baked into the
+           # artifact and used for the tag, so they can never disagree.
+           V="$(node client/version.js --json)"
+           VERSION="$(jq -r .version <<<"$V")"
+           BUILD="$(jq -r .build <<<"$V")"
+           MN="$(jq -r '.major + "." + .minor' <<<"$V")"
+           SHA="$(git rev-parse HEAD)"
+           {
+             echo "version=${VERSION}"
+             echo "build=${BUILD}"
+             echo "major_minor=${MN}"
+             echo "sha=${SHA}"
+           } >> "$GITHUB_OUTPUT"
+           echo "Building version ${VERSION} (build ${BUILD}) from ${SHA}"
+           {
+             echo "### Version \`${VERSION}\`"
+             echo ""
+             echo "| | |"
+             echo "|---|---|"
+             echo "| Version | \`${VERSION}\` |"
+             echo "| Build number | \`${BUILD}\` |"
+             echo "| Commit | \`${SHA}\` |"
+           } >> "$GITHUB_STEP_SUMMARY"
+
        - name: Install docker-compose
          uses: KengoTODA/actions-setup-docker-compose@v1
          with:
            version: '5.2.0'
        - name: build
+         env:
+           # Bake the computed build number into the image (client/Dockerfile
+           # stamps public/version.json with it at image build time).
+           BUILD_NUMBER: ${{ steps.version.outputs.build }}
+           GIT_COMMIT: ${{ steps.version.outputs.sha }}
          run: CONFIG_FILE=./env/local.js docker-compose -f docker-compose.yml build
+
+       - name: Tag this build
+         if: ${{ github.event_name != 'pull_request' }}
+         env:
+           VERSION: ${{ steps.version.outputs.version }}
+           MAJOR_MINOR: ${{ steps.version.outputs.major_minor }}
+           BUILD: ${{ steps.version.outputs.build }}
+         run: |
+           set -euo pipefail
+           SHA="$(git rev-parse HEAD)"
+           git config user.name  "github-actions[bot]"
+           git config user.email "github-actions[bot]@users.noreply.github.com"
+           # M.N.O — one per build, so it is created once and never moved.
+           if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
+             echo "::warning::tag ${VERSION} already exists; leaving it as it is"
+           else
+             git tag -a "${VERSION}" -m "Docker Image CI build ${BUILD} from ${SHA}"
+             git push origin "refs/tags/${VERSION}"
+             echo "Tagged ${SHA} as ${VERSION}"
+           fi
+           # M.N — a floating tag that always points at the newest build of this
+           # line, so it is force-moved on every build.
+           git tag -f -a "${MAJOR_MINOR}" -m "Latest ${MAJOR_MINOR} build: ${VERSION} (Docker Image CI)"
+           git push -f origin "refs/tags/${MAJOR_MINOR}"
+           echo "Moved ${MAJOR_MINOR} to ${SHA}"
+           echo "Tagged \`${VERSION}\` and moved \`${MAJOR_MINOR}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+

@@ -125,9 +125,11 @@ function buildJWKSInfoTable(discoveryInfo) {
   }
   log.debug('certData: ' + discovery_info_table_html);
   $("#jwks_info_table").html(discovery_info_table_html);
+  log.debug("Leaving buildJWKSInfoTable().");
 }
 
 function onSubmitPopulateFormsWithDiscoveryInformation() {
+  log.debug("Entering onSubmitPopulateFormsWithDiscoveryInformation().");
   log.debug('Entering OnSubmitPopulateFormsWithDiscoveryInformation().');
   var authorizationEndpoint = discoveryInfo["authorization_endpoint"];
   var idTokenSigningAlgValuesSupported = discoveryInfo["id_token_signing_alg_values_supported"];
@@ -155,6 +157,7 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
       localStorage.setItem("jwks_endpoint", jwksUri);
   }
   log.debug('Leaving OnSubmitPopulateFormsWithDiscoveryInformation().');
+  log.debug("Leaving onSubmitPopulateFormsWithDiscoveryInformation().");
   return true;
 }
 // document.getElementById("step0").style.display = "none";

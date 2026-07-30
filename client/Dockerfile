@@ -57,6 +57,9 @@ COPY client/public/ /usr/src/app/public/
 COPY client/src/env/ /usr/src/app/env/
 COPY client/server.js /usr/src/app
 COPY client/package.json /usr/src/app
+# Application version: the repo-root VERSION file (M.N) plus the stamping module.
+COPY VERSION /usr/src/app/VERSION
+COPY client/version.js /usr/src/app/version.js
 RUN true
 COPY client/src/ /usr/src/app/src/
 RUN true
@@ -73,11 +76,23 @@ RUN browserify src/logout.js -o public/js/logout.js --debug --standalone logout 
 RUN browserify src/jwt_tools.js -o public/js/jwt_tools.js --debug --standalone jwt_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/encoding_tools.js -o public/js/encoding_tools.js --debug --standalone encoding_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/digital_signature.js -o public/js/digital_signature.js --debug --standalone digital_signature -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/saml_tools.js -o public/js/saml_tools.js --debug --standalone saml_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/saml_request.js -o public/js/saml_request.js --debug --standalone saml_request -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/saml_cert.js -o public/js/saml_cert.js --debug --standalone saml_cert -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/saml_tools.js -o public/js/saml_tools.js --debug --standalone saml_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/saml_response.js -o public/js/saml_response.js --debug --standalone saml_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wstrust_tools.js -o public/js/wstrust_tools.js --debug --standalone wstrust_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wstrust_response.js -o public/js/wstrust_response.js --debug --standalone wstrust_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_issuance_0.js -o public/js/sd_jwt_vc_issuance_0.js --debug --standalone sdjwtvc0 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_issuance_1.js -o public/js/sd_jwt_vc_issuance_1.js --debug --standalone sdjwtvc1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_issuance_2.js -o public/js/sd_jwt_vc_issuance_2.js --debug --standalone sdjwtvc2 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_issuance_3.js -o public/js/sd_jwt_vc_issuance_3.js --debug --standalone sdjwtvc3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_issuance_4.js -o public/js/sd_jwt_vc_issuance_4.js --debug --standalone sdjwtvc4 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_presentation_0.js -o public/js/sd_jwt_vc_presentation_0.js --debug --standalone sdjwtvp0 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_presentation_1.js -o public/js/sd_jwt_vc_presentation_1.js --debug --standalone sdjwtvp1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_presentation_2.js -o public/js/sd_jwt_vc_presentation_2.js --debug --standalone sdjwtvp2 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/sd_jwt_vc_presentation_3.js -o public/js/sd_jwt_vc_presentation_3.js --debug --standalone sdjwtvp3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/wsfed_tools.js -o public/js/wsfed_tools.js --debug --standalone wsfed_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/wsfed_response.js -o public/js/wsfed_response.js --debug --standalone wsfed_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----
@@ -90,13 +105,20 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_tools:saml_tools" "saml_cert:saml_cert" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response"; do \
+      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "sd_jwt_vc_issuance_0:sdjwtvc0" "sd_jwt_vc_issuance_1:sdjwtvc1" "sd_jwt_vc_issuance_2:sdjwtvc2" "sd_jwt_vc_issuance_3:sdjwtvc3" "sd_jwt_vc_issuance_4:sdjwtvc4" "sd_jwt_vc_presentation_0:sdjwtvp0" "sd_jwt_vc_presentation_1:sdjwtvp1" "sd_jwt_vc_presentation_2:sdjwtvp2" "sd_jwt_vc_presentation_3:sdjwtvp3" "wsfed_tools:wsfed_tools" "wsfed_response:wsfed_response" ; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \
         cat src/coverage_beacon.js >> public/js/${src_name}.js ; \
       done ; \
     fi
+
+# Fix this image's build number (M.N.O) and ship it in public/version.json.
+# BUILD_NUMBER (and GIT_COMMIT) can be supplied by CI: --build-arg BUILD_NUMBER=...
+ARG BUILD_NUMBER
+ARG GIT_COMMIT
+RUN BUILD_NUMBER="${BUILD_NUMBER}" GIT_COMMIT="${GIT_COMMIT}" node version.js --stamp public && \
+    cat public/version.json
 
 EXPOSE 3000
 CMD [ "npm", "start" ]
