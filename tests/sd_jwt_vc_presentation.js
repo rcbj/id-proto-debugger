@@ -45,7 +45,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
-const secureOrigin = require("./browser_secure_origin.js");
+const browserFlags = require("./browser_flags.js");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
@@ -59,6 +59,9 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var fetchWait = Math.max(waitTime, 20000);
+// The budget every waitFor* in ./wait_for.js uses. Set once: one test file
+// runs per process.
+require("./wait_for").configure({ timeout: fetchWait });
 
 var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/, "");
@@ -110,22 +113,14 @@ async function click(driver, locator) {
   await driver.sleep(250);
 }
 
-function text(driver, id) {
-  return driver.executeScript(
-    "var e = document.getElementById(arguments[0]); return e ? e.textContent.trim() : null;", id);
-}
-function value(driver, id) {
-  return driver.executeScript(
-    "var e = document.getElementById(arguments[0]); return e ? e.value : null;", id);
-}
-async function waitForStatus(driver, id, predicate, message) {
-  var last = "";
-  await driver.wait(async function () {
-    last = (await text(driver, id)) || "";
-    return predicate(last);
-  }, fetchWait, message + " (last status: " + last + ")");
-  return last;
-}
+// text()/value() and the waitFor* family live in ./wait_for.js — one
+// implementation, shared by these suites. It waits on CONTENT rather than on the
+// element: every field here is static markup, so locating it proves nothing about
+// whether the page has filled it in, and the fixed sleeps that used to stand in
+// for that lost the race periodically. It also reports what the field LAST held
+// on a timeout, which the local copy of waitForStatus could not — its message was
+// built before the first poll, so it always said "(last status: )".
+const { text, value, waitForStatus } = require("./wait_for");
 function severeErrors(driver) {
   return driver.manage().logs().get(logging.Type.BROWSER).then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
@@ -682,8 +677,9 @@ async function withholdARequestedClaim(driver, held) {
     "  if (box.checked) { box.click(); return td[1].textContent.trim(); }" +
     "} return null;", REQUESTED[0]);
   assert.ok(target, "there should have been a selected claim to deselect.");
-  await driver.sleep(700);
-  var summary = await text(driver, "vp_selection_summary");
+  var summary = await waitForStatus(driver, "vp_selection_summary",
+    function (s) { return new RegExp(target).test(s) && /asked for it/.test(s); },
+    "the page should warn that a claim the verifier asked for is not selected");
   assert.ok(new RegExp(target).test(summary) && /asked for it/.test(summary),
     "the page should warn that a claim the verifier asked for is not selected. Got: " + summary);
   var warned = await text(driver, "vp_present_status");
@@ -827,12 +823,12 @@ async function test() {
   if (headless) {
     options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
   }
-  // This whole workflow is Web Crypto: holder key pairs, proofs of possession, Key
-  // Binding JWTs, signature verification. crypto.subtle exists only in a secure
-  // context, and the containerized stack serves the pages from http://client:3000,
-  // which is not one — so without this the pages have no crypto at all and the
-  // failures look like everything except what they are.
-  secureOrigin.addSecureOriginFlags(options, baseUrl);
+  // Two environment hazards this workflow is exposed to, both silent: it is all Web
+  // Crypto (holder key pairs, proofs of possession, Key Binding JWTs, signature
+  // verification), which needs a secure context; and its pages must fetch this
+  // suite's services on loopback, which a deployed https page may not do without
+  // the private-network flags. See tests/browser_flags.js.
+  browserFlags.addBrowserAccessFlags(options, baseUrl);
   var driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
   try {
     await presentThroughThePages(driver, held, false);

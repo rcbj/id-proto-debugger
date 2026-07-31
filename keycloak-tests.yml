@@ -29,6 +29,15 @@ services:
       # Log level, chosen the same way as for api and client.
       - CONFIG_FILE=./env/local.js
       # Host networking: Keycloak is on the same loopback.
+      #
+      # Where the WALLET is, as a base URL the browser can use. This launcher runs
+      # the suite against a site that is NOT on this host — https://test.idptools.com,
+      # say — so the mock issuer's Credential Offer pages and the mock verifier's
+      # request pages have to hand the End-User back THERE, not to the localhost:3000
+      # they default to. remote-run-tests.sh exports it as the target base URL; left
+      # unset it arrives empty and sts/server.js falls back to its own default, which
+      # is right for a local dev site.
+      - OID4VCI_WALLET_URL=${OID4VCI_WALLET_URL}
     build:
       context: .
       dockerfile: sts/Dockerfile
@@ -77,3 +86,72 @@ services:
     depends_on:
       waltid-issuer-api:
         condition: service_started
+
+  # walt.id verifier-api2 — the independently written OpenID4VP 1.0 verifier the
+  # presentation interoperability suite (tests/sd_jwt_vc_presentation_waltid.js)
+  # runs against, beside the mock one the STS hosts. Same treatment as the issuer
+  # above: host networking so the host-run browser reaches its proxy at
+  # localhost:7003, and its request-signing key comes from the environment
+  # (generateWaltidVerifierKey in common/common.sh).
+  waltid-verifier-api:
+    image: waltid/verifier-api2:0.23.0
+    # No hostname, for the same reason as the issuer.
+    network_mode: "host"
+    volumes:
+      # Rendered by renderWaltidConfig(). A SEPARATE directory from the issuer's:
+      # walt.id reads whatever conf files are in the directory it is given, and the
+      # two services must not be handed each other's.
+      - ./waltid/generated-verifier-config:/waltid-verifier-api2/config:ro
+
+  # CORS in front of the verifier, and the address its urlPrefix names — so every
+  # URL it hands the wallet (the request_uri it fetches, the response_uri it POSTs
+  # to) is one the browser can use.
+  waltid-verifier:
+    image: node:24-alpine
+    command: ["node", "/waltid/cors-proxy.js"]
+    network_mode: "host"
+    environment:
+      - WALTID_UPSTREAM=localhost:7004
+      - WALTID_PROXY_PORT=7003
+    volumes:
+      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+    healthcheck:
+      # /livez is what walt.id's service-commons registers for every service. The
+      # probe is on the proxy because the verifier image has no shell for CMD-SHELL
+      # to run; this covers the whole chain.
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:7003/livez',function(r){process.exit(r.statusCode<500?0:1)}).on('error',function(){process.exit(1)})\""]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    depends_on:
+      waltid-verifier-api:
+        condition: service_started
+
+  # WS-Federation IdP side-car (Keycloak 8.0.1 + the cloudtrust keycloak-wsfed
+  # extension) for tests/wsfed_sso.js. The 26.x Keycloak above has no WS-Federation
+  # support at all and the extension only targets 8.0.1, so this is a second IdP.
+  #
+  # Host networking, hence a WildFly port-offset of 2: HTTP lands on 8082, clear of
+  # the 26.x Keycloak (8080) and the STS (8081). No hostname — under host networking
+  # Docker adds no /etc/hosts entry for it, and Keycloak 8 resolves its own hostname
+  # (see keycloak-wsfed/Dockerfile, which also takes AUTO_SERVER off the H2 URL for
+  # that reason). configureKeycloakWsfed() provisions the realm, the relying-party
+  # client and the user.
+  keycloak-wsfed:
+    container_name: keycloak-wsfed
+    image: rcbj/keycloak-wsfed
+    network_mode: "host"
+    build:
+      context: .
+      dockerfile: keycloak-wsfed/Dockerfile
+    command: ["-b", "0.0.0.0", "-Djboss.socket.binding.port-offset=2"]
+    environment:
+      KEYCLOAK_USER: keycloak
+      KEYCLOAK_PASSWORD: keycloak
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8082/auth/realms/master || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 150s

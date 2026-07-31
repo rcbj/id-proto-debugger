@@ -326,6 +326,20 @@ function viewCertificate(fieldId) {
 // must be driven directly from the browser and the wresult can't be captured
 // server-side. Force the Front radio on and disable the Back radio, mirroring
 // wstrust_tools.js / the OAuth2 debugger.
+// Is there anything at wsfedAcsUrl that can receive the IdP's auto-POST?
+//
+// With the api backend, yes — its /wsfed landing. Without it, only if the
+// deployment put a Lambda@Edge on that path (infra/edge/wsfed_landing.js), which
+// the env config declares with wsfedEdgeLanding. It is a separate flag rather
+// than "wsfedAcsUrl is set" because the static envs have always carried that URL
+// while nothing answered it, and rather than being inferred from backendAvailable
+// because the edge landing is deployed by Terraform, not by the site build: a
+// checkout can be redeployed without the infrastructure having been applied yet.
+function hasWsFedLanding() {
+  if (appconfig.backendAvailable !== false) return true;
+  return appconfig.wsfedEdgeLanding === true && !!appconfig.wsfedAcsUrl;
+}
+
 function enforceBackendAvailability() {
   if (appconfig.backendAvailable === false) {
     var front = el('wsfed_initiateFromFrontEnd');
@@ -351,17 +365,29 @@ window.onload = function () {
   // Seed defaults for blank fields (fresh page).
   if (!val('wsfed_metadata_url') && appconfig.wsfedMetadataUrlDefault) setVal('wsfed_metadata_url', appconfig.wsfedMetadataUrlDefault);
   if (!val('wsfed_realm')) setVal('wsfed_realm', appconfig.wsfedRealm || appconfig.spEntityId || '');
-  // wreply target: with a backend, the API /wsfed landing captures the POST and
-  // redirects to the viewer; on the static build, point at the static response
-  // page (the POSTed wresult can't be auto-read there — use manual paste).
+  // wreply target — where the IdP auto-POSTs the token. Three deployments, two
+  // of which can receive that POST:
+  //   * API backend            -> its /wsfed landing (appconfig.wsfedAcsUrl).
+  //   * static + edge landing  -> the SAME path, answered by the Lambda@Edge in
+  //     infra/edge/wsfed_landing.js instead of by Express. That is the whole
+  //     point of the Lambda: the passive profile has no redirect response
+  //     binding to fall back to the way SAML does, so without something at the
+  //     edge a static site cannot complete the round trip at all.
+  //   * static, no edge landing -> the static response page, which cannot be
+  //     POSTed to; the sign-in ends there and the wresult must be pasted in.
   if (!val('wsfed_reply')) {
-    var replyDefault = appconfig.backendAvailable
+    var replyDefault = hasWsFedLanding()
       ? (appconfig.wsfedAcsUrl || '')
       : (window.location.origin + '/wsfed_response.html');
     if (replyDefault) setVal('wsfed_reply', replyDefault);
   }
 
+  // The static-deployment notice is shown whenever there is no backend, but the
+  // sentence about the token needing a manual paste is only true when there is
+  // also no edge landing to catch the POST.
   show('wsfed_backend_notice', appconfig.backendAvailable === false);
+  show('wsfed_manual_capture_notice', !hasWsFedLanding());
+  show('wsfed_edge_landing_notice', appconfig.backendAvailable === false && hasWsFedLanding());
   enforceBackendAvailability();
   onIncludeWreqChange();
 

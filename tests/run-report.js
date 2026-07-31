@@ -317,6 +317,16 @@ function buildJobs() {
     env: {},
   });
 
+  // The api's outbound address policy (api/ssrf_guard.js): the service fetches
+  // URLs its caller supplies, so it must refuse loopback and private destinations
+  // or it is an SSRF probe into whatever network it runs in. Node only — no
+  // browser, no services — so it is never skipped.
+  jobs.push({
+    name: "API SSRF guard (outbound calls to loopback / private ranges are refused)",
+    script: "api_ssrf_guard.js",
+    env: {},
+  });
+
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
   // Issuer the STS service hosts, the three sd-jwt-vc-issuance pages, and the
   // ?sdjwtvc=1 hand-off through debugger.html / debugger2.html. Needs both the
@@ -441,9 +451,28 @@ function buildJobs() {
 
   // SAML 2.0 EncryptedAssertion decryption: SSO against a SAML client with
   // saml.encrypt=true (provisioned in common.sh), so Keycloak returns an
-  // <saml:EncryptedAssertion>; the Response page decrypts it in-browser with the
-  // SP private key and renders the plaintext assertion. Needs the API ACS
-  // (POST binding), so it's skipped on a backend-less (static) deployment.
+  // <saml:EncryptedAssertion>; the Response page decrypts it IN THE BROWSER with
+  // the SP private key and renders the plaintext assertion.
+  //
+  // The decryption has never needed a backend — decryptAssertion() in
+  // saml_response.js is node-forge in the page, the same XML-Enc engine the
+  // WS-Trust and WS-Federation pages use, with no fetch and no Web Crypto. What
+  // this job needs is somewhere for the IdP to POST the response: Keycloak's
+  // encrypted client is provisioned saml.force.post.binding=true
+  // (common/common.sh), so the response is POSTed whatever the AuthnRequest asks
+  // for, and the Redirect-binding fallback the other SAML jobs use on a static
+  // target is not available to it.
+  //
+  // That used to make this "unavailable on the static deployment". It no longer
+  // is: infra/edge/saml_landing.js answers /samlacs at the CDN edge. So the gate
+  // is whether a landing is actually deployed — remote-run-tests.sh probes for
+  // one — not whether there is an api. Unset means "not probed" (the local and
+  // containerized runs), where the api's ACS has always been there.
+  //
+  // It is also the case the profile cares about: an encrypted assertion is
+  // ciphertext, which does not DEFLATE, so a redirect-bound one roughly doubles
+  // in URL length — which is precisely why saml-profiles-2.0-os section 4.1.2
+  // says the Redirect binding MUST NOT carry the Response.
   {
     const encJob = {
       name: "SAML 2.0 EncryptedAssertion — decrypt on Response page",
@@ -455,8 +484,12 @@ function buildJobs() {
         SAML_USER: env.SAML_USER,
       },
     };
-    if (!samlBackendAvailable) {
-      encJob.skip = "EncryptedAssertion decryption uses the POST binding + API ACS; unavailable on the static deployment.";
+    if (env.SAML_LANDING_AVAILABLE === "false") {
+      encJob.skip = "the target has no SAML ACS landing at " +
+        (env.SAML_LANDING_URL || "<base>/samlacs") + " to receive the IdP's POST, and the encrypted " +
+        "client forces the POST binding so the Redirect fallback cannot be used. On a static " +
+        "deployment, apply the infrastructure (./infra/terraform-local.sh test apply) so the " +
+        "Lambda@Edge landing exists, and build the site with samlEdgeLanding: true.";
     }
     jobs.push(encJob);
   }
@@ -494,6 +527,25 @@ function buildJobs() {
     };
     if (!env.WSFED_METADATA_URL) {
       wsfedJob.skip = "WS-Federation side-car (Keycloak 8.0.1 + wsfed) not provisioned (WSFED_METADATA_URL unset).";
+    } else if (env.WSFED_LANDING_AVAILABLE === "false") {
+      // The other end of the round trip. The Passive Requestor Profile has ONE
+      // way to return the token — the IdP auto-POSTs the wresult to wreply — and
+      // no redirect alternative to fall back to the way SAML has. So the target
+      // needs something at /wsfed that answers a POST.
+      //
+      // This used to be keyed on SAML_BACKEND_AVAILABLE, i.e. "static deployments
+      // cannot do this at all". That was wrong: they can, with a Lambda@Edge on
+      // that path (infra/edge/wsfed_landing.js), which is what the hosted sites
+      // now run. What actually decides it is whether the landing is DEPLOYED —
+      // the site bundle and the Terraform ship independently — so
+      // remote-run-tests.sh probes the target with a real POST and sets this.
+      // Unset (the containerized and local runs) means "not probed", and the job
+      // runs against the api backend's landing as it always has.
+      wsfedJob.skip = "the target has no WS-Federation landing at " +
+        (env.WSFED_LANDING_URL || "<base>/wsfed") + " to receive the IdP's wresult POST " +
+        "(the profile has no redirect binding). On a static deployment, apply the infrastructure " +
+        "(./infra/terraform-local.sh test apply) so the Lambda@Edge landing exists, and build the " +
+        "site with wsfedEdgeLanding: true.";
     }
     jobs.push(wsfedJob);
   }

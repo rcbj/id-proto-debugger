@@ -12,6 +12,7 @@ const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
 const { convertToOAuth2Format  } = require('./data.js');
+const ssrfGuard = require('./ssrf_guard.js');
 
 // Constants
 const PORT = appconfig.port || 4000;
@@ -29,6 +30,22 @@ const STATUS_500 = 500;
 var log = bunyan.createLogger({ name: 'server',
                                 level: LOG_LEVEL });
 log.info("Log initialized. logLevel=" + log.level());
+
+// ---------------------------------------------------------------------------
+// Refuse outbound calls to loopback and private networks (see ssrf_guard.js).
+//
+// Installed here, once, on the axios instance every endpoint uses: this service
+// fetches URLs its CALLER chooses — the token, introspection, revocation,
+// device-authorization and userinfo endpoints, the SAML ArtifactResolve
+// back-channel, the WS-Trust STS and the generic proxy — so without this it will
+// happily probe 127.0.0.1, the deployment's private neighbours, or the cloud
+// metadata service on request. One choke point rather than ten call sites, so
+// anything added later is covered too.
+//
+// On by default; a deployment whose identity providers really are on a private
+// network sets blockPrivateNetworkCalls to false in its api/env config.
+// ---------------------------------------------------------------------------
+ssrfGuard.createGuard(appconfig, log).install(axios);
 
 // Ephemeral, in-memory store for SAML exchanges. The ACS endpoint stashes the
 // (potentially large) SAMLResponse here and redirects the browser to the client

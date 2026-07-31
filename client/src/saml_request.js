@@ -526,9 +526,37 @@ function ssoDestination(binding) {
 //                              (signed) login Response, and the deflated+base64
 //                              assertion must fit the URL-length limits of the
 //                              browser / CDN — otherwise use the API backend.
+// Is there anything at appconfig.acsUrl that can receive the IdP's POST?
+//
+// With the api backend, yes — its /samlacs route. Without it, only if the
+// deployment put a Lambda@Edge on that path (infra/edge/saml_landing.js), which
+// the env config declares with samlEdgeLanding. It is a separate flag rather
+// than being inferred from backendAvailable because Terraform and the site build
+// ship independently: a checkout can be redeployed before the infrastructure has
+// been applied.
+function hasSamlLanding() {
+  if (appconfig.backendAvailable !== false) return true;
+  return appconfig.samlEdgeLanding === true && !!appconfig.acsUrl;
+}
+
+// Which binding to ask the IdP to return the <Response> on.
+//
+// HTTP-POST whenever something can receive a POST, because that is what the
+// profile requires: saml-profiles-2.0-os section 4.1.2 step 5 says the Response
+// goes over HTTP POST or HTTP Artifact and that "the HTTP Redirect binding MUST
+// NOT be used, as the response will typically exceed the URL length permitted by
+// most user agents".
+//
+// HTTP-Redirect is the fallback for a deployment with no landing — a static site
+// with no edge function. It is out of profile, and the spec's stated reason is
+// exactly what bites: an encrypted assertion is ciphertext, which does not
+// DEFLATE, so the redirect URL roughly doubles and runs at CloudFront's
+// 8,192-byte cap. It is kept because it is the only thing that works there, and
+// because real deployments do use the Redirect binding; it is not the default
+// anywhere a POST can land.
 function responseProtocolBinding(binding) {
   if (binding === 'artifact') return BINDING.artifact;
-  return appconfig.backendAvailable ? BINDING.post : BINDING.redirect;
+  return hasSamlLanding() ? BINDING.post : BINDING.redirect;
 }
 
 function buildAuthnRequest() {
@@ -1496,10 +1524,12 @@ window.onload = function () {
   if (!val('saml_metadata_url') && appconfig.samlMetadataUrlDefault) setVal('saml_metadata_url', appconfig.samlMetadataUrlDefault);
   if (!val('saml_sp_entity_id') && appconfig.spEntityId) setVal('saml_sp_entity_id', appconfig.spEntityId);
   // ACS (where the IdP returns its response). With a backend it's the api's
-  // /samlacs endpoint (from config). Backendless, there is no server to POST to —
-  // so the "ACS" is this static SAML Response page on the same origin, which the
+  // /samlacs endpoint (from config); on a static deployment with the edge ACS
+  // deployed it is the SAME path, answered by the Lambda@Edge instead of by
+  // Express. With neither there is nothing that can receive a POST, so the "ACS"
+  // is this static SAML Response page on the same origin, which the
   // Redirect-binding response (see responseProtocolBinding) delivers to as a GET.
-  var acsDefault = appconfig.backendAvailable
+  var acsDefault = hasSamlLanding()
     ? appconfig.acsUrl
     : (window.location.origin + '/saml_response.html');
   if (!val('saml_acs_url') && acsDefault) setVal('saml_acs_url', acsDefault);
@@ -1516,7 +1546,11 @@ window.onload = function () {
   // signer cert from previously-loaded metadata (also restored above).
   if (!val('saml_enc_cert') && val('saml_signer_cert')) setVal('saml_enc_cert', val('saml_signer_cert'));
 
+  // The static notice always shows without a backend, but WHICH binding sentence
+  // applies depends on whether the edge ACS is deployed.
   show('saml_backend_notice', !appconfig.backendAvailable);
+  show('saml_edge_acs_notice', appconfig.backendAvailable === false && hasSamlLanding());
+  show('saml_redirect_fallback_notice', !hasSamlLanding());
   onVersionChange();
   onNameIdFormatChange();
   onSignChange();

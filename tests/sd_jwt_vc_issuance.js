@@ -55,7 +55,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
-const secureOrigin = require("./browser_secure_origin.js");
+const browserFlags = require("./browser_flags.js");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
@@ -69,6 +69,9 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var fetchWait = Math.max(waitTime, 20000);
+// The budget every waitFor* in ./wait_for.js uses. Set once: one test file
+// runs per process.
+require("./wait_for").configure({ timeout: fetchWait });
 
 var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/, "");
@@ -132,22 +135,15 @@ async function click(driver, locator) {
   await driver.sleep(250);
 }
 
-function text(driver, id) {
-  return driver.executeScript(
-    "var e = document.getElementById(arguments[0]); return e ? e.textContent.trim() : null;", id);
-}
-function value(driver, id) {
-  return driver.executeScript(
-    "var e = document.getElementById(arguments[0]); return e ? e.value : null;", id);
-}
-async function waitForStatus(driver, id, predicate, message) {
-  var last = "";
-  await driver.wait(async function () {
-    last = (await text(driver, id)) || "";
-    return predicate(last);
-  }, fetchWait, message + " (last status: " + last + ")");
-  return last;
-}
+// text()/value() and the waitFor* family live in ./wait_for.js — one
+// implementation, shared with the other SD-JWT VC suites. See that file for why
+// waiting on CONTENT rather than on the element (plus a fixed sleep) matters:
+// these fields are all static markup, so locating them proves nothing, and the
+// fixed sleep this suite used to rely on lost the race twice.
+const {
+  text, value, waitFor, waitForStatus, waitForValue, waitForFilled, waitForJson
+} = require("./wait_for");
+
 function severeErrors(driver) {
   return driver.manage().logs().get(logging.Type.BROWSER).then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
@@ -181,12 +177,25 @@ async function stepOne(driver) {
   log.info("[step1] Configuration Parameters pane: " + coverage.fields + " fields in " +
            coverage.groups + " groups.");
 
-  // The RFC 8414 pane starts on the configured authorization server metadata
-  // endpoint, so the workflow is usable without pasting a URL in.
+  // The RFC 8414 pane starts on the authorization server metadata endpoint this
+  // deployment configures, so the workflow is usable without pasting a URL in —
+  // WHERE one is configured. `client/src/env/local.js` and `docker-tests.js` name
+  // this suite's STS; `prod.js` and `test-idptools-com.js` deliberately name
+  // nothing, because a public site has no business defaulting to somebody's
+  // localhost. So the SHAPE is asserted when a default is there, and its absence is
+  // recorded rather than failed: every pane this test drives is filled from the URLs
+  // the test was given, a few lines below.
   var asDefault = await value(driver, "oidc_discovery_endpoint");
-  assert.ok(asDefault && asDefault.indexOf("/.well-known/oauth-authorization-server") !== -1,
-    "the RFC 8414 pane should default to an RFC 8414 endpoint, got: " + JSON.stringify(asDefault));
-  log.info("[step1] the RFC 8414 pane defaults to " + asDefault + ".");
+  if (asDefault) {
+    assert.ok(asDefault.indexOf("/.well-known/oauth-authorization-server") !== -1,
+      "a configured default for the RFC 8414 pane must be an RFC 8414 endpoint, got: " +
+      JSON.stringify(asDefault));
+    log.info("[step1] the RFC 8414 pane defaults to " + asDefault + ".");
+  } else {
+    log.info("[step1] this deployment configures no default RFC 8414 endpoint " +
+             "(rfc8414MetadataUrlDefault is unset in its client env, as it is for the deployed sites); " +
+             "the test supplies the URL itself.");
+  }
 
   // ---- pane 1: the credential issuer metadata -----------------------------
   await driver.executeScript(
@@ -402,8 +411,8 @@ async function stepOne(driver) {
     "document.getElementById('client_id').value = arguments[0];" +
     "document.getElementById('scope').value = 'openid profile email';", clientId);
   await click(driver, By.id("config_save_button"));
-  await driver.sleep(300);
-  assert.strictEqual(await text(driver, "config_status"), "Saved.", "the configuration should save.");
+  await waitForStatus(driver, "config_status", function (s) { return s === "Saved."; },
+    "the configuration should save");
 
   var summary = await text(driver, "handoff_credential");
   assert.ok(summary.indexOf("IdentityCredential") !== -1 && summary.indexOf(EXPECTED_VCT) !== -1,
@@ -450,10 +459,10 @@ async function oidcLeg(driver) {
 async function stepTwo(driver) {
   log.info("=== Step 2: approve and request the credential ===");
   await driver.wait(until.elementLocated(By.id("vc_access_token")), waitTime);
-  await driver.sleep(600);
-
-  var accessToken = await value(driver, "vc_access_token");
-  var idToken = await value(driver, "vc_id_token");
+  // The fields exist before the page restores them; wait for the values.
+  var accessToken = await waitForFilled(driver, "vc_access_token",
+    "step 2 never showed the access token");
+  var idToken = await waitForFilled(driver, "vc_id_token", "step 2 never showed the id token");
   assert.ok(accessToken && accessToken.split(".").length === 3,
     "step 2 should show the access token the OIDC leg obtained.");
   assert.ok(idToken && idToken.split(".").length === 3, "step 2 should show the ID token.");
@@ -549,10 +558,7 @@ async function stepTwo(driver) {
 async function stepThree(driver, context) {
   log.info("=== Step 3: the issued credential ===");
   await driver.wait(until.elementLocated(By.id("vc_credential_raw")), waitTime);
-  await driver.sleep(900);
-
-  var raw = await value(driver, "vc_credential_raw");
-  assert.ok(raw, "step 3 should show the credential.");
+  var raw = await waitForFilled(driver, "vc_credential_raw", "step 3 should show the credential");
 
   // ---- what the page says --------------------------------------------------
   var checks = await driver.executeScript(
@@ -1250,16 +1256,19 @@ async function credentialHistoryNavigation(driver, generations) {
   }, fetchWait, "Older should move back again.");
   await driver.navigate().refresh();
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
-  await driver.sleep(600);
-  assert.ok(/^generation 1 of 2/.test((await navState()).position),
-    "the activated generation should survive a reload. Got: " + (await navState()).position);
+  // The table element is in the HTML; the pane renders into it from localStorage
+  // after load. Wait for the position to say so, the same as the clicks above do.
+  await waitFor(driver, async function () { return (await navState()).position || ""; },
+    function (pos) { return /^generation 1 of 2/.test(pos); },
+    "the activated generation should survive a reload");
   // ... and step 3 verifies whatever the history activated, including the cnf
   // binding, which is the check that would fail if the key had not travelled.
   await driver.get(baseUrl + "/sd-jwt-vc-issuance-3.html");
   await driver.wait(until.elementLocated(By.id("vc_credential_raw")), waitTime);
-  await driver.sleep(900);
-  assert.strictEqual(await value(driver, "vc_credential_raw"), generations.original,
-    "step 3 should show the generation the history activated.");
+  // Waiting for the RIGHT value, not just any value: this is the assertion.
+  await waitForValue(driver, "vc_credential_raw",
+    function (v) { return v === generations.original; },
+    "step 3 should show the generation the history activated");
   await assertStepThreeIsHappy(driver, "the generation activated from the history");
   log.info("[history] OK — the activated generation survives a reload and still verifies in step 3.");
 
@@ -1481,12 +1490,14 @@ async function inspectLinksReturnHere(driver) {
   log.info("=== The Inspect links on step 2 ===");
   await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
   await driver.wait(until.elementLocated(By.id("vc_access_token")), waitTime);
-  await driver.sleep(400);
+  // Both fields exist in the HTML before the page restores them from
+  // localStorage, so wait for the values rather than for the elements.
   var onPage2 = {
-    access: await value(driver, "vc_access_token"),
-    id: await value(driver, "vc_id_token")
+    access: await waitForFilled(driver, "vc_access_token",
+      "step 2 never showed the access token, so there is nothing to inspect"),
+    id: await waitForFilled(driver, "vc_id_token",
+      "step 2 never showed the id token, so there is nothing to inspect")
   };
-  assert.ok(onPage2.access && onPage2.id, "step 2 should be showing the tokens for this check.");
 
   for (const which of ["access", "id"]) {
     var index = which === "access" ? 0 : 1;
@@ -1496,11 +1507,12 @@ async function inspectLinksReturnHere(driver) {
     assert.ok(href.indexOf("from=sd-jwt-vc-issuance-2.html") !== -1,
       "the Inspect link should name the page it came from, so the detail page can come back. Got: " + href);
     await driver.executeScript("arguments[0].click();", links[index]);
-    await driver.wait(until.elementLocated(By.id("jwt_payload")), waitTime);
-    await driver.sleep(500);
-
-    // The detail page must be decoding the token step 2 was showing.
-    var shown = JSON.parse(await value(driver, "jwt_payload"));
+    // #jwt_payload is in the static HTML, so locating it proves nothing. The
+    // page fills it only after fetching /claimdescription and walking the whole
+    // IANA claim registry, which takes a variable few hundred milliseconds — the
+    // fixed sleep this replaced lost that race twice.
+    var shown = await waitForJson(driver, "jwt_payload",
+      "the token detail page never decoded the " + which + " token");
     var expected = jsonFromB64u(onPage2[which].split(".")[1]);
     assert.deepStrictEqual(shown, expected,
       "the detail page should decode the " + which + " token step 2 is showing.");
@@ -1834,10 +1846,8 @@ async function credentialOfferSameDevice(driver) {
   await click(driver, By.id("vc_approve_button"));
   await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
     "approving should produce the credential.");
-  await driver.sleep(900);
-
-  var credential = await value(driver, "vc_credential_raw");
-  assert.ok(credential, "H.1 should end with a credential.");
+  var credential = await waitForFilled(driver, "vc_credential_raw",
+    "H.1 should end with a credential");
   var payload = jsonFromB64u(credential.split("~")[0].split(".")[1]);
   assert.strictEqual(payload.iss, issuerBase, "the credential should come from the issuer that made the offer.");
   assert.strictEqual(payload.vct, EXPECTED_VCT, "it should be the credential that was offered.");
@@ -2006,8 +2016,9 @@ async function crossDeviceOffer(driver) {
 
   // ---- the Transaction Code is not optional --------------------------------
   await click(driver, By.id("vc_token_request_button"));
-  await driver.sleep(500);
-  var refusedLocally = await text(driver, "vc_token_status");
+  var refusedLocally = await waitForStatus(driver, "vc_token_status",
+    function (s) { return s.trim() !== ""; },
+    "the wallet said nothing when asked to send without a Transaction Code");
   assert.ok(/Transaction Code/i.test(refusedLocally) && /type it in/i.test(refusedLocally),
     "with no Transaction Code typed the wallet should refuse to send at all. Got: " + refusedLocally);
   assert.strictEqual(await value(driver, "vc_access_token"), "",
@@ -2231,8 +2242,9 @@ async function authorizationDetailsFlow(driver) {
     JSON.stringify(asMeta.authorization_details_types_supported));
 
   await stepOneConfigured(driver, "authorization_details");
-  await driver.sleep(300);
-  var note = await text(driver, "handoff_mechanism_note");
+  var note = await waitForStatus(driver, "handoff_mechanism_note",
+    function (s) { return s.trim() !== ""; },
+    "step 1 never said what it was about to send");
   assert.ok(note.indexOf("openid_credential") !== -1,
     "step 1 should say what it is about to send. Got: " + note);
   log.info("[authz details] OK — step 1 offers both ways of asking, and describes the one chosen.");
@@ -2521,9 +2533,9 @@ async function batchAndEncryptedIssuance(driver) {
 
   await driver.executeScript(
     "document.getElementById('vc_credential_select').value = '2'; sdjwtvc3.onCredentialChange();");
-  await driver.sleep(700);
-  var third = await value(driver, "vc_credential_raw");
-  assert.strictEqual(third, issued.all[2], "choosing another credential should show that one.");
+  await waitForValue(driver, "vc_credential_raw",
+    function (v) { return v === issued.all[2]; },
+    "choosing another credential should show that one");
   await assertStepThreeIsHappy(driver, "batch credential 3");
   log.info("[batch] OK — each credential in the batch verifies on its own.");
 
@@ -2688,9 +2700,9 @@ async function handoffParameterCheck(driver) {
   await driver.get(baseUrl + "/debugger.html?sdjwtvc=1");
   await driver.wait(until.elementLocated(By.id("sdjwtvc_banner")), waitTime,
     "debugger.html should say when it is being driven by the SD-JWT VC workflow.");
-  await driver.sleep(900);
-  var banner = await text(driver, "sdjwtvc_banner");
-  assert.ok(/SD-JWT VC issuance/.test(banner), "the banner should name the workflow. Got: " + banner);
+  var banner = await waitForStatus(driver, "sdjwtvc_banner",
+    function (s) { return /SD-JWT VC issuance/.test(s); },
+    "the banner should name the workflow");
   assert.ok(/not configured|not started/.test(banner),
     "with nothing configured the banner should say the flow was not started. Got: " + banner);
   assert.ok((await driver.getCurrentUrl()).indexOf("debugger.html") !== -1,
@@ -2719,12 +2731,12 @@ async function test() {
   if (headless) {
     options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
   }
-  // This whole workflow is Web Crypto: holder key pairs, proofs of possession, Key
-  // Binding JWTs, signature verification. crypto.subtle exists only in a secure
-  // context, and the containerized stack serves the pages from http://client:3000,
-  // which is not one — so without this the pages have no crypto at all and the
-  // failures look like everything except what they are.
-  secureOrigin.addSecureOriginFlags(options, baseUrl);
+  // Two environment hazards this workflow is exposed to, both silent: it is all Web
+  // Crypto (holder key pairs, proofs of possession, Key Binding JWTs, signature
+  // verification), which needs a secure context; and its pages must fetch this
+  // suite's services on loopback, which a deployed https page may not do without
+  // the private-network flags. See tests/browser_flags.js.
+  browserFlags.addBrowserAccessFlags(options, baseUrl);
   var driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
   try {
     await handoffParameterCheck(driver);

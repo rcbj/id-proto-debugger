@@ -28,6 +28,16 @@ common_setup()
   echo "Leaving common_setup()."
 }
 
+# Variables compose itself needs — the ones the compose FILES substitute, plus
+# COMPOSE_PROJECT_NAME, which scopes ps/logs/up to the right project when a
+# launcher isolates its stack (remote-run-tests.sh does).
+#
+# They have to be listed because `sudo` RESETS THE ENVIRONMENT: only assignments
+# written on its command line survive. For a long time just CONFIG_FILE was
+# forwarded, so every other `${...}` in a compose file silently substituted to
+# empty — including GIT_COMMIT and BUILD_NUMBER, which stamp the build.
+COMPOSE_FORWARDED_VARS="CONFIG_FILE COMPOSE_PROJECT_NAME OID4VCI_WALLET_URL BUILD_NUMBER GIT_COMMIT LIVE_CONFIG_FILE LIVE_DEBUGGER_BASE_URL LIVE_WSTRUST_STS_URL"
+
 docker_compose() {
   echo "Entering docker_compose()."
   # Capture the real exit code of the compose command. sudo propagates the
@@ -35,15 +45,29 @@ docker_compose() {
   # return it — otherwise a failed `up --exit-code-from tests` (a failing test)
   # is masked and callers (e.g. run-coverage.sh) wrongly see success.
   local rc
+  # Only variables that are actually SET are passed: an empty
+  # COMPOSE_PROJECT_NAME makes compose refuse to run, and an empty value is not
+  # the same as absent for compose's own substitution warnings. Deliberately
+  # unquoted below so the list splits into separate NAME=VALUE arguments — every
+  # value here is a URL, a path or a name, none of which contain spaces.
+  local env_args="" _v _val
+  for _v in ${COMPOSE_FORWARDED_VARS};
+  do
+    eval "_val=\${${_v}-}"
+    if [ -n "${_val}" ];
+    then
+      env_args="${env_args} ${_v}=${_val}"
+    fi
+  done
   if [ -x ~/.local/bin/docker-compose ];
   then
-    sudo CONFIG_FILE=${CONFIG_FILE} docker-compose "$@"
+    sudo ${env_args} docker-compose "$@"
     rc=$?
   elif docker compose version >/dev/null 2>&1; then
-    sudo CONFIG_FILE=${CONFIG_FILE} docker compose "$@"
+    sudo ${env_args} docker compose "$@"
     rc=$?
   elif command -v docker-compose >/dev/null 2>&1; then
-    sudo CONFIG_FILE=${CONFIG_FILE} docker-compose "$@"
+    sudo ${env_args} docker-compose "$@"
     rc=$?
   else
     echo "Error: Docker Compose not found." >&2
@@ -1564,6 +1588,17 @@ configureKeycloakWsfed()
     | jq -r '.access_token')
 
   # WS-Federation relying-party client. protocol "wsfed"; clientId == wtrealm;
+  #
+  # webOrigins registers the debugger's origin for CORS, as every client in the
+  # main realm does. Be clear about what it can and cannot do here: Keycloak emits
+  # CORS headers per ENDPOINT, from a client context, and the cloudtrust extension's
+  # metadata endpoint has none — `@GET @Path("descriptor")` in WSFedService returns a
+  # bare String, and there is no Cors.add() anywhere in the extension. So a browser
+  # on another origin CANNOT fetch /protocol/wsfed/descriptor whatever is configured
+  # here; the WS-Fed page's metadata load is best-effort for that reason and the
+  # test falls back to the derived sign-in endpoint. This setting is for the
+  # endpoints that DO carry a client context, and for consistency with the rest of
+  # the provisioning.
   # redirect URIs cover the debugger's /wsfed landing (the wreply target) and its
   # response page. The token format defaults to SAML 2.0.
   curl -s -X POST "${KC_WSFED}/admin/realms/${WSFED_REALM_NAME}/clients" \
@@ -1575,6 +1610,7 @@ configureKeycloakWsfed()
           "enabled": true,
           "frontchannelLogout": true,
           "redirectUris": [ "'"${WSFED_API_BASE}"'/wsfed", "'"${WSFED_API_BASE}"'/*", "'"${WSFED_UI_BASE}"'/*" ],
+          "webOrigins": [ "'"${WSFED_UI_BASE}"'", "'"${WSFED_API_BASE}"'" ],
           "attributes": {
             "wsfed.saml.assertion.token.format": "SAML2.0",
             "saml.assertion.token.format": "SAML2.0"

@@ -36,6 +36,12 @@ var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: 'oauth2_metadata_rfc8414',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
+// The dummy URL the OIDC source offers when nothing is configured —
+// METADATA_SOURCES.oidc.defaultUrl in client/src/debugger.js. Its presence after
+// selecting RFC 8414 is how this test tells "this deployment configures no RFC 8414
+// default" apart from "the selector failed to offer the one it has".
+var OIDC_DUMMY_DEFAULT = "https://localhost/oidc/.well-known";
+
 var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
@@ -371,17 +377,33 @@ async function metadataSourceActivities(driver, doc) {
   var oidcDefaultUrl = s.url;
   await click(driver, By.id('metadata_source_rfc8414'));
   var offered = (await paneState(driver)).url;
-  assert.notStrictEqual(offered, oidcDefaultUrl,
-    "selecting RFC 8414 should offer an RFC 8414 endpoint, not leave the OIDC default in place.");
-  assert.ok(offered.indexOf("/.well-known/oauth-authorization-server") !== -1,
-    "the offered default should be an RFC 8414 endpoint, got: " + offered);
-  log.info("[default] OK — selecting RFC 8414 offers " + offered + ".");
-  // Switching back keeps that host and swaps the path — the long-standing rule
-  // for a field that holds a real endpoint, which it now does.
-  await click(driver, By.id('metadata_source_oidc'));
-  assert.strictEqual((await paneState(driver)).url,
-    offered.replace("/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"),
-    "switching back should keep the host and swap the well-known path.");
+  if (offered === oidcDefaultUrl && offered === OIDC_DUMMY_DEFAULT) {
+    // The field still holds the OIDC source's own dummy default, which means the
+    // RFC 8414 source had nothing to offer — `METADATA_SOURCES.rfc8414.defaultUrl`
+    // in client/src/debugger.js is `appconfig.rfc8414MetadataUrlDefault || ""`, and
+    // the deployed configs (prod.js, test-idptools-com.js) set that to "" because a
+    // public site has no business defaulting to somebody's localhost STS. So the
+    // default-offering rules below do not apply here.
+    //
+    // This is deliberately narrow: it is the OIDC DUMMY that says "nothing was
+    // offered". A configured default that failed to appear would leave some other
+    // value in the field and still fail below, which is what this check is for.
+    log.info("[default] this deployment configures no RFC 8414 endpoint default " +
+             "(rfc8414MetadataUrlDefault is empty), so the selector has nothing to offer; " +
+             "skipping the default-offering checks.");
+  } else {
+    assert.notStrictEqual(offered, oidcDefaultUrl,
+      "selecting RFC 8414 should offer an RFC 8414 endpoint, not leave the OIDC default in place.");
+    assert.ok(offered.indexOf("/.well-known/oauth-authorization-server") !== -1,
+      "the offered default should be an RFC 8414 endpoint, got: " + offered);
+    log.info("[default] OK — selecting RFC 8414 offers " + offered + ".");
+    // Switching back keeps that host and swaps the path — the long-standing rule
+    // for a field that holds a real endpoint, which it now does.
+    await click(driver, By.id('metadata_source_oidc'));
+    assert.strictEqual((await paneState(driver)).url,
+      offered.replace("/.well-known/oauth-authorization-server", "/.well-known/openid-configuration"),
+      "switching back should keep the host and swap the well-known path.");
+  }
 
   // Selecting RFC 8414 retunes the hint, the spec link, and the well-known path.
   await driver.executeScript(

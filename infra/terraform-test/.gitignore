@@ -10,3 +10,7 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Build artifact: the zipped Lambda@Edge source (lambda_edge.tf regenerates it
+# from ../edge/wsfed_landing.js on every plan).
+.terraform-artifacts/

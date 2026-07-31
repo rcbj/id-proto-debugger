@@ -36,7 +36,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
-const secureOrigin = require("./browser_secure_origin.js");
+const browserFlags = require("./browser_flags.js");
 const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -49,6 +49,9 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var fetchWait = Math.max(waitTime, 25000);
+// The budget every waitFor* in ./wait_for.js uses. Set once: one test file
+// runs per process.
+require("./wait_for").configure({ timeout: fetchWait });
 
 // walt.id's service, and the Credential Issuer Identifier it publishes — which
 // is the service URL plus a path. That path is the whole point of several of
@@ -105,22 +108,14 @@ async function click(driver, locator) {
   await driver.sleep(250);
 }
 
-function text(driver, id) {
-  return driver.executeScript(
-    "var e = document.getElementById(arguments[0]); return e ? e.textContent.trim() : null;", id);
-}
-function value(driver, id) {
-  return driver.executeScript(
-    "var e = document.getElementById(arguments[0]); return e ? e.value : null;", id);
-}
-async function waitForStatus(driver, id, predicate, message) {
-  var last = "";
-  await driver.wait(async function () {
-    last = (await text(driver, id)) || "";
-    return predicate(last);
-  }, fetchWait, message + " (last status: " + last + ")");
-  return last;
-}
+// text()/value() and the waitFor* family live in ./wait_for.js — one
+// implementation, shared by these suites. It waits on CONTENT rather than on the
+// element: every field here is static markup, so locating it proves nothing about
+// whether the page has filled it in, and the fixed sleeps that used to stand in
+// for that lost the race periodically. It also reports what the field LAST held
+// on a timeout, which the local copy of waitForStatus could not — its message was
+// built before the first poll, so it always said "(last status: )".
+const { text, value, waitForStatus, waitForValue } = require("./wait_for");
 function severeErrors(driver) {
   return driver.manage().logs().get(logging.Type.BROWSER).then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
@@ -234,10 +229,9 @@ async function configureFromWaltid(driver) {
     "var s = document.getElementById('vci_credential_configuration_select');" +
     "s.value = arguments[0];" +
     "sdjwtvc1.onCredentialConfigurationChange();", CONFIGURATION_ID);
-  await driver.sleep(400);
-  assert.strictEqual(await value(driver, "vci_credential_configuration_id"), CONFIGURATION_ID,
-    "choosing the credential configuration should select it. Got: " +
-    (await value(driver, "vci_credential_configuration_id")));
+  await waitForValue(driver, "vci_credential_configuration_id",
+    function (v) { return v === CONFIGURATION_ID; },
+    "choosing the credential configuration should select it");
   assert.strictEqual(await value(driver, "vci_format"), SD_JWT_VC_TYP,
     "the chosen configuration should be an SD-JWT VC.");
 
@@ -595,10 +589,9 @@ async function crossDeviceOffer(driver) {
   await driver.wait(async function () {
     return (await value(driver, "vci_credential_endpoint")) === issuerId + "/credential";
   }, fetchWait, "taking walt.id's offer should discover the issuer it names.");
-  await driver.sleep(400);
-
-  assert.strictEqual(await value(driver, "vci_metadata_endpoint"), metadataUrl,
-    "the offer names only the issuer identifier, so the wallet has to derive the path-inserted metadata URL.");
+  await waitForValue(driver, "vci_metadata_endpoint",
+    function (v) { return v === metadataUrl; },
+    "the offer names only the issuer identifier, so the wallet has to derive the path-inserted metadata URL");
   assert.strictEqual(await value(driver, "vci_credential_endpoint"), issuerId + "/credential",
     "and read walt.id's metadata from there.");
   var grantShown = await text(driver, "offer_grant");
@@ -793,8 +786,9 @@ async function optionalFeaturesAbsentHere(driver) {
   await driver.executeScript(
     "document.getElementById('handoff_request_mechanism').value = 'authorization_details';" +
     "sdjwtvc1.onRequestMechanismChange();");
-  await driver.sleep(300);
-  var note = await text(driver, "handoff_mechanism_note");
+  var note = await waitForStatus(driver, "handoff_mechanism_note",
+    function (s) { return s.trim() !== ""; },
+    "step 1 said nothing about the request mechanism it was switched to");
   assert.ok(/does not advertise authorization_details_types_supported|may refuse/.test(note),
     "choosing authorization_details against a server that does not advertise support for it should say " +
     "so, rather than implying it will work. Got: " + note);
@@ -885,12 +879,12 @@ async function test() {
   if (headless) {
     options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
   }
-  // This whole workflow is Web Crypto: holder key pairs, proofs of possession, Key
-  // Binding JWTs, signature verification. crypto.subtle exists only in a secure
-  // context, and the containerized stack serves the pages from http://client:3000,
-  // which is not one — so without this the pages have no crypto at all and the
-  // failures look like everything except what they are.
-  secureOrigin.addSecureOriginFlags(options, baseUrl);
+  // Two environment hazards this workflow is exposed to, both silent: it is all Web
+  // Crypto (holder key pairs, proofs of possession, Key Binding JWTs, signature
+  // verification), which needs a secure context; and its pages must fetch this
+  // suite's services on loopback, which a deployed https page may not do without
+  // the private-network flags. See tests/browser_flags.js.
+  browserFlags.addBrowserAccessFlags(options, baseUrl);
   var driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
   try {
     await walletInitiated(driver);

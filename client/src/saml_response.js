@@ -1,18 +1,34 @@
 // File: saml_response.js
 // Author: Robert C. Broeckelmann Jr.
 //
-// SAML Response debugger page. The API ACS endpoint stashes the IdP's
-// SAMLResponse and redirects here with ?id=<stash id>; this page fetches the
-// stashed XML (GET /samlresponse?id=), shows the full response and the extracted
-// assertion, and lists the assertion attributes (incl. NameID) in a table.
+// SAML Response debugger page. It shows the full IdP response, the extracted
+// assertion, and the assertion attributes (incl. NameID) in a table.
 //
-// As a fallback it also accepts the base64 SAMLResponse directly in the query
-// (?SAMLResponse=) for manual testing.
+// Four ways the response reaches this page, all handled below:
+//
+//   ?id=<stash>       the API ACS (/samlacs) captured the IdP's POST server-side
+//                     and stashed the XML; fetched here with GET /samlresponse?id=.
+//   ?posted=1         the STATIC deployments' Lambda@Edge ACS
+//                     (infra/edge/saml_landing.js) captured the POST at the edge
+//                     and, having nowhere to stash it, handed it to the browser
+//                     in sessionStorage under the edge_landing.js SAML keys. Read
+//                     ONCE and deleted — a response left behind would make the
+//                     next visit render a stale login as though it had just
+//                     happened. The value arrives still base64-encoded, exactly
+//                     as the IdP sent it, and goes through the same
+//                     decodeSamlParam() as the query-string form.
+//   ?SAMLResponse=    the HTTP-Redirect binding delivering straight to this page,
+//                     which is what a deployment with no ACS landing asks the IdP
+//                     for (responseProtocolBinding() in saml_request.js). Also
+//                     useful for pasting a response in by hand.
+//   none              nothing arrived; the last rendered response is restored
+//                     from localStorage, or paste one in.
 
 var appconfig = require(process.env.CONFIG_FILE);
 var history = require("./saml_history");
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
+var edge = require("./edge_landing"); // the static landings' hand-off contract
 var log = bunyan.createLogger({ name: 'saml_response', level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
@@ -545,6 +561,51 @@ function decryptAssertion() {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// The edge ACS's hand-off (static deployments — infra/edge/saml_landing.js).
+//
+// The value handed over is the SAMLResponse exactly as the IdP sent it: base64,
+// and DEFLATE-compressed if it came over the Redirect binding. decodeSamlParam()
+// already distinguishes the two — it is the decoder the ?SAMLResponse= path has
+// always used — so nothing is decoded at the edge and there is one decoder here.
+// ---------------------------------------------------------------------------
+function handleEdgeHandoff(posted) {
+  log.debug('Entering handleEdgeHandoff(). posted=' + posted);
+  if (posted === 'blocked') {
+    setStatus('The IdP\'s POST was captured at the edge, but this browser would not let that page store ' +
+              'the response (sessionStorage is blocked), so it could not be handed over. Capture the POST ' +
+              'with the developer tools and paste the SAMLResponse below.');
+    resolveHistoryUnreadable('the browser blocked the edge landing\'s hand-off (sessionStorage).');
+    return;
+  }
+  var handoff = edge.takeHandoff({
+    response: edge.SAML.responseKey,
+    relayState: edge.SAML.relayStateKey
+  });
+  if (!handoff.ok) { log.error('handleEdgeHandoff: sessionStorage could not be read.'); }
+  if (!handoff.response) {
+    // Most often a reload: the response is deliberately read once and removed,
+    // so say that rather than showing an empty page. Fall back to the cached
+    // last response if there is one, exactly as the ?id= path does.
+    if (!renderFromStorage()) {
+      setStatus('The edge landing redirected here but no SAMLResponse was waiting in sessionStorage. ' +
+                'A reload will do this — it is read once and removed. Sign in again, or paste a ' +
+                'response below.');
+      resolveHistoryUnreadable('no SAMLResponse was waiting from the edge landing.');
+    }
+    return;
+  }
+  setStatus('Decoding SAMLResponse…');
+  decodeSamlParam(handoff.response)
+    .then(function (xml) { render(xml, true); })
+    .catch(function (e) {
+      log.error('decode edge SAMLResponse: ' + e.message);
+      setStatus('Could not decode the SAMLResponse handed over by the edge landing: ' + e.message);
+      resolveHistoryUnreadable('could not decode the IdP response: ' + e.message);
+    });
+  log.debug('Leaving handleEdgeHandoff().');
+}
+
 window.onload = function () {
   renderOperationHistory();
   // Prefill the decryption key from the SP private key stored by the SAML Test
@@ -556,6 +617,14 @@ window.onload = function () {
   } catch (e) {
     // No storage, or nothing stashed by the SAML Test Tools page: the field is
     // simply left for the user to paste into.
+  }
+
+  // The static deployments' edge ACS hands the response over in sessionStorage
+  // rather than by id — it has no server-side stash to put it in.
+  var posted = qp(edge.SAML.handoffParam);
+  if (posted) {
+    handleEdgeHandoff(posted);
+    return;
   }
 
   var id = qp('id');

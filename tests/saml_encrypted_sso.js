@@ -6,6 +6,8 @@ const { Command, Option } = require('commander');
 // The SP key pair is generated per run and passed in through the environment;
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
+const { addBrowserAccessFlags } = require("./browser_flags");
+const { assertEdgeLandingContract } = require("./edge_landing_contract");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -75,6 +77,30 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, met
   // POST binding (encrypted assertion is returned to the ACS via POST).
   await driver.executeScript(
     "var s=document.getElementById('saml_binding'); if(s){ s.value='post'; s.dispatchEvent(new Event('change')); }");
+
+  // The ACS default is the deployment's own statement about where its landing
+  // is, so it is READ rather than set. This test is the one that cannot fall
+  // back to the Redirect binding: Keycloak's encrypted client is provisioned
+  // saml.force.post.binding=true (common/common.sh), so the response is POSTed
+  // whatever the AuthnRequest asks for — and the static response page cannot
+  // receive a POST. Check it here rather than letting the wait below time out
+  // saying only that the response page never loaded.
+  var acs = await driver.findElement(By.id("saml_acs_url")).getAttribute("value");
+  log.info("ACS (the page's default): " + acs);
+  assert(acs, "saml_acs_url is empty, so the IdP has nowhere to return the response.");
+  assert(!/\/saml_response\.html(\?|$)/.test(acs),
+    "the ACS defaults to the static response page (" + acs + "), which cannot receive the IdP's POST. " +
+    "On a static deployment it should be the /samlacs landing answered by the Lambda@Edge — set " +
+    "samlEdgeLanding: true in the client env config for this target and redeploy the site bundle " +
+    "(see infra/edge/saml_landing.js).");
+
+  // The response must actually come back over POST for this test to mean
+  // anything; assert the AuthnRequest asked for it rather than assuming.
+  var requestXml = await driver.findElement(By.id("saml_authn_request")).getAttribute("value");
+  assert(requestXml.indexOf("HTTP-POST") >= 0,
+    "the AuthnRequest should request the HTTP-POST response binding (ProtocolBinding), since an " +
+    "encrypted assertion is exactly the case saml-profiles-2.0-os section 4.1.2 forbids Redirect for. " +
+    "Request was:\n" + requestXml.slice(0, 600));
 
   log.info("Call IdP (POST, encrypted client).");
   await clickByValue(driver, "Call IdP");
@@ -165,8 +191,9 @@ async function test() {
   if (headless) { options.addArguments("--headless"); }
   options.addArguments("--no-sandbox");
   options.addArguments("--disable-dev-shm-usage");
-  options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  // Private Network Access (Keycloak is on this host's loopback while the page
+  // may be a deployed https site) AND secure context. See browser_flags.js.
+  addBrowserAccessFlags(options, baseUrl);
 
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
@@ -179,6 +206,10 @@ async function test() {
     const user = process.env.SAML_USER || "saml";
     assert(metadataUrl || metadataFile, "Set SAML_METADATA_URL or SAML_METADATA_FILE.");
     assert(spEntityId, "SAML_ENC_SP_ENTITY_ID environment variable is not set.");
+
+    // No browser needed, and it fails naming the cause — so it runs first.
+    assertEdgeLandingContract(log);
+
     await encryptedSsoActivities(driver, metadataUrl, spEntityId, user, metadataFile);
     log.info("Test completed successfully.");
   } catch (error) {

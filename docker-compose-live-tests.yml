@@ -85,14 +85,28 @@ services:
       # The SP entityID equals the AuthnRequest Issuer and must match the deployed
       # client bundle's baked spEntityId.
       - SAML_SP_ENTITY_ID=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}/saml/sp
-      # Backendless: no server to receive the IdP's POST, so the ACS/SLO are the
-      # static saml_response.html page (the client requests the Redirect binding so
-      # the browser reads the response from the URL).
-      - SAML_ACS_URL=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}/saml_response.html
-      - SAML_SLO_URL=${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}/saml_response.html
+      # Backendless: the ACS/SLO are the static saml_response.html page and the
+      # client asks the IdP for the Redirect binding, so the browser reads the
+      # response from the URL.
+      #
+      # This is the FALLBACK arrangement. The deployed sites can also answer a POST
+      # at /samlacs with a Lambda@Edge (infra/edge/saml_landing.js), which is what
+      # the profile requires and what the EncryptedAssertion job needs — but unlike
+      # remote-run-tests.sh, nothing here can probe the target to find out whether
+      # that Lambda is applied, so this file assumes the fallback. To exercise the
+      # POST binding from CI once the infrastructure is applied, set
+      # LIVE_SAML_LANDING_AVAILABLE=true and point the two URLs below at
+      # /samlacs and /samlslo.
+      - SAML_ACS_URL=${LIVE_SAML_ACS_URL:-${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}/saml_response.html}
+      - SAML_SLO_URL=${LIVE_SAML_SLO_URL:-${LIVE_DEBUGGER_BASE_URL:-https://test.idptools.com}/saml_response.html}
       # No API backend → run-report.js skips the HTTP-Artifact test (which needs
       # the server-side SOAP ArtifactResolve back-channel).
       - SAML_BACKEND_AVAILABLE=false
+      # And skips the EncryptedAssertion test: Keycloak's encrypted client forces
+      # the POST binding (saml.force.post.binding=true), so the Redirect fallback
+      # above cannot carry its response. Decryption itself is in-browser and needs
+      # nothing — see run-report.js.
+      - SAML_LANDING_AVAILABLE=${LIVE_SAML_LANDING_AVAILABLE:-false}
       # WS-Trust: the STS mock started above, reached over LOOPBACK so the HTTPS
       # page isn't mixed-content-blocked. It must be given explicitly — the
       # entrypoint only defaults to the bridge name http://sts:8081/sts for the

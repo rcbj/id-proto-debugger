@@ -2,11 +2,19 @@
 //
 // WS-Federation Passive Requestor Profile response debugger. In the passive
 // profile the IdP authenticates the user and auto-POSTs a form (wa=wsignin1.0,
-// wresult, wctx) to the RP's wreply URL. When a backend is available, the API
-// /wsfed landing endpoint captures that POST, stashes the wresult, and redirects
-// here with ?id=<stash>; this page fetches the wresult by id. On the static
-// (backend-less) build the POST cannot be auto-captured, so paste the wresult
-// XML into the box instead.
+// wresult, wctx) to the RP's wreply URL. There are three ways that POST reaches
+// this page, and it handles all three:
+//
+//   ?id=<stash>   the API /wsfed landing captured the POST server-side and
+//                 stashed the wresult; this page fetches it by id.
+//   ?posted=1     the STATIC deployments' Lambda@Edge landing
+//                 (infra/edge/wsfed_landing.js) captured it at the edge and,
+//                 having nowhere to stash it, handed it to the browser in
+//                 sessionStorage under the edge_landing.js WSFED keys. This
+//                 page reads them and DELETES them — a token left in storage
+//                 would be replayed onto the next sign-in that failed.
+//   neither       nothing captured it (a deployment with no landing at all):
+//                 paste the wresult XML into the box.
 //
 // wresult is a WS-Trust RequestSecurityTokenResponse[Collection] carrying the
 // issued SAML (1.1 or 2.0) assertion. This page renders:
@@ -24,6 +32,7 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
+var edge = require("./edge_landing"); // the static landings' hand-off contract
 var log = bunyan.createLogger({ name: 'wsfed_response', level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
@@ -333,6 +342,50 @@ function decryptToken() {
 
 function qp(name) { try { return new URLSearchParams(window.location.search).get(name); } catch (e) { return null; } }
 
+// ---------------------------------------------------------------------------
+// The edge landing's hand-off (static deployments — see the header comment and
+// infra/edge/wsfed_landing.js).
+//
+// Read once and remove: the wresult is a bearer token, and leaving it in
+// sessionStorage would make the NEXT visit to this page render a stale sign-in
+// as though it had just happened — which is exactly the kind of thing a debugger
+// must not do, because it hides a sign-in that actually failed.
+// ---------------------------------------------------------------------------
+function takeEdgeHandoff() {
+  log.debug('Entering takeEdgeHandoff().');
+  var out = edge.takeHandoff({
+    wresult: edge.WSFED.wresultKey,
+    wctx: edge.WSFED.wctxKey,
+    wa: edge.WSFED.waKey
+  });
+  if (!out.ok) { log.error('takeEdgeHandoff: sessionStorage could not be read.'); }
+  log.debug('Leaving takeEdgeHandoff(). wresult ' + (out.wresult ? 'present' : 'absent') + '.');
+  return out;
+}
+
+// Handle ?posted=… . Returns true when this page has dealt with the parameter,
+// so onload stops. `posted` is "1" from a successful hand-off and "blocked" when
+// the edge page itself could not write sessionStorage.
+function handleEdgeHandoff(posted) {
+  log.debug('Entering handleEdgeHandoff(). posted=' + posted);
+  if (posted === 'blocked') {
+    setStatus('The IdP\'s POST was captured at the edge, but this browser would not let that page ' +
+              'store the token (sessionStorage is blocked), so it could not be handed over. ' +
+              'Capture the POST with the developer tools and paste the wresult below.');
+    return true;
+  }
+  var handoff = takeEdgeHandoff();
+  if (!handoff.wresult) {
+    setStatus('The edge landing redirected here but no wresult was waiting in sessionStorage. ' +
+              'A reload will do this — the token is deliberately read once and removed. ' +
+              'Sign in again, or paste the wresult below.');
+    return true;
+  }
+  render(handoff.wresult, handoff.wctx);
+  log.debug('Leaving handleEdgeHandoff(). Rendered the edge hand-off.');
+  return true;
+}
+
 window.onload = function () {
   // Prefill the decryption key from the RP private key stored by the tools page
   // (the IdP encrypts the token to the RP certificate).
@@ -345,6 +398,14 @@ window.onload = function () {
   var signout = qp('signout');
   if (signout) {
     setStatus('Signed out at the IdP (wa=' + esc(signout) + '). No token is returned for sign-out.');
+    return;
+  }
+
+  // The static deployments' edge landing hands the token over in sessionStorage
+  // rather than by id — it has nowhere on a server to stash it.
+  var posted = qp(edge.WSFED.handoffParam);
+  if (posted) {
+    handleEdgeHandoff(posted);
     return;
   }
 

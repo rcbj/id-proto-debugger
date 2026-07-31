@@ -2,6 +2,8 @@ const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { addBrowserAccessFlags } = require("./browser_flags");
+const { assertEdgeLandingContract } = require("./edge_landing_contract");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -16,14 +18,28 @@ var waitTime = appconfig.waitTime;
 //   - the sign-in request is a top-level browser navigation (wa=wsignin1.0) and
 //     is NOT signed (no SP key to load — passive profile);
 //   - the IdP is the dedicated Keycloak 8.0.1 + cloudtrust wsfed side-car;
-//   - the IdP POSTs a wresult (WS-Trust RSTR carrying a SAML assertion) to the
-//     debugger's api /wsfed landing, which stashes it and redirects to
-//     wsfed_response.html?id=... where the token is rendered.
+//   - the IdP POSTs a wresult (WS-Trust RSTR carrying a SAML assertion) to a
+//     landing at the debugger's /wsfed, which hands it to wsfed_response.html
+//     where the token is rendered.
+//
+// That landing is one of two implementations, and this test drives both without
+// caring which: the api backend's Express route (POST /wsfed -> stash ->
+// ?id=<stash>), or, on the STATIC S3 + CloudFront deployments, the Lambda@Edge in
+// infra/edge/wsfed_landing.js (POST /wsfed -> sessionStorage -> ?posted=1). The
+// second one exists because the passive profile has no redirect response binding:
+// SAML's static deployments dodge this by asking the IdP to return the response
+// over HTTP-Redirect to a static page (see responseProtocolBinding() in
+// saml_request.js), and WS-Federation has no such option — the token comes back
+// as a POST or not at all, so a static site needs code at the edge to catch it.
+// The assertions below are written against what the user sees, so they hold for
+// either landing; tests/edge_landing_contract.js separately guards the one thing
+// that cannot be checked through the browser, namely that the Lambda and the
+// page still agree on the hand-off key names.
 //
 // Then it signs the user out (wa=wsignout1.0) in the same browser, because that
 // leg needs the session the sign-in established — see wsfedSignOutActivities().
 // Sign-out returns no token, so what is asserted is the wa the IdP was actually
-// sent (read back off the api landing's redirect) and that the session is really
+// sent (read back off the landing's redirect) and that the session is really
 // gone: signing in again must require credentials rather than silently issuing a
 // second token off a surviving SSO cookie.
 // Env: WSFED_METADATA_URL (the side-car descriptor), WSFED_REALM (the wtrealm ==
@@ -94,6 +110,22 @@ async function wsfedActivities(driver, metadataUrl, realm, user) {
   log.info("Sign-in endpoint: " + endpoint);
   await setField(driver, "wsfed_realm", realm);
 
+  // wreply decides whether this test can work at all, and the page's DEFAULT is
+  // what is being checked — not something the test sets, because the default is
+  // the deployment's own statement about where its landing is. The static
+  // response page is the one value that cannot work: the IdP POSTs the token,
+  // and a POST to a static object is answered 403/405, so the round trip would
+  // end at the last hop with nothing to show. Assert it here rather than letting
+  // the wait below time out saying only "the response page never loaded".
+  var reply = await driver.findElement(By.id("wsfed_reply")).getAttribute("value");
+  log.info("wreply (the page's default): " + reply);
+  assert(reply, "wsfed_reply (wreply) is empty, so the IdP has nowhere to return the token.");
+  assert(!/\/wsfed_response\.html(\?|$)/.test(reply),
+    "wreply defaults to the static response page (" + reply + "), which cannot receive the IdP's POST. " +
+    "On a static deployment it should be the /wsfed landing answered by the Lambda@Edge — set " +
+    "wsfedEdgeLanding: true in the client env config for this target and redeploy the site bundle " +
+    "(see infra/edge/wsfed_landing.js).");
+
   // Send the sign-in request (wa=wsignin1.0). Button value is "Call IdP (Sign In)".
   log.info("Call IdP (Sign In). wtrealm=" + realm);
   await clickByValue(driver, "Call IdP (Sign In)");
@@ -111,10 +143,16 @@ async function wsfedActivities(driver, metadataUrl, realm, user) {
   await driver.findElement(password).sendKeys(user);
   await driver.findElement(kcLogin).click();
 
-  // Land on the response page (the api /wsfed landing stashed the wresult and
-  // redirected here with ?id=...).
+  // Land on the response page. The landing at /wsfed got there first and handed
+  // the wresult over — the api one by stashing it and passing ?id=, the edge one
+  // by putting it in sessionStorage and passing ?posted=1. Either way the page
+  // reports the same thing, so the assertion does not need to know which.
   log.info("Wait for the WS-Federation response page.");
-  await driver.wait(until.urlContains("wsfed_response.html"), loginWait);
+  await driver.wait(until.urlContains("wsfed_response.html"), loginWait,
+    "the IdP's POST never reached a landing that could forward it to the response page. " +
+    "On a static deployment that is what a missing (or not-yet-applied) Lambda@Edge looks like: " +
+    "CloudFront answers the POST to /wsfed from S3 with 403/405 and the browser stops there.");
+  log.info("Landed at: " + (await driver.getCurrentUrl()));
   await waitForValue(driver, By.id("wsfed_resp_status"),
     function (v) { return v.indexOf("wresult loaded.") >= 0; },
     "wresult was not loaded on the response page.", loginWait);
@@ -151,7 +189,7 @@ async function wsfedActivities(driver, metadataUrl, realm, user) {
 // asserting are what actually happened:
 //
 //   1. the browser came back to wreply as a sign-out and not as a sign-in: the
-//      api's /wsfed landing gets no wresult, so it redirects to
+//      /wsfed landing gets no wresult, so it redirects to
 //      wsfed_response.html?signout=<the wa it received, or 1>, and the page says
 //      so. Note that the wa on that final hop is the extension's choice, not
 //      ours — see the assertion below.
@@ -181,19 +219,21 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   if (!pre.signin) { await setField(driver, "wsfed_signin_endpoint", deriveEndpoint(metadataUrl)); }
   if (!pre.realm) { await setField(driver, "wsfed_realm", realm); }
   // wreply is where the IdP sends the browser afterwards, and it is what makes the
-  // sign-out observable here at all. The page defaults it to the api's /wsfed
-  // landing; if that default is missing the deployment has no backend and this
-  // leg cannot be checked, which is worth saying rather than guessing a URL.
+  // sign-out observable here at all. The page defaults it to the /wsfed landing —
+  // Express's or the edge one, depending on the deployment; if that default is
+  // missing there is no landing at all and this leg cannot be checked, which is
+  // worth saying rather than guessing a URL.
   assert(pre.reply,
     "wsfed_reply (wreply) is empty, so the IdP has nowhere to return the browser after sign-out. " +
-    "The page normally defaults it to the api's /wsfed landing.");
+    "The page normally defaults it to the /wsfed landing.");
   log.info("Sign-out preconditions: endpoint=" + (pre.signout || pre.signin) +
            " wtrealm=" + (pre.realm || realm) + " wreply=" + pre.reply);
 
   log.info("Click Sign Out (wa=wsignout1.0).");
   await clickByValue(driver, "Sign Out");
 
-  // Back on the response page, with the sign-out flag the api landing passed on.
+  // Back on the response page, with the sign-out flag the landing passed on. Both
+  // landings redirect to ?signout=<wa or 1>, so this leg is identical on either.
   await driver.wait(until.urlContains("wsfed_response.html"), loginWait,
     "the IdP did not return the browser to the wreply landing after sign-out.");
   var url = await driver.getCurrentUrl();
@@ -204,8 +244,9 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   // WSFedService.handleLogoutRequest and WSFedLoginProtocol at tag 8.0.1-1.0: the
   // sign-out request stashes wreply, marks this client's session LOGGED_OUT and
   // calls browserLogout; the browser then comes back through finishLogout, which
-  // builds the redirect with the wctx and NO wa at all. So the api landing sees no
-  // wa and falls back to signout=1. A run where another client is still in the
+  // builds the redirect with the wctx and NO wa at all. So the landing sees no wa
+  // and falls back to signout=1 (both implementations do; that fallback is one of
+  // the things the edge Lambda copies from the Express route deliberately). A run where another client is still in the
   // session instead passes through frontchannelLogout, which does send
   // wa=wsignoutcleanup1.0. Both are correct WS-Federation behaviour, so all three
   // values are accepted and the one that arrived is logged.
@@ -262,8 +303,11 @@ async function test() {
   if (headless) { options.addArguments("--headless"); }
   options.addArguments("--no-sandbox");
   options.addArguments("--disable-dev-shm-usage");
-  options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  // Private Network Access (the IdP side-car is on this host's loopback while the
+  // page may be a deployed https site) AND secure context (Validate Signature
+  // needs window.crypto.subtle, which does not exist on a plain-http non-localhost
+  // origin like the container's http://client:3000). See browser_flags.js.
+  addBrowserAccessFlags(options, baseUrl);
 
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
@@ -279,6 +323,10 @@ async function test() {
     const realm = process.env.WSFED_REALM || "urn:wsfed:test:rp";
     const user = process.env.WSFED_USER || "wsfed";
     assert(metadataUrl, "WSFED_METADATA_URL environment variable is not set.");
+
+    // Cheap, no browser, and it fails with a message that names the cause —
+    // so it runs before the round trip rather than after it.
+    assertEdgeLandingContract(log);
 
     await wsfedActivities(driver, metadataUrl, realm, user);
     // Sign-out needs the session the sign-in just established, so it runs in the

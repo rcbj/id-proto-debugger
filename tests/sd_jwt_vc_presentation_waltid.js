@@ -34,7 +34,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
-const secureOrigin = require("./browser_secure_origin.js");
+const browserFlags = require("./browser_flags.js");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
@@ -48,6 +48,9 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var fetchWait = Math.max(waitTime, 30000);
+// The budget every waitFor* in ./wait_for.js uses. Set once: one test file
+// runs per process.
+require("./wait_for").configure({ timeout: fetchWait });
 
 // walt.id's two services, each behind its own CORS proxy. These are the addresses
 // the BROWSER uses, which is also what walt.id publishes in everything it builds.
@@ -113,22 +116,14 @@ async function click(driver, locator) {
   await driver.sleep(250);
 }
 
-function text(driver, id) {
-  return driver.executeScript(
-    "var e = document.getElementById(arguments[0]); return e ? e.textContent.trim() : null;", id);
-}
-function value(driver, id) {
-  return driver.executeScript(
-    "var e = document.getElementById(arguments[0]); return e ? e.value : null;", id);
-}
-async function waitForStatus(driver, id, predicate, message) {
-  var last = "";
-  await driver.wait(async function () {
-    last = (await text(driver, id)) || "";
-    return predicate(last);
-  }, fetchWait, message + " (last status: " + last + ")");
-  return last;
-}
+// text()/value() and the waitFor* family live in ./wait_for.js — one
+// implementation, shared by these suites. It waits on CONTENT rather than on the
+// element: every field here is static markup, so locating it proves nothing about
+// whether the page has filled it in, and the fixed sleeps that used to stand in
+// for that lost the race periodically. It also reports what the field LAST held
+// on a timeout, which the local copy of waitForStatus could not — its message was
+// built before the first poll, so it always said "(last status: )".
+const { text, value, waitForStatus, waitForValue, waitForFilled } = require("./wait_for");
 function severeErrors(driver) {
   return driver.manage().logs().get(logging.Type.BROWSER).then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
@@ -189,9 +184,9 @@ async function issueFromWaltid(driver) {
     "var s = document.getElementById('vci_credential_configuration_select');" +
     "s.value = arguments[0];" +
     "sdjwtvc1.onCredentialConfigurationChange();", CONFIGURATION_ID);
-  await driver.sleep(400);
-  assert.strictEqual(await value(driver, "vci_credential_configuration_id"), CONFIGURATION_ID,
-    "choosing the credential configuration should select it.");
+  await waitForValue(driver, "vci_credential_configuration_id",
+    function (v) { return v === CONFIGURATION_ID; },
+    "choosing the credential configuration should select it");
 
   // walt.id publishes no authorization_servers, so it is its own — and its
   // identifier HAS a path, so the metadata is at the RFC 8414 path-INSERTED URL.
@@ -243,10 +238,8 @@ async function issueFromWaltid(driver) {
   await click(driver, By.id("vc_approve_button"));
   await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
     "approving should have obtained a credential from walt.id.");
-  await driver.sleep(900);
-
-  var credential = await value(driver, "vc_credential_raw");
-  assert.ok(credential, "step 3 should be showing the credential walt.id issued.");
+  var credential = await waitForFilled(driver, "vc_credential_raw",
+    "step 3 should be showing the credential walt.id issued");
   var payload = jsonFromB64u(credential.split("~")[0].split(".")[1]);
   var header = jsonFromB64u(credential.split("~")[0].split(".")[0]);
   // The things that make this walt.id's credential and not ours.
@@ -626,12 +619,12 @@ async function test() {
   if (headless) {
     options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
   }
-  // This whole workflow is Web Crypto: holder key pairs, proofs of possession, Key
-  // Binding JWTs, signature verification. crypto.subtle exists only in a secure
-  // context, and the containerized stack serves the pages from http://client:3000,
-  // which is not one — so without this the pages have no crypto at all and the
-  // failures look like everything except what they are.
-  secureOrigin.addSecureOriginFlags(options, baseUrl);
+  // Two environment hazards this workflow is exposed to, both silent: it is all Web
+  // Crypto (holder key pairs, proofs of possession, Key Binding JWTs, signature
+  // verification), which needs a secure context; and its pages must fetch this
+  // suite's services on loopback, which a deployed https page may not do without
+  // the private-network flags. See tests/browser_flags.js.
+  browserFlags.addBrowserAccessFlags(options, baseUrl);
   var driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
   try {
     var held = await issueFromWaltid(driver);

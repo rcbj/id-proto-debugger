@@ -6,6 +6,11 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    # Zips infra/edge/wsfed_landing.js for the Lambda@Edge (lambda_edge.tf).
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
   }
 
   # Remote state in S3 (bootstrapped by infra/bootstrap-state.sh). Separate
