@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_issuance_4.js
+// File: vc_issuance_4.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC issuance, step 4: refreshing the credential.
@@ -40,7 +40,7 @@ var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var vciWallet = require("./vci_wallet");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_issuance_4',
+var log = bunyan.createLogger({ name: 'vc_issuance_4',
                                 level: appconfig.LOG_LEVEL || 'info' });
 
 var REFRESH_GRANT = "refresh_token";
@@ -333,13 +333,13 @@ function historyRow(entry, attemptNumber, generation, isActive) {
   html += "<td>" + credentialCell(entry) + "</td>";
   html += "<td>";
   if (outcome === sdJwtVc.HISTORY_OUTCOME.PENDING) {
-    html += '<input class="btn2" type="button" value="Keep" onclick="return sdjwtvc4.replaceCredential();" /> ' +
-            '<input class="btn2" type="button" value="Discard" onclick="return sdjwtvc4.discardRefreshed();" />';
+    html += '<input class="btn2" type="button" value="Keep" onclick="return vcissuance4.replaceCredential();" /> ' +
+            '<input class="btn2" type="button" value="Discard" onclick="return vcissuance4.discardRefreshed();" />';
   } else if (isActive) {
     html += "<strong>In hand</strong>";
   } else if (generation) {
     html += '<input class="btn2" type="button" value="Activate" ' +
-            'onclick="return sdjwtvc4.activateGeneration(' + entry.id + ');" />';
+            'onclick="return vcissuance4.activateGeneration(' + entry.id + ');" />';
   } else {
     // A log row: nothing to activate, and saying so beats an empty cell.
     html += '<span class="vc-note">log only</span>';

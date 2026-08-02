@@ -26,8 +26,8 @@ var OAUTH2_CARD = cardByTitle("OAuth2 / OIDC Protocol");
 var TOKEN_EXCHANGE_CARD = cardByTitle("OAuth2 Token Exchange");
 var SAML_CARD = By.css('a.landing-card[href="/saml_request.html"]');
 var WSTRUST_CARD = By.css('a.landing-card[href="/wstrust_tools.html"]');
-var SDJWTVC_CARD = By.css('a.landing-card[href="/sd-jwt-vc-issuance-0.html"]');
-var SDJWTVP_CARD = By.css('a.landing-card[href="/sd-jwt-vc-presentation-0.html"]');
+var SDJWTVC_CARD = By.css('a.landing-card[href="/vc-issuance-0.html"]');
+var SDJWTVP_CARD = By.css('a.landing-card[href="/vc-presentation-0.html"]');
 var WSFED_CARD = By.css('a.landing-card[href="/wsfed_tools.html"]');
 // Dynamic Client Registration lives on debugger.html, so its card is told apart
 // from the OAuth2 card by the fragment naming the DCR pane. The OAuth2 locator
@@ -276,13 +276,13 @@ async function navigationActivities(driver) {
   log.info("Back on the landing page.");
 
   // 8. Choose the SD-JWT VC issuance workflow -> the use-case chooser.
-  log.info("Click the SD-JWT VC Issuance card.");
+  log.info("Click the VC Issuance card.");
   await click(driver, SDJWTVC_CARD);
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-0.html"), waitTime);
+  await driver.wait(until.urlContains("vc-issuance-0.html"), waitTime);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")), waitTime);
-  log.info("Landed on sd-jwt-vc-issuance-0.html (choose a use case).");
-  await checkFooterVersion(driver, "sd-jwt-vc-issuance-0.html");
-  await checkStylesheetsLoaded(driver, "sd-jwt-vc-issuance-0.html");
+  log.info("Landed on vc-issuance-0.html (choose a use case).");
+  await checkFooterVersion(driver, "vc-issuance-0.html");
+  await checkStylesheetsLoaded(driver, "vc-issuance-0.html");
 
   // 9. Return to Home -> landing page.
   log.info("Click Home -> landing page.");
@@ -290,13 +290,13 @@ async function navigationActivities(driver) {
   await waitVisible(driver, CHOICES);
 
   // 10. Choose the SD-JWT VC presentation workflow -> its flow chooser.
-  log.info("Click the SD-JWT VC Presentation card.");
+  log.info("Click the VC Presentation card.");
   await click(driver, SDJWTVP_CARD);
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-0.html"), waitTime);
+  await driver.wait(until.urlContains("vc-presentation-0.html"), waitTime);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), waitTime);
-  log.info("Landed on sd-jwt-vc-presentation-0.html (choose a flow).");
-  await checkFooterVersion(driver, "sd-jwt-vc-presentation-0.html");
-  await checkStylesheetsLoaded(driver, "sd-jwt-vc-presentation-0.html");
+  log.info("Landed on vc-presentation-0.html (choose a flow).");
+  await checkFooterVersion(driver, "vc-presentation-0.html");
+  await checkStylesheetsLoaded(driver, "vc-presentation-0.html");
 
   // 11. Return to Home -> landing page.
   log.info("Click Home -> landing page.");

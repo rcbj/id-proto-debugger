@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_presentation_3.js
+// File: vc_presentation_3.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC presentation, step 3: what the Verifier decided, and why.
@@ -25,7 +25,7 @@ var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation_3',
+var log = bunyan.createLogger({ name: 'vc_presentation_3',
                                 level: appconfig.logLevel });
 
 var sent = null;
@@ -391,7 +391,7 @@ function presentAgain() {
 
 function startOver() {
   sdJwtVp.forgetRequest();
-  window.location.href = "/sd-jwt-vc-presentation-0.html";
+  window.location.href = "/vc-presentation-0.html";
   return false;
 }
 

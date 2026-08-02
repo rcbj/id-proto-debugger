@@ -112,7 +112,7 @@ select.not-defined {
 }
 
 /* Selected by CLASS, not id: the same pane appears on debugger.html and twice
-   on sd-jwt-vc-issuance-1.html, each with its own id but all carrying
+   on vc-issuance-1.html, each with its own id but all carrying
    .discovery_info_table.
    The retrieved metadata table is generated from a document we do not control:
    values are long URLs and long comma-joined lists with no break opportunities,

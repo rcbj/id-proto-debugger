@@ -2,22 +2,22 @@
 //
 // The SD-JWT VC PRESENTATION workflow, end to end:
 //
-//   step 0 (sd-jwt-vc-presentation-0.html)
+//   step 0 (vc-presentation-0.html)
 //     which OID4VP flow to run — request by value, signed request by reference,
 //     or cross-device — and whether this wallet is even holding a credential.
 //
-//   step 1 (sd-jwt-vc-presentation-1.html)
+//   step 1 (vc-presentation-1.html)
 //     the verifier's Authorization Request: read from the redirect, or fetched
 //     from a request_uri and its signature verified, with the DCQL query decoded
 //     into the claims being asked for.
 //
-//   step 2 (sd-jwt-vc-presentation-2.html)
+//   step 2 (vc-presentation-2.html)
 //     the holder chooses which Disclosures to send; the wallet builds the
 //     SD-JWT+KB — issuer-signed JWT, those Disclosures, and a Key Binding JWT
 //     over this request's nonce with sd_hash across exactly those bytes — and
 //     POSTs the vp_token to the Response URI.
 //
-//   step 3 (sd-jwt-vc-presentation-3.html)
+//   step 3 (vc-presentation-3.html)
 //     the verifier's verdict, check by check, next to the wallet's own re-check
 //     of the bytes it sent.
 //
@@ -186,7 +186,7 @@ async function mintCredential(label) {
 // issuance workflow writes.
 async function planCredentialIntoWallet(driver, held) {
   log.debug("Entering planCredentialIntoWallet().");
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-0.html");
+  await driver.get(baseUrl + "/vc-presentation-0.html");
   await driver.wait(until.elementLocated(By.id("vp_usecases")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -439,7 +439,7 @@ async function presentThroughThePages(driver, held, byReference) {
   // URL the browser is actually on. The verifier builds it from OID4VP_WALLET_URL
   // (falling back to OID4VCI_WALLET_URL), and that default only works when the
   // browser and the wallet share a host.
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-1.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-presentation-1.html"), fetchWait,
     "the verifier should send the wallet the request.");
 
   // The wallet PAGE is in that URL — but is it this wallet? The verifier builds the
@@ -523,7 +523,7 @@ async function presentThroughThePages(driver, held, byReference) {
   log.info("[step1] asks for: " + asked[0].claims.replace(/\s+/g, " "));
 
   await click(driver, By.id("vp_continue_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-2.html"), waitTime,
+  await driver.wait(until.urlContains("vc-presentation-2.html"), waitTime,
     "step 1 should continue to the disclosure choice.");
 
   // ---- step 2: the choice and the presentation ----------------------------
@@ -600,7 +600,7 @@ async function presentThroughThePages(driver, held, byReference) {
 
   // ---- present it ---------------------------------------------------------
   await click(driver, By.id("vp_present_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-presentation-3.html"), fetchWait,
     "presenting should open step 3 with the verdict.");
   await driver.sleep(600);
 
@@ -664,7 +664,7 @@ async function withholdARequestedClaim(driver, held) {
   await planCredentialIntoWallet(driver, held);
   var request = await freshRequest();
   // Straight to step 1 with the request, the way the verifier's redirect arrives.
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-1.html?" +
+  await driver.get(baseUrl + "/vc-presentation-1.html?" +
     request.location.slice(request.location.indexOf("?") + 1));
   await driver.wait(until.elementLocated(By.id("vp_request_status")), waitTime);
   await waitForStatus(driver, "vp_request_status", function (s) { return /Request read/.test(s); },
@@ -695,7 +695,7 @@ async function withholdARequestedClaim(driver, held) {
 
   // Send it anyway: the verifier must refuse, and step 3 must say which check.
   await click(driver, By.id("vp_present_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-presentation-3.html"), fetchWait,
     "a refused presentation should still open step 3 — that is where the reason is.");
   await driver.sleep(600);
   var verdict = await waitForStatus(driver, "vp_verifier_status",
@@ -744,8 +744,8 @@ async function withholdARequestedClaim(driver, held) {
 // ---------------------------------------------------------------------------
 async function panesContainTheirContent(driver) {
   log.info("=== Nothing overflows its pane ===");
-  var pages = ["sd-jwt-vc-presentation-0.html", "sd-jwt-vc-presentation-1.html",
-               "sd-jwt-vc-presentation-2.html", "sd-jwt-vc-presentation-3.html"];
+  var pages = ["vc-presentation-0.html", "vc-presentation-1.html",
+               "vc-presentation-2.html", "vc-presentation-3.html"];
   for (var i = 0; i < pages.length; i++) {
     await driver.get(baseUrl + "/" + pages[i]);
     await driver.wait(until.elementLocated(By.id("vp_steps")), waitTime);
@@ -795,7 +795,7 @@ async function refusingIsAnAnswer(driver, held) {
   log.info("=== The holder refuses ===");
   await planCredentialIntoWallet(driver, held);
   var request = await freshRequest();
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-1.html?" +
+  await driver.get(baseUrl + "/vc-presentation-1.html?" +
     request.location.slice(request.location.indexOf("?") + 1));
   await driver.wait(until.elementLocated(By.id("vp_continue_button")), waitTime);
   await waitForStatus(driver, "vp_request_status", function (s) { return /Request read/.test(s); },

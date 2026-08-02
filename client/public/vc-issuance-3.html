@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Issuance (3 of 4)</title>
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Issuance (3 of 4)</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,14 +21,14 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/sd_jwt_vc_issuance_3.js">
+<script type="text/javascript" src="/js/vc_issuance_3.js">
 </script>
 
-<!--#include file="/partials/sd_jwt_vc_steps.html"-->
+<!--#include file="/partials/vc_steps.html"-->
 
-<p class="vc-return"><a id="return_link" href="/sd-jwt-vc-issuance-1.html">&larr; Back to step 1 (discovery &amp; configuration)</a></p>
+<p class="vc-return"><a id="return_link" href="/vc-issuance-1.html">&larr; Back to step 1 (discovery &amp; configuration)</a></p>
 
-<h3 class="vc-title">SD-JWT VC Issuance &mdash; Step 3 of 4: The Issued Credential</h3>
+<h3 class="vc-title">VC Issuance &mdash; Step 3 of 4: The Issued Credential</h3>
 
 
 <p class="vc-intro">The SD-JWT VC the issuer returned, taken apart as
@@ -61,7 +61,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 1: the credential as it arrived ============ -->
 <div class="step0 dbg-pane" id="pane_credential">
-  <legend class="dbg-legend" id="credential_expand_button" onclick="return sdjwtvc3.togglePane('credential_fieldset');">The Credential (Combined Serialization)</legend>
+  <legend class="dbg-legend" id="credential_expand_button" onclick="return vcissuance3.togglePane('credential_fieldset');">The Credential (Combined Serialization)</legend>
   <fieldset name="credential_fieldset" id="credential_fieldset" style="display: block;">
     <div class="vc-status" id="vc_credential_status">&nbsp;</div>
     <table class="vc-token-table">
@@ -82,19 +82,19 @@ function vcSetAllPanes(expand) {
     <p class="vc-note" id="vc_batch_row" style="display: none;">
       <label for="vc_credential_select">This request bound several keys, so the issuer returned several
       credentials &mdash; one per proof (OID4VCI section 8.3). Inspect: </label>
-      <select id="vc_credential_select" name="vc_credential_select" onchange="return sdjwtvc3.onCredentialChange();"></select>
+      <select id="vc_credential_select" name="vc_credential_select" onchange="return vcissuance3.onCredentialChange();"></select>
       <span id="vc_batch_summary">&nbsp;</span>
     </p>
     <div class="vc-serialized" id="vc_serialized">&nbsp;</div>
     <p>
-      <input class="btn2" id="vc_copy_button" type="button" value="Copy Credential" onclick="return sdjwtvc3.copyCredential();" />
-      <input class="btn2" id="vc_verify_button" type="button" value="Verify Again" onclick="return sdjwtvc3.verify();" />
-      <input class="btn2" id="vc_goto_refresh_button" type="button" value="Refresh this Credential" onclick="return sdjwtvc3.gotoRefresh();" />
-      <input class="btn2" id="vc_restart_button" type="button" value="Start Over" onclick="return sdjwtvc3.startOver();" />
+      <input class="btn2" id="vc_copy_button" type="button" value="Copy Credential" onclick="return vcissuance3.copyCredential();" />
+      <input class="btn2" id="vc_verify_button" type="button" value="Verify Again" onclick="return vcissuance3.verify();" />
+      <input class="btn2" id="vc_goto_refresh_button" type="button" value="Refresh this Credential" onclick="return vcissuance3.gotoRefresh();" />
+      <input class="btn2" id="vc_restart_button" type="button" value="Start Over" onclick="return vcissuance3.startOver();" />
       <span class="vc-status" id="vc_copy_status">&nbsp;</span>
     </p>
     <p class="vc-note">A credential's claim values and its validity window both go stale.
-      <a href="/sd-jwt-vc-issuance-4.html">Step 4</a> refreshes it the way OID4VCI section 14.5 describes &mdash;
+      <a href="/vc-issuance-4.html">Step 4</a> refreshes it the way OID4VCI section 14.5 describes &mdash;
       a Refresh Token for a fresh Access Token, then this issuer's Credential Endpoint again &mdash; with no
       End-User interaction at all.</p>
     <textarea class="vc-token" rows="4" readonly id="vc_credential_raw"></textarea>
@@ -103,7 +103,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 2: the issuer-signed JWT ============ -->
 <div class="step0 dbg-pane" id="pane_jwt">
-  <legend class="dbg-legend" id="jwt_expand_button" onclick="return sdjwtvc3.togglePane('jwt_fieldset');">Issuer-signed JWT</legend>
+  <legend class="dbg-legend" id="jwt_expand_button" onclick="return vcissuance3.togglePane('jwt_fieldset');">Issuer-signed JWT</legend>
   <fieldset name="jwt_fieldset" id="jwt_fieldset" style="display: block;">
     <p class="vc-note">The signed part of the credential. <code>_sd</code> holds one digest per
     selectively-disclosable claim (plus any decoys the issuer added), <code>cnf</code> holds the holder's public key,
@@ -129,7 +129,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 3: the disclosures ============ -->
 <div class="step0 dbg-pane" id="pane_disclosures">
-  <legend class="dbg-legend" id="disclosures_expand_button" onclick="return sdjwtvc3.togglePane('disclosures_fieldset');">Disclosures</legend>
+  <legend class="dbg-legend" id="disclosures_expand_button" onclick="return vcissuance3.togglePane('disclosures_fieldset');">Disclosures</legend>
   <fieldset name="disclosures_fieldset" id="disclosures_fieldset" style="display: block;">
     <p class="vc-note">Each Disclosure is <code>base64url([salt, claim name, claim value])</code>. Its digest is
     <code>base64url(SHA-256(the ASCII of that base64url string))</code> &mdash; recomputed here in the browser and
@@ -141,7 +141,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 4: the resulting claim set ============ -->
 <div class="step0 dbg-pane" id="pane_claims">
-  <legend class="dbg-legend" id="claims_expand_button" onclick="return sdjwtvc3.togglePane('claims_fieldset');">Resulting Claim Set</legend>
+  <legend class="dbg-legend" id="claims_expand_button" onclick="return vcissuance3.togglePane('claims_fieldset');">Resulting Claim Set</legend>
   <fieldset name="claims_fieldset" id="claims_fieldset" style="display: block;">
     <p class="vc-note">What a verifier ends up with if the holder presents <em>every</em> Disclosure: the
     always-visible claims plus every disclosed claim, with the SD-JWT machinery (<code>_sd</code>,
@@ -153,7 +153,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Telling the issuer what happened (section 11) ====== -->
 <div class="step0 dbg-pane" id="pane_notification">
-  <legend class="dbg-legend" id="notification_expand_button" onclick="return sdjwtvc3.togglePane('notification_fieldset');">Notify the Issuer</legend>
+  <legend class="dbg-legend" id="notification_expand_button" onclick="return vcissuance3.togglePane('notification_fieldset');">Notify the Issuer</legend>
   <fieldset name="notification_fieldset" id="notification_fieldset" style="display: block;">
     <p class="vc-note">The Credential Response carried a <code>notification_id</code>, which is the issuer asking
     to be told what became of the credential (OID4VCI section 11). It is <strong>optional for the wallet</strong> —
@@ -177,13 +177,13 @@ function vcSetAllPanes(expand) {
             </div>
           </td>
           <td>
-            <select id="vc_notification_event" name="vc_notification_event" onchange="return sdjwtvc3.renderNotification();">
+            <select id="vc_notification_event" name="vc_notification_event" onchange="return vcissuance3.renderNotification();">
               <option value="credential_accepted" selected="selected">credential_accepted</option>
               <option value="credential_failure">credential_failure</option>
               <option value="credential_deleted">credential_deleted</option>
             </select>
             <input type="text" id="vc_notification_description" name="vc_notification_description" size="34"
-                   placeholder="event_description (optional)" oninput="return sdjwtvc3.renderNotification();" />
+                   placeholder="event_description (optional)" oninput="return vcissuance3.renderNotification();" />
           </td>
         </tr>
         <tr>
@@ -193,7 +193,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vc_notification_button" type="button" value="Send the Notification" onclick="return sdjwtvc3.sendNotification();" />
+              <input class="btn2" id="vc_notification_button" type="button" value="Send the Notification" onclick="return vcissuance3.sendNotification();" />
               <span class="tooltiptext">POST it. A successful notification is answered with 204 and no body.</span>
             </div>
           </td>
@@ -211,14 +211,14 @@ function vcSetAllPanes(expand) {
      4's own "Verify in step 3": a button and not a redirect, so nothing moves the
      browser out from under someone still reading the credential above. -->
 <div class="step0 dbg-pane" id="pane_next">
-  <legend class="dbg-legend" id="next_expand_button" onclick="return sdjwtvc3.togglePane('next_fieldset');">Next: Refresh It, or Present It</legend>
+  <legend class="dbg-legend" id="next_expand_button" onclick="return vcissuance3.togglePane('next_fieldset');">Next: Refresh It, or Present It</legend>
   <fieldset name="next_fieldset" id="next_fieldset" style="display: block;">
     <p class="vc-note">A credential does not last forever. <strong>Step 4</strong> refreshes the one above the
     way <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a>
     section 14.5 describes it &mdash; a Refresh Token for a fresh Access Token, then the Credential Endpoint again
     &mdash; and shows what the issuer changed. Nothing is sent by going there.</p>
     <p>
-      <input class="btn2" id="vc_goto_step4_button" type="button" value="Refresh It (step 4)" onclick="return sdjwtvc3.refreshInStepFour();" />
+      <input class="btn2" id="vc_goto_step4_button" type="button" value="Refresh It (step 4)" onclick="return vcissuance3.refreshInStepFour();" />
       <span class="vc-status" id="vc_next_status">&nbsp;</span>
     </p>
     <p class="vc-note">Or show it to somebody. The <strong>presentation workflow</strong> is the other half of the
@@ -227,7 +227,7 @@ function vcSetAllPanes(expand) {
     and this wallet answers with only the Disclosures it chooses plus a Key Binding JWT. Nothing is copied by going
     there &mdash; both workflows read the same browser storage, so the credential above is already what it will find.</p>
     <p>
-      <input class="btn2" id="vc_present_button" type="button" value="Present It (presentation workflow)" onclick="return sdjwtvc3.presentIt();" />
+      <input class="btn2" id="vc_present_button" type="button" value="Present It (presentation workflow)" onclick="return vcissuance3.presentIt();" />
       <span class="vc-status" id="vc_present_status">&nbsp;</span>
     </p>
   </fieldset>

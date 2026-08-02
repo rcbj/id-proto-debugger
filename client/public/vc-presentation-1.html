@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Presentation (1 of 3)</title>
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Presentation (1 of 3)</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,14 +21,14 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/sd_jwt_vc_presentation_1.js">
+<script type="text/javascript" src="/js/vc_presentation_1.js">
 </script>
 
 <!--#include file="/partials/sd_jwt_vp_steps.html"-->
 
 <p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
 
-<h3 class="vc-title">SD-JWT VC Presentation &mdash; Step 1 of 3: The Verifier&rsquo;s Request</h3>
+<h3 class="vc-title">VC Presentation &mdash; Step 1 of 3: The Verifier&rsquo;s Request</h3>
 
 <p class="vc-intro">A verifier has asked for a presentation. Before any part of the credential is
 disclosed the wallet has to establish three things: <strong>who</strong> is asking (the Client Identifier, and what
@@ -61,7 +61,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 1: the request ============ -->
 <div class="step0 dbg-pane" id="pane_request">
-  <legend class="dbg-legend" id="request_expand_button" onclick="return sdjwtvp1.togglePane('request_fieldset');">The Verifier's Authorization Request</legend>
+  <legend class="dbg-legend" id="request_expand_button" onclick="return vcpresentation1.togglePane('request_fieldset');">The Verifier's Authorization Request</legend>
   <fieldset name="request_fieldset" id="request_fieldset" style="display: block;">
     <p class="vc-note">OID4VP is OAuth 2.0 with a different response type: <code>vp_token</code>. The request
     below either arrived in the query string (by value) or was fetched from a <code>request_uri</code> where it
@@ -120,7 +120,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 2: what is being asked for ============ -->
 <div class="step0 dbg-pane" id="pane_requested">
-  <legend class="dbg-legend" id="requested_expand_button" onclick="return sdjwtvp1.togglePane('requested_fieldset');">What Is Being Asked For</legend>
+  <legend class="dbg-legend" id="requested_expand_button" onclick="return vcpresentation1.togglePane('requested_fieldset');">What Is Being Asked For</legend>
   <fieldset name="requested_fieldset" id="requested_fieldset" style="display: block;">
     <p class="vc-note">The DCQL query, decoded, against the credential this wallet holds: a claim in green is one
     the credential can disclose, a claim in red is one it cannot &mdash; and a <code>vct</code> in red means the
@@ -131,7 +131,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 3: receiving a request by hand ============ -->
 <div class="step0 dbg-pane" id="pane_receive">
-  <legend class="dbg-legend" id="receive_expand_button" onclick="return sdjwtvp1.togglePane('receive_fieldset');">Receive a Request (cross-device)</legend>
+  <legend class="dbg-legend" id="receive_expand_button" onclick="return vcpresentation1.togglePane('receive_fieldset');">Receive a Request (cross-device)</legend>
   <fieldset name="receive_fieldset" id="receive_fieldset" style="display: block;">
     <p class="vc-note">In the cross-device flow the verifier's screen shows a QR code and the wallet is on
     another device, so nothing navigates here. Paste what the code encodes &mdash; an
@@ -146,13 +146,13 @@ function vpSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vp_use_pasted_button" type="button" value="Read this Request" onclick="return sdjwtvp1.usePastedRequest();" />
+              <input class="btn2" id="vp_use_pasted_button" type="button" value="Read this Request" onclick="return vcpresentation1.usePastedRequest();" />
               <span class="tooltiptext">Read the request and show what it asks for. Nothing is sent to the verifier.</span>
             </div>
           </td>
           <td>
-            <input class="btn2" id="vp_continue_button" type="button" value="Choose what to disclose &rarr;" onclick="return sdjwtvp1.continueToDisclose();" />
-            <input class="btn2" id="vp_forget_button" type="button" value="Discard this request" onclick="return sdjwtvp1.forgetRequest();" />
+            <input class="btn2" id="vp_continue_button" type="button" value="Choose what to disclose &rarr;" onclick="return vcpresentation1.continueToDisclose();" />
+            <input class="btn2" id="vp_forget_button" type="button" value="Discard this request" onclick="return vcpresentation1.forgetRequest();" />
           </td>
         </tr>
       </tbody>

@@ -3,12 +3,12 @@
 // ---------------------------------------------------------------------------
 // State and parsing shared by the SD-JWT VC issuance pages.
 //
-//   sd-jwt-vc-issuance-1.html  discovery + configuration, then hands off to the
+//   vc-issuance-1.html  discovery + configuration, then hands off to the
 //                              OIDC Authorization Code flow on debugger.html
-//   sd-jwt-vc-issuance-2.html  the tokens that came back, the user's approval,
+//   vc-issuance-2.html  the tokens that came back, the user's approval,
 //                              and the OID4VCI Credential Request
-//   sd-jwt-vc-issuance-3.html  the issued SD-JWT VC
-//   sd-jwt-vc-issuance-4.html  refreshing it: a Refresh Token for a fresh
+//   vc-issuance-3.html  the issued SD-JWT VC
+//   vc-issuance-4.html  refreshing it: a Refresh Token for a fresh
 //                              Access Token, then the Credential Endpoint again
 //                              (OID4VCI section 14.5)
 //
@@ -106,7 +106,7 @@ var HOLDER_PRIVATE_KEYS = [
 //
 // OID4VCI Appendix H describes several; they differ on the wire in how the
 // issuance is started and which grant is used, so the workflow carries the
-// choice rather than guessing. Step 0 (sd-jwt-vc-issuance-0.html) is where it
+// choice rather than guessing. Step 0 (vc-issuance-0.html) is where it
 // is made; every later page shows which one is running.
 //
 //   id           the value stored under KEYS.USE_CASE
@@ -209,7 +209,7 @@ function renderUseCaseBadge() {
   badge.id = "vc_use_case_badge";
   badge.className = "vc-use-case-badge";
   badge.innerHTML = 'Use case: <strong>' + uc.spec + ' &middot; ' + uc.label + '</strong> — ' +
-                    uc.mechanics + ' <a href="/sd-jwt-vc-issuance-0.html">change</a>';
+                    uc.mechanics + ' <a href="/vc-issuance-0.html">change</a>';
   host.parentNode.insertBefore(badge, host.nextSibling);
   return uc;
 }
@@ -268,13 +268,13 @@ function offerIssuerState() {
 }
 
 var FLOW_ACTIVE = "active";
-var STEP2_URL = "/sd-jwt-vc-issuance-2.html";
-var STEP3_URL = "/sd-jwt-vc-issuance-3.html";
-var STEP4_URL = "/sd-jwt-vc-issuance-4.html";
+var STEP2_URL = "/vc-issuance-2.html";
+var STEP3_URL = "/vc-issuance-3.html";
+var STEP4_URL = "/vc-issuance-4.html";
 // Where the PRESENTATION workflow starts. It lives here rather than in
 // sd_jwt_vp.js because the pages that link to it are issuance pages, which do not
 // load that module.
-var PRESENTATION_URL = "/sd-jwt-vc-presentation-0.html";
+var PRESENTATION_URL = "/vc-presentation-0.html";
 
 function ls() {
   try {
@@ -952,7 +952,7 @@ function credentialLabel(parsed) {
 // presentation step 1 will decide when it gets there. This is that decision, in
 // one place, so an offer and the workflow it leads to cannot disagree — the
 // three-way distinction below mirrors renderRequest() in
-// sd_jwt_vc_presentation_1.js and must keep mirroring it.
+// vc_presentation_1.js and must keep mirroring it.
 function presentationReadiness() {
   log.debug("Entering presentationReadiness().");
   var raw = (get(KEYS.CREDENTIAL) || "").trim();

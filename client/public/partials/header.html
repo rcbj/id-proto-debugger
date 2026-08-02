@@ -11,7 +11,8 @@
   // The brand logo returns to the home page of the debugger family the user is
   // currently in: SAML pages (saml_*) -> the SAML home, WS-Trust pages
   // (wstrust_*) -> the WS-Trust home, the SD-JWT VC issuance pages
-  // (sd-jwt-vc-*) -> step 1, everything else -> the OAuth2/OIDC home.
+  // (vc-issuance-* / vc-presentation-*) -> step 1 of that workflow, everything
+    // else -> the OAuth2/OIDC home.
   // The "Home" nav link (above) goes to the landing page (index.html) so the
   // user can switch protocols.
   (function () {
@@ -21,8 +22,8 @@
     var href = '/debugger.html';
     if (p.indexOf('/saml_') === 0) href = '/saml_request.html';
     else if (p.indexOf('/wstrust_') === 0) href = '/wstrust_tools.html';
-    else if (p.indexOf('/sd-jwt-vc-presentation-') === 0) href = '/sd-jwt-vc-presentation-1.html';
-    else if (p.indexOf('/sd-jwt-vc-') === 0) href = '/sd-jwt-vc-issuance-1.html';
+    else if (p.indexOf('/vc-presentation-') === 0) href = '/vc-presentation-1.html';
+    else if (p.indexOf('/vc-issuance-') === 0) href = '/vc-issuance-1.html';
     else if (p.indexOf('/wsfed_') === 0) href = '/wsfed_tools.html';
     logo.setAttribute('href', href);
   })();

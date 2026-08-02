@@ -2,12 +2,12 @@
 //
 // The SD-JWT VC issuance workflow, end to end:
 //
-//   step 0 (sd-jwt-vc-issuance-0.html)
+//   step 0 (vc-issuance-0.html)
 //     the use-case chooser: which OID4VCI Appendix H flow to run. The
 //     wallet-initiated one (H.6) is what most of this file drives; the
 //     issuer-initiated Credential Offer (H.1) has its own section at the end.
 //
-//   step 1 (sd-jwt-vc-issuance-1.html)
+//   step 1 (vc-issuance-1.html)
 //     retrieve the OID4VCI Credential Issuer Metadata, validate its
 //     signed_metadata, populate the Configuration Parameters pane from it;
 //     retrieve the authorization server's RFC 8414 metadata and populate the
@@ -18,18 +18,18 @@
 //     the user authenticates and the authorization code is exchanged for
 //     tokens WITHOUT further interaction, because the workflow drives it.
 //
-//   step 2 (sd-jwt-vc-issuance-2.html)
+//   step 2 (vc-issuance-2.html)
 //     the tokens are shown, a holder key pair is generated, and approving the
 //     issuance fetches a c_nonce, signs an openid4vci-proof+jwt and POSTs the
 //     Credential Request.
 //
-//   step 3 (sd-jwt-vc-issuance-3.html)
+//   step 3 (vc-issuance-3.html)
 //     the returned SD-JWT VC is parsed and verified: issuer signature, media
 //     type, vct, cnf binding to the holder key, and every Disclosure's digest
 //     against _sd. The credential is independently re-checked here in the test,
 //     so a page that merely CLAIMS the credential is fine cannot pass.
 //
-//   step 4 (sd-jwt-vc-issuance-4.html)
+//   step 4 (vc-issuance-4.html)
 //     refreshing it (OID4VCI section 14.5): the refresh token is exchanged for a
 //     fresh access token, the Credential Endpoint is asked again, and the two
 //     credentials are compared — here as well as by the page, because what the
@@ -158,7 +158,7 @@ function severeErrors(driver) {
 // ---------------------------------------------------------------------------
 async function stepOne(driver) {
   log.info("=== Step 1: discover the issuer ===");
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
@@ -448,7 +448,7 @@ async function oidcLeg(driver) {
   await click(driver, By.id("kc-login"));
 
   // ... through debugger2.html, which exchanges the code and comes back.
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "debugger2.html should have exchanged the code for tokens and returned to step 2.");
   log.info("[oidc] OK — debugger2.html exchanged the code and returned to step 2.");
 }
@@ -534,7 +534,7 @@ async function stepTwo(driver) {
 
   // Denying must send nothing at all.
   await click(driver, By.id("vc_deny_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-1.html"), waitTime,
+  await driver.wait(until.urlContains("vc-issuance-1.html"), waitTime,
     "denying should return to step 1.");
   var afterDeny = await driver.executeScript("return localStorage.getItem('sdjwtvc_credential');");
   assert.strictEqual(afterDeny, null, "denying must not obtain a credential.");
@@ -542,11 +542,11 @@ async function stepTwo(driver) {
 
   // Back to step 2 to approve. The tokens are still in storage, so the page
   // stands on its own.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
+  await driver.get(baseUrl + "/vc-issuance-2.html");
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.sleep(600);
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "approving should obtain the credential and open step 3.");
   log.info("[step2] OK — approving fetched a nonce, signed a proof, and got a credential.");
   return { accessToken: accessToken, holderJwk: holderJwk, idClaims: idClaims };
@@ -695,7 +695,7 @@ async function stepFour(driver, context) {
   assert.ok(before.refreshToken,
     "the OIDC leg should have obtained a refresh token; without one there is nothing to refresh with.");
   await click(driver, By.id("vc_goto_refresh_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-4.html"), waitTime,
+  await driver.wait(until.urlContains("vc-issuance-4.html"), waitTime,
     "step 3 should offer a way to step 4.");
   await driver.wait(until.elementLocated(By.id("vc_refresh_request")), waitTime);
   await driver.wait(async function () {
@@ -927,7 +927,7 @@ async function stepFour(driver, context) {
   await driver.wait(async function () {
     return /^generation 2 of 2/.test(await text(driver, "vc_history_position"));
   }, fetchWait, "keeping the credential should add a generation to the history, in place.");
-  assert.ok((await driver.getCurrentUrl()).indexOf("sd-jwt-vc-issuance-4.html") !== -1,
+  assert.ok((await driver.getCurrentUrl()).indexOf("vc-issuance-4.html") !== -1,
     "and should stay on step 4 rather than navigating away from the pane it just changed.");
   var afterKeep = await driver.executeScript(
     "return { pending: document.querySelectorAll('#vc_history_table tbody tr.vc-history-pending').length," +
@@ -954,7 +954,7 @@ async function stepFour(driver, context) {
   log.info("[step4] OK — keeping it updated the history in place: " + afterKeep.status);
 
   await click(driver, By.id("vc_goto_step3_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "\"Verify in step 3\" should open step 3.");
   await driver.sleep(900);
   var promoted = await driver.executeScript(
@@ -983,7 +983,7 @@ async function stepFour(driver, context) {
 // ---------------------------------------------------------------------------
 // Every page of the workflow links to every step, at the top, on ONE row.
 //
-// The row is shared markup (partials/sd_jwt_vc_steps.html), so what can break is
+// The row is shared markup (partials/vc_steps.html), so what can break is
 // the layout: five items in a flex row that is allowed to wrap put the last step
 // on a second line, which is what happened when step 4 was added. "One row" is a
 // geometric claim, so it is checked geometrically — every item on the same top
@@ -991,8 +991,8 @@ async function stepFour(driver, context) {
 // ---------------------------------------------------------------------------
 async function stepLinksOnEveryPage(driver) {
   log.info("=== The step links, on every page, on one row ===");
-  var pages = ["sd-jwt-vc-issuance-0.html", "sd-jwt-vc-issuance-1.html", "sd-jwt-vc-issuance-2.html",
-               "sd-jwt-vc-issuance-3.html", "sd-jwt-vc-issuance-4.html"];
+  var pages = ["vc-issuance-0.html", "vc-issuance-1.html", "vc-issuance-2.html",
+               "vc-issuance-3.html", "vc-issuance-4.html"];
   for (var i = 0; i < pages.length; i++) {
     await driver.get(baseUrl + "/" + pages[i]);
     await driver.wait(until.elementLocated(By.id("vc_steps")), waitTime);
@@ -1016,7 +1016,7 @@ async function stepLinksOnEveryPage(driver) {
     assert.strictEqual(row.count, 5,
       pages[i] + " should link to all five steps, got " + row.count + ".");
     for (var step = 0; step < 5; step++) {
-      assert.ok(row.hrefs.indexOf("/sd-jwt-vc-issuance-" + step + ".html") !== -1,
+      assert.ok(row.hrefs.indexOf("/vc-issuance-" + step + ".html") !== -1,
         pages[i] + " should link to step " + step + ". Got: " + JSON.stringify(row.hrefs));
     }
     // One row: every item shares a top edge, and the row is no taller than one item.
@@ -1090,7 +1090,7 @@ async function metadataSignatureValidation(driver) {
 
   var saved = null;
   var openStep1 = async function () {
-    await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+    await driver.get(baseUrl + "/vc-issuance-1.html");
     await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   };
   // A verdict, however it turns out. Every one of these ends in a full stop, and
@@ -1168,7 +1168,7 @@ async function metadataSignatureValidation(driver) {
       pane.name + ": signed_metadata should verify right after retrieval. Got: " + fresh);
 
     // --- THE FIX: navigate away, come back, do not retrieve ----------------
-    await driver.get(baseUrl + "/sd-jwt-vc-issuance-0.html");
+    await driver.get(baseUrl + "/vc-issuance-0.html");
     await driver.sleep(400);
     await openStep1();
     await driver.sleep(600);
@@ -1274,7 +1274,7 @@ async function metadataSignatureValidation(driver) {
 // ---------------------------------------------------------------------------
 async function presentationHandoff(driver, generations) {
   log.info("=== The hand-off into the presentation workflow ===");
-  var pages = ["sd-jwt-vc-issuance-3.html", "sd-jwt-vc-issuance-4.html"];
+  var pages = ["vc-issuance-3.html", "vc-issuance-4.html"];
 
   // Everything the seeded states below would otherwise destroy.
   await driver.get(baseUrl + "/" + pages[0]);
@@ -1453,7 +1453,7 @@ async function presentationHandoff(driver, generations) {
     "for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); out[k] = localStorage.getItem(k); }" +
     "return out;");
   await click(driver, By.id("vc_present_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-0.html"), waitTime,
+  await driver.wait(until.urlContains("vc-presentation-0.html"), waitTime,
     "Present It should land on the presentation workflow.");
   var after = await driver.executeScript(
     "var out = {};" +
@@ -1490,8 +1490,8 @@ async function presentationHandoff(driver, generations) {
 // ---------------------------------------------------------------------------
 async function panesContainTheirContent(driver) {
   log.info("=== Nothing overflows its pane ===");
-  var pages = ["sd-jwt-vc-issuance-1.html", "sd-jwt-vc-issuance-2.html",
-               "sd-jwt-vc-issuance-3.html", "sd-jwt-vc-issuance-4.html"];
+  var pages = ["vc-issuance-1.html", "vc-issuance-2.html",
+               "vc-issuance-3.html", "vc-issuance-4.html"];
   for (var i = 0; i < pages.length; i++) {
     await driver.get(baseUrl + "/" + pages[i]);
     await driver.wait(until.elementLocated(By.css(".dbg-pane")), waitTime);
@@ -1527,7 +1527,7 @@ async function panesContainTheirContent(driver) {
 
   // And the boxes in a pane line up on both edges rather than each being its own
   // width — a <pre> and a <textarea> in the same pane must come out the same.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
+  await driver.get(baseUrl + "/vc-issuance-2.html");
   await driver.wait(until.elementLocated(By.id("vc_request_body")), waitTime);
   await driver.sleep(700);
   var boxes = await driver.executeScript(
@@ -1560,7 +1560,7 @@ async function panesContainTheirContent(driver) {
 // ---------------------------------------------------------------------------
 async function credentialHistoryNavigation(driver, generations) {
   log.info("=== Step 4: the Credential History pane ===");
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-4.html");
+  await driver.get(baseUrl + "/vc-issuance-4.html");
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_reissue_proof"));
@@ -1702,7 +1702,7 @@ async function credentialHistoryNavigation(driver, generations) {
     "the activated generation should survive a reload");
   // ... and step 3 verifies whatever the history activated, including the cnf
   // binding, which is the check that would fail if the key had not travelled.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-3.html");
+  await driver.get(baseUrl + "/vc-issuance-3.html");
   await driver.wait(until.elementLocated(By.id("vc_credential_raw")), waitTime);
   // Waiting for the RIGHT value, not just any value: this is the assertion.
   await waitForValue(driver, "vc_credential_raw",
@@ -1714,7 +1714,7 @@ async function credentialHistoryNavigation(driver, generations) {
   // ---- a long log: fixed height, scrolling, and capped at 100 -------------
   // Seeded rather than made by 120 real refreshes: what is under test is the
   // pane's behaviour with a long log, not the issuer's patience.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-4.html");
+  await driver.get(baseUrl + "/vc-issuance-4.html");
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.executeScript(
     "var real = JSON.parse(localStorage.getItem('sdjwtvc_credential_history') || '[]');" +
@@ -1773,7 +1773,7 @@ async function credentialHistoryNavigation(driver, generations) {
            longLog.clientHeight + "px box with a sticky header.");
 
   // ---- clearing forgets the list, not the credential ----------------------
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-4.html");
+  await driver.get(baseUrl + "/vc-issuance-4.html");
   await driver.wait(until.elementLocated(By.id("vc_history_clear_button")), waitTime);
   await driver.sleep(600);
   await click(driver, By.id("vc_history_clear_button"));
@@ -1809,7 +1809,7 @@ async function refreshNegatives(driver) {
   // A refresh token the authorization server will not accept. Poisoned rather
   // than removed: "the server refused it" and "there is none" are different
   // states and the page has to distinguish them.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-4.html");
+  await driver.get(baseUrl + "/vc-issuance-4.html");
   await driver.wait(until.elementLocated(By.id("vc_refresh_button")), waitTime);
   await driver.executeScript(
     "localStorage.setItem('token_refresh_token', arguments[0]);",
@@ -1927,7 +1927,7 @@ async function refreshNegatives(driver) {
 // ---------------------------------------------------------------------------
 async function inspectLinksReturnHere(driver) {
   log.info("=== The Inspect links on step 2 ===");
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
+  await driver.get(baseUrl + "/vc-issuance-2.html");
   await driver.wait(until.elementLocated(By.id("vc_access_token")), waitTime);
   // Both fields exist in the HTML before the page restores them from
   // localStorage, so wait for the values rather than for the elements.
@@ -1943,7 +1943,7 @@ async function inspectLinksReturnHere(driver) {
     var links = await driver.findElements(By.linkText("Inspect"));
     assert.ok(links.length > index, "step 2 should offer an Inspect link for the " + which + " token.");
     var href = await links[index].getAttribute("href");
-    assert.ok(href.indexOf("from=sd-jwt-vc-issuance-2.html") !== -1,
+    assert.ok(href.indexOf("from=vc-issuance-2.html") !== -1,
       "the Inspect link should name the page it came from, so the detail page can come back. Got: " + href);
     await driver.executeScript("arguments[0].click();", links[index]);
     // #jwt_payload is in the static HTML, so locating it proves nothing. The
@@ -1959,7 +1959,7 @@ async function inspectLinksReturnHere(driver) {
     var returnLinks = await driver.findElements(By.css("a.return_link"));
     assert.ok(returnLinks.length, "the detail page should offer a return link.");
     var target = await returnLinks[0].getAttribute("href");
-    assert.ok(/sd-jwt-vc-issuance-2\.html$/.test(target),
+    assert.ok(/vc-issuance-2\.html$/.test(target),
       "the return link should come back to step 2, got: " + target);
     assert.ok(/step 2/i.test(await returnLinks[0].getText()),
       "the return link should say where it goes: " + (await returnLinks[0].getText()));
@@ -1993,7 +1993,7 @@ async function stepTwoWithoutTokens(driver) {
     "localStorage.removeItem('token_access_token');" +
     "localStorage.removeItem('token_id_token');" +
     "localStorage.removeItem('token_refresh_token');");
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
+  await driver.get(baseUrl + "/vc-issuance-2.html");
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
@@ -2026,7 +2026,7 @@ async function stepTwoWithoutTokens(driver) {
 // ---------------------------------------------------------------------------
 async function staleProofRecovery(driver) {
   log.info("=== A proof that went stale before Approve ===");
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
+  await driver.get(baseUrl + "/vc-issuance-2.html");
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
@@ -2059,7 +2059,7 @@ async function staleProofRecovery(driver) {
 
   // The page's own proof is now unusable. Approving must still get a credential.
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "approving with a spent c_nonce should rebuild the proof and retry, not fail.");
   var credential = await value(driver, "vc_credential_raw");
   assert.ok(credential && credential.indexOf("~") > 0,
@@ -2090,7 +2090,7 @@ var WRONG_ISSUER = "http://localhost:8181/not-the-offering-issuer";
 
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -2112,7 +2112,7 @@ async function credentialOfferSameDevice(driver) {
   log.info("=== H.1: Credential Offer - Same-Device ===");
 
   // ---- step 0: the chooser ------------------------------------------------
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-0.html");
+  await driver.get(baseUrl + "/vc-issuance-0.html");
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")), waitTime);
   // Start with no use case chosen and no offer in hand — and then say which
   // issuer this wallet is configured for, because that is what step 0 needs to
@@ -2249,7 +2249,7 @@ async function credentialOfferSameDevice(driver) {
   log.info("[H.1] Signing out of " + logoutUrl + " so the authorization request is made afresh.");
   await driver.get(logoutUrl);
   await driver.sleep(600);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("start_issuance_button")), waitTime);
   await driver.sleep(400);
 
@@ -2277,13 +2277,13 @@ async function credentialOfferSameDevice(driver) {
   await driver.findElement(By.id("username")).sendKeys(signInUser);
   await driver.findElement(By.id("password")).sendKeys(signInPassword);
   await click(driver, By.id("kc-login"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "after signing in the workflow should come back to step 2.");
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
   }, fetchWait, "step 2 should prepare the credential request.");
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "approving should produce the credential.");
   var credential = await waitForFilled(driver, "vc_credential_raw",
     "H.1 should end with a credential");
@@ -2355,7 +2355,7 @@ async function crossDeviceOffer(driver) {
 
   // Step 0 needs to know which issuer to send the End-User to; the offer that
   // comes back is what configures everything else.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-0.html");
+  await driver.get(baseUrl + "/vc-issuance-0.html");
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -2395,7 +2395,7 @@ async function crossDeviceOffer(driver) {
   // Poisoned first, so what the pane shows afterwards can only have come from
   // the offer itself (see misconfigureTheWallet).
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];", screen.offerUri);
@@ -2428,7 +2428,7 @@ async function crossDeviceOffer(driver) {
 
   // ---- no authorization request --------------------------------------------
   await click(driver, By.id("start_issuance_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "a pre-authorized offer must NOT go through the authorization server — the End-User was already " +
     "identified, so the workflow should go straight to the Token Request.");
   await driver.wait(async function () {
@@ -2464,7 +2464,7 @@ async function crossDeviceOffer(driver) {
     "nothing should have been issued.");
 
   await driver.executeScript(
-    "document.getElementById('vc_tx_code').value = '00000'; sdjwtvc2.onTxCodeChange();");
+    "document.getElementById('vc_tx_code').value = '00000'; vcissuance2.onTxCodeChange();");
   await click(driver, By.id("vc_token_request_button"));
   await driver.wait(async function () {
     return /refused/i.test((await text(driver, "vc_token_status")) || "");
@@ -2478,7 +2478,7 @@ async function crossDeviceOffer(driver) {
 
   // ---- the right one -------------------------------------------------------
   await driver.executeScript(
-    "document.getElementById('vc_tx_code').value = arguments[0]; sdjwtvc2.onTxCodeChange();", screen.txCode);
+    "document.getElementById('vc_tx_code').value = arguments[0]; vcissuance2.onTxCodeChange();", screen.txCode);
   await click(driver, By.id("vc_token_request_button"));
   await driver.wait(async function () {
     return !!(await value(driver, "vc_access_token"));
@@ -2505,7 +2505,7 @@ async function crossDeviceOffer(driver) {
 
   // ---- and the credential --------------------------------------------------
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "approving should get the credential the offer was for.");
   await driver.sleep(800);
   await assertStepThreeIsHappy(driver, "H.2");
@@ -2527,7 +2527,7 @@ async function deferredIssuance(driver) {
   assert.ok(meta.deferred_credential_endpoint,
     "an issuer that can defer says so with deferred_credential_endpoint; this one should.");
 
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-0.html");
+  await driver.get(baseUrl + "/vc-issuance-0.html");
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -2544,7 +2544,7 @@ async function deferredIssuance(driver) {
     "return { txCode: document.getElementById('tx_code').textContent.trim()," +
     "         offerUri: document.getElementById('offer_uri').textContent.trim() };");
 
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];", screen.offerUri);
@@ -2559,7 +2559,7 @@ async function deferredIssuance(driver) {
   await click(driver, By.id("start_issuance_button"));
   await driver.wait(until.elementLocated(By.id("vc_tx_code")), fetchWait);
   await driver.executeScript(
-    "document.getElementById('vc_tx_code').value = arguments[0]; sdjwtvc2.onTxCodeChange();", screen.txCode);
+    "document.getElementById('vc_tx_code').value = arguments[0]; vcissuance2.onTxCodeChange();", screen.txCode);
   await click(driver, By.id("vc_token_request_button"));
   await driver.wait(async function () {
     return !!(await value(driver, "vc_access_token"));
@@ -2608,7 +2608,7 @@ async function deferredIssuance(driver) {
     "OID4VCI section 9.3 names that error invalid_transaction_id. Got: " + bogus.raw.slice(0, 160));
 
   // ---- the wallet waits, and collects --------------------------------------
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "the wallet should keep polling until the issuer has the credential ready.");
   await driver.sleep(800);
   await assertStepThreeIsHappy(driver, "H.3");
@@ -2704,7 +2704,7 @@ async function authorizationDetailsFlow(driver) {
   await driver.findElement(By.id("username")).sendKeys(MOCK_AS_USER);
   await driver.findElement(By.id("password")).sendKeys("any-password");
   await click(driver, By.id("kc-login"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "the workflow should come back to step 2 with tokens.");
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
@@ -2765,7 +2765,7 @@ async function authorizationDetailsFlow(driver) {
   log.info("[authz details] OK — both identifiers together, the wrong one, and an invented one are all refused.");
 
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "naming the credential by its granted identifier should issue it.");
   await driver.sleep(800);
   await assertStepThreeIsHappy(driver, "authorization_details");
@@ -2839,7 +2839,7 @@ async function notificationFlow(driver) {
   await driver.executeScript(
     "document.getElementById('vc_notification_event').value = 'credential_accepted';" +
     "document.getElementById('vc_notification_description').value = 'stored in the wallet';" +
-    "sdjwtvc3.renderNotification();");
+    "vcissuance3.renderNotification();");
   await click(driver, By.id("vc_notification_button"));
   await waitForStatus(driver, "vc_notification_status",
     function (s) { return /accepted|refused|failed/i.test(s); },
@@ -2883,7 +2883,7 @@ async function batchAndEncryptedIssuance(driver) {
   await driver.findElement(By.id("username")).sendKeys(MOCK_AS_USER);
   await driver.findElement(By.id("password")).sendKeys("any-password");
   await click(driver, By.id("kc-login"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait);
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
   }, fetchWait, "step 2 should assemble the request.");
@@ -2904,7 +2904,7 @@ async function batchAndEncryptedIssuance(driver) {
   await driver.executeScript(
     "document.getElementById('vc_batch_size').value = '3';" +
     "document.getElementById('vc_encrypt_response').checked = true;" +
-    "sdjwtvc2.onRequestOptionsChange();");
+    "vcissuance2.onRequestOptionsChange();");
   await driver.wait(async function () {
     var shown = await text(driver, "vc_request_body");
     try {
@@ -2939,7 +2939,7 @@ async function batchAndEncryptedIssuance(driver) {
   log.info("[batch] OK — the request carries three proofs over three distinct keys, and an encryption key.");
 
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "the issuer should accept the batch and the workflow should reach step 3.");
   await driver.sleep(900);
 
@@ -2971,7 +2971,7 @@ async function batchAndEncryptedIssuance(driver) {
   log.info("[batch] OK — three credentials came back from an ENCRYPTED response, each bound to its own key.");
 
   await driver.executeScript(
-    "document.getElementById('vc_credential_select').value = '2'; sdjwtvc3.onCredentialChange();");
+    "document.getElementById('vc_credential_select').value = '2'; vcissuance3.onCredentialChange();");
   await waitForValue(driver, "vc_credential_raw",
     function (v) { return v === issued.all[2]; },
     "choosing another credential should show that one");
@@ -3016,7 +3016,7 @@ async function signOutOfMockAs(driver) {
 async function stepOneConfigured(driver, mechanism) {
   log.debug("Entering stepOneConfigured(). mechanism=" + (mechanism || "scope"));
   await signOutOfMockAs(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
@@ -3043,7 +3043,7 @@ async function stepOneConfigured(driver, mechanism) {
     // reloads, so a section that did not say which it wanted would silently run
     // whatever the previous one chose.
     "document.getElementById('handoff_request_mechanism').value = arguments[1];" +
-    "sdjwtvc1.onRequestMechanismChange();",
+    "vcissuance1.onRequestMechanismChange();",
     clientId, mechanism === "authorization_details" ? "authorization_details" : "scope");
   await click(driver, By.id("config_save_button"));
   await driver.sleep(300);

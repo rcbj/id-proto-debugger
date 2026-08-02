@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_presentation_2.js
+// File: vc_presentation_2.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC presentation, step 2: choose what to disclose, and present it.
@@ -29,7 +29,7 @@ var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation_2',
+var log = bunyan.createLogger({ name: 'vc_presentation_2',
                                 level: appconfig.logLevel });
 
 // What this page is working with.
@@ -133,7 +133,7 @@ function renderDisclosureTable() {
       : '<span class="vc-bad">not asked for</span>';
     return "<tr>" +
       '<td><input type="checkbox" id="vp_disclose_' + i + '"' + (r.checked ? ' checked="checked"' : '') +
-      ' onchange="return sdjwtvp2.onSelectionChange(' + i + ', this.checked);" /></td>' +
+      ' onchange="return vcpresentation2.onSelectionChange(' + i + ', this.checked);" /></td>' +
       "<td>" + esc(r.name) + "</td>" +
       "<td>" + esc(valueText) + "</td>" +
       "<td>" + flag + "</td>" +

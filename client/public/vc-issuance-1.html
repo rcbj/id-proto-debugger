@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Issuance (1 of 4)</title>
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Issuance (1 of 4)</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,14 +21,14 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/sd_jwt_vc_issuance_1.js">
+<script type="text/javascript" src="/js/vc_issuance_1.js">
 </script>
 
-<!--#include file="/partials/sd_jwt_vc_steps.html"-->
+<!--#include file="/partials/vc_steps.html"-->
 
 <p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
 
-<h3 class="vc-title">SD-JWT VC Issuance &mdash; Step 1 of 4: Discover the Issuer</h3>
+<h3 class="vc-title">VC Issuance &mdash; Step 1 of 4: Discover the Issuer</h3>
 
 
 <p class="vc-intro">Issue a <strong>Selective Disclosure JWT Verifiable Credential</strong>
@@ -66,7 +66,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== The Credential Offer, when the issuer started this (H.1) ====== -->
 <div class="step0 dbg-pane" id="pane_offer" style="display: none;">
-  <legend class="dbg-legend" id="offer_expand_button" onclick="return sdjwtvc1.togglePane('offer_fieldset');">Credential Offer</legend>
+  <legend class="dbg-legend" id="offer_expand_button" onclick="return vcissuance1.togglePane('offer_fieldset');">Credential Offer</legend>
   <fieldset name="offer_fieldset" id="offer_fieldset" style="display: block;">
     <p class="vc-note" id="offer_intro">An issuer has offered you a credential. This is the Credential Offer it
     sent, exactly as received &mdash; nothing has been requested yet.</p>
@@ -95,7 +95,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="offer_discard_button" type="button" value="Discard this offer" onclick="return sdjwtvc1.discardOffer();" />
+              <input class="btn2" id="offer_discard_button" type="button" value="Discard this offer" onclick="return vcissuance1.discardOffer();" />
               <span class="tooltiptext">Forget the offer and carry on as a wallet-initiated issuance. The metadata and configuration below stay as they are.</span>
             </div>
           </td>
@@ -108,7 +108,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Taking an offer that arrived on another device (H.2 / H.3) ====== -->
 <div class="step0 dbg-pane" id="pane_scan">
-  <legend class="dbg-legend" id="scan_expand_button" onclick="return sdjwtvc1.togglePane('scan_fieldset');">Receive a Credential Offer</legend>
+  <legend class="dbg-legend" id="scan_expand_button" onclick="return vcissuance1.togglePane('scan_fieldset');">Receive a Credential Offer</legend>
   <fieldset name="scan_fieldset" id="scan_fieldset" style="display: block;">
     <p class="vc-note">In a cross-device flow the issuer shows a QR code on its own screen and your wallet is
     somewhere else, so the offer does not arrive in this browser by itself. Paste what the QR code contains
@@ -127,7 +127,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="scan_offer_button" type="button" value="Take this offer" onclick="return sdjwtvc1.takeScannedOffer();" />
+              <input class="btn2" id="scan_offer_button" type="button" value="Take this offer" onclick="return vcissuance1.takeScannedOffer();" />
               <span class="tooltiptext">Read the offer, then discover the issuer it names and the authorization server that issuer names — the same thing that happens when an offer arrives in the URL.</span>
             </div>
           </td>
@@ -140,7 +140,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 1: Credential Issuer Metadata (OID4VCI) ============ -->
 <div class="step0 dbg-pane" id="pane_vci">
-  <legend class="dbg-legend" id="vci_expand_button" onclick="return sdjwtvc1.togglePane('vci_fieldset');">Credential Issuer Metadata (OID4VCI)</legend>
+  <legend class="dbg-legend" id="vci_expand_button" onclick="return vcissuance1.togglePane('vci_fieldset');">Credential Issuer Metadata (OID4VCI)</legend>
   <fieldset name="vci_fieldset" id="vci_fieldset" style="display: block;">
     <table border="0">
       <tbody>
@@ -160,18 +160,18 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn_vci_retrieve btn2" id="vci_retrieve_button" type="button" value="Retrieve" onclick="sdjwtvc1.retrieveVciMetadata(); return false;" />
+              <input class="btn_vci_retrieve btn2" id="vci_retrieve_button" type="button" value="Retrieve" onclick="vcissuance1.retrieveVciMetadata(); return false;" />
               <span class="tooltiptext">Fetch the Credential Issuer Metadata document from the URL above.</span>
             </div>
             <div class="tooltip">
-              <input class="btn2" id="vci_upload_button" type="button" value="Upload" onclick="return sdjwtvc1.uploadVciMetadata();" />
+              <input class="btn2" id="vci_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadVciMetadata();" />
               <span class="tooltiptext">Load the Credential Issuer Metadata from a file on disk instead of fetching it. Use this when the issuer sends no CORS headers, which stops a browser reading its metadata however correct the URL is: fetch the document with curl, save it, and load it here. Everything afterwards is identical to a retrieval.</span>
             </div>
-            <input type="file" id="vci_metadata_file" name="vci_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return sdjwtvc1.onVciFileChange(event);" />
+            <input type="file" id="vci_metadata_file" name="vci_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return vcissuance1.onVciFileChange(event);" />
           </td>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vci_clear_button" type="button" value="Clear" onclick="return sdjwtvc1.clearVciMetadata();" />
+              <input class="btn2" id="vci_clear_button" type="button" value="Clear" onclick="return vcissuance1.clearVciMetadata();" />
               <span class="tooltiptext">Forget the retrieved Credential Issuer Metadata document, its table, and the OID4VCI values it populated (on screen and in local storage).</span>
             </div>
           </td>
@@ -179,7 +179,7 @@ function vcSetAllPanes(expand) {
         <tr id="vci_signed_metadata_row">
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vci_validate_signed_metadata_button" type="button" value="Validate Signature" onclick="return sdjwtvc1.validateVciSignature();" />
+              <input class="btn2" id="vci_validate_signed_metadata_button" type="button" value="Validate Signature" onclick="return vcissuance1.validateVciSignature();" />
               <span class="tooltiptext">Verify the signed_metadata JWT on the Credential Issuer Metadata document. The issuer's keys are resolved from the SD-JWT VC issuer metadata (/.well-known/jwt-vc-issuer) or from a jwks_uri in the document itself; the signature is verified in the browser, the iss claim is checked against credential_issuer, and any signed claim that disagrees with the plain JSON is reported.</span>
             </div>
           </td>
@@ -193,7 +193,7 @@ function vcSetAllPanes(expand) {
             </div>
           </td>
           <td>
-            <select id="vci_credential_configuration_select" onchange="return sdjwtvc1.onCredentialConfigurationChange();"></select>
+            <select id="vci_credential_configuration_select" onchange="return vcissuance1.onCredentialConfigurationChange();"></select>
           </td>
         </tr>
       </tbody>
@@ -206,7 +206,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Pane 2: Authorization Server Metadata (RFC 8414) ====== -->
 <div class="step0 dbg-pane" id="pane_as">
-  <legend class="dbg-legend" id="as_expand_button" onclick="return sdjwtvc1.togglePane('as_fieldset');">Authorization Server Metadata (RFC 8414)</legend>
+  <legend class="dbg-legend" id="as_expand_button" onclick="return vcissuance1.togglePane('as_fieldset');">Authorization Server Metadata (RFC 8414)</legend>
   <fieldset name="as_fieldset" id="as_fieldset" style="display: block;">
     <table border="0">
       <tbody>
@@ -226,18 +226,18 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn_oidc_discovery_endpoint btn2" id="as_retrieve_button" type="button" value="Retrieve" onclick="sdjwtvc1.retrieveAsMetadata(); return false;" />
+              <input class="btn_oidc_discovery_endpoint btn2" id="as_retrieve_button" type="button" value="Retrieve" onclick="vcissuance1.retrieveAsMetadata(); return false;" />
               <div class="tooltip">
-                <input class="btn2" id="as_upload_button" type="button" value="Upload" onclick="return sdjwtvc1.uploadAsMetadata();" />
+                <input class="btn2" id="as_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadAsMetadata();" />
                 <span class="tooltiptext">Load the Authorization Server Metadata from a file on disk instead of fetching it. Use this when the authorization server sends no CORS headers, which stops a browser reading its metadata however correct the URL is: fetch the document with curl, save it, and load it here. Everything afterwards is identical to a retrieval — including what debugger.html then shows.</span>
               </div>
-              <input type="file" id="as_metadata_file" name="as_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return sdjwtvc1.onAsFileChange(event);" />
+              <input type="file" id="as_metadata_file" name="as_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return vcissuance1.onAsFileChange(event);" />
               <span class="tooltiptext">Fetch the authorization server metadata document from the URL above.</span>
             </div>
           </td>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="as_clear_button" type="button" value="Clear" onclick="return sdjwtvc1.clearAsMetadata();" />
+              <input class="btn2" id="as_clear_button" type="button" value="Clear" onclick="return vcissuance1.clearAsMetadata();" />
               <span class="tooltiptext">Forget the retrieved authorization server metadata document and every value it populated — here AND on the debugger pages, since both share the same local storage.</span>
             </div>
           </td>
@@ -245,7 +245,7 @@ function vcSetAllPanes(expand) {
         <tr id="as_signed_metadata_row">
           <td>
             <div class="tooltip">
-              <input class="btn2" id="as_validate_signed_metadata_button" type="button" value="Validate Signature" onclick="return sdjwtvc1.validateAsSignature();" />
+              <input class="btn2" id="as_validate_signed_metadata_button" type="button" value="Validate Signature" onclick="return vcissuance1.validateAsSignature();" />
               <span class="tooltiptext">Verify the signed_metadata JWT on the RFC 8414 document against the keys at its own jwks_uri, exactly as the Metadata Retrieval pane on debugger.html does.</span>
             </div>
           </td>
@@ -263,7 +263,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 3: Configuration Parameters ============ -->
 <div class="step0 dbg-pane" id="pane_config">
-  <legend class="dbg-legend" id="config_expand_button" onclick="return sdjwtvc1.togglePane('config_fieldset');">Configuration Parameters</legend>
+  <legend class="dbg-legend" id="config_expand_button" onclick="return vcissuance1.togglePane('config_fieldset');">Configuration Parameters</legend>
   <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
     <p class="vc-note">Every parameter the two metadata documents above can define, plus the client settings the
     authorization request needs. Retrieving either document fills its half of this pane; each value can then be
@@ -280,9 +280,9 @@ function vcSetAllPanes(expand) {
       </table>
     </form>
     <p>
-      <input class="btn2" id="config_save_button" type="button" value="Save" onclick="return sdjwtvc1.saveConfiguration();" />
-      <input class="btn2" id="config_clear_button" type="button" value="Clear All" onclick="return sdjwtvc1.clearConfiguration();" />
-      <input class="btn2" id="config_defaults_button" type="button" value="Restore Defaults" onclick="return sdjwtvc1.restoreDefaults();" />
+      <input class="btn2" id="config_save_button" type="button" value="Save" onclick="return vcissuance1.saveConfiguration();" />
+      <input class="btn2" id="config_clear_button" type="button" value="Clear All" onclick="return vcissuance1.clearConfiguration();" />
+      <input class="btn2" id="config_defaults_button" type="button" value="Restore Defaults" onclick="return vcissuance1.restoreDefaults();" />
       <span class="vc-status" id="config_status">&nbsp;</span>
     </p>
   </fieldset>
@@ -290,7 +290,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 4: Authenticate the user ============ -->
 <div class="step0 dbg-pane" id="pane_handoff">
-  <legend class="dbg-legend" id="handoff_expand_button" onclick="return sdjwtvc1.togglePane('handoff_fieldset');">Authorize Issuance (OIDC Authorization Code Flow)</legend>
+  <legend class="dbg-legend" id="handoff_expand_button" onclick="return vcissuance1.togglePane('handoff_fieldset');">Authorize Issuance (OIDC Authorization Code Flow)</legend>
   <fieldset name="handoff_fieldset" id="handoff_fieldset" style="display: block;">
     <p class="vc-note">OID4VCI authorizes issuance with an ordinary OAuth 2.0 / OpenID Connect Authorization Code
     flow, so this step hands over to the debugger pages that already implement it. The
@@ -321,7 +321,7 @@ function vcSetAllPanes(expand) {
             </div>
           </td>
           <td>
-            <select id="handoff_request_mechanism" name="handoff_request_mechanism" onchange="return sdjwtvc1.onRequestMechanismChange();">
+            <select id="handoff_request_mechanism" name="handoff_request_mechanism" onchange="return vcissuance1.onRequestMechanismChange();">
               <option value="scope" selected="selected">scope — the credential configuration's scope value</option>
               <option value="authorization_details">authorization_details — RFC 9396, type openid_credential</option>
             </select>
@@ -338,7 +338,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="start_issuance_button" type="button" value="Start Issuance" onclick="return sdjwtvc1.startIssuance();" />
+              <input class="btn2" id="start_issuance_button" type="button" value="Start Issuance" onclick="return vcissuance1.startIssuance();" />
               <span class="tooltiptext">Save the configuration and go to debugger.html?sdjwtvc=1 to authenticate the user.</span>
             </div>
           </td>

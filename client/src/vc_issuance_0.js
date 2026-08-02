@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_issuance_0.js
+// File: vc_issuance_0.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC issuance, step 0: choose how the issuance starts.
@@ -19,13 +19,13 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_issuance_0',
+var log = bunyan.createLogger({ name: 'vc_issuance_0',
                                 level: appconfig.logLevel });
 
 // Where each use case sends the user once it is chosen. The offer-based ones
 // start at the issuer, not at the wallet — that is the whole point of them.
 var STARTS = {
-  "wallet-initiated": { url: "/sd-jwt-vc-issuance-1.html", cta: "Start at the wallet" },
+  "wallet-initiated": { url: "/vc-issuance-1.html", cta: "Start at the wallet" },
   "offer-same-device": { issuerPath: "/issuer", cta: "Go to the issuer's web page" },
   // Cross-device: the End-User is standing in front of the issuer's screen, and
   // what it shows is a QR code — so go straight to the screen that displays one
@@ -68,7 +68,7 @@ function buttonHtml(uc, current) {
   if (uc.id === current.id) classes.push("vc-usecase-current");
   var html =
     '<button type="button" class="' + classes.join(" ") + '" id="vc_usecase_' + esc(uc.id) + '"' +
-    (uc.available ? ' onclick="return sdjwtvc0.choose(\'' + esc(uc.id) + '\');"' : ' disabled="disabled"') +
+    (uc.available ? ' onclick="return vcissuance0.choose(\'' + esc(uc.id) + '\');"' : ' disabled="disabled"') +
     '>' +
       '<span class="vc-usecase-head">' +
         '<span class="vc-usecase-spec">' + esc(uc.spec) + '</span>' +
@@ -117,7 +117,7 @@ function choose(id) {
     if (!url) {
       status("Set the credential issuer first (step 1 has the field) — the issuer's web page is where an " +
              "offer comes from, and this workflow does not know where it is yet.", "vc-bad");
-      window.setTimeout(function () { window.location.href = "/sd-jwt-vc-issuance-1.html"; }, 2500);
+      window.setTimeout(function () { window.location.href = "/vc-issuance-1.html"; }, 2500);
       return false;
     }
     status("Taking you to the issuer at " + url + " …", "vc-pending");
@@ -127,7 +127,7 @@ function choose(id) {
   }
 
   status("Starting at the wallet …", "vc-pending");
-  window.location.href = (STARTS[uc.id] || {}).url || "/sd-jwt-vc-issuance-1.html";
+  window.location.href = (STARTS[uc.id] || {}).url || "/vc-issuance-1.html";
   log.debug("Leaving choose(). Sent to the wallet.");
   return false;
 }

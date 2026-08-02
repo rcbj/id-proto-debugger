@@ -3,12 +3,12 @@
 // ---------------------------------------------------------------------------
 // State and mechanics shared by the SD-JWT VC PRESENTATION pages.
 //
-//   sd-jwt-vc-presentation-0.html  choose how the presentation starts
-//   sd-jwt-vc-presentation-1.html  the Verifier's Authorization Request
-//   sd-jwt-vc-presentation-2.html  choose what to disclose, build and send it
-//   sd-jwt-vc-presentation-3.html  what the Verifier decided, and why
+//   vc-presentation-0.html  choose how the presentation starts
+//   vc-presentation-1.html  the Verifier's Authorization Request
+//   vc-presentation-2.html  choose what to disclose, build and send it
+//   vc-presentation-3.html  what the Verifier decided, and why
 //
-// The issuance workflow (sd-jwt-vc-issuance-*.html) puts a credential in this
+// The issuance workflow (vc-issuance-*.html) puts a credential in this
 // browser's storage; this workflow is the other half — a Verifier asks for part
 // of it, and the wallet presents exactly that part and no more.
 //
@@ -66,14 +66,14 @@ var KEYS = {
   VERIFIER_JWKS_URL: "sdjwtvp_verifier_jwks_url",
   // Where the verifier's own pages live. Set on step 0, which is also where
   // it is used: it builds the start links. Was read from a bare string literal
-  // in sd_jwt_vc_presentation_0.js with nothing ever writing it, so the wallet
+  // in vc_presentation_0.js with nothing ever writing it, so the wallet
   // fell through to guessing from the credential issuer.
   VERIFIER_BASE_URL: "sdjwtvp_verifier_base_url"
 };
 
-var STEP1_URL = "/sd-jwt-vc-presentation-1.html";
-var STEP2_URL = "/sd-jwt-vc-presentation-2.html";
-var STEP3_URL = "/sd-jwt-vc-presentation-3.html";
+var STEP1_URL = "/vc-presentation-1.html";
+var STEP2_URL = "/vc-presentation-2.html";
+var STEP3_URL = "/vc-presentation-3.html";
 
 // The Key Binding JWT's media type and the algorithm this wallet signs with.
 // ES256 because that is what the holder key generated during issuance is
@@ -170,7 +170,7 @@ function renderUseCaseBadge() {
   badge.innerHTML = 'Flow: <strong>' + metadataClient.escapeHtmlText(uc.spec) + ' &middot; ' +
                     metadataClient.escapeHtmlText(uc.label) + '</strong> — ' +
                     metadataClient.escapeHtmlText(uc.mechanics) +
-                    ' <a href="/sd-jwt-vc-presentation-0.html">change</a>';
+                    ' <a href="/vc-presentation-0.html">change</a>';
   host.parentNode.insertBefore(badge, host.nextSibling);
   log.debug("Leaving renderUseCaseBadge().");
   return uc;

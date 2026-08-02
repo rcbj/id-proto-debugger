@@ -26,8 +26,8 @@ This project currently supports the following specs & features:
 * [WS-Federation v1.2 Passive Requestor Profile](https://docs.oasis-open.org/wsfed/federation/v1.2/os/ws-federation-1.2-spec-os.html) -- An older protocol, but still common with Microsoft ADFS.
 * [SD-JWT — Selective Disclosure for JWTs, RFC 9901](https://www.rfc-editor.org/rfc/rfc9901.html) -- the format the credential workflows below are built on: salted claim Disclosures hashed into an `_sd` array, a Combined Serialization joined by `~`, and a **Key Binding JWT** (section 4.3) whose `sd_hash` commits to exactly the bytes presented. In-browser: nothing is disclosed that you did not tick.
 * [SD-JWT VC — SD-JWT-based Verifiable Credentials](https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/) -- the credential type on top of SD-JWT: a `dc+sd-jwt` typed JWT with a `vct`, an issuer resolvable by `iss` (an HTTPS identifier with JWT VC Issuer Metadata, or a `did:jwk`), and holder binding through `cnf`.
-* [OpenID for Verifiable Credential Issuance 1.0 (OID4VCI)](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) -- the **SD-JWT VC Issuance workflow**: credential issuer metadata (including RFC 8414 well-known *path insertion*), the authorization code and **pre-authorized code** grants, Credential Offers by value / by `credential_offer_uri` / by QR code with a Transaction Code, `authorization_details` → `credential_identifier`, a nonce endpoint and `openid4vci-proof+jwt` proof of possession, batch issuance, deferred issuance, encrypted Credential Responses, the Notification Endpoint, and **credential refresh** (section 14.5). Appendix H use cases H.1, H.2, H.3 and H.6. See the SD-JWT VC Issuance section below.
-* [OpenID for Verifiable Presentations 1.0 (OID4VP)](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html) -- the **SD-JWT VC Presentation workflow**: an Authorization Request with `response_type=vp_token` and `response_mode=direct_post`, a **DCQL** query decoded into the claim paths being asked for, Client Identifier Prefixes, the request by value or as a signed Request Object by reference, cross-device by QR code, and a `vp_token` keyed by DCQL credential-query id. See the SD-JWT VC Presentation section below.
+* [OpenID for Verifiable Credential Issuance 1.0 (OID4VCI)](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) -- the **VC Issuance workflow**: credential issuer metadata (including RFC 8414 well-known *path insertion*), the authorization code and **pre-authorized code** grants, Credential Offers by value / by `credential_offer_uri` / by QR code with a Transaction Code, `authorization_details` → `credential_identifier`, a nonce endpoint and `openid4vci-proof+jwt` proof of possession, batch issuance, deferred issuance, encrypted Credential Responses, the Notification Endpoint, and **credential refresh** (section 14.5). Appendix H use cases H.1, H.2, H.3 and H.6. See the VC Issuance section below.
+* [OpenID for Verifiable Presentations 1.0 (OID4VP)](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html) -- the **VC Presentation workflow**: an Authorization Request with `response_type=vp_token` and `response_mode=direct_post`, a **DCQL** query decoded into the claim paths being asked for, Client Identifier Prefixes, the request by value or as a signed Request Object by reference, cross-device by QR code, and a `vp_token` keyed by DCQL credential-query id. See the VC Presentation section below.
 * [JAR — JWT-Secured Authorization Request, RFC 9101](https://www.rfc-editor.org/rfc/rfc9101.html) -- how a Verifier's OID4VP request is passed **by reference and signed**, and verified in the browser before anything is disclosed.
 * [WS-Trust 1.0–1.4](https://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html) -- Issue / Renew / Validate / Cancel against an STS, selectable protocol version (1.0/1.1/1.2 pre-OASIS, 1.3/1.4 OASIS ws-sx), with WS-Security (UsernameToken / SAML token), WS-Addressing, and optional XML Signature / XML Encryption. See the WS-Trust Test Tools section below.
 * [XML Signature](https://www.w3.org/TR/xmldsig-core/)
@@ -92,7 +92,7 @@ So far, this tool has been tested with the following OAuth2 or OIDC implementati
 * Okta (OIDC + OAuth2)
 * Auth0 (OIDC + OAuth2)
 * ForgeRock (OIDC + OAuth2 + SAML2)
-* Walt.ID (SD-JWT VC Issuance + Presentation)
+* Walt.ID (VC Issuance + Presentation)
 
 # 3Scale Usage Notes
 The version of 3Scale SaaS + APICast only supports OAuth2; 3Scale can support the OIDC Authorization Code Flow since the response_type and grant_type values match OAuth2's Authorization Code Grant.  The other OIDC Authentication Flows are not supported by 3Scale OAuth2.  The latest version of 3Scale on-premise has OIDC support.  As of 12/3/2017, I haven't been able to test this yet.
@@ -634,11 +634,11 @@ Set the level to `info` (`sts/env/test.js`) for a quiet run.
 ### STS for testing
 The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite this repository also ships a small **WS-Trust STS mock** (`sts/`) that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. Against a **deployed static site** the same mock is started on the host and reached over loopback (`http://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would be blocked as mixed content. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
 
-## SD-JWT VC Issuance (OID4VCI)
+## VC Issuance (OID4VCI)
 
 Issue a **Selective Disclosure JWT Verifiable Credential** — [SD-JWT, RFC 9901](https://www.rfc-editor.org/rfc/rfc9901.html) — from a Credential Issuer using [OpenID for Verifiable Credential Issuance](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) (OID4VCI). The workflow plays the wallet's part across five pages — choose a use case, discover the issuer, authorize and approve, inspect the credential, and refresh it — and deliberately **reuses the OIDC Authorization Code flow already implemented on `debugger.html` / `debugger2.html`** to authorize the issuance, exactly as OID4VCI intends. It is reached from its own card on the landing page.
 
-### Step 0 — Choose a use case (`sd-jwt-vc-issuance-0.html`)
+### Step 0 — Choose a use case (`vc-issuance-0.html`)
 A credential reaches a wallet in more than one way, and OID4VCI's [Appendix H](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#name-use-cases) names them. They are not different protocols — they differ in **who starts**, **how the wallet learns what is on offer**, and **which grant authorizes it** — so the choice is made once, here, and the rest of the workflow follows it. Each is a card describing what it is and what it does on the wire; the two that are not implemented yet are listed anyway, plainly marked, because knowing what is coming is more useful than a shorter list.
 
 | | Use case | Who starts | On the wire |
@@ -671,7 +671,7 @@ the `transaction_id` stops working, as OID4VCI section 9 requires.
 
 **H.1 in this workflow**: choosing it sends the End-User to the *issuer's* web page (the mock issuer's is at `<credential issuer>/issuer`) rather than into the wallet. Following the offer link there brings them back to step 1 with a **Credential Offer** — passed either by value in `credential_offer` or by reference in `credential_offer_uri`, both of which the page accepts — which names the issuer, the credential configuration on offer, and the `authorization_code` grant with its **`issuer_state`**. The offer is shown in its own pane, the wallet discovers the issuer *and* the authorization server it names without being asked, and the `issuer_state` is carried into the authorization request so the issuer can tie the two halves together. The offer can be discarded, which returns the workflow to wallet-initiated.
 
-### Step 1 — Discover the issuer (`sd-jwt-vc-issuance-1.html`)
+### Step 1 — Discover the issuer (`vc-issuance-1.html`)
 Four panes, plus a fifth — **Credential Offer** — shown only when an offer brought the End-User here:
 
 1. **Credential Issuer Metadata (OID4VCI)** — retrieve `/.well-known/openid-credential-issuer`, tabulate it (with a note saying which document it is and where it came from), pick one entry of `credential_configurations_supported`, and **Validate Signature** on the document's `signed_metadata` JWT. The issuer's keys are resolved the SD-JWT VC way, from `/.well-known/jwt-vc-issuer` under the credential issuer identifier (or a `jwks_uri` in the document itself); the rest of the check is the same code the Metadata Retrieval pane on `debugger.html` runs — signature, `iss`, and any signed claim that disagrees with the plain JSON.
@@ -682,7 +682,7 @@ Four panes, plus a fifth — **Credential Offer** — shown only when an offer b
 ### The OIDC leg (`debugger.html` → IdP → `debugger2.html`)
 The `sdjwtvc=1` query parameter puts the debugger into this workflow: it shows a banner saying so, starts the Authorization Code request with the configuration from step 1, and — once the user has authenticated and `debugger2.html` has exchanged the code for tokens — sends the browser on to step 2. Without the parameter neither page behaves any differently.
 
-### Step 2 — Approve and request (`sd-jwt-vc-issuance-2.html`)
+### Step 2 — Approve and request (`vc-issuance-2.html`)
 Shows the access / ID / refresh tokens the OIDC leg obtained (and the decoded ID token claims), generates an **ES256 holder key pair** in the browser (the private half never leaves it), and asks the user to approve the issuance.
 
 The whole request is assembled **before** the user approves — the page fetches a `c_nonce` from the issuer's Nonce Endpoint and signs a proof of possession (`typ: openid4vci-proof+jwt`, the holder public key in the header, the credential issuer as `aud`) on load — so the nonce, the proof (raw and decoded), the JSON body, and a box showing the **fully assembled call** (method, full URL, headers including the Bearer access token, and body) are all there to read first. Approving sends exactly that; because a `c_nonce` is single use and expires, a proof that has gone stale by then is rebuilt and the request retried once. **Deny** sends nothing and returns to step 1.
@@ -721,10 +721,10 @@ told — so it is a button, not something that happens automatically. The mock i
 event rather than answering `204` to anything, and records what it was told, so a test can check that the
 notification actually landed.
 
-### Step 3 — The credential (`sd-jwt-vc-issuance-3.html`)
+### Step 3 — The credential (`vc-issuance-3.html`)
 Takes the returned SD-JWT VC apart the way a verifier would: the Combined Serialization with its `~` separators, the issuer-signed JWT header and payload, and one row per **Disclosure** — salt, claim name, value, and the digest recomputed in the browser (`base64url(SHA-256(the ASCII of the base64url Disclosure))`) and looked up in the JWT's `_sd`. A checks table reports the media type (`dc+sd-jwt`), the algorithm, `vct`, the `cnf` binding to the holder key from step 2, `_sd_alg`, the validity window, whether a Key Binding JWT is present (it is not, at issuance), digest coverage, and the **issuer signature**, verified against the issuer's published JWKS. The last pane shows the claim set a verifier ends up with if every Disclosure is presented.
 
-### Step 4 — Refresh the credential (`sd-jwt-vc-issuance-4.html`)
+### Step 4 — Refresh the credential (`vc-issuance-4.html`)
 A credential goes stale: its claim values age and its validity window runs out.
 [Section 14.5](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html), *Refreshing Issued
 Credentials*, gives two mechanisms — get an updated credential from the Credential Endpoint with a valid access
@@ -847,7 +847,7 @@ when `WALTID_ISSUER_URL` is unset, so a run without that container still passes.
 ### Mock Credential Issuer for testing
 The `sts/` service also hosts a **bare-minimum OID4VCI Credential Issuer**: `/.well-known/openid-credential-issuer` (with `signed_metadata` and one `dc+sd-jwt` credential configuration), `/.well-known/jwt-vc-issuer` for key resolution, `POST /oid4vci/nonce`, and `POST /oid4vci/credential`. It requires a Bearer token, and properly verifies the wallet's proof of possession (typ, algorithm, audience, single-use nonce, and the signature against the key in the proof's own header) before minting an SD-JWT VC per RFC 9901 — disclosures with 128-bit salts, `_sd` digests plus a decoy, `_sd_alg`, `cnf.jwk`, and the required trailing `~`. It cannot validate an access token issued by a separate authorization server, and does not pretend to. It also implements **`authorization_details`** of type `openid_credential` (advertised as `authorization_details_types_supported`, granting `credential_identifiers` in the token response and enforcing the mutual exclusion at the credential endpoint), **batch issuance** (several proofs, one credential per proof, `batch_size` enforced — and one `c_nonce` per *request*, not per proof), **response encryption** (RSA-OAEP-256 to the wallet's key, refusing any algorithm it does not perform), a **Notification Endpoint** that validates the `notification_id` and the event and remembers what it was told, the **pre-authorized code grant** (`tx_code` required, checked, and single use), and a **Deferred Credential Endpoint** — `202` with a `transaction_id` for a few seconds, then the credential, then `invalid_transaction_id` for anyone who asks again. For H.1 it also hosts the **issuer's side of a Credential Offer**: a web page at `/issuer` with the offer links, `GET /issuer/offer` which builds the offer and sends the End-User to the wallet (`OID4VCI_WALLET_URL`) with it — by value or, with `?by=reference`, as a `credential_offer_uri` pointing at `GET /oid4vci/credential-offer/:id` — and it remembers each `issuer_state` so the authorization endpoint can recognise a request as belonging to an offer it made. For the cross-device use cases it shows a real **QR code** and the Transaction Code on its own page (`/issuer/offer?mode=cross-device|deferred`). By default the metadata advertises the mock **itself** as its authorization server, which is what lets an issuer-initiated offer be walked end to end with no identity provider at all; `OID4VCI_AUTHORIZATION_SERVER` points it at a real one instead. The end-to-end test is `tests/sd_jwt_vc_issuance.js`.
 
-## SD-JWT VC Presentation (OID4VP)
+## VC Presentation (OID4VP)
 
 Issuance puts a credential in a wallet; **presentation** is what it is for. This workflow plays the wallet's part
 when a **verifier** asks for part of a credential over
@@ -857,7 +857,7 @@ when a **verifier** asks for part of a credential over
 landing page, and it presents whatever credential the issuance workflow left in this browser — the two workflows
 meet at those `localStorage` keys and nowhere else.
 
-### Step 0 — Choose a flow (`sd-jwt-vc-presentation-0.html`)
+### Step 0 — Choose a flow (`vc-presentation-0.html`)
 The three shapes an OID4VP request can take. All of them **start at the verifier**, because a presentation is
 something a verifier asks for:
 
@@ -870,7 +870,7 @@ something a verifier asks for:
 The page also says whether this wallet is holding a credential *and* the private half of the key it is bound to,
 because without both there is nothing to present.
 
-### Step 1 — The verifier's request (`sd-jwt-vc-presentation-1.html`)
+### Step 1 — The verifier's request (`vc-presentation-1.html`)
 Nothing is disclosed here. The page answers three questions: **who** is asking (the Client Identifier and what its
 prefix lets the wallet conclude — with the signature verified when there is one), **what** they are asking for (the
 **DCQL** query decoded into claim paths, shown in green when the credential can disclose them and red when it
@@ -879,7 +879,7 @@ cannot, with the `vct` checked against the credential in hand), and **how** the 
 `dcql_query`, no credential, no holder key — says so instead of letting step 2 discover it. A pane takes a request
 pasted from a QR code for the cross-device flow.
 
-### Step 2 — Choose what to disclose (`sd-jwt-vc-presentation-2.html`)
+### Step 2 — Choose what to disclose (`vc-presentation-2.html`)
 The page selective disclosure exists for. One checkbox per Disclosure, marked with whether *this* verifier asked
 for it; the default selection is exactly what was asked for and nothing more. Two buttons make the trade-off
 concrete: **Only what was asked for**, and **Everything (over-disclose)** — which is what a credential format
@@ -897,7 +897,7 @@ without selective disclosure would force on you. From that choice the wallet ass
 **Refuse** is a first-class answer: OID4VP defines `access_denied` for it, and the verifier is told the request was
 seen and declined — which is not the same as never having arrived.
 
-### Step 3 — The verdict (`sd-jwt-vc-presentation-3.html`)
+### Step 3 — The verdict (`vc-presentation-3.html`)
 Two accounts of the same event. **What the wallet sent**, with the presentation's parts coloured (issuer-signed
 JWT · Disclosure · KB-JWT) and re-checked here over the bytes themselves — `sd_hash` recomputed, every
 Disclosure's digest looked up in `_sd`, the KB-JWT's `nonce` and `aud` compared with the request. And **what the
@@ -943,7 +943,7 @@ presented *our* credential would look identical and prove nothing.
 
 | Step | What happens |
 |---|---|
-| 1 | walt.id issues a credential through `sd-jwt-vc-issuance-*` (End-User authenticated at Keycloak, since walt.id authenticates nobody itself) |
+| 1 | walt.id issues a credential through `vc-issuance-*` (End-User authenticated at Keycloak, since walt.id authenticates nobody itself) |
 | 2 | walt.id's management API creates a verification session: `POST /verification-session/create` with `flow_type`, a `dcql_query` (`meta.vct_values` read off the credential it just issued, not guessed) and its own `vc_policies` |
 | 3 | Its Authorization Request — both shapes: the full one by value and the short `request_uri` one — is handed to our step 1, and the workflow runs: choose disclosures, sign the KB-JWT, `direct_post` the `vp_token` |
 | 4 | walt.id's session record (`GET /verification-session/{id}/info`) is read back: its status, its `policy_results`, and the claims it ended up with — `given_name` and `birthdate` present, `email` and `phone_number` absent |

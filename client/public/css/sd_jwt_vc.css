@@ -7,7 +7,7 @@
 .vc-intro, .vc-note { max-width: 1100px; line-height: 1.45; }
 .vc-note { font-size: 0.9em; color: #333; }
 
-/* --- step indicator (partials/sd_jwt_vc_steps.html) ---
+/* --- step indicator (partials/vc_steps.html) ---
    Every page of the workflow carries the same row of links to every step, at the
    top. It is ONE row: `nowrap` plus items that may shrink (flex-basis 0,
    min-width 0), so five steps share the width instead of the last one dropping

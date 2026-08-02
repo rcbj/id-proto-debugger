@@ -5,10 +5,10 @@
 //
 // Two pages make that request, for two different reasons:
 //
-//   sd-jwt-vc-issuance-2.html   the first issuance — the access token has just
+//   vc-issuance-2.html   the first issuance — the access token has just
 //                               been obtained and the credential does not exist
 //                               yet;
-//   sd-jwt-vc-issuance-4.html   a refresh (OID4VCI section 14.5) — the wallet
+//   vc-issuance-4.html   a refresh (OID4VCI section 14.5) — the wallet
 //                               already holds a credential and asks the issuer
 //                               for an up-to-date one.
 //

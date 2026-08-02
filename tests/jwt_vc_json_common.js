@@ -367,7 +367,7 @@ async function plantIntoWallet(driver, opts) {
   log.debug("Entering plantIntoWallet().");
   const By = opts.By;
   const until = opts.until;
-  await driver.get(opts.baseUrl + "/sd-jwt-vc-presentation-0.html");
+  await driver.get(opts.baseUrl + "/vc-presentation-0.html");
   await driver.wait(until.elementLocated(By.id("vp_usecases")), opts.waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +

@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_issuance_3.js
+// File: vc_issuance_3.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC issuance, step 3: the credential the issuer returned.
@@ -19,7 +19,7 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_issuance_3',
+var log = bunyan.createLogger({ name: 'vc_issuance_3',
                                 level: appconfig.LOG_LEVEL || 'info' });
 
 // The SD-JWT VC media types: the current one and the one earlier drafts used.
@@ -318,7 +318,7 @@ function copyCredential() {
 }
 
 function startOver() {
-  window.location.href = "/sd-jwt-vc-issuance-1.html";
+  window.location.href = "/vc-issuance-1.html";
   return false;
 }
 

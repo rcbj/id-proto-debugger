@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Presentation (choose a flow)</title>
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Presentation (choose a flow)</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,14 +21,14 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/sd_jwt_vc_presentation_0.js">
+<script type="text/javascript" src="/js/vc_presentation_0.js">
 </script>
 
 <!--#include file="/partials/sd_jwt_vp_steps.html"-->
 
 <p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
 
-<h3 class="vc-title">SD-JWT VC Presentation &mdash; How is the credential being asked for?</h3>
+<h3 class="vc-title">VC Presentation &mdash; How is the credential being asked for?</h3>
 
 <p class="vc-intro">A credential is only useful when it is shown to someone. This workflow is the
 <strong>presentation</strong> half of SD-JWT VC: a verifier asks for particular claims, and the wallet answers
@@ -37,7 +37,7 @@ with those claims and no others &mdash; over
 (OID4VP), using the presentation format
 <a href="https://www.rfc-editor.org/rfc/rfc9901.html" target="_blank" rel="noopener noreferrer">RFC 9901</a>
 defines. It presents whatever credential the
-<a href="/sd-jwt-vc-issuance-0.html">issuance workflow</a> left in this browser.</p>
+<a href="/vc-issuance-0.html">issuance workflow</a> left in this browser.</p>
 
 <div class="vc-note vc-status" id="vp_credential_state">&nbsp;</div>
 
@@ -46,7 +46,7 @@ defines. It presents whatever credential the
      the verifier base URL, so this is the thing you set before choosing how the
      verifier asks. -->
 <div class="step0 dbg-pane" id="pane_config">
-  <legend class="dbg-legend" id="config_expand_button" onclick="return sdjwtvp0.togglePane('config_fieldset');">Configuration Parameters</legend>
+  <legend class="dbg-legend" id="config_expand_button" onclick="return vcpresentation0.togglePane('config_fieldset');">Configuration Parameters</legend>
   <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
     <p class="vc-note">What this wallet needs to know about the verifier. Unlike an issuer, an OID4VP verifier
     publishes no discovery document &mdash; there is no well-known endpoint to retrieve and nothing to populate
@@ -76,9 +76,9 @@ defines. It presents whatever credential the
       </table>
     </form>
     <p>
-      <input class="btn2" id="config_save_button" type="button" value="Save" onclick="return sdjwtvp0.saveConfiguration();" />
-      <input class="btn2" id="config_clear_button" type="button" value="Clear All" onclick="return sdjwtvp0.clearConfiguration();" />
-      <input class="btn2" id="config_defaults_button" type="button" value="Restore Defaults" onclick="return sdjwtvp0.restoreDefaults();" />
+      <input class="btn2" id="config_save_button" type="button" value="Save" onclick="return vcpresentation0.saveConfiguration();" />
+      <input class="btn2" id="config_clear_button" type="button" value="Clear All" onclick="return vcpresentation0.clearConfiguration();" />
+      <input class="btn2" id="config_defaults_button" type="button" value="Restore Defaults" onclick="return vcpresentation0.restoreDefaults();" />
       <span class="vc-status" id="config_status">&nbsp;</span>
     </p>
   </fieldset>

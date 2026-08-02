@@ -7,7 +7,7 @@
 // Three panes in this app do the same thing to three different JSON documents:
 //
 //   debugger.html               OIDC Discovery 1.0 / RFC 8414 (authorization server)
-//   sd-jwt-vc-issuance-1.html   OID4VCI credential issuer metadata, and a second
+//   vc-issuance-1.html   OID4VCI credential issuer metadata, and a second
 //                               copy of the RFC 8414 pane
 //
 // They fetch a URL, tabulate what came back (saying which kind of document it is

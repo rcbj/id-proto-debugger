@@ -1094,7 +1094,7 @@ function maybeStartSdJwtVcFlow() {
   if (!$("#authorization_endpoint").val() || !$("#client_id").val()) {
     $("#sdjwtvc_banner").append(
       "<p class='vc-bad'>The authorization endpoint or client id is not configured, so the flow was not " +
-      "started. Go back to <a href='/sd-jwt-vc-issuance-1.html'>step 1</a> and retrieve the metadata.</p>");
+      "started. Go back to <a href='/vc-issuance-1.html'>step 1</a> and retrieve the metadata.</p>");
     return false;
   }
   // An issuer-initiated issuance (OID4VCI Appendix H.1) carries an issuer_state

@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_presentation_1.js
+// File: vc_presentation_1.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC presentation, step 1: the Verifier's Authorization Request.
@@ -28,7 +28,7 @@ var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation_1',
+var log = bunyan.createLogger({ name: 'vc_presentation_1',
                                 level: appconfig.logLevel });
 
 // The request as this page understands it: { params, dcql, clientMetadata,

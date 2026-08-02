@@ -1152,7 +1152,7 @@ app.get('/issuer/offer', function (req, res) {
   const mode = String(req.query.mode || 'same-device');
   const built = buildCredentialOffer(req, configurationIds, mode);
   const wallet = String(req.query.wallet || WALLET_BASE_URL).replace(/\/+$/, '') +
-                 '/sd-jwt-vc-issuance-1.html';
+                 '/vc-issuance-1.html';
 
   // Sweep expired offers/states/codes while we are here.
   const now = Date.now();
@@ -2195,7 +2195,7 @@ app.get('/oid4vp/start', function (req, res) {
   const record = buildVpRequest(req, { byReference: byReference, format: format });
   const query = vpRequestQuery(req, record);
   const wallet = String(req.query.wallet || VP_WALLET_URL).replace(/\/+$/, '') +
-                 '/sd-jwt-vc-presentation-1.html';
+                 '/vc-presentation-1.html';
 
   if (mode !== 'cross-device') {
     // Same device: the browser IS the wallet's user agent, so send it there.

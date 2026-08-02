@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_issuance_2.js
+// File: vc_issuance_2.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC issuance, step 2: the tokens, the user's approval, and the OID4VCI
@@ -29,7 +29,7 @@ var sdJwtVc = require("./sd_jwt_vc");
 // refresh the credential (OID4VCI section 14.5).
 var vciWallet = require("./vci_wallet");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_issuance_2',
+var log = bunyan.createLogger({ name: 'vc_issuance_2',
                                 level: appconfig.LOG_LEVEL || 'info' });
 
 // The request as it currently stands: what step 1 configured, plus what this
@@ -965,7 +965,7 @@ function denyIssuance() {
   sdJwtVc.endFlow();
   status("vc_approval_status",
     "Issuance denied. Nothing was sent to the issuer. Returning to step 1 …", "vc-pending");
-  window.setTimeout(function () { window.location.href = "/sd-jwt-vc-issuance-1.html"; }, 1200);
+  window.setTimeout(function () { window.location.href = "/vc-issuance-1.html"; }, 1200);
   return false;
 }
 

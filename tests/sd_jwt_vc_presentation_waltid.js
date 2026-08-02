@@ -154,7 +154,7 @@ async function signOutOfKeycloak(driver) {
 async function issueFromWaltid(driver) {
   log.info("=== Phase 1: walt.id issues the credential (through our own pages) ===");
   await signOutOfKeycloak(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
@@ -183,7 +183,7 @@ async function issueFromWaltid(driver) {
   await driver.executeScript(
     "var s = document.getElementById('vci_credential_configuration_select');" +
     "s.value = arguments[0];" +
-    "sdjwtvc1.onCredentialConfigurationChange();", CONFIGURATION_ID);
+    "vcissuance1.onCredentialConfigurationChange();", CONFIGURATION_ID);
   await waitForValue(driver, "vci_credential_configuration_id",
     function (v) { return v === CONFIGURATION_ID; },
     "choosing the credential configuration should select it");
@@ -228,7 +228,7 @@ async function issueFromWaltid(driver) {
   await driver.findElement(By.id("username")).sendKeys(clientId);
   await driver.findElement(By.id("password")).sendKeys(clientId);
   await click(driver, By.id("kc-login"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "the code should have been exchanged and the workflow returned to step 2.");
 
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
@@ -236,7 +236,7 @@ async function issueFromWaltid(driver) {
     return !!(await value(driver, "vc_proof_jwt"));
   }, fetchWait, "step 2 should have built the Credential Request.");
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "approving should have obtained a credential from walt.id.");
   var credential = await waitForFilled(driver, "vc_credential_raw",
     "step 3 should be showing the credential walt.id issued");
@@ -345,7 +345,7 @@ async function presentToWaltid(driver, session, opts) {
            (byReference ? "request by reference" : "request by value") +
            (withhold ? ", withholding " + withhold : "") + ") ===");
 
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-1.html?" + requestQuery(session, byReference));
+  await driver.get(baseUrl + "/vc-presentation-1.html?" + requestQuery(session, byReference));
   await driver.wait(until.elementLocated(By.id("vp_request_status")), waitTime);
   var requestStatus = await waitForStatus(driver, "vp_request_status",
     function (s) { return /Request read|cannot be answered|Could not/.test(s); },
@@ -422,7 +422,7 @@ async function presentToWaltid(driver, session, opts) {
   log.info("[phase3] built an SD-JWT+KB with " + (parts.length - 2) + " Disclosure(s) for walt.id.");
 
   await click(driver, By.id("vp_present_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-presentation-3.html"), fetchWait,
     "presenting should open step 3, whatever walt.id decided.");
   await driver.sleep(800);
   var sent = await driver.executeScript(

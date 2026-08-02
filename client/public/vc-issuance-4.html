@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Issuance (4 of 4)</title>
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Issuance (4 of 4)</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,14 +21,14 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/sd_jwt_vc_issuance_4.js">
+<script type="text/javascript" src="/js/vc_issuance_4.js">
 </script>
 
-<!--#include file="/partials/sd_jwt_vc_steps.html"-->
+<!--#include file="/partials/vc_steps.html"-->
 
-<p class="vc-return"><a id="return_link" href="/sd-jwt-vc-issuance-3.html">&larr; Back to step 3 (the credential)</a></p>
+<p class="vc-return"><a id="return_link" href="/vc-issuance-3.html">&larr; Back to step 3 (the credential)</a></p>
 
-<h3 class="vc-title">SD-JWT VC Issuance &mdash; Step 4 of 4: Refresh the Credential</h3>
+<h3 class="vc-title">VC Issuance &mdash; Step 4 of 4: Refresh the Credential</h3>
 
 
 <p class="vc-intro">A credential does not stay current: its claim values go out of date and its validity window
@@ -65,7 +65,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 1: the credential the wallet holds ============ -->
 <div class="step0 dbg-pane" id="pane_current">
-  <legend class="dbg-legend" id="current_expand_button" onclick="return sdjwtvc4.togglePane('current_fieldset');">The Credential You Hold</legend>
+  <legend class="dbg-legend" id="current_expand_button" onclick="return vcissuance4.togglePane('current_fieldset');">The Credential You Hold</legend>
   <fieldset name="current_fieldset" id="current_fieldset" style="display: block;">
     <p class="vc-note">What there is to refresh, and why anyone would: the validity window is the usual reason,
     but not the only one &mdash; a claim the issuer knows has changed is another, and the wallet cannot tell from
@@ -96,7 +96,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Credential History ============ -->
 <div class="step0 dbg-pane" id="pane_history">
-  <legend class="dbg-legend" id="history_expand_button" onclick="return sdjwtvc4.togglePane('history_fieldset');">Credential History</legend>
+  <legend class="dbg-legend" id="history_expand_button" onclick="return vcissuance4.togglePane('history_fieldset');">Credential History</legend>
   <fieldset name="history_fieldset" id="history_fieldset" style="display: block;">
     <p class="vc-note"><strong>Every attempt</strong> made on this page, newest first &mdash; not only the ones
     that worked. Each access token refresh, each Credential Request, each poll of the Deferred Credential
@@ -119,12 +119,12 @@ function vcSetAllPanes(expand) {
     <em>backwards</em> as well as forwards: a refresh that turned out worse than what it replaced is a real
     outcome, and going back to the credential that was working is what a wallet does about it.</p>
     <p class="vc-history-nav">
-      <input class="btn2" id="vc_history_oldest_button" type="button" value="&#8676; Oldest" onclick="return sdjwtvc4.historyOldest();" />
-      <input class="btn2" id="vc_history_older_button" type="button" value="&#9664; Older" onclick="return sdjwtvc4.historyOlder();" />
+      <input class="btn2" id="vc_history_oldest_button" type="button" value="&#8676; Oldest" onclick="return vcissuance4.historyOldest();" />
+      <input class="btn2" id="vc_history_older_button" type="button" value="&#9664; Older" onclick="return vcissuance4.historyOlder();" />
       <span class="vc-history-position" id="vc_history_position">&mdash;</span>
-      <input class="btn2" id="vc_history_newer_button" type="button" value="Newer &#9654;" onclick="return sdjwtvc4.historyNewer();" />
-      <input class="btn2" id="vc_history_latest_button" type="button" value="Latest &#8677;" onclick="return sdjwtvc4.historyLatest();" />
-      <input class="btn2" id="vc_history_clear_button" type="button" value="Clear History" onclick="return sdjwtvc4.clearHistory();" />
+      <input class="btn2" id="vc_history_newer_button" type="button" value="Newer &#9654;" onclick="return vcissuance4.historyNewer();" />
+      <input class="btn2" id="vc_history_latest_button" type="button" value="Latest &#8677;" onclick="return vcissuance4.historyLatest();" />
+      <input class="btn2" id="vc_history_clear_button" type="button" value="Clear History" onclick="return vcissuance4.clearHistory();" />
     </p>
     <div class="vc-status" id="vc_history_status">&nbsp;</div>
     <div id="vc_history_table">&nbsp;</div>
@@ -133,7 +133,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Pane 2: the Refresh Token call (RFC 6749 section 6) ====== -->
 <div class="step0 dbg-pane" id="pane_refresh">
-  <legend class="dbg-legend" id="refresh_expand_button" onclick="return sdjwtvc4.togglePane('refresh_fieldset');">Refresh the Access Token</legend>
+  <legend class="dbg-legend" id="refresh_expand_button" onclick="return vcissuance4.togglePane('refresh_fieldset');">Refresh the Access Token</legend>
   <fieldset name="refresh_fieldset" id="refresh_fieldset" style="display: block;">
     <p class="vc-note">Plain OAuth 2.0: <code>grant_type=refresh_token</code> at the authorization server's Token
     Endpoint. Nothing about this call is OID4VCI-specific &mdash; which is section 14.5's point. What is specific
@@ -153,7 +153,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip"><label>Refresh Token</label><span class="tooltiptext">Issued alongside the access token, and the whole reason a credential can be refreshed without troubling the End-User. An authorization server is not obliged to issue one.</span></div>
-            <p style="font-size:80%;"><a href="/token_detail.html?type=refresh&amp;from=sd-jwt-vc-issuance-4.html">Inspect</a></p>
+            <p style="font-size:80%;"><a href="/token_detail.html?type=refresh&amp;from=vc-issuance-4.html">Inspect</a></p>
           </td>
           <td><textarea class="vc-token" rows="4" readonly id="vc_refresh_token_value"></textarea></td>
         </tr>
@@ -166,7 +166,7 @@ function vcSetAllPanes(expand) {
           <td>
             <input type="text" id="vc_refresh_scope" name="vc_refresh_scope" size="40" autocomplete="off"
                    placeholder="(empty — keep the scope originally granted)"
-                   oninput="return sdjwtvc4.onRefreshScopeChange();" />
+                   oninput="return vcissuance4.onRefreshScopeChange();" />
           </td>
         </tr>
         <tr>
@@ -176,7 +176,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vc_refresh_button" type="button" value="Send the Refresh Request" onclick="return sdjwtvc4.sendRefreshRequest();" />
+              <input class="btn2" id="vc_refresh_button" type="button" value="Send the Refresh Request" onclick="return vcissuance4.sendRefreshRequest();" />
               <span class="tooltiptext">Exchange the refresh token for a fresh access token. No credential is issued by this call — that is the pane below.</span>
             </div>
           </td>
@@ -193,7 +193,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Pane 3: the Credential Request, again ====== -->
 <div class="step0 dbg-pane" id="pane_reissue">
-  <legend class="dbg-legend" id="reissue_expand_button" onclick="return sdjwtvc4.togglePane('reissue_fieldset');">Ask the Credential Endpoint Again</legend>
+  <legend class="dbg-legend" id="reissue_expand_button" onclick="return vcissuance4.togglePane('reissue_fieldset');">Ask the Credential Endpoint Again</legend>
   <fieldset name="reissue_fieldset" id="reissue_fieldset" style="display: block;">
     <p class="vc-note">The same Credential Request step 2 makes &mdash; a fresh <code>c_nonce</code>, a proof of
     possession signed by the holder key, the credential named the way section 8.2 requires &mdash; sent with the
@@ -217,7 +217,7 @@ function vcSetAllPanes(expand) {
             </div>
           </td>
           <td>
-            <select id="vc_refresh_key_mode" name="vc_refresh_key_mode" onchange="return sdjwtvc4.onKeyModeChange();">
+            <select id="vc_refresh_key_mode" name="vc_refresh_key_mode" onchange="return vcissuance4.onKeyModeChange();">
               <option value="reuse" selected="selected">Reuse the key the credential is already bound to</option>
               <option value="new">Generate a new holder key pair</option>
             </select>
@@ -233,7 +233,7 @@ function vcSetAllPanes(expand) {
           <td>
             <textarea class="vc-token" rows="4" id="vc_holder_private_jwk"
                       placeholder='Paste the holder key pair file, or a private JWK: {"kty":"EC","crv":"P-256","d":"…","x":"…","y":"…"}'
-                      oninput="return sdjwtvc4.onHolderKeyPasted();"></textarea>
+                      oninput="return vcissuance4.onHolderKeyPasted();"></textarea>
             <span class="vc-note" id="vc_holder_key_note">&nbsp;</span>
           </td>
         </tr>
@@ -256,7 +256,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vc_reissue_button" type="button" value="Request a Refreshed Credential" onclick="return sdjwtvc4.requestRefreshedCredential();" />
+              <input class="btn2" id="vc_reissue_button" type="button" value="Request a Refreshed Credential" onclick="return vcissuance4.requestRefreshedCredential();" />
               <span class="tooltiptext">Send it. Nothing the wallet already holds is touched by this: what comes back is compared with the credential in hand, and replaces it only if you say so.</span>
             </div>
           </td>
@@ -270,7 +270,7 @@ function vcSetAllPanes(expand) {
           </td>
           <td>
             <code id="vc_reissue_transaction_id">&mdash;</code>
-            <p><input class="btn2" id="vc_reissue_deferred_button" type="button" value="Check for it now" onclick="return sdjwtvc4.pollDeferred();" /></p>
+            <p><input class="btn2" id="vc_reissue_deferred_button" type="button" value="Check for it now" onclick="return vcissuance4.pollDeferred();" /></p>
             <pre class="vc-json" id="vc_reissue_deferred_attempts">&mdash;</pre>
           </td>
         </tr>
@@ -285,7 +285,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Pane 4: what the issuer changed ====== -->
 <div class="step0 dbg-pane" id="pane_compare" style="display: none;">
-  <legend class="dbg-legend" id="compare_expand_button" onclick="return sdjwtvc4.togglePane('compare_fieldset');">What Changed</legend>
+  <legend class="dbg-legend" id="compare_expand_button" onclick="return vcissuance4.togglePane('compare_fieldset');">What Changed</legend>
   <fieldset name="compare_fieldset" id="compare_fieldset" style="display: block;">
     <p class="vc-note">Section 14.5 leaves it to the issuer <em>&ldquo;whether to update both the signature and
     the claim values, or only the signature&rdquo;</em>, and section 14.3 allows the answer to be the same
@@ -306,10 +306,10 @@ function vcSetAllPanes(expand) {
       <p class="vc-note" id="vc_compare_refreshed_meta">&mdash;</p>
       <textarea class="vc-token" rows="5" readonly id="vc_compare_refreshed_raw"></textarea>
       <p>
-        <input class="btn2" id="vc_replace_button" type="button" value="Replace the credential I hold" onclick="return sdjwtvc4.replaceCredential();" />
-        <input class="btn2" id="vc_discard_button" type="button" value="Discard the refreshed one" onclick="return sdjwtvc4.discardRefreshed();" />
-        <input class="btn2" id="vc_compare_copy_button" type="button" value="Copy Credential" onclick="return sdjwtvc4.copyRefreshed();" />
-        <input class="btn2" id="vc_goto_step3_button" type="button" value="Verify in step 3" onclick="return sdjwtvc4.verifyInStepThree();" />
+        <input class="btn2" id="vc_replace_button" type="button" value="Replace the credential I hold" onclick="return vcissuance4.replaceCredential();" />
+        <input class="btn2" id="vc_discard_button" type="button" value="Discard the refreshed one" onclick="return vcissuance4.discardRefreshed();" />
+        <input class="btn2" id="vc_compare_copy_button" type="button" value="Copy Credential" onclick="return vcissuance4.copyRefreshed();" />
+        <input class="btn2" id="vc_goto_step3_button" type="button" value="Verify in step 3" onclick="return vcissuance4.verifyInStepThree();" />
       </p>
       <p class="vc-note">Keeping it does not navigate anywhere: the
       <strong>Credential History</strong> pane above gains the new generation and marks it as the one in hand, and
@@ -319,7 +319,7 @@ function vcSetAllPanes(expand) {
 </div>
 
 <div class="step0 dbg-pane" id="pane_next">
-  <legend class="dbg-legend" id="next_expand_button" onclick="return sdjwtvc4.togglePane('next_fieldset');">Next: Present It</legend>
+  <legend class="dbg-legend" id="next_expand_button" onclick="return vcissuance4.togglePane('next_fieldset');">Next: Present It</legend>
   <fieldset name="next_fieldset" id="next_fieldset" style="display: block;">
     <p class="vc-note">The <strong>presentation workflow</strong> is the other half of the format: a Verifier asks
     for some of this credential's claims over
@@ -328,7 +328,7 @@ function vcSetAllPanes(expand) {
     there &mdash; both workflows read the same browser storage, so what goes is whatever this wallet is
     <em>holding</em>: the generation marked as in hand above, with the holder key it is bound to.</p>
     <p>
-      <input class="btn2" id="vc_present_button" type="button" value="Present It (presentation workflow)" onclick="return sdjwtvc4.presentIt();" />
+      <input class="btn2" id="vc_present_button" type="button" value="Present It (presentation workflow)" onclick="return vcissuance4.presentIt();" />
       <span class="vc-status" id="vc_present_status">&nbsp;</span>
     </p>
   </fieldset>

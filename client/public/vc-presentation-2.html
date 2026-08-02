@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Presentation (2 of 3)</title>
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Presentation (2 of 3)</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,14 +21,14 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/sd_jwt_vc_presentation_2.js">
+<script type="text/javascript" src="/js/vc_presentation_2.js">
 </script>
 
 <!--#include file="/partials/sd_jwt_vp_steps.html"-->
 
-<p class="vc-return"><a id="return_link" href="/sd-jwt-vc-presentation-1.html">&larr; Back to step 1 (the request)</a></p>
+<p class="vc-return"><a id="return_link" href="/vc-presentation-1.html">&larr; Back to step 1 (the request)</a></p>
 
-<h3 class="vc-title">SD-JWT VC Presentation &mdash; Step 2 of 3: Choose What To Disclose</h3>
+<h3 class="vc-title">VC Presentation &mdash; Step 2 of 3: Choose What To Disclose</h3>
 
 <p class="vc-intro">This is the page selective disclosure exists for. The credential carries everything
 the issuer put in it; the verifier asked for some of it; what leaves this browser is the holder&rsquo;s choice.
@@ -62,7 +62,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 1: what is being asked ============ -->
 <div class="step0 dbg-pane" id="pane_ask">
-  <legend class="dbg-legend" id="ask_expand_button" onclick="return sdjwtvp2.togglePane('ask_fieldset');">What This Verifier Asked For</legend>
+  <legend class="dbg-legend" id="ask_expand_button" onclick="return vcpresentation2.togglePane('ask_fieldset');">What This Verifier Asked For</legend>
   <fieldset name="ask_fieldset" id="ask_fieldset" style="display: block;">
     <table class="vc-token-table">
       <tbody>
@@ -93,7 +93,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 2: the choice ============ -->
 <div class="step0 dbg-pane" id="pane_choose">
-  <legend class="dbg-legend" id="choose_expand_button" onclick="return sdjwtvp2.togglePane('choose_fieldset');">Choose What To Disclose</legend>
+  <legend class="dbg-legend" id="choose_expand_button" onclick="return vcpresentation2.togglePane('choose_fieldset');">Choose What To Disclose</legend>
   <fieldset name="choose_fieldset" id="choose_fieldset" style="display: block;">
     <p class="vc-note">One row per Disclosure the credential carries. The default selection is exactly what the
     verifier asked for &mdash; a wallet should not have to be told to minimise &mdash; but the choice is the
@@ -102,15 +102,15 @@ function vpSetAllPanes(expand) {
     <table class="vc-table" id="vp_disclosures_table"><tbody></tbody></table>
     <p class="vc-note" id="vp_selection_summary">&nbsp;</p>
     <p>
-      <input class="btn2" id="vp_select_requested_button" type="button" value="Only what was asked for" onclick="return sdjwtvp2.selectRequestedOnly();" />
-      <input class="btn2" id="vp_select_all_button" type="button" value="Everything (over-disclose)" onclick="return sdjwtvp2.selectAll();" />
+      <input class="btn2" id="vp_select_requested_button" type="button" value="Only what was asked for" onclick="return vcpresentation2.selectRequestedOnly();" />
+      <input class="btn2" id="vp_select_all_button" type="button" value="Everything (over-disclose)" onclick="return vcpresentation2.selectAll();" />
     </p>
   </fieldset>
 </div>
 
 <!-- ============ Pane 3: the presentation ============ -->
 <div class="step0 dbg-pane" id="pane_presentation">
-  <legend class="dbg-legend" id="presentation_expand_button" onclick="return sdjwtvp2.togglePane('presentation_fieldset');">The Presentation</legend>
+  <legend class="dbg-legend" id="presentation_expand_button" onclick="return vcpresentation2.togglePane('presentation_fieldset');">The Presentation</legend>
   <fieldset name="presentation_fieldset" id="presentation_fieldset" style="display: block;">
     <p class="vc-note">Assembled from the choice above, before anything is sent:
       <span class="vc-part-jwt">issuer-signed JWT</span><span class="vc-tilde">~</span><span class="vc-part-disclosure">selected Disclosure</span><span class="vc-tilde">~</span>…<span class="vc-tilde">~</span><span class="vc-part-kb">KB-JWT</span>.
@@ -124,7 +124,7 @@ function vpSetAllPanes(expand) {
           <td>
             <textarea class="vc-token" rows="4" id="vp_holder_private_jwk"
                       placeholder='Paste the holder key pair file, or a private JWK: {"kty":"EC","crv":"P-256","d":"…","x":"…","y":"…"}'
-                      oninput="return sdjwtvp2.onHolderKeyPasted();"></textarea>
+                      oninput="return vcpresentation2.onHolderKeyPasted();"></textarea>
             <span class="vc-note" id="vp_holder_key_note">&nbsp;</span>
           </td>
         </tr>
@@ -163,7 +163,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 4: sending it ============ -->
 <div class="step0 dbg-pane" id="pane_present">
-  <legend class="dbg-legend" id="present_expand_button" onclick="return sdjwtvp2.togglePane('present_fieldset');">Present It</legend>
+  <legend class="dbg-legend" id="present_expand_button" onclick="return vcpresentation2.togglePane('present_fieldset');">Present It</legend>
   <fieldset name="present_fieldset" id="present_fieldset" style="display: block;">
     <div class="vc-approval">
       <h4>Present these claims to this verifier?</h4>
@@ -177,8 +177,8 @@ function vpSetAllPanes(expand) {
       </div>
       <textarea class="vc-token" rows="12" readonly id="vp_assembled_call"></textarea>
       <p>
-        <input class="btn2" id="vp_present_button" type="button" value="Present" onclick="return sdjwtvp2.present();" />
-        <input class="btn2" id="vp_refuse_button" type="button" value="Refuse" onclick="return sdjwtvp2.refuse();" />
+        <input class="btn2" id="vp_present_button" type="button" value="Present" onclick="return vcpresentation2.present();" />
+        <input class="btn2" id="vp_refuse_button" type="button" value="Refuse" onclick="return vcpresentation2.refuse();" />
       </p>
       <div class="vc-status" id="vp_present_status">&nbsp;</div>
     </div>

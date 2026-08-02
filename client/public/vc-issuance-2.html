@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Issuance (2 of 4)</title>
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Issuance (2 of 4)</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,14 +21,14 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/sd_jwt_vc_issuance_2.js">
+<script type="text/javascript" src="/js/vc_issuance_2.js">
 </script>
 
-<!--#include file="/partials/sd_jwt_vc_steps.html"-->
+<!--#include file="/partials/vc_steps.html"-->
 
-<p class="vc-return"><a id="return_link" href="/sd-jwt-vc-issuance-1.html">&larr; Back to step 1 (discovery &amp; configuration)</a></p>
+<p class="vc-return"><a id="return_link" href="/vc-issuance-1.html">&larr; Back to step 1 (discovery &amp; configuration)</a></p>
 
-<h3 class="vc-title">SD-JWT VC Issuance &mdash; Step 2 of 4: Approve and Request the Credential</h3>
+<h3 class="vc-title">VC Issuance &mdash; Step 2 of 4: Approve and Request the Credential</h3>
 
 
 <p class="vc-intro">The user has authenticated through the OIDC Authorization Code flow and
@@ -60,7 +60,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Pane 0: the Token Request, for a pre-authorized offer (H.2/H.3) ====== -->
 <div class="step0 dbg-pane" id="pane_pre_authorized" style="display: none;">
-  <legend class="dbg-legend" id="preauth_expand_button" onclick="return sdjwtvc2.togglePane('preauth_fieldset');">Token Request (pre-authorized code)</legend>
+  <legend class="dbg-legend" id="preauth_expand_button" onclick="return vcissuance2.togglePane('preauth_fieldset');">Token Request (pre-authorized code)</legend>
   <fieldset name="preauth_fieldset" id="preauth_fieldset" style="display: block;">
     <p class="vc-note">This offer carries a <code>pre-authorized_code</code>, so there was no authorization
     request and nobody was sent to a login page: the End-User was identified by the issuer beforehand and this
@@ -80,7 +80,7 @@ function vcSetAllPanes(expand) {
           </td>
           <td>
             <input type="text" id="vc_tx_code" name="vc_tx_code" size="20" autocomplete="off"
-                   oninput="return sdjwtvc2.onTxCodeChange();" />
+                   oninput="return vcissuance2.onTxCodeChange();" />
             <span class="vc-note" id="vc_tx_code_hint">&nbsp;</span>
           </td>
         </tr>
@@ -91,7 +91,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vc_token_request_button" type="button" value="Send the Token Request" onclick="return sdjwtvc2.sendTokenRequest();" />
+              <input class="btn2" id="vc_token_request_button" type="button" value="Send the Token Request" onclick="return vcissuance2.sendTokenRequest();" />
               <span class="tooltiptext">Redeem the pre-authorized code for an access token. Nothing is issued yet — the credential is requested further down this page.</span>
             </div>
           </td>
@@ -108,7 +108,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 1: the tokens ============ -->
 <div class="step0 dbg-pane" id="pane_tokens">
-  <legend class="dbg-legend" id="tokens_expand_button" onclick="return sdjwtvc2.togglePane('tokens_fieldset');">Tokens from the OIDC Authorization Code Flow</legend>
+  <legend class="dbg-legend" id="tokens_expand_button" onclick="return vcissuance2.togglePane('tokens_fieldset');">Tokens from the OIDC Authorization Code Flow</legend>
   <fieldset name="tokens_fieldset" id="tokens_fieldset" style="display: block;">
     <p class="vc-note">The token set <a href="/debugger2.html">debugger2.html</a> obtained from the authorization
     server. The <strong>access token</strong> is what authorizes the credential request below; the ID token says who
@@ -119,14 +119,14 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip"><label>Access Token</label><span class="tooltiptext">Presented to the Credential Endpoint as a Bearer credential. The issuer decides what to put in the credential based on who this token belongs to.</span></div>
-            <p style="font-size:80%;"><a href="/token_detail.html?type=access&amp;from=sd-jwt-vc-issuance-2.html">Inspect</a></p>
+            <p style="font-size:80%;"><a href="/token_detail.html?type=access&amp;from=vc-issuance-2.html">Inspect</a></p>
           </td>
           <td><textarea class="vc-token" rows="4" readonly id="vc_access_token"></textarea></td>
         </tr>
         <tr>
           <td>
             <div class="tooltip"><label>ID Token</label><span class="tooltiptext">The OIDC authentication result. Not sent to the credential endpoint — shown so you can see who the credential will be about.</span></div>
-            <p style="font-size:80%;"><a href="/token_detail.html?type=id&amp;from=sd-jwt-vc-issuance-2.html">Inspect</a></p>
+            <p style="font-size:80%;"><a href="/token_detail.html?type=id&amp;from=vc-issuance-2.html">Inspect</a></p>
           </td>
           <td><textarea class="vc-token" rows="4" readonly id="vc_id_token"></textarea></td>
         </tr>
@@ -149,7 +149,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ============ Pane 2: the credential request ============ -->
 <div class="step0 dbg-pane" id="pane_request">
-  <legend class="dbg-legend" id="request_expand_button" onclick="return sdjwtvc2.togglePane('request_fieldset');">OID4VCI Credential Request</legend>
+  <legend class="dbg-legend" id="request_expand_button" onclick="return vcissuance2.togglePane('request_fieldset');">OID4VCI Credential Request</legend>
   <fieldset name="request_fieldset" id="request_fieldset" style="display: block;">
     <p class="vc-note">Everything the request is built from. The <strong>holder key pair</strong> is generated in this
     browser; only its public half leaves, inside the proof of possession, and the issuer copies it into the
@@ -172,8 +172,8 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip"><label>Holder public key</label><span class="tooltiptext">The public half of the key pair generated in this browser, as a JWK. It goes in the proof JWT header and ends up in the credential's cnf claim.</span></div>
-            <p><input class="btn2" id="vc_regenerate_key_button" type="button" value="Regenerate Key" onclick="return sdjwtvc2.regenerateHolderKey();" /></p>
-            <p><input class="btn2" id="vc_download_key_button" type="button" value="Download Key Pair" onclick="return sdjwtvc2.downloadHolderKey();" title="Save the holder key pair (both halves, as a JWK pair) to a file. This is the only copy you get if the key pair is not kept in localStorage." /></p>
+            <p><input class="btn2" id="vc_regenerate_key_button" type="button" value="Regenerate Key" onclick="return vcissuance2.regenerateHolderKey();" /></p>
+            <p><input class="btn2" id="vc_download_key_button" type="button" value="Download Key Pair" onclick="return vcissuance2.downloadHolderKey();" title="Save the holder key pair (both halves, as a JWK pair) to a file. This is the only copy you get if the key pair is not kept in localStorage." /></p>
           </td>
           <td><pre class="vc-json" id="vc_holder_jwk">&nbsp;</pre></td>
         </tr>
@@ -183,7 +183,7 @@ function vcSetAllPanes(expand) {
           </td>
           <td>
             <input type="checkbox" id="vc_save_holder_key" name="vc_save_holder_key" checked="checked"
-                   onchange="return sdjwtvc2.onSaveHolderKeyChange();" />
+                   onchange="return vcissuance2.onSaveHolderKeyChange();" />
             <label for="vc_save_holder_key">Save this holder key pair in browser localStorage</label>
             <span class="vc-note" id="vc_holder_key_storage_note">&nbsp;</span>
           </td>
@@ -216,7 +216,7 @@ function vcSetAllPanes(expand) {
 <!-- ============ Pane 3: approval ============ -->
 <!-- ====== What the Credential Request will ask for ====== -->
 <div class="step0 dbg-pane" id="pane_request_options">
-  <legend class="dbg-legend" id="request_options_expand_button" onclick="return sdjwtvc2.togglePane('request_options_fieldset');">Credential Request Options</legend>
+  <legend class="dbg-legend" id="request_options_expand_button" onclick="return vcissuance2.togglePane('request_options_fieldset');">Credential Request Options</legend>
   <fieldset name="request_options_fieldset" id="request_options_fieldset" style="display: block;">
     <p class="vc-note">Three things the wallet gets to decide, each of which changes the request below.</p>
     <table class="vc-token-table">
@@ -237,7 +237,7 @@ function vcSetAllPanes(expand) {
           </td>
           <td>
             <input type="number" id="vc_batch_size" name="vc_batch_size" min="1" max="16" value="1" size="4"
-                   onchange="return sdjwtvc2.onRequestOptionsChange();" />
+                   onchange="return vcissuance2.onRequestOptionsChange();" />
             <span class="vc-note" id="vc_batch_note">&nbsp;</span>
           </td>
         </tr>
@@ -249,7 +249,7 @@ function vcSetAllPanes(expand) {
           </td>
           <td>
             <input type="checkbox" id="vc_encrypt_response" name="vc_encrypt_response"
-                   onchange="return sdjwtvc2.onRequestOptionsChange();" />
+                   onchange="return vcissuance2.onRequestOptionsChange();" />
             <span class="vc-note" id="vc_encrypt_note">&nbsp;</span>
           </td>
         </tr>
@@ -259,7 +259,7 @@ function vcSetAllPanes(expand) {
 </div>
 
 <div class="step0 dbg-pane" id="pane_approval">
-  <legend class="dbg-legend" id="approval_expand_button" onclick="return sdjwtvc2.togglePane('approval_fieldset');">Approve Issuance</legend>
+  <legend class="dbg-legend" id="approval_expand_button" onclick="return vcissuance2.togglePane('approval_fieldset');">Approve Issuance</legend>
   <fieldset name="approval_fieldset" id="approval_fieldset" style="display: block;">
     <div class="vc-approval">
       <h4>Issue this credential?</h4>
@@ -278,8 +278,8 @@ function vcSetAllPanes(expand) {
       </div>
       <textarea class="vc-token" rows="14" readonly id="vc_approval_request"></textarea>
       <p>
-        <input class="btn2" id="vc_approve_button" type="button" value="Approve and Request Credential" onclick="return sdjwtvc2.approveIssuance();" />
-        <input class="btn2" id="vc_deny_button" type="button" value="Deny" onclick="return sdjwtvc2.denyIssuance();" />
+        <input class="btn2" id="vc_approve_button" type="button" value="Approve and Request Credential" onclick="return vcissuance2.approveIssuance();" />
+        <input class="btn2" id="vc_deny_button" type="button" value="Deny" onclick="return vcissuance2.denyIssuance();" />
       </p>
       <div class="vc-status" id="vc_approval_status">&nbsp;</div>
     </div>
@@ -289,7 +289,7 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== The issuer needs more time (H.3) ====== -->
 <div class="step0 dbg-pane" id="pane_deferred" style="display: none;">
-  <legend class="dbg-legend" id="deferred_expand_button" onclick="return sdjwtvc2.togglePane('deferred_fieldset');">Deferred Issuance</legend>
+  <legend class="dbg-legend" id="deferred_expand_button" onclick="return vcissuance2.togglePane('deferred_fieldset');">Deferred Issuance</legend>
   <fieldset name="deferred_fieldset" id="deferred_fieldset" style="display: block;">
     <p class="vc-note">The issuer answered <code>202</code> with a <code>transaction_id</code> instead of a
     credential: it cannot issue this one immediately (a background check, a human in the loop). The wallet
@@ -317,7 +317,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vc_deferred_poll_button" type="button" value="Check again now" onclick="return sdjwtvc2.pollDeferred();" />
+              <input class="btn2" id="vc_deferred_poll_button" type="button" value="Check again now" onclick="return vcissuance2.pollDeferred();" />
               <span class="tooltiptext">Ask the Deferred Credential Endpoint again without waiting for the interval. The wallet is already retrying on its own.</span>
             </div>
           </td>

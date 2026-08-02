@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_issuance_1.js
+// File: vc_issuance_1.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC issuance, step 1: discover the issuer and settle the configuration.
@@ -27,7 +27,7 @@ var opMetadata = require("./op_metadata");
 var vciMetadata = require("./vci_metadata");
 var sdJwtVc = require("./sd_jwt_vc");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_issuance_1',
+var log = bunyan.createLogger({ name: 'vc_issuance_1',
                                 level: appconfig.LOG_LEVEL || 'info' });
 
 // --- storage keys -----------------------------------------------------------
@@ -256,7 +256,7 @@ function renderVciTable() {
   el("vci_metadata_table").innerHTML = html;
   el("vci_metadata_populate").innerHTML =
     '<input class="btn_vci_populate_meta_data btn2" id="vci_populate_button" type="button"' +
-    ' value="Populate Meta Data" onclick="return sdjwtvc1.populateFromVci();" />';
+    ' value="Populate Meta Data" onclick="return vcissuance1.populateFromVci();" />';
 }
 
 function renderCredentialConfigurations() {
@@ -599,7 +599,7 @@ function renderAsTable() {
   el("discovery_info_table").innerHTML = metadataClient.buildInfoTable(asInfo, provenance);
   el("discovery_info_meta_data_populate").innerHTML =
     '<input class="btn_oidc_populate_meta_data btn2" id="as_populate_button" type="button"' +
-    ' value="Populate Meta Data" onclick="return sdjwtvc1.populateFromAs();" />';
+    ' value="Populate Meta Data" onclick="return vcissuance1.populateFromAs();" />';
 }
 
 // The authorization server document, once in hand. Shared by the retrieve and

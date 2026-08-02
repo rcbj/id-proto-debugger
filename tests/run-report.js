@@ -395,13 +395,13 @@ function buildJobs() {
   });
 
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
-  // Issuer the STS service hosts, the three sd-jwt-vc-issuance pages, and the
+  // Issuer the STS service hosts, the three vc-issuance pages, and the
   // ?sdjwtvc=1 hand-off through debugger.html / debugger2.html. Needs both the
   // STS mock (which is the credential issuer) and Keycloak (which authorizes
   // the issuance), so it is gated on the STS like the other STS-backed jobs.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
-      name: "SD-JWT VC Issuance (OID4VCI credential issuance end to end)",
+      name: "VC Issuance — SD-JWT VC (OID4VCI credential issuance end to end)",
       script: "sd_jwt_vc_issuance.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
@@ -411,7 +411,7 @@ function buildJobs() {
     });
   }
 
-  // The metadata schema check on sd-jwt-vc-issuance-1.html, both panes. Its rule
+  // The metadata schema check on vc-issuance-1.html, both panes. Its rule
   // half needs no browser and no services and never skips; its wiring half
   // drives the page, so it needs only the client — which every run has.
   // Registered unconditionally for the same reason as the four below.
@@ -437,7 +437,7 @@ function buildJobs() {
   // configuration.
   {
     jobs.push({
-      name: "jwt_vc_json Issuance (OID4VCI, W3C VC secured as a JWT)",
+      name: "VC Issuance — jwt_vc_json (W3C VC secured as a JWT)",
       script: "jwt_vc_json_issuance.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
@@ -447,7 +447,7 @@ function buildJobs() {
   }
 
   // The SD-JWT VC PRESENTATION workflow (OID4VP 1.0 + RFC 9901 section 4.3): the
-  // mock Verifier the STS service hosts, the four sd-jwt-vc-presentation pages,
+  // mock Verifier the STS service hosts, the four vc-presentation pages,
   // and the presentation itself — an SD-JWT+KB whose Key Binding JWT is signed
   // over the request's nonce. Needs only the STS (issuer AND verifier), so no
   // identity provider is involved. Carries its own negatives: a replayed
@@ -455,7 +455,7 @@ function buildJobs() {
   // removed after signing, and a claim the verifier asked for withheld.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
-      name: "SD-JWT VC Presentation (OID4VP: selective disclosure end to end, positive and negative)",
+      name: "VC Presentation — SD-JWT VC (OID4VP: selective disclosure, positive and negative)",
       script: "sd_jwt_vc_presentation.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
@@ -472,7 +472,7 @@ function buildJobs() {
   // Serialization also splits into three dot-separated parts).
   {
     jobs.push({
-      name: "jwt_vc_json Presentation (OID4VP: Verifiable Presentation JWT, positive and negative)",
+      name: "VC Presentation — jwt_vc_json (Verifiable Presentation JWT, positive and negative)",
       script: "jwt_vc_json_presentation.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
@@ -489,7 +489,7 @@ function buildJobs() {
   // that container being up rather than on the STS.
   if (env.WALTID_ISSUER_URL) {
     jobs.push({
-      name: "SD-JWT VC Issuance against walt.id (OID4VCI interoperability)",
+      name: "VC Issuance — SD-JWT VC against walt.id (OID4VCI interoperability)",
       script: "sd_jwt_vc_waltid.js",
       env: {
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL,
@@ -506,7 +506,7 @@ function buildJobs() {
   // walt.id issuer and Keycloak, because that is where the credential comes from.
   if (env.WALTID_VERIFIER_URL) {
     jobs.push({
-      name: "SD-JWT VC Presentation against walt.id (OID4VP interoperability, positive and negative)",
+      name: "VC Presentation — SD-JWT VC against walt.id (OID4VP interoperability)",
       script: "sd_jwt_vc_presentation_waltid.js",
       env: {
         WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
@@ -528,7 +528,7 @@ function buildJobs() {
   // failed, because neither implementation is wrong.
   {
     jobs.push({
-      name: "jwt_vc_json Issuance against walt.id (OID4VCI interoperability)",
+      name: "VC Issuance — jwt_vc_json against walt.id (OID4VCI interoperability)",
       script: "jwt_vc_json_issuance_waltid.js",
       env: {
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL,
@@ -539,7 +539,7 @@ function buildJobs() {
 
   {
     jobs.push({
-      name: "jwt_vc_json Presentation against walt.id (OID4VP interoperability)",
+      name: "VC Presentation — jwt_vc_json against walt.id (OID4VP interoperability)",
       script: "jwt_vc_json_presentation_waltid.js",
       env: {
         WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,

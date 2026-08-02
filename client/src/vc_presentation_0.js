@@ -1,4 +1,4 @@
-// File: sd_jwt_vc_presentation_0.js
+// File: vc_presentation_0.js
 //
 // ---------------------------------------------------------------------------
 // SD-JWT VC presentation, step 0: choose how the presentation starts.
@@ -18,7 +18,7 @@ var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 
-var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation_0',
+var log = bunyan.createLogger({ name: 'vc_presentation_0',
                                 level: appconfig.logLevel });
 
 // Where each flow begins. All three start at the VERIFIER — a presentation is
@@ -203,7 +203,7 @@ function buttonHtml(uc, current) {
   if (uc.id === current.id) classes.push("vc-usecase-current");
   var html =
     '<button type="button" class="' + classes.join(" ") + '" id="vp_usecase_' + esc(uc.id) + '"' +
-    (uc.available ? ' onclick="return sdjwtvp0.choose(\'' + esc(uc.id) + '\');"' : ' disabled="disabled"') +
+    (uc.available ? ' onclick="return vcpresentation0.choose(\'' + esc(uc.id) + '\');"' : ' disabled="disabled"') +
     '>' +
       '<span class="vc-usecase-head">' +
         '<span class="vc-usecase-spec">' + esc(uc.spec) + '</span>' +
@@ -229,7 +229,7 @@ function renderCredentialState() {
   if (!raw) {
     host.className = "vc-note vc-status vc-bad";
     host.innerHTML = "This wallet is not holding a credential yet, so there is nothing to present. " +
-      '<a href="/sd-jwt-vc-issuance-0.html">The issuance workflow</a> puts one here.';
+      '<a href="/vc-issuance-0.html">The issuance workflow</a> puts one here.';
     log.debug("Leaving renderCredentialState(). Nothing held.");
     return false;
   }

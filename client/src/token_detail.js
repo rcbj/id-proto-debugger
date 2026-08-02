@@ -671,16 +671,16 @@ $(document).on("change", "#jwt_verification_type", function() {
 var RETURN_TARGETS = {
   'debugger.html': '/debugger.html',
   'debugger2.html': '/debugger2.html?redirectFromTokenDetail=true',
-  'sd-jwt-vc-issuance-1.html': '/sd-jwt-vc-issuance-1.html',
-  'sd-jwt-vc-issuance-2.html': '/sd-jwt-vc-issuance-2.html',
-  'sd-jwt-vc-issuance-3.html': '/sd-jwt-vc-issuance-3.html',
-  'sd-jwt-vc-issuance-4.html': '/sd-jwt-vc-issuance-4.html'
+  'vc-issuance-1.html': '/vc-issuance-1.html',
+  'vc-issuance-2.html': '/vc-issuance-2.html',
+  'vc-issuance-3.html': '/vc-issuance-3.html',
+  'vc-issuance-4.html': '/vc-issuance-4.html'
 };
 var RETURN_LABELS = {
-  'sd-jwt-vc-issuance-1.html': 'Return to SD-JWT VC issuance (step 1)',
-  'sd-jwt-vc-issuance-2.html': 'Return to SD-JWT VC issuance (step 2)',
-  'sd-jwt-vc-issuance-3.html': 'Return to SD-JWT VC issuance (step 3)',
-  'sd-jwt-vc-issuance-4.html': 'Return to SD-JWT VC issuance (step 4)'
+  'vc-issuance-1.html': 'Return to SD-JWT VC issuance (step 1)',
+  'vc-issuance-2.html': 'Return to SD-JWT VC issuance (step 2)',
+  'vc-issuance-3.html': 'Return to SD-JWT VC issuance (step 3)',
+  'vc-issuance-4.html': 'Return to SD-JWT VC issuance (step 4)'
 };
 
 function setReturnLinks() {

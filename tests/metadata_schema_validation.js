@@ -1,7 +1,7 @@
 // File: metadata_schema_validation.js
 //
 // ---------------------------------------------------------------------------
-// The metadata schema check on sd-jwt-vc-issuance-1.html, for both panes.
+// The metadata schema check on vc-issuance-1.html, for both panes.
 //
 // Two layers, because they can fail independently and a single layer would let
 // one of them rot unnoticed:
@@ -394,7 +394,7 @@ async function populateRunsTheCheck() {
   var driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
   try {
     var plant = async function (vci, as) {
-      await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+      await driver.get(baseUrl + "/vc-issuance-1.html");
       await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
       await driver.executeScript(
         "window.localStorage.clear();" +

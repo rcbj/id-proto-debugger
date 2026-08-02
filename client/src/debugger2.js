@@ -424,7 +424,7 @@ function errorInternalTokenAPICall(request, status, error) {
     // the workflow's hold on it.
     sdJwtVc.endFlow();
     $("#sdjwtvc_banner").html("<strong>SD-JWT VC issuance</strong> — the token endpoint call failed, so the " +
-      "workflow stopped here. The error is shown below; <a href='/sd-jwt-vc-issuance-1.html'>step 1</a> " +
+      "workflow stopped here. The error is shown below; <a href='/vc-issuance-1.html'>step 1</a> " +
       "starts it again.");
   }
   log.error("request: " + JSON.stringify(request));
@@ -1737,7 +1737,7 @@ $(document).ready(function() {
 // ---------------------------------------------------------------------------
 // SD-JWT VC issuance.
 //
-// When the workflow started on sd-jwt-vc-issuance-1.html marked itself active,
+// When the workflow started on vc-issuance-1.html marked itself active,
 // this page is a waypoint rather than a destination: exchange the authorization
 // code for tokens as usual, then hand the browser back to the workflow, which
 // needs the access token to make its OID4VCI Credential Request.
@@ -1755,7 +1755,7 @@ function maybeContinueSdJwtVcFlow() {
     $(".container").prepend(
       "<div class='vc-handoff-banner'><strong>SD-JWT VC issuance</strong> — no authorization code came back " +
       "from the identity provider, so there are no tokens to carry into the credential request. " +
-      "<a href='/sd-jwt-vc-issuance-1.html'>Return to step 1</a>.</div>");
+      "<a href='/vc-issuance-1.html'>Return to step 1</a>.</div>");
     sdJwtVc.endFlow();
     return false;
   }

@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>OAuth2 &amp; OpenID Connect Debugger — SD-JWT VC Presentation (3 of 3)</title>
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Presentation (3 of 3)</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
@@ -21,14 +21,14 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/sd_jwt_vc_presentation_3.js">
+<script type="text/javascript" src="/js/vc_presentation_3.js">
 </script>
 
 <!--#include file="/partials/sd_jwt_vp_steps.html"-->
 
-<p class="vc-return"><a id="return_link" href="/sd-jwt-vc-presentation-2.html">&larr; Back to step 2 (choose what to disclose)</a></p>
+<p class="vc-return"><a id="return_link" href="/vc-presentation-2.html">&larr; Back to step 2 (choose what to disclose)</a></p>
 
-<h3 class="vc-title">SD-JWT VC Presentation &mdash; Step 3 of 3: The Verdict</h3>
+<h3 class="vc-title">VC Presentation &mdash; Step 3 of 3: The Verdict</h3>
 
 <p class="vc-intro">Two accounts of the same event: what the wallet <strong>sent</strong> &mdash; with
 the presentation checked here, over the bytes themselves &mdash; and what the verifier <strong>did</strong>, check
@@ -59,7 +59,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 1: what the wallet sent ============ -->
 <div class="step0 dbg-pane" id="pane_sent">
-  <legend class="dbg-legend" id="sent_expand_button" onclick="return sdjwtvp3.togglePane('sent_fieldset');">What The Wallet Sent</legend>
+  <legend class="dbg-legend" id="sent_expand_button" onclick="return vcpresentation3.togglePane('sent_fieldset');">What The Wallet Sent</legend>
   <fieldset name="sent_fieldset" id="sent_fieldset" style="display: block;">
     <div class="vc-status" id="vp_sent_status">&nbsp;</div>
     <table class="vc-token-table">
@@ -96,9 +96,9 @@ function vpSetAllPanes(expand) {
       <span class="vc-part-kb">KB-JWT</span>.</p>
     <div class="vc-serialized" id="vp_sent_serialized">&nbsp;</div>
     <p>
-      <input class="btn2" id="vp_copy_button" type="button" value="Copy Presentation" onclick="return sdjwtvp3.copyPresentation();" />
-      <input class="btn2" id="vp_again_button" type="button" value="Present Again" onclick="return sdjwtvp3.presentAgain();" />
-      <input class="btn2" id="vp_restart_button" type="button" value="Start Over" onclick="return sdjwtvp3.startOver();" />
+      <input class="btn2" id="vp_copy_button" type="button" value="Copy Presentation" onclick="return vcpresentation3.copyPresentation();" />
+      <input class="btn2" id="vp_again_button" type="button" value="Present Again" onclick="return vcpresentation3.presentAgain();" />
+      <input class="btn2" id="vp_restart_button" type="button" value="Start Over" onclick="return vcpresentation3.startOver();" />
       <span class="vc-status" id="vp_copy_status">&nbsp;</span>
     </p>
     <textarea class="vc-token" rows="4" readonly id="vp_sent_presentation"></textarea>
@@ -107,7 +107,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 2: the wallet's own re-check ============ -->
 <div class="step0 dbg-pane" id="pane_recheck">
-  <legend class="dbg-legend" id="recheck_expand_button" onclick="return sdjwtvp3.togglePane('recheck_fieldset');">The Wallet's Own Checks</legend>
+  <legend class="dbg-legend" id="recheck_expand_button" onclick="return vcpresentation3.togglePane('recheck_fieldset');">The Wallet's Own Checks</legend>
   <fieldset name="recheck_fieldset" id="recheck_fieldset" style="display: block;">
     <p class="vc-note">Run here, over the bytes that were sent, doing what the verifier does: recompute
     <code>sd_hash</code>, look up every Disclosure's digest in <code>_sd</code>, and compare the Key Binding
@@ -120,7 +120,7 @@ function vpSetAllPanes(expand) {
 
 <!-- ============ Pane 3: the verifier's verdict ============ -->
 <div class="step0 dbg-pane" id="pane_verifier">
-  <legend class="dbg-legend" id="verifier_expand_button" onclick="return sdjwtvp3.togglePane('verifier_fieldset');">What The Verifier Decided</legend>
+  <legend class="dbg-legend" id="verifier_expand_button" onclick="return vcpresentation3.togglePane('verifier_fieldset');">What The Verifier Decided</legend>
   <fieldset name="verifier_fieldset" id="verifier_fieldset" style="display: block;">
     <p class="vc-note">The verifier&rsquo;s own verdict, check by check. Reading it back like this is not part of
     OID4VP &mdash; a real verifier shows the End-User its own page &mdash; but a debugger needs to see which rule
@@ -148,7 +148,7 @@ function vpSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="vp_refresh_verdict_button" type="button" value="Ask again" onclick="return sdjwtvp3.fetchVerdict();" />
+              <input class="btn2" id="vp_refresh_verdict_button" type="button" value="Ask again" onclick="return vcpresentation3.fetchVerdict();" />
               <span class="tooltiptext">Fetch the verifier's verdict again.</span>
             </div>
           </td>

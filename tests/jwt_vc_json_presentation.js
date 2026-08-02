@@ -90,7 +90,7 @@ async function presentThroughThePages(driver, held) {
     "and address its claims under credentialSubject, where a W3C VC keeps them. Got: " +
     JSON.stringify(dcql.credentials[0].claims[0].path));
 
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-1.html?" + request.location.split("?")[1]);
+  await driver.get(baseUrl + "/vc-presentation-1.html?" + request.location.split("?")[1]);
   await waitForStatus(driver, "vp_request_status", function (s) { return /Request read/.test(s); },
     "step 1 should read a jwt_vc_json request", waitTime);
   await click(driver, By.id("vp_continue_button"));
@@ -116,7 +116,7 @@ async function presentThroughThePages(driver, held) {
     "step 2 should say why there is nothing to choose. Said: " + summary);
 
   await click(driver, By.id("vp_present_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-3.html"), waitTime,
+  await driver.wait(until.urlContains("vc-presentation-3.html"), waitTime,
     "presenting should reach step 3.");
 
   const verdict = await waitForStatus(driver, "vp_verifier_status",

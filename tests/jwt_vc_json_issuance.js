@@ -134,7 +134,7 @@ async function theWalletPagesReadIt(driver, held) {
   });
 
   // Issuance step 3 — the credential in hand.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-3.html");
+  await driver.get(baseUrl + "/vc-issuance-3.html");
   await driver.wait(until.elementLocated(By.id("vc_credential_raw")), waitTime);
   await driver.sleep(700);
   const raw = await text(driver, "vc_credential_raw");
@@ -143,7 +143,7 @@ async function theWalletPagesReadIt(driver, held) {
 
   // The presentation workflow's entry point is where the format's one real
   // consequence has to be stated, so this is asserted rather than eyeballed.
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-0.html");
+  await driver.get(baseUrl + "/vc-presentation-0.html");
   await driver.wait(until.elementLocated(By.id("vp_credential_state")), waitTime);
   const state = await waitForStatus(driver, "vp_credential_state",
     function (s) { return s.trim() !== ""; }, "step 0 should describe the held credential", waitTime);
