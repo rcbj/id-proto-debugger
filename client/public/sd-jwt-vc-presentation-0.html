@@ -41,6 +41,49 @@ defines. It presents whatever credential the
 
 <div class="vc-note vc-status" id="vp_credential_state">&nbsp;</div>
 
+<!-- ============ Configuration ============
+     Above the chooser deliberately: the three start links below are built from
+     the verifier base URL, so this is the thing you set before choosing how the
+     verifier asks. -->
+<div class="step0 dbg-pane" id="pane_config">
+  <legend class="dbg-legend" id="config_expand_button" onclick="return sdjwtvp0.togglePane('config_fieldset');">Configuration Parameters</legend>
+  <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
+    <p class="vc-note">What this wallet needs to know about the verifier. Unlike an issuer, an OID4VP verifier
+    publishes no discovery document &mdash; there is no well-known endpoint to retrieve and nothing to populate
+    these from, so they are set by hand. <em>Restore Defaults</em> fills in this suite&rsquo;s own mock verifier.</p>
+    <form action="" id="config_form" name="config_form" onsubmit="return false;">
+      <table border="0" id="config_table">
+        <tbody>
+          <tr>
+            <td>
+              <div class="tooltip"><label for="vp_verifier_base_url">Verifier base URL</label>
+                <span class="tooltiptext">The origin the verifier's own pages live under. It builds the three start links below (/oid4vp/verifier and /oid4vp/start), which are this debugger's mock verifier's own pages &mdash; a real verifier has none, so against one of those you paste a request into step 1 instead.</span>
+              </div>
+            </td>
+            <td><input type="text" class="stored" id="vp_verifier_base_url" name="vp_verifier_base_url" size="60"
+                       placeholder="http://localhost:8081" /></td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label for="vp_verifier_jwks_url">Verifier JWKS URL</label>
+                <span class="tooltiptext">Where this wallet looks for the verifier's keys when a request is signed. For a pre-registered client this is the "out of band" knowledge OID4VP assumes the wallet already has. Leave it empty and a signed request is reported as unverifiable rather than trusted.</span>
+              </div>
+            </td>
+            <td><input type="text" class="stored" id="vp_verifier_jwks_url" name="vp_verifier_jwks_url" size="60"
+                       placeholder="http://localhost:8081/oauth2/jwks" /></td>
+          </tr>
+        </tbody>
+      </table>
+    </form>
+    <p>
+      <input class="btn2" id="config_save_button" type="button" value="Save" onclick="return sdjwtvp0.saveConfiguration();" />
+      <input class="btn2" id="config_clear_button" type="button" value="Clear All" onclick="return sdjwtvp0.clearConfiguration();" />
+      <input class="btn2" id="config_defaults_button" type="button" value="Restore Defaults" onclick="return sdjwtvp0.restoreDefaults();" />
+      <span class="vc-status" id="config_status">&nbsp;</span>
+    </p>
+  </fieldset>
+</div>
+
 <div class="vc-usecases" id="vp_usecases"></div>
 
 <p class="vc-note" id="vp_usecase_status">&nbsp;</p>

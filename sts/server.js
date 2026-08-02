@@ -813,6 +813,48 @@ const VCI_CONFIG_ID = 'IdentityCredential';
 const VCI_BATCH_SIZE = Number(process.env.OID4VCI_BATCH_SIZE || 4);
 const VCI_VCT = 'urn:idptools:sd-jwt-vc:identity';
 const VCI_SCOPE = 'identity_credential';
+
+// ---------------------------------------------------------------------------
+// A second credential format: jwt_vc_json (OID4VCI Appendix A.1.1).
+//
+// The same End-User facts, issued as a W3C Verifiable Credential secured as a
+// JWT instead of as an SD-JWT VC. It is here because the two formats differ in
+// the one way this workflow is about: jwt_vc_json has NO selective disclosure.
+// The whole credentialSubject is in the JWT, so a holder presenting it hands
+// over everything in it — there are no Disclosures to choose between, and the
+// holder binding that an SD-JWT does with a Key Binding JWT is done instead by
+// signing a Verifiable Presentation JWT around the credential.
+//
+// Everything else is deliberately identical: the same proof of possession, the
+// same batch and deferred paths, the same response encryption, the same
+// notification ids. Only the artefact at the end is a different shape.
+// ---------------------------------------------------------------------------
+const VCI_JWT_CONFIG_ID = 'IdentityCredentialJwtVcJson';
+const VCI_JWT_SCOPE = 'identity_credential_jwt';
+const VCI_JWT_TYPES = ['VerifiableCredential', 'IdentityCredential'];
+const VC_CONTEXT = 'https://www.w3.org/2018/credentials/v1';
+
+// Every credential this issuer offers, by credential_configuration_id. One
+// place, because "is this a configuration I offer" is asked from four of them
+// (the credential endpoint, authorization_details, the offer builder and the
+// metadata) and a list that disagrees with itself between those is an issuer
+// that advertises what it will then refuse.
+const VCI_CONFIGS = {};
+VCI_CONFIGS[VCI_CONFIG_ID] = { format: 'dc+sd-jwt', scope: VCI_SCOPE };
+VCI_CONFIGS[VCI_JWT_CONFIG_ID] = { format: 'jwt_vc_json', scope: VCI_JWT_SCOPE };
+
+function vciConfigIds() { return Object.keys(VCI_CONFIGS); }
+function vciFormatOf(configId) {
+  const c = VCI_CONFIGS[configId];
+  return c ? c.format : '';
+}
+// A credential_identifier is minted as "<configId>:<hash>", so the
+// configuration it belongs to is the part before the colon. Used to route a
+// section 8.2 identifier request to the right format.
+function configIdOfIdentifier(identifier) {
+  const prefix = String(identifier || '').split(':')[0];
+  return VCI_CONFIGS[prefix] ? prefix : '';
+}
 // c_nonce values this issuer has handed out and not yet seen used. A nonce is
 // single-use (RFC-conformant behaviour, and it makes replay visible in a test).
 const vciNonces = new Map();
@@ -885,7 +927,35 @@ function vciMetadata(req) {
       { path: ['address', 'country'], display: [{ locale: 'en-US', name: 'Country' }] }
     ]
   };
-  log.debug("Leaving vciMetadata().");
+  // The same facts as a W3C VC secured as a JWT. `credential_definition.type`
+  // is what identifies the credential in this format — jwt_vc_json has no vct —
+  // and the claim paths are rooted at credentialSubject because that is where a
+  // W3C VC keeps them.
+  meta.credential_configurations_supported[VCI_JWT_CONFIG_ID] = {
+    format: 'jwt_vc_json',
+    scope: VCI_JWT_SCOPE,
+    credential_definition: { type: VCI_JWT_TYPES },
+    cryptographic_binding_methods_supported: ['jwk'],
+    credential_signing_alg_values_supported: ['RS256'],
+    proof_types_supported: {
+      jwt: { proof_signing_alg_values_supported: ['ES256', 'RS256'] }
+    },
+    display: [{
+      name: 'Identity Credential (JWT VC, no selective disclosure)',
+      locale: 'en-US',
+      background_color: '#0b6b4f',
+      text_color: '#FFFFFF'
+    }],
+    claims: [
+      { path: ['credentialSubject', 'given_name'], display: [{ locale: 'en-US', name: 'Given name' }] },
+      { path: ['credentialSubject', 'family_name'], display: [{ locale: 'en-US', name: 'Family name' }] },
+      { path: ['credentialSubject', 'email'], display: [{ locale: 'en-US', name: 'Email address' }] },
+      { path: ['credentialSubject', 'birthdate'], display: [{ locale: 'en-US', name: 'Date of birth' }] },
+      { path: ['credentialSubject', 'address', 'country'], display: [{ locale: 'en-US', name: 'Country' }] }
+    ]
+  };
+  log.debug("Leaving vciMetadata(). " + Object.keys(meta.credential_configurations_supported).length +
+            " credential configuration(s).");
   return meta;
 }
 
@@ -1326,6 +1396,73 @@ function buildSdJwtVc(subjectClaims, holderJwk, credentialIssuer) {
   return { credential: serialized, disclosures: disclosures, payload: payload, decoy: decoy };
 }
 
+// A W3C Verifiable Credential secured as a JWT (OID4VCI format jwt_vc_json).
+//
+// The VC-JWT encoding of VCDM 1.1: the credential object goes in the `vc`
+// claim, and the JWT's own registered claims carry the parts that would
+// otherwise be duplicated inside it — iss is the issuer, sub the credential
+// subject, nbf/exp the validity window, jti the credential id.
+//
+// Two things to notice, because they are what the workflow is meant to show:
+// there are NO Disclosures and no _sd digests — every claim is in the clear in
+// the payload, so a holder presenting this discloses all of it; and holder
+// binding is the same cnf.jwk this issuer puts in an SD-JWT VC, but what proves
+// possession at presentation time is a Verifiable Presentation JWT signed with
+// that key rather than a Key Binding JWT.
+function buildJwtVcJson(subjectClaims, holderJwk, credentialIssuer) {
+  log.debug("Entering buildJwtVcJson().");
+  logArtifact('jwt_vc_json credential', 'the claims it will assert',
+              { subjectClaims: subjectClaims, holderJwk: holderJwk, credentialIssuer: credentialIssuer });
+  const now = Math.floor(Date.now() / 1000);
+  const exp = now + 30 * 24 * 3600;
+  const subjectId = subjectClaims.sub || ('urn:uuid:' + crypto.randomUUID());
+
+  // credentialSubject.id is the subject identifier; the rest of the claims sit
+  // beside it. `sub` is not repeated inside as a claim of its own — it IS the id.
+  const credentialSubject = { id: subjectId };
+  Object.keys(subjectClaims).forEach(function (name) {
+    if (name !== 'sub') credentialSubject[name] = subjectClaims[name];
+  });
+
+  const vc = {
+    '@context': [VC_CONTEXT],
+    type: VCI_JWT_TYPES,
+    issuer: credentialIssuer,
+    issuanceDate: new Date(now * 1000).toISOString(),
+    expirationDate: new Date(exp * 1000).toISOString(),
+    credentialSubject: credentialSubject
+  };
+  const payload = {
+    iss: credentialIssuer,
+    sub: subjectId,
+    nbf: now,
+    exp: exp,
+    jti: 'urn:uuid:' + crypto.randomUUID(),
+    cnf: { jwk: holderJwk },
+    vc: vc
+  };
+  logArtifact('jwt_vc_json credential', 'before signing',
+              { header: { alg: 'RS256', typ: 'JWT', kid: STS.kid }, payload: payload });
+
+  const token = jwt.sign(payload, STS.privateKeyPem, {
+    algorithm: 'RS256',
+    header: { alg: 'RS256', typ: 'JWT', kid: STS.kid }
+  });
+  logArtifact('jwt_vc_json credential', 'after signing, as it will be sent', token);
+  log.debug("Leaving buildJwtVcJson(). " + (Object.keys(credentialSubject).length - 1) +
+            " claim(s), none of them selectively disclosable.");
+  // `disclosures` is deliberately an empty array rather than absent: the callers
+  // count them for logging, and "this format has none" is the honest answer.
+  return { credential: token, disclosures: [], payload: payload, vc: vc };
+}
+
+// Mint whichever format the requested configuration names.
+function buildCredentialFor(configId, subjectClaims, holderJwk, credentialIssuer) {
+  return vciFormatOf(configId) === 'jwt_vc_json'
+    ? buildJwtVcJson(subjectClaims, holderJwk, credentialIssuer)
+    : buildSdJwtVc(subjectClaims, holderJwk, credentialIssuer);
+}
+
 // The claims the credential asserts. Lifted from the access token when it is a
 // JWT (so the credential describes whoever actually authenticated), with
 // mock-issuer defaults for anything the token does not carry.
@@ -1559,14 +1696,24 @@ app.post('/oid4vci/credential', function (req, res) {
         'the token response granted credential_identifiers, so credential_configuration_id MUST NOT be used ' +
         '(OID4VCI section 8.2).');
     }
-    if (configId !== VCI_CONFIG_ID) {
+    if (!VCI_CONFIGS[configId]) {
       return vciError(res, 400, 'unsupported_credential_type',
-        'This issuer only offers credential_configuration_id "' + VCI_CONFIG_ID + '".');
+        'This issuer offers credential_configuration_id ' +
+        vciConfigIds().map(function (id) { return '"' + id + '"'; }).join(' and ') + '.');
     }
   } else {
     return vciError(res, 400, 'invalid_credential_request',
       'Name the credential: credential_identifier (when one was granted) or credential_configuration_id.');
   }
+
+  // Which format, decided once. An identifier names its configuration in its own
+  // prefix; a configuration id names it directly. Anything else falls back to
+  // the SD-JWT configuration, which is what this issuer has always offered.
+  const requestedConfigId = identifier
+    ? (configIdOfIdentifier(identifier) || VCI_CONFIG_ID)
+    : (configId || VCI_CONFIG_ID);
+  log.debug("The credential endpoint will issue " + vciFormatOf(requestedConfigId) +
+            " (configuration " + requestedConfigId + ").");
 
   // Encryption of the response is the wallet's call (section 8.2). Checked before
   // any signature work: a request this issuer is going to refuse should not cost
@@ -1623,6 +1770,10 @@ app.post('/oid4vci/credential', function (req, res) {
       claims: subjectClaimsFrom(accessToken),
       holderJwk: holderJwk,
       holderJwks: holderJwks,
+      // The format was chosen in the request that was deferred, not in the one
+      // that collects it — the wallet asked for a credential, and postponing
+      // the answer must not change which credential it gets.
+      configId: requestedConfigId,
       // A deferred response is encrypted with the parameters given in the
       // DEFERRED request, not these — but keeping them means an issuer that
       // decides otherwise still has them. Section 9.2 is explicit that the newly
@@ -1645,7 +1796,7 @@ app.post('/oid4vci/credential', function (req, res) {
   const claims = subjectClaimsFrom(accessToken);
   const issuerId = vciMetadata(req).credential_issuer;
   const issued = holderJwks.map(function (jwk) {
-    return buildSdJwtVc(claims, jwk, issuerId);
+    return buildCredentialFor(requestedConfigId, claims, jwk, issuerId);
   });
   const response = {
     credentials: issued.map(function (b) { return { credential: b.credential }; }),
@@ -1653,9 +1804,9 @@ app.post('/oid4vci/credential', function (req, res) {
   };
   logArtifact('OID4VCI Credential Response', 'as returned', response);
   sendCredentialResponse(res, 200, response, encryption);
-  log.debug("Leaving the OID4VCI credential endpoint. Issued " + issued.length +
-            " SD-JWT VC(s), " + issued[0].disclosures.length + " disclosures each" +
-            (encryption ? ", encrypted to the wallet's key" : "") + ".");
+  log.debug("Leaving the OID4VCI credential endpoint. Issued " + issued.length + " " +
+            vciFormatOf(requestedConfigId) + " credential(s), " + issued[0].disclosures.length +
+            " disclosure(s) each" + (encryption ? ", encrypted to the wallet's key" : "") + ".");
 });
 
 // The Deferred Credential Endpoint (OID4VCI section 9). 202 with the same
@@ -1704,8 +1855,11 @@ app.post('/oid4vci/deferred_credential', function (req, res) {
   deferredTransactions.delete(transactionId);
   const holderKeys = record.holderJwks || [record.holderJwk];
   const issuerId = vciMetadata(req).credential_issuer;
+  // The format the DEFERRED request asked for, not a fresh choice: see the note
+  // where it was recorded.
+  const deferredConfigId = record.configId || VCI_CONFIG_ID;
   const issued = holderKeys.map(function (jwk) {
-    return buildSdJwtVc(record.claims, jwk, issuerId);
+    return buildCredentialFor(deferredConfigId, record.claims, jwk, issuerId);
   });
   const response = {
     credentials: issued.map(function (b) { return { credential: b.credential }; }),
@@ -1713,8 +1867,8 @@ app.post('/oid4vci/deferred_credential', function (req, res) {
   };
   logArtifact('OID4VCI Deferred Credential Response', 'as returned', response);
   sendCredentialResponse(res, 200, response, record.encryption);
-  log.debug("Leaving the OID4VCI deferred credential endpoint. Issued " + issued.length +
-            " SD-JWT VC(s).");
+  log.debug("Leaving the OID4VCI deferred credential endpoint. Issued " + issued.length + " " +
+            vciFormatOf(deferredConfigId) + " credential(s).");
 });
 
 // The Notification Endpoint (OID4VCI section 11): the wallet reports what it did
@@ -1859,18 +2013,40 @@ function sweepVpTransactions() {
 // The DCQL query (OID4VP section 6): which credential, of which format, with
 // which claims. `claims` is what makes this a selective-disclosure request — the
 // Verifier names the paths it needs and has no way to ask for "everything".
-function vpDcqlQuery() {
-  log.debug("Entering vpDcqlQuery().");
-  const query = {
-    credentials: [{
-      id: VP_DCQL_ID,
-      format: 'dc+sd-jwt',
-      meta: { vct_values: [VCI_VCT] },
-      claims: VP_REQUESTED_CLAIMS.map(function (name) { return { path: [name] }; })
-    }]
-  };
+// The DCQL credential query, which differs by format in two ways that matter.
+//
+// How the credential is IDENTIFIED: an SD-JWT VC by its vct, a W3C VC by its
+// type array — hence `vct_values` against `type_values`, and note type_values
+// is an array OF ARRAYS (each entry is a complete type set that would satisfy
+// the query).
+//
+// Where the CLAIMS live: an SD-JWT VC keeps them at the top level of the
+// payload, a W3C VC under credentialSubject — so the same claim is asked for as
+// ["given_name"] in one format and ["credentialSubject","given_name"] in the
+// other. Getting that path wrong does not fail loudly; it asks for a claim that
+// is not there and the presentation looks like it withheld something.
+function vpDcqlQuery(format) {
+  log.debug("Entering vpDcqlQuery(). format=" + (format || 'dc+sd-jwt'));
+  const jwtVcJson = format === 'jwt_vc_json';
+  const credential = jwtVcJson
+    ? {
+        id: VP_DCQL_ID,
+        format: 'jwt_vc_json',
+        meta: { type_values: [VCI_JWT_TYPES] },
+        claims: VP_REQUESTED_CLAIMS.map(function (name) {
+          return { path: ['credentialSubject', name] };
+        })
+      }
+    : {
+        id: VP_DCQL_ID,
+        format: 'dc+sd-jwt',
+        meta: { vct_values: [VCI_VCT] },
+        claims: VP_REQUESTED_CLAIMS.map(function (name) { return { path: [name] }; })
+      };
+  const query = { credentials: [credential] };
   logArtifact('OID4VP DCQL query', 'as built', query);
-  log.debug("Leaving vpDcqlQuery(). " + VP_REQUESTED_CLAIMS.length + " claim(s) requested.");
+  log.debug("Leaving vpDcqlQuery(). " + VP_REQUESTED_CLAIMS.length + " claim(s) requested as " +
+            credential.format + ".");
   return query;
 }
 
@@ -1883,7 +2059,8 @@ function vpDcqlQuery() {
 //   by reference  a pre-registered client_id and a SIGNED Request Object at
 //                 request_uri, verifiable against this service's published JWKS.
 function buildVpRequest(req, opts) {
-  log.debug("Entering buildVpRequest(). byReference=" + !!opts.byReference);
+  log.debug("Entering buildVpRequest(). byReference=" + !!opts.byReference +
+            ", format=" + (opts.format || 'dc+sd-jwt'));
   const base = baseUrlOf(req);
   const responseUri = base + '/oid4vp/response';
   const id = randomId(16);
@@ -1897,16 +2074,26 @@ function buildVpRequest(req, opts) {
     response_uri: responseUri,
     nonce: nonce,
     state: state,
-    dcql_query: vpDcqlQuery(),
+    dcql_query: vpDcqlQuery(opts.format),
     client_metadata: {
       client_name: 'Mock Verifier (bar door)',
-      vp_formats_supported: { 'dc+sd-jwt': { 'sd-jwt_alg_values': ['RS256', 'ES256'],
-                                             'kb-jwt_alg_values': ['ES256'] } }
+      // Both formats are advertised whichever one this request asks for: this is
+      // what the Verifier CAN accept, not what it wants this time — the DCQL
+      // query is what says that.
+      vp_formats_supported: {
+        'dc+sd-jwt': { 'sd-jwt_alg_values': ['RS256', 'ES256'], 'kb-jwt_alg_values': ['ES256'] },
+        'jwt_vc_json': { alg_values: ['RS256', 'ES256'] }
+      }
     }
   };
   const record = {
     id: id, nonce: nonce, state: state, clientId: clientId,
     responseMode: 'direct_post', request: request, byReference: !!opts.byReference,
+    // Which format this Verifier asked for. The response is verified against
+    // THIS, not against whatever shape happens to turn up, so a wallet that
+    // answers a jwt_vc_json query with an SD-JWT is refused rather than quietly
+    // accepted by the other code path.
+    format: opts.format === 'jwt_vc_json' ? 'jwt_vc_json' : 'dc+sd-jwt',
     expires: Date.now() + VP_TTL_MS, verdict: null
   };
   logArtifact('OID4VP Authorization Request', 'as built', request);
@@ -1982,6 +2169,10 @@ app.get('/oid4vp/verifier', function (req, res) {
     '<p class="alt">Wallet on another device?<br>' +
     '<a class="cta secondary" id="present_cross_device" href="/oid4vp/start?mode=cross-device">' +
     'Show a QR code (cross-device)</a></p>' +
+    '<p class="alt">Holding a <code>jwt_vc_json</code> credential instead? That format has no selective ' +
+    'disclosure, so presenting it hands over every claim it carries.<br>' +
+    '<a class="cta secondary" id="present_jwt_vc_json" href="/oid4vp/start?format=jwt_vc_json">' +
+    'Present a JWT VC</a></p>' +
     '<div class="meta">This is the Verifier in OID4VP. It builds an Authorization Request with ' +
     '<code>response_type=vp_token</code>, a <code>dcql_query</code> naming the claims above, a fresh ' +
     '<code>nonce</code>, and <code>response_mode=direct_post</code> — so your wallet POSTs the presentation ' +
@@ -1994,10 +2185,14 @@ app.get('/oid4vp/verifier', function (req, res) {
 
 // The link on that page: build the request and hand it to the wallet.
 app.get('/oid4vp/start', function (req, res) {
-  log.debug("Entering the presentation start endpoint. mode=" + (req.query.mode || 'same-device'));
+  log.debug("Entering the presentation start endpoint. mode=" + (req.query.mode || 'same-device') +
+            ", format=" + (req.query.format || 'dc+sd-jwt'));
   const byReference = String(req.query.by || '') === 'reference';
   const mode = String(req.query.mode || 'same-device');
-  const record = buildVpRequest(req, { byReference: byReference });
+  // Which credential format to ask for. Anything unrecognised falls back to
+  // dc+sd-jwt, which is what this Verifier has always asked for.
+  const format = String(req.query.format || '') === 'jwt_vc_json' ? 'jwt_vc_json' : 'dc+sd-jwt';
+  const record = buildVpRequest(req, { byReference: byReference, format: format });
   const query = vpRequestQuery(req, record);
   const wallet = String(req.query.wallet || VP_WALLET_URL).replace(/\/+$/, '') +
                  '/sd-jwt-vc-presentation-1.html';
@@ -2089,6 +2284,170 @@ function sdHashOf(presentedWithoutKb, sdAlg) {
   const nodeAlg = { 'sha-256': 'sha256', 'sha-384': 'sha384', 'sha-512': 'sha512' }[alg];
   if (!nodeAlg) return null;
   return b64u(crypto.createHash(nodeAlg).update(presentedWithoutKb, 'ascii').digest());
+}
+
+// A W3C Verifiable Presentation secured as a JWT, carrying a jwt_vc_json
+// credential (OID4VP with format jwt_vc_json).
+//
+// The checks are the same QUESTIONS the SD-JWT path asks, answered against a
+// different artefact — which is the point of running both formats through this
+// workflow:
+//
+//   who signed the credential          the issuer's key, as before
+//   is it still valid                  nbf/exp, as before
+//   is the holder the one it was bound to
+//                                      here the VP JWT's signature against the
+//                                      credential's cnf.jwk, where an SD-JWT
+//                                      uses a Key Binding JWT
+//   is this presentation fresh and for us
+//                                      nonce and aud, as before — but they are
+//                                      claims of the VP JWT, not of a KB-JWT
+//   what was disclosed                 everything in credentialSubject, because
+//                                      this format cannot withhold anything
+//
+// There is deliberately no sd_hash equivalent: an SD-JWT's KB-JWT commits to the
+// exact bytes presented because a presentation can be a SUBSET. A VP JWT signs
+// over the whole credential it embeds, so the commitment is the signature.
+function verifyVpJwt(presentation, record) {
+  log.debug("Entering verifyVpJwt().");
+  logArtifact('OID4VP Verifiable Presentation (jwt_vc_json)', 'as received', presentation);
+  const checks = [];
+  const result = { ok: false, checks: checks, claims: {}, disclosed: [], vct: '', sub: '',
+                   extraDisclosed: [] };
+
+  // The tilde test comes FIRST, and it has to. An SD-JWT Combined Serialization
+  // is <JWT>~<Disclosure>*~ — splitting THAT on "." also yields three parts,
+  // because the tildes hang off the end of the signature segment. So a
+  // part-count check alone lets an SD-JWT through to be reported as an
+  // undecodable JWT, which names the wrong problem: the wallet answered in the
+  // wrong FORMAT, and that is what it needs to be told.
+  const raw = String(presentation || '');
+  if (raw.indexOf('~') >= 0) {
+    vpCheck(checks, 'Format', false,
+      'this is an SD-JWT Combined Serialization (it contains "~"), but this request asked for ' +
+      'jwt_vc_json, whose presentation is a Verifiable Presentation JWT.');
+    log.debug("Leaving verifyVpJwt(). An SD-JWT answered a jwt_vc_json query.");
+    return result;
+  }
+  const vpParts = raw.split('.');
+  if (vpParts.length !== 3) {
+    vpCheck(checks, 'Format', false,
+      'a jwt_vc_json presentation is a Verifiable Presentation JWT (three parts); this has ' +
+      vpParts.length + ' part(s).');
+    log.debug("Leaving verifyVpJwt(). Not a JWS.");
+    return result;
+  }
+  let vpHeader = {}, vpPayload = {};
+  try {
+    vpHeader = jsonFromB64u(vpParts[0]);
+    vpPayload = jsonFromB64u(vpParts[1]);
+  } catch (e) {
+    vpCheck(checks, 'Format', false, 'the presentation JWT cannot be decoded: ' + e.message);
+    return result;
+  }
+  const vp = vpPayload.vp || {};
+  const embedded = [].concat(vp.verifiableCredential || []);
+  if (!embedded.length || typeof embedded[0] !== 'string') {
+    vpCheck(checks, 'Format', false,
+      'the vp claim carries no verifiableCredential; a jwt_vc_json presentation embeds the credential JWT there.');
+    log.debug("Leaving verifyVpJwt(). No credential inside.");
+    return result;
+  }
+  vpCheck(checks, 'Format', true,
+    'Verifiable Presentation JWT carrying ' + embedded.length + ' credential(s); no Disclosures, because ' +
+    'jwt_vc_json has no selective disclosure.');
+
+  // --- the credential inside -----------------------------------------------
+  const vcJwt = embedded[0];
+  let vcHeader = {}, vcPayload = {};
+  try {
+    vcHeader = jsonFromB64u(vcJwt.split('.')[0]);
+    vcPayload = jsonFromB64u(vcJwt.split('.')[1]);
+  } catch (e) {
+    vpCheck(checks, 'Credential', false, 'the embedded credential cannot be decoded: ' + e.message);
+    return result;
+  }
+  const vc = vcPayload.vc || {};
+  const subject = vc.credentialSubject || {};
+  result.sub = vcPayload.sub || subject.id || '';
+
+  let issuerSignatureOk = false;
+  try {
+    jwt.verify(vcJwt, STS.certPem, { algorithms: ['RS256'] });
+    issuerSignatureOk = true;
+  } catch (e) {
+    vpCheck(checks, 'Issuer signature', false, 'does not verify: ' + e.message);
+  }
+  if (issuerSignatureOk) {
+    vpCheck(checks, 'Issuer signature', true, "verifies against the issuer's key (alg " + vcHeader.alg + ').');
+  }
+  const now = nowSec();
+  vpCheck(checks, 'Validity window',
+    (!vcPayload.exp || vcPayload.exp > now) && (!vcPayload.nbf || vcPayload.nbf <= now),
+    'nbf ' + (vcPayload.nbf || '—') + ', exp ' + (vcPayload.exp || '—') + ', now ' + now + '.');
+
+  const types = [].concat(vc.type || []);
+  const wantedTypes = VCI_JWT_TYPES;
+  const typesOk = wantedTypes.every(function (t) { return types.indexOf(t) >= 0; });
+  vpCheck(checks, 'Credential type', typesOk,
+    'type is [' + types.join(', ') + ']; this Verifier asked for [' + wantedTypes.join(', ') + '].');
+
+  // --- holder binding: the VP JWT is signed by the key the credential names --
+  const cnfJwk = (vcPayload.cnf || {}).jwk;
+  if (!cnfJwk) {
+    vpCheck(checks, 'Holder binding', false,
+      'the credential carries no cnf.jwk, so nothing says which key may present it.');
+  } else {
+    let holderOk = false;
+    try {
+      const holderKey = crypto.createPublicKey({ key: cnfJwk, format: 'jwk' });
+      holderOk = crypto.verify(
+        vpHeader.alg === 'RS256' ? 'sha256' : null,
+        Buffer.from(vpParts[0] + '.' + vpParts[1]),
+        vpHeader.alg === 'RS256'
+          ? holderKey
+          : { key: holderKey, dsaEncoding: 'ieee-p1363' },
+        Buffer.from(vpParts[2], 'base64url'));
+    } catch (e) {
+      vpCheck(checks, 'Holder binding', false, 'the presentation signature could not be checked: ' + e.message);
+    }
+    if (holderOk) {
+      vpCheck(checks, 'Holder binding', true,
+        'the presentation JWT is signed by the key the credential is bound to (cnf.jwk, alg ' +
+        vpHeader.alg + ').');
+    } else {
+      vpCheck(checks, 'Holder binding', false,
+        'the presentation JWT is NOT signed by the key the credential is bound to (cnf.jwk).');
+    }
+  }
+
+  // --- freshness and audience ----------------------------------------------
+  vpCheck(checks, 'Nonce', vpPayload.nonce === record.nonce,
+    'nonce is "' + (vpPayload.nonce || '—') + '"; this request used "' + record.nonce + '".');
+  vpCheck(checks, 'Audience', String(vpPayload.aud) === String(record.clientId),
+    'aud is "' + vpPayload.aud + '"; this Verifier is "' + record.clientId + '".');
+
+  // --- what arrived ---------------------------------------------------------
+  // Everything in credentialSubject came, because this format cannot send less.
+  // `id` is the subject identifier rather than a claim, so it is not counted.
+  const present = Object.keys(subject).filter(function (k) { return k !== 'id'; });
+  present.forEach(function (name) { result.claims[name] = subject[name]; });
+  result.disclosed = present;
+  const missing = VP_REQUESTED_CLAIMS.filter(function (name) { return present.indexOf(name) < 0; });
+  result.extraDisclosed = present.filter(function (name) { return VP_REQUESTED_CLAIMS.indexOf(name) < 0; });
+  vpCheck(checks, 'Requested claims', missing.length === 0,
+    missing.length
+      ? 'missing: ' + missing.join(', ') + '.'
+      : 'all ' + VP_REQUESTED_CLAIMS.length + ' requested claim(s) arrived' +
+        (result.extraDisclosed.length
+          ? ', along with ' + result.extraDisclosed.length + ' this Verifier did not ask for (' +
+            result.extraDisclosed.join(', ') + ') — jwt_vc_json cannot withhold them.'
+          : '.'));
+
+  result.ok = checks.every(function (c) { return c.ok; });
+  log.debug("Leaving verifyVpJwt(). " + (result.ok ? "accepted" : "REFUSED") + ", " +
+            checks.filter(function (c) { return !c.ok; }).length + " failed check(s).");
+  return result;
 }
 
 function verifyPresentation(presentation, record) {
@@ -2330,7 +2689,12 @@ app.post('/oid4vp/response', function (req, res) {
     return;
   }
 
-  const verified = verifyPresentation(presentations[0], record);
+  // Verified against the format THIS request asked for, so answering a
+  // jwt_vc_json query with an SD-JWT (or the reverse) is refused rather than
+  // silently handled by the other code path.
+  const verified = record.format === 'jwt_vc_json'
+    ? verifyVpJwt(presentations[0], record)
+    : verifyPresentation(presentations[0], record);
   record.verdict = {
     ok: verified.ok,
     at: new Date().toISOString(),
@@ -2771,7 +3135,7 @@ function parseAuthorizationDetails(raw) {
                       'this issuer understands openid_credential.' };
     }
     const configId = d.credential_configuration_id;
-    if (configId && configId !== VCI_CONFIG_ID) {
+    if (configId && !VCI_CONFIGS[configId]) {
       log.debug("Leaving parseAuthorizationDetails(). Unknown configuration: " + configId);
       return { error: 'credential_configuration_id "' + configId + '" is not one this issuer offers.' };
     }

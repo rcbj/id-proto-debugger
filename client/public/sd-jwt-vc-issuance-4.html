@@ -318,6 +318,22 @@ function vcSetAllPanes(expand) {
   </fieldset>
 </div>
 
+<div class="step0 dbg-pane" id="pane_next">
+  <legend class="dbg-legend" id="next_expand_button" onclick="return sdjwtvc4.togglePane('next_fieldset');">Next: Present It</legend>
+  <fieldset name="next_fieldset" id="next_fieldset" style="display: block;">
+    <p class="vc-note">The <strong>presentation workflow</strong> is the other half of the format: a Verifier asks
+    for some of this credential's claims over
+    <a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html" target="_blank" rel="noopener noreferrer">OID4VP</a>,
+    and this wallet answers with only the Disclosures it chooses plus a Key Binding JWT. Nothing is copied by going
+    there &mdash; both workflows read the same browser storage, so what goes is whatever this wallet is
+    <em>holding</em>: the generation marked as in hand above, with the holder key it is bound to.</p>
+    <p>
+      <input class="btn2" id="vc_present_button" type="button" value="Present It (presentation workflow)" onclick="return sdjwtvc4.presentIt();" />
+      <span class="vc-status" id="vc_present_status">&nbsp;</span>
+    </p>
+  </fieldset>
+</div>
+
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
 <link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">

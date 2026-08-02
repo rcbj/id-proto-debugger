@@ -157,7 +157,7 @@ function loadCurrentCredential() {
   }
   var parsed;
   try {
-    parsed = sdJwtVc.parseSdJwt(raw);
+    parsed = sdJwtVc.parseCredential(raw);
   } catch (e) {
     log.error("the stored credential could not be parsed: " + e.message);
     state.current = { raw: raw, parsed: null, meta: meta, error: e.message };
@@ -350,6 +350,13 @@ function historyRow(entry, attemptNumber, generation, isActive) {
 
 function renderHistory() {
   log.debug("Entering renderHistory().");
+  // Which generation is in hand is exactly what the presentation offer names, and
+  // every path that changes it comes through here — keeping, discarding,
+  // activating, stepping and clearing — so the offer is rebuilt with the table
+  // rather than at each of those call sites. It goes at the TOP because the
+  // empty-history return below is itself a state the offer has to describe
+  // (nothing held, nothing to present), and this function only reads state.
+  renderPresentOffer();
   var history = sdJwtVc.credentialHistory();
   var active = sdJwtVc.activeGeneration();
   var dropped = sdJwtVc.droppedGenerations();
@@ -1323,7 +1330,7 @@ function renderComparison() {
   }
   var after;
   try {
-    after = sdJwtVc.parseSdJwt(refreshed.raw);
+    after = sdJwtVc.parseCredential(refreshed.raw);
   } catch (e) {
     status("vc_compare_status", "The refreshed credential could not be parsed: " + e.message, "vc-bad");
     log.debug("Leaving renderComparison(). Unparseable.");
@@ -1397,6 +1404,9 @@ function renderComparison() {
     (refreshed.meta.notificationId ? ", notification_id " + refreshed.meta.notificationId : ""));
   disable("vc_replace_button", false);
   disable("vc_discard_button", false);
+  // A pending refresh is the newest thing on the screen and is not in storage, so
+  // the offer has to disown it the moment it appears.
+  renderPresentOffer();
   log.debug("Leaving renderComparison().");
   return true;
 }
@@ -1486,6 +1496,54 @@ function replaceCredential() {
 function verifyInStepThree() {
   window.location.href = sdJwtVc.STEP3_URL;
   return false;
+}
+
+// Hand off to the PRESENTATION workflow. Nothing is copied: that workflow reads
+// the same storage keys this page writes, so what it will find is whatever is in
+// hand right now — which is the whole reason the offer below spells out which
+// generation that is.
+function presentIt() {
+  log.debug("Entering presentIt().");
+  var readiness = sdJwtVc.presentationReadiness();
+  if (!readiness.ready) {
+    renderPresentOffer();
+    log.debug("Leaving presentIt(). Not ready.");
+    return false;
+  }
+  window.location.href = sdJwtVc.PRESENTATION_URL;
+  log.debug("Leaving presentIt().");
+  return false;
+}
+
+// This page is the one place where "the credential" is ambiguous, so the offer
+// has to say which one would go. Two things make it ambiguous, and both are
+// states this page puts the user in deliberately:
+//   - several generations, of which one is in hand (and it need not be the
+//     newest — going back to an older one is a supported thing to do here);
+//   - a refreshed credential retrieved but NOT yet kept, which is the newest
+//     thing on the screen and is not in storage at all, so it is not what a
+//     Verifier would be shown.
+function renderPresentOffer() {
+  log.debug("Entering renderPresentOffer().");
+  var readiness = sdJwtVc.presentationReadiness();
+  var button = el("vc_present_button");
+  if (button) button.disabled = !readiness.ready;
+  var message = readiness.message;
+  var level = readiness.level;
+  if (readiness.ready) {
+    var active = sdJwtVc.activeGeneration();
+    if (active && active.total > 1) {
+      message += " That is generation " + active.generation + " of " + active.total +
+        (active.generation < active.total ? ", which is not the newest one." : ", the newest one.");
+    }
+    if (state.refreshed) {
+      message += " The refreshed credential below has not been kept, so it is NOT what would be presented — " +
+        "keep it first if that is the one you want shown.";
+      level = "vc-pending";
+    }
+  }
+  status("vc_present_status", message, level);
+  log.debug("Leaving renderPresentOffer(). ready=" + readiness.ready);
 }
 
 // Everything a pending refresh left behind, including the key it would have
@@ -1631,5 +1689,6 @@ module.exports = {
   discardRefreshed: discardRefreshed,
   copyRefreshed: copyRefreshed,
   togglePane: togglePane,
+  presentIt: presentIt,
   onload: onload
 };

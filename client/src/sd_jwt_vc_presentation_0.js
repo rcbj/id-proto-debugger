@@ -41,17 +41,152 @@ function status(text, cls) {
   e.className = "vc-note vc-status" + (cls ? " " + cls : "");
 }
 
-// The verifier's own pages, derived from the configured verifier base URL. The
-// mock verifier the STS service hosts lives under the same origin as the mock
-// issuer, which is why this defaults to the issuer URL the issuance workflow
-// already configured.
+// Where the verifier's own start pages live.
+//
+// Those pages — /oid4vp/verifier and /oid4vp/start — are THIS debugger's mock
+// verifier's invention (sts/server.js). A real verifier has no such thing, which
+// is why walt.id's does not answer them. So the base is taken from explicit
+// configuration first, and only guessed as a last resort.
+//
+// The guess used to be the credential issuer URL, whole, on the reasoning that
+// the mock verifier shares an origin with the mock issuer. True for the mock, and
+// wrong in two separate ways as soon as issuance has been run against walt.id:
+// its Credential Issuer Identifier carries a PATH (http://localhost:7005/openid4vci),
+// so appending /oid4vp/verifier produced
+// http://localhost:7005/openid4vci/oid4vp/verifier — and its verifier is a
+// different service on :7003 regardless. Only the ORIGIN of the issuer is a
+// usable guess, and even then only because the mock happens to co-locate them.
+//
+// Returns the base and where it came from, because a guessed base that 404s and
+// a configured one that 404s call for different things from the user.
+function verifierBase() {
+  var stored = sdJwtVc.get(sdJwtVp.KEYS.VERIFIER_BASE_URL) || "";
+  if (stored) return { base: trimBase(stored), source: "configured" };
+
+  var configured = appconfig.oid4vpVerifierUrlDefault || "";
+  if (configured) return { base: trimBase(configured), source: "configured" };
+
+  // Last resort: the ORIGIN of whatever issuer the issuance workflow used.
+  var issuer = sdJwtVc.storedRequestConfig().credentialIssuer ||
+               appconfig.oid4vciIssuerUrlDefault || "";
+  var origin = originOf(issuer);
+  if (origin) return { base: origin, source: "guessed from the credential issuer" };
+
+  return { base: "", source: "none" };
+}
+
+function trimBase(v) { return String(v).replace(/\/+$/, ""); }
+
+// The scheme://host:port of a URL, dropping any path. Falls back to the trimmed
+// string when it will not parse, so a hand-typed value is not silently discarded.
+function originOf(url) {
+  var s = String(url || "").trim();
+  if (!s) return "";
+  try {
+    return new URL(s).origin;
+  } catch (e) {
+    return trimBase(s);
+  }
+}
+
 function verifierBaseUrl() {
   log.debug("Entering verifierBaseUrl().");
-  var stored = sdJwtVc.get("sdjwtvp_verifier_base_url") || "";
-  var issuer = sdJwtVc.storedRequestConfig().credentialIssuer || "";
-  var base = stored || issuer || appconfig.oid4vciIssuerUrlDefault || "";
-  log.debug("Leaving verifierBaseUrl(). base=" + base);
-  return String(base).replace(/\/+$/, "");
+  var b = verifierBase();
+  log.debug("Leaving verifierBaseUrl(). base=" + b.base + " (" + b.source + ")");
+  return b.base;
+}
+
+// ---------------------------------------------------------------------------
+// The configuration pane.
+//
+// Two settings, both about the verifier, both hand-entered: an OID4VP verifier
+// publishes no discovery document, so there is nothing to retrieve and populate
+// them from the way issuance step 1 populates its pane from the issuer's
+// metadata. Save / Clear All / Restore Defaults mirror that pane's controls so
+// the two workflows behave the same way under the same buttons.
+// ---------------------------------------------------------------------------
+var CONFIG_FIELDS = [
+  { id: "vp_verifier_base_url", key: "VERIFIER_BASE_URL" },
+  { id: "vp_verifier_jwks_url", key: "VERIFIER_JWKS_URL" }
+];
+
+function configStatus(text, cls) {
+  var e = el("config_status");
+  if (!e) return;
+  e.textContent = text;
+  e.className = "vc-status" + (cls ? " " + cls : "");
+}
+
+function loadConfiguration() {
+  log.debug("Entering loadConfiguration().");
+  CONFIG_FIELDS.forEach(function (f) {
+    var e = el(f.id);
+    if (e) e.value = sdJwtVc.get(sdJwtVp.KEYS[f.key]) || "";
+  });
+  log.debug("Leaving loadConfiguration().");
+}
+
+function saveConfiguration() {
+  log.debug("Entering saveConfiguration().");
+  CONFIG_FIELDS.forEach(function (f) {
+    var e = el(f.id);
+    var v = e ? String(e.value || "").trim() : "";
+    if (v) sdJwtVc.set(sdJwtVp.KEYS[f.key], v);
+    else sdJwtVc.remove(sdJwtVp.KEYS[f.key]);
+  });
+  configStatus("Saved.", "vc-ok");
+  // The base decides the start links below, so the chooser has to be redrawn or
+  // it would keep offering links built from the previous value.
+  render();
+  log.debug("Leaving saveConfiguration().");
+  return false;
+}
+
+function clearConfiguration() {
+  log.debug("Entering clearConfiguration().");
+  CONFIG_FIELDS.forEach(function (f) {
+    sdJwtVc.remove(sdJwtVp.KEYS[f.key]);
+    var e = el(f.id);
+    if (e) e.value = "";
+  });
+  // Cleared, not defaulted: the pane now falls back to whatever the deployment
+  // configures, which the chooser's status line names.
+  configStatus("Cleared.", "");
+  render();
+  log.debug("Leaving clearConfiguration().");
+  return false;
+}
+
+function restoreDefaults() {
+  log.debug("Entering restoreDefaults().");
+  var base = trimBase(appconfig.oid4vpVerifierUrlDefault || "");
+  if (!base) {
+    configStatus("This deployment configures no default verifier (oid4vpVerifierUrlDefault is empty), so " +
+                 "there is nothing to restore \u2014 enter the verifier by hand.", "vc-bad");
+    log.debug("Leaving restoreDefaults(). No default configured.");
+    return false;
+  }
+  setFieldValue("vp_verifier_base_url", base);
+  // The mock verifier signs Request Objects with the STS key and serves it at
+  // /oauth2/jwks. Derived rather than configured separately, because for this
+  // suite's own verifier the two always move together.
+  setFieldValue("vp_verifier_jwks_url", base + "/oauth2/jwks");
+  configStatus("Restored this suite's mock verifier. Save to apply.", "");
+  log.debug("Leaving restoreDefaults().");
+  return false;
+}
+
+// Step 0 had no collapsible panes before this one, so it had no toggle. Same
+// behaviour as the other pages' so the legends act alike across the workflow.
+function togglePane(id) {
+  var fs = el(id);
+  if (fs) fs.style.display = (fs.style.display === "none") ? "block" : "none";
+  return false;
+}
+
+function setFieldValue(id, v) {
+  var e = el(id);
+  if (e) e.value = v;
 }
 
 function verifierPageUrl(id) {
@@ -100,14 +235,13 @@ function renderCredentialState() {
   }
   var parsed = null;
   try {
-    parsed = sdJwtVc.parseSdJwt(raw);
+    parsed = sdJwtVc.parseCredential(raw);
   } catch (e) {
     host.className = "vc-note vc-status vc-bad";
     host.textContent = "The credential in storage could not be parsed: " + e.message;
     log.debug("Leaving renderCredentialState(). Unparseable.");
     return false;
   }
-  var payload = parsed.payload || {};
   var hasKey = !!sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK);
   // Absent-by-choice is not the same as absent-and-lost: the holder key pair can
   // be deliberately kept out of localStorage (issuance step 2), in which case it
@@ -115,8 +249,14 @@ function renderCredentialState() {
   // presentable. Saying "cannot be presented" for that case would be wrong.
   var optedOut = !hasKey && !sdJwtVc.holderPrivateKeyMayBeStored();
   host.className = "vc-note vc-status " + (hasKey ? "vc-ok" : (optedOut ? "vc-pending" : "vc-bad"));
-  host.textContent = "Holding a " + (payload.vct || "credential") + " with " +
-    parsed.disclosures.length + " selectively-disclosable claim(s)" +
+  // Said per format, because "0 selectively-disclosable claims" is true of a
+  // jwt_vc_json and tells the holder exactly the wrong thing: the credential is
+  // full of claims, none of which can be withheld.
+  host.textContent = "Holding a " + sdJwtVc.credentialLabel(parsed) +
+    (parsed.format === sdJwtVc.FORMAT_JWT_VC_JSON
+      ? " (jwt_vc_json) carrying " + Object.keys(parsed.claims).length +
+        " claim(s), none of which can be withheld — that format has no selective disclosure"
+      : " with " + parsed.disclosures.length + " selectively-disclosable claim(s)") +
     (hasKey
       ? ", and the holder key it is bound to — so it can be presented."
       : optedOut
@@ -137,9 +277,21 @@ function render() {
     }).join("");
   }
   renderCredentialState();
-  var base = verifierBaseUrl();
-  status("Currently selected: " + current.spec + " · " + current.label + ". The verifier is " +
-         (base || "not configured yet — step 1 can take a request pasted in by hand instead") + ".", "");
+  // Name the base AND where it came from. A guessed one is the case that goes
+  // wrong — the start pages below exist only on this debugger's mock verifier, so
+  // a base guessed from, say, walt.id's issuer will 404 — and saying so here is
+  // the difference between an obvious misconfiguration and an unreachable link.
+  var b = verifierBase();
+  var where = b.base
+    ? "The verifier is " + b.base +
+      (b.source === "configured"
+        ? "."
+        : " (guessed from the credential issuer — these start pages exist only on this " +
+          "debugger's own mock verifier, so set oid4vpVerifierUrlDefault, or paste a request " +
+          "into step 1 by hand, if that is not it).")
+    : "The verifier is not configured yet — step 1 can take a request pasted in by hand instead.";
+  status("Currently selected: " + current.spec + " · " + current.label + ". " + where,
+         b.source === "guessed from the credential issuer" ? "vc-pending" : "");
   log.debug("Leaving render().");
 }
 
@@ -169,6 +321,8 @@ function choose(id) {
 
 function onload() {
   log.debug("Entering onload().");
+  // Before render(): the chooser's links and status line are built from these.
+  loadConfiguration();
   render();
   var step = document.getElementById("vp_step_0");
   if (step) step.className = "vc-step-current";
@@ -183,6 +337,10 @@ module.exports = {
   choose: choose,
   render: render,
   verifierBaseUrl: verifierBaseUrl,
+  togglePane: togglePane,
+  saveConfiguration: saveConfiguration,
+  clearConfiguration: clearConfiguration,
+  restoreDefaults: restoreDefaults,
   verifierPageUrl: verifierPageUrl,
   onload: onload
 };

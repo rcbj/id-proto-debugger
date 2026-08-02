@@ -204,6 +204,35 @@ function vcSetAllPanes(expand) {
   </fieldset>
 </div>
 
+<!-- ============ On to step 4 ============
+     Refreshing is OPTIONAL — OID4VCI section 14.5 leaves it to the issuer to
+     offer and to the wallet to ask — so this is an offer at the end of the
+     workflow rather than a Continue the page insists on. The button mirrors step
+     4's own "Verify in step 3": a button and not a redirect, so nothing moves the
+     browser out from under someone still reading the credential above. -->
+<div class="step0 dbg-pane" id="pane_next">
+  <legend class="dbg-legend" id="next_expand_button" onclick="return sdjwtvc3.togglePane('next_fieldset');">Next: Refresh It, or Present It</legend>
+  <fieldset name="next_fieldset" id="next_fieldset" style="display: block;">
+    <p class="vc-note">A credential does not last forever. <strong>Step 4</strong> refreshes the one above the
+    way <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a>
+    section 14.5 describes it &mdash; a Refresh Token for a fresh Access Token, then the Credential Endpoint again
+    &mdash; and shows what the issuer changed. Nothing is sent by going there.</p>
+    <p>
+      <input class="btn2" id="vc_goto_step4_button" type="button" value="Refresh It (step 4)" onclick="return sdjwtvc3.refreshInStepFour();" />
+      <span class="vc-status" id="vc_next_status">&nbsp;</span>
+    </p>
+    <p class="vc-note">Or show it to somebody. The <strong>presentation workflow</strong> is the other half of the
+    format: a Verifier asks for some of these claims over
+    <a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html" target="_blank" rel="noopener noreferrer">OID4VP</a>,
+    and this wallet answers with only the Disclosures it chooses plus a Key Binding JWT. Nothing is copied by going
+    there &mdash; both workflows read the same browser storage, so the credential above is already what it will find.</p>
+    <p>
+      <input class="btn2" id="vc_present_button" type="button" value="Present It (presentation workflow)" onclick="return sdjwtvc3.presentIt();" />
+      <span class="vc-status" id="vc_present_status">&nbsp;</span>
+    </p>
+  </fieldset>
+</div>
+
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
 <link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">

@@ -353,11 +353,19 @@ function validateSignedMetadata(doc, options) {
 function buildInfoTable(info, provenance) {
   log.debug("Entering buildInfoTable().");
   var note = "";
-  if (provenance && (provenance.url || provenance.docLabel)) {
+  if (provenance && (provenance.url || provenance.docLabel || provenance.file)) {
+    // Where it came from, said accurately. A document read off disk was not
+    // "retrieved from" anywhere, and saying so would hide the one fact that
+    // matters when a pane is being used because CORS blocked the fetch: what is
+    // on screen is a local copy, not what that URL serves right now.
+    var where = "";
+    if (provenance.file) {
+      where = " loaded from the file <code>" + escapeHtmlText(provenance.file) + "</code>";
+    } else if (provenance.url) {
+      where = " retrieved from <code>" + escapeHtmlText(provenance.url) + "</code>";
+    }
     note = "<p class='discovery-info-note'>Showing <strong>" +
-           escapeHtmlText(provenance.docLabel || "metadata") + "</strong>" +
-           (provenance.url ? " retrieved from <code>" + escapeHtmlText(provenance.url) + "</code>" : "") +
-           ".</p>";
+           escapeHtmlText(provenance.docLabel || "metadata") + "</strong>" + where + ".</p>";
   }
   var html = note + "<table border='2' style='border:2px;'>" +
              "<tr><td><strong>Attribute</strong></td><td><strong>Value</strong></td></tr>";
@@ -380,6 +388,22 @@ function buildInfoTable(info, provenance) {
 // load, which also restores the in-memory copy the "Populate" button reads. Its
 // provenance goes in a separate key so the document's own shape stays exactly
 // as it arrived.
+//
+// The PARSED document is what is kept, deliberately, and it is worth saying why
+// the obvious-looking alternative is wrong. Caching the original response bytes
+// as well, and validating signed_metadata against those, would defeat the more
+// useful half of that check: signed_metadata is a JWT signed over its OWN
+// payload, not over the surrounding JSON, so the bytes add nothing to the
+// signature verification — while the claim-by-claim comparison is deliberately
+// made against the document the page is SHOWING and USING, which is how a member
+// edited away from its signed claim gets reported. Validating the pristine bytes
+// instead reports every tampered document as clean;
+// tests/oauth2_metadata_rfc8414.js has both negative controls for it.
+//
+// save() reports whether the write actually happened. A quota failure used to be
+// swallowed here, which is the one way a table can be on screen with nothing
+// behind it — and the caller can now say so instead of leaving a button that
+// will answer "retrieve a document first" for reasons the user cannot see.
 // ---------------------------------------------------------------------------
 function createStore(infoKey, sourceKey) {
   log.debug("Entering createStore().");
@@ -391,9 +415,12 @@ function createStore(infoKey, sourceKey) {
       try {
         localStorage.setItem(infoKey, JSON.stringify(info));
         localStorage.setItem(sourceKey, JSON.stringify(provenance || null));
+        return true;
       } catch (e) {
         // No storage, or over quota: the document is still on screen, it just
-        // will not survive a reload.
+        // will not survive a reload. Reported rather than swallowed.
+        log.debug("createStore().save(): could not store " + infoKey + ": " + e.message);
+        return false;
       }
     },
     read: function () {
@@ -431,6 +458,41 @@ function fetchJson(url) {
     if (!r.ok) throw new Error("the endpoint returned HTTP " + r.status + ".");
     return r.json();
   });
+}
+
+// The document a pane should validate, and where it came from.
+//
+// Order matters and is the opposite of what looks natural: the IN-MEMORY copy
+// comes first because it is the one the table and the Populate button are built
+// from, so it is what the user is looking at — and reporting a signed claim that
+// disagrees with the document in use is the whole point of the check. Storage is
+// the fallback for the case the button used to fail on: arriving at a page whose
+// table was restored from a previous visit.
+//
+// Be clear about how much the storage branch earns: onload restores the
+// in-memory copy from storage before any table is drawn, so through the UI the
+// two are populated together and that branch is not reached. It is defensive —
+// removing it breaks nothing today and no test can catch it — and it is kept so
+// that a future page which renders a table without seeding its in-memory copy
+// gets a working button instead of a silent one.
+function documentForValidation(store, inMemory) {
+  log.debug("Entering documentForValidation().");
+  if (inMemory && Object.keys(inMemory).length) {
+    log.debug("Leaving documentForValidation(). Using the document this page holds.");
+    return { doc: inMemory, source: "memory", note: "" };
+  }
+  var saved = null;
+  try {
+    saved = store ? store.read() : null;
+  } catch (e) {
+    saved = null;
+  }
+  if (saved && Object.keys(saved).length) {
+    log.debug("Leaving documentForValidation(). Using the stored copy.");
+    return { doc: saved, source: "stored", note: "" };
+  }
+  log.debug("Leaving documentForValidation(). Nothing to validate.");
+  return { doc: null, source: "none", note: "" };
 }
 
 // ---------------------------------------------------------------------------
@@ -517,6 +579,7 @@ module.exports = {
   buildInfoTable: buildInfoTable,
   createStore: createStore,
   fetchJson: fetchJson,
+  documentForValidation: documentForValidation,
   wellKnownCandidates: wellKnownCandidates,
   fetchWellKnown: fetchWellKnown
 };

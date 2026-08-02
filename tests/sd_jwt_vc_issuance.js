@@ -1037,6 +1037,445 @@ async function stepLinksOnEveryPage(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// Validate Signature on step 1's two metadata panes.
+//
+// Two independent things are pinned here, and the second one is the reason this
+// section exists at all.
+//
+// FIRST, the button must work whenever a table is on screen — not only during the
+// visit that pressed Retrieve. It reads the document this page holds, falling
+// back to the stored copy, so returning to a page whose table was restored is
+// enough. Before that, the in-memory copy was the only source and coming back to
+// the page left the button answering "retrieve the metadata first" beside a fully
+// populated table.
+//
+// SECOND — and this is the trap — it must validate the document THE PAGE IS
+// USING, never a pristine copy of the bytes that arrived. Caching the raw
+// response and validating that instead looks like an obvious improvement and is
+// actively wrong: signed_metadata is a JWT signed over its OWN payload, not over
+// the surrounding JSON, so the original bytes add nothing to the signature check,
+// while the claim-by-claim comparison is what catches a member edited away from
+// its signed claim. Validate the pristine bytes and every tampered document
+// reports clean. tests/oauth2_metadata_rfc8414.js has those controls for
+// debugger.html's pane; these two panes had none, which is how the mistake got as
+// far as a working build.
+//
+// Both panes are pointed at the mock STS, because it emits signed_metadata on
+// both documents and Keycloak emits it on neither.
+//
+// Scope, honestly: the two assertions above are what this section earns its keep
+// with, and mutation testing says so — re-introducing the cached-response
+// mistake, and reverting the orphaned-table message, are both caught. The last
+// two checks below (an unreachable jwks_uri, a table with no document) cover
+// branches that are DEFENSIVE rather than reachable by using the page, so they
+// pin the messages without proving the branches are load-bearing.
+// ---------------------------------------------------------------------------
+async function metadataSignatureValidation(driver) {
+  log.info("=== Validate Signature on the step 1 metadata panes ===");
+  var asUrl = issuerBase + "/.well-known/oauth-authorization-server";
+  var panes = [
+    // `tamperMember` is a member the signed_metadata covers and that key
+    // RESOLUTION does not depend on. credential_issuer would be the obvious
+    // choice for the first pane and is the wrong one: this pane finds the
+    // issuer's keys by fetching /.well-known/jwt-vc-issuer UNDER that value, so
+    // editing it fails at "no jwks_uri" before any claim is compared, and the
+    // test would pass for a reason unrelated to what it is checking.
+    { name: "credential issuer", statusId: "vci_signed_metadata_status", tableId: "vci_metadata_table",
+      buttonId: "vci_validate_signed_metadata_button", storeKey: "vci_info",
+      tamperMember: "credential_endpoint" },
+    { name: "authorization server", statusId: "as_signed_metadata_status", tableId: "discovery_info_table",
+      buttonId: "as_validate_signed_metadata_button", storeKey: "discovery_info",
+      tamperMember: "issuer" }
+  ];
+
+  var saved = null;
+  var openStep1 = async function () {
+    await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+    await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
+  };
+  // A verdict, however it turns out. Every one of these ends in a full stop, and
+  // none of the intermediate "… " progress lines do — which is what tells a
+  // finished verdict from a pane still working. Waiting on content rather than
+  // sleeping also means a hung promise fails HERE, naming the pane, instead of
+  // somewhere downstream.
+  var verdictOf = async function (pane, why) {
+    await click(driver, By.id(pane.buttonId));
+    return await waitForStatus(driver, pane.statusId,
+      function (s) { return s !== "" && !/…$/.test(s); },
+      "the " + pane.name + " pane never reached a verdict " + why);
+  };
+  // Rewrite the stored document, then reload so the page picks it up.
+  var tamperStored = async function (pane, mutate) {
+    await driver.executeScript(
+      "var doc = JSON.parse(localStorage.getItem(arguments[0]));" +
+      "(" + mutate + ")(doc);" +
+      "localStorage.setItem(arguments[0], JSON.stringify(doc));", pane.storeKey);
+    await openStep1();
+    await driver.sleep(500);
+  };
+
+  // Everything the WORKFLOW left behind, captured BEFORE this section clears
+  // storage to get a clean pair of metadata documents. It has to be put back at
+  // the end: the sections after this one still need the credential and the
+  // access token the issuance produced, and restoring only the metadata state
+  // this section created leaves them with neither. That is exactly how this
+  // broke refreshNegatives — "there is no access token to present" — one section
+  // later and with nothing pointing back here.
+  await openStep1();
+  var original = await driver.executeScript(
+    "var out = {};" +
+    "for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); out[k] = localStorage.getItem(k); }" +
+    "return out;");
+  var putBack = async function (snapshot) {
+    await driver.executeScript(
+      "localStorage.clear();" +
+      "var o = arguments[0];" +
+      "Object.keys(o).forEach(function (k) { localStorage.setItem(k, o[k]); });", snapshot);
+  };
+
+  await driver.executeScript("window.localStorage.clear();");
+  await openStep1();
+  await driver.executeScript(
+    "document.getElementById('vci_metadata_endpoint').value = arguments[0];" +
+    "document.getElementById('oidc_discovery_endpoint').value = arguments[1];",
+    issuerMetadataUrl, asUrl);
+  await click(driver, By.id("vci_retrieve_button"));
+  await waitForStatus(driver, "vci_signed_metadata_status", function (s) { return /^Retrieved/.test(s); },
+    "the credential issuer metadata was not retrieved");
+  await click(driver, By.id("as_retrieve_button"));
+  await waitForStatus(driver, "as_signed_metadata_status", function (s) { return /^Retrieved/.test(s); },
+    "the authorization server metadata was not retrieved");
+  saved = await driver.executeScript(
+    "var out = {};" +
+    "for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); out[k] = localStorage.getItem(k); }" +
+    "return out;");
+  var restore = async function () {
+    await driver.executeScript(
+      "localStorage.clear();" +
+      "var o = arguments[0];" +
+      "Object.keys(o).forEach(function (k) { localStorage.setItem(k, o[k]); });", saved);
+    await openStep1();
+    await driver.sleep(500);
+  };
+
+  for (var i = 0; i < panes.length; i++) {
+    var pane = panes[i];
+
+    // --- in the visit that retrieved it ------------------------------------
+    await restore();
+    var fresh = await verdictOf(pane, "right after retrieval");
+    assert.ok(fresh.indexOf("VALID") === 0,
+      pane.name + ": signed_metadata should verify right after retrieval. Got: " + fresh);
+
+    // --- THE FIX: navigate away, come back, do not retrieve ----------------
+    await driver.get(baseUrl + "/sd-jwt-vc-issuance-0.html");
+    await driver.sleep(400);
+    await openStep1();
+    await driver.sleep(600);
+    var rows = await driver.executeScript(
+      "var t = document.getElementById(arguments[0]);" +
+      "return t ? t.querySelectorAll('tr').length : 0;", pane.tableId);
+    assert.ok(rows > 0, pane.name + ": the table should be restored on returning to the page.");
+    var returned = await verdictOf(pane, "after returning to the page");
+    assert.ok(returned.indexOf("VALID") === 0,
+      pane.name + ": with a table on screen the button must validate WITHOUT the document being retrieved " +
+      "again — that is the whole regression. Got: " + returned);
+
+    // --- THE TRAP: the document in use is what gets validated --------------
+    // A member edited away from its signed claim must be reported. This fails if
+    // validation is ever pointed at a pristine copy of the response instead.
+    await restore();
+    await tamperStored(pane, "function (d) { d." + pane.tamperMember + " = 'https://evil.example.com'; }");
+    var edited = await verdictOf(pane, "with an edited member");
+    // The member has to be NAMED. "Every signed claim matches" is the exact
+    // sentence a pristine-bytes implementation would produce here, so asserting
+    // only that the verdict is not clean would not distinguish the two.
+    assert.ok(/Signed claims that differ from the JSON/.test(edited) &&
+              edited.indexOf(pane.tamperMember) !== -1,
+      pane.name + ": " + pane.tamperMember + " was edited away from its signed claim and must be named as " +
+      "differing. Validating a pristine copy of the response instead of the document in use would report " +
+      "this as clean. Got: " + edited);
+    assert.ok(edited.indexOf("Every signed claim matches") === -1,
+      pane.name + ": a tampered document must not be reported as fully matching. Got: " + edited);
+
+    // A broken signature must be rejected outright.
+    await restore();
+    await tamperStored(pane,
+      "function (d) { var p = d.signed_metadata.split('.'); p[2] = p[2].slice(0, -4) + 'AAAA';" +
+      " d.signed_metadata = p.join('.'); }");
+    var broken = await verdictOf(pane, "with a broken signature");
+    assert.ok(broken.indexOf("INVALID") === 0,
+      pane.name + ": a tampered signed_metadata must be rejected. Got: " + broken);
+
+    log.info("[signature] " + pane.name + ": valid fresh and after returning; edited member and broken " +
+             "signature both caught.");
+  }
+
+  // --- the keys cannot be fetched: a verdict, not a pane stuck on "Fetching …"
+  // Every failure here used to be an unhandled rejection, so the pane sat on its
+  // progress line for ever and read as a button that does nothing.
+  await restore();
+  await tamperStored(panes[1],
+    "function (d) { d.jwks_uri = 'http://127.0.0.1:1/nowhere/jwks.json'; }");
+  var unreachable = await verdictOf(panes[1], "when its keys cannot be fetched");
+  assert.ok(/INVALID|Could not validate/.test(unreachable),
+    "an unreachable jwks_uri must produce a verdict rather than leaving the pane on a progress line. Got: " +
+    unreachable);
+  log.info("[signature] an unreachable jwks_uri is reported instead of hanging.");
+
+  // --- a table with nothing behind it says so -----------------------------
+  // Defensive: with the restore in place this state is not reachable by using the
+  // page. It is asserted because the message it replaced ("retrieve the metadata
+  // first", beside a full table) is what sent people to press Retrieve.
+  await driver.executeScript("window.localStorage.clear();");
+  await openStep1();
+  // A whole <table>: that element is a CONTAINER the pane writes a table into,
+  // not a <table> itself, and the parser drops a bare <tr> in that context —
+  // which would leave the "is a table displayed" check false and test nothing.
+  await driver.executeScript(
+    "var t = document.getElementById(arguments[0]);" +
+    "t.innerHTML = '<table><tr><td>credential_issuer</td><td>https://example.test</td></tr></table>';",
+    panes[0].tableId);
+  var orphaned = await verdictOf(panes[0], "with a table but no document");
+  assert.ok(/no longer has/.test(orphaned),
+    "a table with no document behind it should say so, not ask for a retrieval it already looks like it has. " +
+    "Got: " + orphaned);
+  log.info("[signature] a table with no document behind it is named as such.");
+
+  // Hand the workflow's own state back to the sections that follow.
+  await putBack(original);
+  await openStep1();
+  var handedBack = await driver.executeScript(
+    "return !!localStorage.getItem('token_access_token') || !!localStorage.getItem('sdjwtvc_credential');");
+  assert.ok(handedBack,
+    "this section clears storage and must hand back what the workflow left; the sections after it need " +
+    "the credential and the access token.");
+  log.info("[signature] OK — Validate Signature survives navigation and still catches tampering.");
+}
+
+// ---------------------------------------------------------------------------
+// The hand-off from issuance into the PRESENTATION workflow (steps 3 and 4).
+//
+// The thing worth pinning is what the offer does NOT do: it copies nothing. The
+// two workflows meet at the same storage keys, so a hand-off that duplicated the
+// credential would be a second copy that goes stale — this asserts the click adds
+// no such copy.
+//
+// The rest is the preflight, and its point is that it agrees with what
+// presentation step 1 will decide. The case that earns its keep is the pair of
+// missing-key states, which must come out DIFFERENTLY: a key that was never
+// generated here is a dead end (step 1 refuses), while a key deliberately not
+// kept is fine (step 2 has a field to paste it into). Collapsing them to "no key
+// → blocked" is the plausible simplification, and it strands the user two pages
+// before the only field that fixes it.
+//
+// Seeded states are restored afterwards, because later sections run on the state
+// the workflow left behind.
+// ---------------------------------------------------------------------------
+async function presentationHandoff(driver, generations) {
+  log.info("=== The hand-off into the presentation workflow ===");
+  var pages = ["sd-jwt-vc-issuance-3.html", "sd-jwt-vc-issuance-4.html"];
+
+  // Everything the seeded states below would otherwise destroy.
+  await driver.get(baseUrl + "/" + pages[0]);
+  var saved = await driver.executeScript(
+    "var out = {};" +
+    "for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); out[k] = localStorage.getItem(k); }" +
+    "return out;");
+  var restore = async function () {
+    await driver.executeScript(
+      "localStorage.clear();" +
+      "var o = arguments[0];" +
+      "Object.keys(o).forEach(function (k) { localStorage.setItem(k, o[k]); });", saved);
+  };
+  var credential = saved["sdjwtvc_credential"] || "";
+  assert.ok(credential, "the workflow should have left a credential in storage for this section to hand off.");
+
+  // What the offer reports, on either page.
+  var offerOn = async function (page) {
+    await driver.get(baseUrl + "/" + page);
+    await driver.wait(until.elementLocated(By.id("vc_present_button")), waitTime,
+      page + " should carry a Present It button.");
+    // The offer is rendered from storage on load, so wait for it to say something
+    // rather than sleeping and hoping.
+    await waitForStatus(driver, "vc_present_status", function (v) { return v.trim() !== ""; },
+      page + ": the presentation offer never said anything", waitTime);
+    return await driver.executeScript(
+      "var b = document.getElementById('vc_present_button');" +
+      "var s = document.getElementById('vc_present_status');" +
+      "var panes = document.querySelectorAll('.dbg-pane');" +
+      "return { disabled: b.disabled, message: s.textContent.trim(), cls: s.className," +
+      "         inLastPane: panes[panes.length - 1].contains(b) };");
+  };
+
+  for (var i = 0; i < pages.length; i++) {
+    // --- the credential the workflow actually issued -----------------------
+    await restore();
+    var ready = await offerOn(pages[i]);
+    assert.ok(ready.inLastPane, pages[i] + ": the offer belongs in the last pane on the page.");
+    assert.strictEqual(ready.disabled, false,
+      pages[i] + ": a held credential with its holder key should be presentable. Said: " + ready.message);
+    assert.ok(/vc-ok/.test(ready.cls),
+      pages[i] + ": a presentable credential should read as OK, got class " + ready.cls);
+    assert.ok(ready.message.indexOf(EXPECTED_VCT) !== -1,
+      pages[i] + ": the offer should name the credential type being offered. Said: " + ready.message);
+
+    // --- nothing held ------------------------------------------------------
+    // A FRESH wallet: no credential and no history. Clearing only the credential
+    // would leave step 4's history table populated, and step 4 renders this offer
+    // from the same pass that draws that table — so the empty-history path would
+    // never be taken and an offer rendered only on the populated path would look
+    // correct here while being blank on the state a first-time user arrives in.
+    await driver.executeScript("localStorage.clear();");
+    var empty = await offerOn(pages[i]);
+    assert.strictEqual(empty.disabled, true,
+      pages[i] + ": with nothing held there is nothing to present. Said: " + empty.message);
+    // Belt and braces: the handler must refuse too, or re-enabling the button
+    // (a later edit, a browser extension) would navigate to an empty workflow.
+    await driver.executeScript(
+      "var b = document.getElementById('vc_present_button'); b.disabled = false; b.click();");
+    await driver.sleep(500);
+    assert.ok((await driver.getCurrentUrl()).indexOf(pages[i]) !== -1,
+      pages[i] + ": a forced click with nothing held should not navigate.");
+
+    // --- the two missing-key states, which must NOT come out the same ------
+    await restore();
+    await driver.executeScript("localStorage.removeItem('sdjwtvc_holder_private_jwk');");
+    var lost = await offerOn(pages[i]);
+    assert.strictEqual(lost.disabled, true,
+      pages[i] + ": a key that was never generated here is a dead end — presentation step 1 refuses it. " +
+      "Said: " + lost.message);
+
+    await restore();
+    await driver.executeScript(
+      "localStorage.removeItem('sdjwtvc_holder_private_jwk');" +
+      "localStorage.setItem('sdjwtvc_save_holder_key', '0');");
+    var optedOut = await offerOn(pages[i]);
+    assert.strictEqual(optedOut.disabled, false,
+      pages[i] + ": a holder key deliberately not kept is pasted in on presentation step 2, so the hand-off " +
+      "must stay open. Said: " + optedOut.message);
+    assert.ok(/vc-pending/.test(optedOut.cls),
+      pages[i] + ": absent-by-choice should read as an advisory, got class " + optedOut.cls);
+    assert.ok(/paste/i.test(optedOut.message),
+      pages[i] + ": the advisory should say the key will have to be pasted. Said: " + optedOut.message);
+
+    // --- something that cannot be parsed -----------------------------------
+    await restore();
+    await driver.executeScript("localStorage.setItem('sdjwtvc_credential', 'not-a-credential');");
+    var broken = await offerOn(pages[i]);
+    assert.strictEqual(broken.disabled, true,
+      pages[i] + ": an unparseable credential cannot be presented. Said: " + broken.message);
+
+    log.info("[handoff] " + pages[i] + ": ready / empty / key-lost / opted-out / unparseable all distinct.");
+  }
+
+  // --- step 4 only: which generation would go ------------------------------
+  // Read the history that is actually in storage rather than trusting the array
+  // stepFour returned: credentialHistoryNavigation() ends by clearing the
+  // history, so by the time this runs there is usually one generation and a
+  // check written against the passed-in count SKIPS ITSELF SILENTLY — which is
+  // exactly what it did on its first real run, while passing.
+  await restore();
+  var heldCount = await driver.executeScript(
+    "try {" +
+    "  var h = JSON.parse(localStorage.getItem('sdjwtvc_credential_history') || '[]');" +
+    "  return h.filter(function (e) { return e.outcome === 'kept' && e.credential; }).length;" +
+    "} catch (e) { return 0; }");
+  if (heldCount < 2) {
+    // Give it two generations of its own.
+    //
+    // Cloning an existing kept row is not enough: credentialHistoryNavigation()
+    // ends with Clear History, so by the time this runs there is often NO kept
+    // row to clone — and a seed guarded on finding one quietly seeds nothing,
+    // leaves a single generation, and the assertion below then fails for a
+    // reason that has nothing to do with the offer. That is exactly how this
+    // failed on its first full-suite run. So the rows are built from the
+    // credential the wallet is actually holding, which is always there.
+    //
+    // HISTORY_INDEX points at the FIRST of them, so the offer has to say "not
+    // the newest one" — the more interesting of the two branches.
+    await driver.executeScript(
+      "var credential = localStorage.getItem('sdjwtvc_credential') || '';" +
+      "if (credential) {" +
+      "  var pub = null, prv = null;" +
+      "  try { pub = JSON.parse(localStorage.getItem('sdjwtvc_holder_jwk') || 'null'); } catch (e) { pub = null; }" +
+      "  try { prv = JSON.parse(localStorage.getItem('sdjwtvc_holder_private_jwk') || 'null'); } catch (e) { prv = null; }" +
+      "  var h = JSON.parse(localStorage.getItem('sdjwtvc_credential_history') || '[]');" +
+      "  var nextId = h.reduce(function (m, e) { return Math.max(m, e.id || 0); }, 0);" +
+      "  var row = function (id, source) {" +
+      "    return { id: id, at: new Date().toISOString(), kind: 'issuance', outcome: 'kept'," +
+      "             detail: '', source: source, credential: credential, credentials: [credential]," +
+      "             meta: {}, holderJwk: pub, holderPrivateJwk: prv };" +
+      "  };" +
+      "  h.push(row(nextId + 1, 'issued'));" +
+      "  h.push(row(nextId + 2, 'refreshed'));" +
+      "  localStorage.setItem('sdjwtvc_credential_history', JSON.stringify(h));" +
+      "  localStorage.setItem('sdjwtvc_credential_history_index', String(nextId + 1));" +
+      "}");
+    // The seed has to have worked, or the assertion below would fail for a
+    // reason unrelated to what it is testing.
+    var seeded = await driver.executeScript(
+      "try {" +
+      "  var h = JSON.parse(localStorage.getItem('sdjwtvc_credential_history') || '[]');" +
+      "  return h.filter(function (e) { return e.outcome === 'kept' && e.credential; }).length;" +
+      "} catch (e) { return 0; }");
+    assert.ok(seeded >= 2,
+      "this section needs two held generations to check that step 4 names the one in hand; it could only " +
+      "make " + seeded + ". Is a credential still in storage at this point?");
+  }
+  var named = await offerOn(pages[1]);
+  assert.ok(/generation \d+ of \d+/.test(named.message),
+    "with more than one generation held, step 4 must say which one would be presented. Said: " + named.message);
+  log.info("[handoff] step 4 names the generation in hand: " +
+    (named.message.match(/generation \d+ of \d+[^.]*/) || [""])[0]);
+
+  // --- step 4 only: a refresh retrieved but not kept ------------------------
+  // It is the newest thing on the screen and is NOT in storage, so it is not what
+  // a Verifier would see. Saying nothing here would let the page imply otherwise.
+  await restore();
+  await driver.executeScript(
+    "localStorage.setItem('sdjwtvc_refreshed_credential', arguments[0]);" +
+    "localStorage.setItem('sdjwtvc_refreshed_credentials', JSON.stringify([arguments[0]]));" +
+    "localStorage.setItem('sdjwtvc_refreshed_meta', JSON.stringify({ tokenRefreshed: true }));", credential);
+  var pending = await offerOn(pages[1]);
+  assert.ok(/not been kept/i.test(pending.message) && /NOT what would be presented/i.test(pending.message),
+    "step 4 with a refresh pending must say the unkept credential is not what would go. Said: " + pending.message);
+  assert.ok(/vc-pending/.test(pending.cls),
+    "a pending refresh should mark the offer as pending, got class " + pending.cls);
+  log.info("[handoff] step 4 disowns a refreshed credential that has not been kept.");
+
+  // --- the click navigates, and copies nothing ------------------------------
+  await restore();
+  await driver.get(baseUrl + "/" + pages[0]);
+  await driver.wait(until.elementLocated(By.id("vc_present_button")), waitTime);
+  var before = await driver.executeScript(
+    "var out = {};" +
+    "for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); out[k] = localStorage.getItem(k); }" +
+    "return out;");
+  await click(driver, By.id("vc_present_button"));
+  await driver.wait(until.urlContains("sd-jwt-vc-presentation-0.html"), waitTime,
+    "Present It should land on the presentation workflow.");
+  var after = await driver.executeScript(
+    "var out = {};" +
+    "for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); out[k] = localStorage.getItem(k); }" +
+    "return out;");
+  assert.strictEqual(after["sdjwtvc_credential"], before["sdjwtvc_credential"],
+    "the hand-off must not rewrite the credential it hands off.");
+  // No NEW key may hold the credential: the workflows share one copy, and a
+  // second one is a copy that can go stale.
+  var duplicates = Object.keys(after).filter(function (k) {
+    return !(k in before) && String(after[k]).indexOf(credential) !== -1;
+  });
+  assert.deepStrictEqual(duplicates, [],
+    "the hand-off copies nothing — the presentation workflow reads the same keys. New copies: " +
+    JSON.stringify(duplicates));
+  log.info("[handoff] OK — Present It navigates and copies nothing.");
+
+  await driver.get(baseUrl + "/" + pages[0]);
+  await restore();
+}
+
+// ---------------------------------------------------------------------------
 // Nothing may run off the side of a pane.
 //
 // Every value these pages show is base64url — a c_nonce, an access token, a JWK's
@@ -2753,6 +3192,16 @@ async function test() {
     assert.strictEqual(errors.length, 0,
       "the workflow logged browser errors:\n" + errors.join("\n"));
     log.info("[browser] OK — no console errors across the workflow.");
+
+    // Both of these belong AFTER the console-error assertion above, with the
+    // other negative sections: each deliberately drives the pages into states
+    // they are supposed to complain about. presentationHandoff() plants an
+    // unparseable credential, and step 4 quite correctly logs that it cannot
+    // parse what it was given — which failed the run when this sat above the
+    // assertion. metadataSignatureValidation() clobbers and restores both
+    // metadata documents.
+    await presentationHandoff(driver, generations);
+    await metadataSignatureValidation(driver);
 
     await refreshNegatives(driver);
     await staleProofRecovery(driver);

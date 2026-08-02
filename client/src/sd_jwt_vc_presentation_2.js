@@ -75,7 +75,7 @@ function loadState() {
   state.parsed = null;
   if (state.credential) {
     try {
-      state.parsed = sdJwtVc.parseSdJwt(state.credential);
+      state.parsed = sdJwtVc.parseCredential(state.credential);
     } catch (e) {
       log.error("the stored credential could not be parsed: " + e.message);
     }
@@ -84,6 +84,11 @@ function loadState() {
   // for it. The default choice is exactly what was asked for and nothing else —
   // a wallet should not have to be told to minimise.
   var previously = sdJwtVc.getJson(sdJwtVp.KEYS.SELECTED);
+  // jwt_vc_json has no Disclosures, so there are no rows and nothing to choose:
+  // the credential goes whole or not at all. That is a property of the format,
+  // not an empty table, and renderDisclosures() says so.
+  state.format = (state.parsed && state.parsed.format) || sdJwtVc.FORMAT_SD_JWT;
+  state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON;
   state.rows = ((state.parsed && state.parsed.disclosures) || []).map(function (d) {
     var requested = state.requested.indexOf(d.name) !== -1;
     return {
@@ -135,6 +140,33 @@ function renderDisclosureTable() {
       '<td class="vc-mono">' + esc(String(r.encoded).slice(0, 24) + "…") + "</td>" +
       "</tr>";
   }).join("");
+  // With no Disclosures the table would render as an empty box, which reads as a
+  // credential that carries nothing. Show what will actually be sent instead,
+  // and say why none of it can be withheld.
+  if (!state.selectable) {
+    var claims = (state.parsed && state.parsed.claims) || {};
+    var names = Object.keys(claims);
+    setHtml("vp_disclosures_table",
+      "<thead><tr><th style='width:22%'>Claim</th><th>Value</th><th style='width:18%'>This verifier</th>" +
+      "</tr></thead><tbody>" +
+      (names.length
+        ? names.map(function (name) {
+            var v = claims[name];
+            return "<tr><td>" + esc(name) + "</td><td>" +
+              esc(typeof v === "object" ? JSON.stringify(v) : String(v)) + "</td><td>" +
+              (state.requested.indexOf(name) !== -1
+                ? '<span class="vc-ok">asked for</span>'
+                : '<span class="vc-bad">not asked for</span>') + "</td></tr>";
+          }).join("")
+        : "<tr><td colspan='3'>This credential carries no claims.</td></tr>") +
+      "</tbody>");
+    setHtml("vp_selection_summary",
+      '<span class="vc-status vc-pending">This credential is jwt_vc_json, which has no selective ' +
+      'disclosure: all ' + names.length + ' claim(s) above are sent, including any this verifier did not ' +
+      'ask for. Withholding one would mean asking the issuer for a different credential.</span>');
+    log.debug("Leaving renderDisclosures(). jwt_vc_json — " + names.length + " claim(s), none selectable.");
+    return;
+  }
   setHtml("vp_disclosures_table",
     "<thead><tr><th style='width:6%'>Send</th><th style='width:16%'>Claim</th><th style='width:34%'>Value</th>" +
     "<th style='width:16%'>This verifier</th><th>Disclosure</th></tr></thead><tbody>" + rows + "</tbody>");
@@ -194,7 +226,8 @@ function buildPresentation() {
     log.debug("Leaving buildPresentation(). No holder key.");
     return Promise.resolve(false);
   }
-  return sdJwtVp.buildPresentation({
+  return sdJwtVp.buildPresentationFor({
+    credential: state.credential,
     parsed: state.parsed,
     selected: selectedEncoded(),
     holderPrivateJwk: priv,
@@ -205,7 +238,14 @@ function buildPresentation() {
     state.built = built;
     setValue("vp_presentation", built.presentation);
     setText("vp_sd_hash", built.sdHash);
-    if (built.kb) {
+    if (built.vp) {
+      // A jwt_vc_json presentation has no Key Binding JWT; the Verifiable
+      // Presentation JWT does that job, so it is shown in the same place rather
+      // than leaving the pane blank.
+      setValue("vp_kb_jwt", built.vp.jwt);
+      setJson("vp_kb_header", built.vp.header);
+      setJson("vp_kb_payload", built.vp.payload);
+    } else if (built.kb) {
       setValue("vp_kb_jwt", built.kb.jwt);
       setJson("vp_kb_header", built.kb.header);
       setJson("vp_kb_payload", built.kb.payload);
@@ -480,6 +520,11 @@ function onload() {
   setText("vp_verifier", params.client_id || "—");
   setText("vp_nonce", params.nonce || "—");
   setText("vp_requested", state.requested.length ? state.requested.join(", ") : "—");
+  if (state.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
+    setText("vp_key_binding",
+      "This credential is jwt_vc_json, so holder binding is a Verifiable Presentation JWT signed with the " +
+      "bound key — there is no Key Binding JWT, and no Disclosures to choose between.");
+  } else
   setText("vp_key_binding", sdJwtVp.requiresKeyBinding(state.credentialQuery)
     ? "required — the presentation carries a Key Binding JWT signed by the holder key"
     : "not required by this verifier, so the presentation may go without a holder proof");

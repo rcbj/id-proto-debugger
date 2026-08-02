@@ -1431,11 +1431,27 @@ function validateSignedMetadata(evt) {
   // Keep the click off the form's onclick, which would fire a retrieval.
   if (evt && evt.stopPropagation) evt.stopPropagation();
   var out = function (text) { $("#signed_metadata_status").text(text); };
-  metadataClient.validateSignedMetadata(discoveryInfo || {}, {
+  // The document this page is showing, falling back to the stored copy — so the
+  // button works when the table was restored from a previous visit and not only
+  // in the visit that retrieved it.
+  var chosen = metadataClient.documentForValidation(
+    { read: function () {
+        try { return JSON.parse(localStorage.getItem(DISCOVERY_INFO_KEY) || "null"); } catch (e) { return null; }
+      } },
+    discoveryInfo);
+  if (!chosen.doc) {
+    out($("#discovery_info_table").find("tr").length
+      ? "The table above was drawn from a document this browser no longer has, so there is nothing to " +
+        "validate against. Retrieve it again."
+      : "Retrieve a metadata document first.");
+    return false;
+  }
+  metadataClient.validateSignedMetadata(chosen.doc, {
     issuerMember: "issuer",
     noSignedMetadataNote: "(signed_metadata is an RFC 8414 member; OIDC Discovery does not define it.)",
     progress: out
-  }).then(out);
+  }).then(out)
+    .catch(function (e) { out("Could not validate the signature: " + e.message); });
   return false;
 }
 

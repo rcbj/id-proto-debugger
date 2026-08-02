@@ -163,6 +163,11 @@ function vcSetAllPanes(expand) {
               <input class="btn_vci_retrieve btn2" id="vci_retrieve_button" type="button" value="Retrieve" onclick="sdjwtvc1.retrieveVciMetadata(); return false;" />
               <span class="tooltiptext">Fetch the Credential Issuer Metadata document from the URL above.</span>
             </div>
+            <div class="tooltip">
+              <input class="btn2" id="vci_upload_button" type="button" value="Upload" onclick="return sdjwtvc1.uploadVciMetadata();" />
+              <span class="tooltiptext">Load the Credential Issuer Metadata from a file on disk instead of fetching it. Use this when the issuer sends no CORS headers, which stops a browser reading its metadata however correct the URL is: fetch the document with curl, save it, and load it here. Everything afterwards is identical to a retrieval.</span>
+            </div>
+            <input type="file" id="vci_metadata_file" name="vci_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return sdjwtvc1.onVciFileChange(event);" />
           </td>
           <td>
             <div class="tooltip">
@@ -195,6 +200,7 @@ function vcSetAllPanes(expand) {
     </table>
     <div class="discovery_info_table" id="vci_metadata_table">&nbsp;</div>
     <div class="discovery_info_meta_data_populate" id="vci_metadata_populate">&nbsp;</div>
+    <div class="vc-schema-report" id="vci_schema_report"></div>
   </fieldset>
 </div>
 
@@ -221,6 +227,11 @@ function vcSetAllPanes(expand) {
           <td>
             <div class="tooltip">
               <input class="btn_oidc_discovery_endpoint btn2" id="as_retrieve_button" type="button" value="Retrieve" onclick="sdjwtvc1.retrieveAsMetadata(); return false;" />
+              <div class="tooltip">
+                <input class="btn2" id="as_upload_button" type="button" value="Upload" onclick="return sdjwtvc1.uploadAsMetadata();" />
+                <span class="tooltiptext">Load the Authorization Server Metadata from a file on disk instead of fetching it. Use this when the authorization server sends no CORS headers, which stops a browser reading its metadata however correct the URL is: fetch the document with curl, save it, and load it here. Everything afterwards is identical to a retrieval — including what debugger.html then shows.</span>
+              </div>
+              <input type="file" id="as_metadata_file" name="as_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return sdjwtvc1.onAsFileChange(event);" />
               <span class="tooltiptext">Fetch the authorization server metadata document from the URL above.</span>
             </div>
           </td>
@@ -246,6 +257,7 @@ function vcSetAllPanes(expand) {
     </table>
     <div class="discovery_info_table" id="discovery_info_table">&nbsp;</div>
     <div class="discovery_info_meta_data_populate" id="discovery_info_meta_data_populate">&nbsp;</div>
+    <div class="vc-schema-report" id="as_schema_report"></div>
   </fieldset>
 </div>
 

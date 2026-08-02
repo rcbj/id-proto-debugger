@@ -376,7 +376,7 @@ function showCredential(index) {
   }
   showing = index;
   try {
-    parsed = sdJwtVc.parseSdJwt(raw);
+    parsed = sdJwtVc.parseCredential(raw);
   } catch (e) {
     status("vc_credential_status", "That credential could not be parsed: " + e.message, "vc-bad");
     el("vc_credential_raw").value = raw;
@@ -493,6 +493,59 @@ function sendNotification() {
   return false;
 }
 
+// Step 4 refreshes whatever the wallet is holding, so it has nothing to work
+// with if nothing is held. A button rather than a redirect, matching step 4's own
+// "Verify in step 3": the page does not move the browser out from under someone
+// still reading the credential above.
+function refreshInStepFour() {
+  log.debug("Entering refreshInStepFour().");
+  if (!(sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "").trim()) {
+    // Say so here rather than sending them to a page that can only report the
+    // same emptiness one navigation later.
+    status("vc_next_status", "There is no credential in this wallet to refresh yet.", "vc-bad");
+    log.debug("Leaving refreshInStepFour(). Nothing held.");
+    return false;
+  }
+  window.location.href = sdJwtVc.STEP4_URL;
+  log.debug("Leaving refreshInStepFour().");
+  return false;
+}
+
+// The other thing to do with a verified credential: show it to a Verifier. This
+// copies nothing — the presentation workflow reads the same storage keys this
+// page does — so it is a navigation, and the only question worth answering
+// before navigating is whether that workflow could get anywhere.
+function presentIt() {
+  log.debug("Entering presentIt().");
+  var readiness = sdJwtVc.presentationReadiness();
+  if (!readiness.ready) {
+    status("vc_present_status", readiness.message, readiness.level);
+    log.debug("Leaving presentIt(). Not ready.");
+    return false;
+  }
+  window.location.href = sdJwtVc.PRESENTATION_URL;
+  log.debug("Leaving presentIt().");
+  return false;
+}
+
+// Reflect on load whether either next step has anything to act on, so both offers
+// are honest before they are clicked rather than after.
+function renderNextStep() {
+  var held = (sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "").trim();
+  var button = document.getElementById("vc_goto_step4_button");
+  if (button) button.disabled = !held;
+  if (!held) {
+    status("vc_next_status", "Nothing is held yet — step 4 refreshes a credential this wallet already has.", "");
+  } else {
+    status("vc_next_status", "", "");
+  }
+
+  var readiness = sdJwtVc.presentationReadiness();
+  var present = document.getElementById("vc_present_button");
+  if (present) present.disabled = !readiness.ready;
+  status("vc_present_status", readiness.message, readiness.level);
+}
+
 function onload() {
   log.debug("Entering onload().");
   sdJwtVc.renderUseCaseBadge();
@@ -502,6 +555,10 @@ function onload() {
     var e = document.getElementById(id);
     if (e) e.className = "vc-step-done";
   });
+
+  // Before the early return below: when nothing is held onload stops there, and
+  // that is precisely the case this offer has to describe.
+  renderNextStep();
 
   var raw = sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "";
   meta = sdJwtVc.getJson(sdJwtVc.KEYS.CREDENTIAL_META) || {};
@@ -556,5 +613,7 @@ module.exports = {
   startOver: startOver,
   gotoRefresh: gotoRefresh,
   togglePane: togglePane,
+  refreshInStepFour: refreshInStepFour,
+  presentIt: presentIt,
   onload: onload
 };

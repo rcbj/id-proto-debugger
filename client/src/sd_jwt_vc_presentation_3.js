@@ -80,7 +80,16 @@ function renderWhatWasSent() {
   } catch (e) {
     setText("vp_sent_claims", "The presentation could not be parsed back: " + e.message);
   }
-  var disclosed = presented ? (presented.parsed.disclosures || []).length : 0;
+  // What went, and what to call it. A jwt_vc_json presentation has no
+  // Disclosures — counting them reports 0 and then reads every requested claim
+  // as withheld, which is the opposite of what happened: that format sends
+  // everything. Its unit is the claim.
+  var jwtVcJson = presented && presented.parsed &&
+                  presented.parsed.format === sdJwtVc.FORMAT_JWT_VC_JSON;
+  var disclosed = presented
+    ? (jwtVcJson ? Object.keys(presented.claims || {}).length : (presented.parsed.disclosures || []).length)
+    : 0;
+  var unit = jwtVcJson ? "claim" : "Disclosure";
 
   // Asked-for against actually-sent, compared by NAME rather than by count.
   // Counting was wrong in both directions: withholding one requested claim while
@@ -92,7 +101,9 @@ function renderWhatWasSent() {
   // A requested DCQL path names a claim at some depth; the Disclosure that has to
   // be sent for it is the one at the head of that path.
   var disclosedNames = presented
-    ? (presented.parsed.disclosures || []).map(function (d) { return d.name; }).filter(Boolean)
+    ? (jwtVcJson
+        ? Object.keys(presented.claims || {})
+        : (presented.parsed.disclosures || []).map(function (d) { return d.name; }).filter(Boolean))
     : [];
   var requested = sent.requested || [];
   var requestedHeads = requested.map(function (p) { return String(p).split(".")[0]; });
@@ -117,14 +128,16 @@ function renderWhatWasSent() {
     missing.length ? "vc-bad" : extraNames.length ? "vc-pending" : "vc-ok");
 
   status("vp_sent_status",
-    "Presented " + disclosed + " Disclosure(s) to " + (sent.clientId || "the verifier") + ", answering a " +
+    "Presented " + disclosed + " " + unit + "(s) to " + (sent.clientId || "the verifier") + ", answering a " +
     "request for " + requested.length + " claim(s)." +
     (missing.length
       ? " " + missing.length + " of them were withheld (" + missing.join(", ") +
         "), so the request was not fully answered."
       : extraNames.length
         ? " That is " + extraNames.length + " more than was asked for (" + extraNames.join(", ") +
-          ") — over-disclosure the verifier will never complain about."
+          ")" + (jwtVcJson
+                   ? " — unavoidable in jwt_vc_json, which cannot send a subset."
+                   : " — over-disclosure the verifier will never complain about.")
         : " Nothing more than was asked for."),
     missing.length ? "vc-bad" : extraNames.length ? "vc-pending" : "vc-ok");
   log.debug("Leaving renderWhatWasSent(). disclosed=" + disclosed + ", missing=" + missing.length +
@@ -140,13 +153,61 @@ function recheckOwnPresentation() {
   if (!sent || !sent.presentation) return Promise.resolve(false);
   var parsed;
   try {
-    parsed = sdJwtVc.parseSdJwt(sent.presentation);
+    parsed = sdJwtVc.parseCredential(sent.presentation);
   } catch (e) {
     status("vp_recheck_status", "The presentation cannot be parsed: " + e.message, "vc-bad");
     return Promise.resolve(false);
   }
   var checks = [];
   var payload = parsed.payload || {};
+
+  // A jwt_vc_json presentation is a Verifiable Presentation JWT: no KB-JWT, no
+  // sd_hash and no Disclosure digests, because there are no Disclosures. The
+  // questions are the same — is this fresh, is it for this verifier, and does
+  // the embedded credential still verify — so they are asked of the artefact
+  // that actually carries them.
+  if (parsed.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
+    var vpPayload = parsed.payload || {};
+    var embedded = [].concat((vpPayload.vp || {}).verifiableCredential || [])[0] || "";
+    var inner = null;
+    try {
+      inner = sdJwtVc.parseCredential(embedded);
+    } catch (e) {
+      inner = null;
+    }
+    checks.push({
+      name: "Verifiable Presentation JWT",
+      ok: !!embedded,
+      detail: embedded
+        ? "the credential is carried inside the vp claim of a presentation JWT signed by the holder — this " +
+          "format has no Key Binding JWT."
+        : "the presentation carries no verifiableCredential."
+    });
+    checks.push({
+      name: "Presentation nonce",
+      ok: !!sent.nonce && vpPayload.nonce === sent.nonce,
+      detail: "signed over the nonce " + (vpPayload.nonce || "—") +
+              "; the request's nonce was " + (sent.nonce || "—") + "."
+    });
+    checks.push({
+      name: "Presentation audience",
+      ok: vpPayload.aud === sent.clientId,
+      detail: "aud is " + (vpPayload.aud || "—") + "; the verifier's Client Identifier is " +
+              (sent.clientId || "—") + "."
+    });
+    checks.push({
+      name: "Selective disclosure",
+      ok: true,
+      detail: inner
+        ? "none is possible in jwt_vc_json: all " + Object.keys(inner.claims || {}).length +
+          " claim(s) in the credential were sent, whether or not the verifier asked for them."
+        : "the embedded credential could not be read."
+    });
+    renderRecheck(checks);
+    log.debug("Leaving recheckOwnPresentation(). jwt_vc_json, " + checks.length + " check(s).");
+    return Promise.resolve(checks.every(function (c) { return c.ok; }));
+  }
+
   var kbParts = String(parsed.kbJwt || "").split(".");
   var kbPayload = {};
   try {
@@ -203,20 +264,27 @@ function recheckOwnPresentation() {
             "really is part of what the issuer signed."
           : bad + " presented Disclosure(s) are not in _sd."
       });
-      setHtml("vp_recheck_table",
-        "<thead><tr><th style='width:22%'>Check</th><th style='width:10%'>Result</th><th>Detail</th></tr></thead>" +
-        "<tbody>" + checks.map(function (c) {
-          return "<tr><td>" + esc(c.name) + '</td><td class="' + (c.ok ? "vc-ok" : "vc-bad") + '">' +
-                 (c.ok ? "OK" : "FAILED") + "</td><td>" + esc(c.detail) + "</td></tr>";
-        }).join("") + "</tbody>");
-      var failed = checks.filter(function (c) { return !c.ok; }).length;
-      status("vp_recheck_status", failed === 0
-        ? "The wallet's own checks on what it sent all pass."
-        : failed + " of the wallet's own checks on what it sent FAIL — the verifier was right to refuse.",
-        failed === 0 ? "vc-ok" : "vc-bad");
-      log.debug("Leaving recheckOwnPresentation(). failed=" + failed);
-      return failed === 0;
+      renderRecheck(checks);
+      log.debug("Leaving recheckOwnPresentation(). failed=" +
+                checks.filter(function (c) { return !c.ok; }).length);
+      return checks.every(function (c) { return c.ok; });
     });
+}
+
+// The wallet's own verdict table. Shared by both formats: the checks differ, how
+// they are shown does not.
+function renderRecheck(checks) {
+  setHtml("vp_recheck_table",
+    "<thead><tr><th style='width:22%'>Check</th><th style='width:10%'>Result</th><th>Detail</th></tr></thead>" +
+    "<tbody>" + checks.map(function (c) {
+      return "<tr><td>" + esc(c.name) + '</td><td class="' + (c.ok ? "vc-ok" : "vc-bad") + '">' +
+             (c.ok ? "OK" : "FAILED") + "</td><td>" + esc(c.detail) + "</td></tr>";
+    }).join("") + "</tbody>");
+  var failed = checks.filter(function (c) { return !c.ok; }).length;
+  status("vp_recheck_status", failed === 0
+    ? "The wallet's own checks on what it sent all pass."
+    : failed + " of the wallet's own checks on what it sent FAIL — the verifier was right to refuse.",
+    failed === 0 ? "vc-ok" : "vc-bad");
 }
 
 // --- what the verifier said -------------------------------------------------

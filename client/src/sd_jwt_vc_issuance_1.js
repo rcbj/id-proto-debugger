@@ -22,6 +22,7 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
+var metadataSchema = require("./metadata_schema");
 var opMetadata = require("./op_metadata");
 var vciMetadata = require("./vci_metadata");
 var sdJwtVc = require("./sd_jwt_vc");
@@ -45,6 +46,11 @@ var JWT_VC_ISSUER_WELL_KNOWN = "/.well-known/jwt-vc-issuer";
 // The two documents currently on display.
 var vciInfo = {};
 var asInfo = {};
+// Whether the last retrieval actually reached storage. A table on screen with
+// nothing behind it is the state that makes Validate Signature look broken, so
+// each pane knows which it is in and can say so.
+var vciStored = true;
+var asStored = true;
 
 // ---------------------------------------------------------------------------
 // The plain fields the Configuration Parameters pane carries besides the
@@ -76,6 +82,22 @@ var ENDPOINT_FIELDS = [
 ];
 
 function el(id) { return document.getElementById(id); }
+// Said once, by both panes, when the document could not be stored — the browser
+// is out of quota or storage is blocked. The table is on screen and Validate
+// Signature works now, from the copy in this page; neither survives leaving it.
+function notStoredNote(stored) {
+  if (stored) return "";
+  return " NOTE: this browser would not store the document (storage full or blocked), so it will be gone " +
+         "when you leave this page and Validate Signature will ask you to retrieve it again.";
+}
+
+// A metadata table with rows in it. What a pane shows and what it can validate
+// have to agree, so the failure messages distinguish "nothing retrieved" from
+// "a table is on screen but the document behind it is gone".
+function tableIsDisplayed(id) {
+  var t = el(id);
+  return !!(t && t.querySelectorAll("tr").length);
+}
 function val(id) { var e = el(id); return e ? e.value : ""; }
 function setText(id, t) { var e = el(id); if (e) e.textContent = (t == null ? "" : String(t)); }
 function setVal(id, v) { var e = el(id); if (e) e.value = (v == null ? "" : v); }
@@ -260,6 +282,122 @@ function renderCredentialConfigurations() {
   log.debug("Leaving renderCredentialConfigurations().");
 }
 
+// ---------------------------------------------------------------------------
+// Loading a metadata document from a local file.
+//
+// The reason this exists is CORS. Both panes fetch a document from an origin the
+// user names, and a credential issuer or authorization server that sends no
+// Access-Control-Allow-Origin cannot be read by a browser at all — the request
+// succeeds, the browser refuses to hand the body to the page, and there is
+// nothing the page can do about it. Neither is that a rare configuration:
+// metadata is meant to be read by servers, so plenty of deployments never
+// thought about browsers. walt.id's own services send no CORS headers, which is
+// why this suite runs a proxy in front of them.
+//
+// So the document can be fetched with curl and loaded from disk instead. It goes
+// through applyVciDocument / applyAsDocument, the same functions the retrieve
+// route uses, so everything downstream is identical — the table, the credential
+// list, the Configuration Parameters, Validate Signature, and what
+// debugger.html then shows.
+//
+// Following the pattern already on saml_request.html and wsfed_tools.html: a
+// visible button, a hidden file input it clicks, and the input's value cleared
+// afterwards so choosing the SAME file again still fires a change event.
+// ---------------------------------------------------------------------------
+function readMetadataFile(evt, statusId, onDocument) {
+  log.debug("Entering readMetadataFile(). statusId=" + statusId);
+  var input = evt && evt.target;
+  var file = input && input.files && input.files[0];
+  if (!file) {
+    log.debug("Leaving readMetadataFile(). Nothing chosen.");
+    return false;
+  }
+  status(statusId, "Reading " + file.name + " …", "vc-pending");
+  var reader = new FileReader();
+  reader.onload = function () {
+    var doc = null;
+    try {
+      doc = JSON.parse(String(reader.result || ""));
+    } catch (e) {
+      status(statusId, "That file is not JSON: " + e.message, "vc-bad");
+      if (input) input.value = "";
+      return;
+    }
+    if (!doc || typeof doc !== "object" || Object.prototype.toString.call(doc) === "[object Array]") {
+      status(statusId, "That file is JSON, but a metadata document has to be a JSON object.", "vc-bad");
+      if (input) input.value = "";
+      return;
+    }
+    try {
+      onDocument(doc, file.name);
+    } finally {
+      // Cleared whatever happened, so the same file can be chosen again after a
+      // correction — otherwise the second attempt fires no change event and the
+      // button looks broken.
+      if (input) input.value = "";
+    }
+  };
+  reader.onerror = function () {
+    status(statusId, "Could not read " + file.name + ".", "vc-bad");
+    if (input) input.value = "";
+  };
+  reader.readAsText(file);
+  log.debug("Leaving readMetadataFile().");
+  return false;
+}
+
+function uploadVciMetadata() {
+  var f = el("vci_metadata_file");
+  if (f) f.click();
+  return false;
+}
+
+function onVciFileChange(evt) {
+  return readMetadataFile(evt, "vci_signed_metadata_status", function (doc, name) {
+    applyVciDocument(doc, { docLabel: VCI_DOC_LABEL, file: name }, "Loaded");
+  });
+}
+
+function uploadAsMetadata() {
+  var f = el("as_metadata_file");
+  if (f) f.click();
+  return false;
+}
+
+function onAsFileChange(evt) {
+  return readMetadataFile(evt, "as_signed_metadata_status", function (doc, name) {
+    applyAsDocument(doc, { source: "rfc8414", docLabel: AS_DOC_LABEL, file: name }, "Loaded");
+  });
+}
+
+// Everything that happens to a credential issuer metadata document once it is
+// in hand, whether it arrived over the network or off disk.
+//
+// Shared deliberately: an uploaded document has to configure the workflow
+// exactly as a retrieved one does — same storage, same table, same credential
+// list, same Configuration Parameters, same Validate Signature. Two code paths
+// here would mean the upload route quietly did less, and the difference would
+// only show up later as a pane that looks filled in but drives nothing.
+function applyVciDocument(doc, provenance, verb) {
+  log.debug("Entering applyVciDocument(). " + (provenance && (provenance.url || provenance.file)));
+  vciInfo = doc || {};
+  vciStored = VCI_STORE.save(vciInfo, provenance);
+  renderVciTable();
+  renderCredentialConfigurations();
+  defaultAuthorizationServerUrl();
+  // Obtaining a document is what configures this workflow, so the Configuration
+  // Parameters pane is filled in straight away. The Populate Meta Data button
+  // below the table re-applies the document afterwards (e.g. to undo a
+  // hand-edit, or after choosing another credential).
+  var used = populateFromVciDocument();
+  status("vci_signed_metadata_status",
+    (verb || "Loaded") + " " + Object.keys(vciInfo).length + " members; " +
+    Object.keys(vciInfo.credential_configurations_supported || {}).length +
+    ' credential configuration(s) offered. Configuration Parameters populated (credential "' +
+    used + '").' + notStoredNote(vciStored), vciStored ? "vc-ok" : "vc-pending");
+  log.debug("credential issuer metadata: " + JSON.stringify(vciInfo));
+}
+
 function retrieveVciMetadata() {
   log.debug("Entering retrieveVciMetadata().");
   var url = val(VCI_URL_KEY);
@@ -271,22 +409,7 @@ function retrieveVciMetadata() {
   status("vci_signed_metadata_status", "Retrieving " + url + " …", "vc-pending");
   return metadataClient.fetchJson(url)
     .then(function (doc) {
-      vciInfo = doc || {};
-      VCI_STORE.save(vciInfo, { docLabel: VCI_DOC_LABEL, url: url });
-      renderVciTable();
-      renderCredentialConfigurations();
-      defaultAuthorizationServerUrl();
-      // Retrieving a document is what configures this workflow, so the
-      // Configuration Parameters pane is filled in straight away. The Populate
-      // Meta Data button below the table re-applies the document afterwards
-      // (e.g. to undo a hand-edit, or after choosing another credential).
-      var used = populateFromVciDocument();
-      status("vci_signed_metadata_status",
-        "Retrieved " + Object.keys(vciInfo).length + " members; " +
-        Object.keys(vciInfo.credential_configurations_supported || {}).length +
-        ' credential configuration(s) offered. Configuration Parameters populated (credential "' +
-        used + '").', "vc-ok");
-      log.debug("credential issuer metadata: " + JSON.stringify(vciInfo));
+      applyVciDocument(doc, { docLabel: VCI_DOC_LABEL, url: url }, "Retrieved");
     })
     .catch(function (e) {
       status("vci_signed_metadata_status", "Could not retrieve the metadata: " + e.message, "vc-bad");
@@ -345,15 +468,58 @@ function populateFromVciDocument() {
   return used;
 }
 
+// ---------------------------------------------------------------------------
+// Reporting a schema check.
+//
+// The document is populated either way, and that is deliberate: this is a
+// debugger. Refusing to populate an out-of-spec document would take away the
+// one thing someone debugging an out-of-spec issuer needs — to see what their
+// document actually does to a wallet. So the verdict is reported beside the
+// populate, not in place of it.
+//
+// Errors and warnings are kept apart because they mean different things: an
+// error is a MUST the document breaks, a warning is a SHOULD, a RECOMMENDED
+// member, or something legal but odd. A checker that called both "invalid"
+// would be ignored within a week.
+// ---------------------------------------------------------------------------
+function renderSchemaReport(hostId, result, spec) {
+  var host = el(hostId);
+  if (!host) return;
+  if (!result.errors.length && !result.warnings.length) {
+    host.innerHTML = '<p class="vc-status vc-ok">Schema check: this document satisfies every rule ' +
+      esc(spec) + " states for it.</p>";
+    return;
+  }
+  var row = function (item, kind) {
+    return "<tr><td class=\"" + (kind === "error" ? "vc-bad" : "vc-pending") + "\">" +
+      (kind === "error" ? "ERROR" : "warning") + "</td><td><code>" + esc(item.member) + "</code></td>" +
+      "<td>" + esc(item.message) + "</td><td>" + esc(item.cite || spec) + "</td></tr>";
+  };
+  host.innerHTML =
+    '<p class="vc-status ' + (result.errors.length ? "vc-bad" : "vc-pending") + '">Schema check against ' +
+    esc(spec) + ": " + result.errors.length + " error(s), " + result.warnings.length + " warning(s). " +
+    "The Configuration Parameters were populated regardless, so you can see what this document does." +
+    "</p><table class=\"vc-token-table\"><thead><tr><th>Result</th><th>Member</th><th>What the " +
+    "specification says</th><th>Where</th></tr></thead><tbody>" +
+    result.errors.map(function (e) { return row(e, "error"); }).join("") +
+    result.warnings.map(function (w) { return row(w, "warning"); }).join("") +
+    "</tbody></table>";
+}
+
 function populateFromVci() {
   if (!vciInfo || !Object.keys(vciInfo).length) {
     status("vci_signed_metadata_status", "Retrieve the credential issuer metadata first.", "vc-bad");
     return false;
   }
   var used = populateFromVciDocument();
+  // Checked at the moment the document is put to use, which is when being told
+  // it is malformed is worth something.
+  var check = metadataSchema.validateVciMetadata(vciInfo);
+  renderSchemaReport("vci_schema_report", check, metadataSchema.VCI_SPEC);
   status("vci_signed_metadata_status",
-    'Configuration Parameters populated from the credential issuer metadata (credential "' + used + '").',
-    "vc-ok");
+    'Configuration Parameters populated from the credential issuer metadata (credential "' + used + '"). ' +
+    metadataSchema.summarize(check, "Schema check"),
+    check.errors.length ? "vc-bad" : (check.warnings.length ? "vc-pending" : "vc-ok"));
   return false;
 }
 
@@ -384,14 +550,22 @@ function resolveIssuerJwksUri(doc) {
 function validateVciSignature() {
   log.debug("Entering validateVciSignature().");
   var out = function (text, cls) { status("vci_signed_metadata_status", text, cls); };
-  if (!vciInfo || !Object.keys(vciInfo).length) {
-    out("Retrieve the credential issuer metadata first.", "vc-bad");
+  // The document as it arrived, falling back to the parsed copy and then to what
+  // is on this page — so the button works whenever a table is displayed, rather
+  // than only in the visit that retrieved it.
+  var chosen = metadataClient.documentForValidation(VCI_STORE, vciInfo);
+  if (!chosen.doc) {
+    out(tableIsDisplayed("vci_metadata_table")
+      ? "The table above was drawn from a document this browser no longer has, so there is nothing to " +
+        "validate against. Retrieve it again."
+      : "Retrieve the credential issuer metadata first.", "vc-bad");
+    log.debug("Leaving validateVciSignature(). Nothing to validate.");
     return false;
   }
   out("Resolving the issuer's keys …", "vc-pending");
-  resolveIssuerJwksUri(vciInfo)
+  resolveIssuerJwksUri(chosen.doc)
     .then(function (jwksUri) {
-      return metadataClient.validateSignedMetadata(vciInfo, {
+      return metadataClient.validateSignedMetadata(chosen.doc, {
         issuerMember: "credential_issuer",
         jwksUri: jwksUri,
         noSignedMetadataNote: "(signed_metadata is optional in OID4VCI.)",
@@ -399,9 +573,17 @@ function validateVciSignature() {
       });
     })
     .then(function (verdict) {
-      out(verdict, verdict.indexOf("VALID") === 0 ? "vc-ok" : "vc-bad");
+      out(verdict + chosen.note, verdict.indexOf("VALID") === 0 ? "vc-ok" : "vc-bad");
+    })
+    .catch(function (e) {
+      // Belt and braces, not a fix for an observed hang: resolveIssuerJwksUri()
+      // and validateSignedMetadata() both catch their own failures and RESOLVE
+      // with a message, so this chain does not reject today. It is here so that
+      // removing either of those catches surfaces as a verdict rather than as a
+      // pane stuck on a progress line.
+      out("Could not validate the signature: " + e.message, "vc-bad");
     });
-  log.debug("Leaving validateVciSignature().");
+  log.debug("Leaving validateVciSignature(). source=" + chosen.source);
   return false;
 }
 
@@ -420,6 +602,22 @@ function renderAsTable() {
     ' value="Populate Meta Data" onclick="return sdjwtvc1.populateFromAs();" />';
 }
 
+// The authorization server document, once in hand. Shared by the retrieve and
+// upload routes for the same reason as applyVciDocument.
+function applyAsDocument(doc, provenance, verb) {
+  log.debug("Entering applyAsDocument(). " + (provenance && (provenance.url || provenance.file)));
+  asInfo = doc || {};
+  asStored = AS_STORE.save(asInfo, provenance);
+  // debugger.html reads this to decide which source its radio shows.
+  sdJwtVc.set("metadata_source", "rfc8414");
+  renderAsTable();
+  populateFromAsDocument();
+  status("as_signed_metadata_status",
+    (verb || "Loaded") + " " + Object.keys(asInfo).length + " members and populated the Configuration " +
+    "Parameters pane. This document — and those values — are now what debugger.html shows too." +
+    notStoredNote(asStored), asStored ? "vc-ok" : "vc-pending");
+}
+
 function retrieveAsMetadata() {
   log.debug("Entering retrieveAsMetadata().");
   var url = val("oidc_discovery_endpoint");
@@ -431,16 +629,7 @@ function retrieveAsMetadata() {
   status("as_signed_metadata_status", "Retrieving " + url + " …", "vc-pending");
   return metadataClient.fetchJson(url)
     .then(function (doc) {
-      asInfo = doc || {};
-      AS_STORE.save(asInfo, { source: "rfc8414", docLabel: AS_DOC_LABEL, url: url });
-      // debugger.html reads this to decide which source its radio shows.
-      sdJwtVc.set("metadata_source", "rfc8414");
-      renderAsTable();
-      populateFromAsDocument();
-      status("as_signed_metadata_status",
-        "Retrieved " + Object.keys(asInfo).length + " members and populated the Configuration Parameters " +
-        "pane. This document — and those values — are now what debugger.html shows too.",
-        "vc-ok");
+      applyAsDocument(doc, { source: "rfc8414", docLabel: AS_DOC_LABEL, url: url }, "Retrieved");
     })
     .catch(function (e) {
       status("as_signed_metadata_status", "Could not retrieve the metadata: " + e.message, "vc-bad");
@@ -471,8 +660,12 @@ function populateFromAs() {
     return false;
   }
   populateFromAsDocument();
+  var asCheck = metadataSchema.validateAsMetadata(asInfo);
+  renderSchemaReport("as_schema_report", asCheck, metadataSchema.AS_SPEC);
   status("as_signed_metadata_status",
-    "Configuration Parameters populated. debugger.html will run with these values.", "vc-ok");
+    "Configuration Parameters populated. debugger.html will run with these values. " +
+    metadataSchema.summarize(asCheck, "Schema check"),
+    asCheck.errors.length ? "vc-bad" : (asCheck.warnings.length ? "vc-pending" : "vc-ok"));
   return false;
 }
 
@@ -530,14 +723,27 @@ function populateScope() {
 }
 
 function validateAsSignature() {
+  log.debug("Entering validateAsSignature().");
   var out = function (text, cls) { status("as_signed_metadata_status", text, cls); };
-  metadataClient.validateSignedMetadata(asInfo || {}, {
+  var chosen = metadataClient.documentForValidation(AS_STORE, asInfo);
+  if (!chosen.doc) {
+    out(tableIsDisplayed("discovery_info_table")
+      ? "The table above was drawn from a document this browser no longer has, so there is nothing to " +
+        "validate against. Retrieve it again."
+      : "Retrieve the authorization server metadata first.", "vc-bad");
+    log.debug("Leaving validateAsSignature(). Nothing to validate.");
+    return false;
+  }
+  metadataClient.validateSignedMetadata(chosen.doc, {
     issuerMember: "issuer",
     noSignedMetadataNote: "(signed_metadata is an RFC 8414 member; OIDC Discovery does not define it.)",
     progress: function (t) { out(t, "vc-pending"); }
   }).then(function (verdict) {
-    out(verdict, verdict.indexOf("VALID") === 0 ? "vc-ok" : "vc-bad");
+    out(verdict + chosen.note, verdict.indexOf("VALID") === 0 ? "vc-ok" : "vc-bad");
+  }).catch(function (e) {
+    out("Could not validate the signature: " + e.message, "vc-bad");
   });
+  log.debug("Leaving validateAsSignature(). source=" + chosen.source);
   return false;
 }
 
@@ -1027,6 +1233,10 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   retrieveVciMetadata: retrieveVciMetadata,
+  uploadVciMetadata: uploadVciMetadata,
+  onVciFileChange: onVciFileChange,
+  uploadAsMetadata: uploadAsMetadata,
+  onAsFileChange: onAsFileChange,
   discardOffer: discardOffer,
   acceptOfferFromQuery: acceptOfferFromQuery,
   takeScannedOffer: takeScannedOffer,

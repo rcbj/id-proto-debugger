@@ -145,15 +145,6 @@ function vpSetAllPanes(expand) {
         </tr>
         <tr>
           <td>
-            <div class="tooltip"><label for="vp_verifier_jwks_url">Verifier JWKS URL</label>
-              <span class="tooltiptext">Where this wallet looks for the verifier's keys when a request is signed. For a pre-registered client this is the "out of band" knowledge OID4VP assumes the wallet has.</span>
-            </div>
-          </td>
-          <td><input type="text" id="vp_verifier_jwks_url" name="vp_verifier_jwks_url" size="60"
-                     onchange="return sdjwtvp1.saveVerifierJwksUrl();" /></td>
-        </tr>
-        <tr>
-          <td>
             <div class="tooltip">
               <input class="btn2" id="vp_use_pasted_button" type="button" value="Read this Request" onclick="return sdjwtvp1.usePastedRequest();" />
               <span class="tooltiptext">Read the request and show what it asks for. Nothing is sent to the verifier.</span>

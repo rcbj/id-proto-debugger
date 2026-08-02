@@ -58,7 +58,7 @@ RUN node -v
 RUN npm -v
 
 # Bundle app source
-COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem.js tests/url_safety.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js ./
+COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem.js tests/url_safety.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js ./
 # The XML Signature/Encryption interop test drives the frontend crypto module
 # directly (no browser); copy it next to the test so it can require('./xmldsig.js')
 # and resolve its deps (node-forge, etc.) from this image's node_modules. The
@@ -72,6 +72,12 @@ COPY client/src/xmldsig.js client/src/wstrust_msg.js client/src/jose_jwe.js clie
 COPY client/src/jwk_pem.js ./
 # The scheme allowlist, tested directly by tests/url_safety.js.
 COPY client/src/url_safety.js ./
+# The metadata schema checker, loaded directly by
+# tests/metadata_schema_validation.js. That test is named _validation for a
+# reason: this COPY lands the module FLAT beside the test scripts, so a test
+# named metadata_schema.js would be overwritten by it (or overwrite it) depending
+# on which COPY ran last, and the failure would be silent.
+COPY client/src/metadata_schema.js ./
 # The two halves of the edge landings' hand-off contract, which
 # tests/edge_landing_contract.js compares: the module deployed to Lambda@Edge by
 # Terraform and the client module browserified into the page (copied just above).

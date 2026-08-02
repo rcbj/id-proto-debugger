@@ -120,7 +120,7 @@ async function click(driver, locator) {
 // for that lost the race periodically. It also reports what the field LAST held
 // on a timeout, which the local copy of waitForStatus could not — its message was
 // built before the first poll, so it always said "(last status: )".
-const { text, value, waitForStatus } = require("./wait_for");
+const { text, value, waitForStatus, waitForValue } = require("./wait_for");
 function severeErrors(driver) {
   return driver.manage().logs().get(logging.Type.BROWSER).then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
@@ -195,8 +195,14 @@ async function planCredentialIntoWallet(driver, held) {
     "localStorage.setItem('sdjwtvc_holder_jwk', arguments[1]);" +
     "localStorage.setItem('sdjwtvc_holder_private_jwk', arguments[2]);" +
     "localStorage.setItem('sdjwtvc_credential_meta', arguments[3]);" +
-    // The verifier lives on the same service as the issuer, which is how step 0
-    // finds it.
+    // The verifier lives on the same service as the issuer for this mock, but
+    // step 0 no longer INFERS that: it has a Configuration Parameters pane, and a
+    // configured verifier wins over anything derived. Set it explicitly so this
+    // suite points at the STS it actually started, rather than at whatever
+    // oid4vpVerifierUrlDefault the target carries — http://localhost:8081 for
+    // local.js, http://sts:8081 containerized, empty for the deployed sites.
+    "localStorage.setItem('sdjwtvp_verifier_base_url', arguments[4]);" +
+    "localStorage.setItem('sdjwtvp_verifier_jwks_url', arguments[4] + '/oauth2/jwks');" +
     "localStorage.setItem('vci_credential_issuer', arguments[4]);",
     held.credential, JSON.stringify(held.publicJwk), JSON.stringify(held.privateJwk),
     JSON.stringify({ issuer: issuerBase, configurationId: VCI_CONFIG_ID, vct: EXPECTED_VCT,

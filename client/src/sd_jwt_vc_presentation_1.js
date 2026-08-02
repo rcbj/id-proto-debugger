@@ -156,7 +156,7 @@ function fetchRequestObject(uri, clientId) {
 // the out-of-band knowledge OID4VP assumes.
 function verifyRequestSignature(compact, clientId) {
   log.debug("Entering verifyRequestSignature().");
-  var jwksUrl = (val("vp_verifier_jwks_url") || sdJwtVc.get(sdJwtVp.KEYS.VERIFIER_JWKS_URL) || "").trim();
+  var jwksUrl = verifierJwksUrl();
   if (!jwksUrl) {
     request.signatureVerdict = "The request is signed, but no Verifier JWKS URL is configured, so the " +
       "signature cannot be checked. Anyone could have sent this.";
@@ -188,7 +188,7 @@ function heldCredential() {
   var raw = sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "";
   if (!raw) return null;
   try {
-    return { raw: raw, parsed: sdJwtVc.parseSdJwt(raw) };
+    return { raw: raw, parsed: sdJwtVc.parseCredential(raw) };
   } catch (e) {
     log.error("the stored credential could not be parsed: " + e.message);
     return { raw: raw, parsed: null, error: e.message };
@@ -208,11 +208,17 @@ function renderRequestedClaims() {
   var held = heldCredential();
   var available = {};
   if (held && held.parsed) {
+    // What the credential can answer with, whichever format it is: an SD-JWT's
+    // Disclosures plus its plain claims, or a jwt_vc_json's credentialSubject.
+    // parseCredential() reduces both to the same `claims` map, so this does not
+    // have to branch — and a jwt_vc_json, whose disclosures list is empty, would
+    // otherwise look like a credential that can answer nothing.
+    Object.keys(held.parsed.claims || {}).forEach(function (name) { available[name] = true; });
     (held.parsed.disclosures || []).forEach(function (d) {
       if (!d.error && d.name !== null) available[d.name] = true;
     });
     Object.keys(held.parsed.payload || {}).forEach(function (k) {
-      if (["_sd", "_sd_alg", "cnf"].indexOf(k) === -1) available[k] = true;
+      if (["_sd", "_sd_alg", "cnf", "vc"].indexOf(k) === -1) available[k] = true;
     });
   }
   var rows = "";
@@ -349,9 +355,20 @@ function usePastedRequest() {
   return false;
 }
 
-function saveVerifierJwksUrl() {
-  sdJwtVc.set(sdJwtVp.KEYS.VERIFIER_JWKS_URL, (val("vp_verifier_jwks_url") || "").trim());
-  return true;
+// The JWKS URL this wallet trusts for the verifier.
+//
+// Configured on step 0's Configuration Parameters pane. When it has not been,
+// fall back to the DEPLOYMENT'S DEFAULT VERIFIER — deliberately not to the
+// credential issuer, which this used to do: the mock hosts issuer and verifier
+// together, but the moment issuance has been run against walt.id the issuer is a
+// different service on a different port with a path in its identifier, and the
+// derived URL pointed at nothing.
+function verifierJwksUrl() {
+  var stored = (sdJwtVc.get(sdJwtVp.KEYS.VERIFIER_JWKS_URL) || "").trim();
+  if (stored) return stored;
+  var base = (sdJwtVc.get(sdJwtVp.KEYS.VERIFIER_BASE_URL) ||
+              appconfig.oid4vpVerifierUrlDefault || "").trim();
+  return base ? base.replace(/\/+$/, "") + "/oauth2/jwks" : "";
 }
 
 function forgetRequest() {
@@ -384,15 +401,6 @@ function onload() {
   var zero = document.getElementById("vp_step_0");
   if (zero) zero.className = "vc-step-done";
 
-  // The JWKS URL this wallet trusts for the verifier, defaulted from the issuer
-  // it already knows: the mock verifier is hosted by the same service.
-  var stored = sdJwtVc.get(sdJwtVp.KEYS.VERIFIER_JWKS_URL);
-  if (!stored) {
-    var issuer = sdJwtVc.storedRequestConfig().credentialIssuer ||
-                 appconfig.oid4vciIssuerUrlDefault || "";
-    stored = issuer ? String(issuer).replace(/\/+$/, "") + "/oauth2/jwks" : "";
-  }
-  setValue("vp_verifier_jwks_url", stored);
 
   // A request in the query string is the same-device flow: the verifier just
   // redirected the browser here with it.
@@ -430,7 +438,6 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   usePastedRequest: usePastedRequest,
-  saveVerifierJwksUrl: saveVerifierJwksUrl,
   forgetRequest: forgetRequest,
   continueToDisclose: continueToDisclose,
   clientIdentifier: clientIdentifier,

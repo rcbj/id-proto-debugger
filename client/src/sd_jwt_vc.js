@@ -271,6 +271,10 @@ var FLOW_ACTIVE = "active";
 var STEP2_URL = "/sd-jwt-vc-issuance-2.html";
 var STEP3_URL = "/sd-jwt-vc-issuance-3.html";
 var STEP4_URL = "/sd-jwt-vc-issuance-4.html";
+// Where the PRESENTATION workflow starts. It lives here rather than in
+// sd_jwt_vp.js because the pages that link to it are issuance pages, which do not
+// load that module.
+var PRESENTATION_URL = "/sd-jwt-vc-presentation-0.html";
 
 function ls() {
   try {
@@ -527,10 +531,14 @@ function droppedGenerations() {
 // when it is recorded rather than on every render.
 function summarizeCredential(serialized) {
   log.debug("Entering summarizeCredential().");
-  var summary = { vct: "", iat: 0, nbf: 0, exp: 0, disclosures: 0, boundKey: "", signature: "" };
+  var summary = { vct: "", iat: 0, nbf: 0, exp: 0, disclosures: 0, boundKey: "", signature: "",
+                  format: "" };
   var parsed;
   try {
-    parsed = parseSdJwt(serialized);
+    // Format-aware: Credential History holds whatever the wallet was issued, and
+    // a jwt_vc_json generation must summarise rather than fall into the
+    // unparseable branch below and show a blank row.
+    parsed = parseCredential(serialized);
   } catch (e) {
     // A credential this build cannot parse is still one the wallet held; it goes
     // in the history with an empty summary rather than being dropped.
@@ -538,7 +546,10 @@ function summarizeCredential(serialized) {
     return summary;
   }
   var payload = parsed.payload || {};
-  summary.vct = payload.vct || "";
+  summary.format = parsed.format || "";
+  // For a jwt_vc_json there is no vct; the row shows what the credential says it
+  // is instead, so the column is never blank for a credential that parsed.
+  summary.vct = payload.vct || credentialLabel(parsed);
   summary.iat = payload.iat || 0;
   summary.nbf = payload.nbf || 0;
   summary.exp = payload.exp || 0;
@@ -817,6 +828,181 @@ function parseSdJwt(serialized) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Two credential formats.
+//
+// The workflow issues and presents SD-JWT VC (dc+sd-jwt) and W3C VC secured as
+// a JWT (jwt_vc_json). They differ in the one thing the workflow is about:
+// jwt_vc_json has NO selective disclosure. Everything it carries is in the
+// clear, so presenting it hands over all of it, and holder binding is done by
+// signing a Verifiable Presentation JWT around it rather than by a Key Binding
+// JWT.
+//
+// Rather than branch on the format at each of the dozen places that read a
+// credential, they all go through parseCredential(), which returns the SAME
+// shape for both: `disclosures` is simply an empty array for jwt_vc_json, and
+// `claims` is the claim set either way.
+// ---------------------------------------------------------------------------
+var FORMAT_SD_JWT = "dc+sd-jwt";
+var FORMAT_JWT_VC_JSON = "jwt_vc_json";
+
+// Which format some stored bytes are.
+//
+// The tilde decides it, and nothing else can: an SD-JWT Combined Serialization
+// is <JWT>~<Disclosure>*~ and ALWAYS carries at least the trailing one, while a
+// VC-JWT never does. Counting dot-separated parts does not work — the tildes
+// hang off the signature segment, so an SD-JWT also splits into exactly three.
+function credentialFormat(serialized) {
+  var raw = String(serialized || "").trim();
+  if (!raw) return "";
+  if (raw.indexOf("~") >= 0) return FORMAT_SD_JWT;
+  if (raw.split(".").length === 3) return FORMAT_JWT_VC_JSON;
+  return "";
+}
+
+// A W3C Verifiable Credential secured as a JWT (VC-JWT). The credential object
+// is in the `vc` claim; the JWT's own claims carry the issuer, subject and
+// validity window.
+function parseJwtVc(serialized) {
+  log.debug("Entering parseJwtVc().");
+  var raw = String(serialized || "").trim();
+  if (!raw) throw new Error("There is no credential to parse.");
+  var parts = raw.split(".");
+  if (parts.length !== 3) throw new Error("A jwt_vc_json credential is a three-part JWS.");
+  var header, payload;
+  try {
+    header = metadataClient.b64uToJson(parts[0]);
+  } catch (e) {
+    throw new Error("Cannot read the credential JWT header: " + e.message);
+  }
+  try {
+    payload = metadataClient.b64uToJson(parts[1]);
+  } catch (e) {
+    throw new Error("Cannot read the credential JWT payload: " + e.message);
+  }
+  var vc = payload.vc || {};
+  if (!vc || typeof vc !== "object") throw new Error("The JWT carries no vc claim, so it is not a VC-JWT.");
+  log.debug("Leaving parseJwtVc().");
+  return {
+    serialized: raw, issuerJwt: raw, header: header, payload: payload,
+    signature: parts[2], vc: vc,
+    credentialSubject: vc.credentialSubject || {},
+    disclosures: [], kbJwt: ""
+  };
+}
+
+// The claim set a credential asserts, as a flat name -> value map, whichever
+// format it is in. For an SD-JWT that is what its Disclosures reveal; for a
+// jwt_vc_json it is credentialSubject, minus `id`, which identifies the subject
+// rather than saying anything about them.
+function claimsOf(parsed) {
+  var out = {};
+  if (!parsed) return out;
+  if (parsed.format === FORMAT_JWT_VC_JSON) {
+    var subject = parsed.credentialSubject || {};
+    Object.keys(subject).forEach(function (name) {
+      if (name !== "id") out[name] = subject[name];
+    });
+    return out;
+  }
+  (parsed.disclosures || []).forEach(function (d) {
+    if (d && d.name != null) out[d.name] = d.value;
+  });
+  return out;
+}
+
+// Parse whichever format the bytes are, into one shape.
+function parseCredential(serialized) {
+  log.debug("Entering parseCredential().");
+  var format = credentialFormat(serialized);
+  if (!format) throw new Error("This does not look like an SD-JWT VC or a jwt_vc_json credential.");
+  var parsed = format === FORMAT_JWT_VC_JSON ? parseJwtVc(serialized) : parseSdJwt(serialized);
+  parsed.format = format;
+  parsed.claims = claimsOf(parsed);
+  parsed.selectivelyDisclosable = format === FORMAT_SD_JWT;
+  // What the credential says it IS: a vct for an SD-JWT VC, a type array for a
+  // W3C VC. Both are surfaced so a caller can name the credential without
+  // knowing which format it holds.
+  parsed.vct = (parsed.payload || {}).vct || "";
+  parsed.types = format === FORMAT_JWT_VC_JSON ? [].concat((parsed.vc || {}).type || []) : [];
+  parsed.subject = (parsed.payload || {}).sub || (parsed.credentialSubject || {}).id || "";
+  log.debug("Leaving parseCredential(). format=" + format + ", " +
+            Object.keys(parsed.claims).length + " claim(s), " +
+            parsed.disclosures.length + " disclosure(s).");
+  return parsed;
+}
+
+// What to call this credential in a sentence.
+function credentialLabel(parsed) {
+  if (!parsed) return "credential";
+  if (parsed.format === FORMAT_JWT_VC_JSON) {
+    var types = (parsed.types || []).filter(function (t) { return t !== "VerifiableCredential"; });
+    return types.length ? types.join(", ") : "Verifiable Credential";
+  }
+  return parsed.vct || "credential";
+}
+
+// Can what this wallet is holding actually be presented?
+//
+// Issuance steps 3 and 4 both offer a hand-off into the PRESENTATION workflow.
+// Nothing is copied by that hand-off — the two workflows meet at these storage
+// keys and nowhere else, so the credential is already where the other workflow
+// looks. What the offer owes the user is therefore not a transfer but an honest
+// answer to "will anything happen if I click this", and that answer is whatever
+// presentation step 1 will decide when it gets there. This is that decision, in
+// one place, so an offer and the workflow it leads to cannot disagree — the
+// three-way distinction below mirrors renderRequest() in
+// sd_jwt_vc_presentation_1.js and must keep mirroring it.
+function presentationReadiness() {
+  log.debug("Entering presentationReadiness().");
+  var raw = (get(KEYS.CREDENTIAL) || "").trim();
+  if (!raw) {
+    log.debug("Leaving presentationReadiness(). Nothing held.");
+    return { ready: false, level: "vc-bad",
+             message: "Nothing is held yet — the presentation workflow presents a credential this wallet " +
+                      "already has." };
+  }
+  var parsed = null;
+  try {
+    parsed = parseCredential(raw);
+  } catch (e) {
+    log.debug("Leaving presentationReadiness(). Unparseable.");
+    return { ready: false, level: "vc-bad",
+             message: "The credential in storage cannot be parsed, so it cannot be presented: " + e.message };
+  }
+  // What a Verifier would be shown, said differently for the two formats
+  // because the difference is the point: an SD-JWT offers a CHOICE of claims,
+  // a jwt_vc_json offers all of them or nothing.
+  var offered = parsed.format === FORMAT_JWT_VC_JSON
+    ? "the " + credentialLabel(parsed) + " above — all " + Object.keys(parsed.claims).length +
+      " of its claims, because jwt_vc_json has no selective disclosure"
+    : "the " + credentialLabel(parsed) + " above, with its " +
+      parsed.disclosures.length + " selectively-disclosable claim(s)";
+  if (getJson(KEYS.HOLDER_PRIVATE_JWK)) {
+    log.debug("Leaving presentationReadiness(). Ready.");
+    return { ready: true, level: "vc-ok",
+             message: "A Verifier would be offered " + offered + ", signed with the holder key it is bound to." };
+  }
+  if (holderPrivateKeyMayBeStored()) {
+    // Saving is ON and the key is still absent, so it was never generated in this
+    // browser: there is nothing to paste, and presentation step 1 refuses to
+    // continue past exactly this. Blocking here says so one page earlier.
+    log.debug("Leaving presentationReadiness(). Key lost.");
+    return { ready: false, level: "vc-bad",
+             message: "The private half of the holder key is missing, so no Key Binding JWT could be signed " +
+                      "for this credential — the presentation workflow would stop at step 1." };
+  }
+  // Deliberately not kept (the checkbox on issuance step 2). Presentation step 2
+  // has a field to paste it into, so this is an advisory and must NOT block:
+  // refusing here would strand the user two pages before the only field that
+  // fixes it.
+  log.debug("Leaving presentationReadiness(). Ready, key to be pasted.");
+  return { ready: true, level: "vc-pending",
+           message: "A Verifier would be offered " + offered + ". The holder key is not kept in this browser, " +
+                    "by the choice made on issuance step 2 — you will be asked to paste it when the " +
+                    "presentation is assembled." };
+}
+
 // The digest that an SD-JWT's _sd array carries for a Disclosure: the hash of
 // the US-ASCII of the base64url-encoded Disclosure, base64url-encoded.
 // _sd_alg defaults to sha-256 (RFC 9901 section 4.1.1).
@@ -895,6 +1081,8 @@ module.exports = {
   STEP2_URL: STEP2_URL,
   STEP3_URL: STEP3_URL,
   STEP4_URL: STEP4_URL,
+  PRESENTATION_URL: PRESENTATION_URL,
+  presentationReadiness: presentationReadiness,
   get: get,
   set: set,
   remove: remove,
@@ -920,6 +1108,13 @@ module.exports = {
   activateCredentialGeneration: activateCredentialGeneration,
   clearCredentialHistory: clearCredentialHistory,
   parseSdJwt: parseSdJwt,
+  parseJwtVc: parseJwtVc,
+  parseCredential: parseCredential,
+  credentialFormat: credentialFormat,
+  credentialLabel: credentialLabel,
+  claimsOf: claimsOf,
+  FORMAT_SD_JWT: FORMAT_SD_JWT,
+  FORMAT_JWT_VC_JSON: FORMAT_JWT_VC_JSON,
   digestForDisclosure: digestForDisclosure,
   collectSdDigests: collectSdDigests,
   disclosedClaims: disclosedClaims
