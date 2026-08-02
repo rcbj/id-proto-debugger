@@ -1,0 +1,17 @@
+{
+  "@context": {
+    "@protected": true,
+    "IdentityCredential": "https://idptools.com/contexts/identity#IdentityCredential",
+    "given_name": "https://schema.org/givenName",
+    "family_name": "https://schema.org/familyName",
+    "email": "https://schema.org/email",
+    "birthDate": "https://schema.org/birthDate",
+    "nationality": "https://schema.org/nationality",
+    "country": "https://schema.org/addressCountry",
+    "locality": "https://schema.org/addressLocality",
+    "region": "https://schema.org/addressRegion",
+    "streetAddress": "https://schema.org/streetAddress",
+    "isOver18": "https://idptools.com/contexts/identity#isOver18",
+    "isOver21": "https://idptools.com/contexts/identity#isOver21"
+  }
+}

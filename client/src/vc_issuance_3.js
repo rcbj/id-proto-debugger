@@ -76,6 +76,30 @@ function renderChecks(checks) {
 
 // --- disclosures ------------------------------------------------------------
 function renderDisclosures(rows, sdDigests) {
+  // ldp_vc selects over CANONICAL STATEMENTS, not Disclosures, so this table has
+  // no rows to show. Rendering an empty Disclosure table would read as "this
+  // credential reveals nothing", which is the opposite of the truth: the holder
+  // can withhold almost anything here, and unlinkably — just not by carrying
+  // Disclosures. The statements themselves are only known after
+  // canonicalization, which happens in the presentation workflow where the
+  // choice is actually made.
+  if (parsed && parsed.format === sdJwtVc.FORMAT_LDP_VC) {
+    var claims = parsed.claims || {};
+    el("vc_disclosures").innerHTML =
+      "<thead><tr><th style='width:22%'>Claim</th><th>Value</th></tr></thead><tbody>" +
+      Object.keys(claims).map(function (k) {
+        var v = claims[k];
+        return "<tr><td>" + esc(k) + "</td><td>" +
+          esc(typeof v === "object" ? JSON.stringify(v) : String(v)) + "</td></tr>";
+      }).join("") + "</tbody>";
+    el("vc_disclosure_summary").innerHTML =
+      '<span class="vc-status vc-pending">This credential is <code>ldp_vc</code> with a ' +
+      '<code>bbs-2023</code> proof. It carries no Disclosures: selective disclosure here is over the ' +
+      "credential's canonical statements, chosen when it is presented, and each presentation is a " +
+      'fresh proof that cannot be linked to the previous one.</span>';
+    return;
+  }
+
   log.debug("Entering renderDisclosures().");
   var body = rows.map(function (r, i) {
     var valueText = (r.value === undefined) ? "" :

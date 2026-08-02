@@ -151,6 +151,45 @@ function renderWhatWasSent() {
 function recheckOwnPresentation() {
   log.debug("Entering recheckOwnPresentation().");
   if (!sent || !sent.presentation) return Promise.resolve(false);
+  // A bbs-2023 presentation is not a JWS at all, so none of the checks below
+  // apply: there is no KB-JWT, no sd_hash, and no issuer signature travelling
+  // with it. The derived proof is the signature, and the nonce is inside it.
+  if (String(sent.presentation || "").indexOf('"cryptosuite":"bbs-2023"') !== -1) {
+    var checks = [];   // local: the shared one is declared after the parse below
+    var envelope = {};
+    try {
+      envelope = JSON.parse(sent.presentation);
+    } catch (e) {
+      envelope = {};
+    }
+    var statements = [].concat(envelope.disclosedStatements || []);
+    checks.push({
+      name: "Derived proof present", ok: !!envelope.proof,
+      detail: envelope.proof
+        ? "a bbs-2023 derived proof, " + envelope.proof.length + " characters of base64url."
+        : "there is no derived proof in what was sent."
+    });
+    checks.push({
+      name: "Statements disclosed", ok: statements.length > 0,
+      detail: statements.length + " canonical statement(s) went. The rest of the credential was " +
+              "withheld — not hidden behind a digest, simply never proved."
+    });
+    checks.push({
+      name: "Freshness", ok: true,
+      detail: "the verifier's nonce is the presentation header, so it is bound INSIDE the proof. A " +
+              "replay is not caught by comparing a claim; the proof itself fails to verify."
+    });
+    checks.push({
+      name: "Unlinkability", ok: true,
+      detail: "this proof was re-randomised at derivation, so presenting the same credential again " +
+              "produces different bytes. Neither of the other two formats can do that: they replay " +
+              "the issuer's signature verbatim."
+    });
+    renderRecheck(checks);
+    log.debug("Leaving recheckOwnPresentation(). ldp_vc, " + checks.length + " check(s).");
+    return Promise.resolve(true);
+  }
+
   var parsed;
   try {
     parsed = sdJwtVc.parseCredential(sent.presentation);

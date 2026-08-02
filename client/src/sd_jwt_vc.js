@@ -845,6 +845,7 @@ function parseSdJwt(serialized) {
 // ---------------------------------------------------------------------------
 var FORMAT_SD_JWT = "dc+sd-jwt";
 var FORMAT_JWT_VC_JSON = "jwt_vc_json";
+var FORMAT_LDP_VC = "ldp_vc";
 
 // Which format some stored bytes are.
 //
@@ -853,11 +854,53 @@ var FORMAT_JWT_VC_JSON = "jwt_vc_json";
 // VC-JWT never does. Counting dot-separated parts does not work — the tildes
 // hang off the signature segment, so an SD-JWT also splits into exactly three.
 function credentialFormat(serialized) {
+  // ldp_vc is the odd one out and is checked first: it is a JSON OBJECT with an
+  // embedded proof, where the other two are compact-serialized strings. Stored
+  // credentials are strings, so an ldp_vc arrives as JSON text beginning with
+  // "{" — which neither of the others can.
+  if (serialized && typeof serialized === "object") {
+    return (serialized.proof && serialized.proof.type === "DataIntegrityProof") ? FORMAT_LDP_VC : "";
+  }
   var raw = String(serialized || "").trim();
   if (!raw) return "";
+  if (raw.charAt(0) === "{") {
+    try {
+      var doc = JSON.parse(raw);
+      if (doc && doc.proof && doc.proof.type === "DataIntegrityProof") return FORMAT_LDP_VC;
+    } catch (e) {
+      // Not JSON after all; fall through to the string formats below.
+      log.debug("credentialFormat(): leading brace but not JSON.");
+    }
+    return "";
+  }
   if (raw.indexOf("~") >= 0) return FORMAT_SD_JWT;
   if (raw.split(".").length === 3) return FORMAT_JWT_VC_JSON;
   return "";
+}
+
+// An ldp_vc credential, parsed into the same shape as the other two.
+//
+// `disclosures` is empty as it is for jwt_vc_json, but for the OPPOSITE reason:
+// jwt_vc_json cannot withhold anything, while ldp_vc can withhold nearly
+// everything — just not by carrying Disclosures. What it selects over is
+// canonical statements, and those are only known after canonicalization, which
+// is async and therefore not done here.
+function parseLdpVc(serialized) {
+  log.debug("Entering parseLdpVc().");
+  var doc = (serialized && typeof serialized === "object")
+    ? serialized : JSON.parse(String(serialized));
+  var subject = doc.credentialSubject || {};
+  log.debug("Leaving parseLdpVc().");
+  return {
+    serialized: typeof serialized === "string" ? serialized : JSON.stringify(doc),
+    document: doc,
+    header: { cryptosuite: (doc.proof || {}).cryptosuite, type: (doc.proof || {}).type },
+    payload: doc,
+    signature: (doc.proof || {}).proofValue || "",
+    credentialSubject: subject,
+    disclosures: [],
+    kbJwt: ""
+  };
 }
 
 // A W3C Verifiable Credential secured as a JWT (VC-JWT). The credential object
@@ -898,7 +941,7 @@ function parseJwtVc(serialized) {
 function claimsOf(parsed) {
   var out = {};
   if (!parsed) return out;
-  if (parsed.format === FORMAT_JWT_VC_JSON) {
+  if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
     var subject = parsed.credentialSubject || {};
     Object.keys(subject).forEach(function (name) {
       if (name !== "id") out[name] = subject[name];
@@ -916,15 +959,21 @@ function parseCredential(serialized) {
   log.debug("Entering parseCredential().");
   var format = credentialFormat(serialized);
   if (!format) throw new Error("This does not look like an SD-JWT VC or a jwt_vc_json credential.");
-  var parsed = format === FORMAT_JWT_VC_JSON ? parseJwtVc(serialized) : parseSdJwt(serialized);
+  var parsed = format === FORMAT_LDP_VC ? parseLdpVc(serialized)
+             : format === FORMAT_JWT_VC_JSON ? parseJwtVc(serialized)
+             : parseSdJwt(serialized);
   parsed.format = format;
   parsed.claims = claimsOf(parsed);
-  parsed.selectivelyDisclosable = format === FORMAT_SD_JWT;
+  // ldp_vc IS selectively disclosable — more so than SD-JWT, and unlinkably —
+  // but over canonical statements rather than Disclosures.
+  parsed.selectivelyDisclosable = format === FORMAT_SD_JWT || format === FORMAT_LDP_VC;
   // What the credential says it IS: a vct for an SD-JWT VC, a type array for a
   // W3C VC. Both are surfaced so a caller can name the credential without
   // knowing which format it holds.
   parsed.vct = (parsed.payload || {}).vct || "";
-  parsed.types = format === FORMAT_JWT_VC_JSON ? [].concat((parsed.vc || {}).type || []) : [];
+  parsed.types = format === FORMAT_JWT_VC_JSON ? [].concat((parsed.vc || {}).type || [])
+               : format === FORMAT_LDP_VC ? [].concat((parsed.document || {}).type || [])
+               : [];
   parsed.subject = (parsed.payload || {}).sub || (parsed.credentialSubject || {}).id || "";
   log.debug("Leaving parseCredential(). format=" + format + ", " +
             Object.keys(parsed.claims).length + " claim(s), " +
@@ -935,7 +984,7 @@ function parseCredential(serialized) {
 // What to call this credential in a sentence.
 function credentialLabel(parsed) {
   if (!parsed) return "credential";
-  if (parsed.format === FORMAT_JWT_VC_JSON) {
+  if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
     var types = (parsed.types || []).filter(function (t) { return t !== "VerifiableCredential"; });
     return types.length ? types.join(", ") : "Verifiable Credential";
   }
@@ -976,8 +1025,19 @@ function presentationReadiness() {
   var offered = parsed.format === FORMAT_JWT_VC_JSON
     ? "the " + credentialLabel(parsed) + " above — all " + Object.keys(parsed.claims).length +
       " of its claims, because jwt_vc_json has no selective disclosure"
-    : "the " + credentialLabel(parsed) + " above, with its " +
-      parsed.disclosures.length + " selectively-disclosable claim(s)";
+    : parsed.format === FORMAT_LDP_VC
+      ? "the " + credentialLabel(parsed) + " above (ldp_vc, bbs-2023) — you choose which statements " +
+        "go, and each presentation is a fresh proof that cannot be linked to the last"
+      : "the " + credentialLabel(parsed) + " above, with its " +
+        parsed.disclosures.length + " selectively-disclosable claim(s)";
+  // ldp_vc needs no holder private key to present: the BBS derived proof IS the
+  // holder's act, and the credential names its subject by DID rather than by a
+  // cnf key the wallet must sign with. Gating it on a holder key would strand
+  // the user for a reason that does not apply to this format.
+  if (parsed.format === FORMAT_LDP_VC) {
+    log.debug("Leaving presentationReadiness(). ldp_vc, ready.");
+    return { ready: true, level: "vc-ok", message: "A Verifier would be offered " + offered + "." };
+  }
   if (getJson(KEYS.HOLDER_PRIVATE_JWK)) {
     log.debug("Leaving presentationReadiness(). Ready.");
     return { ready: true, level: "vc-ok",
@@ -1115,6 +1175,8 @@ module.exports = {
   claimsOf: claimsOf,
   FORMAT_SD_JWT: FORMAT_SD_JWT,
   FORMAT_JWT_VC_JSON: FORMAT_JWT_VC_JSON,
+  FORMAT_LDP_VC: FORMAT_LDP_VC,
+  parseLdpVc: parseLdpVc,
   digestForDisclosure: digestForDisclosure,
   collectSdDigests: collectSdDigests,
   disclosedClaims: disclosedClaims

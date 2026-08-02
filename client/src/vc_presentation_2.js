@@ -28,6 +28,7 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
+var bbs2023 = require("./bbs2023");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_2',
                                 level: appconfig.logLevel });
@@ -110,6 +111,48 @@ function selectedEncoded() {
   return state.rows.filter(function (r) { return r.checked; }).map(function (r) { return r.encoded; });
 }
 
+// ldp_vc selects over canonical STATEMENTS, so what a row identifies is an index
+// into the statement list rather than an encoded Disclosure.
+function selectedStatementIndexes() {
+  return state.rows.filter(function (r) { return r.checked; })
+    .map(function (r) { return r.statementIndex; });
+}
+
+// Canonicalizing is async and loadState() is not, so the statements are fetched
+// once here and the panes re-rendered when they arrive. Until then the table
+// says it is working rather than showing an empty selection the holder might
+// take for "this credential reveals nothing".
+function prepareLdpStatements() {
+  log.debug("Entering prepareLdpStatements().");
+  var doc = (state.parsed && state.parsed.document) || null;
+  if (!doc) return Promise.resolve(false);
+  var body = Object.assign({}, doc);
+  delete body.proof;
+  return bbs2023.canonicalizedStatements(body).then(function (statements) {
+    state.statements = statements;
+    // Default to the statements that mention a requested claim. The claim names
+    // come from DCQL; a statement is an N-Quad, so the match is on the predicate
+    // IRI's local name, which is what the context maps those claims to.
+    state.rows = statements.map(function (line, i) {
+      var wanted = state.requested.some(function (name) {
+        var leaf = String(name).split(".").pop();
+        return line.indexOf("/" + leaf) !== -1 || line.indexOf("#" + leaf) !== -1 ||
+               new RegExp(leaf.replace(/_(\w)/g, function (m, c) { return c.toUpperCase(); }))
+                 .test(line);
+      });
+      return { statementIndex: i, name: "statement " + (i + 1), value: line.trim(),
+               requested: wanted, checked: wanted, encoded: "", error: "" };
+    });
+    log.debug("Leaving prepareLdpStatements(). " + statements.length + " statement(s).");
+    return true;
+  }).catch(function (e) {
+    log.error("could not canonicalize the credential: " + e.message);
+    status("vp_present_status", "This credential could not be canonicalized, so no bbs-2023 proof can " +
+      "be derived from it: " + e.message, "vc-bad");
+    return false;
+  });
+}
+
 // The claims that travel whatever the holder chooses: they are in the
 // issuer-signed JWT itself, not in a Disclosure, so they cannot be withheld
 // without breaking the signature.
@@ -143,6 +186,35 @@ function renderDisclosureTable() {
   // With no Disclosures the table would render as an empty box, which reads as a
   // credential that carries nothing. Show what will actually be sent instead,
   // and say why none of it can be withheld.
+  if (state.format === sdJwtVc.FORMAT_LDP_VC) {
+    var stmts = state.rows || [];
+    setHtml("vp_disclosures_table",
+      "<thead><tr><th style='width:6%'>Send</th><th style='width:8%'>#</th><th>Canonical statement " +
+      "(N-Quad)</th><th style='width:16%'>This verifier</th></tr></thead><tbody>" +
+      (stmts.length
+        ? stmts.map(function (r, i) {
+            return "<tr>" +
+              '<td><input type="checkbox" id="vp_disclose_' + i + '"' +
+              (r.checked ? ' checked="checked"' : "") +
+              ' onchange="return vcpresentation2.onSelectionChange(' + i + ', this.checked);" /></td>' +
+              "<td>" + (r.statementIndex + 1) + "</td>" +
+              '<td class="vc-mono">' + esc(r.value) + "</td>" +
+              "<td>" + (r.requested ? '<span class="vc-ok">asked for</span>'
+                                    : '<span class="vc-bad">not asked for</span>') + "</td></tr>";
+          }).join("")
+        : "<tr><td colspan='4'>Canonicalizing the credential…</td></tr>") +
+      "</tbody>");
+    var chosen = stmts.filter(function (r) { return r.checked; }).length;
+    setHtml("vp_selection_summary",
+      '<span class="vc-status vc-pending">This credential is <code>ldp_vc</code> with a ' +
+      '<code>bbs-2023</code> proof, so the unit of disclosure is the canonical STATEMENT, not a claim: ' +
+      "these " + stmts.length + " statements are what the issuer actually signed, and " + chosen +
+      " will be sent. The count will not match the number of claims — one claim can be several " +
+      "statements. Each presentation derives a FRESH proof, so two presentations of this credential " +
+      "cannot be linked to each other.</span>");
+    log.debug("Leaving renderDisclosures(). ldp_vc — " + stmts.length + " statement(s).");
+    return;
+  }
   if (!state.selectable) {
     var claims = (state.parsed && state.parsed.claims) || {};
     var names = Object.keys(claims);
@@ -214,6 +286,60 @@ function buildPresentation() {
       "credential in this wallet.", "vc-bad");
     log.debug("Leaving buildPresentation(). Not enough state.");
     return Promise.resolve(false);
+  }
+  if (state.format === sdJwtVc.FORMAT_LDP_VC) {
+    // No holder private key is needed: the BBS derived proof IS the holder's act.
+    //
+    // Canonicalization is async, and onload calls this once before it finishes.
+    // That first call has no statements and no issuer key, so it returns quietly
+    // rather than deriving from nothing — attempting it logged an error on every
+    // load, which is both noise and a console error the suite fails on.
+    if (!state.statements || !state.issuerBbsKey) {
+      status("vp_present_status",
+        "Canonicalizing the credential so its statements can be chosen…", "vc-pending");
+      log.debug("Leaving buildPresentation(). ldp_vc not canonicalized yet.");
+      return Promise.resolve(false);
+    }
+    var chosenIdx = selectedStatementIndexes();
+    return bbs2023.deriveProof(state.parsed.document, state.issuerBbsKey, chosenIdx,
+                               new TextEncoder().encode(params.nonce))
+      .then(function (derived) {
+        // What travels. A bbs-2023 presentation must carry more than the proof:
+        // the verifier needs the statements being disclosed and their indexes to
+        // check the proof at all, and the issuer's proof options to rebuild the
+        // header the base proof was bound to. Sent as one JSON object; see the
+        // shape note in the STS's verifyLdpVc().
+        var proofOptions = Object.assign({ "@context": state.parsed.document["@context"] },
+                                         state.parsed.document.proof || {});
+        delete proofOptions.proofValue;
+        var envelope = {
+          cryptosuite: "bbs-2023",
+          proof: bbs2023.bytesToB64u(derived.proof),
+          disclosedIndexes: derived.disclosedIndexes,
+          disclosedStatements: derived.disclosedStatements,
+          proofOptions: proofOptions
+        };
+        state.built = { presentation: JSON.stringify(envelope), derived: derived };
+        setValue("vp_presentation", state.built.presentation);
+        setText("vp_sd_hash", "");
+        setValue("vp_kb_jwt", "");
+        setJson("vp_kb_header", { cryptosuite: "bbs-2023", disclosed: derived.disclosedIndexes.length,
+                                  of: derived.statements.length });
+        setJson("vp_kb_payload", derived.disclosedStatements);
+        setJson("vp_vp_token", sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
+                                               state.built.presentation));
+        renderAssembledCall();
+        setJson("vp_presented_claims", derived.disclosedStatements);
+        status("vp_present_status", "Derived a bbs-2023 proof disclosing " +
+          derived.disclosedIndexes.length + " of " + derived.statements.length + " statements.", "vc-ok");
+        log.debug("Leaving buildPresentation(). bbs-2023 proof derived.");
+        return true;
+      })
+      .catch(function (e) {
+        log.error("could not derive the bbs-2023 proof: " + e.message);
+        status("vp_present_status", "Could not derive the proof: " + e.message, "vc-bad");
+        return false;
+      });
   }
   var keyBinding = sdJwtVp.requiresKeyBinding(state.credentialQuery);
   if (keyBinding && !priv) {
@@ -511,6 +637,23 @@ function onload() {
   });
 
   loadState();
+  // ldp_vc needs its canonical statements before anything can be selected or
+  // derived, and that is async. The issuer's BBS key is fetched from the
+  // credential's own verificationMethod — the credential says where its key is.
+  if (state.format === sdJwtVc.FORMAT_LDP_VC) {
+    var vm = ((state.parsed.document || {}).proof || {}).verificationMethod || "";
+    fetch(vm).then(function (r) { return r.json(); }).then(function (km) {
+      state.issuerBbsKey = bbs2023.b64uToBytes(String(km.publicKeyMultibase || "").replace(/^u/, ""));
+      return prepareLdpStatements();
+    }).then(function () {
+      renderDisclosureTable();
+      buildPresentation();
+    }).catch(function (e) {
+      log.error("could not prepare the ldp_vc presentation: " + e.message);
+      status("vp_present_status", "Could not fetch the issuer's BBS key from " + vm + ": " + e.message,
+             "vc-bad");
+    });
+  }
   // Show the paste-in row from the start when there is no stored private half:
   // buildPresentation() also renders it, but it returns early when there is not
   // enough state yet, which is exactly the case where the user most needs to be

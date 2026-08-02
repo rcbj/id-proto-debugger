@@ -292,6 +292,14 @@ function renderRequest() {
   var holderKeyAdvisory = null;
   if (!held) problems.push("this wallet holds no credential to present");
   else if (!held.parsed) problems.push("the credential in storage cannot be parsed: " + held.error);
+  // ldp_vc needs no holder private key at all: the bbs-2023 derived proof IS the
+  // holder's act, and the credential names its subject by id rather than by a
+  // cnf key the wallet must sign with. Requiring one here refused every ldp_vc
+  // request for want of a key the format never uses.
+  else if (held.parsed && held.parsed.format === sdJwtVc.FORMAT_LDP_VC) {
+    holderKeyAdvisory = "This credential is ldp_vc with a bbs-2023 proof, so no holder key is needed: " +
+      "the derived proof itself is what proves the holder made this presentation.";
+  }
   else if (!sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK)) {
     if (sdJwtVc.holderPrivateKeyMayBeStored()) {
       // Saving is on and it is still absent: the key was never generated in this

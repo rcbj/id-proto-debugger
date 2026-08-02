@@ -832,6 +832,16 @@ const VCI_SCOPE = 'identity_credential';
 const VCI_JWT_CONFIG_ID = 'IdentityCredentialJwtVcJson';
 const VCI_JWT_SCOPE = 'identity_credential_jwt';
 const VCI_JWT_TYPES = ['VerifiableCredential', 'IdentityCredential'];
+const VCI_LDP_CONFIG_ID = 'IdentityCredentialLdpVc';
+const VCI_LDP_SCOPE = 'identity_credential_ldp';
+const bbs2023 = require('./bbs2023.js');
+// One BBS key pair per start, like the RSA one. Generated lazily because key
+// generation is async and the module loads synchronously.
+let bbsKeys = null;
+async function bbsKeyPair() {
+  if (!bbsKeys) bbsKeys = await bbs2023.generateKeyPair();
+  return bbsKeys;
+}
 const VC_CONTEXT = 'https://www.w3.org/2018/credentials/v1';
 
 // Every credential this issuer offers, by credential_configuration_id. One
@@ -842,6 +852,13 @@ const VC_CONTEXT = 'https://www.w3.org/2018/credentials/v1';
 const VCI_CONFIGS = {};
 VCI_CONFIGS[VCI_CONFIG_ID] = { format: 'dc+sd-jwt', scope: VCI_SCOPE };
 VCI_CONFIGS[VCI_JWT_CONFIG_ID] = { format: 'jwt_vc_json', scope: VCI_JWT_SCOPE };
+// The third format: a W3C credential secured by an EMBEDDED Data Integrity
+// proof (bbs-2023) rather than by a JWS. This is the only one of the three that
+// can carry BBS at all — the other two are JOSE-secured and BBS is not a JOSE
+// alg — and it is the only one offering unlinkable selective disclosure: the
+// holder derives a fresh proof per presentation instead of replaying the
+// issuer's signature.
+VCI_CONFIGS[VCI_LDP_CONFIG_ID] = { format: 'ldp_vc', scope: VCI_LDP_SCOPE };
 
 function vciConfigIds() { return Object.keys(VCI_CONFIGS); }
 function vciFormatOf(configId) {
@@ -952,6 +969,31 @@ function vciMetadata(req) {
       { path: ['credentialSubject', 'email'], display: [{ locale: 'en-US', name: 'Email address' }] },
       { path: ['credentialSubject', 'birthdate'], display: [{ locale: 'en-US', name: 'Date of birth' }] },
       { path: ['credentialSubject', 'address', 'country'], display: [{ locale: 'en-US', name: 'Country' }] }
+    ]
+  };
+  // ldp_vc: the signing "alg" slot holds a CRYPTOSUITE name, not a JOSE alg —
+  // which is the visible sign that this format is secured differently.
+  meta.credential_configurations_supported[VCI_LDP_CONFIG_ID] = {
+    format: 'ldp_vc',
+    scope: VCI_LDP_SCOPE,
+    credential_definition: {
+      '@context': ['https://www.w3.org/ns/credentials/v2', bbs2023.IDENTITY_CONTEXT_URL],
+      type: VCI_JWT_TYPES
+    },
+    cryptographic_binding_methods_supported: ['did:key'],
+    credential_signing_alg_values_supported: ['bbs-2023'],
+    proof_types_supported: {
+      jwt: { proof_signing_alg_values_supported: ['ES256'] }
+    },
+    display: [{
+      name: 'Identity Credential (ldp_vc, BBS selective disclosure)',
+      locale: 'en-US', background_color: '#4a148c', text_color: '#FFFFFF'
+    }],
+    claims: [
+      { path: ['credentialSubject', 'given_name'], display: [{ locale: 'en-US', name: 'Given name' }] },
+      { path: ['credentialSubject', 'family_name'], display: [{ locale: 'en-US', name: 'Family name' }] },
+      { path: ['credentialSubject', 'email'], display: [{ locale: 'en-US', name: 'Email address' }] },
+      { path: ['credentialSubject', 'birthDate'], display: [{ locale: 'en-US', name: 'Date of birth' }] }
     ]
   };
   log.debug("Leaving vciMetadata(). " + Object.keys(meta.credential_configurations_supported).length +
@@ -1456,11 +1498,62 @@ function buildJwtVcJson(subjectClaims, holderJwk, credentialIssuer) {
   return { credential: token, disclosures: [], payload: payload, vc: vc };
 }
 
+// A W3C credential with an EMBEDDED bbs-2023 proof (OID4VCI format ldp_vc).
+//
+// Async, unlike the other two, because canonicalization is — which is why
+// buildCredentialFor and the credential endpoint are async as well.
+//
+// Holder binding differs from the other formats by necessity: there is no
+// cnf.jwk here. The holder is named by credentialSubject.id, a did:key built
+// from the key it proved possession of, and what proves possession at
+// presentation time is the BBS derived proof itself rather than a separate
+// signature by the holder.
+async function buildLdpVc(subjectClaims, holderJwk, credentialIssuer) {
+  log.debug("Entering buildLdpVc().");
+  const keys = await bbsKeyPair();
+  const now = Math.floor(Date.now() / 1000);
+  const subjectId = 'did:jwk:' + b64u(Buffer.from(JSON.stringify({
+    crv: holderJwk.crv, kty: holderJwk.kty, x: holderJwk.x, y: holderJwk.y
+  })));
+  const unsecured = {
+    '@context': ['https://www.w3.org/ns/credentials/v2', bbs2023.IDENTITY_CONTEXT_URL],
+    type: VCI_JWT_TYPES,
+    issuer: credentialIssuer,
+    validFrom: new Date(now * 1000).toISOString(),
+    validUntil: new Date((now + 30 * 24 * 3600) * 1000).toISOString(),
+    credentialSubject: {
+      id: subjectId,
+      given_name: subjectClaims.given_name,
+      family_name: subjectClaims.family_name,
+      email: subjectClaims.email,
+      birthDate: subjectClaims.birthdate
+    }
+  };
+  logArtifact('ldp_vc credential', 'before signing', unsecured);
+  const issued = await bbs2023.issue(unsecured, {
+    verificationMethod: credentialIssuer + '/bbs/keys/1',
+    created: new Date(now * 1000).toISOString()
+  }, keys.secretKey, keys.publicKey);
+
+  // Verified immediately, by this service, before it is handed out: the
+  // requirement is that the STS validate every crypto operation, and an issuer
+  // that cannot verify its own output has no business emitting it.
+  const check = await bbs2023.verifyBase(issued.credential, keys.publicKey);
+  if (!check.ok) throw new Error('the ldp_vc credential this issuer just built does not verify');
+
+  logArtifact('ldp_vc credential', 'after signing (' + issued.statements.length + ' statements)',
+              issued.credential);
+  log.debug("Leaving buildLdpVc(). " + issued.statements.length + " canonical statement(s).");
+  return { credential: issued.credential, disclosures: [], payload: issued.credential,
+           statements: issued.statements };
+}
+
 // Mint whichever format the requested configuration names.
-function buildCredentialFor(configId, subjectClaims, holderJwk, credentialIssuer) {
-  return vciFormatOf(configId) === 'jwt_vc_json'
-    ? buildJwtVcJson(subjectClaims, holderJwk, credentialIssuer)
-    : buildSdJwtVc(subjectClaims, holderJwk, credentialIssuer);
+async function buildCredentialFor(configId, subjectClaims, holderJwk, credentialIssuer) {
+  const format = vciFormatOf(configId);
+  if (format === 'ldp_vc') return buildLdpVc(subjectClaims, holderJwk, credentialIssuer);
+  if (format === 'jwt_vc_json') return buildJwtVcJson(subjectClaims, holderJwk, credentialIssuer);
+  return buildSdJwtVc(subjectClaims, holderJwk, credentialIssuer);
 }
 
 // The claims the credential asserts. Lifted from the access token when it is a
@@ -1652,7 +1745,27 @@ function sendCredentialResponse(res, status, payload, encryption) {
   log.debug("Leaving sendCredentialResponse(). Sent as a JWE.");
 }
 
-app.post('/oid4vci/credential', function (req, res) {
+// The BBS public key the ldp_vc proofs are made with. A BBS key is not a JWK —
+// there is no registered kty for BLS12-381 G2 in the JOSE registry — so it is
+// published as its raw compressed bytes in multibase base64url, which is what
+// the Data Integrity multikey encoding uses and what verificationMethod above
+// points at. Served no-store because the key is regenerated on every start.
+app.get('/bbs/keys/1', async function (req, res) {
+  log.debug("Entering the BBS key endpoint.");
+  const keys = await bbsKeyPair();
+  res.set('Cache-Control', 'no-store');
+  res.set('Access-Control-Allow-Origin', '*');
+  res.status(200).type('application/json').send(JSON.stringify({
+    id: baseUrlOf(req) + '/bbs/keys/1',
+    type: 'Multikey',
+    controller: baseUrlOf(req),
+    cryptosuite: bbs2023.CRYPTOSUITE,
+    publicKeyMultibase: 'u' + bbs2023.bytesToB64u(keys.publicKey)
+  }));
+  log.debug("Leaving the BBS key endpoint.");
+});
+
+app.post('/oid4vci/credential', async function (req, res) {
   log.debug("Entering the OID4VCI credential endpoint.");
   const auth = req.headers['authorization'] || '';
   if (!/^Bearer\s+\S+/i.test(auth)) {
@@ -1795,9 +1908,9 @@ app.post('/oid4vci/credential', function (req, res) {
   // One credential per key the wallet proved possession of.
   const claims = subjectClaimsFrom(accessToken);
   const issuerId = vciMetadata(req).credential_issuer;
-  const issued = holderJwks.map(function (jwk) {
+  const issued = await Promise.all(holderJwks.map(function (jwk) {
     return buildCredentialFor(requestedConfigId, claims, jwk, issuerId);
-  });
+  }));
   const response = {
     credentials: issued.map(function (b) { return { credential: b.credential }; }),
     notification_id: newNotificationId(accessToken)
@@ -1813,7 +1926,7 @@ app.post('/oid4vci/credential', function (req, res) {
 // transaction_id while the issuance is still "in progress", 200 with the
 // credential once it is ready, and invalid_transaction_id for a transaction
 // this issuer never made or has already handed over.
-app.post('/oid4vci/deferred_credential', function (req, res) {
+app.post('/oid4vci/deferred_credential', async function (req, res) {
   log.debug("Entering the OID4VCI deferred credential endpoint.");
   const auth = req.headers['authorization'] || '';
   if (!/^Bearer\s+\S+/i.test(auth)) {
@@ -1858,9 +1971,9 @@ app.post('/oid4vci/deferred_credential', function (req, res) {
   // The format the DEFERRED request asked for, not a fresh choice: see the note
   // where it was recorded.
   const deferredConfigId = record.configId || VCI_CONFIG_ID;
-  const issued = holderKeys.map(function (jwk) {
+  const issued = await Promise.all(holderKeys.map(function (jwk) {
     return buildCredentialFor(deferredConfigId, record.claims, jwk, issuerId);
-  });
+  }));
   const response = {
     credentials: issued.map(function (b) { return { credential: b.credential }; }),
     notification_id: newNotificationId(record.accessToken)
@@ -2027,6 +2140,22 @@ function sweepVpTransactions() {
 // is not there and the presentation looks like it withheld something.
 function vpDcqlQuery(format) {
   log.debug("Entering vpDcqlQuery(). format=" + (format || 'dc+sd-jwt'));
+  if (format === 'ldp_vc') {
+    // A W3C credential identified by its type array, like jwt_vc_json — what
+    // differs is how it is SECURED, not how it is named.
+    const ldp = {
+      id: VP_DCQL_ID,
+      format: 'ldp_vc',
+      meta: { type_values: [VCI_JWT_TYPES] },
+      claims: VP_REQUESTED_CLAIMS.map(function (name) {
+        return { path: ['credentialSubject', name] };
+      })
+    };
+    const ldpQuery = { credentials: [ldp] };
+    logArtifact('OID4VP DCQL query', 'as built (ldp_vc)', ldpQuery);
+    log.debug("Leaving vpDcqlQuery(). ldp_vc, " + VP_REQUESTED_CLAIMS.length + " claim(s).");
+    return ldpQuery;
+  }
   const jwtVcJson = format === 'jwt_vc_json';
   const credential = jwtVcJson
     ? {
@@ -2082,7 +2211,8 @@ function buildVpRequest(req, opts) {
       // query is what says that.
       vp_formats_supported: {
         'dc+sd-jwt': { 'sd-jwt_alg_values': ['RS256', 'ES256'], 'kb-jwt_alg_values': ['ES256'] },
-        'jwt_vc_json': { alg_values: ['RS256', 'ES256'] }
+        'jwt_vc_json': { alg_values: ['RS256', 'ES256'] },
+        'ldp_vc': { cryptosuites: ['bbs-2023'] }
       }
     }
   };
@@ -2093,7 +2223,9 @@ function buildVpRequest(req, opts) {
     // THIS, not against whatever shape happens to turn up, so a wallet that
     // answers a jwt_vc_json query with an SD-JWT is refused rather than quietly
     // accepted by the other code path.
-    format: opts.format === 'jwt_vc_json' ? 'jwt_vc_json' : 'dc+sd-jwt',
+    format: opts.format === 'jwt_vc_json' ? 'jwt_vc_json'
+          : opts.format === 'ldp_vc' ? 'ldp_vc'
+          : 'dc+sd-jwt',
     expires: Date.now() + VP_TTL_MS, verdict: null
   };
   logArtifact('OID4VP Authorization Request', 'as built', request);
@@ -2191,7 +2323,10 @@ app.get('/oid4vp/start', function (req, res) {
   const mode = String(req.query.mode || 'same-device');
   // Which credential format to ask for. Anything unrecognised falls back to
   // dc+sd-jwt, which is what this Verifier has always asked for.
-  const format = String(req.query.format || '') === 'jwt_vc_json' ? 'jwt_vc_json' : 'dc+sd-jwt';
+  const requested = String(req.query.format || '');
+  const format = requested === 'jwt_vc_json' ? 'jwt_vc_json'
+               : requested === 'ldp_vc' ? 'ldp_vc'
+               : 'dc+sd-jwt';
   const record = buildVpRequest(req, { byReference: byReference, format: format });
   const query = vpRequestQuery(req, record);
   const wallet = String(req.query.wallet || VP_WALLET_URL).replace(/\/+$/, '') +
@@ -2308,6 +2443,72 @@ function sdHashOf(presentedWithoutKb, sdAlg) {
 // There is deliberately no sd_hash equivalent: an SD-JWT's KB-JWT commits to the
 // exact bytes presented because a presentation can be a SUBSET. A VP JWT signs
 // over the whole credential it embeds, so the commitment is the signature.
+// A bbs-2023 derived proof (OID4VP format ldp_vc).
+//
+// The same questions as the other two formats, asked of a very different
+// artefact. There is no issuer signature to check on what arrives — a derived
+// proof IS the signature, re-randomised — so "did the issuer sign this" and "is
+// this the holder presenting it" collapse into one check.
+//
+// SHAPE NOTE, a stated simplification: a full bbs-2023 presentation
+// reconstructs a JSON-LD document from the disclosed statements. This mock is
+// handed the statements and their indexes directly, beside the proof and the
+// issuer's proof options. Everything cryptographic is real — the proof is
+// verified against this service's BBS key over exactly those statements, with
+// this request's nonce as the presentation header — but another verifier would
+// expect a document.
+async function verifyLdpVc(presentation, record) {
+  log.debug("Entering verifyLdpVc().");
+  const checks = [];
+  const result = { ok: false, checks, claims: {}, disclosed: [], vct: '', sub: '', extraDisclosed: [] };
+
+  let payload;
+  try {
+    payload = typeof presentation === 'string' ? JSON.parse(presentation) : presentation;
+  } catch (e) {
+    vpCheck(checks, 'Format', false, 'an ldp_vc presentation here is a JSON object carrying the ' +
+      'derived proof and the statements it discloses; this is not JSON: ' + e.message);
+    return result;
+  }
+  const proofBytes = payload.proof ? bbs2023.b64uToBytes(payload.proof) : null;
+  const statements = [].concat(payload.disclosedStatements || []);
+  const indexes = [].concat(payload.disclosedIndexes || []);
+  if (!proofBytes || !statements.length || statements.length !== indexes.length) {
+    vpCheck(checks, 'Format', false,
+      'expected proof, disclosedStatements and disclosedIndexes of equal length; got ' +
+      statements.length + ' statement(s) and ' + indexes.length + ' index(es).');
+    return result;
+  }
+  vpCheck(checks, 'Format', true,
+    'a bbs-2023 derived proof disclosing ' + statements.length + ' canonical statement(s).');
+
+  const keys = await bbsKeyPair();
+  let header;
+  try {
+    header = await bbs2023.headerFor(payload.proofOptions || {});
+  } catch (e) {
+    vpCheck(checks, 'Proof options', false, 'could not be canonicalized: ' + e.message);
+    return result;
+  }
+  vpCheck(checks, 'Proof options', true, 'canonicalized to the header the base proof was bound to.');
+
+  const ok = await bbs2023.verifyDerived(keys.publicKey, proofBytes, header,
+    Buffer.from(String(record.nonce), 'utf8'), statements, indexes);
+  vpCheck(checks, 'Derived proof', ok, ok
+    ? "verifies against this issuer's BBS key over exactly the statements disclosed, and against this " +
+      "request's nonce — so it was derived for THIS request and cannot be replayed."
+    : 'does not verify. Either it was not derived from a credential this issuer signed, the statements ' +
+      'do not match what was proved, or it was derived against a different nonce.');
+
+  statements.forEach(function (line, i) {
+    result.claims['statement ' + (indexes[i] + 1)] = String(line).trim();
+  });
+  result.disclosed = indexes.map(function (i) { return 'statement ' + (i + 1); });
+  result.ok = checks.every(function (c) { return c.ok; });
+  log.debug("Leaving verifyLdpVc(). " + (result.ok ? 'accepted' : 'REFUSED'));
+  return result;
+}
+
 function verifyVpJwt(presentation, record) {
   log.debug("Entering verifyVpJwt().");
   logArtifact('OID4VP Verifiable Presentation (jwt_vc_json)', 'as received', presentation);
@@ -2639,7 +2840,7 @@ function verifyPresentation(presentation, record) {
 
 // The Response URI (OID4VP section 8.2): response_mode direct_post, so the
 // Authorization Response arrives as a form POST rather than in a URL.
-app.post('/oid4vp/response', function (req, res) {
+app.post('/oid4vp/response', async function (req, res) {
   log.debug("Entering the OID4VP response endpoint.");
   const body = parseBody(req);
   const state = String(body.state || '');
@@ -2692,9 +2893,11 @@ app.post('/oid4vp/response', function (req, res) {
   // Verified against the format THIS request asked for, so answering a
   // jwt_vc_json query with an SD-JWT (or the reverse) is refused rather than
   // silently handled by the other code path.
-  const verified = record.format === 'jwt_vc_json'
-    ? verifyVpJwt(presentations[0], record)
-    : verifyPresentation(presentations[0], record);
+  const verified = record.format === 'ldp_vc'
+    ? await verifyLdpVc(presentations[0], record)
+    : record.format === 'jwt_vc_json'
+      ? verifyVpJwt(presentations[0], record)
+      : verifyPresentation(presentations[0], record);
   record.verdict = {
     ok: verified.ok,
     at: new Date().toISOString(),

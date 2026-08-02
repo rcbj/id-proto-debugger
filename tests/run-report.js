@@ -411,6 +411,54 @@ function buildJobs() {
     });
   }
 
+  // The BBS signatures the debugger produces, checked by a DIFFERENT BBS
+  // implementation (@digitalbazaar/bbs-signatures). No browser and no services,
+  // so it never skips. It is the foundation the bbs-2023 cryptosuite stands on:
+  // BBS has several places where a signer and verifier can share a mistake and
+  // agree perfectly with each other and with nobody else.
+  {
+    jobs.push({
+      name: "BBS signatures (cross-checked against an independent implementation)",
+      script: "bbs_crypto.js",
+      env: {},
+    });
+  }
+
+  // The third credential format through both workflows: ldp_vc secured by a
+  // bbs-2023 Data Integrity proof. Registered unconditionally like the
+  // jwt_vc_json pair — a gated job that does not register is the quietest way
+  // for a format to go untested.
+  {
+    jobs.push({
+      name: "VC Issuance — ldp_vc / bbs-2023 (embedded Data Integrity proof)",
+      script: "ldp_vc_issuance.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, unlinkable)",
+      script: "ldp_vc_presentation.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        OID4VP_VERIFIER_URL: env.OID4VP_VERIFIER_URL || "",
+      },
+    });
+  }
+
+  // The cryptosuite ABOVE the primitive: JSON-LD canonicalization, the base
+  // proof, and selective disclosure. The STS issues with one BBS implementation
+  // and the wallet derives with the other, so neither marks its own homework.
+  {
+    jobs.push({
+      name: "bbs-2023 cryptosuite (ldp_vc issue, derive, verify across two implementations)",
+      script: "bbs2023_cryptosuite.js",
+      env: {},
+    });
+  }
+
   // The metadata schema check on vc-issuance-1.html, both panes. Its rule
   // half needs no browser and no services and never skips; its wiring half
   // drives the page, so it needs only the client — which every run has.
