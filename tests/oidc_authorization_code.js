@@ -213,13 +213,16 @@ async function tokenDetailPage(driver, type)
     log.info("Click link to go back to debugger2.");
     await driver.findElement(returnToDebugger).click();
 
-    // Make sure you see the access_token on the debugger2.html page.
+    // Make sure you see the access_token on the debugger2.html page. The click
+    // above navigates away from token_detail.html, so this must wait for the
+    // element rather than look for it once — a bare findElement() here races
+    // the navigation and fails ~100ms after the click on a loaded machine.
     log.info("Find token_access_token.");
     token = By.id(token_field);
     log.info("Wait for " + token_field);
-    await driver.findElement(token);
+    await driver.wait(until.elementLocated(token), waitTime);
     log.info("Wait for " + token_field + " to be visible.");
-    await driver.wait(until.elementIsVisible(driver.findElement(token)), waitTime);
+    await driver.wait(until.elementIsVisible(await driver.findElement(token)), waitTime);
     log.info("Leaving tokenDetailPage().");
   } catch(e) {
     log.error("An error occurred: " + e.stack);

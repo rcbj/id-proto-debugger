@@ -29,6 +29,7 @@ var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 var bbs2023 = require("./bbs2023");
+var didLib = require("./did");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_2',
                                 level: appconfig.logLevel });
@@ -88,7 +89,27 @@ function loadState() {
   // jwt_vc_json has no Disclosures, so there are no rows and nothing to choose:
   // the credential goes whole or not at all. That is a property of the format,
   // not an empty table, and renderDisclosures() says so.
-  state.format = (state.parsed && state.parsed.format) || sdJwtVc.FORMAT_SD_JWT;
+  // The format to present in is the one the VERIFIER ASKED FOR, not the one the
+  // wallet happens to hold. Reading it off the credential was silently wrong in
+  // one direction: the wallet built whatever shape it had, the verifier parsed
+  // whatever shape it requested, and when they differed the refusal named the
+  // symptom instead of the cause — a dc+sd-jwt verifier splitting an ldp_vc JSON
+  // object on "~", finding one part, and reporting a malformed presentation.
+  //
+  // held is kept separately because the MISMATCH is the thing worth saying out
+  // loud; collapsing the two loses the ability to explain it.
+  state.heldFormat = (state.parsed && state.parsed.format) || "";
+  state.requestedFormat = sdJwtVp.firstCredentialQueryFormat(state.dcql);
+  // With no format in the query there is nothing to disagree with, so the held
+  // credential is the only sensible reading — and defaulting to dc+sd-jwt when
+  // nothing is held preserves what this line did before.
+  state.format = state.requestedFormat || state.heldFormat || sdJwtVc.FORMAT_SD_JWT;
+  // A wallet cannot answer a query for one format with a credential in another.
+  // Recorded rather than thrown so the pane can explain it and disable Present,
+  // which is the difference between a wallet that says why and one that sends
+  // something the verifier cannot read.
+  state.formatMismatch = !!(state.requestedFormat && state.heldFormat &&
+                            state.requestedFormat !== state.heldFormat);
   state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON;
   state.rows = ((state.parsed && state.parsed.disclosures) || []).map(function (d) {
     var requested = state.requested.indexOf(d.name) !== -1;
@@ -285,6 +306,28 @@ function buildPresentation() {
       "There is not enough here to build a presentation: a request with a nonce and a client_id, plus a " +
       "credential in this wallet.", "vc-bad");
     log.debug("Leaving buildPresentation(). Not enough state.");
+    return Promise.resolve(false);
+  }
+  // Refused here rather than at the verifier. Building anyway produces a
+  // presentation in the wrong shape, and the verifier's complaint is about
+  // parsing ("this has 1 part(s)") rather than about the wallet having nothing
+  // it was asked for — which sends the reader looking for a bug in the
+  // serialization instead of at the credential in hand.
+  if (state.formatMismatch) {
+    setValue("vp_presentation", "");
+    setValue("vp_kb_jwt", "");
+    setJson("vp_kb_header", null);
+    setJson("vp_kb_payload", null);
+    setValue("vp_assembled_call", "");
+    status("vp_present_status",
+      "This verifier asked for a " + state.requestedFormat + " credential and this wallet holds a " +
+      state.heldFormat + " one. A presentation cannot change a credential's format: the two are " +
+      "different artifacts, secured differently — " + state.heldFormat + " cannot be reshaped into " +
+      state.requestedFormat + ". Issue a " + state.requestedFormat + " credential in the issuance " +
+      "workflow, or start a presentation from a verifier that asks for " + state.heldFormat + ".",
+      "vc-bad");
+    log.debug("Leaving buildPresentation(). Format mismatch: asked for " + state.requestedFormat +
+              ", holding " + state.heldFormat + ".");
     return Promise.resolve(false);
   }
   if (state.format === sdJwtVc.FORMAT_LDP_VC) {
@@ -642,15 +685,26 @@ function onload() {
   // credential's own verificationMethod — the credential says where its key is.
   if (state.format === sdJwtVc.FORMAT_LDP_VC) {
     var vm = ((state.parsed.document || {}).proof || {}).verificationMethod || "";
-    fetch(vm).then(function (r) { return r.json(); }).then(function (km) {
-      state.issuerBbsKey = bbs2023.b64uToBytes(String(km.publicKeyMultibase || "").replace(/^u/, ""));
+    // Resolved rather than fetched, because a verificationMethod is not always a
+    // URL that can be fetched: an issuer named by DID names its key by DID URL
+    // (did:web:…#bbs-1), and fetch() on that reports the issuer's key as
+    // unreachable — which reads as a broken issuer rather than as a wallet that
+    // cannot follow a DID. did.js handles both forms.
+    didLib.resolveVerificationMethod(vm, { allowHttp: true }).then(function (resolved) {
+      var multibase = resolved.method.publicKeyMultibase;
+      if (!multibase) {
+        throw new Error("the verification method " + vm + " publishes no publicKeyMultibase, so there " +
+                        "is no BBS key in it. A BBS key has no JOSE representation and cannot arrive " +
+                        "as a publicKeyJwk.");
+      }
+      state.issuerBbsKey = bbs2023.multibaseToBytes(multibase);
       return prepareLdpStatements();
     }).then(function () {
       renderDisclosureTable();
       buildPresentation();
     }).catch(function (e) {
       log.error("could not prepare the ldp_vc presentation: " + e.message);
-      status("vp_present_status", "Could not fetch the issuer's BBS key from " + vm + ": " + e.message,
+      status("vp_present_status", "Could not resolve the issuer's BBS key from " + vm + ": " + e.message,
              "vc-bad");
     });
   }

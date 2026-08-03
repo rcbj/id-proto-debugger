@@ -45,7 +45,19 @@ RUN npm -v
 COPY sts/package*.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
-COPY sts/server.js ./
+# The service is eleven modules, and server.js is only the shell that requires the
+# other ten and listens. They are copied as a GROUP for exactly the reason the
+# individual COPY lines below exist for their files: a module left out is not a
+# missing feature, it is a MODULE_NOT_FOUND at startup, so the container never
+# listens and every STS-backed job in the suite fails on a timeout that says
+# nothing about the cause. This wildcard is deliberate — a per-file list here
+# would have to be edited every time a module is added, and forgetting is silent
+# until the containerized run.
+COPY sts/*.js ./
+# The JSON-LD contexts the bbs-2023 cryptosuite (sts/bbs2023.js, copied above)
+# loads AT REQUIRE TIME. Mandatory: the module reads them at module scope, so a
+# missing one is not a degraded feature — the service does not start at all.
+COPY client/src/contexts ./contexts
 # The service selects its configuration (log level) with CONFIG_FILE, the same
 # way api and client do. The compose files override this per stack.
 COPY sts/env ./env

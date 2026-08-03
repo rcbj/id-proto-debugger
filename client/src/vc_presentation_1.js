@@ -285,6 +285,10 @@ function renderRequest() {
   }
   if (!request.dcql) problems.push("no dcql_query, so the request does not say what it wants");
   var held = heldCredential();
+  // The format this verifier asked for, which is not necessarily the one in
+  // hand. Empty when the query does not say, in which case there is nothing to
+  // disagree with and the check below stays silent.
+  var requestedFormat = sdJwtVp.firstCredentialQueryFormat(request.dcql);
   // A missing holder key is only a dead end when there is no way to supply one.
   // Since the holder key pair can be deliberately kept out of localStorage
   // (issuance step 2), "not in storage" now has two meanings, and treating them
@@ -292,6 +296,17 @@ function renderRequest() {
   var holderKeyAdvisory = null;
   if (!held) problems.push("this wallet holds no credential to present");
   else if (!held.parsed) problems.push("the credential in storage cannot be parsed: " + held.error);
+  // Asked for one format, holding another. This blocks rather than advises,
+  // because unlike a missing holder key there is nothing the next page can do
+  // about it: a presentation cannot change a credential's format. Caught here so
+  // the user is told before choosing disclosures, instead of at the verifier —
+  // which reports it as a malformed presentation ("this has 1 part(s)"), naming
+  // the parse failure rather than the credential in hand.
+  else if (requestedFormat && held.parsed.format && requestedFormat !== held.parsed.format) {
+    problems.push("this verifier asked for a " + requestedFormat + " credential and this wallet holds a " +
+      held.parsed.format + " one — a presentation cannot convert between formats, so issue a " +
+      requestedFormat + " credential first");
+  }
   // ldp_vc needs no holder private key at all: the bbs-2023 derived proof IS the
   // holder's act, and the credential names its subject by id rather than by a
   // cnf key the wallet must sign with. Requiring one here refused every ldp_vc

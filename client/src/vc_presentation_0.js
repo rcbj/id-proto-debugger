@@ -189,10 +189,43 @@ function setFieldValue(id, v) {
   if (e) e.value = v;
 }
 
+// The format of the credential this wallet is holding, "" when there is none or
+// it cannot be read.
+function heldFormat() {
+  var raw = sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "";
+  if (!raw) return "";
+  try {
+    return sdJwtVc.parseCredential(raw).format || "";
+  } catch (e) {
+    // Unparseable: renderCredentialState() already says so, and asking the
+    // verifier for a format derived from a broken credential would be worse than
+    // letting it use its default.
+    log.debug("heldFormat(): the held credential could not be parsed: " + e.message);
+    return "";
+  }
+}
+
 function verifierPageUrl(id) {
   var base = verifierBaseUrl();
   var path = (STARTS[id] || {}).verifierPath || "/oid4vp/verifier";
-  return base ? base + path : "";
+  if (!base) return "";
+  // Tell the verifier which format to ask for.
+  //
+  // Without this every flow here starts a request for the verifier's default,
+  // dc+sd-jwt, whatever the wallet is holding — so a holder who has just been
+  // issued an ldp_vc credential is sent to ask for one they do not have. The
+  // wallet then either sends the wrong shape (which the verifier reports as a
+  // malformed presentation, naming the parse failure rather than the cause) or,
+  // now, refuses on step 1. Neither is the user's fault and neither is fixable
+  // from the wallet side: the format is the VERIFIER's choice, so it has to be
+  // made here, where the link to the verifier is built.
+  //
+  // Omitted when nothing is held, so the verifier keeps its own default and the
+  // page behaves exactly as before for a wallet with no credential.
+  var format = heldFormat();
+  if (!format) return base + path;
+  return base + path + (path.indexOf("?") === -1 ? "?" : "&") +
+         "format=" + encodeURIComponent(format);
 }
 
 function buttonHtml(uc, current) {

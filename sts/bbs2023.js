@@ -95,7 +95,24 @@ async function headerFor(proof) {
 }
 
 function bytesToB64u(bytes) { return Buffer.from(bytes).toString('base64url'); }
-function b64uToBytes(s) { return new Uint8Array(Buffer.from(String(s).replace(/^u/, ''), 'base64url')); }
+function b64uToBytes(s) { return new Uint8Array(Buffer.from(String(s), 'base64url')); }
+
+// Multibase base64url ("u" prefix, per the Data Integrity multikey encoding).
+//
+// SEPARATE from b64uToBytes ON PURPOSE. b64uToBytes used to strip a leading "u"
+// itself, and every caller ALSO stripped the multibase prefix before calling it
+// — so whenever the base64url payload happened to begin with "u", a second
+// character was eaten and the key came back one byte short. A BLS12-381 G2 key
+// is 96 bytes; the failure produced 95, and every signature then failed to
+// verify while looking like a crypto bug. It only bites for roughly one key in
+// sixty-four, so it passed locally and failed in CI on the same code.
+function multibaseToBytes(s) {
+  const text = String(s || '');
+  if (text.charAt(0) !== 'u') {
+    throw new Error('expected multibase base64url (a leading "u"), got: ' + text.slice(0, 12));
+  }
+  return b64uToBytes(text.slice(1));
+}
 
 async function generateKeyPair() {
   const lib = await bbs();
@@ -144,7 +161,7 @@ async function verifyBase(secured, publicKey) {
   delete reproof.proofValue;
   const statements = await canonicalizedStatements(document);
   const header = await headerFor(reproof);
-  const signature = b64uToBytes(proof.proofValue);
+  const signature = multibaseToBytes(proof.proofValue);
   const ok = await lib.verifySignature({
     publicKey, signature, header, messages: statements.map(te), ciphersuite: suite
   }).catch(() => false);
@@ -178,5 +195,6 @@ module.exports = {
   verifyDerived,
   bytesToB64u,
   b64uToBytes,
+  multibaseToBytes,
   documentLoader
 };

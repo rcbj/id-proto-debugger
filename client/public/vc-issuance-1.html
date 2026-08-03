@@ -53,7 +53,7 @@ issuer returns.</p>
 
 <script type="text/javascript">
 function vcSetAllPanes(expand) {
-  var fieldsets = ['vci_fieldset', 'as_fieldset', 'config_fieldset', 'handoff_fieldset'];
+  var fieldsets = ['vci_fieldset', 'did_fieldset', 'as_fieldset', 'config_fieldset', 'handoff_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -187,20 +187,87 @@ function vcSetAllPanes(expand) {
             <div class="signed_metadata_status" id="vci_signed_metadata_status">&nbsp;</div>
           </td>
         </tr>
-        <tr id="vci_configuration_row" style="display: none;">
-          <td>
-            <div class="tooltip"><label>Credential to request: </label><span class="tooltiptext">One entry of credential_configurations_supported — the credential the wallet will ask this issuer to mint. Its format, vct, scope and proof algorithms fill the Configuration Parameters pane below.</span>
-            </div>
-          </td>
-          <td>
-            <select id="vci_credential_configuration_select" onchange="return vcissuance1.onCredentialConfigurationChange();"></select>
-          </td>
-        </tr>
       </tbody>
     </table>
     <div class="discovery_info_table" id="vci_metadata_table">&nbsp;</div>
     <div class="discovery_info_meta_data_populate" id="vci_metadata_populate">&nbsp;</div>
     <div class="vc-schema-report" id="vci_schema_report"></div>
+  </fieldset>
+</div>
+
+<!-- ====== Pane 1b: DID Document (W3C DID Core 1.0) ====== -->
+<div class="step0 dbg-pane" id="pane_did">
+  <legend class="dbg-legend" id="did_expand_button" onclick="return vcissuance1.togglePane('did_fieldset');">Issuer DID Document (W3C DID Core 1.0)</legend>
+  <fieldset name="did_fieldset" id="did_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>&nbsp;</td>
+          <td><p id="did_source_hint">A credential may name its issuer by <a href="https://www.w3.org/TR/did-1.0/" target="_blank" rel="noopener noreferrer">DID</a> instead of by URL. <code>did:jwk</code> and <code>did:key</code> <em>are</em> their key &mdash; they resolve here with no network call. Only <code>did:web</code> has a document to retrieve. Note that <a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/" target="_blank" rel="noopener noreferrer">SD-JWT VC</a> defines no DID-based issuer signature mechanism &mdash; using one with <code>dc+sd-jwt</code> is a profile extension. <code>ldp_vc</code> is DID-native under <a href="https://www.w3.org/TR/vc-data-model-2.0/" target="_blank" rel="noopener noreferrer">VC Data Model 2.0</a>.</p></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Issuer DID: </label><span class="tooltiptext">The DID to resolve. Filled in automatically from a retrieved credential (its iss or issuer) when that is a DID; type one here to resolve it by hand.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="did_identifier" name="did_identifier" type="text" max="512" size="60" />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn_did_resolve btn2" id="did_resolve_button" type="button" value="Resolve" onclick="vcissuance1.resolveDid(); return false;" />
+              <span class="tooltiptext">Resolve the DID above. did:jwk and did:key are decoded locally; did:web is fetched over HTTP(S) from the document URL the method defines.</span>
+            </div>
+            <div class="tooltip">
+              <input class="btn2" id="did_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadDidDocument();" />
+              <span class="tooltiptext">Load a DID Document from a file instead of resolving it. Use this when a did:web host sends no CORS headers, which stops a browser reading its document however correct the URL is: fetch it with curl, save it, and load it here.</span>
+            </div>
+            <input type="file" id="did_document_file" name="did_document_file" accept=".json,application/json,.jsonld,text/plain" style="display:none;" onchange="return vcissuance1.onDidFileChange(event);" />
+          </td>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_clear_button" type="button" value="Clear" onclick="return vcissuance1.clearDidDocument();" />
+              <span class="tooltiptext">Forget the resolved DID Document, its table, and the DID values it populated (on screen and in local storage).</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="did_resolution_url">Document URL: </label><span class="tooltiptext">Where a did:web document is fetched from. Derived from the DID: the host with its port percent-decoded, then /.well-known/did.json, or /&lt;path&gt;/did.json when the DID carries path segments. Empty for did:jwk and did:key, which have nothing to fetch.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="did_resolution_url" name="did_resolution_url" type="text" max="512" size="60" readonly />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_verify_button" type="button" value="Verify Issuer Key" onclick="return vcissuance1.verifyDidBinding();" />
+              <span class="tooltiptext">Check that a key in this DID Document actually verifies the credential in hand. Resolving a document proves nothing on its own &mdash; what matters is whether the key it publishes is the one the issuer signed with.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="did_status">&nbsp;</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_linkage_button" type="button" value="Verify Domain Linkage" onclick="return vcissuance1.verifyDomainLinkage();" />
+              <span class="tooltiptext">Fetch /.well-known/did-configuration.json from the issuer's origin and verify its Domain Linkage Credential (DIF Well Known DID Configuration). This is what proves the DID and the https issuer are the same entity. For did:web it is the only non-circular proof: resolving did:web:host means fetching host, so the DID document alone cannot establish that the origin's controller and the DID's controller are one party.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="did_linkage_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="discovery_info_table" id="did_linkage_table">&nbsp;</div>
+    <div class="discovery_info_table" id="did_document_table">&nbsp;</div>
   </fieldset>
 </div>
 

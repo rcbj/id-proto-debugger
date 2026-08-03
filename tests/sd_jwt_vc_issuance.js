@@ -2868,6 +2868,162 @@ async function notificationFlow(driver) {
 //   credential_response_encryption         the response as a JWE the wallet
 //                                          decrypts (section 10)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// An encrypted Credential REQUEST — OID4VCI section 10 in the other direction.
+//
+// batchAndEncryptedIssuance() below covers the response side, where the WALLET
+// supplies the key. Here the ISSUER publishes keys in
+// credential_request_encryption.jwks and the wallet encrypts to one of them,
+// sending application/jwt instead of JSON. The two are not symmetric and the
+// differences are what this section exists to pin:
+//
+//   * there is no alg_values_supported for requests — "The JWE alg algorithm
+//     used MUST be equal to the alg value of the chosen JWK" — so a pane that
+//     reads the response side's member list finds nothing;
+//   * "Each JWK in the set MUST have a kid", and the JWE MUST echo it.
+//
+// The protocol itself is covered headlessly by tests/oid4vci_request_encryption.js
+// against the wallet module. What is only observable HERE is that the pane is
+// wired to that module at all: the checkbox reads the metadata step 1 stored,
+// the assembled call shows what will really be sent, and Approve actually sends
+// the ciphertext. Every one of those is a seam where the feature can be present
+// in the module and unreachable from the page.
+// ---------------------------------------------------------------------------
+async function encryptedCredentialRequest(driver) {
+  log.info("=== An encrypted Credential Request (section 10, issuer-published keys) ===");
+  var meta = (await httpJson(issuerMetadataUrl)).body;
+  var offered = meta.credential_request_encryption;
+  assert.ok(offered, "this issuer should advertise credential_request_encryption; without it the " +
+    "checkbox is correctly disabled and this section would assert nothing.");
+  assert.strictEqual(offered.alg_values_supported, undefined,
+    "and must NOT carry alg_values_supported — that member belongs to the response side.");
+  var publishedKid = ((offered.jwks || {}).keys || [])[0].kid;
+  assert.ok(publishedKid, "every published key needs a kid for the wallet to echo.");
+
+  await stepOneConfigured(driver, "scope");
+  await click(driver, By.id("start_issuance_button"));
+  await driver.wait(until.elementLocated(By.id("username")), fetchWait);
+  await driver.findElement(By.id("username")).sendKeys(MOCK_AS_USER);
+  await driver.findElement(By.id("password")).sendKeys("any-password");
+  await click(driver, By.id("kc-login"));
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait);
+  await driver.wait(async function () {
+    return !!(await value(driver, "vc_proof_jwt"));
+  }, fetchWait, "step 2 should assemble the request.");
+
+  // The metadata step 1 retrieved has to have reached the key step 2 reads. That
+  // seam is invisible when it breaks: the checkbox simply stays disabled, with a
+  // note saying the issuer does not offer encryption — which is indistinguishable
+  // from an issuer that genuinely does not.
+  var stored = await driver.executeScript(
+    "return window.localStorage.getItem('vci_credential_request_encryption') || '';");
+  assert.ok(stored && stored.indexOf(publishedKid) !== -1,
+    "step 1 must store credential_request_encryption where step 2 looks for it " +
+    "(vci_credential_request_encryption), including the published kid. Got: " +
+    String(stored).slice(0, 160));
+
+  var before = await driver.executeScript(
+    "return { disabled: document.getElementById('vc_encrypt_request').disabled," +
+    "         checked: document.getElementById('vc_encrypt_request').checked," +
+    "         note: document.getElementById('vc_encrypt_request_note').textContent.trim()," +
+    "         call: document.getElementById('vc_approval_request').value };");
+  assert.strictEqual(before.disabled, false,
+    "the checkbox should be offered: this issuer advertises a usable key. Note: " + before.note);
+  assert.strictEqual(before.checked, false,
+    "and left OFF, because encryption_required is false and section 10 makes it the wallet's choice.");
+  assert.ok(before.note.indexOf(publishedKid) !== -1,
+    "the note should name the key it would encrypt to, so the choice is not blind. Got: " + before.note);
+  assert.ok(/application\/json/.test(before.call),
+    "and while it is off the assembled call is plain JSON. Got: " + before.call.slice(0, 120));
+  log.info("[request-enc] OK — offered, off by default, and naming " + publishedKid + ".");
+
+  await driver.executeScript(
+    "document.getElementById('vc_encrypt_request').checked = true;" +
+    "vcissuance2.onRequestOptionsChange();");
+  await driver.wait(async function () {
+    return /application\/jwt/.test(await value(driver, "vc_approval_request"));
+  }, fetchWait, "ticking the box should rebuild the call as application/jwt.");
+
+  var call = await value(driver, "vc_approval_request");
+  assert.ok(/Content-Type: application\/jwt/.test(call),
+    "section 10: the media type MUST be application/jwt. Got: " + call.slice(0, 160));
+  // The pane must show what is SENT. The plaintext is exactly what encryption
+  // hides, so showing it as the body would describe a call this page never makes.
+  var wireBody = call.split("--- the plaintext")[0];
+  assert.ok(wireBody.indexOf("credential_configuration_id") === -1,
+    "the displayed body must be the ciphertext, not the JSON it encrypts. Got: " +
+    wireBody.slice(-200));
+  var compact = wireBody.trim().split("\n").pop().trim();
+  assert.strictEqual(compact.split(".").length, 5,
+    "and that body should be a JWE in compact serialization (five parts). Got " +
+    compact.split(".").length + " part(s).");
+  var jweHeader = jsonFromB64u(compact.split(".")[0]);
+  assert.strictEqual(jweHeader.kid, publishedKid,
+    "the JWE MUST echo the kid of the key it was encrypted to. Got: " + JSON.stringify(jweHeader));
+  assert.strictEqual(jweHeader.alg, ((offered.jwks || {}).keys || [])[0].alg,
+    "and its alg MUST equal the chosen JWK's alg — there is no alg_values_supported to read instead.");
+  assert.ok((offered.enc_values_supported || []).indexOf(jweHeader.enc) !== -1,
+    "and its enc must be one the issuer said it can decode. Got: " + jweHeader.enc);
+  log.info("[request-enc] OK — the call is a five-part JWE echoing " + jweHeader.kid +
+    " with alg " + jweHeader.alg + " / enc " + jweHeader.enc + ".");
+
+  // And it has to actually reach the issuer as ciphertext. Everything asserted
+  // above is client-side and is equally consistent with a pane that builds a
+  // perfect JWE, displays it, and then posts the plaintext — while
+  // encryption_required is false the issuer accepts that JSON and issues from
+  // it, so even arriving at step 3 with a valid credential proves nothing. A
+  // mutation that did exactly this went undetected until the check below
+  // existed, which is why the issuer is asked what it actually received.
+  await click(driver, By.id("vc_approve_button"));
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
+    "the issuer should decrypt the request and issue, reaching step 3.");
+  await assertStepThreeIsHappy(driver, "encrypted request");
+
+  var arrived = (await httpJson(issuerBase + "/oid4vci/last_request")).body || {};
+  assert.strictEqual(arrived.seen, true,
+    "the issuer should have recorded the request it just served. Got: " + JSON.stringify(arrived));
+  assert.strictEqual(arrived.encrypted, true,
+    "the issuer must have received CIPHERTEXT. It received " +
+    (arrived.contentType || "something unencrypted") + " — so the page displayed a JWE and sent the " +
+    "plaintext, which is invisible from the browser and produces a working credential either way. " +
+    "Got: " + JSON.stringify(arrived));
+  assert.strictEqual(arrived.kid, publishedKid,
+    "and decrypted it with the key the wallet named. Got: " + JSON.stringify(arrived));
+  assert.strictEqual(arrived.enc, jweHeader.enc,
+    "with the enc the pane displayed — the bytes sent must be the bytes shown, not a re-encryption.");
+  log.info("[request-enc] OK — the ISSUER confirms it received ciphertext (" + arrived.alg + " / " +
+    arrived.enc + ", kid " + arrived.kid + ") and issued from it.");
+
+  // Unticking must go back to JSON. Without this the box could be write-once —
+  // and the stale-ciphertext bug it guards against is real: the assembled call is
+  // rendered inside buildRequestBody(), before the JWE is built, so clearing the
+  // previous run's ciphertext at the wrong moment leaves the pane showing a
+  // request that is no longer the one being sent.
+  await driver.get(baseUrl + "/vc-issuance-2.html");
+  await driver.wait(async function () {
+    return !!(await value(driver, "vc_proof_jwt"));
+  }, fetchWait, "step 2 should reassemble on a fresh load.");
+  await driver.executeScript(
+    "document.getElementById('vc_encrypt_request').checked = true;" +
+    "vcissuance2.onRequestOptionsChange();");
+  await driver.wait(async function () {
+    return /application\/jwt/.test(await value(driver, "vc_approval_request"));
+  }, fetchWait, "it should encrypt when ticked.");
+  await driver.executeScript(
+    "document.getElementById('vc_encrypt_request').checked = false;" +
+    "vcissuance2.onRequestOptionsChange();");
+  await driver.wait(async function () {
+    return /application\/json/.test(await value(driver, "vc_approval_request"));
+  }, fetchWait, "and go back to JSON when unticked.");
+  var reverted = await value(driver, "vc_approval_request");
+  assert.ok(reverted.indexOf("--- the plaintext") === -1,
+    "with encryption off there is no ciphertext to caption, so the plaintext note must go too. Got: " +
+    reverted.slice(0, 200));
+  assert.ok(reverted.indexOf("credential_configuration_id") !== -1,
+    "and the body is the JSON request again.");
+  log.info("[request-enc] OK — unticking returns the call to plain JSON with no stale ciphertext.");
+}
+
 async function batchAndEncryptedIssuance(driver) {
   log.info("=== Batch issuance and an encrypted Credential Response ===");
   var meta = (await httpJson(issuerMetadataUrl)).body;
@@ -3215,6 +3371,10 @@ async function test() {
     // about that credential.
     await notificationFlow(driver);
     await batchAndEncryptedIssuance(driver);
+    // The other direction of section 10. After the batch section because both
+    // start from stepOneConfigured(), and this one leaves step 3 showing a
+    // credential obtained through an encrypted request.
+    await encryptedCredentialRequest(driver);
     log.info("Test completed successfully.");
   } finally {
     await driver.quit();

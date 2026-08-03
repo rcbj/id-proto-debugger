@@ -26,6 +26,7 @@ var metadataSchema = require("./metadata_schema");
 var opMetadata = require("./op_metadata");
 var vciMetadata = require("./vci_metadata");
 var sdJwtVc = require("./sd_jwt_vc");
+var didLib = require("./did");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_1',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -168,7 +169,40 @@ function buildConfigRows() {
     html += fieldRow(vciMetadata.idFor(m.name), m.name, m.desc, m.type);
   });
 
+  // The DID section sits between the issuer's metadata and the chosen
+  // credential, because that is where it belongs in the story: who the issuer
+  // says it is, then how it is identified, then what it will hand over.
+  html += groupRow("Issuer DID document", "W3C DID Core 1.0, resolved in the pane above");
+  html += '<tr><td>' +
+    '<div class="tooltip"><label for="did_enabled">Use DIDs for this credential: </label>' +
+    '<span class="tooltiptext">Whether this run treats the issuer as a DID: resolving its document ' +
+    'for the verification key rather than using the credential issuer URL. Default ON for ldp_vc, ' +
+    'which is DID-native under VC Data Model 2.0, and OFF for every other format \u2014 SD-JWT VC ' +
+    'defines no DID-based issuer signature mechanism, so using one there is a profile ' +
+    'extension.</span></div></td>' +
+    '<td><input type="checkbox" id="did_enabled" name="did_enabled" ' +
+    'onchange="return vcissuance1.onDidEnabledChange();" />' +
+    '<span class="vc-note" id="did_enabled_note"></span></td></tr>';
+  didLib.DID_METADATA.forEach(function (m) {
+    html += fieldRow(didLib.idFor(m.name), m.name, m.desc, m.type);
+  });
+
   html += groupRow("Credential configuration", "the chosen entry of credential_configurations_supported");
+  // The chooser sits at the head of the fields it FILLS IN, not up in the
+  // metadata pane. Every field below is one of these hard-to-guess values —
+  // format, vct, scope, credential_definition, the proof algorithms — and they
+  // all change together when a different credential is picked. Having the
+  // control next to its effect is the difference between "why did those fields
+  // change" and "of course they did".
+  html += '<tr><td>' +
+    '<div class="tooltip"><label>Credential to request: </label>' +
+    '<span class="tooltiptext">Which entry of credential_configurations_supported this run asks ' +
+    'for. Choosing one rewrites every field in this section from the retrieved metadata, and it is ' +
+    'what step 2 names in the Credential Request. The list appears once a credential issuer ' +
+    'metadata document has been retrieved.</span></div></td>' +
+    '<td><select id="vci_credential_configuration_select" ' +
+    'onchange="return vcissuance1.onCredentialConfigurationChange();"></select>' +
+    '<span class="vc-note" id="vci_configuration_note"></span></td></tr>';
   vciMetadata.VCI_CONFIG_METADATA.forEach(function (m) {
     html += fieldRow(vciMetadata.idFor(m.name), m.name, m.desc, m.type);
   });
@@ -188,6 +222,16 @@ function loadConfiguration() {
   });
   opMetadata.loadFromLocalStorage();
   vciMetadata.loadFromLocalStorage();
+  // The DID fields and the use-DIDs box, after the metadata load: the box's
+  // default follows the chosen credential's FORMAT, which vciMetadata has only
+  // just restored. Rendering it before that reads an empty format and defaults
+  // every credential to off, including the ldp_vc that should be on.
+  didLib.DID_METADATA.forEach(function (m) {
+    var v = sdJwtVc.get(didLib.idFor(m.name));
+    if (v !== null && v !== undefined) setVal(didLib.idFor(m.name), v);
+  });
+  setVal(DID_ID_KEY, sdJwtVc.get(DID_ID_KEY) || "");
+  renderDidEnabled();
 }
 
 function defaultFor(f) {
@@ -262,13 +306,18 @@ function renderVciTable() {
 function renderCredentialConfigurations() {
   log.debug("Entering renderCredentialConfigurations().");
   var select = el("vci_credential_configuration_select");
-  var row = el("vci_configuration_row");
-  if (!select || !row) return;
+  var note = el("vci_configuration_note");
+  if (!select) return;
   var configs = (vciInfo && vciInfo.credential_configurations_supported) || {};
   var ids = Object.keys(configs);
   if (!ids.length) {
-    row.style.display = "none";
+    // The chooser now lives among the fields it fills, which are always on
+    // screen, so it cannot simply be hidden: say why it is empty instead.
     select.innerHTML = "";
+    if (note) {
+      note.textContent = " Retrieve the credential issuer metadata above to see what this issuer offers.";
+      note.className = "vc-note vc-pending";
+    }
     return;
   }
   var chosen = val(vciMetadata.idFor("credential_configuration_id")) || ids[0];
@@ -278,8 +327,11 @@ function renderCredentialConfigurations() {
     return '<option value="' + esc(id) + '"' + (id === chosen ? ' selected="selected"' : '') + '>' +
            esc(label) + '</option>';
   }).join("");
-  row.style.display = "";
-  log.debug("Leaving renderCredentialConfigurations().");
+  if (note) {
+    note.textContent = " " + ids.length + " offered by this issuer.";
+    note.className = "vc-note";
+  }
+  log.debug("Leaving renderCredentialConfigurations(). " + ids.length + " offered.");
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +442,7 @@ function applyVciDocument(doc, provenance, verb) {
   // below the table re-applies the document afterwards (e.g. to undo a
   // hand-edit, or after choosing another credential).
   var used = populateFromVciDocument();
+  offerAdvertisedIssuerDid();
   status("vci_signed_metadata_status",
     (verb || "Loaded") + " " + Object.keys(vciInfo).length + " members; " +
     Object.keys(vciInfo.credential_configurations_supported || {}).length +
@@ -528,6 +581,8 @@ function onCredentialConfigurationChange() {
   // are unaffected by which credential is chosen.
   if (vciInfo && Object.keys(vciInfo).length) populateFromVci();
   return false;
+  // The format may have changed, and with it whether DIDs default on.
+  renderDidEnabled();
 }
 
 // The issuer's signing keys: a jwks_uri in the document if it has one,
@@ -1205,7 +1260,11 @@ function onload() {
 
   // Whatever was retrieved last time, so the tables survive a reload.
   vciInfo = VCI_STORE.read() || {};
-  if (Object.keys(vciInfo).length) { renderVciTable(); renderCredentialConfigurations(); }
+  if (Object.keys(vciInfo).length) { renderVciTable(); }
+  // Unconditionally: the chooser now lives among the Configuration Parameters
+  // and is on screen whether or not a document has been retrieved, so the
+  // no-document case has to say why it is empty rather than render nothing.
+  renderCredentialConfigurations();
   asInfo = AS_STORE.read() || {};
   if (Object.keys(asInfo).length) {
     renderAsTable();
@@ -1231,7 +1290,369 @@ if (typeof window !== "undefined") {
   window.addEventListener("load", onload);
 }
 
+
+// ---------------------------------------------------------------------------
+// The DID pane (W3C DID Core 1.0).
+//
+// Modelled on the two metadata panes above — Resolve / Upload / Clear, a table
+// of what came back, and the values pushed into Configuration Parameters — with
+// one honest difference: only did:web has anything to RETRIEVE. did:jwk and
+// did:key ARE their key, so "resolving" them is a local decode, and the
+// provenance line says which happened rather than implying a network call that
+// never took place.
+// ---------------------------------------------------------------------------
+var DID_ID_KEY = "did_identifier";
+var didDocument = null;
+
+// Which format this run is configured for, so the DID default can follow it.
+function configuredFormat() {
+  return sdJwtVc.get(vciMetadata.idFor("format")) || val(vciMetadata.idFor("format")) || "";
+}
+
+// DIDs default ON for ldp_vc and OFF for everything else. Stored as "1"/"0" once
+// the user has touched the box, so an explicit choice survives a format change;
+// with nothing stored the format decides. That distinction matters — a holder
+// who deliberately turned DIDs off for ldp_vc should not have them turned back
+// on by re-picking the same credential.
+function didEnabledDefault() {
+  return configuredFormat() === sdJwtVc.FORMAT_LDP_VC;
+}
+
+function didEnabled() {
+  var stored = sdJwtVc.get("did_enabled");
+  if (stored === "1") return true;
+  if (stored === "0") return false;
+  return didEnabledDefault();
+}
+
+function renderDidEnabled() {
+  var box = el("did_enabled");
+  if (box) box.checked = didEnabled();
+  var format = configuredFormat() || "(no credential chosen yet)";
+  setText("did_enabled_note", didEnabled()
+    ? (didEnabledDefault()
+        ? "On, the default for " + format + ": VC Data Model 2.0 is DID-native."
+        : "On for " + format + " — a profile extension: SD-JWT VC defines no DID-based issuer " +
+          "signature mechanism.")
+    : "Off for " + format + ": the issuer is identified by its credential_issuer URL and its keys " +
+      "come from /.well-known/jwt-vc-issuer.");
+}
+
+function onDidEnabledChange() {
+  var box = el("did_enabled");
+  sdJwtVc.set("did_enabled", box && box.checked ? "1" : "0");
+  renderDidEnabled();
+  return true;
+}
+
+
+// An issuer may say which DID it also answers to, and where a credential from a
+// given configuration will name it. Neither member is registered by OID4VCI —
+// they are this issuer's extension — but they are the only way a wallet learns the
+// DID from something it FETCHED rather than from the credential itself, which is
+// the one source that cannot corroborate its own issuer.
+//
+// Offered, not imposed: the field is filled only when it is empty, because this
+// pane is also where somebody tries a DID the issuer has not published, or a
+// deliberately wrong one to watch the verification refuse it.
+function offerAdvertisedIssuerDid() {
+  log.debug("Entering offerAdvertisedIssuerDid().");
+  var advertised = (vciInfo || {}).issuer_did || "";
+  if (!advertised) {
+    log.debug("Leaving offerAdvertisedIssuerDid(). This issuer advertises none.");
+    return;
+  }
+  if (!didLib.isDid(advertised)) {
+    // Said so rather than filled in: a malformed advertisement is worth seeing.
+    status("did_status", 'This issuer advertises issuer_did as "' + advertised +
+      '", which is not a DID.', "vc-bad");
+    return;
+  }
+  var current = (val(DID_ID_KEY) || "").trim();
+  if (current) {
+    log.debug("Leaving offerAdvertisedIssuerDid(). A DID is already entered.");
+    return;
+  }
+  setVal(DID_ID_KEY, advertised);
+  sdJwtVc.set(DID_ID_KEY, advertised);
+  var configured = (vciInfo.credential_configurations_supported || {});
+  var perConfiguration = Object.keys(configured).filter(function (id) {
+    return configured[id] && configured[id].issuer_identifier === advertised;
+  });
+  status("did_status", "This issuer advertises the DID " + advertised + " (issuer_did in its " +
+    "metadata — an extension, not a registered member). " +
+    (perConfiguration.length
+      ? perConfiguration.length + " of its credential configurations name the issuer by that DID: " +
+        perConfiguration.join(", ") + "."
+      : "None of its credential configurations name the issuer by it, so credentials will carry the " +
+        "https identifier.") + " Resolve to see the document.", "vc-pending");
+  log.debug("Leaving offerAdvertisedIssuerDid(). Offered " + advertised + ".");
+}
+
+// Push the resolved document into the editable Configuration Parameters fields.
+function populateFromDidDocument() {
+  var doc = didDocument || {};
+  didLib.DID_METADATA.forEach(function (m) {
+    var v = doc[m.name];
+    var shown = (v === undefined || v === null) ? ""
+      : (typeof v === "string" ? v : JSON.stringify(v, null, 2));
+    setVal(didLib.idFor(m.name), shown);
+    sdJwtVc.set(didLib.idFor(m.name), shown);
+    opMetadata.markNotDefined(didLib.idFor(m.name),
+      !Object.prototype.hasOwnProperty.call(doc, m.name));
+  });
+}
+
+function renderDidTable(provenance) {
+  var host = el("did_document_table");
+  if (!host) return;
+  host.innerHTML = didDocument
+    ? metadataClient.buildInfoTable(didDocument, provenance)
+    : "";
+}
+
+function applyDidDocument(doc, provenance, verb, url) {
+  didDocument = doc || null;
+  setVal("did_resolution_url", url || "");
+  renderDidTable(provenance);
+  populateFromDidDocument();
+  var methods = didLib.verificationMethods(didDocument || {});
+  status("did_status",
+    verb + " a DID Document for " + ((didDocument || {}).id || "(no id)") + " with " +
+    methods.length + " verification method(s): " +
+    methods.map(function (m) { return (m.id || "").split("#")[1] || m.id; }).join(", ") +
+    ". " + (provenance && provenance.note ? provenance.note : ""), "vc-ok");
+}
+
+function resolveDid() {
+  log.debug("Entering resolveDid().");
+  var didValue = val(DID_ID_KEY).trim();
+  sdJwtVc.set(DID_ID_KEY, didValue);
+  var parsed = didLib.parse(didValue);
+  if (!parsed) {
+    status("did_status", 'That is not a DID. A DID looks like "did:web:example.com", ' +
+      '"did:jwk:eyJrdHki…" or "did:key:zDnae…".', "vc-bad");
+    return false;
+  }
+  // did:web over plain http is allowed here because this suite's own issuer runs
+  // on it. The method mandates https; a deployed site talking to a real issuer
+  // will use it, and the only reason to relax it is a local stack.
+  var allowHttp = /^https?:\/\/localhost|^http:\/\//.test(String(window.location.origin)) ||
+                  /^did:web:(localhost|sts|127\.0\.0\.1)/.test(didValue);
+  var url = parsed.method === "web"
+    ? (allowHttp ? didLib.didWebToUrlInsecure(didValue) : didLib.didWebToUrl(didValue)) : "";
+  setVal("did_resolution_url", url);
+  status("did_status", parsed.method === "web"
+    ? "Retrieving " + url + " …" : "Decoding the " + parsed.method + " locally …", "vc-pending");
+  return didLib.resolve(didValue, { allowHttp: allowHttp })
+    .then(function (r) {
+      applyDidDocument(r.document, { url: r.url || "", note: "Source: " + r.from + "." },
+        r.url ? "Retrieved" : "Resolved", r.url);
+    })
+    .catch(function (e) {
+      status("did_status", "Could not resolve that DID: " + e.message, "vc-bad");
+    });
+}
+
+function uploadDidDocument() {
+  var f = el("did_document_file");
+  if (f) f.click();
+  return false;
+}
+
+function onDidFileChange(evt) {
+  return readMetadataFile(evt, "did_status", function (doc, name) {
+    applyDidDocument(doc, { file: name, note: "Loaded from " + name + ", not resolved." },
+      "Loaded", "");
+  });
+}
+
+function clearDidDocument() {
+  log.debug("Entering clearDidDocument().");
+  didDocument = null;
+  sdJwtVc.set(DID_ID_KEY, "");
+  setVal(DID_ID_KEY, "");
+  setVal("did_resolution_url", "");
+  renderDidTable(null);
+  didLib.DID_METADATA.forEach(function (m) {
+    setVal(didLib.idFor(m.name), "");
+    sdJwtVc.set(didLib.idFor(m.name), "");
+  });
+  status("did_status", "Cleared.", "vc-ok");
+  return false;
+}
+
+// Resolving a document proves nothing on its own. What matters is whether a key
+// it publishes is the one the issuer actually signed with — so this checks the
+// credential in hand against it, rather than reporting a green tick for having
+// fetched some JSON.
+function verifyDidBinding() {
+  log.debug("Entering verifyDidBinding().");
+  if (!didDocument) {
+    status("did_status", "Resolve or upload a DID Document first.", "vc-bad");
+    return false;
+  }
+  var raw = sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "";
+  if (!raw) {
+    status("did_status", "There is no credential in this wallet to check the document against. " +
+      "Issue one first — this button answers \"is this the key that signed it\", which needs " +
+      "something signed.", "vc-bad");
+    return false;
+  }
+  var parsed;
+  try {
+    parsed = sdJwtVc.parseCredential(raw);
+  } catch (e) {
+    status("did_status", "The credential in this wallet could not be parsed: " + e.message, "vc-bad");
+    return false;
+  }
+  var named = parsed.format === sdJwtVc.FORMAT_LDP_VC
+    ? ((parsed.document || {}).issuer || "")
+    : ((parsed.payload || {}).iss || "");
+  if (named && didDocument.id && named !== didDocument.id) {
+    status("did_status", "This credential names its issuer as \"" + named + "\", but the document " +
+      "resolved here describes \"" + didDocument.id + "\". They are different subjects, so the " +
+      "keys below say nothing about that credential.", "vc-bad");
+    return false;
+  }
+  var keys = didLib.assertionKeys(didDocument);
+  if (!keys.length) {
+    status("did_status", "This document publishes no key that may assert, so nothing here could " +
+      "have signed a credential.", "vc-bad");
+    return false;
+  }
+  if (parsed.format === sdJwtVc.FORMAT_LDP_VC) {
+    var vm = ((parsed.document || {}).proof || {}).verificationMethod || "";
+    var found = keys.filter(function (k) { return k.id === vm; })[0];
+    status("did_status", found
+      ? "The proof names " + vm + ", and this document publishes it (" + found.type + "). " +
+        "Step 3 verifies the proof itself against that key."
+      : "The proof names " + vm + ", which this document does NOT publish. Either the document is " +
+        "stale or the credential was signed by something else.", found ? "vc-ok" : "vc-bad");
+    return false;
+  }
+  // A JWS-secured credential: check the signature here and now.
+  var header = parsed.header || {};
+  var key = didLib.keyForKid(didDocument, header.kid);
+  if (!key || !key.jwk) {
+    status("did_status", "No key in this document matches the credential's kid (" +
+      (header.kid || "none given") + "), or the matching key is not expressed as a JWK.", "vc-bad");
+    return false;
+  }
+  status("did_status", "Verifying the credential signature against " + key.id + " …", "vc-pending");
+  // verifyJwsWithJwks takes a JWK SET and reports {valid}, so the one key this
+  // document named is wrapped as a set of one — verifying against every key in
+  // the document would answer a weaker question than "did THIS method sign it".
+  metadataClient.verifyJwsWithJwks(parsed.serialized.split("~")[0], { keys: [key.jwk] },
+      "the credential")
+    .then(function (verdict) {
+      status("did_status", verdict && verdict.valid
+        ? "VERIFIED: the credential's signature checks out against " + key.id + " from this DID " +
+          "Document. The DID really does identify the key that signed it."
+        : "The credential's signature does NOT verify against " + key.id +
+          ". Resolving a document is not the same as it being the right one.",
+        verdict && verdict.valid ? "vc-ok" : "vc-bad");
+    })
+    .catch(function (e) {
+      status("did_status", "The signature could not be checked: " + e.message, "vc-bad");
+    });
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Domain linkage (DIF Well Known DID Configuration).
+//
+// "Verify Issuer Key" above answers: does this document publish the key that
+// signed the credential. This answers the question BEFORE that one, which is the
+// one a DID cannot answer about itself: why should this DID be believed to be the
+// same party as the https issuer the wallet discovered?
+//
+// For did:web the appearance of an answer is worse than none. Resolving
+// did:web:example.com means fetching example.com, so reading a DID document off
+// that origin to decide whether the DID belongs to it is circular. The linkage
+// credential is not: the DID signs, with its own key, a credential naming the
+// origin, and the verifier checks the signature against the keys the DID
+// authorises to assert.
+//
+// The origin is taken from the CREDENTIAL ISSUER's identifier rather than from the
+// DID, because the whole point is to connect the two: deriving the origin from the
+// DID would ask whether the DID vouches for itself, which it always does.
+function verifyDomainLinkage() {
+  log.debug("Entering verifyDomainLinkage().");
+  var didValue = (val(DID_ID_KEY) || "").trim() || (didDocument || {}).id || "";
+  if (!didValue) {
+    status("did_linkage_status", "Give a DID first — this checks whether an origin vouches for one.",
+           "vc-bad");
+    return false;
+  }
+  // Whatever the issuer metadata says its identifier is. That document is where a
+  // wallet learned about this issuer, so it is the origin whose word is in
+  // question.
+  var issuer = sdJwtVc.get(vciMetadata.idFor("credential_issuer")) ||
+               val(vciMetadata.idFor("credential_issuer")) || "";
+  if (!issuer) {
+    status("did_linkage_status", "Retrieve the credential issuer metadata first: the linkage is " +
+      "between that issuer's ORIGIN and this DID, so there is nothing to check it against yet.",
+      "vc-bad");
+    return false;
+  }
+  var origin;
+  try {
+    origin = new URL(issuer).origin;
+  } catch (e) {
+    status("did_linkage_status", 'The credential issuer identifier "' + issuer + '" is not a URL, so ' +
+      "it has no origin to link.", "vc-bad");
+    return false;
+  }
+  var allowHttp = /^http:/.test(origin);
+  var host = el("did_linkage_table");
+  if (host) host.innerHTML = "";
+  status("did_linkage_status", "Fetching " + didLib.didConfigurationUrl(origin) + " …", "vc-pending");
+  didLib.verifyOriginLinkage(origin, didValue, { allowHttp: allowHttp })
+    .then(function (result) {
+      // Every entry is shown, not only the matching one: an origin may link
+      // several DIDs, and one that fails is as interesting as one that passes.
+      var rows = result.results.map(function (r) {
+        return "<tr><td>" + metadataClient.escapeHtmlText(r.did || "(no DID)") + "</td>" +
+          '<td class="' + (r.valid ? "vc-ok" : "vc-bad") + '">' + (r.valid ? "verified" : "not verified") +
+          "</td><td>" + r.checks.map(function (c) {
+            return '<span class="' + (c.ok ? "vc-ok" : "vc-bad") + '">' + (c.ok ? "OK" : "FAILED") +
+                   "</span> " + metadataClient.escapeHtmlText(c.name + " — " + c.detail);
+          }).join("<br />") + "</td></tr>";
+      }).join("");
+      if (host) {
+        host.innerHTML = "<table><thead><tr><th style='width:26%'>Linked DID</th>" +
+          "<th style='width:10%'>Result</th><th>Checks</th></tr></thead><tbody>" + rows + "</tbody></table>";
+      }
+      status("did_linkage_status", result.linked
+        ? "LINKED: " + origin + " and " + didValue + " are the same entity, proved by a Domain " +
+          "Linkage Credential signed by that DID's own key at " + result.url + "."
+        : (result.matched.length
+            ? "NOT LINKED: " + origin + " publishes a Domain Linkage Credential for " + didValue +
+              ", but it does not verify. See the checks below."
+            : "NOT LINKED: " + result.url + " vouches for " +
+              (result.results.length ? result.results.length + " other DID(s)" : "no DID") +
+              ", not for " + didValue + ". An origin linking some DID has not linked this one."),
+        result.linked ? "vc-ok" : "vc-bad");
+    })
+    .catch(function (e) {
+      status("did_linkage_status", "Could not check the domain linkage: " + e.message + " (An issuer " +
+        "need not publish this document — it is DIF's, not OID4VCI's — so its absence is not a " +
+        "failure of the credential.)", "vc-bad");
+    });
+  return false;
+}
+
 module.exports = {
+  resolveDid: resolveDid,
+  uploadDidDocument: uploadDidDocument,
+  onDidFileChange: onDidFileChange,
+  clearDidDocument: clearDidDocument,
+  verifyDidBinding: verifyDidBinding,
+  verifyDomainLinkage: verifyDomainLinkage,
+  onDidEnabledChange: onDidEnabledChange,
+  didEnabled: didEnabled,
+  renderDidEnabled: renderDidEnabled,
   retrieveVciMetadata: retrieveVciMetadata,
   uploadVciMetadata: uploadVciMetadata,
   onVciFileChange: onVciFileChange,

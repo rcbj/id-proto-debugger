@@ -183,20 +183,38 @@ function renderCurrentCredential() {
     return;
   }
   var meta = state.current.meta || {};
-  var payload = (state.current.parsed && state.current.parsed.payload) || {};
-  setText("vc_current_vct", payload.vct || "—");
-  var expired = payload.exp && payload.exp <= Math.floor(Date.now() / 1000);
+  var parsed = state.current.parsed;
+
+  // Type, validity and binding are all read through sd_jwt_vc.js rather than off
+  // the payload, because all three are spelled differently by the two families
+  // and reading only the SD-JWT spelling reports DIFFERENCE as ABSENCE — the
+  // failure that matters, because absence is the reassuring answer. An ldp_vc
+  // showed as having no type, never expiring, and bound to no holder key; all
+  // three were false. Each label names the member it actually read, so the pane
+  // cannot claim to be showing a vct while showing a type array.
+  setText("vc_current_vct_label", "Credential type (" + sdJwtVc.typeMemberName(parsed) + ")");
+  setText("vc_current_vct", sdJwtVc.credentialLabel(parsed) || "—");
+
+  var window_ = sdJwtVc.validityWindowOf(parsed);
+  var expired = window_.expires && window_.expires <= Math.floor(Date.now() / 1000);
+  setText("vc_current_validity_label",
+    "Validity (" + window_.notBeforeMember + "/" + window_.expiresMember + ")");
   setText("vc_current_validity",
-    "nbf " + isoOf(payload.nbf) + ", exp " + isoOf(payload.exp) + " — " +
-    (payload.exp ? (expired ? "EXPIRED " + relativeTo(payload.exp)
-                            : "valid, expires " + relativeTo(payload.exp))
-                 : "no exp claim, so it does not expire on its own"));
-  var cnf = (payload.cnf && payload.cnf.jwk) || null;
-  setText("vc_current_binding", cnf
-    ? cnf.kty + " " + (cnf.crv || "") + " key " + String(cnf.x || "").slice(0, 16) + "…" +
-      (holderKeyIsHeld(cnf) ? " — the holder key this browser generated"
-                            : " — NOT a holder key this browser still has, so a proof for it cannot be signed")
-    : "no cnf claim: this credential is not bound to a holder key");
+    window_.notBeforeMember + " " + isoOf(window_.notBefore) + ", " +
+    window_.expiresMember + " " + isoOf(window_.expires) + " — " +
+    (window_.expires ? (expired ? "EXPIRED " + relativeTo(window_.expires)
+                                : "valid, expires " + relativeTo(window_.expires))
+                     : "no " + window_.expiresMember + ", so it does not expire on its own"));
+  // Reading only cnf here also disabled "reuse the bound key" below, silently
+  // forcing a new key on every ldp_vc refresh.
+  var bound = sdJwtVc.boundHolderJwk(parsed);
+  var boundIn = sdJwtVc.bindingMemberName(parsed);
+  setText("vc_current_binding_label", "Bound to (" + boundIn + ")");
+  setText("vc_current_binding", bound
+    ? bound.kty + " " + (bound.crv || "") + " key " + String(bound.x || "").slice(0, 16) + "…" +
+      (holderKeyIsHeld(bound) ? " — the holder key this browser generated"
+                              : " — NOT a holder key this browser still has, so a proof for it cannot be signed")
+    : "no " + boundIn + ": this credential is not bound to a holder key");
   var provenance = (meta.configurationId || "?") + " from " + (meta.issuer || "?") +
                    ", requested " + (meta.requestedAt || "?");
   if (meta.refreshGeneration) {
@@ -716,9 +734,7 @@ function sendRefreshRequest() {
 // ---------------------------------------------------------------------------
 function keyChoice() {
   var choice = val("vc_refresh_key_mode") || "reuse";
-  var cnf = state.current && state.current.parsed &&
-            state.current.parsed.payload && state.current.parsed.payload.cnf;
-  var boundJwk = (cnf && cnf.jwk) || null;
+  var boundJwk = sdJwtVc.boundHolderJwk(state.current && state.current.parsed);
   // "Reuse" is only honest while the private half is still here.
   if (choice === "reuse" && !holderKeyIsHeld(boundJwk)) return "new";
   return choice;
@@ -872,9 +888,7 @@ function renderReissue() {
   log.debug("Entering renderReissue().");
   setText("vc_reissue_endpoint", state.config.credentialEndpoint || "—");
   setText("vc_reissue_access_token", describeToken(sdJwtVc.get("token_access_token") || ""));
-  var cnf = state.current && state.current.parsed &&
-            state.current.parsed.payload && state.current.parsed.payload.cnf;
-  var boundJwk = (cnf && cnf.jwk) || null;
+  var boundJwk = sdJwtVc.boundHolderJwk(state.current && state.current.parsed);
   var held = holderKeyIsHeld(boundJwk);
   var select = el("vc_refresh_key_mode");
   if (select) {
@@ -898,8 +912,9 @@ function renderReissue() {
   }
   renderHolderKeyRow();
   setText("vc_refresh_key_note", keyChoice() === "reuse"
-    ? "The refreshed credential will carry the same cnf.jwk, so it replaces the one in hand rather than " +
-      "sitting beside it."
+    ? "The refreshed credential will carry the same " +
+      sdJwtVc.bindingMemberName(state.current && state.current.parsed) +
+      ", so it replaces the one in hand rather than sitting beside it."
     : "A new key pair means the refreshed credential is bound to something else: a verifier will demand " +
       "proof of possession of THIS key, and the old credential still needs the old one.");
   log.debug("Leaving renderReissue().");
@@ -1252,8 +1267,13 @@ function comparisonRows(before, after) {
   log.debug("Entering comparisonRows().");
   var b = before.payload || {};
   var a = after.payload || {};
-  var bCnf = (b.cnf && b.cnf.jwk) || {};
-  var aCnf = (a.cnf && a.cnf.jwk) || {};
+  // Read through the shared helper for the same reason the pane above does: for
+  // an ldp_vc the bound key is a did:jwk in credentialSubject.id, so comparing
+  // cnf.jwk would show "— → —" and a rebinding to a different holder key — the
+  // one change that makes the refresh NOT a replacement — would go unreported.
+  var bBound = sdJwtVc.boundHolderJwk(before) || {};
+  var aBound = sdJwtVc.boundHolderJwk(after) || {};
+  var boundIn = sdJwtVc.bindingMemberName(after || before);
   var rows = [
     { name: "vct", before: b.vct || "—", after: a.vct || "—" },
     { name: "iss", before: b.iss || "—", after: a.iss || "—" },
@@ -1266,9 +1286,9 @@ function comparisonRows(before, after) {
       after: isoOf(a.exp) + (a.exp ? " (" + relativeTo(a.exp) + ")" : "")
     },
     {
-      name: "Bound key (cnf.jwk)",
-      before: bCnf.x ? String(bCnf.x).slice(0, 20) + "…" : "—",
-      after: aCnf.x ? String(aCnf.x).slice(0, 20) + "…" : "—"
+      name: "Bound key (" + boundIn + ")",
+      before: bBound.x ? String(bBound.x).slice(0, 20) + "…" : "—",
+      after: aBound.x ? String(aBound.x).slice(0, 20) + "…" : "—"
     },
     {
       name: "Issuer signature",
@@ -1373,8 +1393,13 @@ function renderComparison() {
   var sameCredential = before && before.serialized === after.serialized;
   var signatureChanged = before && before.signature !== after.signature;
   var windowChanged = before && ((before.payload || {}).exp !== (after.payload || {}).exp);
-  var keyChanged = before &&
-    JSON.stringify(((before.payload || {}).cnf || {}).jwk) !== JSON.stringify(((after.payload || {}).cnf || {}).jwk);
+  // Compared on the key's own coordinates rather than on the serialized member,
+  // so the two formats answer the same question: an ldp_vc's binding is a
+  // did:jwk string and an SD-JWT's is a cnf object, and neither is comparable
+  // to the other in raw form.
+  var beforeBound = before ? sdJwtVc.boundHolderJwk(before) : null;
+  var afterBound = after ? sdJwtVc.boundHolderJwk(after) : null;
+  var keyChanged = before && JSON.stringify(beforeBound) !== JSON.stringify(afterBound);
   var verdict;
   if (sameCredential) {
     verdict = "The issuer returned the very same credential, byte for byte. Section 14.3 allows exactly " +

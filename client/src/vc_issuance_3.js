@@ -18,6 +18,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
+var didLib = require("./did");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_3',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -130,29 +131,50 @@ function renderDisclosures(rows, sdDigests) {
 }
 
 // --- issuer key resolution --------------------------------------------------
-// A did:jwk identifier IS the key: the part after the method prefix is the
-// base64url JWK itself, so it resolves without a network call. walt.id's issuer
-// signs with one (iss = "did:jwk:eyJrdHkiOiJFQyIs…"), and a credential whose
-// key is sitting in its own iss should not be reported as unverifiable.
-function jwkFromDid(iss) {
-  log.debug("Entering jwkFromDid(). iss=" + String(iss).slice(0, 40));
-  var prefix = "did:jwk:";
-  if (String(iss || "").indexOf(prefix) !== 0) {
-    log.debug("Leaving jwkFromDid(). Not a did:jwk.");
-    return null;
-  }
-  var encoded = String(iss).slice(prefix.length).split("#")[0];
-  var jwk;
-  try {
-    jwk = metadataClient.b64uToJson(encoded);
-  } catch (e) {
-    // A did:jwk whose body is not base64url JSON is simply not resolvable here;
-    // the other resolution paths still get their turn.
-    log.debug("Leaving jwkFromDid(). Undecodable: " + e.message);
-    return null;
-  }
-  log.debug("Leaving jwkFromDid(). Decoded a " + (jwk && jwk.kty) + " key.");
-  return jwk && jwk.kty ? jwk : null;
+// Every DID method this debugger resolves, read the same way: resolve the
+// identifier to its DID Document, take the keys the document says may ASSERT,
+// and hand them to the same JWKS verification the well-known path feeds.
+//
+// Going through did.js rather than decoding a did:jwk in place is the point of
+// this function. It replaces a call to sd_jwt_vc.js's jwkFromDid(), which
+// handles did:jwk ONLY — the part after that prefix IS the base64url key — so a
+// did:web or did:key issuer used to fall straight past it into the
+// /.well-known/jwt-vc-issuer chain, a URL that cannot be built from a DID, and
+// then verified off the last-resort fallback by luck, or not at all. (That
+// function stays where it is: step 4 resolves a HOLDER key the same way, an
+// ldp_vc having no cnf claim to name one in.)
+//
+// did:jwk and did:key resolve with NO network call, which is why walt.id's
+// credentials verify with nothing fetched. did:web is a real retrieval, allowed
+// over plain http because neither this stack nor the containerized one has TLS.
+//
+// What this is, for dc+sd-jwt: an EXTENSION. draft-ietf-oauth-sd-jwt-vc defines
+// no DID-based issuer signature mechanism — "A DID-based mechanism is not
+// explicitly provided herein but still possible via profile/extension" — so the
+// spec route is the well-known below and this is beside it. ldp_vc is the
+// opposite: VC Data Model 2.0 and Data Integrity are DID-native.
+function resolveIssuerDid(iss) {
+  log.debug("Entering resolveIssuerDid(). iss=" + String(iss).slice(0, 60));
+  return didLib.resolve(iss, { allowHttp: true }).then(function (res) {
+    // The conversion lives in did.js because the domain linkage check needs the
+    // same one: both are asking whether a key this DID authorises to ASSERT
+    // signed some bytes, and they must not disagree about which keys those are.
+    var converted = didLib.assertionJwks(res.document);
+    if (!converted.jwks.keys.length) {
+      throw new Error("the DID document for " + iss + " publishes no assertion key that can verify a JWS" +
+                      (converted.unusable.length ? " — it names " + converted.unusable.join(", ") : "") +
+                      ".");
+    }
+    log.debug("Leaving resolveIssuerDid(). " + converted.jwks.keys.length + " assertion key(s), " +
+              converted.unusable.length + " unusable.");
+    // The caller renders this after "against the keys at", where the well-known
+    // path puts a URL. Saying which document it was matters more here than
+    // matching that shape: for did:jwk and did:key there is no URL to name, and
+    // reporting a locally-decoded key as though it had been fetched would be the
+    // one misleading thing this pane could say.
+    return { jwks: converted.jwks,
+             from: res.url ? "the DID document " + res.url : res.from };
+  });
 }
 
 // SD-JWT VC: the issuer publishes its keys at /.well-known/jwt-vc-issuer under
@@ -163,14 +185,16 @@ function resolveIssuerJwks(iss) {
   var doc = sdJwtVc.getJson("vci_info") || {};
   var direct = doc.jwks_uri;
 
-  var embedded = jwkFromDid(iss);
-  if (embedded) {
-    log.debug("Leaving resolveIssuerJwks(). The key is embedded in the did:jwk iss.");
-    return Promise.resolve({ jwks: { keys: [embedded] }, from: "the did:jwk in iss" });
-  }
   // The well-known segment goes in front of an issuer identifier's path, not
   // after it; both forms are tried. See metadata_client.wellKnownCandidates().
-  var chain = iss
+  //
+  // A DID is not a URL and has nothing well-known under it, so it takes the DID
+  // branch entirely — but it keeps the fallbacks below, because an issuer whose
+  // DID will not resolve here may still publish the very same keys under its
+  // Credential Issuer Identifier, which is where walt.id's live.
+  var chain = didLib.isDid(iss)
+    ? resolveIssuerDid(iss)
+    : iss
     ? metadataClient.fetchWellKnown(iss, JWT_VC_ISSUER_WELL_KNOWN).then(function (found) {
         var m = found.doc;
         if (m && m.jwks) return { jwks: m.jwks, from: found.url };

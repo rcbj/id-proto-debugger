@@ -991,6 +991,123 @@ function credentialLabel(parsed) {
   return parsed.vct || "credential";
 }
 
+// --- holder binding, whichever way the format expresses it ------------------
+//
+// A did:jwk identifier IS the key: the part after the method prefix is the
+// base64url JWK itself, so it resolves with no network call. Shared rather than
+// duplicated because issuance step 3 resolves an ISSUER key this way (walt.id
+// signs with a did:jwk) and step 4 resolves a HOLDER key this way — the same
+// decoding for two different purposes.
+function jwkFromDid(did) {
+  log.debug("Entering jwkFromDid(). did=" + String(did).slice(0, 40));
+  var prefix = "did:jwk:";
+  if (String(did || "").indexOf(prefix) !== 0) {
+    log.debug("Leaving jwkFromDid(). Not a did:jwk.");
+    return null;
+  }
+  var encoded = String(did).slice(prefix.length).split("#")[0];
+  var jwk;
+  try {
+    jwk = metadataClient.b64uToJson(encoded);
+  } catch (e) {
+    // A did:jwk whose body is not base64url JSON is simply not resolvable here;
+    // callers have other resolution paths, or report it as unresolvable.
+    log.debug("Leaving jwkFromDid(). Undecodable: " + e.message);
+    return null;
+  }
+  log.debug("Leaving jwkFromDid(). Decoded a " + (jwk && jwk.kty) + " key.");
+  return jwk && jwk.kty ? jwk : null;
+}
+
+// The holder public key a credential is bound to — the thing a verifier will
+// demand proof of possession of.
+//
+// The two families express it completely differently, and reading only one of
+// them is what made issuance step 4 report an ldp_vc as unbound:
+//
+//   dc+sd-jwt, jwt_vc_json   payload.cnf.jwk — a confirmation claim, RFC 7800;
+//   ldp_vc                   credentialSubject.id, a did:jwk. A W3C credential
+//                            has no cnf claim at all, and holder binding at
+//                            presentation time is the BBS derived proof itself
+//                            rather than a separate signature by the holder.
+//
+// Returns a public JWK or null, so callers can compare it against a key they
+// hold without caring which format produced it.
+function boundHolderJwk(parsed) {
+  if (!parsed) return null;
+  if (parsed.format === FORMAT_LDP_VC) {
+    return jwkFromDid((parsed.credentialSubject || {}).id);
+  }
+  var cnf = (parsed.payload || {}).cnf;
+  return (cnf && cnf.jwk) || null;
+}
+
+// What that binding is CALLED in this format, for panes that name it. Naming
+// cnf.jwk on a credential that has no cnf claim is how a correct pane still
+// tells the user something false.
+function bindingMemberName(parsed) {
+  return (parsed && parsed.format === FORMAT_LDP_VC) ? "credentialSubject.id" : "cnf.jwk";
+}
+
+// What the credential's TYPE is called: an SD-JWT VC has a vct, a W3C credential
+// has a type array. Same reasoning as bindingMemberName().
+function typeMemberName(parsed) {
+  return (parsed && (parsed.format === FORMAT_LDP_VC || parsed.format === FORMAT_JWT_VC_JSON))
+    ? "type" : "vct";
+}
+
+// --- the validity window, whichever members carry it ------------------------
+//
+// The two families disagree here too, and in a way that reads as absence rather
+// than as difference — which is worse, because a pane that says "no exp claim,
+// so it does not expire on its own" about a credential that expires in a month
+// is not merely unhelpful, it is wrong in the reassuring direction:
+//
+//   dc+sd-jwt, jwt_vc_json   nbf / exp, NumericDate (seconds since the epoch);
+//   ldp_vc                   validFrom / validUntil, ISO 8601 strings. W3C VCDM
+//                            1.1 called them issuanceDate / expirationDate, and
+//                            a credential in the wild may still use those, so
+//                            both spellings are read.
+//
+// Returns seconds since the epoch (or null), so callers format dates one way
+// regardless of which member the value came out of, and the member NAMES so a
+// pane can say which it read.
+function validityWindowOf(parsed) {
+  log.debug("Entering validityWindowOf().");
+  var payload = (parsed && parsed.payload) || {};
+  if (parsed && parsed.format === FORMAT_LDP_VC) {
+    var from = payload.validFrom || payload.issuanceDate || "";
+    var until = payload.validUntil || payload.expirationDate || "";
+    log.debug("Leaving validityWindowOf(). ldp_vc: " + (from || "no start") + " → " +
+              (until || "no end"));
+    return {
+      notBefore: epochFromIso(from),
+      expires: epochFromIso(until),
+      notBeforeMember: payload.issuanceDate && !payload.validFrom ? "issuanceDate" : "validFrom",
+      expiresMember: payload.expirationDate && !payload.validUntil ? "expirationDate" : "validUntil"
+    };
+  }
+  log.debug("Leaving validityWindowOf(). nbf/exp.");
+  return {
+    notBefore: typeof payload.nbf === "number" ? payload.nbf : null,
+    expires: typeof payload.exp === "number" ? payload.exp : null,
+    notBeforeMember: "nbf",
+    expiresMember: "exp"
+  };
+}
+
+// An ISO 8601 instant as seconds since the epoch. Null for anything unparseable,
+// so a malformed date is reported as absent rather than as 1970.
+function epochFromIso(value) {
+  if (!value) return null;
+  var ms = Date.parse(String(value));
+  if (isNaN(ms)) {
+    log.debug("epochFromIso(): not a parseable instant: " + String(value).slice(0, 40));
+    return null;
+  }
+  return Math.floor(ms / 1000);
+}
+
 // Can what this wallet is holding actually be presented?
 //
 // Issuance steps 3 and 4 both offer a hand-off into the PRESENTATION workflow.
@@ -1172,6 +1289,11 @@ module.exports = {
   parseCredential: parseCredential,
   credentialFormat: credentialFormat,
   credentialLabel: credentialLabel,
+  jwkFromDid: jwkFromDid,
+  boundHolderJwk: boundHolderJwk,
+  bindingMemberName: bindingMemberName,
+  typeMemberName: typeMemberName,
+  validityWindowOf: validityWindowOf,
   claimsOf: claimsOf,
   FORMAT_SD_JWT: FORMAT_SD_JWT,
   FORMAT_JWT_VC_JSON: FORMAT_JWT_VC_JSON,

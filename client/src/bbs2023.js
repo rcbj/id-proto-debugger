@@ -136,7 +136,7 @@ function deriveProof(secured, publicKey, disclosedIndexes, presentationHeader) {
   var proof = secured.proof || {};
   var document = Object.assign({}, secured);
   delete document.proof;
-  var signature = b64uToBytes(String(proof.proofValue || "").replace(/^u/, ""));
+  var signature = multibaseToBytes(proof.proofValue);
   var reproof = Object.assign({ "@context": secured["@context"] }, proof);
   delete reproof.proofValue;
   return Promise.all([canonicalizedStatements(document), headerFor(reproof)])
@@ -168,6 +168,19 @@ function bytesToB64u(bytes) {
   for (var i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
+// Multibase base64url ("u" prefix). Kept separate from b64uToBytes for the
+// reason recorded in sts/bbs2023.js: a decoder that also strips the prefix, plus
+// a caller that strips it too, silently eats a data character whenever the
+// payload begins with "u" — about one key in sixty-four, which is exactly the
+// kind of bug that passes locally and fails in CI.
+function multibaseToBytes(str) {
+  var text = String(str || "");
+  if (text.charAt(0) !== "u") {
+    throw new Error('expected multibase base64url (a leading "u"), got: ' + text.slice(0, 12));
+  }
+  return b64uToBytes(text.slice(1));
+}
+
 function b64uToBytes(str) {
   var s = String(str).replace(/-/g, "+").replace(/_/g, "/");
   while (s.length % 4) s += "=";
@@ -188,5 +201,6 @@ module.exports = {
   verifyDerived: verifyDerived,
   bytesToB64u: bytesToB64u,
   b64uToBytes: b64uToBytes,
+  multibaseToBytes: multibaseToBytes,
   documentLoader: documentLoader
 };

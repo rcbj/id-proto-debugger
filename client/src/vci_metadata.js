@@ -53,6 +53,8 @@ var VCI_METADATA = [
     desc: "OPTIONAL. Present when the issuer can mint several credentials in one request; batch_size is the most proofs it will accept." },
   { name: "credential_response_encryption", type: "json", dflt: "",
     desc: "OPTIONAL. The JWE algorithms the issuer supports for encrypting the Credential Response, and whether encryption is required." },
+  { name: "credential_request_encryption", type: "json", dflt: "",
+    desc: "OPTIONAL. The issuer's own public keys (jwks, each with a kid) for encrypting the Credential Request to it, the enc values its endpoint can decode, and whether encryption is required. Note there is no alg_values_supported here, unlike the response side: section 10 takes the JWE alg from the alg of the chosen JWK." },
   { name: "display", type: "json", dflt: "",
     desc: "OPTIONAL. How to display the Credential Issuer itself (name, locale, logo)." },
   { name: "signed_metadata", type: "string", dflt: "",

@@ -253,6 +253,18 @@ function vcSetAllPanes(expand) {
             <span class="vc-note" id="vc_encrypt_note">&nbsp;</span>
           </td>
         </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="vc_encrypt_request">Encrypt the request</label>
+              <span class="tooltiptext">Section 10, the other direction. The ISSUER publishes keys in credential_request_encryption.jwks and the wallet encrypts the Credential Request to one of them, sending it as application/jwt instead of JSON. Unlike the response side there is no alg_values_supported: the JWE alg is the alg of the key chosen from the JWKS. Only offered when the issuer advertises credential_request_encryption.</span>
+            </div>
+          </td>
+          <td>
+            <input type="checkbox" id="vc_encrypt_request" name="vc_encrypt_request"
+                   onchange="return vcissuance2.onRequestOptionsChange();" />
+            <span class="vc-note" id="vc_encrypt_request_note">&nbsp;</span>
+          </td>
+        </tr>
       </tbody>
     </table>
   </fieldset>

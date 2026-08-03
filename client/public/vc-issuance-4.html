@@ -74,15 +74,15 @@ function vcSetAllPanes(expand) {
     <table class="vc-token-table">
       <tbody>
         <tr>
-          <td><div class="tooltip"><label>Credential type (vct)</label><span class="tooltiptext">What kind of credential this is. A refresh asks for the same one — this is not a way to obtain a different credential.</span></div></td>
+          <td><div class="tooltip"><label id="vc_current_vct_label">Credential type</label><span class="tooltiptext">What kind of credential this is — a vct for an SD-JWT VC, a type array for a W3C credential. A refresh asks for the same one — this is not a way to obtain a different credential.</span></div></td>
           <td><code id="vc_current_vct">&mdash;</code></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label>Validity</label><span class="tooltiptext">nbf and exp from the issuer-signed JWT, next to now. An expired credential is the plainest case for refreshing; a valid one may still be refreshed (section 14.3).</span></div></td>
+          <td><div class="tooltip"><label id="vc_current_validity_label">Validity</label><span class="tooltiptext">The credential's validity window next to now — nbf and exp for a JWS-secured credential, validFrom and validUntil for a W3C one. An expired credential is the plainest case for refreshing; a valid one may still be refreshed (section 14.3).</span></div></td>
           <td><code id="vc_current_validity">&mdash;</code></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label>Bound to (cnf.jwk)</label><span class="tooltiptext">The holder key this credential is bound to. Refreshing it in place needs the private half of that key, because the Credential Request has to carry a proof of possession for it.</span></div></td>
+          <td><div class="tooltip"><label id="vc_current_binding_label">Bound to</label><span class="tooltiptext">The holder key this credential is bound to — cnf.jwk for an SD-JWT VC, credentialSubject.id (a did:jwk) for a W3C credential, which has no cnf claim. Refreshing it in place needs the private half of that key, because the Credential Request has to carry a proof of possession for it.</span></div></td>
           <td><code id="vc_current_binding">&mdash;</code></td>
         </tr>
         <tr>

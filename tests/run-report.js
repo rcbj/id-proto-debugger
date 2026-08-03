@@ -370,6 +370,22 @@ function buildJobs() {
     env: {},
   });
 
+  // The wallet's DID module (client/src/did.js): did:jwk, did:key and did:web,
+  // reading a DID document, and the DIF Well Known DID Configuration check that
+  // proves a DID and an origin are the same entity. Everything here fails
+  // silently when it is wrong — a multicodec written as a fixed-width number
+  // instead of a varint produces DIDs that decode here and nowhere else, a
+  // compressed EC point decompressed with the wrong square root gives the other
+  // valid point on the curve, and a Domain Linkage Credential with a typ header
+  // or an iat claim is exactly what a JWT library produces by default. It found a
+  // real bug on its first run: P-384's and P-521's field primes were truncated.
+  // Node only, never skipped.
+  jobs.push({
+    name: "DID module (did:jwk/key/web, document reading, DIF domain linkage)",
+    script: "did_document.js",
+    env: {},
+  });
+
   // The api's outbound address policy (api/ssrf_guard.js): the service fetches
   // URLs its caller supplies, so it must refuse loopback and private destinations
   // or it is an SSRF probe into whatever network it runs in. Node only — no
@@ -437,6 +453,32 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
+    // Refreshing one (OID4VCI 14.5's two calls, and the 14.3 route that is all
+    // that remains after the pre-authorized grant). Registered separately from
+    // issuance because it drives a different call site — issuance step 4's —
+    // over the same wallet module, and because holder binding for this format
+    // is credentialSubject.id rather than cnf.jwk, which is what distinguishes
+    // a replacement from a second credential.
+    // Section 10 in the direction the response-encryption support did not
+    // cover: the ISSUER publishes the key and the wallet encrypts to it. Needs
+    // only the STS mock, so it is registered unconditionally.
+    jobs.push({
+      name: "OID4VCI Credential Request encryption (section 10, issuer-published keys)",
+      script: "oid4vci_request_encryption.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        WALTID_ISSUER_URL: env.WALTID_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "VC Refresh — ldp_vc / bbs-2023 (OID4VCI 14.5 refresh_token + re-request)",
+      script: "ldp_vc_refresh.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
     jobs.push({
       name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, unlinkable)",
       script: "ldp_vc_presentation.js",
@@ -444,6 +486,42 @@ function buildJobs() {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
         OID4VP_VERIFIER_URL: env.OID4VP_VERIFIER_URL || "",
+      },
+    });
+    // The issuer named by a DID, for both formats that can carry one. It runs
+    // against the IdentityCredentialDid / IdentityCredentialLdpVcDid
+    // configurations, which exist so that ONE run covers both routes: those two
+    // name the issuer by did:web while their plain siblings keep the https
+    // identifier, so the specification's own key resolution
+    // (/.well-known/jwt-vc-issuer, which is all draft-ietf-oauth-sd-jwt-vc
+    // defines) goes on being exercised beside the DID extension. A server-wide
+    // switch could only ever test one of the two.
+    //
+    // The chain it checks is advertisement -> resolution -> domain linkage ->
+    // credential -> signature, and the last link is the one that matters: a DID
+    // that resolves to the wrong key looks like success until something tries to
+    // verify with it. Needs only the STS mock.
+    // The mock STS's own index of itself: GET /sts-metadata lists every endpoint it
+    // registers, with its methods, and every specification it implements. The list
+    // is read from the running Express router rather than kept by hand, and this
+    // job is what makes that worth something — it fails if a route is registered
+    // and undescribed (the page understates what is callable) or described and not
+    // registered (the page advertises a 404, which is what a rename produces).
+    // Needs only the STS mock.
+    jobs.push({
+      name: "STS metadata page (/sts-metadata lists exactly what the router registers)",
+      script: "sts_metadata.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "VC Issuance — issuer named by DID (did:web, domain linkage, both formats)",
+      script: "vc_did.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
   }

@@ -309,6 +309,11 @@ async function mintJwtVcJson(issuerBase, configurationId, accessToken, proofKeyM
   log.debug("Leaving mintJwtVcJson().");
   return {
     credential: credential,
+    // The whole Credential Response, so a caller can hand the issuer's ACTUAL
+    // bytes to the wallet-side reader rather than rebuilding a body it merely
+    // believes the issuer sends. Reconstructing it would assert the caller's
+    // assumption about the shape, which is the assumption most likely wrong.
+    responseBody: response.body,
     did: did,
     publicJwk: { kty: publicJwk.kty, crv: publicJwk.crv, x: publicJwk.x, y: publicJwk.y },
     privateJwk: privateJwk,

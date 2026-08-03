@@ -299,6 +299,62 @@ function validateVciMetadata(doc) {
       }
     }
   }
+  // The request side (section 10). Deliberately NOT a copy of the block above:
+  // requests have no alg_values_supported — the JWE alg must equal the alg of
+  // the JWK the wallet chose — and they carry a jwks whose every key MUST have a
+  // kid. Checking it against the response side's rules would pass a document
+  // that no wallet can use.
+  if (doc.credential_request_encryption !== undefined) {
+    var req = doc.credential_request_encryption;
+    if (!isObject(req)) {
+      r.error("credential_request_encryption", "must be an object.", VCI);
+    } else {
+      var label = VCI + " (credential_request_encryption)";
+      if (!isObject(req.jwks) || !isArray(req.jwks.keys) || !req.jwks.keys.length) {
+        r.error("credential_request_encryption.jwks",
+          "is REQUIRED and must be a JWK Set with at least one key for the wallet to encrypt to.",
+          label);
+      } else {
+        req.jwks.keys.forEach(function (k, i) {
+          if (!isObject(k)) {
+            r.error("credential_request_encryption.jwks.keys[" + i + "]", "must be an object.", label);
+            return;
+          }
+          if (typeof k.kid !== "string" || !k.kid) {
+            r.error("credential_request_encryption.jwks.keys[" + i + "].kid",
+              "is REQUIRED: \"Each JWK in the set MUST have a kid (Key ID) parameter that uniquely " +
+              "identifies the key\", and the wallet has to echo it in the JWE header.", label);
+          }
+          if (typeof k.alg !== "string" || !k.alg) {
+            r.error("credential_request_encryption.jwks.keys[" + i + "].alg",
+              "is REQUIRED for request encryption: \"The alg parameter MUST be present. The JWE alg " +
+              "algorithm used MUST be equal to the alg value of the chosen JWK.\" Without it the " +
+              "wallet has no algorithm to use, since requests have no alg_values_supported.", label);
+          }
+        });
+        var kids = req.jwks.keys.map(function (k) { return isObject(k) ? k.kid : null; })
+          .filter(function (k) { return typeof k === "string" && k; });
+        if (kids.length !== new Set(kids).size) {
+          r.error("credential_request_encryption.jwks",
+            "has duplicate kid values; each kid must UNIQUELY identify a key, or the issuer cannot " +
+            "tell which one a request was encrypted to.", label);
+        }
+      }
+      checkStringArray(r, req, "enc_values_supported", label, true);
+      if (req.zip_values_supported !== undefined) {
+        checkStringArray(r, req, "zip_values_supported", label, false);
+      }
+      if (typeof req.encryption_required !== "boolean") {
+        r.error("credential_request_encryption.encryption_required",
+          "is REQUIRED and must be a boolean.", label);
+      }
+      if (req.alg_values_supported !== undefined) {
+        r.warn("credential_request_encryption.alg_values_supported",
+          "is not defined for request encryption — that member belongs to credential_response_" +
+          "encryption. The request algorithm comes from the alg of the chosen JWK.", label);
+      }
+    }
+  }
   if (doc.display !== undefined && !isArray(doc.display)) {
     r.error("display", "must be an array of display objects.", VCI);
   }

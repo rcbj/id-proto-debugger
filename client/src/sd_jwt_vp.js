@@ -305,6 +305,23 @@ function firstCredentialQueryId(dcql) {
   return (queries[0] && queries[0].id) || "";
 }
 
+// The credential FORMAT this verifier asked for.
+//
+// It is not the same question as "what format is the credential in hand", and
+// conflating the two is silently wrong in one direction: the wallet builds a
+// presentation in whatever shape it happens to hold, the verifier parses it in
+// whatever shape it asked for, and when they differ the refusal names the
+// symptom rather than the cause — a dc+sd-jwt verifier splits an ldp_vc JSON
+// object on "~", finds one part, and reports a malformed presentation.
+//
+// Empty when the query does not say. DCQL makes `format` required, but a wallet
+// that treated "absent" as "whatever I hold" would be back to the same bug, so
+// callers are left to decide rather than being handed a default here.
+function firstCredentialQueryFormat(dcql) {
+  var queries = dcqlCredentialQueries(dcql);
+  return (queries[0] && queries[0].format) || "";
+}
+
 // Whether the verifier insists on a Key Binding JWT. The default is true
 // (section 6.1): a presentation without holder binding is the exception, and the
 // wallet should not guess it is allowed.
@@ -509,6 +526,7 @@ module.exports = {
   requestedClaims: requestedClaims,
   claimNameForPath: claimNameForPath,
   firstCredentialQueryId: firstCredentialQueryId,
+  firstCredentialQueryFormat: firstCredentialQueryFormat,
   requiresKeyBinding: requiresKeyBinding,
   presentedPrefix: presentedPrefix,
   sdHash: sdHash,

@@ -290,8 +290,25 @@ function prepareRequest() {
     .then(fetchNonce)
     .then(function (nonce) { return signProof(nonce); })
     .then(function () {
+      // Cleared BEFORE the body is built, because buildRequestBody() renders the
+      // assembled call itself: leaving the previous run's JWE in place would
+      // make unticking the box redisplay a ciphertext that is no longer going to
+      // be sent.
+      request.encryptedRequest = "";
       buildRequestBody();
-      return true;
+      // Encrypting last, because the JWE has to cover the FINISHED body — doing
+      // it before the proof is signed would seal an incomplete request. Stored
+      // on `request` rather than produced at send time so the pane shows the
+      // very bytes that go out, not a second encryption of the same body with a
+      // different CEK and IV.
+      if (!wantsRequestEncryption()) return true;
+      return vciWallet.encryptRequestBody(request.body, requestEncryptionOffer())
+        .then(function (jwe) {
+          request.encryptedRequest = jwe;
+          // Re-render: the call built a moment ago described the plaintext.
+          renderAssembledCall();
+          return true;
+        });
     })
     .catch(function (e) {
       log.error("could not prepare the credential request: " + e.message);
@@ -403,7 +420,64 @@ function renderRequestOptions() {
       (encryption.encryption_required ? " and REQUIRES encryption." : ". Encryption is optional.") +
       " This wallet implements RSA-OAEP-256.");
   }
+
+  // The request side. Its availability is decided by the wallet module rather
+  // than by reading the metadata here, because the decision is not "is it
+  // advertised" — a key with no alg, or an enc this wallet cannot perform, is
+  // advertised and still unusable, and section 10 gives the wallet no way to
+  // guess past either. requestEncryptionOffer() already reaches that verdict
+  // for the module's own use; asking it again here is what keeps the checkbox
+  // and the request that gets sent from disagreeing.
+  var reqOffer = requestEncryptionOffer();
+  var reqBox = el("vc_encrypt_request");
+  if (reqBox) reqBox.disabled = !reqOffer.usable;
+  if (!reqOffer.usable && reqBox) reqBox.checked = false;
+  // Required-but-impossible is the state worth naming: the endpoint cannot be
+  // used at all, and saying only "unavailable" would leave the user retrying.
+  if (reqOffer.required && !reqOffer.usable) {
+    setText("vc_encrypt_request_note",
+      "This issuer REQUIRES request encryption and this wallet cannot provide it — " + reqOffer.reason +
+      " The Credential Endpoint cannot be used until that is resolved.");
+  } else if (reqOffer.usable) {
+    // Section 10 makes it the wallet's choice unless required, so the box is
+    // ticked for the user rather than forced, except when it is not a choice.
+    if (reqOffer.required && reqBox && !reqBox.checked) reqBox.checked = true;
+    setText("vc_encrypt_request_note", reqOffer.reason +
+      (reqOffer.required
+        ? " This issuer REQUIRES it, so it cannot be turned off."
+        : " Encryption is optional here; the request goes as application/jwt when ticked.") +
+      (reqOffer.skipped && reqOffer.skipped.length
+        ? " Other keys were skipped: " + reqOffer.skipped.join(", ") + "."
+        : ""));
+    if (reqOffer.required && reqBox) reqBox.disabled = true;
+  } else {
+    setText("vc_encrypt_request_note", reqOffer.reason);
+  }
   log.debug("Leaving renderRequestOptions().");
+}
+
+// What the issuer published for REQUEST encryption. Step 1 stores each metadata
+// member separately under a vci_-prefixed key, so this is the counterpart of
+// issuerEncryption() above and not a second way of reading the same thing.
+function issuerRequestEncryption() {
+  return sdJwtVc.getJson("vci_credential_request_encryption") || null;
+}
+
+// The wallet module's verdict on that offer. It takes a metadata-shaped object,
+// so the stored member is put back under its own name rather than the module
+// growing a second entry point for this page's storage layout.
+function requestEncryptionOffer() {
+  var published = issuerRequestEncryption();
+  return vciWallet.requestEncryptionOffer(
+    published ? { credential_request_encryption: published } : {});
+}
+
+// Whether the assembled request will actually be encrypted: the box, or the
+// issuer insisting. Mirrors how wantsEncryption is decided for the response.
+function wantsRequestEncryption() {
+  var offer = requestEncryptionOffer();
+  if (!offer.usable) return false;
+  return offer.required || !!(el("vc_encrypt_request") && el("vc_encrypt_request").checked);
 }
 
 // A change to any of them invalidates the assembled request, so it is rebuilt —
@@ -461,13 +535,23 @@ function renderAssembledCall() {
     return "";
   }
   var accessToken = sdJwtVc.get("token_access_token") || "";
+  // What is shown must be what is SENT. When the request is encrypted the body
+  // on the wire is the compact JWE and the media type is application/jwt, so
+  // showing the JSON here would describe a call this page does not make — and
+  // the JSON is exactly what encryption is hiding. The plaintext is still worth
+  // seeing, so it is named as such below the JWE rather than shown as the body.
+  var encryptedBody = request.encryptedRequest || "";
   var text = vciWallet.describeCall({
     method: "POST",
     url: endpoint,
-    contentType: "application/json",
+    contentType: encryptedBody ? "application/jwt" : "application/json",
     authorization: "Bearer " + (accessToken || "(no access token yet — authenticate in step 1)"),
-    body: JSON.stringify(request.body, null, 2)
+    body: encryptedBody || JSON.stringify(request.body, null, 2)
   });
+  if (encryptedBody) {
+    text += "\n\n--- the plaintext inside that JWE (not sent in the clear) ---\n" +
+            JSON.stringify(request.body, null, 2);
+  }
   setValue("vc_approval_request", text);
   log.debug("Leaving renderAssembledCall().");
   return text;
@@ -659,14 +743,21 @@ function approveIssuance() {
   el("vc_approve_button").disabled = true;
 
   var send = function () {
-    status("vc_approval_status", "Sending the Credential Request …", "vc-pending");
+    status("vc_approval_status",
+      request.encryptedRequest ? "Sending the encrypted Credential Request …"
+                               : "Sending the Credential Request …", "vc-pending");
+    // Section 10: an encrypted request IS a JWT and says so in its media type,
+    // which is what tells the issuer to decrypt rather than parse. The JWE was
+    // built in prepareRequest() over the finished body; it is reused here rather
+    // than rebuilt so the bytes sent are the bytes the pane displayed.
+    var encrypted = request.encryptedRequest || "";
     return fetch(request.config.credentialEndpoint, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": encrypted ? "application/jwt" : "application/json",
         "Authorization": "Bearer " + accessToken
       },
-      body: JSON.stringify(request.body || buildRequestBody())
+      body: encrypted || JSON.stringify(request.body || buildRequestBody())
     }).then(function (r) {
       return r.text().then(function (text) {
         return readCredentialResponse(r, text);
