@@ -53,6 +53,7 @@ async function selectBinding(driver, binding) {
 //     uses this against the deployed HTTPS site, which can't fetch the local
 //     http Keycloak descriptor (mixed content / CORS).
 async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
+  log.debug("Entering loadIdpMetadata().");
   if (metadataFile) {
     log.info("Upload IdP metadata from local file: " + metadataFile);
     var fileInput = By.id("saml_metadata_file");
@@ -73,12 +74,14 @@ async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
   await waitForValue(driver, By.id("saml_metadata_status"),
     function (v) { return v.indexOf("Loaded and parsed") >= 0; },
     "Metadata was not loaded/parsed.");
+  log.debug("Leaving loadIdpMetadata().");
 }
 
 // Perform an SP-initiated SSO login. This establishes the Keycloak SSO session
 // (session cookie) AND — when the response page renders — saves the NameID /
 // SessionIndex to localStorage, both of which the subsequent LogoutRequest needs.
 async function ssoLogin(driver, metadataUrl, spEntityId, user, binding, loginWait, metadataFile) {
+  log.debug("Entering ssoLogin().");
   log.info("SLO test — step 1: SSO login (binding=" + binding + ").");
   await driver.get(baseUrl + "/saml_request.html");
 
@@ -119,9 +122,11 @@ async function ssoLogin(driver, metadataUrl, spEntityId, user, binding, loginWai
     function (v) { return v.indexOf("Assertion") >= 0 && v.indexOf("no <Assertion") < 0; },
     "SSO did not yield an assertion — cannot exercise logout.", loginWait);
   log.info("SSO login complete; Keycloak session established.");
+  log.debug("Leaving ssoLogin().");
 }
 
 async function samlLogout(driver, metadataUrl, spEntityId, user, binding, metadataFile) {
+  log.debug("Entering samlLogout().");
   // Keycloak's login + logout round-trips can take several seconds on a cold
   // browser, so give the navigations a generous timeout.
   var loginWait = Math.max(waitTime, 15000);
@@ -191,9 +196,11 @@ async function samlLogout(driver, metadataUrl, spEntityId, user, binding, metada
   }
 
   log.info("SAML Single Logout succeeded (LogoutResponse status Success).");
+  log.debug("Leaving samlLogout().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) { options.addArguments("--headless"); }
   options.addArguments("--no-sandbox");
@@ -242,6 +249,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

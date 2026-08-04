@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Issuance (2 of 4)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/vc_issuance_2.js">
+</script>
+
+<!--#include file="/partials/vc_steps.html"-->
+
+<p class="vc-return"><a id="return_link" href="/vc-issuance-1.html">&larr; Back to step 1 (discovery &amp; configuration)</a></p>
+
+<h3 class="vc-title">VC Issuance &mdash; Step 2 of 4: Approve and Request the Credential</h3>
+
+
+<p class="vc-intro">The user has authenticated through the OIDC Authorization Code flow and
+<a href="/debugger2.html">debugger2.html</a> has exchanged the code for tokens. What follows is the OID4VCI
+credential request: the wallet proves possession of a key it just generated, the user approves the issuance, and the
+access token is presented to the issuer's <strong>Credential Endpoint</strong>.</p>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" onchange="vcSetAllPanes(this.checked);" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function vcSetAllPanes(expand) {
+  var fieldsets = ['tokens_fieldset', 'dpop_fieldset', 'request_fieldset', 'approval_fieldset', 'vc_tools_fieldset'];
+  for (var i = 0; i < fieldsets.length; i++) {
+    var fs = document.getElementById(fieldsets[i]);
+    if (fs) fs.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<!-- ====== Pane 0: the Token Request, for a pre-authorized offer (H.2/H.3) ====== -->
+<div class="step0 dbg-pane" id="pane_pre_authorized" style="display: none;">
+  <legend class="dbg-legend" id="preauth_expand_button" onclick="return vcissuance2.togglePane('preauth_fieldset');">Token Request (pre-authorized code)</legend>
+  <fieldset name="preauth_fieldset" id="preauth_fieldset" style="display: block;">
+    <p class="vc-note">This offer carries a <code>pre-authorized_code</code>, so there was no authorization
+    request and nobody was sent to a login page: the End-User was identified by the issuer beforehand and this
+    code is the proof of it. The wallet goes straight to the token endpoint with the grant type
+    <code>urn:ietf:params:oauth:grant-type:pre-authorized_code</code>.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Pre-authorized code</label><span class="tooltiptext">From the Credential Offer. Single use, like an authorization code.</span></div></td>
+          <td><code id="vc_pre_authorized_code">&mdash;</code></td>
+        </tr>
+        <tr id="vc_tx_code_row">
+          <td>
+            <div class="tooltip"><label for="vc_tx_code">Transaction Code</label>
+              <span class="tooltiptext">The code the issuer displayed on ITS screen (tx_code). It never travels in the offer — that separation is what makes the cross-device flow safe to start from a QR code anyone could photograph.</span>
+            </div>
+          </td>
+          <td>
+            <input type="text" id="vc_tx_code" name="vc_tx_code" size="20" autocomplete="off"
+                   oninput="return vcissuance2.onTxCodeChange();" />
+            <span class="vc-note" id="vc_tx_code_hint">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>The call</label><span class="tooltiptext">The Token Request exactly as it will be sent: method, URL, headers and the form-encoded body.</span></div></td>
+          <td><textarea class="vc-token" rows="9" readonly id="vc_token_request"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vc_token_request_button" type="button" value="Send the Token Request" onclick="return vcissuance2.sendTokenRequest();" />
+              <span class="tooltiptext">Redeem the pre-authorized code for an access token. Nothing is issued yet — the credential is requested further down this page.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="vc_token_status">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Response</label><span class="tooltiptext">The token endpoint's answer, verbatim.</span></div></td>
+          <td><pre class="vc-json" id="vc_token_response" style="display: none;">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 1: the tokens ============ -->
+<div class="step0 dbg-pane" id="pane_tokens">
+  <legend class="dbg-legend" id="tokens_expand_button" onclick="return vcissuance2.togglePane('tokens_fieldset');">Tokens from the OIDC Authorization Code Flow</legend>
+  <fieldset name="tokens_fieldset" id="tokens_fieldset" style="display: block;">
+    <p class="vc-note">The token set <a href="/debugger2.html">debugger2.html</a> obtained from the authorization
+    server. The <strong>access token</strong> is what authorizes the credential request below; the ID token says who
+    was authenticated.</p>
+    <div class="vc-status" id="tokens_status">&nbsp;</div>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Access Token</label><span class="tooltiptext">Presented to the Credential Endpoint as a Bearer credential. The issuer decides what to put in the credential based on who this token belongs to.</span></div>
+            <p style="font-size:80%;"><a href="/token_detail.html?type=access&amp;from=vc-issuance-2.html">Inspect</a></p>
+          </td>
+          <td><textarea class="vc-token" rows="4" readonly id="vc_access_token"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>ID Token</label><span class="tooltiptext">The OIDC authentication result. Not sent to the credential endpoint — shown so you can see who the credential will be about.</span></div>
+            <p style="font-size:80%;"><a href="/token_detail.html?type=id&amp;from=vc-issuance-2.html">Inspect</a></p>
+          </td>
+          <td><textarea class="vc-token" rows="4" readonly id="vc_id_token"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Refresh Token</label><span class="tooltiptext">Not used by the issuance itself — but it is what lets step 4 refresh the credential later without troubling the End-User (OID4VCI section 14.5). An authorization server is not obliged to issue one, and the pre-authorized code grant normally does not.</span></div>
+          </td>
+          <td><textarea class="vc-token" rows="3" readonly id="vc_refresh_token"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>ID Token claims</label><span class="tooltiptext">The decoded ID token payload — the authenticated subject the issuer will describe.</span></div>
+          </td>
+          <td><pre class="vc-json" id="vc_id_token_claims">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ====== DPoP: sender-constraining the access token (RFC 9449) ====== -->
+<div class="step0 dbg-pane" id="pane_dpop">
+  <legend class="dbg-legend" id="dpop_expand_button" onclick="return vcissuance2.togglePane('dpop_fieldset');">DPoP &mdash; Sender-Constrained Access Token</legend>
+  <fieldset name="dpop_fieldset" id="dpop_fieldset" style="display: block;">
+    <details class="vc-hint"><summary>What DPoP is, and why OID4VCI recommends it</summary>
+    <p>A <strong>Bearer</strong> access token (<a href="https://www.rfc-editor.org/rfc/rfc6750" target="_blank" rel="noopener noreferrer">RFC 6750</a>)
+    is a password: anything that can read the bytes can spend them. <a href="https://www.rfc-editor.org/rfc/rfc9449" target="_blank" rel="noopener noreferrer">DPoP</a>
+    binds the token to a key &mdash; the token carries <code>cnf.jkt</code>, the
+    <a href="https://www.rfc-editor.org/rfc/rfc7638" target="_blank" rel="noopener noreferrer">RFC 7638</a> thumbprint of a public key &mdash; and
+    every request presenting it must also carry a fresh signature from the matching private key over
+    <em>that request's</em> method and URI. A stolen token is then useless without the key.</p>
+    <p><a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a>
+    says the use of DPoP is <strong>RECOMMENDED</strong> for sender-constrained access tokens, because mTLS
+    (<a href="https://www.rfc-editor.org/rfc/rfc8705" target="_blank" rel="noopener noreferrer">RFC 8705</a>) &mdash; the other way to do this &mdash;
+    is impractical for a native-app wallet. It applies to the Token Endpoint and to every protected endpoint
+    the issuer publishes: Credential, Deferred Credential and Notification.</p>
+    <p>DPoP is indifferent to the <strong>credential format</strong>: it binds an OAuth access token, not a
+    credential, so it works the same for <code>dc+sd-jwt</code>, <code>jwt_vc_json</code> and <code>ldp_vc</code>.</p>
+    </details>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Sender-constrain the token</label><span class="tooltiptext">Whether to send a DPoP proof on the Token Request. With it, the authorization server binds the access token (and the refresh token) to this wallet's key and answers token_type: DPoP; without it the token comes back as a Bearer token, which is what the rest of this workflow demonstrates by default.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="vc_dpop_enabled" name="vc_dpop_enabled"
+                   onchange="return vcissuance2.onDpopEnabledChange();" />
+            <label for="vc_dpop_enabled">Use DPoP (RFC 9449) instead of a Bearer access token</label>
+            <span class="vc-note" id="vc_dpop_enabled_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Credential key binding</label><span class="tooltiptext">Which key the CREDENTIAL is bound to, which is a different question from whether the TOKEN is bound. Proof of Possession generates a holder key of its own and proves it with an openid4vci-proof+jwt. Holder of Key reuses the DPoP key, so one key is both the token's cnf.jkt and the credential's cnf.jwk.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="vc_dpop_holder_of_key" name="vc_dpop_holder_of_key"
+                   onchange="return vcissuance2.onBindingModeChange();" />
+            <label for="vc_dpop_holder_of_key">Holder of Key &mdash; bind the credential to the DPoP key
+            (unchecked: Proof of Possession, a holder key of its own)</label>
+            <span class="vc-note" id="vc_dpop_binding_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Proof algorithm</label><span class="tooltiptext">The JWS algorithm the DPoP proofs are signed with. RFC 9449 requires an asymmetric algorithm and forbids none and any MAC. Which ones the authorization server accepts is in its dpop_signing_alg_values_supported metadata, shown below.</span></div></td>
+          <td>
+            <select class="stored" id="vc_dpop_alg" name="vc_dpop_alg"
+                    onchange="return vcissuance2.onDpopAlgChange();">
+              <option value="ES256">ES256</option>
+              <option value="RS256">RS256</option>
+            </select>
+            <input class="btn2" id="vc_dpop_regenerate_button" type="button" value="New Key Pair"
+                   onclick="return vcissuance2.regenerateDpopKey();" />
+            <span class="vc-note" id="vc_dpop_alg_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Server accepts</label><span class="tooltiptext">dpop_signing_alg_values_supported from the authorization server's RFC 8414 metadata. Its presence is the only signal that DPoP is on offer at all, so an absent value means the server has not said it supports DPoP.</span></div></td>
+          <td><code id="vc_dpop_server_algs">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>DPoP public key</label><span class="tooltiptext">The public half, which travels in the jwk header of every proof. It is not secret: the point is not to hide the key but to make the token useless without the private half.</span></div></td>
+          <td><pre class="vc-json" id="vc_dpop_public_jwk">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>jkt (RFC 7638)</label><span class="tooltiptext">The JWK Thumbprint of the public key: the SHA-256 of its required members in lexicographic order with no whitespace. This is the value the access token carries as cnf.jkt.</span></div></td>
+          <td><code id="vc_dpop_jkt">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Bind the authorization code</label><span class="tooltiptext">RFC 9449 section 10: sending dpop_jkt on the AUTHORIZATION request binds the code itself to this key, so a stolen code cannot be redeemed even by someone who also has the PKCE code_verifier. It has to be set before step 1 runs, which is why this only says whether it happened.</span></div></td>
+          <td><code id="vc_dpop_jkt_sent">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Token binding</label><span class="tooltiptext">What the token endpoint actually answered: token_type and the cnf.jkt inside the access token. Asking for a binding does not create one — a server that ignores the proof would answer Bearer, and this row is how you would notice.</span></div></td>
+          <td><div class="signed_metadata_status" id="vc_dpop_token_status">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Server-supplied nonce</label><span class="tooltiptext">RFC 9449 sections 8 and 9: a server may require a nonce of its own choosing in every proof, asking for it with use_dpop_nonce and supplying it in a DPoP-Nonce header. The wallet retries once and remembers the nonce, so later calls carry it without being asked again.</span></div></td>
+          <td><code id="vc_dpop_nonce">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Proof sent</label><span class="tooltiptext">The most recent DPoP proof this page sent, decoded. htm and htu tie it to one method and one endpoint; ath is the hash of the access token it accompanied; jti makes it single use.</span></div></td>
+          <td><pre class="vc-json" id="vc_dpop_last_proof">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 2: the credential request ============ -->
+<div class="step0 dbg-pane" id="pane_request">
+  <legend class="dbg-legend" id="request_expand_button" onclick="return vcissuance2.togglePane('request_fieldset');">OID4VCI Credential Request</legend>
+  <fieldset name="request_fieldset" id="request_fieldset" style="display: block;">
+    <p class="vc-note">Everything the request is built from. The <strong>holder key pair</strong> is generated in this
+    browser; only its public half leaves, inside the proof of possession, and the issuer copies it into the
+    credential's <code>cnf</code> claim so a verifier can later demand proof that the presenter holds the private
+    half.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Credential Endpoint</label><span class="tooltiptext">credential_endpoint from the credential issuer metadata retrieved in step 1.</span></div></td>
+          <td><code id="vc_credential_endpoint">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Credential Issuer</label><span class="tooltiptext">credential_issuer — also the audience of the proof of possession.</span></div></td>
+          <td><code id="vc_credential_issuer">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Credential requested</label><span class="tooltiptext">credential_configuration_id, its format and its vct — the credential the issuer is being asked to mint.</span></div></td>
+          <td><code id="vc_credential_config">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Holder public key</label><span class="tooltiptext">The public half of the key pair generated in this browser, as a JWK. It goes in the proof JWT header and ends up in the credential's cnf claim.</span></div>
+            <p><input class="btn2" id="vc_regenerate_key_button" type="button" value="Regenerate Key" onclick="return vcissuance2.regenerateHolderKey();" /></p>
+            <p><input class="btn2" id="vc_download_key_button" type="button" value="Download Key Pair" onclick="return vcissuance2.downloadHolderKey();" title="Save the holder key pair (both halves, as a JWK pair) to a file. This is the only copy you get if the key pair is not kept in localStorage." /></p>
+          </td>
+          <td><pre class="vc-json" id="vc_holder_jwk">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Keep the key pair</label><span class="tooltiptext">Whether the PRIVATE half of the holder key pair may be written to this browser's localStorage. It has to be kept for the workflow to continue past this page: step 4 needs it to refresh the credential, and the presentation pages need it to sign the Key Binding JWT. Turn it off to keep it out of storage, and carry it yourself with Download Key Pair.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="vc_save_holder_key" name="vc_save_holder_key" checked="checked"
+                   onchange="return vcissuance2.onSaveHolderKeyChange();" />
+            <label for="vc_save_holder_key">Save this holder key pair in browser localStorage</label>
+            <span class="vc-note" id="vc_holder_key_storage_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>c_nonce</label><span class="tooltiptext">A fresh nonce from the issuer's Nonce Endpoint, carried by the proof so the issuer knows the proof was made for this request.</span></div></td>
+          <td><code id="vc_nonce">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Proof of possession</label><span class="tooltiptext">A JWT with typ openid4vci-proof+jwt, signed by the holder key, naming the credential issuer as its audience and carrying the c_nonce.</span></div></td>
+          <td><textarea class="vc-token" rows="4" readonly id="vc_proof_jwt"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>JWT Header:</label><span class="tooltiptext">The header of the proof JWT carried in the request body's proofs.jwt, decoded. typ marks it as an OID4VCI proof of possession, alg is what it was signed with, and jwk is the holder public key the credential will be bound to.</span></div></td>
+          <td><textarea class="vc-token" rows="12" readonly id="jwt_header" name="jwt_header"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>JWT Payload:</label><span class="tooltiptext">The payload of the proof JWT carried in the request body's proofs.jwt, decoded: the wallet as iss, the credential issuer as aud, when it was signed (iat), and the c_nonce that ties it to this request.</span></div></td>
+          <td><textarea class="vc-token" rows="8" readonly id="jwt_payload" name="jwt_payload"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Request body</label><span class="tooltiptext">The JSON that will be POSTed to the credential endpoint with the access token as a Bearer credential.</span></div></td>
+          <td><pre class="vc-json" id="vc_request_body">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 3: approval ============ -->
+<!-- ====== What the Credential Request will ask for ====== -->
+<div class="step0 dbg-pane" id="pane_request_options">
+  <legend class="dbg-legend" id="request_options_expand_button" onclick="return vcissuance2.togglePane('request_options_fieldset');">Credential Request Options</legend>
+  <fieldset name="request_options_fieldset" id="request_options_fieldset" style="display: block;">
+    <p class="vc-note">Three things the wallet gets to decide, each of which changes the request below.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Naming the credential</label>
+              <span class="tooltiptext">OID4VCI section 8.2. If the token response granted credential_identifiers (because the authorization used authorization_details), the request MUST use credential_identifier and MUST NOT use credential_configuration_id. Otherwise it is the other way round. This is not a preference — it follows from what was granted.</span>
+            </div>
+          </td>
+          <td><code id="vc_identifier_mode">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="vc_batch_size">Keys to bind</label>
+              <span class="tooltiptext">One proof per key, one credential per proof (section 8.3). The issuer's batch_credential_issuance.batch_size is the most it will accept; asking for more than one is how a wallet gets several copies of the same credential bound to different keys.</span>
+            </div>
+          </td>
+          <td>
+            <input type="number" id="vc_batch_size" name="vc_batch_size" min="1" max="16" value="1" size="4"
+                   onchange="return vcissuance2.onRequestOptionsChange();" />
+            <span class="vc-note" id="vc_batch_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="vc_encrypt_response">Encrypt the response</label>
+              <span class="tooltiptext">Section 10. The wallet sends a public key and the issuer returns a JWE instead of JSON, which this page then decrypts. Only offered when the issuer advertises credential_response_encryption.</span>
+            </div>
+          </td>
+          <td>
+            <input type="checkbox" id="vc_encrypt_response" name="vc_encrypt_response"
+                   onchange="return vcissuance2.onRequestOptionsChange();" />
+            <span class="vc-note" id="vc_encrypt_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="vc_encrypt_request">Encrypt the request</label>
+              <span class="tooltiptext">Section 10, the other direction. The ISSUER publishes keys in credential_request_encryption.jwks and the wallet encrypts the Credential Request to one of them, sending it as application/jwt instead of JSON. Unlike the response side there is no alg_values_supported: the JWE alg is the alg of the key chosen from the JWKS. Only offered when the issuer advertises credential_request_encryption.</span>
+            </div>
+          </td>
+          <td>
+            <input type="checkbox" id="vc_encrypt_request" name="vc_encrypt_request"
+                   onchange="return vcissuance2.onRequestOptionsChange();" />
+            <span class="vc-note" id="vc_encrypt_request_note">&nbsp;</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<div class="step0 dbg-pane" id="pane_approval">
+  <legend class="dbg-legend" id="approval_expand_button" onclick="return vcissuance2.togglePane('approval_fieldset');">Approve Issuance</legend>
+  <fieldset name="approval_fieldset" id="approval_fieldset" style="display: block;">
+    <div class="vc-approval">
+      <h4>Issue this credential?</h4>
+      <p>Approving will send the Credential Request shown below to the issuer, exactly as it appears. The issuer
+      will mint an SD-JWT VC describing the authenticated user and bound to the holder key generated on this
+      page.</p>
+      <ul>
+        <li>Issuer: <code id="vc_approval_issuer">&mdash;</code></li>
+        <li>Credential: <code id="vc_approval_credential">&mdash;</code></li>
+        <li>Subject: <code id="vc_approval_subject">&mdash;</code></li>
+        <li>Claims the issuer says this credential can carry: <span id="vc_approval_claims">&mdash;</span></li>
+      </ul>
+      <div class="tooltip vc-approval-request">
+        <label for="vc_approval_request">The call this will make</label>
+        <span class="tooltiptext">The fully assembled HTTP request: the method and URL of the Credential Endpoint, the headers (including the access token presented as a Bearer credential), and the JSON body carrying the proof of possession. This is exactly what Approve sends.</span>
+      </div>
+      <textarea class="vc-token" rows="14" readonly id="vc_approval_request"></textarea>
+      <p>
+        <input class="btn2" id="vc_approve_button" type="button" value="Approve and Request Credential" onclick="return vcissuance2.approveIssuance();" />
+        <input class="btn2" id="vc_deny_button" type="button" value="Deny" onclick="return vcissuance2.denyIssuance();" />
+      </p>
+      <div class="vc-status" id="vc_approval_status">&nbsp;</div>
+    </div>
+    <pre class="vc-json" id="vc_response_body" style="display:none;">&nbsp;</pre>
+  </fieldset>
+</div>
+
+<!-- ====== The issuer needs more time (H.3) ====== -->
+<div class="step0 dbg-pane" id="pane_deferred" style="display: none;">
+  <legend class="dbg-legend" id="deferred_expand_button" onclick="return vcissuance2.togglePane('deferred_fieldset');">Deferred Issuance</legend>
+  <fieldset name="deferred_fieldset" id="deferred_fieldset" style="display: block;">
+    <p class="vc-note">The issuer answered <code>202</code> with a <code>transaction_id</code> instead of a
+    credential: it cannot issue this one immediately (a background check, a human in the loop). The wallet
+    comes back to the <strong>Deferred Credential Endpoint</strong> with that identifier until the credential is
+    ready. The issuer says how long to wait between attempts in <code>interval</code>, and the
+    <code>transaction_id</code> stops working the moment the credential has been collected.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Transaction</label><span class="tooltiptext">transaction_id from the Credential Response. It identifies this deferred issuance and nothing else.</span></div></td>
+          <td><code id="vc_transaction_id">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Endpoint</label><span class="tooltiptext">deferred_credential_endpoint from the credential issuer metadata. An issuer that cannot defer does not publish one.</span></div></td>
+          <td><code id="vc_deferred_endpoint">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>The call</label><span class="tooltiptext">The Deferred Credential Request as it is sent, each time.</span></div></td>
+          <td><textarea class="vc-token" rows="8" readonly id="vc_deferred_request"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Attempts</label><span class="tooltiptext">Every poll and what came back, so the waiting is visible rather than implied.</span></div></td>
+          <td><pre class="vc-json" id="vc_deferred_attempts">&mdash;</pre></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vc_deferred_poll_button" type="button" value="Check again now" onclick="return vcissuance2.pollDeferred();" />
+              <span class="tooltiptext">Ask the Deferred Credential Endpoint again without waiting for the interval. The wallet is already retrying on its own.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="vc_deferred_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

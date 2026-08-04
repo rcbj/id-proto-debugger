@@ -54,6 +54,7 @@ function listen(server) {
 // 1. Which addresses the default policy blocks.
 // ---------------------------------------------------------------------------
 function addressMatrix() {
+  log.debug("Entering addressMatrix().");
   log.info("=== The default policy, address by address ===");
   var guard = guardModule.createGuard({}, quiet);
   assert.ok(guard.enabled, "the guard must be ON when the configuration says nothing.");
@@ -99,6 +100,7 @@ function addressMatrix() {
   });
   log.info("[policy] OK — " + blocked.length + " private/loopback forms refused, " +
            allowed.length + " public ones allowed, across " + guard.ranges.length + " ranges.");
+  log.debug("Leaving addressMatrix().");
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +108,7 @@ function addressMatrix() {
 //    anything else.
 // ---------------------------------------------------------------------------
 function rangeConfiguration() {
+  log.debug("Entering rangeConfiguration().");
   log.info("=== The range configuration ===");
   var good = ["10.0.0.0/8", "10.0.0.0-10.255.255.255", "fc00::/7", "2001:db8::1-2001:db8::ff", "0.0.0.0/0"];
   good.forEach(function (entry) {
@@ -145,16 +148,19 @@ function rangeConfiguration() {
     "loopback is NOT blocked by a policy that does not name it — the list is the policy.");
   log.info("[config] OK — " + good.length + " range forms accepted, " + refused.length +
            " malformed entries refused with a reason, and a configured list replaces the defaults.");
+  log.debug("Leaving rangeConfiguration().");
 }
 
 // ---------------------------------------------------------------------------
 // 3. Layer one: the URL pre-flight.
 // ---------------------------------------------------------------------------
 async function urlPreflight() {
+  log.debug("Entering urlPreflight().");
   log.info("=== Layer 1: the URL pre-flight ===");
   var guard = guardModule.createGuard({}, quiet);
 
   async function refuses(url, why) {
+    log.debug("Entering refuses().");
     var failed = null;
     try {
       await guard.assertUrlAllowed(url);
@@ -166,6 +172,7 @@ async function urlPreflight() {
       "the refusal should carry the EBLOCKEDADDRESS code, got: " + failed.code);
     assert.ok(/Refusing to call/.test(failed.message),
       "and a message a caller can act on, got: " + failed.message);
+    log.debug("Leaving refuses().");
   }
 
   await refuses("http://127.0.0.1:8080/token", "literal loopback");
@@ -181,12 +188,14 @@ async function urlPreflight() {
   await guard.assertUrlAllowed("https://[2606:4700:4700::1111]/");
   log.info("[preflight] OK — loopback by literal, by name and by IPv6, metadata and RFC 1918 all refused; " +
            "public literals allowed.");
+  log.debug("Leaving urlPreflight().");
 }
 
 // ---------------------------------------------------------------------------
 // 4. Layer two: the agent's DNS lookup — the layer that survives a REDIRECT.
 // ---------------------------------------------------------------------------
 async function agentLayer() {
+  log.debug("Entering agentLayer().");
   log.info("=== Layer 2: the agent (what a redirect hop goes through) ===");
   var guard = guardModule.createGuard({}, quiet);
 
@@ -195,6 +204,8 @@ async function agentLayer() {
   var port = await listen(victim);
 
   function fetchWith(agent) {
+    log.debug("Entering fetchWith().");
+    log.debug("Leaving fetchWith().");
     return new Promise(function (resolve, reject) {
       var req = http.request({ host: "127.0.0.1", port: port, path: "/", agent: agent },
         function (res) {
@@ -228,6 +239,7 @@ async function agentLayer() {
   victim.close();
   log.info("[agent] OK — the guarded agent refuses the connection before the socket is opened, " +
            "which is the same path a redirect hop takes; an ordinary agent reaches the same server.");
+  log.debug("Leaving agentLayer().");
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +251,7 @@ async function agentLayer() {
 // network and NO address policy applies to it.
 // ---------------------------------------------------------------------------
 function schemePolicy() {
+  log.debug("Entering schemePolicy().");
   log.info("=== The scheme policy (http/https only) ===");
   var guard = guardModule.createGuard({}, quiet);
 
@@ -284,12 +297,14 @@ function schemePolicy() {
 
   log.info("[scheme] OK — http/https allowed; data, file, ftp, javascript and ws refused, " +
            "with the off switch making no difference.");
+  log.debug("Leaving schemePolicy().");
 }
 
 // ---------------------------------------------------------------------------
 // 5. install(): what it does to the http client, and the off switch.
 // ---------------------------------------------------------------------------
 function installation() {
+  log.debug("Entering installation().");
   log.info("=== Installing on the http client ===");
   function stubAxios() {
     return {
@@ -333,6 +348,7 @@ function installation() {
   });
   log.info("[install] OK — enabled: both agents plus the scheme and address interceptors; " +
            "disabled: the scheme check only; and only a real `false` disables the address policy.");
+  log.debug("Leaving installation().");
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +357,7 @@ function installation() {
 //    are reported as skipped there rather than silently passing.
 // ---------------------------------------------------------------------------
 function shippedConfiguration() {
+  log.debug("Entering shippedConfiguration().");
   log.info("=== The wiring and the shipped configuration ===");
   var apiDir = path.join(__dirname, "..", "api");
   if (!fs.existsSync(path.join(apiDir, "server.js"))) {
@@ -376,6 +393,7 @@ function shippedConfiguration() {
   });
   log.info("[shipped] OK — server.js installs the guard, and every api/env config carries a usable " +
            "range list (local and docker-tests disable it deliberately; test.js keeps it on).");
+  log.debug("Leaving shippedConfiguration().");
 }
 
 async function test() {

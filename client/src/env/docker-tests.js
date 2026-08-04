@@ -22,6 +22,12 @@ var config = {
   // Default OID4VCI Credential Issuer base URL (the mock issuer the STS
   // service also hosts) for the SD-JWT VC issuance workflow.
   oid4vciIssuerUrlDefault: "http://sts:8081",
+  // Where the OID4VP verifier lives, for the PRESENTATION workflow. Separate
+  // from the issuer above: they share an origin only on this suite's mock STS,
+  // and deriving one from the other breaks the moment issuance is run against
+  // walt.id (its issuer is :7005/openid4vci, its verifier a different service
+  // on :7003).
+  oid4vpVerifierUrlDefault: "http://sts:8081",
   // Default RFC 8414 (OAuth 2.0 Authorization Server Metadata) endpoint for
   // the Metadata Retrieval panes. The mock authorization server metadata the
   // STS service publishes.

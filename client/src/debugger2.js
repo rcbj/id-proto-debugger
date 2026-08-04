@@ -3,6 +3,7 @@ const appconfig = require(process.env.CONFIG_FILE);
 // both Configuration Parameters panes carry the same fields and defaults.
 const opMetadata = require("./op_metadata");
 const sdJwtVc = require("./sd_jwt_vc");
+const vciWallet = require("./vci_wallet");
 const bunyan = require("bunyan");
 const DOMPurify = require("dompurify");
 const $ = require("jquery");
@@ -126,17 +127,40 @@ function tokenButtonClick() {
   var formData = buildInternalTokenAPIRequestMessage();
   if (useFrontEnd) {
     log.debug("Using frontend to call Token Endpoint. formData=" + JSON.stringify(formData));
-    $.ajax({
-      type: "POST",
-      crossdomain: true,
-      url: localStorage.getItem("token_endpoint"),
-      data: convertToOAuth2Format(formData),
-      contentType: "application/x-www-form-urlencoded",
-      success: successfulInternalTokenAPICall,
-      error: errorInternalTokenAPICall
-    });
+    // RFC 9449: when the SD-JWT VC workflow has DPoP switched on, this Token
+    // Request carries a proof and the token comes back bound. Building it is
+    // asynchronous (Web Crypto), so the call is made from the promise rather than
+    // inline — and when DPoP is off, dpopTokenRequestHeaders() resolves to an
+    // empty object and this is the request it always was.
+    dpopTokenRequestHeaders(localStorage.getItem("token_endpoint"))
+      .then(function (headers) {
+        $.ajax({
+          type: "POST",
+          crossdomain: true,
+          url: localStorage.getItem("token_endpoint"),
+          data: convertToOAuth2Format(formData),
+          contentType: "application/x-www-form-urlencoded",
+          headers: headers,
+          success: successfulInternalTokenAPICall,
+          error: errorInternalTokenAPICall
+        });
+      });
   } else {
     log.debug("Using backend to call Token Endpoint. formData=" + JSON.stringify(formData));
+    // The proxied call cannot carry a DPoP proof: the api makes the request to the
+    // token endpoint, so a proof built here would either name the api as its htu
+    // (and be refused) or name an endpoint this browser is not calling. Saying so
+    // beats sending an unbound token onward as if it were bound — which is the
+    // failure this whole mechanism exists to prevent.
+    if (sdJwtVc.dpopEnabled()) {
+      log.debug("DPoP is on, but this call is proxied through the api, which does not forward " +
+                "DPoP proofs.");
+      $("#sdjwtvc_banner").append(
+        "<p class='vc-bad'>DPoP is on, but this Token Request is being <strong>proxied through " +
+        "the api</strong>, which does not forward DPoP proofs \u2014 so the token will come back " +
+        "as an ordinary Bearer token. Untick <em>Call the token endpoint from the api</em> to " +
+        "send the request from the browser and have it bound.</p>");
+    }
     $.ajax({
       type: "POST",
       crossdomain: true,
@@ -149,6 +173,53 @@ function tokenButtonClick() {
   }
   log.debug("Leaving tokenButtonClick().");
   return false; // don't reload the page.
+}
+
+// ---------------------------------------------------------------------------
+// The DPoP proof for this page's Token Request (RFC 9449).
+//
+// This page is shared: it is the OAuth2/OIDC workflow's token exchange AND the
+// SD-JWT VC issuance workflow's authorization-code leg. DPoP is a decision the VC
+// workflow makes, so it is read from that workflow's state and is simply absent
+// for everybody else — which is why this resolves to {} rather than refusing when
+// there is nothing to sign with.
+//
+// It applies only to the BROWSER-DIRECT call. The proxied call goes to the api,
+// which then calls the token endpoint itself: a proof made here would name the
+// api's URL as its htu and be refused, and one naming the token endpoint would be
+// a proof for a request this browser is not making. Forwarding proofs through the
+// api is not implemented, so the pane says so instead of sending something that
+// cannot work.
+// ---------------------------------------------------------------------------
+function dpopTokenRequestHeaders(tokenEndpoint) {
+  log.debug("Entering dpopTokenRequestHeaders().");
+  var context = null;
+  try {
+    context = sdJwtVc.dpopContext();
+  } catch (e) {
+    // sd_jwt_vc's storage is unavailable (private mode, or storage disabled).
+    // A Bearer request is the right fallback and needs no headers.
+    log.debug("dpopTokenRequestHeaders(): no DPoP state is readable: " + e.message);
+    context = null;
+  }
+  if (!context) {
+    log.debug("Leaving dpopTokenRequestHeaders(). No DPoP context; a Bearer request.");
+    return Promise.resolve({});
+  }
+  return vciWallet.dpopHeadersFor({
+    context: context, method: "POST", url: tokenEndpoint
+    // No accessToken: this request is how one is obtained.
+  }).then(function (built) {
+    log.debug("Leaving dpopTokenRequestHeaders(). A DPoP proof was built.");
+    return built.headers;
+  }).catch(function (e) {
+    // A proof that cannot be built must not silently become a Bearer request:
+    // the token would come back unbound and the workflow would carry on as if it
+    // were bound. Reported and then sent without, which the step 2 pane will show
+    // as "NOT bound".
+    log.error("could not build a DPoP proof for the token request: " + e.message);
+    return {};
+  });
 }
 
 function buildInternalTokenAPIRequestMessage() {
@@ -264,6 +335,13 @@ function successfulInternalTokenAPICall(data, textStatus, request)
           + ", request=" 
           + JSON.stringify(request));
   var token_endpoint_result_html = "";
+  // What the server said about the binding. Recorded rather than inferred,
+  // because asking for a DPoP-bound token does not make one: a server that
+  // ignored the proof answers Bearer, and the VC workflow's DPoP pane reports
+  // that difference.
+  if (!!data.token_type) {
+    localStorage.setItem(sdJwtVc.KEYS.DPOP_TOKEN_TYPE, DOMPurify.sanitize(String(data.token_type)));
+  }
   if (!!data.refresh_token && 
       data.refresh_token != 'undefined') {
     currentRefreshToken = DOMPurify.sanitize(data.refresh_token);
@@ -414,6 +492,7 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     });
     // If the SD-JWT VC workflow sent us here, the tokens are what it came for.
     returnToSdJwtVcFlow();
+  log.debug("Leaving successfulInternalTokenAPICall().");
 }
 
 function errorInternalTokenAPICall(request, status, error) {
@@ -424,7 +503,7 @@ function errorInternalTokenAPICall(request, status, error) {
     // the workflow's hold on it.
     sdJwtVc.endFlow();
     $("#sdjwtvc_banner").html("<strong>SD-JWT VC issuance</strong> — the token endpoint call failed, so the " +
-      "workflow stopped here. The error is shown below; <a href='/sd-jwt-vc-issuance-1.html'>step 1</a> " +
+      "workflow stopped here. The error is shown below; <a href='/vc-issuance-1.html'>step 1</a> " +
       "starts it again.");
   }
   log.error("request: " + JSON.stringify(request));
@@ -440,7 +519,7 @@ function errorInternalTokenAPICall(request, status, error) {
 
 function buildInternalRefreshAPIRequestMessage() {
   log.debug("Entering buildInternalRefreshAPIRequestMessage().");
-  log.debug("Entering buildInternalTokenAPIRequestMessage()."); 
+  log.debug("Entering buildInternalRefreshAPIRequestMessage()."); 
   // validate and process form here
   var token_endpoint = $("#token_endpoint").val();
   var client_id = $("#refresh_client_id").val();
@@ -474,7 +553,7 @@ function buildInternalRefreshAPIRequestMessage() {
   {
     formData.client_secret = client_secret
   }
-  log.debug("Leaving buildInternalTokenAPIRequestMessage().");
+  log.debug("Leaving buildInternalRefreshAPIRequestMessage().");
   log.debug("Leaving buildInternalRefreshAPIRequestMessage().");
   return formData;
 }
@@ -555,7 +634,7 @@ function successfulInternalRefreshAPICall(data, textStatus, request) {
 
 function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken, currentIDToken) {
   log.debug("Entering recreateRefreshTokenDisplay().");
-  log.debug("Entering displayRefreshTokenPane().");
+  log.debug("Entering recreateRefreshTokenDisplay().");
   var refresh_endpoint_result_html = "";
   log.debug("displayOpenIDConnectArtifacts=" + displayOpenIDConnectArtifacts);
   var iteration = 0;
@@ -660,11 +739,12 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken, cu
   }
   populateRevocationTokenWithLatestAccessToken();
   populateTokenExchangeSubjectWithLatestAccessToken();
-  log.debug("Leaving displayRefreshTokenPane().");
+  log.debug("Leaving recreateRefreshTokenDisplay().");
   log.debug("Leaving recreateRefreshTokenDisplay().");
 }
 
 function errorInternalRefreshAPICall(request, status, error) {
+  log.debug("Entering errorInternalRefreshAPICall().");
   log.error("An error occurred making a token refresh call to token endpoint.");
   log.error("request: " + JSON.stringify(request));
   log.error("status: " + JSON.stringify(status));
@@ -674,6 +754,7 @@ function errorInternalRefreshAPICall(request, status, error) {
     client_id: $("#refresh_client_id").val(),
     detail: 'error'
   });
+  log.debug("Leaving errorInternalRefreshAPICall().");
 }
 
 function resetUI(value)
@@ -909,6 +990,7 @@ function setAuthorizationGrantType()
   }
   resetUI(authzGrantType);
   log.debug("Entering setAuthorizationGrantType().");
+  log.debug("Leaving setAuthorizationGrantType().");
 }
 
 function loadValuesFromLocalStorage()
@@ -1298,6 +1380,7 @@ function recreateUniqueGrantFlowElements()
     fillGeneratedFields("#display_authz_error_class", { error: error });
   }
   log.debug("Entering recreateUniqueGrantFlowElements().");
+  log.debug("Leaving recreateUniqueGrantFlowElements().");
 }
 
 function recalculateTokenRequestDescription()
@@ -1737,7 +1820,7 @@ $(document).ready(function() {
 // ---------------------------------------------------------------------------
 // SD-JWT VC issuance.
 //
-// When the workflow started on sd-jwt-vc-issuance-1.html marked itself active,
+// When the workflow started on vc-issuance-1.html marked itself active,
 // this page is a waypoint rather than a destination: exchange the authorization
 // code for tokens as usual, then hand the browser back to the workflow, which
 // needs the access token to make its OID4VCI Credential Request.
@@ -1755,7 +1838,7 @@ function maybeContinueSdJwtVcFlow() {
     $(".container").prepend(
       "<div class='vc-handoff-banner'><strong>SD-JWT VC issuance</strong> — no authorization code came back " +
       "from the identity provider, so there are no tokens to carry into the credential request. " +
-      "<a href='/sd-jwt-vc-issuance-1.html'>Return to step 1</a>.</div>");
+      "<a href='/vc-issuance-1.html'>Return to step 1</a>.</div>");
     sdJwtVc.endFlow();
     return false;
   }
@@ -2050,6 +2133,7 @@ function recalculateRefreshErrorDescription(data)
 
 function parseFragment()
 {
+  log.debug("Entering parseFragment().");
   log.debug("hash=" + window.location.hash);
   var hash = window.location.hash.substr(1);
 
@@ -2058,6 +2142,7 @@ function parseFragment()
       result[parts[0]] = parts[1];
       return result;
   }, {});
+  log.debug("Leaving parseFragment().");
   return result;
 }
 
@@ -2080,7 +2165,7 @@ function displayOIDCArtifacts()
 
 function useRefreshTokens()
 {
-  log.debug("Entering useRefreshToken().");
+  log.debug("Entering useRefreshTokens().");
   var yesCheck = $("#useRefreshToken-yes").is(":checked");
   var noCheck = $("#useRefreshToken-no").is(":checked");
   log.debug("useRefreshToken-yes=" + yesCheck, "useRefreshToken-no=" + noCheck);
@@ -2123,6 +2208,7 @@ function clearLocalStorage() {
 // ---- Token History ----
 
 function decodeJwtPayload(token) {
+  log.debug("Entering decodeJwtPayload().");
   try {
     var parts = token.split('.');
     if (parts.length < 2) return null;
@@ -2132,6 +2218,7 @@ function decodeJwtPayload(token) {
   } catch (e) {
     return null;
   }
+  log.debug("Leaving decodeJwtPayload().");
 }
 
 function extractNonce(id_token) {
@@ -2387,6 +2474,7 @@ function regenerateNonce() {
 
 function recreateTokenDisplay()
 {
+  log.debug("Entering recreateTokenDisplay().");
       var token_endpoint_result_html = "";
       log.debug("displayOpenIDConnectArtifacts=" + displayOpenIDConnectArtifacts);
       var refreshToken = localStorage.getItem("token_refresh_token");
@@ -2482,6 +2570,7 @@ function recreateTokenDisplay()
         refresh: refreshToken,
         id: localStorage.getItem("token_id_token")
       });
+  log.debug("Leaving recreateTokenDisplay().");
 }
 
 function displayTokenCustomParametersCheck()
@@ -2509,6 +2598,7 @@ function displayTokenCustomParametersCheck()
 
 function generateCustomParametersListUI()
 {
+  log.debug("Entering generateCustomParametersListUI().");
   var customParametersListHTML = "" +
     "<fieldset>" +
     "<legend>Custom Parameters" +
@@ -2554,6 +2644,7 @@ function generateCustomParametersListUI()
     }
   }
   recalculateTokenRequestDescription();
+  log.debug("Leaving generateCustomParametersListUI().");
 }
 
 function onClickShowFieldSet(expand_button_id, field_set_id) {
@@ -2574,7 +2665,7 @@ function onClickShowFieldSet(expand_button_id, field_set_id) {
   $("#step0_expand_form").on("click", function(event) {
     event.preventDefault();
   });
-  log.debug('Leaving onClickShowConfigFieldSet().');
+  log.debug('Leaving onClickShowFieldSet().');
   log.debug("Leaving onClickShowFieldSet().");
   return false;
 }
@@ -2741,10 +2832,10 @@ function setHeaderAuthStyleRefreshToken() {
 }
 
 function onClickCopyToken(field) {
-  log.debug("Entering copyToken().");
+  log.debug("Entering onClickCopyToken().");
   var copyText = $(field);
   navigator.clipboard.writeText(copyText.val());
-  log.debug("Leaving copyToken().");
+  log.debug("Leaving onClickCopyToken().");
   return false;
 }
 

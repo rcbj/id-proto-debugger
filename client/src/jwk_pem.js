@@ -69,6 +69,7 @@ var DER_NULL = [0x05, 0x00];
 // --- base64url --------------------------------------------------------------
 
 function b64uToBytes(value, member) {
+  log.debug("Entering b64uToBytes().");
   if (typeof value !== "string" || value === "") {
     throw new TypeError('Invalid JWK: missing or non-string "' + member + '"');
   }
@@ -91,6 +92,7 @@ function b64uToBytes(value, member) {
   for (var i = 0; i < raw.length; i++) {
     bytes[i] = raw.charCodeAt(i) & 0xff;
   }
+  log.debug("Leaving b64uToBytes().");
   return bytes;
 }
 
@@ -98,6 +100,7 @@ function b64uToBytes(value, member) {
 // --- DER --------------------------------------------------------------------
 
 function derLength(count) {
+  log.debug("Entering derLength().");
   if (count < 0x80) {
     return [count];
   }
@@ -107,6 +110,7 @@ function derLength(count) {
     lengthBytes.unshift(remaining & 0xff);
     remaining = Math.floor(remaining / 256);
   }
+  log.debug("Leaving derLength().");
   return [0x80 | lengthBytes.length].concat(lengthBytes);
 }
 
@@ -126,6 +130,7 @@ function derSequence(parts) {
 // and a leading zero goes back on when the top bit would otherwise read as a
 // negative number. An RSA modulus hits the second case roughly half the time.
 function derInteger(bytes) {
+  log.debug("Entering derInteger().");
   var start = 0;
   while (start < bytes.length - 1 && bytes[start] === 0x00) {
     start++;
@@ -134,6 +139,7 @@ function derInteger(bytes) {
   if ((magnitude[0] & 0x80) !== 0) {
     magnitude = [0x00].concat(magnitude);
   }
+  log.debug("Leaving derInteger().");
   return derTlv(0x02, magnitude);
 }
 
@@ -212,6 +218,7 @@ function ecSpki(jwk) {
 }
 
 function padCoordinate(bytes, size, member, crv) {
+  log.debug("Entering padCoordinate().");
   if (bytes.length > size) {
     throw new TypeError(
       'Invalid JWK: "' + member + '" is ' + bytes.length + " bytes, too long for " + crv
@@ -221,6 +228,7 @@ function padCoordinate(bytes, size, member, crv) {
   while (padded.length < size) {
     padded = [0x00].concat(padded);
   }
+  log.debug("Leaving padCoordinate().");
   return padded;
 }
 

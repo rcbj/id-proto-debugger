@@ -53,6 +53,8 @@ var VCI_METADATA = [
     desc: "OPTIONAL. Present when the issuer can mint several credentials in one request; batch_size is the most proofs it will accept." },
   { name: "credential_response_encryption", type: "json", dflt: "",
     desc: "OPTIONAL. The JWE algorithms the issuer supports for encrypting the Credential Response, and whether encryption is required." },
+  { name: "credential_request_encryption", type: "json", dflt: "",
+    desc: "OPTIONAL. The issuer's own public keys (jwks, each with a kid) for encrypting the Credential Request to it, the enc values its endpoint can decode, and whether encryption is required. Note there is no alg_values_supported here, unlike the response side: section 10 takes the JWE alg from the alg of the chosen JWK." },
   { name: "display", type: "json", dflt: "",
     desc: "OPTIONAL. How to display the Credential Issuer itself (name, locale, logo)." },
   { name: "signed_metadata", type: "string", dflt: "",
@@ -63,7 +65,9 @@ var VCI_CONFIG_METADATA = [
   { name: "credential_configuration_id", type: "string", dflt: "IdentityCredential",
     desc: "The key of the chosen entry in credential_configurations_supported. This is what the Credential Request asks for." },
   { name: "format", type: "string", dflt: "dc+sd-jwt",
-    desc: "REQUIRED. The credential format. dc+sd-jwt is the SD-JWT VC format identifier (vc+sd-jwt in earlier drafts)." },
+    desc: "REQUIRED. The credential format. dc+sd-jwt is the SD-JWT VC format identifier (vc+sd-jwt in earlier drafts); jwt_vc_json is a W3C Verifiable Credential secured as a JWT, which has no selective disclosure." },
+  { name: "credential_definition", type: "json", dflt: "",
+    desc: "REQUIRED for jwt_vc_json. The W3C credential definition — its `type` array is what identifies the credential in that format, in place of the vct an SD-JWT VC uses." },
   { name: "vct", type: "string", dflt: "urn:idptools:sd-jwt-vc:identity",
     desc: "REQUIRED for dc+sd-jwt. The Verifiable Credential Type — what kind of credential this is, and the vct claim the issued SD-JWT VC will carry." },
   { name: "scope", type: "string", dflt: "identity_credential",
@@ -109,6 +113,7 @@ function writeToLocalStorage() {
 }
 
 function loadFromLocalStorage() {
+  log.debug("Entering loadFromLocalStorage().");
   VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
     var v = null;
     try {
@@ -118,6 +123,7 @@ function loadFromLocalStorage() {
     }
     setFieldValue(idFor(m.name), (v === null || v === undefined) ? m.dflt : v);
   });
+  log.debug("Leaving loadFromLocalStorage().");
 }
 
 function clearFields() {
@@ -130,6 +136,7 @@ function clearFields() {
 }
 
 function clearStorage() {
+  log.debug("Entering clearStorage().");
   // "" rather than removed: an ABSENT key falls back to the dummy default on
   // the next load, which would undo the clear.
   VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
@@ -139,6 +146,7 @@ function clearStorage() {
       // No storage available in this context.
     }
   });
+  log.debug("Leaving clearStorage().");
 }
 
 // Fill the pane from a retrieved credential issuer metadata document, plus the
@@ -195,6 +203,8 @@ function populateFromMetadata(info, configId) {
 // What the rest of the workflow needs to make a Credential Request, read back
 // out of the pane (so a hand-edited override is honoured).
 function currentRequestConfig() {
+  log.debug("Entering currentRequestConfig().");
+  log.debug("Leaving currentRequestConfig().");
   return {
     credentialIssuer: fieldValue(idFor("credential_issuer")),
     credentialEndpoint: fieldValue(idFor("credential_endpoint")),

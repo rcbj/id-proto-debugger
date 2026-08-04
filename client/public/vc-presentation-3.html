@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Presentation (3 of 3)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/vc_presentation_3.js">
+</script>
+
+<!--#include file="/partials/sd_jwt_vp_steps.html"-->
+
+<p class="vc-return"><a id="return_link" href="/vc-presentation-2.html">&larr; Back to step 2 (choose what to disclose)</a></p>
+
+<h3 class="vc-title">VC Presentation &mdash; Step 3 of 3: The Verdict</h3>
+
+<p class="vc-intro">Two accounts of the same event: what the wallet <strong>sent</strong> &mdash; with
+the presentation checked here, over the bytes themselves &mdash; and what the verifier <strong>did</strong>, check
+by check. &ldquo;Accepted&rdquo; is the least interesting part: a wallet that disclosed more than was asked for
+gets an accepted too, and this page says so.</p>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" onchange="vpSetAllPanes(this.checked);" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function vpSetAllPanes(expand) {
+  var fieldsets = ['sent_fieldset', 'recheck_fieldset', 'verifier_fieldset', 'vc_tools_fieldset'];
+  for (var i = 0; i < fieldsets.length; i++) {
+    var fs = document.getElementById(fieldsets[i]);
+    if (fs) fs.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<!-- ============ Pane 1: what the wallet sent ============ -->
+<div class="step0 dbg-pane" id="pane_sent">
+  <legend class="dbg-legend" id="sent_expand_button" onclick="return vcpresentation3.togglePane('sent_fieldset');">What The Wallet Sent</legend>
+  <fieldset name="sent_fieldset" id="sent_fieldset" style="display: block;">
+    <div class="vc-status" id="vp_sent_status">&nbsp;</div>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Presented to</label><span class="tooltiptext">The verifier's Client Identifier, and the Response URI the presentation was POSTed to.</span></div></td>
+          <td><code id="vp_sent_to">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>When</label><span class="tooltiptext">A Key Binding JWT is signed for one moment and one request; a verifier may refuse a stale one.</span></div></td>
+          <td><code id="vp_sent_at">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>KB-JWT payload</label><span class="tooltiptext">iat, aud, nonce, sd_hash — the four claims RFC 9901 section 4.3 requires, as signed.</span></div></td>
+          <td><pre class="vc-json" id="vp_sent_kb_payload">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>KB-JWT</label><span class="tooltiptext">The holder's signature over this presentation.</span></div></td>
+          <td><textarea class="vc-token" rows="3" readonly id="vp_sent_kb_jwt"></textarea></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>What they can read</label><span class="tooltiptext">The claim set that follows from the bytes sent — computed here from the presentation itself.</span></div></td>
+          <td><pre class="vc-json" id="vp_sent_claims">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Answered the request?</label><span class="tooltiptext">What the verifier's DCQL query asked for, against what was actually disclosed. A verifier need not check this — walt.id's does not — so the wallet is often the only party that can tell you.</span></div></td>
+          <td><span id="vp_answered">&nbsp;</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="vc-note">The presentation, with its parts called out:
+      <span class="vc-part-jwt">issuer-signed JWT</span> &middot;
+      <span class="vc-part-disclosure">Disclosure</span> &middot;
+      <span class="vc-part-kb">KB-JWT</span>.</p>
+    <div class="vc-serialized" id="vp_sent_serialized">&nbsp;</div>
+    <p>
+      <input class="btn2" id="vp_copy_button" type="button" value="Copy Presentation" onclick="return vcpresentation3.copyPresentation();" />
+      <input class="btn2" id="vp_again_button" type="button" value="Present Again" onclick="return vcpresentation3.presentAgain();" />
+      <input class="btn2" id="vp_restart_button" type="button" value="Start Over" onclick="return vcpresentation3.startOver();" />
+      <span class="vc-status" id="vp_copy_status">&nbsp;</span>
+    </p>
+    <textarea class="vc-token" rows="4" readonly id="vp_sent_presentation"></textarea>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 2: the wallet's own re-check ============ -->
+<div class="step0 dbg-pane" id="pane_recheck">
+  <legend class="dbg-legend" id="recheck_expand_button" onclick="return vcpresentation3.togglePane('recheck_fieldset');">The Wallet's Own Checks</legend>
+  <fieldset name="recheck_fieldset" id="recheck_fieldset" style="display: block;">
+    <p class="vc-note">Run here, over the bytes that were sent, doing what the verifier does: recompute
+    <code>sd_hash</code>, look up every Disclosure's digest in <code>_sd</code>, and compare the Key Binding
+    JWT's <code>nonce</code> and <code>aud</code> with the request. If the wallet cannot verify its own
+    presentation, no verifier will.</p>
+    <div class="vc-status" id="vp_recheck_status">&nbsp;</div>
+    <table class="vc-table" id="vp_recheck_table"><tbody></tbody></table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 3: the verifier's verdict ============ -->
+<div class="step0 dbg-pane" id="pane_verifier">
+  <legend class="dbg-legend" id="verifier_expand_button" onclick="return vcpresentation3.togglePane('verifier_fieldset');">What The Verifier Decided</legend>
+  <fieldset name="verifier_fieldset" id="verifier_fieldset" style="display: block;">
+    <p class="vc-note">The verifier&rsquo;s own verdict, check by check. Reading it back like this is not part of
+    OID4VP &mdash; a real verifier shows the End-User its own page &mdash; but a debugger needs to see which rule
+    was broken, not just that something was.</p>
+    <div class="vc-status" id="vp_verifier_status">&nbsp;</div>
+    <table class="vc-table" id="vp_verifier_table"><tbody></tbody></table>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>It asked for</label><span class="tooltiptext">The claims in its DCQL query.</span></div></td>
+          <td><code id="vp_verifier_requested">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>It received</label><span class="tooltiptext">The Disclosures the wallet actually sent.</span></div></td>
+          <td><code id="vp_verifier_disclosed">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Over-disclosure</label><span class="tooltiptext">Claims it did not ask for and got anyway. No verifier will complain about this, which is exactly why the wallet has to care.</span></div></td>
+          <td><code id="vp_verifier_extra">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>What it now knows</label><span class="tooltiptext">The claim set the verifier ended up with.</span></div></td>
+          <td><pre class="vc-json" id="vp_verifier_claims">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vp_refresh_verdict_button" type="button" value="Ask again" onclick="return vcpresentation3.fetchVerdict();" />
+              <span class="tooltiptext">Fetch the verifier's verdict again.</span>
+            </div>
+          </td>
+          <td><pre class="vc-json" id="vp_verifier_raw">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Issuance (3 of 4)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/vc_issuance_3.js">
+</script>
+
+<!--#include file="/partials/vc_steps.html"-->
+
+<p class="vc-return"><a id="return_link" href="/vc-issuance-1.html">&larr; Back to step 1 (discovery &amp; configuration)</a></p>
+
+<h3 class="vc-title">VC Issuance &mdash; Step 3 of 4: The Issued Credential</h3>
+
+
+<p class="vc-intro">The SD-JWT VC the issuer returned, taken apart as
+<a href="https://www.rfc-editor.org/rfc/rfc9901.html" target="_blank" rel="noopener noreferrer">RFC 9901</a> defines
+it: an issuer-signed JWT whose selectively-disclosable claims appear only as digests, followed by one
+<strong>Disclosure</strong> per claim. The holder decides which Disclosures to present; a verifier hashes each one it
+receives and looks for that digest in the JWT's <code>_sd</code> array.</p>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" onchange="vcSetAllPanes(this.checked);" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function vcSetAllPanes(expand) {
+  var fieldsets = ['credential_fieldset', 'jwt_fieldset', 'disclosures_fieldset', 'claims_fieldset', 'vc_tools_fieldset'];
+  for (var i = 0; i < fieldsets.length; i++) {
+    var fs = document.getElementById(fieldsets[i]);
+    if (fs) fs.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<!-- ============ Pane 1: the credential as it arrived ============ -->
+<div class="step0 dbg-pane" id="pane_credential">
+  <legend class="dbg-legend" id="credential_expand_button" onclick="return vcissuance3.togglePane('credential_fieldset');">The Credential (Combined Serialization)</legend>
+  <fieldset name="credential_fieldset" id="credential_fieldset" style="display: block;">
+    <div class="vc-status" id="vc_credential_status">&nbsp;</div>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Issued by</label><span class="tooltiptext">The credential issuer that minted this credential, and the endpoint it came from.</span></div></td>
+          <td><code id="vc_meta_issuer">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Requested</label><span class="tooltiptext">Which credential configuration was asked for, in which format, and when.</span></div></td>
+          <td><code id="vc_meta_request">&mdash;</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="vc-note"><strong>Compact serialization.</strong>
+      <span class="vc-part-jwt">issuer-signed JWT</span><span class="vc-tilde">~</span><span class="vc-part-disclosure">Disclosure</span><span class="vc-tilde">~</span>…<span class="vc-tilde">~</span>
+      &mdash; the trailing <span class="vc-tilde">~</span> is required when no Key Binding JWT is present.</p>
+    <p class="vc-note" id="vc_batch_row" style="display: none;">
+      <label for="vc_credential_select">This request bound several keys, so the issuer returned several
+      credentials &mdash; one per proof (OID4VCI section 8.3). Inspect: </label>
+      <select id="vc_credential_select" name="vc_credential_select" onchange="return vcissuance3.onCredentialChange();"></select>
+      <span id="vc_batch_summary">&nbsp;</span>
+    </p>
+    <div class="vc-serialized" id="vc_serialized">&nbsp;</div>
+    <p>
+      <input class="btn2" id="vc_copy_button" type="button" value="Copy Credential" onclick="return vcissuance3.copyCredential();" />
+      <input class="btn2" id="vc_verify_button" type="button" value="Verify Again" onclick="return vcissuance3.verify();" />
+      <input class="btn2" id="vc_goto_refresh_button" type="button" value="Refresh this Credential" onclick="return vcissuance3.gotoRefresh();" />
+      <input class="btn2" id="vc_restart_button" type="button" value="Start Over" onclick="return vcissuance3.startOver();" />
+      <span class="vc-status" id="vc_copy_status">&nbsp;</span>
+    </p>
+    <p class="vc-note">A credential's claim values and its validity window both go stale.
+      <a href="/vc-issuance-4.html">Step 4</a> refreshes it the way OID4VCI section 14.5 describes &mdash;
+      a Refresh Token for a fresh Access Token, then this issuer's Credential Endpoint again &mdash; with no
+      End-User interaction at all.</p>
+    <textarea class="vc-token" rows="4" readonly id="vc_credential_raw"></textarea>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 2: the issuer-signed JWT ============ -->
+<div class="step0 dbg-pane" id="pane_jwt">
+  <legend class="dbg-legend" id="jwt_expand_button" onclick="return vcissuance3.togglePane('jwt_fieldset');">Issuer-signed JWT</legend>
+  <fieldset name="jwt_fieldset" id="jwt_fieldset" style="display: block;">
+    <p class="vc-note">The signed part of the credential. <code>_sd</code> holds one digest per
+    selectively-disclosable claim (plus any decoys the issuer added), <code>cnf</code> holds the holder's public key,
+    and <code>vct</code> says what kind of credential this is.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Header</label><span class="tooltiptext">typ should be the SD-JWT VC media type (dc+sd-jwt; vc+sd-jwt in earlier drafts), and alg must not be none.</span></div></td>
+          <td><pre class="vc-json" id="vc_jwt_header">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Payload</label><span class="tooltiptext">The issuer-signed claim set, with selectively-disclosable claims represented only by their digests in _sd.</span></div></td>
+          <td><pre class="vc-json" id="vc_jwt_payload">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Checks</label><span class="tooltiptext">Signature verified against the issuer's published keys, plus the structural checks RFC 9901 and SD-JWT VC ask for.</span></div></td>
+          <td><table class="vc-table" id="vc_checks"><tbody></tbody></table></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 3: the disclosures ============ -->
+<div class="step0 dbg-pane" id="pane_disclosures">
+  <legend class="dbg-legend" id="disclosures_expand_button" onclick="return vcissuance3.togglePane('disclosures_fieldset');">Disclosures</legend>
+  <fieldset name="disclosures_fieldset" id="disclosures_fieldset" style="display: block;">
+    <p class="vc-note">Each Disclosure is <code>base64url([salt, claim name, claim value])</code>. Its digest is
+    <code>base64url(SHA-256(the ASCII of that base64url string))</code> &mdash; recomputed here in the browser and
+    looked up in the JWT's <code>_sd</code> array, which is exactly what a verifier does.</p>
+    <table class="vc-table" id="vc_disclosures"><tbody></tbody></table>
+    <p class="vc-note" id="vc_disclosure_summary">&nbsp;</p>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 4: the resulting claim set ============ -->
+<div class="step0 dbg-pane" id="pane_claims">
+  <legend class="dbg-legend" id="claims_expand_button" onclick="return vcissuance3.togglePane('claims_fieldset');">Resulting Claim Set</legend>
+  <fieldset name="claims_fieldset" id="claims_fieldset" style="display: block;">
+    <p class="vc-note">What a verifier ends up with if the holder presents <em>every</em> Disclosure: the
+    always-visible claims plus every disclosed claim, with the SD-JWT machinery (<code>_sd</code>,
+    <code>_sd_alg</code>) removed. Presenting fewer Disclosures yields a smaller claim set &mdash; that is the point of
+    selective disclosure.</p>
+    <pre class="vc-json" id="vc_claims">&nbsp;</pre>
+  </fieldset>
+</div>
+
+<!-- ====== Telling the issuer what happened (section 11) ====== -->
+<div class="step0 dbg-pane" id="pane_notification">
+  <legend class="dbg-legend" id="notification_expand_button" onclick="return vcissuance3.togglePane('notification_fieldset');">Notify the Issuer</legend>
+  <fieldset name="notification_fieldset" id="notification_fieldset" style="display: block;">
+    <p class="vc-note">The Credential Response carried a <code>notification_id</code>, which is the issuer asking
+    to be told what became of the credential (OID4VCI section 11). It is <strong>optional for the wallet</strong> —
+    an issuer cannot assume a notification will arrive — but it is how an issuer learns that a credential it minted
+    was actually accepted, or was rejected, or has since been deleted. The access token from the issuance authorizes
+    the call.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>notification_id</label><span class="tooltiptext">From the Credential Response. The issuer issues one per response, and it identifies the credential being reported on.</span></div></td>
+          <td><code id="vc_notification_id">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Endpoint</label><span class="tooltiptext">notification_endpoint from the credential issuer metadata. An issuer that does not want notifications does not publish one.</span></div></td>
+          <td><code id="vc_notification_endpoint">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="vc_notification_event">Event</label>
+              <span class="tooltiptext">The three events the spec defines: credential_accepted (stored successfully), credential_failure (something went wrong), credential_deleted (the End-User removed it).</span>
+            </div>
+          </td>
+          <td>
+            <select id="vc_notification_event" name="vc_notification_event" onchange="return vcissuance3.renderNotification();">
+              <option value="credential_accepted" selected="selected">credential_accepted</option>
+              <option value="credential_failure">credential_failure</option>
+              <option value="credential_deleted">credential_deleted</option>
+            </select>
+            <input type="text" id="vc_notification_description" name="vc_notification_description" size="34"
+                   placeholder="event_description (optional)" oninput="return vcissuance3.renderNotification();" />
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>The call</label><span class="tooltiptext">The Notification Request exactly as it will be sent.</span></div></td>
+          <td><textarea class="vc-token" rows="8" readonly id="vc_notification_request"></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vc_notification_button" type="button" value="Send the Notification" onclick="return vcissuance3.sendNotification();" />
+              <span class="tooltiptext">POST it. A successful notification is answered with 204 and no body.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="vc_notification_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ On to step 4 ============
+     Refreshing is OPTIONAL — OID4VCI section 14.5 leaves it to the issuer to
+     offer and to the wallet to ask — so this is an offer at the end of the
+     workflow rather than a Continue the page insists on. The button mirrors step
+     4's own "Verify in step 3": a button and not a redirect, so nothing moves the
+     browser out from under someone still reading the credential above. -->
+<div class="step0 dbg-pane" id="pane_next">
+  <legend class="dbg-legend" id="next_expand_button" onclick="return vcissuance3.togglePane('next_fieldset');">Next: Refresh It, or Present It</legend>
+  <fieldset name="next_fieldset" id="next_fieldset" style="display: block;">
+    <p class="vc-note">A credential does not last forever. <strong>Step 4</strong> refreshes the one above the
+    way <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a>
+    section 14.5 describes it &mdash; a Refresh Token for a fresh Access Token, then the Credential Endpoint again
+    &mdash; and shows what the issuer changed. Nothing is sent by going there.</p>
+    <p>
+      <input class="btn2" id="vc_goto_step4_button" type="button" value="Refresh It (step 4)" onclick="return vcissuance3.refreshInStepFour();" />
+      <span class="vc-status" id="vc_next_status">&nbsp;</span>
+    </p>
+    <p class="vc-note">Or show it to somebody. The <strong>presentation workflow</strong> is the other half of the
+    format: a Verifier asks for some of these claims over
+    <a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html" target="_blank" rel="noopener noreferrer">OID4VP</a>,
+    and this wallet answers with only the Disclosures it chooses plus a Key Binding JWT. Nothing is copied by going
+    there &mdash; both workflows read the same browser storage, so the credential above is already what it will find.</p>
+    <p>
+      <input class="btn2" id="vc_present_button" type="button" value="Present It (presentation workflow)" onclick="return vcissuance3.presentIt();" />
+      <span class="vc-status" id="vc_present_status">&nbsp;</span>
+    </p>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

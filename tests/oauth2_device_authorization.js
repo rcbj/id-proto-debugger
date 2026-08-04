@@ -20,6 +20,7 @@ const { populateMetadata } = require("../common/tests.js")({ By, until, waitTime
 // scope, and click Authorize. This POSTs to the device authorization endpoint
 // and navigates to debugger2.html where the device/user codes are displayed.
 async function requestDeviceAuthorization(driver, client_id, scope) {
+  log.debug("Entering requestDeviceAuthorization().");
   log.info("Entering requestDeviceAuthorization().");
   const grantType = By.id("authorization_grant_type");
   await driver.wait(until.elementLocated(grantType), waitTime);
@@ -54,6 +55,7 @@ async function requestDeviceAuthorization(driver, client_id, scope) {
   await driver.wait(until.elementLocated(By.id("device_user_code")), waitTime);
   await driver.wait(until.elementIsVisible(driver.findElement(By.id("device_user_code"))), waitTime);
   log.info("Leaving requestDeviceAuthorization().");
+  log.debug("Leaving requestDeviceAuthorization().");
 }
 
 async function findEls(driver, by) {
@@ -74,6 +76,7 @@ async function findEls(driver, by) {
 // form is gone). Best effort: if the IdP does something unexpected, log it and
 // let the assertions that follow report the real problem.
 async function waitForConsentToSettle(driver, urlBeforeConsent) {
+  log.debug("Entering waitForConsentToSettle().");
   try {
     await driver.wait(async function () {
       var ready = await driver.executeScript("return document.readyState;");
@@ -85,9 +88,11 @@ async function waitForConsentToSettle(driver, urlBeforeConsent) {
   } catch (e) {
     log.info("Consent did not visibly settle (" + e.message + "); continuing.");
   }
+  log.debug("Leaving waitForConsentToSettle().");
 }
 
 async function approveDeviceAuthorization(driver, verification_uri, user_code, username, password) {
+  log.debug("Entering approveDeviceAuthorization().");
   log.info("Approving device authorization at " + verification_uri);
   await driver.get(verification_uri);
 
@@ -147,9 +152,11 @@ async function approveDeviceAuthorization(driver, verification_uri, user_code, u
     granted = true;
   }
   assert(granted, "Unable to approve the device authorization at the verification URI.");
+  log.debug("Leaving approveDeviceAuthorization().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
     options.addArguments("--headless");
@@ -251,6 +258,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

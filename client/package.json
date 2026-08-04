@@ -9,7 +9,7 @@
     "build": "node build.js"
   },
   "comments": {
-    "devDependencies": "Build-only tools: the bundler, its transform, and the three minifiers. They are separated from dependencies because they are not part of anything that runs or ships to a browser, and because browserify carries elliptic (GHSA-848j-6mx2-7j84, for which no patched version exists) through crypto-browserify. Nothing bundled requires elliptic any more \u2014 tests/jwk_pem.js is what holds that \u2014 so the advisory now describes a build tool only, and `npm audit --omit=dev` says so. Both images install with plain `npm ci`, which includes these, so the build is unaffected."
+    "devDependencies": "Build-only tools: the bundler, its transform, and the three minifiers. They are separated from dependencies because they are not part of anything that runs or ships to a browser, and because browserify carries elliptic (GHSA-848j-6mx2-7j84, for which no patched version exists) through crypto-browserify. Nothing bundled requires elliptic any more — tests/jwk_pem.js is what holds that — so the advisory now describes a build tool only, and `npm audit --omit=dev` says so. Both images install with plain `npm ci`, which includes these, so the build is unaffected."
   },
   "dependencies": {
     "@noble/curves": "1.4.0",
@@ -22,10 +22,12 @@
     "express": "^4.22.2",
     "express-logging": "latest",
     "jquery": "latest",
+    "jsonld": "^8.3.3",
     "jwks": "latest",
     "logops": "latest",
     "node-forge": "^1.3.1",
-    "pkijs": "^3.4.0"
+    "pkijs": "^3.4.0",
+    "rdf-canonize": "^3.4.0"
   },
   "devDependencies": {
     "browserify": "^17.0.1",

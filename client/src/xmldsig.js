@@ -229,6 +229,7 @@ function c14nIncl(el, rendered, isApex) {
 
 // --- XML Encryption (W3C xmlenc / xmlenc11) ---------------------------------
 function dataAlgSpec(uri) {
+  log.debug("Entering dataAlgSpec().");
   switch (uri) {
     case XENC11_NS + 'aes128-gcm': return { cipher: 'AES-GCM', keyBytes: 16, ivBytes: 12, gcm: true };
     case XENC11_NS + 'aes192-gcm': return { cipher: 'AES-GCM', keyBytes: 24, ivBytes: 12, gcm: true };
@@ -239,6 +240,7 @@ function dataAlgSpec(uri) {
     case XENC_NS + 'tripledes-cbc': return { cipher: '3DES-CBC', keyBytes: 24, ivBytes: 8, gcm: false };
     default: throw new Error('Unsupported data encryption algorithm: ' + uri);
   }
+  log.debug("Leaving dataAlgSpec().");
 }
 function forgeMdFor(uri) {
   switch (uri) {
@@ -273,6 +275,7 @@ function mgfMdFor(uri) {
 // DOMParser does not resolve them at all, and neither does @xmldom/xmldom,
 // which is what the node-side tests load this module with.
 function parseXmlStrict(xml, what) {
+  log.debug("Entering parseXmlStrict().");
   var label = what || 'XML';
   if (typeof xml !== 'string' || xml.trim() === '') {
     throw new Error(label + ' is empty.');
@@ -281,6 +284,7 @@ function parseXmlStrict(xml, what) {
   if (!doc || doc.getElementsByTagName('parsererror').length || !doc.documentElement) {
     throw new Error('malformed ' + label + ' — it is not well-formed XML.');
   }
+  log.debug("Leaving parseXmlStrict().");
   return doc;
 }
 

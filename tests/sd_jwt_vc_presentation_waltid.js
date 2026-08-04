@@ -88,7 +88,9 @@ function b64u(buf) {
 function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
 
 function httpJson(url, options) {
+  log.debug("Entering httpJson().");
   options = options || {};
+  log.debug("Leaving httpJson().");
   return fetch(url, options).then(function (r) {
     return r.text().then(function (text) {
       var body = null;
@@ -103,6 +105,7 @@ function httpJson(url, options) {
 }
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
@@ -114,6 +117,7 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", e);
   }
   await driver.sleep(250);
+  log.debug("Leaving click().");
 }
 
 // text()/value() and the waitFor* family live in ./wait_for.js — one
@@ -152,9 +156,10 @@ async function signOutOfKeycloak(driver) {
 }
 
 async function issueFromWaltid(driver) {
+  log.debug("Entering issueFromWaltid().");
   log.info("=== Phase 1: walt.id issues the credential (through our own pages) ===");
   await signOutOfKeycloak(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
@@ -183,7 +188,7 @@ async function issueFromWaltid(driver) {
   await driver.executeScript(
     "var s = document.getElementById('vci_credential_configuration_select');" +
     "s.value = arguments[0];" +
-    "sdjwtvc1.onCredentialConfigurationChange();", CONFIGURATION_ID);
+    "vcissuance1.onCredentialConfigurationChange();", CONFIGURATION_ID);
   await waitForValue(driver, "vci_credential_configuration_id",
     function (v) { return v === CONFIGURATION_ID; },
     "choosing the credential configuration should select it");
@@ -228,7 +233,7 @@ async function issueFromWaltid(driver) {
   await driver.findElement(By.id("username")).sendKeys(clientId);
   await driver.findElement(By.id("password")).sendKeys(clientId);
   await click(driver, By.id("kc-login"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "the code should have been exchanged and the workflow returned to step 2.");
 
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
@@ -236,7 +241,7 @@ async function issueFromWaltid(driver) {
     return !!(await value(driver, "vc_proof_jwt"));
   }, fetchWait, "step 2 should have built the Credential Request.");
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "approving should have obtained a credential from walt.id.");
   var credential = await waitForFilled(driver, "vc_credential_raw",
     "step 3 should be showing the credential walt.id issued");
@@ -259,6 +264,7 @@ async function issueFromWaltid(driver) {
   });
   log.info("[phase1] OK — walt.id issued a " + payload.vct + " (alg " + header.alg + ", iss " +
            String(payload.iss).slice(0, 24) + "…) with Disclosures: " + disclosures.join(", "));
+  log.debug("Leaving issueFromWaltid().");
   return { credential: credential, payload: payload, disclosures: disclosures };
 }
 
@@ -339,13 +345,14 @@ function requestQuery(session, byReference) {
 // Phase 3 — present it, through our pages.
 // ---------------------------------------------------------------------------
 async function presentToWaltid(driver, session, opts) {
+  log.debug("Entering presentToWaltid().");
   var byReference = !!(opts || {}).byReference;
   var withhold = (opts || {}).withhold || "";
   log.info("=== Phase 3: presenting to walt.id (" +
            (byReference ? "request by reference" : "request by value") +
            (withhold ? ", withholding " + withhold : "") + ") ===");
 
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-1.html?" + requestQuery(session, byReference));
+  await driver.get(baseUrl + "/vc-presentation-1.html?" + requestQuery(session, byReference));
   await driver.wait(until.elementLocated(By.id("vp_request_status")), waitTime);
   var requestStatus = await waitForStatus(driver, "vp_request_status",
     function (s) { return /Request read|cannot be answered|Could not/.test(s); },
@@ -422,7 +429,7 @@ async function presentToWaltid(driver, session, opts) {
   log.info("[phase3] built an SD-JWT+KB with " + (parts.length - 2) + " Disclosure(s) for walt.id.");
 
   await click(driver, By.id("vp_present_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-presentation-3.html"), fetchWait,
     "presenting should open step 3, whatever walt.id decided.");
   await driver.sleep(800);
   var sent = await driver.executeScript(
@@ -432,6 +439,7 @@ async function presentToWaltid(driver, session, opts) {
   assert.ok(/all pass/.test(sent.recheck),
     "the wallet's own checks on what it sent should pass. Got: " + sent.recheck);
   log.info("[phase3] " + sent.status.replace(/\s+/g, " ").slice(0, 140));
+  log.debug("Leaving presentToWaltid().");
   return { presentation: sent.presentation, request: request, askedFor: askedFor };
 }
 
@@ -461,6 +469,7 @@ async function waltidVerdict(sessionId, label) {
 // POSITIVE
 // ---------------------------------------------------------------------------
 async function positiveFlow(driver, held, byReference) {
+  log.debug("Entering positiveFlow().");
   var session = await createVerificationSession({ vct: held.payload.vct });
   var presented = await presentToWaltid(driver, session, { byReference: byReference });
   var verdict = await waltidVerdict(session.sessionId,
@@ -493,6 +502,7 @@ async function positiveFlow(driver, held, byReference) {
   log.info("[positive] OK — walt.id accepted a presentation of a credential it issued, with " +
            REQUESTED.join(" + ") + " disclosed and nothing else. Policies: " +
            policies.slice(0, 200));
+  log.debug("Leaving positiveFlow().");
   return { session: session, verdict: verdict, presented: presented };
 }
 
@@ -517,6 +527,7 @@ async function positiveFlow(driver, held, byReference) {
 // not receive the claim, and OUR step 3 says the request went unanswered.
 // ---------------------------------------------------------------------------
 async function negativeWithheldClaim(driver, held) {
+  log.debug("Entering negativeWithheldClaim().");
   log.info("=== NEGATIVE 1: withholding a claim walt.id asked for ===");
   var session = await createVerificationSession({ vct: held.payload.vct });
   await presentToWaltid(driver, session, { withhold: REQUESTED[0] });
@@ -547,6 +558,7 @@ async function negativeWithheldClaim(driver, held) {
   log.info("[negative 1] OK — " + REQUESTED[0] + " never reached walt.id, our step 3 reports the " +
            "shortfall, and walt.id itself said status=" + JSON.stringify(verdict.status) +
            " (it runs no DCQL-fulfilment policy — recorded here as an interop finding).");
+  log.debug("Leaving negativeWithheldClaim().");
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +574,7 @@ async function negativeWithheldClaim(driver, held) {
 // presentation carrying someone else's nonce, and that is the point of it.
 // ---------------------------------------------------------------------------
 async function negativeReplay(held, accepted) {
+  log.debug("Entering negativeReplay().");
   log.info("=== NEGATIVE 2: replaying an accepted presentation into a fresh session ===");
   var session = await createVerificationSession({ vct: held.payload.vct });
   var params = new URLSearchParams(requestQuery(session, false));
@@ -595,10 +608,12 @@ async function negativeReplay(held, accepted) {
     JSON.stringify(verdict.failure || null).slice(0, 300));
   log.info("[negative 2] OK — walt.id refused the replay (HTTP " + posted.status + ", status=" + status +
            "), so its acceptance of the honest presentations is a real verdict.");
+  log.debug("Leaving negativeReplay().");
 }
 
 // ---------------------------------------------------------------------------
 async function test() {
+  log.debug("Entering test().");
   log.info("Starting Test run. verifier=" + verifierBase + ", issuer=" + issuerBase +
            ", wallet=" + baseUrl);
 
@@ -644,6 +659,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

@@ -3,12 +3,12 @@
 // ---------------------------------------------------------------------------
 // State and mechanics shared by the SD-JWT VC PRESENTATION pages.
 //
-//   sd-jwt-vc-presentation-0.html  choose how the presentation starts
-//   sd-jwt-vc-presentation-1.html  the Verifier's Authorization Request
-//   sd-jwt-vc-presentation-2.html  choose what to disclose, build and send it
-//   sd-jwt-vc-presentation-3.html  what the Verifier decided, and why
+//   vc-presentation-0.html  choose how the presentation starts
+//   vc-presentation-1.html  the Verifier's Authorization Request
+//   vc-presentation-2.html  choose what to disclose, build and send it
+//   vc-presentation-3.html  what the Verifier decided, and why
 //
-// The issuance workflow (sd-jwt-vc-issuance-*.html) puts a credential in this
+// The issuance workflow (vc-issuance-*.html) puts a credential in this
 // browser's storage; this workflow is the other half — a Verifier asks for part
 // of it, and the wallet presents exactly that part and no more.
 //
@@ -63,12 +63,17 @@ var KEYS = {
   // Where this wallet looks for the Verifier's keys when a request is signed.
   // A pre-registered client's key is known out of band; for this workflow that
   // "out of band" is a configurable JWKS URL.
-  VERIFIER_JWKS_URL: "sdjwtvp_verifier_jwks_url"
+  VERIFIER_JWKS_URL: "sdjwtvp_verifier_jwks_url",
+  // Where the verifier's own pages live. Set on step 0, which is also where
+  // it is used: it builds the start links. Was read from a bare string literal
+  // in vc_presentation_0.js with nothing ever writing it, so the wallet
+  // fell through to guessing from the credential issuer.
+  VERIFIER_BASE_URL: "sdjwtvp_verifier_base_url"
 };
 
-var STEP1_URL = "/sd-jwt-vc-presentation-1.html";
-var STEP2_URL = "/sd-jwt-vc-presentation-2.html";
-var STEP3_URL = "/sd-jwt-vc-presentation-3.html";
+var STEP1_URL = "/vc-presentation-1.html";
+var STEP2_URL = "/vc-presentation-2.html";
+var STEP3_URL = "/vc-presentation-3.html";
 
 // The Key Binding JWT's media type and the algorithm this wallet signs with.
 // ES256 because that is what the holder key generated during issuance is
@@ -165,7 +170,7 @@ function renderUseCaseBadge() {
   badge.innerHTML = 'Flow: <strong>' + metadataClient.escapeHtmlText(uc.spec) + ' &middot; ' +
                     metadataClient.escapeHtmlText(uc.label) + '</strong> — ' +
                     metadataClient.escapeHtmlText(uc.mechanics) +
-                    ' <a href="/sd-jwt-vc-presentation-0.html">change</a>';
+                    ' <a href="/vc-presentation-0.html">change</a>';
   host.parentNode.insertBefore(badge, host.nextSibling);
   log.debug("Leaving renderUseCaseBadge().");
   return uc;
@@ -222,6 +227,7 @@ function parseRequestUri(text) {
 // The JSON-valued parameters, parsed. Kept separate from parseRequestQuery so a
 // malformed one is reported rather than throwing while the request is read.
 function requestObjectValue(params, name) {
+  log.debug("Entering requestObjectValue().");
   var raw = params && params[name];
   if (!raw) return null;
   if (typeof raw === "object") return raw;
@@ -231,6 +237,7 @@ function requestObjectValue(params, name) {
     log.error("the " + name + " parameter is not JSON: " + e.message);
     return null;
   }
+  log.debug("Leaving requestObjectValue().");
 }
 
 // ---------------------------------------------------------------------------
@@ -262,12 +269,35 @@ function dcqlClaimPaths(credentialQuery) {
   return out;
 }
 
-// Every claim path the whole query asks for, and the credential query id the
-// response has to be keyed by.
+// The claim a DCQL path refers to, named the way the WALLET holds it.
+//
+// The same claim is addressed differently in the two formats, because the two
+// keep their claims in different places: an SD-JWT VC at the top level of the
+// payload (["given_name"]), a W3C VC under credentialSubject
+// (["credentialSubject","given_name"]). The wallet's own claim map is flat in
+// both cases, so a jwt_vc_json path has its container stripped before anything
+// is compared against it.
+//
+// Skipping this does not fail loudly, which is why it is worth a function: the
+// comparison simply never matches, and every requested claim is then reported as
+// WITHHELD even though all of them were sent. That is a lie in the reassuring
+// direction for the verifier and the alarming direction for the holder.
+function claimNameForPath(path, format) {
+  var parts = String(path || "").split(".");
+  if (format === sdJwtVc.FORMAT_JWT_VC_JSON && parts.length > 1 && parts[0] === "credentialSubject") {
+    parts = parts.slice(1);
+  }
+  return parts.join(".");
+}
+
+// Every claim the whole query asks for, named as the wallet holds them.
 function requestedClaims(dcql) {
   var out = [];
   dcqlCredentialQueries(dcql).forEach(function (q) {
-    dcqlClaimPaths(q).forEach(function (p) { if (out.indexOf(p) === -1) out.push(p); });
+    dcqlClaimPaths(q).forEach(function (p) {
+      var name = claimNameForPath(p, q && q.format);
+      if (out.indexOf(name) === -1) out.push(name);
+    });
   });
   return out;
 }
@@ -275,6 +305,23 @@ function requestedClaims(dcql) {
 function firstCredentialQueryId(dcql) {
   var queries = dcqlCredentialQueries(dcql);
   return (queries[0] && queries[0].id) || "";
+}
+
+// The credential FORMAT this verifier asked for.
+//
+// It is not the same question as "what format is the credential in hand", and
+// conflating the two is silently wrong in one direction: the wallet builds a
+// presentation in whatever shape it happens to hold, the verifier parses it in
+// whatever shape it asked for, and when they differ the refusal names the
+// symptom rather than the cause — a dc+sd-jwt verifier splits an ldp_vc JSON
+// object on "~", finds one part, and reports a malformed presentation.
+//
+// Empty when the query does not say. DCQL makes `format` required, but a wallet
+// that treated "absent" as "whatever I hold" would be back to the same bug, so
+// callers are left to decide rather than being handed a default here.
+function firstCredentialQueryFormat(dcql) {
+  var queries = dcqlCredentialQueries(dcql);
+  return (queries[0] && queries[0].format) || "";
 }
 
 // Whether the verifier insists on a Key Binding JWT. The default is true
@@ -363,6 +410,68 @@ function buildPresentation(opts) {
     });
 }
 
+// ---------------------------------------------------------------------------
+// Presenting a jwt_vc_json credential.
+//
+// A W3C VC secured as a JWT cannot be presented the way an SD-JWT is. There are
+// no Disclosures to select from and no sd_hash to compute — the credential goes
+// whole or not at all. Holder binding is done by wrapping it in a Verifiable
+// Presentation JWT signed by the key the credential is bound to, with the
+// Verifier's nonce and Client Identifier as claims of that JWT rather than of a
+// Key Binding JWT.
+//
+// So the KB-JWT's job is done here by the VP JWT itself: same questions (is this
+// fresh, is it for us, is the presenter the holder), different artefact.
+// ---------------------------------------------------------------------------
+function signVpJwt(opts) {
+  log.debug("Entering signVpJwt(). aud=" + opts.aud);
+  var header = { typ: "JWT", alg: KB_ALG };
+  var payload = {
+    iss: opts.holderId || "urn:ietf:params:oauth:jwk-thumbprint:holder",
+    aud: opts.aud,
+    nonce: opts.nonce,
+    iat: Math.floor(Date.now() / 1000),
+    vp: {
+      "@context": ["https://www.w3.org/2018/credentials/v1"],
+      type: ["VerifiablePresentation"],
+      verifiableCredential: [opts.credential]
+    }
+  };
+  var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) + "." +
+                     metadataClient.utf8ToB64u(JSON.stringify(payload));
+  return crypto.subtle.importKey("jwk", opts.holderPrivateJwk,
+      { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])
+    .then(function (key) {
+      return crypto.subtle.sign({ name: "ECDSA", hash: { name: "SHA-256" } }, key,
+        new TextEncoder().encode(signingInput));
+    })
+    .then(function (sig) {
+      log.debug("Leaving signVpJwt().");
+      return { jwt: signingInput + "." + metadataClient.bytesToB64u(sig), header: header, payload: payload };
+    });
+}
+
+// Build whichever presentation the held credential's format calls for. The two
+// return the same shape so the pages that display and submit it do not branch:
+// `selected` and `sdHash` are simply absent for a VP JWT, because that format
+// has nothing to select and nothing to commit to beyond its own signature.
+function buildPresentationFor(opts) {
+  var format = sdJwtVc.credentialFormat(opts.credential);
+  if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) return buildPresentation(opts);
+  log.debug("Entering buildPresentationFor(). jwt_vc_json — nothing to select.");
+  log.debug("Leaving buildPresentationFor().");
+  return signVpJwt({
+    credential: opts.credential,
+    holderPrivateJwk: opts.holderPrivateJwk,
+    holderId: opts.holderId,
+    aud: opts.aud,
+    nonce: opts.nonce
+  }).then(function (vp) {
+    return { presentation: vp.jwt, prefix: "", sdHash: "", kb: null, vp: vp,
+             format: sdJwtVc.FORMAT_JWT_VC_JSON };
+  });
+}
+
 // The vp_token: a JSON object keyed by the DCQL credential query id, each value
 // an array of presentations (OID4VP section 8.1).
 function vpToken(credentialQueryId, presentation) {
@@ -376,6 +485,17 @@ function vpToken(credentialQueryId, presentation) {
 // rather than from what the wallet believes it sent.
 function presentedClaims(presentation) {
   log.debug("Entering presentedClaims().");
+  // A VP JWT carries the credential inside its vp claim, so what reached the
+  // Verifier is read from the EMBEDDED credential — reading the outer JWT would
+  // report the presentation's own claims (nonce, aud) as if they were the
+  // holder's.
+  if (sdJwtVc.credentialFormat(presentation) === sdJwtVc.FORMAT_JWT_VC_JSON) {
+    var outer = sdJwtVc.parseJwtVc(presentation);
+    var embedded = [].concat(((outer.payload || {}).vp || {}).verifiableCredential || [])[0] || "";
+    var inner = sdJwtVc.parseCredential(embedded);
+    log.debug("Leaving presentedClaims(). jwt_vc_json, " + Object.keys(inner.claims).length + " claim(s).");
+    return { parsed: inner, claims: inner.claims, outer: outer };
+  }
   var parsed = sdJwtVc.parseSdJwt(presentation);
   var claims = sdJwtVc.disclosedClaims(parsed);
   delete claims.cnf;
@@ -407,12 +527,16 @@ module.exports = {
   dcqlCredentialQueries: dcqlCredentialQueries,
   dcqlClaimPaths: dcqlClaimPaths,
   requestedClaims: requestedClaims,
+  claimNameForPath: claimNameForPath,
   firstCredentialQueryId: firstCredentialQueryId,
+  firstCredentialQueryFormat: firstCredentialQueryFormat,
   requiresKeyBinding: requiresKeyBinding,
   presentedPrefix: presentedPrefix,
   sdHash: sdHash,
   signKbJwt: signKbJwt,
   buildPresentation: buildPresentation,
+  buildPresentationFor: buildPresentationFor,
+  signVpJwt: signVpJwt,
   vpToken: vpToken,
   presentedClaims: presentedClaims
 };

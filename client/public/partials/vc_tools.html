@@ -1,0 +1,33 @@
+<!-- ============ VC Tools ============
+     Included at the bottom of every page in the VC Issuance and VC Presentation
+     workflows. One copy, because nine pages carry it and nine copies of the same
+     markup is nine places to update.
+
+     Its fieldset is `vc_tools_fieldset`, which each page adds to its own
+     collapse-all list so the toggle at the top covers this pane too.
+================================================================= -->
+<div class="step0 dbg-pane" id="pane_vc_tools">
+  <legend class="dbg-legend" id="vc_tools_expand_button" onclick="var fs=document.getElementById('vc_tools_fieldset'); if (fs) fs.style.display = (fs.style.display === 'none') ? 'block' : 'none'; return false;">VC Tools</legend>
+  <fieldset name="vc_tools_fieldset" id="vc_tools_fieldset" style="display: block;">
+    <p class="vc-note">Tools that are useful at any point in these workflows, and belong to none of their
+    steps.</p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label><a id="vc_tools_did_link" href="/did-tools.html">DID Tools</a></label>
+              <span class="tooltiptext">Resolve a DID to its document, read the keys it publishes, check that one of them really signed the credential this browser is holding, and check that the DID and an origin are the same entity.</span>
+            </div>
+          </td>
+          <td>
+            <span class="vc-note">Resolve a <strong>Decentralized Identifier</strong>
+            (<code>did:jwk</code>, <code>did:key</code>, <code>did:web</code>) to its document, verify that a
+            key it publishes signed the credential in this browser, and verify a domain linkage
+            (<a href="https://identity.foundation/well-known-did-configuration/resources/did-configuration/" target="_blank" rel="noopener noreferrer">DIF
+            Well Known DID Configuration</a>). Opens in this tab; the workflow's state is untouched.</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>

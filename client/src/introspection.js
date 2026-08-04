@@ -11,6 +11,7 @@ const OPERATION_HISTORY_LIMIT = 1000;
 // Decodes a JWT payload (no verification) so the session nonce can be read
 // from an id_token. Mirrors the helper on the debugger2 page.
 function decodeJwtPayload(token) {
+  log.debug("Entering decodeJwtPayload().");
   try {
     var parts = token.split('.');
     if (parts.length < 2) return null;
@@ -20,6 +21,7 @@ function decodeJwtPayload(token) {
   } catch (e) {
     return null;
   }
+  log.debug("Leaving decodeJwtPayload().");
 }
 
 function getCurrentSessionNonce() {

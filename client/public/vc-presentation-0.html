@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Presentation (choose a flow)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/vc_presentation_0.js">
+</script>
+
+<!--#include file="/partials/sd_jwt_vp_steps.html"-->
+
+<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="vc-title">VC Presentation &mdash; How is the credential being asked for?</h3>
+
+<p class="vc-intro">A credential is only useful when it is shown to someone. This workflow is the
+<strong>presentation</strong> half of SD-JWT VC: a verifier asks for particular claims, and the wallet answers
+with those claims and no others &mdash; over
+<a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html" target="_blank" rel="noopener noreferrer">OpenID for Verifiable Presentations</a>
+(OID4VP), using the presentation format
+<a href="https://www.rfc-editor.org/rfc/rfc9901.html" target="_blank" rel="noopener noreferrer">RFC 9901</a>
+defines. It presents whatever credential the
+<a href="/vc-issuance-0.html">issuance workflow</a> left in this browser.</p>
+
+<div class="vc-note vc-status" id="vp_credential_state">&nbsp;</div>
+
+<!-- ============ Configuration ============
+     Above the chooser deliberately: the three start links below are built from
+     the verifier base URL, so this is the thing you set before choosing how the
+     verifier asks. -->
+<div class="step0 dbg-pane" id="pane_config">
+  <legend class="dbg-legend" id="config_expand_button" onclick="return vcpresentation0.togglePane('config_fieldset');">Configuration Parameters</legend>
+  <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
+    <p class="vc-note">What this wallet needs to know about the verifier. Unlike an issuer, an OID4VP verifier
+    publishes no discovery document &mdash; there is no well-known endpoint to retrieve and nothing to populate
+    these from, so they are set by hand. <em>Restore Defaults</em> fills in this suite&rsquo;s own mock verifier.</p>
+    <form action="" id="config_form" name="config_form" onsubmit="return false;">
+      <table border="0" id="config_table">
+        <tbody>
+          <tr>
+            <td>
+              <div class="tooltip"><label for="vp_verifier_base_url">Verifier base URL</label>
+                <span class="tooltiptext">The origin the verifier's own pages live under. It builds the three start links below (/oid4vp/verifier and /oid4vp/start), which are this debugger's mock verifier's own pages &mdash; a real verifier has none, so against one of those you paste a request into step 1 instead.</span>
+              </div>
+            </td>
+            <td><input type="text" class="stored" id="vp_verifier_base_url" name="vp_verifier_base_url" size="60"
+                       placeholder="http://localhost:8081" /></td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label for="vp_verifier_jwks_url">Verifier JWKS URL</label>
+                <span class="tooltiptext">Where this wallet looks for the verifier's keys when a request is signed. For a pre-registered client this is the "out of band" knowledge OID4VP assumes the wallet already has. Leave it empty and a signed request is reported as unverifiable rather than trusted.</span>
+              </div>
+            </td>
+            <td><input type="text" class="stored" id="vp_verifier_jwks_url" name="vp_verifier_jwks_url" size="60"
+                       placeholder="http://localhost:8081/oauth2/jwks" /></td>
+          </tr>
+        </tbody>
+      </table>
+    </form>
+    <p>
+      <input class="btn2" id="config_save_button" type="button" value="Save" onclick="return vcpresentation0.saveConfiguration();" />
+      <input class="btn2" id="config_clear_button" type="button" value="Clear All" onclick="return vcpresentation0.clearConfiguration();" />
+      <input class="btn2" id="config_defaults_button" type="button" value="Restore Defaults" onclick="return vcpresentation0.restoreDefaults();" />
+      <span class="vc-status" id="config_status">&nbsp;</span>
+    </p>
+  </fieldset>
+</div>
+
+<div class="vc-usecases" id="vp_usecases"></div>
+
+<p class="vc-note" id="vp_usecase_status">&nbsp;</p>
+
+<p class="vc-note">All three end the same way: your wallet builds an <strong>SD-JWT+KB</strong> &mdash; the
+issuer-signed JWT, the Disclosures you chose, and a <strong>Key Binding JWT</strong> signed by the key the
+credential is bound to &mdash; and the verifier checks every part of it. What differs is how the request reaches
+the wallet and how much the wallet can prove about who sent it.</p>
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

@@ -94,6 +94,7 @@ function pemToDer(pem) {
 }
 
 function concatBytes() {
+  log.debug("Entering concatBytes().");
   var total = 0, i;
   for (i = 0; i < arguments.length; i++) total += arguments[i].length;
   var out = new Uint8Array(total);
@@ -102,6 +103,7 @@ function concatBytes() {
     out.set(arguments[i], offset);
     offset += arguments[i].length;
   }
+  log.debug("Leaving concatBytes().");
   return out;
 }
 
@@ -204,6 +206,7 @@ function isCryptoKey(key) {
 }
 
 function asJwk(key) {
+  log.debug("Entering asJwk().");
   if (!key) return null;
   if (typeof key === "object" && !isCryptoKey(key)) return key;
   if (typeof key === "string" && key.trim().charAt(0) === "{") {
@@ -215,6 +218,7 @@ function asJwk(key) {
       return null;
     }
   }
+  log.debug("Leaving asJwk().");
   return null;
 }
 

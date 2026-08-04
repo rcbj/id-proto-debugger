@@ -7,7 +7,7 @@
 // Three panes in this app do the same thing to three different JSON documents:
 //
 //   debugger.html               OIDC Discovery 1.0 / RFC 8414 (authorization server)
-//   sd-jwt-vc-issuance-1.html   OID4VCI credential issuer metadata, and a second
+//   vc-issuance-1.html   OID4VCI credential issuer metadata, and a second
 //                               copy of the RFC 8414 pane
 //
 // They fetch a URL, tabulate what came back (saying which kind of document it is
@@ -353,11 +353,19 @@ function validateSignedMetadata(doc, options) {
 function buildInfoTable(info, provenance) {
   log.debug("Entering buildInfoTable().");
   var note = "";
-  if (provenance && (provenance.url || provenance.docLabel)) {
+  if (provenance && (provenance.url || provenance.docLabel || provenance.file)) {
+    // Where it came from, said accurately. A document read off disk was not
+    // "retrieved from" anywhere, and saying so would hide the one fact that
+    // matters when a pane is being used because CORS blocked the fetch: what is
+    // on screen is a local copy, not what that URL serves right now.
+    var where = "";
+    if (provenance.file) {
+      where = " loaded from the file <code>" + escapeHtmlText(provenance.file) + "</code>";
+    } else if (provenance.url) {
+      where = " retrieved from <code>" + escapeHtmlText(provenance.url) + "</code>";
+    }
     note = "<p class='discovery-info-note'>Showing <strong>" +
-           escapeHtmlText(provenance.docLabel || "metadata") + "</strong>" +
-           (provenance.url ? " retrieved from <code>" + escapeHtmlText(provenance.url) + "</code>" : "") +
-           ".</p>";
+           escapeHtmlText(provenance.docLabel || "metadata") + "</strong>" + where + ".</p>";
   }
   var html = note + "<table border='2' style='border:2px;'>" +
              "<tr><td><strong>Attribute</strong></td><td><strong>Value</strong></td></tr>";
@@ -380,6 +388,22 @@ function buildInfoTable(info, provenance) {
 // load, which also restores the in-memory copy the "Populate" button reads. Its
 // provenance goes in a separate key so the document's own shape stays exactly
 // as it arrived.
+//
+// The PARSED document is what is kept, deliberately, and it is worth saying why
+// the obvious-looking alternative is wrong. Caching the original response bytes
+// as well, and validating signed_metadata against those, would defeat the more
+// useful half of that check: signed_metadata is a JWT signed over its OWN
+// payload, not over the surrounding JSON, so the bytes add nothing to the
+// signature verification — while the claim-by-claim comparison is deliberately
+// made against the document the page is SHOWING and USING, which is how a member
+// edited away from its signed claim gets reported. Validating the pristine bytes
+// instead reports every tampered document as clean;
+// tests/oauth2_metadata_rfc8414.js has both negative controls for it.
+//
+// save() reports whether the write actually happened. A quota failure used to be
+// swallowed here, which is the one way a table can be on screen with nothing
+// behind it — and the caller can now say so instead of leaving a button that
+// will answer "retrieve a document first" for reasons the user cannot see.
 // ---------------------------------------------------------------------------
 function createStore(infoKey, sourceKey) {
   log.debug("Entering createStore().");
@@ -388,13 +412,18 @@ function createStore(infoKey, sourceKey) {
     infoKey: infoKey,
     sourceKey: sourceKey,
     save: function (info, provenance) {
+      log.debug("Entering save().");
       try {
         localStorage.setItem(infoKey, JSON.stringify(info));
         localStorage.setItem(sourceKey, JSON.stringify(provenance || null));
+        return true;
       } catch (e) {
         // No storage, or over quota: the document is still on screen, it just
-        // will not survive a reload.
+        // will not survive a reload. Reported rather than swallowed.
+        log.debug("createStore().save(): could not store " + infoKey + ": " + e.message);
+        return false;
       }
+      log.debug("Leaving save().");
     },
     read: function () {
       try {
@@ -431,6 +460,41 @@ function fetchJson(url) {
     if (!r.ok) throw new Error("the endpoint returned HTTP " + r.status + ".");
     return r.json();
   });
+}
+
+// The document a pane should validate, and where it came from.
+//
+// Order matters and is the opposite of what looks natural: the IN-MEMORY copy
+// comes first because it is the one the table and the Populate button are built
+// from, so it is what the user is looking at — and reporting a signed claim that
+// disagrees with the document in use is the whole point of the check. Storage is
+// the fallback for the case the button used to fail on: arriving at a page whose
+// table was restored from a previous visit.
+//
+// Be clear about how much the storage branch earns: onload restores the
+// in-memory copy from storage before any table is drawn, so through the UI the
+// two are populated together and that branch is not reached. It is defensive —
+// removing it breaks nothing today and no test can catch it — and it is kept so
+// that a future page which renders a table without seeding its in-memory copy
+// gets a working button instead of a silent one.
+function documentForValidation(store, inMemory) {
+  log.debug("Entering documentForValidation().");
+  if (inMemory && Object.keys(inMemory).length) {
+    log.debug("Leaving documentForValidation(). Using the document this page holds.");
+    return { doc: inMemory, source: "memory", note: "" };
+  }
+  var saved = null;
+  try {
+    saved = store ? store.read() : null;
+  } catch (e) {
+    saved = null;
+  }
+  if (saved && Object.keys(saved).length) {
+    log.debug("Leaving documentForValidation(). Using the stored copy.");
+    return { doc: saved, source: "stored", note: "" };
+  }
+  log.debug("Leaving documentForValidation(). Nothing to validate.");
+  return { doc: null, source: "none", note: "" };
 }
 
 // ---------------------------------------------------------------------------
@@ -499,6 +563,99 @@ function fetchWellKnown(issuer, wellKnown) {
   return Promise.resolve().then(function () { return attempt(0, null); });
 }
 
+// ---------------------------------------------------------------------------
+// Reading a JSON document off disk, and the two builders for an editable
+// document-members table.
+//
+// These live here rather than on a page because two pages need them and a copy in
+// each is a copy that drifts: vc-issuance-1.html uploads credential issuer and
+// authorization server metadata, and did-tools.html uploads a DID Document — the
+// same operation on a different document. The upload route exists at all because a
+// host that sends no CORS headers cannot be read by a browser however right the URL
+// is, so "fetch it with curl and load the file" has to work everywhere.
+//
+// `onStatus(text, cls)` is passed in rather than assumed: each page writes its
+// status to its own element with its own classes, and this module has no business
+// knowing which.
+// ---------------------------------------------------------------------------
+function readJsonFile(evt, onDocument, onStatus) {
+  log.debug("Entering readJsonFile().");
+  var say = onStatus || function () {};
+  var input = evt && evt.target;
+  var file = input && input.files && input.files[0];
+  if (!file) {
+    log.debug("Leaving readJsonFile(). Nothing chosen.");
+    return false;
+  }
+  say("Reading " + file.name + " \u2026", "vc-pending");
+  var reader = new FileReader();
+  reader.onload = function () {
+    log.debug("Entering readJsonFile onload().");
+    var doc = null;
+    try {
+      doc = JSON.parse(String(reader.result || ""));
+    } catch (e) {
+      say("That file is not JSON: " + e.message, "vc-bad");
+      if (input) input.value = "";
+      return;
+    }
+    if (!doc || typeof doc !== "object" || Object.prototype.toString.call(doc) === "[object Array]") {
+      say("That file is JSON, but the document has to be a JSON object.", "vc-bad");
+      if (input) input.value = "";
+      return;
+    }
+    try {
+      onDocument(doc, file.name);
+    } finally {
+      // Cleared whatever happened, so the same file can be chosen again after a
+      // correction — otherwise the second attempt fires no change event and the
+      // button looks broken.
+      if (input) input.value = "";
+    }
+    log.debug("Leaving readJsonFile onload().");
+  };
+  reader.onerror = function () {
+    say("Could not read " + file.name + ".", "vc-bad");
+    if (input) input.value = "";
+  };
+  reader.readAsText(file);
+  log.debug("Leaving readJsonFile().");
+  return false;
+}
+
+// One row of an editable document-members table: a labelled input whose kind
+// follows the member's type, with the specification's own description as the
+// tooltip. `json` members get a textarea because they are structures shown
+// pretty-printed (setMetadataField swaps it back to an input for a scalar).
+function fieldRow(id, label, desc, type) {
+  log.debug("Entering fieldRow().");
+  var input;
+  if (type === "boolean") {
+    input = '<select class="stored" id="' + escapeHtmlText(id) + '" name="' + escapeHtmlText(id) + '">' +
+              '<option value="true">true</option>' +
+              '<option value="false">false</option>' +
+            '</select>';
+  } else if (type === "json") {
+    input = '<textarea class="stored metadata-json-field" id="' + escapeHtmlText(id) + '" name="' +
+            escapeHtmlText(id) + '" rows="3" spellcheck="false"></textarea>';
+  } else {
+    input = '<input class="stored" type="text" id="' + escapeHtmlText(id) + '" name="' +
+            escapeHtmlText(id) + '" max="512" />';
+  }
+  log.debug("Leaving fieldRow().");
+  return '<tr>' +
+           '<td><div class="tooltip"><label>' + escapeHtmlText(label) + ': </label>' +
+             '<span class="tooltiptext">' + escapeHtmlText(desc) + '</span></div></td>' +
+           '<td>' + input + '</td>' +
+         '</tr>';
+}
+
+// A heading spanning both columns, to group the rows below it.
+function groupRow(title, subtitle) {
+  return '<tr class="vc-group-heading"><td colspan="2">' + escapeHtmlText(title) +
+         (subtitle ? ' <span>' + escapeHtmlText(subtitle) + '</span>' : '') + '</td></tr>';
+}
+
 module.exports = {
   escapeHtmlText: escapeHtmlText,
   isJsonStructure: isJsonStructure,
@@ -517,6 +674,10 @@ module.exports = {
   buildInfoTable: buildInfoTable,
   createStore: createStore,
   fetchJson: fetchJson,
+  documentForValidation: documentForValidation,
   wellKnownCandidates: wellKnownCandidates,
-  fetchWellKnown: fetchWellKnown
+  fetchWellKnown: fetchWellKnown,
+  readJsonFile: readJsonFile,
+  fieldRow: fieldRow,
+  groupRow: groupRow
 };

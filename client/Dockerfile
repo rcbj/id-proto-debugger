@@ -82,15 +82,18 @@ RUN browserify src/saml_tools.js -o public/js/saml_tools.js --debug --standalone
 RUN browserify src/saml_response.js -o public/js/saml_response.js --debug --standalone saml_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wstrust_tools.js -o public/js/wstrust_tools.js --debug --standalone wstrust_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wstrust_response.js -o public/js/wstrust_response.js --debug --standalone wstrust_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_issuance_0.js -o public/js/sd_jwt_vc_issuance_0.js --debug --standalone sdjwtvc0 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_issuance_1.js -o public/js/sd_jwt_vc_issuance_1.js --debug --standalone sdjwtvc1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_issuance_2.js -o public/js/sd_jwt_vc_issuance_2.js --debug --standalone sdjwtvc2 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_issuance_3.js -o public/js/sd_jwt_vc_issuance_3.js --debug --standalone sdjwtvc3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_issuance_4.js -o public/js/sd_jwt_vc_issuance_4.js --debug --standalone sdjwtvc4 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_presentation_0.js -o public/js/sd_jwt_vc_presentation_0.js --debug --standalone sdjwtvp0 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_presentation_1.js -o public/js/sd_jwt_vc_presentation_1.js --debug --standalone sdjwtvp1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_presentation_2.js -o public/js/sd_jwt_vc_presentation_2.js --debug --standalone sdjwtvp2 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/sd_jwt_vc_presentation_3.js -o public/js/sd_jwt_vc_presentation_3.js --debug --standalone sdjwtvp3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_issuance_0.js -o public/js/vc_issuance_0.js --debug --standalone vcissuance0 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_issuance_1.js -o public/js/vc_issuance_1.js --debug --standalone vcissuance1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_issuance_2.js -o public/js/vc_issuance_2.js --debug --standalone vcissuance2 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_issuance_3.js -o public/js/vc_issuance_3.js --debug --standalone vcissuance3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_issuance_4.js -o public/js/vc_issuance_4.js --debug --standalone vcissuance4 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_presentation_0.js -o public/js/vc_presentation_0.js --debug --standalone vcpresentation0 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_presentation_1.js -o public/js/vc_presentation_1.js --debug --standalone vcpresentation1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_presentation_2.js -o public/js/vc_presentation_2.js --debug --standalone vcpresentation2 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+# DID Tools: a general-purpose DID verifier, reached from the VC Tools pane on
+# every page of both VC workflows.
+RUN browserify src/did_tools.js -o public/js/did_tools.js --debug --standalone didtools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/vc_presentation_3.js -o public/js/vc_presentation_3.js --debug --standalone vcpresentation3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_tools.js -o public/js/wsfed_tools.js --debug --standalone wsfed_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_response.js -o public/js/wsfed_response.js --debug --standalone wsfed_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
@@ -105,7 +108,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "sd_jwt_vc_issuance_0:sdjwtvc0" "sd_jwt_vc_issuance_1:sdjwtvc1" "sd_jwt_vc_issuance_2:sdjwtvc2" "sd_jwt_vc_issuance_3:sdjwtvc3" "sd_jwt_vc_issuance_4:sdjwtvc4" "sd_jwt_vc_presentation_0:sdjwtvp0" "sd_jwt_vc_presentation_1:sdjwtvp1" "sd_jwt_vc_presentation_2:sdjwtvp2" "sd_jwt_vc_presentation_3:sdjwtvp3" "wsfed_tools:wsfed_tools" "wsfed_response:wsfed_response" ; do \
+      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_tools:wsfed_tools" "wsfed_response:wsfed_response" ; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

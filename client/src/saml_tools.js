@@ -287,6 +287,7 @@ function subject1x(pad) {
 }
 
 function attributeElements20(pad) {
+  log.debug("Entering attributeElements20().");
   var out = '';
   for (var i = 0; i < attributes.length; i++) {
     var a = attributes[i];
@@ -296,10 +297,12 @@ function attributeElements20(pad) {
     out += pad + '  <saml:AttributeValue' + xsiTypeAttr(a) + '>' + esc(a.value) + '</saml:AttributeValue>\n';
     out += pad + '</saml:Attribute>\n';
   }
+  log.debug("Leaving attributeElements20().");
   return out;
 }
 
 function attributeElements1x(pad) {
+  log.debug("Entering attributeElements1x().");
   var out = '';
   for (var i = 0; i < attributes.length; i++) {
     var a = attributes[i];
@@ -309,6 +312,7 @@ function attributeElements1x(pad) {
     out += pad + '  <saml:AttributeValue' + xsiTypeAttr(a) + '>' + esc(a.value) + '</saml:AttributeValue>\n';
     out += pad + '</saml:Attribute>\n';
   }
+  log.debug("Leaving attributeElements1x().");
   return out;
 }
 
@@ -1029,6 +1033,7 @@ function togglePane(bodyId) {
 }
 
 function viewCertificate(fieldId) {
+  log.debug("Entering viewCertificate().");
   var pem = val(fieldId);
   if (!pem) { setStatus('sa_sign_status', 'No certificate to view yet — generate a key pair first.'); return false; }
   try {
@@ -1037,6 +1042,7 @@ function viewCertificate(fieldId) {
     // No storage available in this context.
   }
   window.open('/saml_cert.html?from=saml_tools.html', '_blank');
+  log.debug("Leaving viewCertificate().");
   return false;
 }
 
@@ -1244,6 +1250,7 @@ window.onload = function () {
   }
 
   autoBuild();
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

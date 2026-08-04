@@ -24,6 +24,28 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const bunyan = require("bunyan");
+
+// This module is required BY other tests (wsfed_sso.js, saml_encrypted_sso.js),
+// each of which passes its own logger in so the contract check appears in that
+// test's log. `fallbackLog` is for the case where it is called without one — it
+// used to be console.log, which was the only place in this directory that wrote
+// outside bunyan.
+//
+// The level is guarded because a caller may not have set CONFIG_FILE, and this
+// module must not be the reason a test fails to load.
+const fallbackLog = bunyan.createLogger({
+  name: "edge_landing_contract",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).LOG_LEVEL || "info";
+    } catch (e) {
+      // No CONFIG_FILE, or it does not resolve from here. Falling back to info
+      // loses only the configured verbosity.
+      return "info";
+    }
+  })()
+});
 
 function locate(candidates) {
   return candidates.filter(function (p) { return fs.existsSync(p); })[0];
@@ -37,7 +59,7 @@ const COMPARED = {
 };
 
 function assertEdgeLandingContract(log) {
-  const say = (log && log.info) ? log.info.bind(log) : console.log;
+  const say = (log && log.info) ? log.info.bind(log) : fallbackLog.info.bind(fallbackLog);
   say("Checking the edge landings' hand-off contract (infra/edge/edge_common.js vs client/src/edge_landing.js).");
 
   // Flat in the tests container, in their own trees in a checkout.

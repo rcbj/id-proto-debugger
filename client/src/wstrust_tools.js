@@ -107,6 +107,7 @@ function forgetStoredKeyPair() {
 // lands on a different page and after a reload, so it is not something to leave
 // the user to discover.
 function renderKeyPairStorageNote() {
+  log.debug("Entering renderKeyPairStorageNote().");
   var note = el('wst_keypair_storage_note');
   if (!note) return;
   if (keyPairMayBeStored()) {
@@ -117,6 +118,7 @@ function renderKeyPairStorageNote() {
   note.textContent = 'Not saved. Use Download to keep this key pair. After a reload you will need ' +
     'to paste it back into these two fields, and paste the private key into the Decryption Key ' +
     'field on the WS-Trust Response page before an encrypted token can be decrypted.';
+  log.debug("Leaving renderKeyPairStorageNote().");
 }
 
 function onSaveKeyPairChange() {
@@ -130,6 +132,7 @@ function onSaveKeyPairChange() {
 }
 
 function saveState() {
+  log.debug("Entering saveState().");
   if (!window.localStorage) return;
   var storeKeyPair = keyPairMayBeStored();
   var els = persistedEls();
@@ -143,8 +146,10 @@ function saveState() {
   // session, before the box was cleared) already put there. saveState() runs on
   // most interactions, so no code path can leave the key pair behind.
   if (!storeKeyPair) forgetStoredKeyPair();
+  log.debug("Leaving saveState().");
 }
 function restoreState() {
+  log.debug("Entering restoreState().");
   if (!window.localStorage) return;
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
@@ -154,6 +159,7 @@ function restoreState() {
     if (els[i].type === 'checkbox') els[i].checked = (v === '1' || v === 'true' || v === 'on');
     else els[i].value = v;
   }
+  log.debug("Leaving restoreState().");
 }
 
 // ---------------------------------------------------------------------------
@@ -556,7 +562,9 @@ function currentUser() {
 }
 
 function historyEntry(result, detail) {
+  log.debug("Entering historyEntry().");
   var op = val('wst_operation');
+  log.debug("Leaving historyEntry().");
   return {
     operation: OPERATION_LABEL[op] || op,
     version: val('wst_trust_version'),
@@ -678,6 +686,7 @@ function togglePane(bodyId) {
   return false;
 }
 function showTab(evt, tabId) {
+  log.debug("Entering showTab().");
   var target = el(tabId);
   var scope = (target && target.closest && target.closest('.saml-pane')) || document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
@@ -686,9 +695,11 @@ function showTab(evt, tabId) {
   for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
+  log.debug("Leaving showTab().");
   return false;
 }
 function viewCertificate(fieldId) {
+  log.debug("Entering viewCertificate().");
   var pem = val(fieldId);
   if (!pem) { setStatus('wst_call_status', 'No certificate to view yet.'); return false; }
   try {
@@ -697,6 +708,7 @@ function viewCertificate(fieldId) {
     // No storage available in this context.
   }
   window.open('/saml_cert.html?from=wstrust_tools.html', '_blank');
+  log.debug("Leaving viewCertificate().");
   return false;
 }
 
@@ -756,6 +768,7 @@ window.onload = function () {
   }
 
   autoBuildRequest();
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

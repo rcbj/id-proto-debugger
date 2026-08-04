@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Issuance (1 of 4)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container vc-fit">
+
+<script type="text/javascript" src="/js/vc_issuance_1.js">
+</script>
+
+<!--#include file="/partials/vc_steps.html"-->
+
+<h3 class="vc-title">VC Issuance &mdash; Step 1 of 4: Discover the Issuer<a class="vc-title-return" id="return_link" href="/index.html">&larr; Return to home</a></h3>
+
+
+<details class="vc-hint vc-intro-fold"><summary>What step 1 does</summary><p class="vc-intro">Issue a <strong>Selective Disclosure JWT Verifiable Credential</strong>
+(<a href="https://www.rfc-editor.org/rfc/rfc9901.html" target="_blank" rel="noopener noreferrer">SD-JWT, RFC 9901</a>)
+using <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OpenID for Verifiable Credential Issuance</a>
+(OID4VCI). This page plays the wallet's part of the discovery phase: retrieve the
+<strong>Credential Issuer Metadata</strong> to learn what the issuer offers and where its endpoints are, retrieve the
+<strong>Authorization Server Metadata</strong> (<a href="https://www.rfc-editor.org/rfc/rfc8414.html" target="_blank" rel="noopener noreferrer">RFC 8414</a>)
+of the server that authorizes issuance, and settle the parameters both documents define. Step&nbsp;2 authenticates the
+user through the existing OIDC Authorization Code flow on the
+<a href="/debugger.html">debugger</a> pages and asks the user to approve issuance; step&nbsp;3 shows the credential the
+issuer returns.</p></details>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" onchange="vcSetAllPanes(this.checked);" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function vcSetAllPanes(expand) {
+  var fieldsets = ['vci_fieldset', 'did_fieldset', 'as_fieldset', 'didcfg_fieldset', 'config_fieldset', 'handoff_fieldset', 'vc_tools_fieldset'];
+  for (var i = 0; i < fieldsets.length; i++) {
+    var fs = document.getElementById(fieldsets[i]);
+    if (fs) fs.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<!-- ====== The Credential Offer, when the issuer started this (H.1) ====== -->
+<div class="step0 dbg-pane" id="pane_offer" style="display: none;">
+  <legend class="dbg-legend" id="offer_expand_button" onclick="return vcissuance1.togglePane('offer_fieldset');">Credential Offer</legend>
+  <fieldset name="offer_fieldset" id="offer_fieldset" style="display: block;">
+    <p class="vc-note" id="offer_intro">An issuer has offered you a credential. This is the Credential Offer it
+    sent, exactly as received &mdash; nothing has been requested yet.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Offered by</label><span class="tooltiptext">credential_issuer from the offer. The panes below are filled in from it, so the rest of the workflow talks to this issuer.</span></div></td>
+          <td><code id="offer_issuer">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Credential offered</label><span class="tooltiptext">credential_configuration_ids — which entry of the issuer's credential_configurations_supported is on offer.</span></div></td>
+          <td><code id="offer_configuration_ids">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Grant</label><span class="tooltiptext">The grants member says how to get authorized. authorization_code sends you to the issuer to sign in; its issuer_state ties that request back to this offer.</span></div></td>
+          <td><code id="offer_grant">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>How it arrived</label><span class="tooltiptext">By value the offer travels in the credential_offer query parameter; by reference the wallet fetches it from credential_offer_uri.</span></div></td>
+          <td><code id="offer_source">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>The offer</label><span class="tooltiptext">The Credential Offer object itself (OID4VCI section 4).</span></div></td>
+          <td><pre class="vc-json" id="offer_json">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="offer_discard_button" type="button" value="Discard this offer" onclick="return vcissuance1.discardOffer();" />
+              <span class="tooltiptext">Forget the offer and carry on as a wallet-initiated issuance. The metadata and configuration below stay as they are.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="offer_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+
+<!-- ============ Pane 1: Credential Issuer Metadata (OID4VCI) ============ -->
+<!-- The four metadata panes side by side: each is a URL, a few buttons and a
+     status, and stacking them spent 1,234px of height on content that fits in a
+     quarter of the width. A grid rather than a fixed four columns, so a narrow
+     window folds them instead of overflowing. -->
+<div class="vc-pane-row">
+<div class="step0 dbg-pane" id="pane_vci">
+  <legend class="dbg-legend" id="vci_expand_button" onclick="return vcissuance1.togglePane('vci_fieldset');">Credential Issuer Metadata</legend>
+  <fieldset name="vci_fieldset" id="vci_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="vci_source_hint">An OID4VCI Credential Issuer publishes its metadata at a path that ends in <code>/.well-known/openid-credential-issuer</code>. See the <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a> spec.</p></details></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Credential Issuer Metadata URL: </label><span class="tooltiptext">The Credential Issuer Metadata endpoint. Retrieving it tells the wallet which credentials this issuer offers, which authorization server protects them, and where the nonce and credential endpoints are, and fills the OID4VCI half of the Configuration Parameters pane below. Populate Meta Data re-applies the document afterwards.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="vci_metadata_endpoint" name="vci_metadata_endpoint" type="text" max="256" size="60" />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn_vci_retrieve btn2" id="vci_retrieve_button" type="button" value="Retrieve" onclick="vcissuance1.retrieveVciMetadata(); return false;" />
+              <span class="tooltiptext">Fetch the Credential Issuer Metadata document from the URL above.</span>
+            </div>
+            <div class="tooltip">
+              <input class="btn2" id="vci_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadVciMetadata();" />
+              <span class="tooltiptext">Load the Credential Issuer Metadata from a file on disk instead of fetching it. Use this when the issuer sends no CORS headers, which stops a browser reading its metadata however correct the URL is: fetch the document with curl, save it, and load it here. Everything afterwards is identical to a retrieval.</span>
+            </div>
+            <input type="file" id="vci_metadata_file" name="vci_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return vcissuance1.onVciFileChange(event);" />
+          </td>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vci_clear_button" type="button" value="Clear" onclick="return vcissuance1.clearVciMetadata();" />
+              <span class="tooltiptext">Forget the retrieved Credential Issuer Metadata document, its table, and the OID4VCI values it populated (on screen and in local storage).</span>
+            </div>
+          </td>
+        </tr>
+        <tr id="vci_signed_metadata_row">
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="vci_validate_signed_metadata_button" type="button" value="Validate Signature" onclick="return vcissuance1.validateVciSignature();" />
+              <span class="tooltiptext">Verify the signed_metadata JWT on the Credential Issuer Metadata document. The issuer's keys are resolved from the SD-JWT VC issuer metadata (/.well-known/jwt-vc-issuer) or from a jwks_uri in the document itself; the signature is verified in the browser, the iss claim is checked against credential_issuer, and any signed claim that disagrees with the plain JSON is reported.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="vci_signed_metadata_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="discovery_info_table" id="vci_metadata_table">&nbsp;</div>
+    <div class="discovery_info_meta_data_populate" id="vci_metadata_populate">&nbsp;</div>
+    <div class="vc-schema-report" id="vci_schema_report"></div>
+  </fieldset>
+</div>
+
+
+<!-- ====== Pane 1b: DID Document (W3C DID Core 1.0) ====== -->
+<div class="step0 dbg-pane" id="pane_did">
+  <legend class="dbg-legend" id="did_expand_button" onclick="return vcissuance1.togglePane('did_fieldset');">Issuer DID Document</legend>
+  <fieldset name="did_fieldset" id="did_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="did_source_hint">A credential may name its issuer by <a href="https://www.w3.org/TR/did-1.0/" target="_blank" rel="noopener noreferrer">DID</a> instead of by URL. <code>did:jwk</code> and <code>did:key</code> <em>are</em> their key &mdash; they resolve here with no network call. Only <code>did:web</code> has a document to retrieve. Note that <a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/" target="_blank" rel="noopener noreferrer">SD-JWT VC</a> defines no DID-based issuer signature mechanism &mdash; using one with <code>dc+sd-jwt</code> is a profile extension. <code>ldp_vc</code> is DID-native under <a href="https://www.w3.org/TR/vc-data-model-2.0/" target="_blank" rel="noopener noreferrer">VC Data Model 2.0</a>.</p></details></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Issuer DID: </label><span class="tooltiptext">The DID to resolve. Filled in automatically from a retrieved credential (its iss or issuer) when that is a DID; type one here to resolve it by hand.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="did_identifier" name="did_identifier" type="text" max="512" size="60" />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn_did_resolve btn2" id="did_resolve_button" type="button" value="Resolve" onclick="vcissuance1.resolveDid(); return false;" />
+              <span class="tooltiptext">Resolve the DID above. did:jwk and did:key are decoded locally; did:web is fetched over HTTP(S) from the document URL the method defines.</span>
+            </div>
+            <div class="tooltip">
+              <input class="btn2" id="did_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadDidDocument();" />
+              <span class="tooltiptext">Load a DID Document from a file instead of resolving it. Use this when a did:web host sends no CORS headers, which stops a browser reading its document however correct the URL is: fetch it with curl, save it, and load it here.</span>
+            </div>
+            <input type="file" id="did_document_file" name="did_document_file" accept=".json,application/json,.jsonld,text/plain" style="display:none;" onchange="return vcissuance1.onDidFileChange(event);" />
+          </td>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_clear_button" type="button" value="Clear" onclick="return vcissuance1.clearDidDocument();" />
+              <span class="tooltiptext">Forget the resolved DID Document, its table, and the DID values it populated (on screen and in local storage).</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="did_resolution_url">Document URL: </label><span class="tooltiptext">Where a did:web document is fetched from. Resolve fills this in from the DID: the host with its port percent-decoded, then /.well-known/did.json, or /&lt;path&gt;/did.json when the DID carries path segments. It stays empty for did:jwk and did:key, which have nothing to fetch. You can also type a URL here and press Retrieve, for a document that is not where the method's rules say it should be.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="did_resolution_url" name="did_resolution_url" type="text" max="512" size="60" />
+            <div class="tooltip">
+              <input class="btn2" id="did_retrieve_button" type="button" value="Retrieve" onclick="return vcissuance1.retrieveDidDocument();" />
+              <span class="tooltiptext">Fetch the DID Document from the URL above and use it here exactly as a resolved one. This is a retrieval, not a resolution: it is for a document that is not at the location the DID method derives &mdash; on a staging host, behind a tunnel, or at a path the issuer has not published yet. Because you chose the URL, a document whose id is a different DID is reported rather than refused.</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_verify_button" type="button" value="Verify Issuer Key" onclick="return vcissuance1.verifyDidBinding();" />
+              <span class="tooltiptext">Check that a key in this DID Document actually verifies the credential in hand. Resolving a document proves nothing on its own &mdash; what matters is whether the key it publishes is the one the issuer signed with.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="did_status">&nbsp;</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_linkage_button" type="button" value="Verify Linkage" onclick="return vcissuance1.verifyDomainLinkage();" />
+              <span class="tooltiptext">Fetch /.well-known/did-configuration.json from the issuer's origin and verify its Domain Linkage Credential (DIF Well Known DID Configuration). This is what proves the DID and the https issuer are the same entity. For did:web it is the only non-circular proof: resolving did:web:host means fetching host, so the DID document alone cannot establish that the origin's controller and the DID's controller are one party.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="did_linkage_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="discovery_info_table" id="did_linkage_table">&nbsp;</div>
+    <div class="discovery_info_table" id="did_document_table">&nbsp;</div>
+  </fieldset>
+</div>
+
+<!-- ====== Pane 2: Authorization Server Metadata (RFC 8414) ====== -->
+<div class="step0 dbg-pane" id="pane_as">
+  <legend class="dbg-legend" id="as_expand_button" onclick="return vcissuance1.togglePane('as_fieldset');">Authorization Server Metadata</legend>
+  <fieldset name="as_fieldset" id="as_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="as_source_hint">An OAuth 2.0 Authorization Server Metadata endpoint uses a path that ends in <code>/.well-known/oauth-authorization-server</code>. See the <a href="https://www.rfc-editor.org/rfc/rfc8414.html" target="_blank" rel="noopener noreferrer">RFC 8414</a> spec. This document is stored under the same names <a href="/debugger.html">debugger.html</a> uses, so retrieving it here also configures the OAuth2 / OIDC workflow.</p></details></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Metadata Endpoint URL: </label><span class="tooltiptext">The RFC 8414 metadata endpoint of the authorization server that protects this credential issuer. Defaulted from the credential issuer metadata's authorization_servers member once that document has been retrieved. Retrieving it fills the authorization server half of the Configuration Parameters pane below; Populate Meta Data re-applies the document afterwards.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="oidc_discovery_endpoint" name="oidc_discovery_endpoint" type="text" max="256" size="60" />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn_oidc_discovery_endpoint btn2" id="as_retrieve_button" type="button" value="Retrieve" onclick="vcissuance1.retrieveAsMetadata(); return false;" />
+              <div class="tooltip">
+                <input class="btn2" id="as_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadAsMetadata();" />
+                <span class="tooltiptext">Load the Authorization Server Metadata from a file on disk instead of fetching it. Use this when the authorization server sends no CORS headers, which stops a browser reading its metadata however correct the URL is: fetch the document with curl, save it, and load it here. Everything afterwards is identical to a retrieval — including what debugger.html then shows.</span>
+              </div>
+              <input type="file" id="as_metadata_file" name="as_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return vcissuance1.onAsFileChange(event);" />
+              <span class="tooltiptext">Fetch the authorization server metadata document from the URL above.</span>
+            </div>
+          </td>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="as_clear_button" type="button" value="Clear" onclick="return vcissuance1.clearAsMetadata();" />
+              <span class="tooltiptext">Forget the retrieved authorization server metadata document and every value it populated — here AND on the debugger pages, since both share the same local storage.</span>
+            </div>
+          </td>
+        </tr>
+        <tr id="as_signed_metadata_row">
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="as_validate_signed_metadata_button" type="button" value="Validate Signature" onclick="return vcissuance1.validateAsSignature();" />
+              <span class="tooltiptext">Verify the signed_metadata JWT on the RFC 8414 document against the keys at its own jwks_uri, exactly as the Metadata Retrieval pane on debugger.html does.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="as_signed_metadata_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="discovery_info_table" id="discovery_info_table">&nbsp;</div>
+    <div class="discovery_info_meta_data_populate" id="discovery_info_meta_data_populate">&nbsp;</div>
+    <div class="vc-schema-report" id="as_schema_report"></div>
+  </fieldset>
+</div>
+
+<!-- ====== Pane 2b: DID Configuration (DIF Well Known DID Configuration) ====== -->
+<div class="step0 dbg-pane" id="pane_didcfg">
+  <legend class="dbg-legend" id="didcfg_expand_button" onclick="return vcissuance1.togglePane('didcfg_fieldset');">DID Configuration</legend>
+  <fieldset name="didcfg_fieldset" id="didcfg_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="didcfg_source_hint">An issuer named by <code>did:web</code> presents a problem this document exists to solve: resolving <code>did:web:example.com</code> means fetching <code>example.com</code>, so reading a DID document off that origin to decide whether the DID belongs to it is circular. A <a href="https://identity.foundation/well-known-did-configuration/resources/did-configuration/" target="_blank" rel="noopener noreferrer">Domain Linkage Credential</a> breaks the circle: the DID signs, with its own key, a credential naming the origin. The resource lives at the fixed path <code>/.well-known/did-configuration.json</code> at the origin root.</p></details></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="didcfg_url">DID Configuration URL: </label><span class="tooltiptext">The resource's location is fixed by the specification: /.well-known/did-configuration.json at the origin root. Filled in from the credential issuer's origin once its metadata is retrieved; editable, because the copy you want to inspect may be somewhere else.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="didcfg_url" name="didcfg_url" type="text" max="512" size="60" />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="didcfg_retrieve_button" type="button" value="Retrieve" onclick="return vcissuance1.retrieveDidConfiguration();" />
+              <span class="tooltiptext">Fetch the resource from the URL above, check it against the specification, and populate the DID Configuration section of Configuration Parameters.</span>
+            </div>
+            <div class="tooltip">
+              <input class="btn2" id="didcfg_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadDidConfiguration();" />
+              <span class="tooltiptext">Load the resource from a file instead. Use this when the origin sends no CORS headers, which stops a browser reading it however right the URL is: fetch it with curl, save it, and load it here.</span>
+            </div>
+            <input type="file" id="didcfg_file" name="didcfg_file" accept=".json,application/json,.jsonld,text/plain" style="display:none;" onchange="return vcissuance1.onDidConfigurationFileChange(event);" />
+          </td>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="didcfg_clear_button" type="button" value="Clear" onclick="return vcissuance1.clearDidConfiguration();" />
+              <span class="tooltiptext">Forget the resource, its table, and the DID Configuration values it populated (on screen and in local storage).</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="didcfg_verify_button" type="button" value="Verify Linkage" onclick="return vcissuance1.verifyLoadedDidConfiguration();" />
+              <span class="tooltiptext">Check the loaded resource cryptographically, not just structurally: resolve the DID it links, verify the credential's signature against the keys that DID authorises to assert, and check the origin it names is the origin it was fetched from. The schema check below says whether the document is well formed; this says whether it is true.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="didcfg_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="discovery_info_table" id="didcfg_metadata_table">&nbsp;</div>
+    <div class="discovery_info_meta_data_populate" id="didcfg_metadata_populate">&nbsp;</div>
+    <div class="vc-schema-report" id="didcfg_schema_report"></div>
+    <div class="discovery_info_table" id="didcfg_verify_table">&nbsp;</div>
+  </fieldset>
+</div>
+</div>
+
+<!-- ====== Taking an offer that arrived on another device (H.2 / H.3) ====== -->
+<div class="step0 dbg-pane" id="pane_scan">
+  <legend class="dbg-legend" id="scan_expand_button" onclick="return vcissuance1.togglePane('scan_fieldset');">Receive a Credential Offer</legend>
+  <fieldset name="scan_fieldset" id="scan_fieldset" style="display: block;">
+    <details class="vc-hint"><summary>When you need this</summary><p class="vc-note">In a cross-device flow the issuer shows a QR code on its own screen and your wallet is
+    somewhere else, so the offer does not arrive in this browser by itself. Paste what the QR code contains
+    &mdash; an <code>openid-credential-offer://</code> URI, an <code>https://</code> link carrying
+    <code>credential_offer</code> or <code>credential_offer_uri</code>, or the Credential Offer JSON itself.</p></details>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="scan_offer_input">Scanned offer</label>
+              <span class="tooltiptext">Whatever the QR code encodes. OID4VCI defines the openid-credential-offer:// URI scheme for exactly this hand-over.</span>
+            </div>
+          </td>
+          <td><textarea id="scan_offer_input" name="scan_offer_input" rows="3" cols="90" placeholder="openid-credential-offer://?credential_offer=%7B%22credential_issuer%22..."></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="scan_offer_button" type="button" value="Take this offer" onclick="return vcissuance1.takeScannedOffer();" />
+              <span class="tooltiptext">Read the offer, then discover the issuer it names and the authorization server that issuer names — the same thing that happens when an offer arrives in the URL.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="scan_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 3: Configuration Parameters ============ -->
+<div class="step0 dbg-pane" id="pane_config">
+  <legend class="dbg-legend" id="config_expand_button" onclick="return vcissuance1.togglePane('config_fieldset');">Configuration Parameters</legend>
+  <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
+    <details class="vc-hint"><summary>What this pane is</summary><p class="vc-note">Every parameter the two metadata documents above can define, plus the client settings the
+    authorization request needs. Retrieving either document fills its half of this pane; each value can then be
+    overridden by hand, and <em>Populate Meta Data</em> in that pane re-applies the document. The OAuth 2.0 / OpenID Provider parameters are
+    stored under the same names <a href="/debugger.html">debugger.html</a> uses, so what is set here is what the OIDC
+    workflow will run with. A member the retrieved document leaves out is marked
+    <span class="not-defined-sample">--&gt;not defined&lt;--</span>.</p></details>
+    <form action="" id="config_form" name="config_form" onsubmit="return false;">
+      <!-- Generated from op_metadata.js, vci_metadata.js and did.js so the pane
+           cannot drift from the member lists it is meant to cover. One block per
+           GROUP rather than one long table: the groups are laid out in columns, which
+           is what took this pane from 3,988px to something a screen can hold. -->
+      <div id="config_rows" class="vc-config-groups"></div>
+    </form>
+    <p>
+      <input class="btn2" id="config_save_button" type="button" value="Save" onclick="return vcissuance1.saveConfiguration();" />
+      <input class="btn2" id="config_clear_button" type="button" value="Clear All" onclick="return vcissuance1.clearConfiguration();" />
+      <input class="btn2" id="config_defaults_button" type="button" value="Restore Defaults" onclick="return vcissuance1.restoreDefaults();" />
+      <span class="vc-status" id="config_status">&nbsp;</span>
+    </p>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 4: Authenticate the user ============ -->
+<div class="step0 dbg-pane" id="pane_handoff">
+  <legend class="dbg-legend" id="handoff_expand_button" onclick="return vcissuance1.togglePane('handoff_fieldset');">Authorize Issuance (OIDC Authorization Code Flow)</legend>
+  <fieldset name="handoff_fieldset" id="handoff_fieldset" style="display: block;">
+    <p class="vc-note">OID4VCI authorizes issuance with an ordinary OAuth 2.0 / OpenID Connect Authorization Code
+    flow, so this step hands over to the debugger pages that already implement it. The
+    <code>sdjwtvc=1</code> query parameter tells <a href="/debugger.html">debugger.html</a> that it is running as part
+    of this workflow: it starts the authorization request with the configuration above, the user authenticates at the
+    identity provider, <a href="/debugger2.html">debugger2.html</a> exchanges the code for tokens, and the browser
+    then returns here &mdash; to step 2, where the tokens are shown and the user is asked to approve issuance.</p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Hand-off URL: </label><span class="tooltiptext">Where the Start button goes. The query parameter is what puts debugger.html into SD-JWT VC issuance mode.</span>
+            </div>
+          </td>
+          <td><code id="handoff_url">/debugger.html?sdjwtvc=1</code></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Authorization Endpoint: </label><span class="tooltiptext">The endpoint the authorization request will be sent to — the value from the Configuration Parameters pane above.</span>
+            </div>
+          </td>
+          <td><code id="handoff_authorization_endpoint">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="handoff_request_mechanism">Ask for the credential with: </label>
+              <span class="tooltiptext">OID4VCI has two ways to say which credential is wanted (section 3.3.4). A scope is the simple one. authorization_details (RFC 9396) is the expressive one: the token response then grants credential_identifiers, and the Credential Request MUST name one of those instead of a credential_configuration_id.</span>
+            </div>
+          </td>
+          <td>
+            <select id="handoff_request_mechanism" name="handoff_request_mechanism" onchange="return vcissuance1.onRequestMechanismChange();">
+              <option value="scope" selected="selected">scope — the credential configuration's scope value</option>
+              <option value="authorization_details">authorization_details — RFC 9396, type openid_credential</option>
+            </select>
+            <div class="vc-note" id="handoff_mechanism_note">&nbsp;</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Credential requested: </label><span class="tooltiptext">The credential configuration the Credential Request will ask for in step 2.</span>
+            </div>
+          </td>
+          <td><code id="handoff_credential">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="start_issuance_button" type="button" value="Start Issuance" onclick="return vcissuance1.startIssuance();" />
+              <span class="tooltiptext">Save the configuration and go to debugger.html?sdjwtvc=1 to authenticate the user.</span>
+            </div>
+          </td>
+          <td>
+            <div class="vc-status" id="handoff_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

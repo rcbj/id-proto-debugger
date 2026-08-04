@@ -29,6 +29,34 @@
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const bunyan = require("bunyan");
+
+// The runner's own progress lines. They used to be console.log, which made this
+// the last thing in this directory writing outside bunyan — every test it spawns
+// already logs bunyan JSON, so the runner's plain lines were the odd ones out.
+//
+// Note what this changes and what it does not. These lines now come out as JSON
+// like everything else, so pipe the run through `npx bunyan` for the old look. The
+// REPORT is unaffected: report.html, report.xml and logs/NN-<test>.log are written
+// with fs.writeFileSync and are what CI reads. And the live echo of each child's
+// output further down stays process.stdout.write — it forwards another process's
+// bytes as they arrive, in arbitrary chunks, so wrapping it would interleave JSON
+// records with fragments of the child's own lines and make both unreadable.
+//
+// The level is guarded because this runner is started without CONFIG_FILE set (it
+// sets one per job for the tests it spawns), so a bare require would throw.
+const log = bunyan.createLogger({
+  name: "run-report",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).LOG_LEVEL || "info";
+    } catch (e) {
+      // No CONFIG_FILE, or it does not resolve from here. Falling back to info
+      // loses only the configured verbosity.
+      return "info";
+    }
+  })()
+});
 
 const TESTS_DIR = __dirname;
 const REPORT_DIR = path.join(TESTS_DIR, "report");
@@ -370,6 +398,36 @@ function buildJobs() {
     env: {},
   });
 
+  // The wallet's DID module (client/src/did.js): did:jwk, did:key and did:web,
+  // reading a DID document, and the DIF Well Known DID Configuration check that
+  // proves a DID and an origin are the same entity. Everything here fails
+  // silently when it is wrong — a multicodec written as a fixed-width number
+  // instead of a varint produces DIDs that decode here and nowhere else, a
+  // compressed EC point decompressed with the wrong square root gives the other
+  // valid point on the curve, and a Domain Linkage Credential with a typ header
+  // or an iat claim is exactly what a JWT library produces by default. It found a
+  // real bug on its first run: P-384's and P-521's field primes were truncated.
+  // Node only, never skipped.
+  jobs.push({
+    name: "DID module (did:jwk/key/web, document reading, DIF domain linkage)",
+    script: "did_document.js",
+    env: {},
+  });
+
+  // DPoP's own arithmetic (client/src/dpop.js): the RFC 7638 JWK Thumbprint that
+  // becomes cnf.jkt, the htu normalization, the ath hash, and the shape of the
+  // proof itself. Every one of those fails SILENTLY when it is wrong — a proof with
+  // a wrong thumbprint or a wrong htu is perfectly well formed and simply matches
+  // nothing, so the server's refusal reads as "your key is wrong" rather than "your
+  // encoding is wrong". The oracle is not a second implementation but the RFCs' own
+  // published values: RFC 9449 prints an EC key and the jkt of the token bound to
+  // it, RFC 7638 section 3.1 does the same for RSA. Node only, never skipped.
+  jobs.push({
+    name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own vectors, htu/ath/jti)",
+    script: "dpop.js",
+    env: {},
+  });
+
   // The api's outbound address policy (api/ssrf_guard.js): the service fetches
   // URLs its caller supplies, so it must refuse loopback and private destinations
   // or it is an SSRF probe into whatever network it runs in. Node only — no
@@ -395,13 +453,13 @@ function buildJobs() {
   });
 
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
-  // Issuer the STS service hosts, the three sd-jwt-vc-issuance pages, and the
+  // Issuer the STS service hosts, the three vc-issuance pages, and the
   // ?sdjwtvc=1 hand-off through debugger.html / debugger2.html. Needs both the
   // STS mock (which is the credential issuer) and Keycloak (which authorizes
   // the issuance), so it is gated on the STS like the other STS-backed jobs.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
-      name: "SD-JWT VC Issuance (OID4VCI credential issuance end to end)",
+      name: "VC Issuance — SD-JWT VC (OID4VCI credential issuance end to end)",
       script: "sd_jwt_vc_issuance.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
@@ -411,20 +469,227 @@ function buildJobs() {
     });
   }
 
+  // The BBS signatures the debugger produces, checked by a DIFFERENT BBS
+  // implementation (@digitalbazaar/bbs-signatures). No browser and no services,
+  // so it never skips. It is the foundation the bbs-2023 cryptosuite stands on:
+  // BBS has several places where a signer and verifier can share a mistake and
+  // agree perfectly with each other and with nobody else.
+  {
+    jobs.push({
+      name: "BBS signatures (cross-checked against an independent implementation)",
+      script: "bbs_crypto.js",
+      env: {},
+    });
+  }
+
+  // The third credential format through both workflows: ldp_vc secured by a
+  // bbs-2023 Data Integrity proof. Registered unconditionally like the
+  // jwt_vc_json pair — a gated job that does not register is the quietest way
+  // for a format to go untested.
+  {
+    jobs.push({
+      name: "VC Issuance — ldp_vc / bbs-2023 (embedded Data Integrity proof)",
+      script: "ldp_vc_issuance.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // Refreshing one (OID4VCI 14.5's two calls, and the 14.3 route that is all
+    // that remains after the pre-authorized grant). Registered separately from
+    // issuance because it drives a different call site — issuance step 4's —
+    // over the same wallet module, and because holder binding for this format
+    // is credentialSubject.id rather than cnf.jwk, which is what distinguishes
+    // a replacement from a second credential.
+    // Section 10 in the direction the response-encryption support did not
+    // cover: the ISSUER publishes the key and the wallet encrypts to it. Needs
+    // only the STS mock, so it is registered unconditionally.
+    jobs.push({
+      name: "OID4VCI Credential Request encryption (section 10, issuer-published keys)",
+      script: "oid4vci_request_encryption.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        WALTID_ISSUER_URL: env.WALTID_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "VC Refresh — ldp_vc / bbs-2023 (OID4VCI 14.5 refresh_token + re-request)",
+      script: "ldp_vc_refresh.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, unlinkable)",
+      script: "ldp_vc_presentation.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        OID4VP_VERIFIER_URL: env.OID4VP_VERIFIER_URL || "",
+      },
+    });
+    // The issuer named by a DID, for both formats that can carry one. It runs
+    // against the IdentityCredentialDid / IdentityCredentialLdpVcDid
+    // configurations, which exist so that ONE run covers both routes: those two
+    // name the issuer by did:web while their plain siblings keep the https
+    // identifier, so the specification's own key resolution
+    // (/.well-known/jwt-vc-issuer, which is all draft-ietf-oauth-sd-jwt-vc
+    // defines) goes on being exercised beside the DID extension. A server-wide
+    // switch could only ever test one of the two.
+    //
+    // The chain it checks is advertisement -> resolution -> domain linkage ->
+    // credential -> signature, and the last link is the one that matters: a DID
+    // that resolves to the wrong key looks like success until something tries to
+    // verify with it. Needs only the STS mock.
+    // The mock STS's own index of itself: GET /sts-metadata lists every endpoint it
+    // registers, with its methods, and every specification it implements. The list
+    // is read from the running Express router rather than kept by hand, and this
+    // job is what makes that worth something — it fails if a route is registered
+    // and undescribed (the page understates what is callable) or described and not
+    // registered (the page advertises a 404, which is what a rename produces).
+    // Needs only the STS mock.
+    // did-tools.html, the general-purpose DID verifier reached from the VC Tools
+    // pane on every page of both workflows. The DIDs it works on are GENERATED by
+    // the mock STS (GET /did/generate), which hands back a DID together with a
+    // credential signed by the key that DID publishes — so the page's verdict can
+    // be checked against a known-good answer instead of against "the document
+    // parsed". Its two negatives are the point: a document that resolves perfectly
+    // but did not sign the held credential must not read as verified, and an origin
+    // that vouches for a different DID must not read as linked. Needs the STS and
+    // the client; no Keycloak, no walt.id.
+    jobs.push({
+      name: "DID Tools page (resolve, verify a signing key, verify a domain linkage)",
+      script: "did_tools.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "STS metadata page (/sts-metadata lists exactly what the router registers)",
+      script: "sts_metadata.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "VC Issuance — issuer named by DID (did:web, domain linkage, both formats)",
+      script: "vc_did.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+  }
+
+  // The cryptosuite ABOVE the primitive: JSON-LD canonicalization, the base
+  // proof, and selective disclosure. The STS issues with one BBS implementation
+  // and the wallet derives with the other, so neither marks its own homework.
+  {
+    jobs.push({
+      name: "bbs-2023 cryptosuite (ldp_vc issue, derive, verify across two implementations)",
+      script: "bbs2023_cryptosuite.js",
+      env: {},
+    });
+  }
+
+  // The metadata schema check on vc-issuance-1.html, both panes. Its rule
+  // half needs no browser and no services and never skips; its wiring half
+  // drives the page, so it needs only the client — which every run has.
+  // Registered unconditionally for the same reason as the four below.
+  {
+    jobs.push({
+      name: "Metadata schema validation (OID4VCI and RFC 8414 panes, positive and negative)",
+      script: "metadata_schema_validation.js",
+      env: {},
+    });
+  }
+
+  // These four are registered UNCONDITIONALLY, unlike their SD-JWT siblings.
+  // A gated job that does not register simply is not in the report, which is the
+  // quietest possible way for a credential format to go untested — the run says
+  // "all green" and nothing says the format was never exercised. Each of these
+  // instead runs and FAILS with what is missing and how to supply it.
+  // The SAME issuance workflow in the other credential format this issuer
+  // offers: jwt_vc_json, a W3C VC secured as a JWT. Its own job rather than a
+  // flag on the one above, because that suite is built around Disclosures and
+  // this format has none — a flag would leave most of it skipped and the run
+  // would read as though selective disclosure had been declined rather than
+  // being unavailable. Skips itself when the issuer offers no such
+  // configuration.
+  {
+    jobs.push({
+      name: "VC Issuance — jwt_vc_json (W3C VC secured as a JWT)",
+      script: "jwt_vc_json_issuance.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+  }
+
   // The SD-JWT VC PRESENTATION workflow (OID4VP 1.0 + RFC 9901 section 4.3): the
-  // mock Verifier the STS service hosts, the four sd-jwt-vc-presentation pages,
+  // mock Verifier the STS service hosts, the four vc-presentation pages,
   // and the presentation itself — an SD-JWT+KB whose Key Binding JWT is signed
   // over the request's nonce. Needs only the STS (issuer AND verifier), so no
   // identity provider is involved. Carries its own negatives: a replayed
   // presentation, a KB-JWT signed by the wrong key, an invented Disclosure, one
   // removed after signing, and a claim the verifier asked for withheld.
   if (env.WSTRUST_STS_URL) {
+    // The SERVER half of DPoP, over HTTP with no browser: all twelve RFC 9449
+    // section 4.3 proof checks, the cnf.jkt binding on access and refresh tokens,
+    // the dpop_jkt code binding, jti replay detection, and the nonce handshake in
+    // both of its shapes. It is almost entirely negatives, because a DPoP server
+    // that issues bound tokens and accepts good proofs looks finished and can be
+    // worth nothing — the value is all in what it refuses. Needs only the STS.
     jobs.push({
-      name: "SD-JWT VC Presentation (OID4VP: selective disclosure end to end, positive and negative)",
+      name: "DPoP server checks (RFC 9449: the twelve proof checks, binding, replay, nonces)",
+      script: "sts_dpop.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // And DPoP through the PAGES, which is the part neither of the two above can
+    // reach: that the wallet really sends the proofs, that the token which comes
+    // back is really bound (checked against the token's own cnf.jkt, not against
+    // what the pane says), and that Holder of Key really binds the credential to
+    // the DPoP key. Driven with the pre-authorized code grant, so no IdP is needed.
+    jobs.push({
+      name: "DPoP through the VC Issuance pages (the pane, the real binding, Holder of Key)",
+      script: "dpop_workflow.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "VC Presentation — SD-JWT VC (OID4VP: selective disclosure, positive and negative)",
       script: "sd_jwt_vc_presentation.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+  }
+
+  // The PRESENTATION half of the same format: a Verifiable Presentation JWT
+  // instead of an SD-JWT+KB, with holder binding done by that JWT's own
+  // signature rather than by a Key Binding JWT. Carries its own negatives — a VP
+  // JWT signed by the wrong key, a replay, a tampered credential, and an SD-JWT
+  // answering a jwt_vc_json query (which matters because a Combined
+  // Serialization also splits into three dot-separated parts).
+  {
+    jobs.push({
+      name: "VC Presentation — jwt_vc_json (Verifiable Presentation JWT, positive and negative)",
+      script: "jwt_vc_json_presentation.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        OID4VP_VERIFIER_URL: env.OID4VP_VERIFIER_URL || "",
       },
     });
   }
@@ -436,7 +701,7 @@ function buildJobs() {
   // that container being up rather than on the STS.
   if (env.WALTID_ISSUER_URL) {
     jobs.push({
-      name: "SD-JWT VC Issuance against walt.id (OID4VCI interoperability)",
+      name: "VC Issuance — SD-JWT VC against walt.id (OID4VCI interoperability)",
       script: "sd_jwt_vc_waltid.js",
       env: {
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL,
@@ -453,8 +718,41 @@ function buildJobs() {
   // walt.id issuer and Keycloak, because that is where the credential comes from.
   if (env.WALTID_VERIFIER_URL) {
     jobs.push({
-      name: "SD-JWT VC Presentation against walt.id (OID4VP interoperability, positive and negative)",
+      name: "VC Presentation — SD-JWT VC against walt.id (OID4VP interoperability)",
       script: "sd_jwt_vc_presentation_waltid.js",
+      env: {
+        WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
+        WALTID_ISSUER_URL: env.WALTID_ISSUER_URL || "",
+        KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+      },
+    });
+  }
+
+  // jwt_vc_json against walt.id: the interoperability half of the two jobs above.
+  // Both skip with instructions when walt.id offers no jwt_vc_json
+  // configuration, which is the state until its container is restarted onto the
+  // configuration in waltid/config/credential-issuer-metadata.conf.
+  //
+  // The presentation one has a second, deliberate skip: walt.id's own
+  // jwt_vc_json profiles bind the holder with a SUBJECT DID where our mock uses
+  // cnf.jwk, and a wallet cannot sign a Verifiable Presentation JWT for a key it
+  // has never held. That is reported as an interoperability finding rather than
+  // failed, because neither implementation is wrong.
+  {
+    jobs.push({
+      name: "VC Issuance — jwt_vc_json against walt.id (OID4VCI interoperability)",
+      script: "jwt_vc_json_issuance_waltid.js",
+      env: {
+        WALTID_ISSUER_URL: env.WALTID_ISSUER_URL,
+        KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+      },
+    });
+  }
+
+  {
+    jobs.push({
+      name: "VC Presentation — jwt_vc_json against walt.id (OID4VP interoperability)",
+      script: "jwt_vc_json_presentation_waltid.js",
       env: {
         WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL || "",
@@ -995,22 +1293,22 @@ async function main() {
 
   if (demo) {
     results = demoResults();
-    console.log("Writing SAMPLE report (--demo); no tests executed.");
+    log.info("Writing SAMPLE report (--demo); no tests executed.");
   } else {
     results = [];
     const jobs = buildJobs();
-    console.log(`Running ${jobs.length} test(s) against ${BASE_URL}\n`);
+    log.info(`Running ${jobs.length} test(s) against ${BASE_URL}`);
     for (const [i, job] of jobs.entries()) {
       if (job.skip) {
-        console.log(`\n===== [${i + 1}/${jobs.length}] ${job.name} — SKIPPED =====`);
-        console.log(`----- SKIP: ${job.skip}`);
+        log.info(`===== [${i + 1}/${jobs.length}] ${job.name} — SKIPPED =====`);
+        log.info(`----- SKIP: ${job.skip}`);
         results.push(makeSkipResult(job, i));
         continue;
       }
-      console.log(`\n===== [${i + 1}/${jobs.length}] ${job.name} =====`);
+      log.info(`===== [${i + 1}/${jobs.length}] ${job.name} =====`);
       const r = await runJob(job, i); // sequential: keep streamed output readable
       results.push(r);
-      console.log(`----- ${r.passed ? "PASS" : "FAIL"} (${(r.durationMs / 1000).toFixed(1)}s) → ${r.logFile}`);
+      log.info(`----- ${r.passed ? "PASS" : "FAIL"} (${(r.durationMs / 1000).toFixed(1)}s) → ${r.logFile}`);
     }
   }
 
@@ -1020,9 +1318,9 @@ async function main() {
   const skipped = results.filter((r) => r.skipped).length;
   const passed = results.length - failed - skipped;
   const rel = path.relative(process.cwd(), RUN_DIR);
-  console.log(`\nReport written to ${rel}/report.html (and report.xml, logs/)`);
-  console.log(`Latest run also at ${path.relative(process.cwd(), path.join(REPORT_DIR, "latest"))}`);
-  console.log(`Summary: ${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`);
+  log.info(`Report written to ${rel}/report.html (and report.xml, logs/)`);
+  log.info(`Latest run also at ${path.relative(process.cwd(), path.join(REPORT_DIR, "latest"))}`);
+  log.info(`Summary: ${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`);
 
   // Don't fail the demo run; otherwise signal failures to the caller/CI.
   process.exit(demo ? 0 : failed > 0 ? 1 : 0);

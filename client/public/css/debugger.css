@@ -112,7 +112,7 @@ select.not-defined {
 }
 
 /* Selected by CLASS, not id: the same pane appears on debugger.html and twice
-   on sd-jwt-vc-issuance-1.html, each with its own id but all carrying
+   on vc-issuance-1.html, each with its own id but all carrying
    .discovery_info_table.
    The retrieved metadata table is generated from a document we do not control:
    values are long URLs and long comma-joined lists with no break opportunities,
@@ -145,6 +145,24 @@ select.not-defined {
   max-width: 0;
   overflow-wrap: anywhere;
   word-break: break-all;
+}
+/* A third column and beyond, capped the same way. The two rules above name the
+   first and second columns because these tables are Attribute/Value — but a table
+   built by hand with three columns inherited no cap and no wrapping on the third,
+   and the column left free is the one that pushes the table past the pane's edge.
+   Note the cap is applied from the THIRD column on, not to every cell: max-width
+   beats width in the cascade, so `max-width: 0` on td:first-child would clamp its
+   34% to nothing and collapse the name column. */
+.discovery_info_table td:nth-child(n + 3),
+.discovery_info_table th:nth-child(n + 3) {
+  max-width: 0;
+}
+/* Wrapping, however, is safe on every cell and is the half that actually stops an
+   unbreakable token — a DID URL, a base64url key — from widening a column. */
+.discovery_info_table td,
+.discovery_info_table th {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .discovery_info_table { max-width: 100%; overflow-x: auto; }
 

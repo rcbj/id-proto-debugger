@@ -54,6 +54,8 @@ function btn(fn) {
 
 // The rendered history, newest first, as objects.
 async function historyRows(driver) {
+  log.debug("Entering historyRows().");
+  log.debug("Leaving historyRows().");
   return driver.executeScript(
     "var rows = document.querySelectorAll('#saml_operation_history tbody tr');" +
     "var out = [];" +
@@ -98,6 +100,7 @@ async function openPage(driver) {
 }
 
 async function operationHistoryActivities(driver) {
+  log.debug("Entering operationHistoryActivities().");
   // Clean slate: the page persists both its configuration and the history.
   await openPage(driver);
   await driver.executeScript("window.localStorage.clear();");
@@ -279,9 +282,11 @@ async function operationHistoryActivities(driver) {
   await driver.wait(until.elementLocated(By.id('pane_history')), waitTime);
   assert.strictEqual((await historyRows(driver)).length, 0, "the cleared history came back after a reload.");
   log.info("[clear] OK — Clear History empties it for good.");
+  log.debug("Leaving operationHistoryActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) options.addArguments("--headless=new");
   options.addArguments("--no-sandbox");
@@ -303,6 +308,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

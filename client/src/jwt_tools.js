@@ -103,6 +103,7 @@ function parseJson(id, label) {
 // Rebuild the unsigned encoded token (header.payload) from the current
 // Header/Payload text. Called whenever either textarea changes.
 function updateEncoded() {
+  log.debug("Entering updateEncoded().");
   try {
     var header = parseJson('jwt_tools_header', 'JWT Header');
     var payload = parseJson('jwt_tools_payload', 'JWT Payload');
@@ -112,6 +113,7 @@ function updateEncoded() {
   } catch (e) {
     setVal('jwt_tools_sync_status', 'Cannot encode: ' + e.message);
   }
+  log.debug("Leaving updateEncoded().");
   return false;
 }
 
@@ -1002,6 +1004,7 @@ async function pbes2JweEncrypt(plaintext, password) {
 }
 
 function triggerDownload(filename, data, mime) {
+  log.debug("Entering triggerDownload().");
   var blob = new Blob([data], { type: mime || 'application/octet-stream' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
@@ -1011,6 +1014,7 @@ function triggerDownload(filename, data, mime) {
   a.click();
   document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  log.debug("Leaving triggerDownload().");
 }
 
 // step === 'sign' | 'enc'
@@ -1196,6 +1200,7 @@ window.onload = function () {
   setVal('jwt_tools_header', JSON.stringify(header, null, 2));
   setVal('jwt_tools_payload', JSON.stringify(payload, null, 2));
   updateEncoded();
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

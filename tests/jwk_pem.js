@@ -73,6 +73,7 @@ function derOf(pem) {
 // recovers the right key, so the round trip alone cannot see it. A mutation that
 // appended a byte to the encoding survived until this check was hoisted here.
 function assertOuterLengthConsistent(pem, label) {
+  log.debug("Entering assertOuterLengthConsistent().");
   const der = derOf(pem);
   assert.strictEqual(der[0], 0x30, label + ": SPKI does not start with a SEQUENCE tag");
   let declared;
@@ -91,12 +92,14 @@ function assertOuterLengthConsistent(pem, label) {
   assert.strictEqual(declared, der.length - headerBytes,
     label + ": the SEQUENCE declares " + declared + " content bytes but the encoding carries " +
     (der.length - headerBytes) + " — trailing or missing bytes");
+  log.debug("Leaving assertOuterLengthConsistent().");
 }
 
 // Independent of both implementations: parse the PEM this module produced with
 // node's own SPKI reader and recover the JWK. If the DER is malformed node
 // throws; if it is well-formed but wrong, the recovered JWK differs.
 function roundTripsThroughNode(jwk, label) {
+  log.debug("Entering roundTripsThroughNode().");
   const pem = jwkToPem(jwk);
   assertOuterLengthConsistent(pem, label);
   let recovered;
@@ -116,6 +119,7 @@ function roundTripsThroughNode(jwk, label) {
   };
   assert.deepStrictEqual(interesting(recovered), interesting(jwk),
     label + ": the key node recovered from the PEM is not the key that went in");
+  log.debug("Leaving roundTripsThroughNode().");
   return pem;
 }
 
@@ -127,6 +131,7 @@ function generatedJwk(type, options) {
 // --- the checks -------------------------------------------------------------
 
 function rsaKeys() {
+  log.debug("Entering rsaKeys().");
   log.info("[rsa] Encoding RSA public keys and reading them back with node's SPKI parser.");
   // Several sizes, and enough 2048 samples that both DER-INTEGER cases (high bit
   // set, needing the 0x00 sign byte, and not set) are certain to be covered.
@@ -145,6 +150,7 @@ function rsaKeys() {
   }
   log.info("[rsa] OK — four key sizes and 12 further 2048-bit keys all parsed back to the key " +
            "they came from, with well-formed PEM framing.");
+  log.debug("Leaving rsaKeys().");
 }
 
 // The DER INTEGER rules, exercised deliberately rather than hoped for.
@@ -156,6 +162,7 @@ function rsaKeys() {
 // mode is silent — a modulus encoded without its sign byte reads as a NEGATIVE
 // integer, which is a different number, so the key is wrong rather than rejected.
 function derIntegerRules() {
+  log.debug("Entering derIntegerRules().");
   log.info("[integer] Checking DER INTEGER minimal encoding and the sign byte.");
 
   function modulusEncodedAs(nBytes) {
@@ -214,9 +221,11 @@ function derIntegerRules() {
 
   log.info("[integer] OK — " + cases.length + " crafted moduli plus the real exponent all encode " +
            "minimally, with the sign byte exactly where it belongs.");
+  log.debug("Leaving derIntegerRules().");
 }
 
 function ecKeys() {
+  log.debug("Entering ecKeys().");
   log.info("[ec] Encoding EC public keys on every supported curve.");
   assert.deepStrictEqual(jwkToPem.SUPPORTED_CURVES.slice().sort(), ["P-256", "P-384", "P-521"],
     "the supported curve list changed — jwk-to-pem covered exactly these three");
@@ -226,6 +235,7 @@ function ecKeys() {
     }
   });
   log.info("[ec] OK — P-256, P-384 and P-521 all round-trip.");
+  log.debug("Leaving ecKeys().");
 }
 
 // RFC 7518 sections 6.2.1.2/6.2.1.3: a coordinate is the full field size,
@@ -235,6 +245,7 @@ function ecKeys() {
 // it: take a key whose x starts with 0x00 and strip it, as a careless publisher
 // would, then require the recovered x to be the original.
 function trimmedCoordinateIsRepadded() {
+  log.debug("Entering trimmedCoordinateIsRepadded().");
   log.info("[padding] A publisher that trimmed a leading zero from a coordinate must still " +
            "produce the original point.");
   let tested = 0;
@@ -257,6 +268,7 @@ function trimmedCoordinateIsRepadded() {
     assert.fail("no P-256 key with a leading-zero x coordinate turned up in 6000 tries");
   }
   log.info("[padding] OK — " + tested + " trimmed coordinates were re-padded to the correct point.");
+  log.debug("Leaving trimmedCoordinateIsRepadded().");
 }
 
 // Both DER length forms, named explicitly. The single-byte form covers content
@@ -264,6 +276,7 @@ function trimmedCoordinateIsRepadded() {
 // 4096-bit modulus), so a length encoder broken in only one of the two would
 // otherwise slip through whichever key sizes happened to be sampled.
 function derLengthsAreWellFormed() {
+  log.debug("Entering derLengthsAreWellFormed().");
   log.info("[der] Checking both DER length forms — short and long.");
   const shortForm = jwkToPem(generatedJwk("ec", { namedCurve: "P-256" }));
   const longForm = jwkToPem(generatedJwk("rsa", { modulusLength: 4096 }));
@@ -274,6 +287,7 @@ function derLengthsAreWellFormed() {
   assertOuterLengthConsistent(shortForm, "P-256");
   assertOuterLengthConsistent(longForm, "RSA 4096");
   log.info("[der] OK — declared lengths match the content, in both the short and long forms.");
+  log.debug("Leaving derLengthsAreWellFormed().");
 }
 
 // The JWKS page catches a throw to mark one key unrenderable and keep the rest of
@@ -281,6 +295,7 @@ function derLengthsAreWellFormed() {
 // something PEM-shaped, and the message has to name the type for the page to say
 // anything useful.
 function refusals() {
+  log.debug("Entering refusals().");
   log.info("[refusals] Unsupported and malformed keys must throw, naming the cause.");
   const cases = [
     [{ kty: "OKP", crv: "Ed25519", x: "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo" },
@@ -307,12 +322,14 @@ function refusals() {
     }));
   }, /too long for P-256/, "an over-long coordinate should be refused, not truncated");
   log.info("[refusals] OK — " + (cases.length + 1) + " bad inputs all throw with a named cause.");
+  log.debug("Leaving refusals().");
 }
 
 // A private JWK is not an error at the call site — the JWKS page shows keys an
 // identity provider published — but `d` must be IGNORED rather than encoded, or
 // a page whose job is displaying public keys would render a private one.
 function privateMembersAreIgnored() {
+  log.debug("Entering privateMembersAreIgnored().");
   log.info("[private] A JWK carrying `d` must still encode as the PUBLIC key.");
   const pair = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   const privateJwk = pair.privateKey.export({ format: "jwk" });
@@ -333,12 +350,14 @@ function privateMembersAreIgnored() {
   assert.strictEqual(recovered.x, privateJwk.x, "public x does not match");
   assert.strictEqual(recovered.y, privateJwk.y, "public y does not match");
   log.info("[private] OK — d is dropped and the public point survives.");
+  log.debug("Leaving privateMembersAreIgnored().");
 }
 
 // The point of the exercise. `elliptic` reaches a browser bundle through any of
 // these requires, and there is no patched version to fall back on, so the only
 // defence is not requiring them. This is the check that catches a NEW page.
 function ellipticStaysOutOfTheBundles() {
+  log.debug("Entering ellipticStaysOutOfTheBundles().");
   log.info("[bundles] Reading client/src for the requires that pull `elliptic` into a bundle.");
   const srcDir = path.join(__dirname, "..", "client", "src");
   if (!fs.existsSync(srcDir)) {
@@ -405,10 +424,12 @@ function ellipticStaysOutOfTheBundles() {
     "code_challenge, and it is currently only present as a transitive dependency of browserify");
   log.info("[bundles] OK — " + files.length + " files in client/src, none requiring a package that " +
            "reaches elliptic, and none of those packages declared.");
+  log.debug("Leaving ellipticStaysOutOfTheBundles().");
 }
 
 
 async function test() {
+  log.debug("Entering test().");
   rsaKeys();
   derIntegerRules();
   ecKeys();
@@ -418,6 +439,7 @@ async function test() {
   privateMembersAreIgnored();
   ellipticStaysOutOfTheBundles();
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

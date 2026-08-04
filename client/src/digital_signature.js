@@ -196,6 +196,7 @@ function currentAlg() {
 }
 
 function triggerDownload(filename, data, mime) {
+  log.debug("Entering triggerDownload().");
   var blob = new Blob([data], { type: mime || 'application/octet-stream' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
@@ -205,6 +206,7 @@ function triggerDownload(filename, data, mime) {
   a.click();
   document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  log.debug("Leaving triggerDownload().");
 }
 
 function generateKeys() {
@@ -499,6 +501,7 @@ function mgf1(seed, len, hashName) {
 
 // EMSA-PSS-ENCODE (RFC 8017 §9.1.1); salt length = digest length.
 function emsaPssEncode(msg, hashName, emBits) {
+  log.debug("Entering emsaPssEncode().");
   var mHash = digestOf(hashName, msg), hLen = mHash.length, sLen = hLen;
   var emLen = Math.ceil(emBits / 8);
   if (emLen < hLen + sLen + 2) throw new Error('Modulus too short for PSS with ' + hashName + '.');
@@ -508,6 +511,7 @@ function emsaPssEncode(msg, hashName, emBits) {
   var dbMask = mgf1(H, emLen - hLen - 1, hashName);
   var maskedDB = DB.map(function (b, i) { return b ^ dbMask[i]; });
   maskedDB[0] &= (0xff >> (8 * emLen - emBits));
+  log.debug("Leaving emsaPssEncode().");
   return concatBytes(maskedDB, H, new Uint8Array([0xbc]));
 }
 function emsaPssVerify(msg, em, hashName, emBits) {
@@ -549,6 +553,7 @@ function rsaGenerateKeys() {
 }
 
 function rsaSelfSignedCert(privateKey, publicKey) {
+  log.debug("Entering rsaSelfSignedCert().");
   var cert = forge.pki.createCertificate();
   cert.publicKey = publicKey;
   cert.serialNumber = '01';
@@ -557,6 +562,7 @@ function rsaSelfSignedCert(privateKey, publicKey) {
   var attrs = [{ name: 'commonName', value: 'digital-signature-tool' }];
   cert.setSubject(attrs); cert.setIssuer(attrs);
   cert.sign(privateKey, forge.md.sha256.create());
+  log.debug("Leaving rsaSelfSignedCert().");
   return cert;
 }
 
@@ -1027,6 +1033,7 @@ window.onload = function () {
   // Default to all panes minimized on load; the user expands the ones they need
   // (or clicks "Expand all"). Clicking a pane's title toggles it individually.
   collapseAll();
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

@@ -118,7 +118,7 @@ services:
       #
       # The mock issuer's Credential Offer pages and the mock verifier's request
       # pages both link the End-User back to the wallet, appending
-      # /sd-jwt-vc-issuance-1.html or /sd-jwt-vc-presentation-1.html to this. It
+      # /vc-issuance-1.html or /vc-presentation-1.html to this. It
       # defaults to http://localhost:3000, which is right for the host-networking
       # local stack and WRONG here: the browser runs in the tests container, where
       # localhost:3000 is nothing at all, so those links went nowhere and the H.1

@@ -59,7 +59,7 @@ function recalculateUserInfoURL()
     query_string += '&claims=' + userinfo_claims;
   }
   query_string = encodeURI(query_string);
-  log.debug("Leaving recalcualteUserInfoURL(): query_string=" + query_string);
+  log.debug("Leaving recalculateUserInfoURL(): query_string=" + query_string);
 }
 
 function callUserInfoEndpoint()
@@ -94,6 +94,7 @@ function callUserInfoEndpoint()
     error: ajaxErrorFunction
   });
   log.debug("Entering callUserInfoEndpoint().");
+  log.debug("Leaving callUserInfoEndpoint().");
 }
 
 function ajaxSuccessFunction(data, textStatus, jqXHR) {
@@ -116,6 +117,7 @@ function ajaxSuccessFunction(data, textStatus, jqXHR) {
 }
 
 function ajaxErrorFunction(request, status, error) {
+  log.debug("Entering ajaxErrorFunction().");
   log.debug("request: " + JSON.stringify(request));
   log.debug("status: " + JSON.stringify(status));
   log.debug("error: " + JSON.stringify(error));
@@ -125,6 +127,7 @@ function ajaxErrorFunction(request, status, error) {
     error: error
   };
   $("#userinfo_output").val(JSON.stringify(errorStatus,null,2));
+  log.debug("Leaving ajaxErrorFunction().");
 }
 
 $(".userinfo_endpoint").keypress(function() {

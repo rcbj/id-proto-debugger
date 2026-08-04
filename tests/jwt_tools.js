@@ -66,6 +66,7 @@ async function getValue(driver, locator) {
 
 // Wait until a field's value satisfies pred(value), then return the value.
 async function waitForValue(driver, locator, pred, msg, timeout) {
+  log.debug("Entering waitForValue().");
   await driver.wait(async function () {
     try {
       var v = await driver.findElement(locator).getAttribute("value");
@@ -74,6 +75,7 @@ async function waitForValue(driver, locator, pred, msg, timeout) {
       return false;
     }
   }, timeout || cryptoWait, msg);
+  log.debug("Leaving waitForValue().");
   return await getValue(driver, locator);
 }
 
@@ -92,6 +94,7 @@ function onclickBtn(fn) {
 }
 
 async function addCustomClaim(driver, name, value, type) {
+  log.debug("Entering addCustomClaim().");
   log.info("Adding custom claim: name=" + name + ", value=" + value + ", type=" + type);
   await setInput(driver, By.id("custom_claim_name"), name);
   await setInput(driver, By.id("custom_claim_value"), value);
@@ -101,11 +104,13 @@ async function addCustomClaim(driver, name, value, type) {
   await waitForValue(driver, By.id("jwt_tools_payload"),
     function (v) { return v.indexOf('"' + name + '"') !== -1; },
     "Claim '" + name + "' was not added to the JWT Payload.");
+  log.debug("Leaving addCustomClaim().");
 }
 
 // The original JWT Tools coverage: open Tools from the debugger, add claims,
 // check compliance, sign + X.509-verify, and encrypt + decrypt.
 async function jwtToolsActivities(driver) {
+  log.debug("Entering jwtToolsActivities().");
   log.info("Navigate back to debugger.html.");
   await driver.get(baseUrl + "/debugger.html");
 
@@ -361,11 +366,13 @@ async function jwtToolsActivities(driver) {
     log.info("  " + alg + ": round-tripped" + (header.epk ? " (epk " + header.epk.crv + ")" : "") + ".");
   }
   log.info("Every key-management algorithm the pane offers round-trips.");
+  log.debug("Leaving jwtToolsActivities().");
 }
 
 // Obtain a real ID Token via the OIDC Authorization Code grant, paste it into
 // the JWT Tools "Encoded JWT" field, and confirm the decoded Payload matches.
 async function idTokenDecodeActivities(driver, id_token) {
+  log.debug("Entering idTokenDecodeActivities().");
   log.info("Navigate to jwt_tools.html to paste the ID Token.");
   await driver.get(baseUrl + "/jwt_tools.html");
 
@@ -398,9 +405,11 @@ async function idTokenDecodeActivities(driver, id_token) {
   var verifyInput = await getValue(driver, By.id("verify_input"));
   assert.strictEqual(verifyInput, id_token, "JWT to Verify field was not populated with the ID Token.");
   log.info("Sign pane fields populated from the pasted ID Token.");
+  log.debug("Leaving idTokenDecodeActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   // JWT Tools clicks key-download buttons. On host runs the browser is the user's
   // real Chrome (default download dir ~/Downloads); redirect downloads to a
   // throwaway temp dir (removed below) so nothing lands in the home directory.
@@ -490,6 +499,7 @@ async function test() {
     await driver.quit();
     try { fs.rmSync(downloadDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

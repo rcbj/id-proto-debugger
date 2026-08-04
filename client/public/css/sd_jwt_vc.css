@@ -7,7 +7,7 @@
 .vc-intro, .vc-note { max-width: 1100px; line-height: 1.45; }
 .vc-note { font-size: 0.9em; color: #333; }
 
-/* --- step indicator (partials/sd_jwt_vc_steps.html) ---
+/* --- step indicator (partials/vc_steps.html) ---
    Every page of the workflow carries the same row of links to every step, at the
    top. It is ONE row: `nowrap` plus items that may shrink (flex-basis 0,
    min-width 0), so five steps share the width instead of the last one dropping
@@ -39,18 +39,34 @@ ol.vc-steps li.vc-step-done { border-left-color: #2e7d32; }
 /* --- step 0: the use-case chooser ---
    Big, calm buttons: a full-width card each, so the choice reads as "which of
    these situations are you in" rather than "pick a protocol variant". */
+/* The chooser's cards. A GRID rather than a single column, because the page's job
+   is to let you compare four options and pick one, and it could not do that without
+   scrolling: four full-width cards stacked in a 1100px column ran to 757px, on a
+   page whose total came to 1450px against a 839px viewport. All of that space was
+   vertical while the horizontal space sat unused — a card 1100px wide holding two
+   lines of prose.
+
+   auto-fit with a 400px floor gives two columns in the ~1170px container and one on
+   a narrow screen, without a breakpoint. It is a floor rather than a fixed count so
+   a fifth use case lands in the grid instead of needing this rule changed; note
+   that an odd count leaves one card alone on the last row, which is why the number
+   of columns is left to the container rather than pinned at two.
+
+   `align-items: start` matters: without it every card in a row stretches to the
+   tallest, which is how a grid quietly reintroduces the height this saved. */
 .vc-usecases {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 1100px;
-  margin: 18px 0 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  align-items: start;
+  gap: 12px;
+  margin: 14px 0 8px;
 }
 button.vc-usecase {
   display: block;
   width: 100%;
+  height: 100%;
   text-align: left;
-  padding: 18px 22px;
+  padding: 14px 18px;
   border: 1px solid #c9c9d4;
   border-left: 6px solid #12107c;
   border-radius: 10px;
@@ -95,16 +111,227 @@ button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
   color: #2e7d32;
 }
 .vc-usecase-flag-soon { color: #8a6d00; }
-.vc-usecase-summary { display: block; margin-top: 8px; font-size: .95em; line-height: 1.45; }
-.vc-usecase-detail { display: block; margin-top: 6px; font-size: .85em; color: #555; line-height: 1.45; }
+.vc-usecase-summary { display: block; margin-top: 6px; font-size: .95em; line-height: 1.4; }
+.vc-usecase-detail { display: block; margin-top: 5px; font-size: .85em; color: #555; line-height: 1.4; }
 .vc-usecase-mechanics {
   display: block;
-  margin-top: 10px;
+  margin-top: 7px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .76em;
   color: #666;
 }
-.vc-usecase-cta { display: block; margin-top: 12px; font-weight: 700; color: #12107c; }
+.vc-usecase-cta { display: block; margin-top: 8px; font-weight: 700; color: #12107c; }
+
+/* --- the chooser's own density (vc-issuance-0.html) ------------------------
+   A chooser has to show everything it is choosing between at once: four options
+   you have to scroll between cannot be compared, which is the whole job of that
+   page. Measured, the page came to 1450px against a 839px viewport — so this
+   reclaims the vertical space the shared rhythm spends, and the cards grid above
+   reclaims the rest by using the horizontal room that was sitting empty.
+   Scoped to .vc-fit so the other eight workflow pages, which are meant to be read
+   top to bottom and may legitimately scroll, are untouched. */
+.vc-fit .vc-title {
+  margin: 2px 0 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+/* The return link rides on the title's line: two stacked blocks for one line of
+   text each was the cheapest space on the page. */
+.vc-fit .vc-title-return {
+  font-size: .62em;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.vc-fit .vc-intro {
+  /* Full container width, not the 1100px the reading measure caps other pages at:
+     a wider paragraph is fewer lines, and on this page height is the scarce thing. */
+  max-width: none;
+  margin: 0 0 6px;
+  line-height: 1.4;
+}
+.vc-fit .vc-usecases { margin: 10px 0 6px; }
+.vc-fit #vc_usecase_status { margin: 4px 0 6px; }
+/* Measured: 14px of card padding and the gaps between a card's four blocks came to
+   23px per card, twice over for two rows. Trimmed rather than removed — the cards
+   still have to look like cards. */
+.vc-fit button.vc-usecase { padding: 11px 16px; }
+.vc-fit .vc-usecase-summary { margin-top: 4px; }
+.vc-fit .vc-usecase-detail { margin-top: 4px; }
+.vc-fit .vc-usecase-mechanics { margin-top: 5px; }
+.vc-fit .vc-usecase-cta { margin-top: 6px; }
+/* The VC Tools pane belongs at the foot of the page, and on a page that must fit it
+   should cost as little height as it can while staying legible: its legend was 49px
+   for one line of text. */
+.vc-fit .dbg-pane { margin-top: 6px; margin-bottom: 6px; }
+.vc-fit .dbg-legend { font-size: 1em; padding: 2px 0; margin-bottom: 2px; }
+.vc-fit .dbg-pane p.vc-note { margin: 3px 0 5px; }
+
+/* The VC Tools pane's label column. Its table is the same two-column shape the
+   other panes use, where the left cell is sized to its content — and "DID Tools"
+   was breaking across two lines in it, which reads as a squeezed layout rather than
+   a label. Not scoped to .vc-fit: the pane is on all nine workflow pages and looks
+   the same on each. */
+#pane_vc_tools td:first-child { white-space: nowrap; vertical-align: top; }
+#vc_tools_did_link { white-space: nowrap; font-weight: 700; }
+
+/* --- vc-issuance-1: the panes and the configuration side by side -------------
+   That page came to 6,569px against a 839px viewport, and almost none of it was
+   necessary: the four metadata panes are each a URL, a few buttons and a status —
+   1,234px of height for content that fits in a quarter of the width — and the
+   Configuration Parameters pane was one table of ~100 rows, 3,988px tall, in a
+   container 1,170px wide.
+
+   Both are grids of auto-fit columns rather than fixed counts, so a narrow window
+   folds them instead of overflowing, and `align-items: start` keeps a short pane
+   from stretching to its tallest neighbour (which is how a grid quietly gives back
+   the height it just saved). */
+.vc-pane-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+  align-items: start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.vc-pane-row .dbg-pane { margin: 0; }
+/* Each pane's own layout table STACKS at a quarter of the width: label above
+   control, not label beside control. Those tables are two columns of label|control,
+   which at 287px leaves a ~120px control column — the inputs came out unreadably
+   short and each pane's buttons landed at different heights in two columns, which
+   read as a broken layout rather than a narrow one.
+   Scoped to `fieldset > table` so it reaches the pane's LAYOUT table and not the
+   retrieved-document tables inside it, which are real tables and must stay that way. */
+.vc-pane-row fieldset > table,
+.vc-pane-row fieldset > table > tbody,
+.vc-pane-row fieldset > table > tbody > tr,
+.vc-pane-row fieldset > table > tbody > tr > td {
+  display: block;
+  width: auto;
+}
+.vc-pane-row fieldset > table > tbody > tr > td:empty { display: none; }
+/* A row is a flex line rather than a block, so the cells that hold nothing but
+   buttons stay on ONE line: these tables split a pane's buttons across two cells
+   (Retrieve/Upload | Clear), and stacking every cell put each group on its own row.
+   Anything that owns a line of its own says so — a label, a field, a hint, a status —
+   and everything else shares. */
+.vc-pane-row fieldset > table > tbody > tr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0 6px;
+  margin-bottom: 3px;
+}
+.vc-pane-row fieldset > table > tbody > tr > td:has(label),
+.vc-pane-row fieldset > table > tbody > tr > td:has(input[type="text"]),
+.vc-pane-row fieldset > table > tbody > tr > td:has(input[type="password"]),
+.vc-pane-row fieldset > table > tbody > tr > td:has(textarea),
+.vc-pane-row fieldset > table > tbody > tr > td:has(select),
+.vc-pane-row fieldset > table > tbody > tr > td:has(> details) { flex: 1 0 100%; }
+/* An unfilled status is a &nbsp; — it cannot be :empty, so it is measured instead:
+   it shares the buttons' line until it has something to say, and takes its own line
+   when it does. `min-width: 0` lets a long verdict wrap rather than widen the pane. */
+.vc-pane-row fieldset > table > tbody > tr > td:has(> .signed_metadata_status),
+.vc-pane-row fieldset > table > tbody > tr > td:has(> .vc-status) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.vc-pane-row .signed_metadata_status,
+.vc-pane-row .vc-status { font-size: .85em; }
+/* The hint's own line is the pane's opening line, so it carries no top margin. */
+.vc-pane-row details.vc-hint { margin: 0 0 2px 0; }
+.vc-pane-row input[type="text"],
+.vc-pane-row textarea,
+.vc-pane-row select { width: 100%; max-width: 100%; box-sizing: border-box; }
+/* The buttons sit on one line and wrap as a group. */
+.vc-pane-row .tooltip { display: inline-block; }
+.vc-pane-row input[type="button"],
+.vc-pane-row input[type="submit"] { margin: 1px 2px 1px 0; }
+/* The retrieved-document tables get a CEILING, which is the whole reason the row is
+   affordable. A quarter of the width wraps every value over several lines: the credential issuer metadata
+   document measured 23,299px in a 287px pane against ~4,000 at full width, and the
+   row is as tall as its tallest pane, so ONE retrieved document made the page ten
+   times longer than the stacked layout it replaced. Bounded and scrolled, the same
+   way Credential History is, so the row's height no longer depends on what was
+   retrieved. The readable full-width rendering of the same values is the
+   Configuration Parameters pane below; this is the raw document beside its controls. */
+.vc-pane-row .discovery_info_table,
+.vc-pane-row .vc-schema-report {
+  font-size: .82em;
+  max-height: 300px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+/* The hint paragraph is the tallest thing in a narrow pane and the least urgent —
+   it stays, smaller. */
+.vc-pane-row .dbg-pane p { font-size: .82em; line-height: 1.35; margin: 2px 0 6px; }
+
+/* The Configuration Parameters groups. Each is self-contained (see groupRow() in
+   vc_issuance_1.js), so they flow into columns. */
+/* CSS COLUMNS, not a grid. A grid places groups row by row and every row is as tall
+   as its tallest member, so wildly uneven groups — "OAuth 2.0 client" has four rows,
+   "Authorization server metadata" has thirty — waste most of each row. Multi-column
+   flows them one after another and balances the column heights, which is the right
+   model for a stack of self-contained blocks of different sizes. */
+.vc-config-groups {
+  column-count: 3;
+  column-gap: 20px;
+}
+@media (max-width: 1100px) { .vc-config-groups { column-count: 2; } }
+@media (max-width: 700px)  { .vc-config-groups { column-count: 1; } }
+/* Groups break ACROSS columns rather than being atomic. One group here holds 36
+   members (the RFC 8414 document's remaining fields) and is ~1,200px on its own, so
+   an unbreakable group set the column height and left the other two columns half
+   empty — the columns cost height without buying density. A heading may not be the
+   last thing in a column, which is the only part of a break that reads as a bug. */
+.vc-config-group { break-inside: auto; }
+h4.vc-group-heading { break-after: avoid; break-inside: avoid; }
+.vc-config-table { width: 100%; table-layout: fixed; }
+.vc-config-table tr { break-inside: avoid; }
+/* A member name is a long unbroken identifier — `id_token_encryption_enc_values_supported`
+   is 40 characters with no break opportunity — and in a third of the width it ran
+   straight over the input beside it, so both were unreadable. It wraps instead. */
+.vc-config-table td:first-child {
+  width: 45%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.vc-config-table td { vertical-align: top; padding: 1px 3px; }
+.vc-config-table input[type="text"],
+.vc-config-table textarea,
+.vc-config-table select { width: 100%; max-width: 100%; box-sizing: border-box; }
+/* A DID document's verificationMethod/authentication/assertionMethod and a DID
+   Configuration's linked_dids are textareas sized for a full-width pane; inside a
+   third of the width they were five blank lines each. Only in the columns: on
+   did-tools.html the same table has the whole width and wants its full height. */
+.vc-config-groups .vc-config-table textarea { height: 3.2em; min-height: 3.2em; }
+h4.vc-group-heading {
+  font-size: .95em;
+  font-weight: 700;
+  color: #12107c;
+  border-bottom: 1px solid #dcdce6;
+  margin: 10px 0 4px;
+  padding-bottom: 2px;
+}
+h4.vc-group-heading span { font-weight: 400; font-size: .82em; color: #666; }
+
+.vc-fit #vc_use_case_badge { margin: 2px 0; }
+.vc-fit details.vc-hint.vc-intro-fold { margin: 2px 0 4px; }
+.vc-fit .dbg-controls { margin: 2px 0 4px; }
+
+/* A pane's explanatory prose, folded. In a quarter-width pane the hint was up to
+   316px of a 622px pane — the most valuable text on a teaching page and the least
+   urgent thing on screen. Folded rather than cut: it is all still there, one click
+   away, and <details> needs no script (this service sets script-src 'none' on its own
+   pages and the client keeps the same habit). */
+details.vc-hint > summary {
+  cursor: pointer;
+  font-size: .82em;
+  color: #12107c;
+  margin: 2px 0;
+}
+details.vc-hint > summary:hover { text-decoration: underline; }
+details.vc-hint p { margin: 4px 0 6px; font-size: .85em; line-height: 1.4; }
 
 /* Which use case is running, under the step indicator on every page. */
 .vc-use-case-badge {

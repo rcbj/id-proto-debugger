@@ -392,7 +392,7 @@ function initValuesToLocalStorage()
       localStorage.setItem("initialized", "true");
       initialized = true;
   }
-  log.debug("Leaving writeValuesToLocalStorage().");
+  log.debug("Leaving initValuesToLocalStorage().");
 }
 
 function loadValuesFromLocalStorage()
@@ -793,6 +793,26 @@ function recalculateAuthorizationRequestDescription()
            $("#display_authz_request_form_textarea1").val() + "&\n" +
            "authorization_details=" + encodeURIComponent(sdJwtVcAuthzDetails));
        }
+       // RFC 9449 section 10: dpop_jkt names the DPoP key the client intends to
+       // use, which binds the authorization CODE to it. That closes a window PKCE
+       // does not: an attacker holding both the code and the code_verifier still
+       // cannot redeem it without the private key. It has to travel on the
+       // authorization request, which is why it is here rather than on step 2 with
+       // the rest of the DPoP pane.
+       var sdJwtVcDpopJkt = sdJwtVc.dpopEnabled()
+         ? (sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "") : "";
+       if (sdJwtVcDpopJkt) {
+         $("#display_authz_request_form_textarea1").val(
+           $("#display_authz_request_form_textarea1").val() + "&\n" +
+           "dpop_jkt=" + encodeURIComponent(sdJwtVcDpopJkt));
+         // Recorded so step 2 can report whether the code was bound, and to WHICH
+         // key: a jkt sent for a key that has since been regenerated makes the code
+         // unredeemable, and that is worth naming rather than presenting as a
+         // mysterious invalid_grant.
+         sdJwtVc.set("dpop_jkt_sent", sdJwtVcDpopJkt);
+       } else {
+         sdJwtVc.set("dpop_jkt_sent", "");
+       }
     } else if (	grant_type == "token" || 
 		grant_type == "id_token token" || 
 		grant_type == "id_token") {
@@ -870,6 +890,7 @@ function triggerDeviceAuthorizationCall()
   // Shared success/error handlers for the device authorization response,
   // whether it comes from the backend proxy or a direct (frontend) call.
   var onDeviceSuccess = function(data) {
+    log.debug("Entering onDeviceSuccess().");
     log.debug("Device Authorization Endpoint Response: " + JSON.stringify(data));
     if (localStorage) {
       localStorage.setItem("device_code", data.device_code || "");
@@ -880,6 +901,7 @@ function triggerDeviceAuthorizationCall()
       localStorage.setItem("device_interval", data.interval || "");
     }
     window.location.href = "/debugger2.html";
+    log.debug("Leaving onDeviceSuccess().");
   };
   var onDeviceError = function(request, status, error) {
     log.debug("Entering onDeviceError().");
@@ -1094,7 +1116,7 @@ function maybeStartSdJwtVcFlow() {
   if (!$("#authorization_endpoint").val() || !$("#client_id").val()) {
     $("#sdjwtvc_banner").append(
       "<p class='vc-bad'>The authorization endpoint or client id is not configured, so the flow was not " +
-      "started. Go back to <a href='/sd-jwt-vc-issuance-1.html'>step 1</a> and retrieve the metadata.</p>");
+      "started. Go back to <a href='/vc-issuance-1.html'>step 1</a> and retrieve the metadata.</p>");
     return false;
   }
   // An issuer-initiated issuance (OID4VCI Appendix H.1) carries an issuer_state
@@ -1113,6 +1135,18 @@ function maybeStartSdJwtVcFlow() {
     $("#sdjwtvc_banner").append(
       "<p>The credential is being asked for with <code>authorization_details</code> (RFC 9396) rather than a " +
       "scope, so the token response should grant a <code>credential_identifiers</code> value to name it with.</p>");
+  }
+  if (sdJwtVc.dpopEnabled()) {
+    var dpopJkt = sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "";
+    log.debug("SD-JWT VC issuance: DPoP is on. dpop_jkt=" + (dpopJkt || "(no key yet)"));
+    $("#sdjwtvc_banner").append(dpopJkt
+      ? "<p>DPoP is on (RFC 9449). <code>dpop_jkt=" + dpopJkt + "</code> is being sent with the " +
+        "authorization request, which binds the authorization code to that key \u2014 a stolen code " +
+        "cannot be redeemed without it, even with the PKCE <code>code_verifier</code>.</p>"
+      : "<p class='vc-pending'>DPoP is on, but no key pair has been generated yet, so the " +
+        "authorization request carries no <code>dpop_jkt</code> and the code will not be bound. " +
+        "Generate one in step 2's DPoP pane first if you want the code bound as well as the " +
+        "token.</p>");
   }
 
   // Let the rest of onload() finish laying the page out before navigating.
@@ -1360,7 +1394,7 @@ function displayOIDCArtifacts()
 
 function useRefreshTokens()
 {
-  log.debug("Entering useRefreshToken().");
+  log.debug("Entering useRefreshTokens().");
   var yesCheck = $("#useRefreshToken-yes").is(":checked");
   var noCheck = $("#useRefreshToken-no").is(":checked");
   log.debug("useRefreshToken-yes=" + yesCheck, "useRefreshToken-no=" + noCheck);
@@ -1428,14 +1462,32 @@ var verifyJwsWithJwks = metadataClient.verifyJwsWithJwks;
 
 // Button handler in the discovery pane.
 function validateSignedMetadata(evt) {
+  log.debug("Entering validateSignedMetadata().");
   // Keep the click off the form's onclick, which would fire a retrieval.
   if (evt && evt.stopPropagation) evt.stopPropagation();
   var out = function (text) { $("#signed_metadata_status").text(text); };
-  metadataClient.validateSignedMetadata(discoveryInfo || {}, {
+  // The document this page is showing, falling back to the stored copy — so the
+  // button works when the table was restored from a previous visit and not only
+  // in the visit that retrieved it.
+  var chosen = metadataClient.documentForValidation(
+    { read: function () {
+        try { return JSON.parse(localStorage.getItem(DISCOVERY_INFO_KEY) || "null"); } catch (e) { return null; }
+      } },
+    discoveryInfo);
+  if (!chosen.doc) {
+    out($("#discovery_info_table").find("tr").length
+      ? "The table above was drawn from a document this browser no longer has, so there is nothing to " +
+        "validate against. Retrieve it again."
+      : "Retrieve a metadata document first.");
+    return false;
+  }
+  metadataClient.validateSignedMetadata(chosen.doc, {
     issuerMember: "issuer",
     noSignedMetadataNote: "(signed_metadata is an RFC 8414 member; OIDC Discovery does not define it.)",
     progress: out
-  }).then(out);
+  }).then(out)
+    .catch(function (e) { out("Could not validate the signature: " + e.message); });
+  log.debug("Leaving validateSignedMetadata().");
   return false;
 }
 
@@ -1703,7 +1755,7 @@ function buildDiscoveryInfoTable(discoveryInfo) {
 
 function onSubmitPopulateFormsWithDiscoveryInformation() {
   log.debug("Entering onSubmitPopulateFormsWithDiscoveryInformation().");
-  log.debug('Entering OnSubmitPopulateFormsWithDiscoveryInformation().');
+  log.debug('Entering onSubmitPopulateFormsWithDiscoveryInformation().');
   var authorizationEndpoint = discoveryInfo["authorization_endpoint"];
   var idTokenSigningAlgValuesSupported = discoveryInfo["id_token_signing_alg_values_supported"];
   var issuer = discoveryInfo["issuer"];
@@ -1799,7 +1851,7 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   // Pre-fill the Dynamic Client Registration pane (registration_endpoint and a
   // default client metadata document) from the discovery metadata.
   populateClientMetadataFromDiscovery();
-  log.debug('Leaving OnSubmitPopulateFormsWithDiscoveryInformation().');
+  log.debug('Leaving onSubmitPopulateFormsWithDiscoveryInformation().');
   log.debug("Leaving onSubmitPopulateFormsWithDiscoveryInformation().");
   return true;
 }
@@ -2154,6 +2206,7 @@ function setPKCEValues()
   $("#authz_pkce_code_method").val(localStorage.getItem("PKCE_code_challenge_method"));
   recalculateAuthorizationRequestDescription();
   log.debug("leaving setPKCEValues().");
+  log.debug("Leaving setPKCEValues().");
   return code_challenge
 }
 
@@ -2274,6 +2327,7 @@ function parseDcrMetadata() {
 // returning the new value, so this must run after every successful operation
 // that returns one or the subsequent call would fail to authenticate.
 function captureRegistrationArtifacts(data) {
+  log.debug("Entering captureRegistrationArtifacts().");
   if (!data) {
     return;
   }
@@ -2284,6 +2338,7 @@ function captureRegistrationArtifacts(data) {
     $("#registration_access_token").val(data.registration_access_token);
   }
   writeDcrValuesToLocalStorage();
+  log.debug("Leaving captureRegistrationArtifacts().");
 }
 
 // Common proxy invocation for all four registration operations.
@@ -2359,6 +2414,7 @@ function registerClient() {
 function readClient() {
   log.debug("Entering readClient().");
   writeDcrValuesToLocalStorage();
+  log.debug("Leaving readClient().");
   return callRegistrationProxy("GET", $("#registration_client_uri").val(),
     $("#registration_access_token").val(), null, function (data) {
       // Reflect the current registration back into the metadata editor and pick

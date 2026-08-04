@@ -83,6 +83,7 @@ const LIVE_DOM_ADOPTIONS = [
 ];
 
 function sourceFiles() {
+  log.debug("Entering sourceFiles().");
   const files = [];
   (function walk(dir) {
     fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
@@ -94,6 +95,7 @@ function sourceFiles() {
       }
     });
   })(SRC_DIR);
+  log.debug("Leaving sourceFiles().");
   return files;
 }
 
@@ -112,6 +114,7 @@ function codeLines(text) {
 // --- 1. every parse is an XML parse -----------------------------------------
 
 function everyParseIsXml() {
+  log.debug("Entering everyParseIsXml().");
   log.info("[mime] Every DOMParser call must ask for application/xml.");
   let parseCalls = 0;
   const offences = [];
@@ -134,12 +137,14 @@ function everyParseIsXml() {
     "text as text/html IS the vulnerability CodeQL js/xss-through-dom describes:\n  " +
     offences.join("\n  "));
   log.info("[mime] OK — all " + parseCalls + " parseFromString calls use a literal XML MIME type.");
+  log.debug("Leaving everyParseIsXml().");
 }
 
 
 // --- 2. the shared engine writes no markup ----------------------------------
 
 function xmlEngineHasNoHtmlSink() {
+  log.debug("Entering xmlEngineHasNoHtmlSink().");
   log.info("[engine] " + XML_ENGINE + " must contain no HTML sink.");
   const file = path.join(SRC_DIR, XML_ENGINE);
   assert.ok(fs.existsSync(file), XML_ENGINE + " is missing — this test needs updating.");
@@ -157,12 +162,14 @@ function xmlEngineHasNoHtmlSink() {
     "modelling artefact into a real finding. Render through esc()/xmlEscape() in the page instead.\n  " +
     offences.join("\n  "));
   log.info("[engine] OK — no innerHTML / outerHTML / insertAdjacentHTML / document.write / .html().");
+  log.debug("Leaving xmlEngineHasNoHtmlSink().");
 }
 
 
 // --- 3. a parsed document never reaches the live page -----------------------
 
 function parsedNodesStayDetached() {
+  log.debug("Entering parsedNodesStayDetached().");
   log.info("[detached] No XML module may adopt a parsed node into the live document.");
   const offences = [];
   let xmlModules = 0;
@@ -185,10 +192,12 @@ function parsedNodesStayDetached() {
     "XMLDocument stops being inert the moment its nodes are adopted into the page:\n  " +
     offences.join("\n  "));
   log.info("[detached] OK — " + xmlModules + " modules parse XML, none call document.importNode/adoptNode.");
+  log.debug("Leaving parsedNodesStayDetached().");
 }
 
 
 async function test() {
+  log.debug("Entering test().");
   // This test reads sources rather than running anything, so it needs the
   // checkout. The tests image stages individual modules flat and has no
   // client/src; say so rather than reporting a silent pass over zero files.
@@ -201,6 +210,7 @@ async function test() {
   xmlEngineHasNoHtmlSink();
   parsedNodesStayDetached();
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

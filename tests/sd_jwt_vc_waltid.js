@@ -80,7 +80,9 @@ function b64uDecode(s) {
 function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
 
 function httpJson(url, options) {
+  log.debug("Entering httpJson().");
   options = options || {};
+  log.debug("Leaving httpJson().");
   return fetch(url, options).then(function (r) {
     return r.text().then(function (text) {
       var body = null;
@@ -95,6 +97,7 @@ function httpJson(url, options) {
 }
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
@@ -106,6 +109,7 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", e);
   }
   await driver.sleep(250);
+  log.debug("Leaving click().");
 }
 
 // text()/value() and the waitFor* family live in ./wait_for.js — one
@@ -136,7 +140,7 @@ var WRONG_ISSUER = "http://localhost:1/not-the-offering-issuer";
 
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -228,7 +232,7 @@ async function configureFromWaltid(driver) {
   await driver.executeScript(
     "var s = document.getElementById('vci_credential_configuration_select');" +
     "s.value = arguments[0];" +
-    "sdjwtvc1.onCredentialConfigurationChange();", CONFIGURATION_ID);
+    "vcissuance1.onCredentialConfigurationChange();", CONFIGURATION_ID);
   await waitForValue(driver, "vci_credential_configuration_id",
     function (v) { return v === CONFIGURATION_ID; },
     "choosing the credential configuration should select it");
@@ -283,7 +287,7 @@ async function authorizeAtWaltid(driver) {
   await driver.findElement(By.id("password")).sendKeys(clientId);
   await click(driver, By.id("kc-login"));
 
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "after authenticating, the workflow should come back to step 2 with tokens.");
   await driver.wait(async function () {
     return !!(await value(driver, "vc_access_token"));
@@ -323,7 +327,7 @@ async function approveAndCollect(driver) {
     "the proof should carry the c_nonce walt.id handed out.");
 
   await click(driver, By.id("vc_approve_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "walt.id should accept the Credential Request and the workflow should move to step 3.");
   await driver.sleep(900);
   log.info("[waltid] OK — walt.id accepted our c_nonce, our proof of possession and our " +
@@ -334,8 +338,8 @@ async function approveAndCollect(driver) {
 // Step 3: what the page concluded, and the same credential checked here so a
 // page that merely claims the credential is fine cannot pass.
 async function checkCredential(driver, what, opts) {
-  opts = opts || {};
   log.debug("Entering checkCredential().");
+  opts = opts || {};
   var credential = await value(driver, "vc_credential_raw");
   assert.ok(credential && credential.indexOf("~") !== -1,
     "step 3 should show the Combined Serialization walt.id returned.");
@@ -424,7 +428,7 @@ async function checkCredential(driver, what, opts) {
 async function walletInitiated(driver) {
   log.debug("Entering walletInitiated().");
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-0.html");
+  await driver.get(baseUrl + "/vc-issuance-0.html");
   await driver.wait(until.elementLocated(By.id("vc_usecase_wallet-initiated")), waitTime);
   await click(driver, By.id("vc_usecase_wallet-initiated"));
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), fetchWait,
@@ -489,7 +493,7 @@ async function issuerInitiated(driver) {
 
   // Hand it to the wallet the way the openid-credential-offer link does.
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html?credential_offer=" +
+  await driver.get(baseUrl + "/vc-issuance-1.html?credential_offer=" +
                    encodeURIComponent(offerParam));
   await driver.wait(until.elementLocated(By.id("pane_offer")), fetchWait,
     "the wallet should show the Credential Offer it was handed.");
@@ -578,7 +582,7 @@ async function crossDeviceOffer(driver) {
 
   // ---- the wallet takes what the QR code carried --------------------------
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];", offerUri);
@@ -610,7 +614,7 @@ async function crossDeviceOffer(driver) {
 
   // ---- no authorization request, and no Keycloak --------------------------
   await click(driver, By.id("start_issuance_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-issuance-2.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "a pre-authorized offer must not go through an authorization server at all.");
   await driver.wait(async function () {
     return !!(await text(driver, "vc_pre_authorized_code"));
@@ -621,7 +625,7 @@ async function crossDeviceOffer(driver) {
 
   // walt.id refuses a wrong Transaction Code, as it must.
   await driver.executeScript(
-    "document.getElementById('vc_tx_code').value = '00000'; sdjwtvc2.onTxCodeChange();");
+    "document.getElementById('vc_tx_code').value = '00000'; vcissuance2.onTxCodeChange();");
   await click(driver, By.id("vc_token_request_button"));
   await driver.wait(async function () {
     return /refused/i.test((await text(driver, "vc_token_status")) || "");
@@ -631,7 +635,7 @@ async function crossDeviceOffer(driver) {
   log.info("[waltid] OK — walt.id refused a wrong Transaction Code: " + (await text(driver, "vc_token_status")));
 
   await driver.executeScript(
-    "document.getElementById('vc_tx_code').value = arguments[0]; sdjwtvc2.onTxCodeChange();", TX);
+    "document.getElementById('vc_tx_code').value = arguments[0]; vcissuance2.onTxCodeChange();", TX);
   await click(driver, By.id("vc_token_request_button"));
   await driver.wait(async function () {
     return !!(await value(driver, "vc_access_token"));
@@ -671,7 +675,7 @@ async function deferredNotSupportedHere(driver) {
   // endpoint — a wallet that guesses <issuer>/deferred_credential would send a
   // Deferred Credential Request into a 404 the moment an issuer took its time.
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   await driver.executeScript(
     "document.getElementById('vci_metadata_endpoint').value = arguments[0];", metadataUrl);
@@ -746,7 +750,7 @@ async function optionalFeaturesAbsentHere(driver) {
 
   // ---- the wallet's configuration pane says so ---------------------------
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
   await driver.executeScript(
     "document.getElementById('vci_metadata_endpoint').value = arguments[0];", metadataUrl);
@@ -785,7 +789,7 @@ async function optionalFeaturesAbsentHere(driver) {
     "step 1 should retrieve walt.id's authorization server metadata");
   await driver.executeScript(
     "document.getElementById('handoff_request_mechanism').value = 'authorization_details';" +
-    "sdjwtvc1.onRequestMechanismChange();");
+    "vcissuance1.onRequestMechanismChange();");
   var note = await waitForStatus(driver, "handoff_mechanism_note",
     function (s) { return s.trim() !== ""; },
     "step 1 said nothing about the request mechanism it was switched to");
@@ -799,7 +803,7 @@ async function optionalFeaturesAbsentHere(driver) {
   // just that it complains.
   await driver.executeScript(
     "document.getElementById('handoff_request_mechanism').value = 'scope';" +
-    "sdjwtvc1.onRequestMechanismChange();" +
+    "vcissuance1.onRequestMechanismChange();" +
     "document.getElementById('scope').value = arguments[0];" +
     "document.getElementById('client_id').value = arguments[1];",
     CONFIGURATION_ID, clientId);
@@ -809,7 +813,7 @@ async function optionalFeaturesAbsentHere(driver) {
   }
 
   await signOutOfKeycloak(driver);
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-1.html");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("start_issuance_button")), waitTime);
   await authorizeAtWaltid(driver);
 
@@ -869,6 +873,7 @@ async function optionalFeaturesAbsentHere(driver) {
 }
 
 async function test() {
+  log.debug("Entering test().");
   log.info("Starting Test run. waltid=" + issuerId + ", keycloak=" + keycloakBase);
   await whatWaltidPublishes();
 
@@ -902,6 +907,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

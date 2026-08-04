@@ -2,22 +2,22 @@
 //
 // The SD-JWT VC PRESENTATION workflow, end to end:
 //
-//   step 0 (sd-jwt-vc-presentation-0.html)
+//   step 0 (vc-presentation-0.html)
 //     which OID4VP flow to run — request by value, signed request by reference,
 //     or cross-device — and whether this wallet is even holding a credential.
 //
-//   step 1 (sd-jwt-vc-presentation-1.html)
+//   step 1 (vc-presentation-1.html)
 //     the verifier's Authorization Request: read from the redirect, or fetched
 //     from a request_uri and its signature verified, with the DCQL query decoded
 //     into the claims being asked for.
 //
-//   step 2 (sd-jwt-vc-presentation-2.html)
+//   step 2 (vc-presentation-2.html)
 //     the holder chooses which Disclosures to send; the wallet builds the
 //     SD-JWT+KB — issuer-signed JWT, those Disclosures, and a Key Binding JWT
 //     over this request's nonce with sd_hash across exactly those bytes — and
 //     POSTs the vp_token to the Response URI.
 //
-//   step 3 (sd-jwt-vc-presentation-3.html)
+//   step 3 (vc-presentation-3.html)
 //     the verifier's verdict, check by check, next to the wallet's own re-check
 //     of the bytes it sent.
 //
@@ -85,7 +85,9 @@ function b64u(buf) {
 function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
 
 function httpJson(url, options) {
+  log.debug("Entering httpJson().");
   options = options || {};
+  log.debug("Leaving httpJson().");
   return fetch(url, options).then(function (r) {
     return r.text().then(function (text) {
       var body = null;
@@ -100,6 +102,7 @@ function httpJson(url, options) {
 }
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
@@ -111,6 +114,7 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", e);
   }
   await driver.sleep(250);
+  log.debug("Leaving click().");
 }
 
 // text()/value() and the waitFor* family live in ./wait_for.js — one
@@ -120,7 +124,7 @@ async function click(driver, locator) {
 // for that lost the race periodically. It also reports what the field LAST held
 // on a timeout, which the local copy of waitForStatus could not — its message was
 // built before the first poll, so it always said "(last status: )".
-const { text, value, waitForStatus } = require("./wait_for");
+const { text, value, waitForStatus, waitForValue } = require("./wait_for");
 function severeErrors(driver) {
   return driver.manage().logs().get(logging.Type.BROWSER).then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
@@ -186,7 +190,7 @@ async function mintCredential(label) {
 // issuance workflow writes.
 async function planCredentialIntoWallet(driver, held) {
   log.debug("Entering planCredentialIntoWallet().");
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-0.html");
+  await driver.get(baseUrl + "/vc-presentation-0.html");
   await driver.wait(until.elementLocated(By.id("vp_usecases")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -195,8 +199,14 @@ async function planCredentialIntoWallet(driver, held) {
     "localStorage.setItem('sdjwtvc_holder_jwk', arguments[1]);" +
     "localStorage.setItem('sdjwtvc_holder_private_jwk', arguments[2]);" +
     "localStorage.setItem('sdjwtvc_credential_meta', arguments[3]);" +
-    // The verifier lives on the same service as the issuer, which is how step 0
-    // finds it.
+    // The verifier lives on the same service as the issuer for this mock, but
+    // step 0 no longer INFERS that: it has a Configuration Parameters pane, and a
+    // configured verifier wins over anything derived. Set it explicitly so this
+    // suite points at the STS it actually started, rather than at whatever
+    // oid4vpVerifierUrlDefault the target carries — http://localhost:8081 for
+    // local.js, http://sts:8081 containerized, empty for the deployed sites.
+    "localStorage.setItem('sdjwtvp_verifier_base_url', arguments[4]);" +
+    "localStorage.setItem('sdjwtvp_verifier_jwks_url', arguments[4] + '/oauth2/jwks');" +
     "localStorage.setItem('vci_credential_issuer', arguments[4]);",
     held.credential, JSON.stringify(held.publicJwk), JSON.stringify(held.privateJwk),
     JSON.stringify({ issuer: issuerBase, configurationId: VCI_CONFIG_ID, vct: EXPECTED_VCT,
@@ -217,6 +227,7 @@ function sdHash(prefix) {
 }
 
 function signKbJwt(opts) {
+  log.debug("Entering signKbJwt().");
   var header = b64u(JSON.stringify({ typ: opts.typ || "kb+jwt", alg: "ES256" }));
   var payload = b64u(JSON.stringify({
     iat: opts.iat || Math.floor(Date.now() / 1000),
@@ -226,12 +237,14 @@ function signKbJwt(opts) {
   }));
   var sig = b64u(crypto.sign("sha256", Buffer.from(header + "." + payload),
     { key: opts.key, dsaEncoding: "ieee-p1363" }));
+  log.debug("Leaving signKbJwt().");
   return header + "." + payload + "." + sig;
 }
 
 // A presentation, exactly as a correct wallet would build it — and the knobs the
 // negatives need to break one of the rules at a time.
 function buildPresentation(held, opts) {
+  log.debug("Entering buildPresentation().");
   var issuerJwt = held.credential.split("~")[0];
   var selected = opts.disclosures || held.disclosures.filter(function (d) {
     var arr = JSON.parse(b64uDecode(d).toString("utf8"));
@@ -249,6 +262,7 @@ function buildPresentation(held, opts) {
     sdHash: sdHash(opts.sdHashOver || prefix)
   });
   var body = opts.presentPrefix || prefix;
+  log.debug("Leaving buildPresentation().");
   return { presentation: body + kb, prefix: prefix, kb: kb, selected: selected };
 }
 
@@ -296,6 +310,7 @@ async function verdictFor(state) {
 // tests itself proves nothing.
 // ---------------------------------------------------------------------------
 async function verifierNegatives(held) {
+  log.debug("Entering verifierNegatives().");
   log.info("=== NEGATIVE: presentations the verifier must refuse ===");
 
   function failedChecks(verdict) {
@@ -397,12 +412,14 @@ async function verifierNegatives(held) {
     "with exactly the claims asked for. Got: " + goodVerdict.disclosed.join(", "));
   log.info("[negative] OK — the control case is accepted, so the refusals above are about the defects and " +
            "not about the verifier.");
+  log.debug("Leaving verifierNegatives().");
 }
 
 // ---------------------------------------------------------------------------
 // POSITIVE: the workflow, through the pages.
 // ---------------------------------------------------------------------------
 async function presentThroughThePages(driver, held, byReference) {
+  log.debug("Entering presentThroughThePages().");
   log.info("=== POSITIVE: presenting through the pages (" +
            (byReference ? "signed request by reference" : "request by value") + ") ===");
 
@@ -433,7 +450,7 @@ async function presentThroughThePages(driver, held, byReference) {
   // URL the browser is actually on. The verifier builds it from OID4VP_WALLET_URL
   // (falling back to OID4VCI_WALLET_URL), and that default only works when the
   // browser and the wallet share a host.
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-1.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-presentation-1.html"), fetchWait,
     "the verifier should send the wallet the request.");
 
   // The wallet PAGE is in that URL — but is it this wallet? The verifier builds the
@@ -517,7 +534,7 @@ async function presentThroughThePages(driver, held, byReference) {
   log.info("[step1] asks for: " + asked[0].claims.replace(/\s+/g, " "));
 
   await click(driver, By.id("vp_continue_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-2.html"), waitTime,
+  await driver.wait(until.urlContains("vc-presentation-2.html"), waitTime,
     "step 1 should continue to the disclosure choice.");
 
   // ---- step 2: the choice and the presentation ----------------------------
@@ -594,7 +611,7 @@ async function presentThroughThePages(driver, held, byReference) {
 
   // ---- present it ---------------------------------------------------------
   await click(driver, By.id("vp_present_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-presentation-3.html"), fetchWait,
     "presenting should open step 3 with the verdict.");
   await driver.sleep(600);
 
@@ -643,6 +660,7 @@ async function presentThroughThePages(driver, held, byReference) {
   });
   log.info("[step3] OK — verifier accepted; " + checks.length + " checks passed; it knows " +
            Object.keys(verifierClaims).join(", ") + " and nothing else.");
+  log.debug("Leaving presentThroughThePages().");
   return { checks: checks, claims: verifierClaims };
 }
 
@@ -654,11 +672,12 @@ async function presentThroughThePages(driver, held, byReference) {
 // pages have to say which check failed rather than "no".
 // ---------------------------------------------------------------------------
 async function withholdARequestedClaim(driver, held) {
+  log.debug("Entering withholdARequestedClaim().");
   log.info("=== NEGATIVE: withholding a claim the verifier asked for ===");
   await planCredentialIntoWallet(driver, held);
   var request = await freshRequest();
   // Straight to step 1 with the request, the way the verifier's redirect arrives.
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-1.html?" +
+  await driver.get(baseUrl + "/vc-presentation-1.html?" +
     request.location.slice(request.location.indexOf("?") + 1));
   await driver.wait(until.elementLocated(By.id("vp_request_status")), waitTime);
   await waitForStatus(driver, "vp_request_status", function (s) { return /Request read/.test(s); },
@@ -689,7 +708,7 @@ async function withholdARequestedClaim(driver, held) {
 
   // Send it anyway: the verifier must refuse, and step 3 must say which check.
   await click(driver, By.id("vp_present_button"));
-  await driver.wait(until.urlContains("sd-jwt-vc-presentation-3.html"), fetchWait,
+  await driver.wait(until.urlContains("vc-presentation-3.html"), fetchWait,
     "a refused presentation should still open step 3 — that is where the reason is.");
   await driver.sleep(600);
   var verdict = await waitForStatus(driver, "vp_verifier_status",
@@ -727,6 +746,7 @@ async function withholdARequestedClaim(driver, held) {
     "and name the withheld claim. Got: " + answered);
   log.info("[negative] OK — refused for " + failed[0].name + ": " + failed[0].detail.slice(0, 90) +
            "; the wallet's own account: " + answered.slice(0, 90));
+  log.debug("Leaving withholdARequestedClaim().");
 }
 
 // ---------------------------------------------------------------------------
@@ -737,9 +757,10 @@ async function withholdARequestedClaim(driver, held) {
 // the defect.
 // ---------------------------------------------------------------------------
 async function panesContainTheirContent(driver) {
+  log.debug("Entering panesContainTheirContent().");
   log.info("=== Nothing overflows its pane ===");
-  var pages = ["sd-jwt-vc-presentation-0.html", "sd-jwt-vc-presentation-1.html",
-               "sd-jwt-vc-presentation-2.html", "sd-jwt-vc-presentation-3.html"];
+  var pages = ["vc-presentation-0.html", "vc-presentation-1.html",
+               "vc-presentation-2.html", "vc-presentation-3.html"];
   for (var i = 0; i < pages.length; i++) {
     await driver.get(baseUrl + "/" + pages[i]);
     await driver.wait(until.elementLocated(By.id("vp_steps")), waitTime);
@@ -780,16 +801,18 @@ async function panesContainTheirContent(driver) {
     log.info("[layout] " + pages[i] + ": every box fits its pane, four step links on one row.");
   }
   log.info("[layout] OK — all four presentation pages.");
+  log.debug("Leaving panesContainTheirContent().");
 }
 
 // ---------------------------------------------------------------------------
 // Refusing is an answer too (OID4VP section 8.4).
 // ---------------------------------------------------------------------------
 async function refusingIsAnAnswer(driver, held) {
+  log.debug("Entering refusingIsAnAnswer().");
   log.info("=== The holder refuses ===");
   await planCredentialIntoWallet(driver, held);
   var request = await freshRequest();
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-1.html?" +
+  await driver.get(baseUrl + "/vc-presentation-1.html?" +
     request.location.slice(request.location.indexOf("?") + 1));
   await driver.wait(until.elementLocated(By.id("vp_continue_button")), waitTime);
   await waitForStatus(driver, "vp_request_status", function (s) { return /Request read/.test(s); },
@@ -808,10 +831,12 @@ async function refusingIsAnAnswer(driver, held) {
     "with the error OID4VP defines for it. Got: " + doc.verdict.error);
   assert.ok(!doc.verdict.claims, "and no claims should have reached it.");
   log.info("[refuse] OK — access_denied reached the verifier and nothing was disclosed.");
+  log.debug("Leaving refusingIsAnAnswer().");
 }
 
 // ---------------------------------------------------------------------------
 async function test() {
+  log.debug("Entering test().");
   log.info("Starting Test run. issuer/verifier=" + issuerBase + ", wallet=" + baseUrl);
   var held = await mintCredential("the positive flow");
   await verifierNegatives(held);
@@ -848,6 +873,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

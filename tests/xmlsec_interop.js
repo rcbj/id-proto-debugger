@@ -26,6 +26,25 @@
 const fs = require("fs");
 const path = require("path");
 
+const bunyan = require("bunyan");
+// The level is read through a guard because this script is run BOTH ways: by
+// run-report.js, which sets CONFIG_FILE, and directly from a checkout, where it is
+// unset. A bare require(process.env.CONFIG_FILE) throws in the second case, and a
+// test that cannot start is worse than one that logs at the default level.
+const log = bunyan.createLogger({
+  name: "xmlsec_interop",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).LOG_LEVEL || "info";
+    } catch (e) {
+      // No CONFIG_FILE, or it does not resolve from here. Falling back to info
+      // loses only the configured verbosity.
+      return "info";
+    }
+  })()
+});
+log.info("Log initialized. logLevel=" + log.level());
+
 // Browser globals the module expects.
 const xmldom = require("@xmldom/xmldom");
 global.DOMParser = xmldom.DOMParser;
@@ -49,8 +68,8 @@ const xmlenc = require("xml-encryption");
 
 let pass = 0, fail = 0;
 function check(name, ok, detail) {
-  if (ok) { pass++; console.log("  PASS  " + name); }
-  else { fail++; console.log("  FAIL  " + name + (detail ? "  -> " + detail : "")); }
+  if (ok) { pass++; log.info("  PASS  " + name); }
+  else { fail++; log.info("  FAIL  " + name + (detail ? "  -> " + detail : "")); }
 }
 
 // Namespaces / algorithm URIs.
@@ -108,7 +127,7 @@ function verifyWithXmlCrypto(signedXml, certPem, idAttributes) {
 }
 
 function signatureTests() {
-  console.log("== WS-Security signature (verified by xml-crypto) ==");
+  log.info("== WS-Security signature (verified by xml-crypto) ==");
   // RSA-SHA384 is offered in the UI but omitted here: xml-crypto's default hash
   // registry has no SHA-384 digest, so it cannot verify that (correct, standard)
   // URI — an xml-crypto coverage gap, not an output defect.
@@ -155,7 +174,7 @@ function decryptWithXmlEnc(encXml, privPem) {
 }
 
 async function encryptionTests() {
-  console.log("== XML-Encryption (decrypted by xml-encryption) ==");
+  log.info("== XML-Encryption (decrypted by xml-encryption) ==");
   // GCM data-encryption is defined in xmlenc11; CBC/3DES in xmlenc 1.0. RSA key
   // transport uses RSA-OAEP-MGF1P (SHA-1) — the interoperable modern default.
   // (RSA-1_5 is intentionally not exercised here: Node/OpenSSL 3 no longer
@@ -192,7 +211,7 @@ async function encryptionTests() {
 // it also covers RSA-1_5 (which Node/OpenSSL 3 refuses to privately decrypt) and
 // the <saml:EncryptedAssertion> wrapper, plus a wrong-key negative control.
 function decryptRoundTripTests() {
-  console.log("== XML-Encryption round-trip (encryptXml -> decryptXml) ==");
+  log.info("== XML-Encryption round-trip (encryptXml -> decryptXml) ==");
   const other = xd.generateKeyPair(2048, "xmlsec-interop-other");
   const cases = [
     { name: "AES-256-GCM + RSA-OAEP (SHA-256/MGF1-SHA-256)", dataAlg: XENC11 + "aes256-gcm", keyAlg: XENC11 + "rsa-oaep", digest: XENC + "sha256", mgf: XENC11 + "mgf1sha256" },
@@ -326,7 +345,7 @@ function childElementNames(xml) {
 }
 
 function envelopedSignatureTests() {
-  console.log("== Enveloped assertion signature (SAML Assertion Tool) ==");
+  log.info("== Enveloped assertion signature (SAML Assertion Tool) ==");
   const id = "_a1b2c3d4e5f6";
   // SAML 1.1 references its assertion through AssertionID (an xs:ID as of 1.1),
   // which a generic verifier only resolves once told that attribute name.
@@ -410,10 +429,10 @@ async function main() {
     decryptRoundTripTests();
     envelopedSignatureTests();
   } catch (e) {
-    console.error("Unexpected error: " + (e && e.stack ? e.stack : e));
+    log.error("Unexpected error: " + (e && e.stack ? e.stack : e));
     process.exit(1);
   }
-  console.log("\n== SUMMARY: " + pass + " passed, " + fail + " failed ==");
+  log.info("== SUMMARY: " + pass + " passed, " + fail + " failed ==");
   process.exit(fail ? 1 : 0);
 }
 

@@ -147,6 +147,7 @@ async function setCheckbox(driver, id, want) {
 // --- the body of the check, run identically for both pages ------------------
 
 async function keyPairOptOut(driver, spec) {
+  log.debug("Entering keyPairOptOut().");
   log.info("=== " + spec.what + ": " + spec.page + " ===");
   // Start from a known state: nothing left over from another test in this
   // browser profile, and the signing pane open.
@@ -260,6 +261,7 @@ async function keyPairOptOut(driver, spec) {
 
   // Leave nothing behind for the next test sharing this profile.
   await driver.executeScript("window.localStorage.clear();");
+  log.debug("Leaving keyPairOptOut().");
 }
 
 
@@ -298,6 +300,7 @@ async function waitForHolderKeyOnStep2(driver) {
 }
 
 async function sdJwtVcHolderKeyOptOut(driver) {
+  log.debug("Entering sdJwtVcHolderKeyOptOut().");
   log.info("=== SD-JWT VC: the holder key pair ===");
   var read = function (script) { return driver.executeScript(script); };
 
@@ -306,7 +309,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // page being able to generate a holder key pair, which is Web Crypto, which
   // needs a secure context — see browser_flags.js and the --headless=new note in
   // test(). Failing here names the cause; failing later names a missing element.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
+  await driver.get(baseUrl + "/vc-issuance-2.html");
   var ctx = await read("return { secure: window.isSecureContext," +
                        "         subtle: typeof (window.crypto && window.crypto.subtle)," +
                        "         origin: window.location.origin };");
@@ -316,7 +319,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
     "--unsafely-treat-insecure-origin-as-secure for this origin (tests/browser_flags.js), and " +
     "that flag is ignored by Chrome's OLD headless mode — this test must run with --headless=new.");
 
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
+  await driver.get(baseUrl + "/vc-issuance-2.html");
   await waitVisible(driver, By.id("vc_save_holder_key"));
 
   // A key pair in storage, and a Credential History generation carrying its own
@@ -336,6 +339,8 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   await waitVisible(driver, By.id("vc_save_holder_key"));
 
   var snapshot = function () {
+    log.debug("Entering snapshot().");
+    log.debug("Leaving snapshot().");
     return read(
       "var h = JSON.parse(localStorage.getItem('sdjwtvc_credential_history') || '[]');" +
       "return {" +
@@ -406,7 +411,8 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   var vpCredential = b64u({ alg: "ES256", typ: "dc+sd-jwt" }) + "." +
                      b64u({ vct: "demo", iss: "http://i", cnf: { jwk: HOLDER_PUBLIC } }) + ".sig~";
   var continueDisabled = async function (optedOut) {
-    await driver.get(baseUrl + "/sd-jwt-vc-presentation-1.html");
+    log.debug("Entering continueDisabled().");
+    await driver.get(baseUrl + "/vc-presentation-1.html");
     await driver.executeScript(
       "localStorage.clear();" +
       "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
@@ -415,6 +421,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
       vpCredential, vpRequest, optedOut ? 1 : 0);
     await driver.navigate().refresh();
     await waitVisible(driver, By.id("vp_continue_button"));
+    log.debug("Leaving continueDisabled().");
     return read("return !!(document.getElementById('vp_continue_button') || {}).disabled;");
   };
   assert.strictEqual(await continueDisabled(true), false,
@@ -427,7 +434,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
 
   // The way back: the presentation page must offer somewhere to paste the key,
   // and accept the file Download Key Pair produces.
-  await driver.get(baseUrl + "/sd-jwt-vc-presentation-2.html");
+  await driver.get(baseUrl + "/vc-presentation-2.html");
   await waitVisible(driver, By.id("vp_holder_key_row"));
   var rowShown = await read(
     "var e = document.getElementById('vp_holder_key_row');" +
@@ -450,7 +457,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // And step 4 must let the bound key be reused once it has been pasted.
   var credential = b64u({ alg: "ES256", typ: "dc+sd-jwt" }) + "." +
                    b64u({ vct: "demo", iss: "http://issuer", cnf: { jwk: HOLDER_PUBLIC } }) + ".sig~";
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-4.html");
+  await driver.get(baseUrl + "/vc-issuance-4.html");
   await driver.executeScript(
     "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
     "localStorage.setItem('sdjwtvc_credential_meta', JSON.stringify({ issuer: 'http://issuer' }));", credential);
@@ -485,7 +492,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // above clear storage as they go, and a toggle test that assumes which way the
   // box is currently pointing will flip the wrong way the moment anything is
   // inserted before it.
-  await driver.get(baseUrl + "/sd-jwt-vc-issuance-2.html");
+  await driver.get(baseUrl + "/vc-issuance-2.html");
   await waitVisible(driver, By.id("vc_save_holder_key"));
   await driver.executeScript("localStorage.setItem('sdjwtvc_save_holder_key', '0');");
   await driver.navigate().refresh();
@@ -503,10 +510,12 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   log.info("[SD-JWT VC] OK — re-enabled: saving resumes.");
 
   await driver.executeScript("window.localStorage.clear();");
+  log.debug("Leaving sdJwtVcHolderKeyOptOut().");
 }
 
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   options.addArguments("--window-size=1500,1400");
   // --headless=new, NOT plain --headless, and this matters more than it looks.
@@ -553,6 +562,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

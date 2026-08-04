@@ -118,6 +118,7 @@ function bytesToUtf8(bytes) {
 // RAW DEFLATE inflate (no zlib header) via the native DecompressionStream —
 // the mirror of the deflate-raw saml_request.js uses to build a Redirect request.
 function inflateRaw(bytes) {
+  log.debug("Entering inflateRaw().");
   if (typeof DecompressionStream === 'undefined') {
     return Promise.reject(new Error('This browser lacks DecompressionStream; cannot inflate a Redirect-binding response.'));
   }
@@ -125,6 +126,7 @@ function inflateRaw(bytes) {
   var writer = ds.writable.getWriter();
   writer.write(bytes);
   writer.close();
+  log.debug("Leaving inflateRaw().");
   return new Response(ds.readable).arrayBuffer().then(function (buf) {
     return bytesToUtf8(new Uint8Array(buf));
   });
@@ -251,6 +253,7 @@ function render(responseXml, isFresh) {
 // Persist the NameID + SessionIndex so the config page's Single Logout can build
 // a LogoutRequest for this session.
 function saveSubjectForLogout(assertion) {
+  log.debug("Entering saveSubjectForLogout().");
   if (!assertion || !window.localStorage) return;
   var subj = tags(assertion, 'Subject')[0];
   var nameId = subj ? tags(subj, 'NameID')[0] : null;
@@ -260,6 +263,7 @@ function saveSubjectForLogout(assertion) {
   }
   var authn = tags(assertion, 'AuthnStatement')[0];
   if (authn) localStorage.setItem('saml_last_session_index', authn.getAttribute('SessionIndex') || '');
+  log.debug("Leaving saveSubjectForLogout().");
 }
 
 function row(cells) {
@@ -444,6 +448,7 @@ function viewSignerCert() {
 // Tab switching scoped to the pane containing the clicked tab, so the two tab
 // groups (SAMLResponse pane, Assertion pane) toggle independently.
 function showTab(evt, tabId) {
+  log.debug("Entering showTab().");
   var target = el(tabId);
   var scope = (target && target.closest && target.closest('.saml-pane')) || document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
@@ -452,6 +457,7 @@ function showTab(evt, tabId) {
   for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
+  log.debug("Leaving showTab().");
   return false;
 }
 
@@ -478,6 +484,7 @@ function copyField(id) {
 // Repopulate from the last response saved in localStorage. Returns true if a
 // cached response was found and rendered.
 function renderFromStorage(msgIfMissing) {
+  log.debug("Entering renderFromStorage().");
   var saved = null;
   try {
     saved = window.localStorage && localStorage.getItem(SAML_RESP_KEY);
@@ -486,6 +493,7 @@ function renderFromStorage(msgIfMissing) {
   }
   if (saved) { render(saved); return true; }
   if (msgIfMissing) setStatus(msgIfMissing);
+  log.debug("Leaving renderFromStorage().");
   return false;
 }
 
@@ -607,6 +615,7 @@ function handleEdgeHandoff(posted) {
 }
 
 window.onload = function () {
+  log.debug("Entering onload().");
   renderOperationHistory();
   // Prefill the decryption key from the SP private key stored by the SAML Test
   // Tools page (the IdP encrypts to the SP's certificate).
@@ -677,6 +686,7 @@ window.onload = function () {
     // the ?id=) — repopulate the fields from the last cached response.
     renderFromStorage('No response id in the URL. Start from the SAML Test Tools page and click "Call IdP".');
   }
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

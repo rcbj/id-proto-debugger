@@ -65,6 +65,7 @@ const DEFAULT_MAX_REDIRECTS = 5;
  * @returns {number} a positive, finite number.
  */
 function resolvePositiveNumber(name, configured, fallback, unit) {
+  log.debug("Entering resolvePositiveNumber().");
   if (configured === undefined || configured === null) {
     return fallback;
   }
@@ -79,6 +80,7 @@ function resolvePositiveNumber(name, configured, fallback, unit) {
              fallback + ".");
     return fallback;
   }
+  log.debug("Leaving resolvePositiveNumber().");
   return value;
 }
 
@@ -140,6 +142,7 @@ const MAX_CONTENT_LENGTH = resolvePositiveNumber(
  * @returns {number} a non-negative integer.
  */
 function resolveNonNegativeInteger(name, configured, fallback) {
+  log.debug("Entering resolveNonNegativeInteger().");
   if (configured === undefined || configured === null) {
     return fallback;
   }
@@ -153,6 +156,7 @@ function resolveNonNegativeInteger(name, configured, fallback) {
              ": expected a non-negative whole number. Using " + fallback + ".");
     return fallback;
   }
+  log.debug("Leaving resolveNonNegativeInteger().");
   return value;
 }
 
@@ -203,6 +207,7 @@ const DEFAULT_USER_AGENT = 'Identity Protocol Debugger/{{VERSION}}';
  * @returns {string} e.g. "0.9.20260731120000", or "0.9.0" from the manifest.
  */
 function resolveAppVersion() {
+  log.debug("Entering resolveAppVersion().");
   var candidates = ['./version.js', '../client/version.js'];
   for (var i = 0; i < candidates.length; i++) {
     try {
@@ -226,6 +231,7 @@ function resolveAppVersion() {
     log.warn('Could not determine the application version: ' + e.message);
     return '0.0.0';
   }
+  log.debug("Leaving resolveAppVersion().");
 }
 
 const APP_VERSION = resolveAppVersion();
@@ -236,6 +242,7 @@ const APP_VERSION = resolveAppVersion();
  * @returns {string} never blank.
  */
 function resolveUserAgent() {
+  log.debug("Entering resolveUserAgent().");
   var configured = appconfig.userAgent;
   var template = DEFAULT_USER_AGENT;
   if (configured !== undefined && configured !== null) {
@@ -250,6 +257,7 @@ function resolveUserAgent() {
       template = String(configured);
     }
   }
+  log.debug("Leaving resolveUserAgent().");
   return template.split('{{VERSION}}').join(APP_VERSION);
 }
 
@@ -292,6 +300,7 @@ const USER_AGENT = resolveUserAgent();
  *   refusing its own UI, with the reason logged.
  */
 function resolveAllowedOrigins(config) {
+  log.debug("Entering resolveAllowedOrigins().");
   var origins = [];
   [["uiUrl", config.uiUrl], ["apiUrl", config.apiUrl]].forEach(function (pair) {
     var name = pair[0];
@@ -319,10 +328,12 @@ function resolveAllowedOrigins(config) {
              "Set uiUrl to the browser origin that calls this api.");
     return "*";
   }
+  log.debug("Leaving resolveAllowedOrigins().");
   return origins;
 }
 
 function resolveBoolean(name, configured, fallback) {
+  log.debug("Entering resolveBoolean().");
   if (configured === undefined || configured === null) {
     return fallback;
   }
@@ -333,6 +344,7 @@ function resolveBoolean(name, configured, fallback) {
              ": expected true or false. Using " + fallback + ".");
     return fallback;
   }
+  log.debug("Leaving resolveBoolean().");
   return configured;
 }
 
@@ -433,6 +445,7 @@ const outboundAgentCache = new Map();
  * @returns {http.Agent|https.Agent} the same instance for the same arguments.
  */
 function agentFor(protocol, rejectUnauthorized) {
+  log.debug("Entering agentFor().");
   var key = protocol + (protocol === 'https' ? '|' + rejectUnauthorized : '');
   var cached = outboundAgentCache.get(key);
   if (cached) {
@@ -447,6 +460,7 @@ function agentFor(protocol, rejectUnauthorized) {
     guard.createAgent(protocol, options), CONNECTION_TIMEOUT, log);
   outboundAgentCache.set(key, agent);
   log.debug('Created the ' + key + ' outbound agent (keepAlive=' + KEEP_ALIVE + ').');
+  log.debug("Leaving agentFor().");
   return agent;
 }
 
@@ -716,6 +730,7 @@ function xmlTextEscape(s) {
 }
 
 function signXmlEnveloped(xml, privateKeyPem, certPem, rootLocalName) {
+  log.debug("Entering signXmlEnveloped().");
   var root = rootLocalName || 'AuthnRequest';
   var xmlcrypto = require('xml-crypto');
   var SignedXml = xmlcrypto.SignedXml;
@@ -742,6 +757,7 @@ function signXmlEnveloped(xml, privateKeyPem, certPem, rootLocalName) {
     location: {
       reference: "/*[local-name(.)='" + root + "']/*[local-name(.)='Issuer']", action: 'after' }
   });
+  log.debug("Leaving signXmlEnveloped().");
   return sig.getSignedXml();
 }
 
@@ -851,6 +867,7 @@ app.post('/samlartifactctx', function (req, res) {
 // Decode a SAML protocol message from a binding parameter: POST binding is raw
 // base64 XML; Redirect binding is DEFLATE (raw) then base64.
 function decodeSamlMessage(b64) {
+  log.debug("Entering decodeSamlMessage().");
   var buf = Buffer.from(String(b64 || ''), 'base64');
   if (buf.length && buf[0] === 0x3c /* '<' */) return buf.toString('utf8');
   try {
@@ -860,10 +877,12 @@ function decodeSamlMessage(b64) {
     // '<', e.g. leading whitespace): read it as plain XML.
     return buf.toString('utf8');
   }
+  log.debug("Leaving decodeSamlMessage().");
 }
 
 // Pull the <samlp:Response> element out of a SOAP <ArtifactResponse> envelope.
 function extractResponseFromArtifactResponse(soapXml) {
+  log.debug("Entering extractResponseFromArtifactResponse().");
   var xmldom = require('@xmldom/xmldom');
   var xpath = require('xpath');
   var doc = new xmldom.DOMParser().parseFromString(soapXml, 'text/xml');
@@ -872,6 +891,7 @@ function extractResponseFromArtifactResponse(soapXml) {
     doc
   );
   if (!nodes || !nodes.length) return '';
+  log.debug("Leaving extractResponseFromArtifactResponse().");
   return new xmldom.XMLSerializer().serializeToString(nodes[0]);
 }
 
@@ -879,6 +899,8 @@ function extractResponseFromArtifactResponse(soapXml) {
 // with the SP context stashed at request time (looked up via RelayState), POST
 // it to the IdP's Artifact Resolution Service, and return the embedded Response.
 function resolveArtifact(artifact, relayState) {
+  log.debug("Entering resolveArtifact().");
+  log.debug("Leaving resolveArtifact().");
   return new Promise(function (resolve, reject) {
     var ctxId = (relayState && relayState.indexOf('art:') === 0) ? relayState.slice(4) : '';
     var ctx = ctxId ? samlArtifactCtx.get(ctxId) : null;
@@ -983,6 +1005,7 @@ function handleSamlAcs(req, res) {
     log.error('samlacs: ' + (e && e.stack ? e.stack : e));
     res.status(STATUS_500).send('ACS error: ' + (e && e.message ? e.message : String(e)));
   }
+  log.debug("Leaving handleSamlAcs().");
 }
 app.post('/samlacs', handleSamlAcs);
 app.get('/samlacs', handleSamlAcs);
@@ -1050,6 +1073,7 @@ function handleWsFedLanding(req, res) {
     log.error('wsfed: ' + (e && e.stack ? e.stack : e));
     res.status(STATUS_500).send('WS-Fed landing error: ' + (e && e.message ? e.message : String(e)));
   }
+  log.debug("Leaving handleWsFedLanding().");
 }
 app.post('/wsfed', handleWsFedLanding);
 app.get('/wsfed', handleWsFedLanding);
@@ -1807,6 +1831,7 @@ app.get('/userinfo', (req, res) => {
 });
 
 function userinfo_common(req, res) {
+  log.debug("Entering userinfo_common().");
 try {
   log.info('Entering app.get for /userinfo.');
   var headers = {
@@ -1868,6 +1893,7 @@ try {
         error: 'The outbound call could not be made: ' + (e && e.message ? e.message : String(e)) });
     }
   }
+  log.debug("Leaving userinfo_common().");
 }
 
 let options = {

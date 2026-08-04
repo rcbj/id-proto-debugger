@@ -27,7 +27,28 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-function log(m) { console.log(m); }
+const bunyan = require("bunyan");
+// `log` used to be a one-line shim that forwarded to the console. It is a real
+// bunyan logger now, so the call sites below are log.info() rather than a bare
+// log() call — the NAME is kept, because it is what every other test in this
+// directory calls its logger.
+//
+// The level is read through a guard because this script runs BOTH ways: spawned by
+// run-report.js, which sets CONFIG_FILE, and directly from a checkout, where it is
+// unset and a bare require of it would throw.
+const log = bunyan.createLogger({
+  name: "wstrust_schema_validate",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).LOG_LEVEL || "info";
+    } catch (e) {
+      // No CONFIG_FILE, or it does not resolve from here. Falling back to info
+      // loses only the configured verbosity.
+      return "info";
+    }
+  })()
+});
+log.info("Log initialized. logLevel=" + log.level());
 
 // --- validation engine ------------------------------------------------------
 // Both engines expose validate(xml, schemaXsd) -> { ok, detail }, caching the
@@ -38,7 +59,7 @@ let lib = null;
 try {
   lib = require("libxmljs2");
 } catch (e) {
-  log("note: libxmljs2 unavailable (" + e.message.split("\n")[0].trim() + ")");
+  log.info("note: libxmljs2 unavailable (" + e.message.split("\n")[0].trim() + ")");
 }
 
 if (lib) {
@@ -94,8 +115,8 @@ if (lib) {
 }
 
 if (!engine) {
-  log("SKIP: no XSD validator available — libxmljs2 does not load and the xmllint CLI is not on PATH.");
-  log("      Install either (npm i libxmljs2, or the libxml2-utils package) to enable WS-Trust message schema validation.");
+  log.info("SKIP: no XSD validator available — libxmljs2 does not load and the xmllint CLI is not on PATH.");
+  log.info("      Install either (npm i libxmljs2, or the libxml2-utils package) to enable WS-Trust message schema validation.");
   process.exit(0);
 }
 
@@ -127,8 +148,8 @@ function schemaForNs(ns) {
 
 let pass = 0, fail = 0;
 function check(name, ok, detail) {
-  if (ok) { pass++; log("  PASS  " + name); }
-  else { fail++; log("  FAIL  " + name + (detail ? "  -> " + detail : "")); }
+  if (ok) { pass++; log.info("  PASS  " + name); }
+  else { fail++; log.info("  FAIL  " + name + (detail ? "  -> " + detail : "")); }
 }
 
 // A small SAML assertion to stand in as the Renew/Validate/Cancel target token.
@@ -163,8 +184,8 @@ function main() {
   const versions = ["1.0", "1.1", "1.2", "1.3", "1.4"];
   const ops = ["issue", "renew", "validate", "cancel"];
 
-  log("== WS-Trust RST schema validation (derived from OASIS ws-trust-1.3.xsd) ==");
-  log("   engine: " + engine.name);
+  log.info("== WS-Trust RST schema validation (derived from OASIS ws-trust-1.3.xsd) ==");
+  log.info("   engine: " + engine.name);
   for (const version of versions) {
     const ns = wm.versionNs(version);
     for (const op of ops) {
@@ -186,7 +207,7 @@ function main() {
   check("negative control: non-integer KeySize is REJECTED", tampered && neg.ok === false,
     tampered ? "schema accepted an invalid KeySize" : "tamper no-op (no KeySize present)");
 
-  log("\n== SUMMARY: " + pass + " passed, " + fail + " failed ==");
+  log.info("== SUMMARY: " + pass + " passed, " + fail + " failed ==");
   process.exit(fail ? 1 : 0);
 }
 
