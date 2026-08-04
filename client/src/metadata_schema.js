@@ -471,10 +471,205 @@ function summarize(result, label) {
   return label + ": " + parts.join(", ") + ".";
 }
 
+// ---------------------------------------------------------------------------
+// DIF Well Known DID Configuration — /.well-known/did-configuration.json
+//
+// The rules below are transcribed from that specification, not guessed, and the
+// citations are per rule so a reader can check them. Two of its habits make a
+// document that LOOKS right fail somebody else's verifier, and they are the reason
+// this is worth checking at all:
+//
+//   * the resource permits NO members beyond @context and linked_dids, and each
+//     credential permits none beyond what is listed. A spec that says "no
+//     additional members" means a well-meaning extra field is a defect.
+//   * in the JWT form the header MUST NOT carry `typ` and the payload permits
+//     nothing beyond iss/sub/nbf/exp/vc — and both are things a JWT library adds
+//     for you unless told otherwise. This is the single most likely way to publish
+//     a document that reads correctly and is refused.
+//
+// What is NOT checked here, because it is not a schema question: whether the
+// signature verifies, whether the DID resolves, and whether the origin matches the
+// one the document was served from. did.js's verifyDomainLinkage() does all three,
+// and the pane runs it alongside this.
+// ---------------------------------------------------------------------------
+var DIDCFG = "DIF Well Known DID Configuration";
+var DIDCFG_CONTEXT = "https://identity.foundation/.well-known/did-configuration/v1";
+var VC_V1_CONTEXT = "https://www.w3.org/2018/credentials/v1";
+var DIDCFG_RESOURCE_MEMBERS = ["@context", "linked_dids"];
+var DIDCFG_JWT_HEADER_MEMBERS = ["alg", "kid"];
+var DIDCFG_JWT_CLAIM_MEMBERS = ["iss", "sub", "nbf", "exp", "vc"];
+var DIDCFG_LD_MEMBERS = ["@context", "issuer", "issuanceDate", "expirationDate", "type",
+                         "credentialSubject", "proof"];
+
+function isDidString(v) { return isNonEmptyString(v) && /^did:[a-z0-9]+:/.test(v); }
+
+// One entry of linked_dids, in whichever of the two forms it takes. `label` names it
+// for the report, since a resource may carry several.
+function checkLinkedDid(r, entry, label) {
+  var where = DIDCFG + " §Domain Linkage Credential";
+  // A string is the JWT form; an object is the Linked Data Proof form. Anything else
+  // is neither.
+  if (isString(entry)) {
+    var parts = entry.split(".");
+    if (parts.length !== 3) {
+      r.error(label, "a JWT-form entry must be a three-part JWS; this has " + parts.length +
+              " dot-separated part(s).", where);
+      return;
+    }
+    var header, claims;
+    try {
+      header = JSON.parse(atob(parts[0].replace(/-/g, "+").replace(/_/g, "/")));
+      claims = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+    } catch (e) {
+      r.error(label, "the JWT's header or payload is not base64url JSON: " + e.message, where);
+      return;
+    }
+    if (!isNonEmptyString(header.alg)) r.error(label + ".alg", "REQUIRED in the JWT header.", where);
+    if (!isNonEmptyString(header.kid)) {
+      r.error(label + ".kid", "REQUIRED in the JWT header: it names the verification method.", where);
+    }
+    if (Object.prototype.hasOwnProperty.call(header, "typ")) {
+      r.error(label + ".typ", "MUST NOT be present in the JWT header. Most JWT libraries add " +
+              'typ:"JWT" unless told not to, so this is the usual way a correct-looking document is ' +
+              "refused.", where);
+    }
+    var extraHeader = Object.keys(header).filter(function (k) {
+      return DIDCFG_JWT_HEADER_MEMBERS.indexOf(k) === -1;
+    });
+    if (extraHeader.length) {
+      r.error(label + " header", "no members beyond alg and kid are permitted; this carries " +
+              extraHeader.join(", ") + ".", where);
+    }
+    var extraClaims = Object.keys(claims).filter(function (k) {
+      return DIDCFG_JWT_CLAIM_MEMBERS.indexOf(k) === -1;
+    });
+    if (extraClaims.length) {
+      r.error(label + " claims", "no members beyond iss, sub, nbf, exp and vc are permitted; this " +
+              "carries " + extraClaims.join(", ") + ". iat is the usual culprit — most libraries add " +
+              "it unless told noTimestamp.", where);
+    }
+    if (!isDidString(claims.iss)) r.error(label + ".iss", "REQUIRED, and MUST be a DID.", where);
+    if (claims.sub !== claims.iss) {
+      r.error(label + ".sub", "MUST equal iss: a Domain Linkage Credential is self-issued, because " +
+              "nobody but the DID's controller can say which origin it controls.", where);
+    }
+    if (!isObject(claims.vc)) {
+      r.error(label + ".vc", "REQUIRED: the credential, in the Linked Data form minus its proof.", where);
+      return;
+    }
+    checkLinkageCredential(r, claims.vc, label + ".vc", claims.iss, true);
+    return;
+  }
+  if (isObject(entry)) {
+    checkLinkageCredential(r, entry, label, entry.issuer, false);
+    if (!isObject(entry.proof)) {
+      r.error(label + ".proof", "REQUIRED in the Linked Data Proof form.", where);
+    }
+    return;
+  }
+  r.error(label, "each linked_dids entry is either a JWT string or a credential object; this is " +
+          typeName(entry) + ".", where);
+}
+
+// The credential itself, shared by both forms — in the JWT form it is the `vc` claim
+// with no proof, which is why `embedded` decides whether a proof is expected.
+function checkLinkageCredential(r, vc, label, issuer, embedded) {
+  var where = DIDCFG + " §Domain Linkage Credential";
+  var contexts = isArray(vc["@context"]) ? vc["@context"] : [];
+  if (contexts.indexOf(VC_V1_CONTEXT) === -1 || contexts.indexOf(DIDCFG_CONTEXT) === -1) {
+    r.error(label + ".@context", "MUST contain both " + VC_V1_CONTEXT + " and " + DIDCFG_CONTEXT + ".",
+            where);
+  }
+  var types = isArray(vc.type) ? vc.type : (isString(vc.type) ? [vc.type] : []);
+  if (types.indexOf("VerifiableCredential") === -1 || types.indexOf("DomainLinkageCredential") === -1) {
+    r.error(label + ".type", "MUST contain VerifiableCredential and DomainLinkageCredential.", where);
+  }
+  if (Object.prototype.hasOwnProperty.call(vc, "id")) {
+    r.error(label + ".id", "MUST NOT be present at the credential root. This credential is not an " +
+            "addressable thing to be fetched or revoked; it is an assertion about one pair.", where);
+  }
+  if (!isDidString(vc.issuer)) r.error(label + ".issuer", "REQUIRED, and MUST be a DID.", where);
+  if (!isNonEmptyString(vc.issuanceDate)) r.error(label + ".issuanceDate", "REQUIRED.", where);
+  if (!isNonEmptyString(vc.expirationDate)) {
+    r.warn(label + ".expirationDate", "REQUIRED by the specification. A credential with no expiry " +
+           "asks a verifier to trust the linkage indefinitely.", where);
+  }
+  var subject = isObject(vc.credentialSubject) ? vc.credentialSubject : null;
+  if (!subject) {
+    r.error(label + ".credentialSubject", "REQUIRED.", where);
+    return;
+  }
+  if (!isDidString(subject.id)) {
+    r.error(label + ".credentialSubject.id", "REQUIRED, and MUST be the DID this credential links.",
+            where);
+  } else if (issuer && subject.id !== issuer) {
+    r.error(label + ".credentialSubject.id", "MUST equal the issuer (" + issuer + "): the subject and " +
+            "the issuer of a Domain Linkage Credential are the same DID.", where);
+  }
+  if (!isNonEmptyString(subject.origin)) {
+    r.error(label + ".credentialSubject.origin", "REQUIRED: the origin this DID claims.", where);
+  } else {
+    var parsed = parsedUrl(subject.origin);
+    if (!parsed) {
+      r.error(label + ".credentialSubject.origin", "MUST be an origin (scheme, host and optional " +
+              'port); "' + subject.origin + '" does not parse as one.', where);
+    } else {
+      foldPlainHttp(r, where);
+      if (parsed.pathname && parsed.pathname !== "/") {
+        r.warn(label + ".credentialSubject.origin", "an ORIGIN is scheme, host and port — this carries " +
+               "the path " + parsed.pathname + ", which a verifier comparing origins will not match.",
+               where);
+      }
+    }
+  }
+  if (embedded && Object.prototype.hasOwnProperty.call(vc, "proof")) {
+    r.error(label + ".proof", "MUST NOT be present inside the JWT's vc claim: the JWS IS the proof.",
+            where);
+  }
+}
+
+function validateDidConfiguration(doc) {
+  log.debug("Entering validateDidConfiguration().");
+  var r = report();
+  if (!isObject(doc)) {
+    r.error("(document)", "the resource MUST be a JSON object.", DIDCFG);
+    log.debug("Leaving validateDidConfiguration(). Not an object.");
+    return r;
+  }
+  if (doc["@context"] !== DIDCFG_CONTEXT) {
+    r.error("@context", 'REQUIRED, and MUST be exactly "' + DIDCFG_CONTEXT + '"; this says ' +
+            JSON.stringify(doc["@context"]) + ".", DIDCFG + " §DID Configuration Resource");
+  }
+  if (!isArray(doc.linked_dids)) {
+    r.error("linked_dids", "REQUIRED, and MUST be an array of Domain Linkage Credentials.",
+            DIDCFG + " §DID Configuration Resource");
+  } else if (!doc.linked_dids.length) {
+    r.warn("linked_dids", "present but empty, so this origin vouches for no DID at all.",
+           DIDCFG + " §DID Configuration Resource");
+  } else {
+    doc.linked_dids.forEach(function (entry, i) {
+      checkLinkedDid(r, entry, "linked_dids[" + i + "]");
+    });
+  }
+  var extra = Object.keys(doc).filter(function (k) {
+    return DIDCFG_RESOURCE_MEMBERS.indexOf(k) === -1;
+  });
+  if (extra.length) {
+    r.error("(document)", "no members beyond @context and linked_dids are permitted; this carries " +
+            extra.join(", ") + ".", DIDCFG + " §DID Configuration Resource");
+  }
+  log.debug("Leaving validateDidConfiguration(). " + r.errors.length + " error(s), " +
+            r.warnings.length + " warning(s).");
+  return r;
+}
+
 module.exports = {
   validateVciMetadata: validateVciMetadata,
   validateAsMetadata: validateAsMetadata,
+  validateDidConfiguration: validateDidConfiguration,
   summarize: summarize,
   VCI_SPEC: VCI,
-  AS_SPEC: AS
+  AS_SPEC: AS,
+  DIDCFG_SPEC: DIDCFG,
+  DIDCFG_CONTEXT: DIDCFG_CONTEXT
 };

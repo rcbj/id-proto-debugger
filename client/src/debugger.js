@@ -793,6 +793,26 @@ function recalculateAuthorizationRequestDescription()
            $("#display_authz_request_form_textarea1").val() + "&\n" +
            "authorization_details=" + encodeURIComponent(sdJwtVcAuthzDetails));
        }
+       // RFC 9449 section 10: dpop_jkt names the DPoP key the client intends to
+       // use, which binds the authorization CODE to it. That closes a window PKCE
+       // does not: an attacker holding both the code and the code_verifier still
+       // cannot redeem it without the private key. It has to travel on the
+       // authorization request, which is why it is here rather than on step 2 with
+       // the rest of the DPoP pane.
+       var sdJwtVcDpopJkt = sdJwtVc.dpopEnabled()
+         ? (sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "") : "";
+       if (sdJwtVcDpopJkt) {
+         $("#display_authz_request_form_textarea1").val(
+           $("#display_authz_request_form_textarea1").val() + "&\n" +
+           "dpop_jkt=" + encodeURIComponent(sdJwtVcDpopJkt));
+         // Recorded so step 2 can report whether the code was bound, and to WHICH
+         // key: a jkt sent for a key that has since been regenerated makes the code
+         // unredeemable, and that is worth naming rather than presenting as a
+         // mysterious invalid_grant.
+         sdJwtVc.set("dpop_jkt_sent", sdJwtVcDpopJkt);
+       } else {
+         sdJwtVc.set("dpop_jkt_sent", "");
+       }
     } else if (	grant_type == "token" || 
 		grant_type == "id_token token" || 
 		grant_type == "id_token") {
@@ -1115,6 +1135,18 @@ function maybeStartSdJwtVcFlow() {
     $("#sdjwtvc_banner").append(
       "<p>The credential is being asked for with <code>authorization_details</code> (RFC 9396) rather than a " +
       "scope, so the token response should grant a <code>credential_identifiers</code> value to name it with.</p>");
+  }
+  if (sdJwtVc.dpopEnabled()) {
+    var dpopJkt = sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "";
+    log.debug("SD-JWT VC issuance: DPoP is on. dpop_jkt=" + (dpopJkt || "(no key yet)"));
+    $("#sdjwtvc_banner").append(dpopJkt
+      ? "<p>DPoP is on (RFC 9449). <code>dpop_jkt=" + dpopJkt + "</code> is being sent with the " +
+        "authorization request, which binds the authorization code to that key \u2014 a stolen code " +
+        "cannot be redeemed without it, even with the PKCE <code>code_verifier</code>.</p>"
+      : "<p class='vc-pending'>DPoP is on, but no key pair has been generated yet, so the " +
+        "authorization request carries no <code>dpop_jkt</code> and the code will not be bound. " +
+        "Generate one in step 2's DPoP pane first if you want the code bound as well as the " +
+        "token.</p>");
   }
 
   // Let the rest of onload() finish laying the page out before navigating.

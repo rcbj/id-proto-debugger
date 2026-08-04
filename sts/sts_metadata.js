@@ -108,6 +108,17 @@ const SPECS = [
     where: 'IETF', url: 'https://www.rfc-editor.org/rfc/rfc7800',
     coverage: 'full for the use made of it: cnf.jwk binds an issued credential to the holder key ' +
               'whose possession was proved.' },
+  { id: 'rfc9449', name: 'RFC 9449 — DPoP (Demonstrating Proof of Possession)',
+    where: 'IETF', url: 'https://www.rfc-editor.org/rfc/rfc9449',
+    coverage: 'full for a mock: all twelve section 4.3 proof checks, cnf.jkt on access AND refresh ' +
+              'tokens, token_type DPoP, the dpop_jkt authorization request parameter (section 10), ' +
+              'jti replay detection, and the server-supplied nonce handshake in both shapes — 400 ' +
+              'use_dpop_nonce at the token endpoint, 401 with WWW-Authenticate at a protected one. ' +
+              'Nonces are off until /dpop/nonce-mode turns them on. Not implemented: the ' +
+              'authorization-code binding via PAR, and mTLS-bound tokens (RFC 8705), which are the ' +
+              "other way to sender-constrain. Note a foreign access token's cnf cannot be trusted " +
+              'here, since this issuer does not verify a token the separate authorization server ' +
+              'signed — the check is real only for tokens this service issued.' },
   { id: 'rfc8414', name: 'RFC 8414 — Authorization Server Metadata',
     where: 'IETF', url: 'https://www.rfc-editor.org/rfc/rfc8414',
     coverage: 'full: every member section 2 defines, plus a genuinely signed signed_metadata. ' +
@@ -232,9 +243,17 @@ const ENDPOINTS = [
   { path: '/oauth2/logout', group: 'OAuth 2.0 / OIDC', name: 'Session end',
     specs: ['oidc'], effect: 'drops the mock session cookie', what: 'Drops the session cookie and returns to post_logout_redirect_uri.' },
   { path: '/oauth2/token', group: 'OAuth 2.0 / OIDC', name: 'Token endpoint',
-    specs: ['rfc6749', 'oidc', 'rfc8693', 'rfc9396', 'oid4vci'],
+    specs: ['rfc6749', 'oidc', 'rfc8693', 'rfc9396', 'oid4vci', 'rfc9449', 'rfc7800'],
     what: 'authorization_code, refresh_token, client_credentials, password, token-exchange, and ' +
-          "OID4VCI's pre-authorized_code with tx_code enforcement." },
+          "OID4VCI's pre-authorized_code with tx_code enforcement. A DPoP proof on the request " +
+          'binds the issued access and refresh tokens to its key (cnf.jkt) and makes token_type ' +
+          'DPoP; without one the response is an ordinary Bearer token.' },
+  { path: '/dpop/nonce-mode', group: 'OAuth 2.0 / OIDC',
+    name: 'DPoP nonce switch (not a spec endpoint)', specs: [],
+    what: 'NON-SPEC, for tests and for trying the handshake by hand: turns the RFC 9449 section ' +
+          '8/9 server-supplied nonce requirement on and off at runtime, so the 401/retry exchange ' +
+          'can be exercised without restarting the service. GET reports the current state; POST ' +
+          '{"required": true|false} sets it.' },
   { path: '/oauth2/introspect', group: 'OAuth 2.0 / OIDC', name: 'Introspection endpoint',
     specs: ['rfc7662'], what: 'Honest active/inactive with the presented token\'s claims.' },
   { path: '/oauth2/revoke', group: 'OAuth 2.0 / OIDC', name: 'Revocation endpoint',

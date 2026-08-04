@@ -47,7 +47,7 @@ access token is presented to the issuer's <strong>Credential Endpoint</strong>.<
 
 <script type="text/javascript">
 function vcSetAllPanes(expand) {
-  var fieldsets = ['tokens_fieldset', 'request_fieldset', 'approval_fieldset', 'vc_tools_fieldset'];
+  var fieldsets = ['tokens_fieldset', 'dpop_fieldset', 'request_fieldset', 'approval_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -141,6 +141,96 @@ function vcSetAllPanes(expand) {
             <div class="tooltip"><label>ID Token claims</label><span class="tooltiptext">The decoded ID token payload — the authenticated subject the issuer will describe.</span></div>
           </td>
           <td><pre class="vc-json" id="vc_id_token_claims">&nbsp;</pre></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ====== DPoP: sender-constraining the access token (RFC 9449) ====== -->
+<div class="step0 dbg-pane" id="pane_dpop">
+  <legend class="dbg-legend" id="dpop_expand_button" onclick="return vcissuance2.togglePane('dpop_fieldset');">DPoP &mdash; Sender-Constrained Access Token</legend>
+  <fieldset name="dpop_fieldset" id="dpop_fieldset" style="display: block;">
+    <details class="vc-hint"><summary>What DPoP is, and why OID4VCI recommends it</summary>
+    <p>A <strong>Bearer</strong> access token (<a href="https://www.rfc-editor.org/rfc/rfc6750" target="_blank" rel="noopener noreferrer">RFC 6750</a>)
+    is a password: anything that can read the bytes can spend them. <a href="https://www.rfc-editor.org/rfc/rfc9449" target="_blank" rel="noopener noreferrer">DPoP</a>
+    binds the token to a key &mdash; the token carries <code>cnf.jkt</code>, the
+    <a href="https://www.rfc-editor.org/rfc/rfc7638" target="_blank" rel="noopener noreferrer">RFC 7638</a> thumbprint of a public key &mdash; and
+    every request presenting it must also carry a fresh signature from the matching private key over
+    <em>that request's</em> method and URI. A stolen token is then useless without the key.</p>
+    <p><a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a>
+    says the use of DPoP is <strong>RECOMMENDED</strong> for sender-constrained access tokens, because mTLS
+    (<a href="https://www.rfc-editor.org/rfc/rfc8705" target="_blank" rel="noopener noreferrer">RFC 8705</a>) &mdash; the other way to do this &mdash;
+    is impractical for a native-app wallet. It applies to the Token Endpoint and to every protected endpoint
+    the issuer publishes: Credential, Deferred Credential and Notification.</p>
+    <p>DPoP is indifferent to the <strong>credential format</strong>: it binds an OAuth access token, not a
+    credential, so it works the same for <code>dc+sd-jwt</code>, <code>jwt_vc_json</code> and <code>ldp_vc</code>.</p>
+    </details>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Sender-constrain the token</label><span class="tooltiptext">Whether to send a DPoP proof on the Token Request. With it, the authorization server binds the access token (and the refresh token) to this wallet's key and answers token_type: DPoP; without it the token comes back as a Bearer token, which is what the rest of this workflow demonstrates by default.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="vc_dpop_enabled" name="vc_dpop_enabled"
+                   onchange="return vcissuance2.onDpopEnabledChange();" />
+            <label for="vc_dpop_enabled">Use DPoP (RFC 9449) instead of a Bearer access token</label>
+            <span class="vc-note" id="vc_dpop_enabled_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Credential key binding</label><span class="tooltiptext">Which key the CREDENTIAL is bound to, which is a different question from whether the TOKEN is bound. Proof of Possession generates a holder key of its own and proves it with an openid4vci-proof+jwt. Holder of Key reuses the DPoP key, so one key is both the token's cnf.jkt and the credential's cnf.jwk.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="vc_dpop_holder_of_key" name="vc_dpop_holder_of_key"
+                   onchange="return vcissuance2.onBindingModeChange();" />
+            <label for="vc_dpop_holder_of_key">Holder of Key &mdash; bind the credential to the DPoP key
+            (unchecked: Proof of Possession, a holder key of its own)</label>
+            <span class="vc-note" id="vc_dpop_binding_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Proof algorithm</label><span class="tooltiptext">The JWS algorithm the DPoP proofs are signed with. RFC 9449 requires an asymmetric algorithm and forbids none and any MAC. Which ones the authorization server accepts is in its dpop_signing_alg_values_supported metadata, shown below.</span></div></td>
+          <td>
+            <select class="stored" id="vc_dpop_alg" name="vc_dpop_alg"
+                    onchange="return vcissuance2.onDpopAlgChange();">
+              <option value="ES256">ES256</option>
+              <option value="RS256">RS256</option>
+            </select>
+            <input class="btn2" id="vc_dpop_regenerate_button" type="button" value="New Key Pair"
+                   onclick="return vcissuance2.regenerateDpopKey();" />
+            <span class="vc-note" id="vc_dpop_alg_note">&nbsp;</span>
+          </td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Server accepts</label><span class="tooltiptext">dpop_signing_alg_values_supported from the authorization server's RFC 8414 metadata. Its presence is the only signal that DPoP is on offer at all, so an absent value means the server has not said it supports DPoP.</span></div></td>
+          <td><code id="vc_dpop_server_algs">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>DPoP public key</label><span class="tooltiptext">The public half, which travels in the jwk header of every proof. It is not secret: the point is not to hide the key but to make the token useless without the private half.</span></div></td>
+          <td><pre class="vc-json" id="vc_dpop_public_jwk">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>jkt (RFC 7638)</label><span class="tooltiptext">The JWK Thumbprint of the public key: the SHA-256 of its required members in lexicographic order with no whitespace. This is the value the access token carries as cnf.jkt.</span></div></td>
+          <td><code id="vc_dpop_jkt">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Bind the authorization code</label><span class="tooltiptext">RFC 9449 section 10: sending dpop_jkt on the AUTHORIZATION request binds the code itself to this key, so a stolen code cannot be redeemed even by someone who also has the PKCE code_verifier. It has to be set before step 1 runs, which is why this only says whether it happened.</span></div></td>
+          <td><code id="vc_dpop_jkt_sent">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Token binding</label><span class="tooltiptext">What the token endpoint actually answered: token_type and the cnf.jkt inside the access token. Asking for a binding does not create one — a server that ignores the proof would answer Bearer, and this row is how you would notice.</span></div></td>
+          <td><div class="signed_metadata_status" id="vc_dpop_token_status">&nbsp;</div></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Server-supplied nonce</label><span class="tooltiptext">RFC 9449 sections 8 and 9: a server may require a nonce of its own choosing in every proof, asking for it with use_dpop_nonce and supplying it in a DPoP-Nonce header. The wallet retries once and remembers the nonce, so later calls carry it without being asked again.</span></div></td>
+          <td><code id="vc_dpop_nonce">&mdash;</code></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Proof sent</label><span class="tooltiptext">The most recent DPoP proof this page sent, decoded. htm and htu tie it to one method and one endpoint; ath is the hash of the access token it accompanied; jti makes it single use.</span></div></td>
+          <td><pre class="vc-json" id="vc_dpop_last_proof">&nbsp;</pre></td>
         </tr>
       </tbody>
     </table>

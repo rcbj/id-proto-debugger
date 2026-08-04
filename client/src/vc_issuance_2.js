@@ -28,6 +28,7 @@ var sdJwtVc = require("./sd_jwt_vc");
 // and reading the response — shared with step 4, which makes the same call to
 // refresh the credential (OID4VCI section 14.5).
 var vciWallet = require("./vci_wallet");
+var dpopLib = require("./dpop");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_2',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -178,6 +179,339 @@ function onSaveHolderKeyChange() {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// DPoP (RFC 9449).
+//
+// Two checkboxes, and they answer two different questions that are easy to
+// confuse:
+//
+//   vc_dpop_enabled        is the ACCESS TOKEN sender-constrained? Off by
+//                          default, so a wallet that ignores this pane behaves
+//                          exactly as it did before and the Bearer path stays
+//                          the one the workflow shows first.
+//   vc_dpop_holder_of_key  is the CREDENTIAL bound to that same key, or to a
+//                          holder key of its own? Unchecked means Proof of
+//                          Possession, which is what this workflow has always
+//                          done and what SD-JWT VC assumes.
+//
+// The second depends on the first — Holder of Key has nothing to reuse without a
+// DPoP key — so the pane says so rather than silently ignoring a checked box.
+// ---------------------------------------------------------------------------
+function renderDpopPane() {
+  log.debug("Entering renderDpopPane().");
+  var on = sdJwtVc.dpopEnabled();
+  var wantsHok = sdJwtVc.credentialBindingPreference() === sdJwtVc.BINDING_MODES.HOK;
+  var effective = sdJwtVc.credentialBindingMode();
+  var enabledBox = el("vc_dpop_enabled");
+  var hokBox = el("vc_dpop_holder_of_key");
+  if (enabledBox) enabledBox.checked = on;
+  if (hokBox) hokBox.checked = wantsHok;
+
+  var readiness = sdJwtVc.dpopReadiness();
+  setText("vc_dpop_enabled_note", on
+    ? (readiness.ready
+        ? "On. The Token Request carries a proof, and every call to a protected endpoint carries " +
+          "another one bound to the token."
+        : (readiness.problem || "On, but not ready."))
+    : "Off. The access token comes back as a Bearer token (RFC 6750) and is presented as one.");
+
+  // The note is where the dependency between the two boxes is made honest. A
+  // checked box whose mode is not in force is the one state a user cannot see
+  // from the checkbox alone.
+  if (wantsHok && !on) {
+    setText("vc_dpop_binding_note",
+      "Holder of Key needs a DPoP key to bind the credential to, and DPoP is off — so Proof of " +
+      "Possession is what will actually happen. Turn DPoP on above to use it.");
+  } else if (effective === sdJwtVc.BINDING_MODES.HOK) {
+    setText("vc_dpop_binding_note",
+      "Holder of Key: one key. The access token's cnf.jkt and the credential's cnf.jwk will name " +
+      "it, and the Credential Request's proof of possession is signed by it. The holder has one " +
+      "key to protect instead of two, and the issuer can see that whoever presents the token is " +
+      "who the credential is bound to.");
+  } else {
+    setText("vc_dpop_binding_note",
+      "Proof of Possession: two keys. The credential is bound to its own holder key, so its " +
+      "lifetime is independent of the token's \u2014 which matters because the credential outlives " +
+      "the access token by months and rotating a key for OAuth reasons should not invalidate it.");
+  }
+
+  var pair = sdJwtVc.dpopKeyPair();
+  setJson("vc_dpop_public_jwk", pair ? pair.publicJwk : null);
+  setText("vc_dpop_jkt", sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "\u2014");
+  setText("vc_dpop_nonce", sdJwtVc.dpopNonce() || "(none asked for)");
+  var alg = el("vc_dpop_alg");
+  if (alg) alg.value = (pair && pair.alg) || sdJwtVc.get(sdJwtVc.KEYS.DPOP_ALG) || "ES256";
+
+  // What the authorization server said it accepts. Absent is meaningful: it is
+  // the only signal that DPoP is on offer, so a server that has not advertised it
+  // may well refuse the proof.
+  var serverAlgs = sdJwtVc.get("dpop_signing_alg_values_supported") || "";
+  setText("vc_dpop_server_algs", serverAlgs ||
+    "(not advertised \u2014 retrieve the authorization server metadata in step 1)");
+  if (serverAlgs && alg && alg.value && serverAlgs.indexOf(alg.value) === -1) {
+    setText("vc_dpop_alg_note", "The server did not advertise " + alg.value +
+      ". It may still accept it, but dpop_signing_alg_values_supported says otherwise.");
+  } else {
+    setText("vc_dpop_alg_note", "");
+  }
+
+  // Whether step 1 bound the authorization code to this key (RFC 9449 section
+  // 10). This page can only report it: the parameter has to be on the request
+  // step 1 already made.
+  var sentJkt = sdJwtVc.get("dpop_jkt_sent") || "";
+  setText("vc_dpop_jkt_sent", sentJkt
+    ? (sentJkt === (sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "")
+        ? "yes \u2014 dpop_jkt=" + sentJkt
+        : "sent for a DIFFERENT key (" + sentJkt + "); this code cannot be redeemed by the key " +
+          "shown above")
+    : "no \u2014 the authorization request carried no dpop_jkt, so only the token is bound, not " +
+      "the code that bought it");
+
+  renderTokenBinding();
+  log.debug("Leaving renderDpopPane(). on=" + on + ", effective=" + effective);
+}
+
+// What the token endpoint ACTUALLY answered, which is not the same as what was
+// asked for: a server that ignored the proof would answer Bearer, and this is
+// where that shows.
+// What the token endpoint answered about the binding, recorded for the pane. Kept
+// separate from renderTokenBinding() because one writes and the other reads: the
+// pane is re-rendered on load, when nothing has just been sent.
+function recordTokenBinding(result) {
+  log.debug("Entering recordTokenBinding().");
+  if (result.sent) {
+    showLastProof(result.sent, result.retriedForNonce
+      ? "the DPoP proof for the Token Request (second attempt, carrying the server's nonce)"
+      : "the DPoP proof for the Token Request");
+  }
+  if (result.body && result.body.token_type) {
+    sdJwtVc.set(sdJwtVc.KEYS.DPOP_TOKEN_TYPE, String(result.body.token_type));
+  }
+  if (result.nonceUsed) setText("vc_dpop_nonce", result.nonceUsed);
+  log.debug("Leaving recordTokenBinding(). token_type=" +
+            ((result.body && result.body.token_type) || "(none)"));
+}
+
+function renderTokenBinding() {
+  log.debug("Entering renderTokenBinding().");
+  var accessToken = sdJwtVc.get("token_access_token") || "";
+  if (!accessToken) {
+    status("vc_dpop_token_status", "No access token yet.", "");
+    log.debug("Leaving renderTokenBinding(). No token.");
+    return;
+  }
+  var tokenType = sdJwtVc.get(sdJwtVc.KEYS.DPOP_TOKEN_TYPE) || "";
+  var claims = null;
+  try {
+    claims = metadataClient.b64uToJson(accessToken.split(".")[1]);
+  } catch (e) {
+    // An opaque access token is legal and carries no readable cnf; say so rather
+    // than reporting "not bound", which would be a claim about a token nobody
+    // here can read.
+    status("vc_dpop_token_status",
+      "The access token is not a readable JWT, so whether it carries cnf.jkt cannot be seen from " +
+      "here. token_type was " + (tokenType || "not recorded") + ".", "");
+    log.debug("Leaving renderTokenBinding(). Opaque token.");
+    return;
+  }
+  var boundTo = (claims && claims.cnf && claims.cnf.jkt) || "";
+  var ourJkt = sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "";
+  if (!boundTo) {
+    status("vc_dpop_token_status",
+      "This access token is NOT bound: it carries no cnf.jkt" +
+      (tokenType ? ", and token_type was " + tokenType : "") + ". It is a Bearer token — anything " +
+      "that can read the bytes can spend them.",
+      sdJwtVc.dpopEnabled() ? "vc-bad" : "");
+  } else if (ourJkt && boundTo === ourJkt) {
+    status("vc_dpop_token_status",
+      "Bound to this wallet's key: cnf.jkt = " + boundTo + ", token_type = " +
+      (tokenType || "DPoP") + ". Every call presenting it must carry a proof from that key.",
+      "vc-ok");
+  } else {
+    status("vc_dpop_token_status",
+      "This token is bound to " + boundTo + ", which is NOT the key this page holds (" +
+      (ourJkt || "none") + "). It cannot be used from here — generate no new key, or run step 1 " +
+      "again with the key you mean to use.", "vc-bad");
+  }
+  log.debug("Leaving renderTokenBinding(). boundTo=" + (boundTo || "(nothing)"));
+}
+
+// Show the most recent proof, decoded. The point of the pane: htm and htu tie it
+// to one method and one endpoint, ath to one token, jti to one use.
+function showLastProof(sent, label) {
+  log.debug("Entering showLastProof().");
+  if (!sent || !sent.decoded) {
+    setText("vc_dpop_last_proof", "");
+    log.debug("Leaving showLastProof(). Nothing to show.");
+    return;
+  }
+  var e = el("vc_dpop_last_proof");
+  if (e) {
+    e.textContent = "// " + (label || "the last DPoP proof sent") + "\n" +
+      JSON.stringify({ header: sent.decoded.header, payload: sent.decoded.payload }, null, 2);
+  }
+  log.debug("Leaving showLastProof().");
+}
+
+// Make sure there is a key to sign with, generating one if needed. Called before
+// any request that may carry a proof, so the pane never has to ask the user to
+// press a button first.
+function ensureDpopKey() {
+  log.debug("Entering ensureDpopKey().");
+  if (!sdJwtVc.dpopEnabled()) {
+    log.debug("Leaving ensureDpopKey(). DPoP is off.");
+    return Promise.resolve(null);
+  }
+  var existing = sdJwtVc.dpopKeyPair();
+  if (existing) {
+    log.debug("Leaving ensureDpopKey(). A key pair is already held.");
+    return Promise.resolve(existing);
+  }
+  var algBox = el("vc_dpop_alg");
+  var wanted = (algBox && algBox.value) || sdJwtVc.get(sdJwtVc.KEYS.DPOP_ALG) || "ES256";
+  return dpopLib.generateKeyPair(wanted).then(function (pair) {
+    return dpopLib.thumbprint(pair.publicJwk).then(function (jkt) {
+      sdJwtVc.storeDpopKeyPair(pair, jkt);
+      renderDpopPane();
+      log.debug("Leaving ensureDpopKey(). Generated a " + wanted + " key pair, jkt=" + jkt);
+      // Returned rather than re-read from storage, because with key saving off
+      // the private half was refused and dpopKeyPair() would answer null — the
+      // key still works for THIS page load, which is what makes the workflow
+      // usable at all in that mode.
+      return pair;
+    });
+  });
+}
+
+// The descriptor vci_wallet.js signs with. Falls back to the pair this page
+// generated when storage refused it, so a wallet with key saving off can still
+// complete the flow within one page.
+var pageDpopKey = null;
+
+function dpopContext() {
+  if (!sdJwtVc.dpopEnabled()) return null;
+  var stored = sdJwtVc.dpopContext();
+  if (stored) return stored;
+  if (!pageDpopKey) return null;
+  return { key: pageDpopKey, nonce: sdJwtVc.dpopNonce(),
+           remember: sdJwtVc.rememberDpopNonce };
+}
+
+function onDpopEnabledChange() {
+  log.debug("Entering onDpopEnabledChange().");
+  var box = el("vc_dpop_enabled");
+  var on = !!(box && box.checked);
+  sdJwtVc.setDpopEnabled(on);
+  if (!on) {
+    pageDpopKey = null;
+    renderDpopPane();
+    status("vc_approval_status",
+      "DPoP is off. The access token will be an ordinary Bearer token, and its key pair has been " +
+      "discarded.", "");
+    log.debug("Leaving onDpopEnabledChange(). off");
+    return false;
+  }
+  ensureDpopKey()
+    .then(function (pair) {
+      pageDpopKey = pair;
+      renderDpopPane();
+      // The token in hand was minted before DPoP was turned on, so it is a Bearer
+      // token and turning the switch on does not change it. Saying so here is the
+      // difference between a confusing pane and a clear one.
+      status("vc_approval_status", sdJwtVc.get("token_access_token")
+        ? "DPoP is on, but the access token you already have was issued as a Bearer token — it " +
+          "cannot become bound after the fact. Get a new one (step 1, or the Token Request pane) " +
+          "to see the binding."
+        : "DPoP is on. The Token Request will carry a proof and the token will come back bound.",
+        "vc-ok");
+      // Rebuild the credential request: under Holder of Key the proof of
+      // possession is signed by this key, so it is a different request now.
+      return prepareRequest();
+    })
+    .catch(function (e) {
+      status("vc_approval_status", "Could not set up DPoP: " + e.message, "vc-bad");
+    });
+  log.debug("Leaving onDpopEnabledChange(). on");
+  return false;
+}
+
+function onBindingModeChange() {
+  log.debug("Entering onBindingModeChange().");
+  var box = el("vc_dpop_holder_of_key");
+  var hok = !!(box && box.checked);
+  sdJwtVc.setCredentialBindingMode(hok ? sdJwtVc.BINDING_MODES.HOK : sdJwtVc.BINDING_MODES.POP);
+  // The credential's proof of possession is over a different key now, so the
+  // request the pane shows is stale. Rebuild it rather than leaving a request on
+  // screen that is not the one Approve would send.
+  request.proof = "";
+  request.proofs = [];
+  request.holderKeys = [];
+  ensureDpopKey()
+    .then(function (pair) {
+      if (pair) pageDpopKey = pair;
+      renderDpopPane();
+      return prepareRequest();
+    })
+    .then(function () {
+      var effective = sdJwtVc.credentialBindingMode();
+      status("vc_approval_status",
+        effective === sdJwtVc.BINDING_MODES.HOK
+          ? "Holder of Key: the credential request below is now signed by the DPoP key, and the " +
+            "credential will be bound to it."
+          : "Proof of Possession: the credential request below is signed by the holder key, which " +
+            "is what the credential will be bound to.",
+        "vc-ok");
+    })
+    .catch(function (e) {
+      status("vc_approval_status", "Could not switch the binding mode: " + e.message, "vc-bad");
+    });
+  log.debug("Leaving onBindingModeChange(). hok=" + hok);
+  return false;
+}
+
+function onDpopAlgChange() {
+  log.debug("Entering onDpopAlgChange().");
+  // A key is tied to its algorithm, so changing the algorithm means a new key.
+  // Doing that silently would leave the pane showing a jkt the proofs no longer
+  // use, so it is the same action as pressing New Key Pair.
+  return regenerateDpopKey();
+}
+
+function regenerateDpopKey() {
+  log.debug("Entering regenerateDpopKey().");
+  if (!sdJwtVc.dpopEnabled()) {
+    status("vc_approval_status",
+      "DPoP is off, so there is no key to generate. Turn it on first.", "vc-pending");
+    log.debug("Leaving regenerateDpopKey(). DPoP is off.");
+    return false;
+  }
+  var algBox = el("vc_dpop_alg");
+  var wanted = (algBox && algBox.value) || "ES256";
+  dpopLib.generateKeyPair(wanted)
+    .then(function (pair) {
+      return dpopLib.thumbprint(pair.publicJwk).then(function (jkt) {
+        sdJwtVc.storeDpopKeyPair(pair, jkt);
+        pageDpopKey = pair;
+        // A new key cannot be the key an existing token is bound to, and it
+        // invalidates a Holder of Key proof of possession, so both are rebuilt.
+        request.proof = "";
+        request.proofs = [];
+        request.holderKeys = [];
+        renderDpopPane();
+        return prepareRequest().then(function () {
+          status("vc_approval_status",
+            "A new " + wanted + " DPoP key pair was generated (jkt " + jkt + "). An access token " +
+            "bound to the previous key can no longer be used.", "vc-ok");
+        });
+      });
+    })
+    .catch(function (e) {
+      status("vc_approval_status", "Could not generate a DPoP key pair: " + e.message, "vc-bad");
+    });
+  log.debug("Leaving regenerateDpopKey().");
+  return false;
+}
+
 function regenerateHolderKey() {
   log.debug("Entering regenerateHolderKey().");
   generateHolderKey().then(function (pub) {
@@ -203,13 +537,43 @@ function regenerateHolderKey() {
   return false;
 }
 
-// Extra holder keys for a batch request. The first is the stored holder key, so
+// The key the credential will be bound to, which under Holder of Key is the DPoP
+// key rather than the holder key. This is the ONE place that decision turns into
+// a key, so the proof of possession, the assembled call and the credential's cnf
+// cannot disagree about which key it was.
+//
+// Note what it does NOT do: it does not overwrite the stored holder key. Under
+// Holder of Key the credential is bound to the DPoP key, and the presentation
+// pages read the bound key off the credential's own cnf.jwk — so the holder key
+// is left where it is rather than being clobbered by a key that is only in play
+// while this mode is on.
+function bindingKey() {
+  if (sdJwtVc.usingHolderOfKey()) {
+    var pair = sdJwtVc.dpopKeyPair() || pageDpopKey;
+    if (pair) {
+      log.debug("bindingKey(): Holder of Key — the credential is bound to the DPoP key.");
+      return pair;
+    }
+    // Asked for, but there is no DPoP key. Falling back silently would bind the
+    // credential to the holder key while the pane says Holder of Key, so the
+    // caller is told and the pane reports it.
+    log.debug("bindingKey(): Holder of Key was asked for but there is no DPoP key; " +
+              "falling back to the holder key.");
+  }
+  return { publicJwk: request.holderPublicJwk, privateJwk: request.holderPrivateJwk };
+}
+
+// Extra holder keys for a batch request. The first is the binding key above, so
 // what the page shows stays the key the first credential is bound to; the rest
 // live for this request only, which is the honest lifetime — a wallet asking for
 // several bindings has several keys.
+//
+// Batch issuance and Holder of Key pull in opposite directions and the honest
+// answer is a partial one: there is only one DPoP key, so only the first
+// credential of a batch can be bound to it. The rest get keys of their own, which
+// is Proof of Possession for those credentials, and renderDpopPane() says so.
 function holderKeysFor(count) {
-  return vciWallet.holderKeysFor(
-    { publicJwk: request.holderPublicJwk, privateJwk: request.holderPrivateJwk }, count);
+  return vciWallet.holderKeysFor(bindingKey(), count);
 }
 
 // --- the proof of possession ------------------------------------------------
@@ -529,6 +893,16 @@ function renderProofJwt(body) {
 // Bearer credential IS how the request is authorized — so leaving it out would
 // not be the whole call.
 // ---------------------------------------------------------------------------
+// The Authorization header line for the DISPLAYED call. It has to agree with what
+// fetchProtected() actually sends, or the pane is showing a request the page does
+// not make — which on this page is the whole product. The scheme is the visible
+// difference between a bound token and a bearer one, and getting it wrong here
+// would teach exactly the mistake RFC 9449 section 7.1 warns about.
+function authorizationLineFor(accessToken, absentNote) {
+  var scheme = (sdJwtVc.dpopEnabled() && dpopContext()) ? "DPoP" : "Bearer";
+  return scheme + " " + (accessToken || absentNote);
+}
+
 function renderAssembledCall() {
   log.debug("Entering renderAssembledCall().");
   var endpoint = request.config ? request.config.credentialEndpoint : "";
@@ -547,7 +921,16 @@ function renderAssembledCall() {
     method: "POST",
     url: endpoint,
     contentType: encryptedBody ? "application/jwt" : "application/json",
-    authorization: "Bearer " + (accessToken || "(no access token yet — authenticate in step 1)"),
+    authorization: authorizationLineFor(accessToken,
+      "(no access token yet — authenticate in step 1)"),
+    // A placeholder rather than a proof, and deliberately: a DPoP proof is single
+    // use and covers its own jti and iat, so any proof shown here would NOT be
+    // the one sent when Approve is pressed. The decoded proof that really went is
+    // in the DPoP pane above, after the fact.
+    dpop: (sdJwtVc.dpopEnabled() && dpopContext())
+      ? "<a fresh dpop+jwt proof, signed at send time: htm=POST, htu=" +
+        (endpoint || "(no endpoint)") + ", ath=SHA-256 of the access token>"
+      : "",
     body: encryptedBody || JSON.stringify(request.body, null, 2)
   });
   if (encryptedBody) {
@@ -676,21 +1059,27 @@ function sendTokenRequest() {
 
   el("vc_token_request_button").disabled = true;
   status("vc_token_status", "Redeeming the pre-authorized code …", "vc-pending");
-  fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: vciWallet.encodeForm(params)
-  })
-    .then(function (r) {
-      return r.text().then(function (text) {
-        var parsed = null;
-        try {
-          parsed = JSON.parse(text);
-        } catch (e) {
-          // Not JSON: the raw text is what gets shown.
-        }
-        return { ok: r.ok, statusCode: r.status, body: parsed, raw: text };
+  // Through fetchProtected() rather than fetch(), so the DPoP proof and the
+  // nonce retry are the same code every other call in this workflow uses. With
+  // DPoP off, dpopContext() is null and this is byte-for-byte the request it
+  // always was.
+  ensureDpopKey()
+    .then(function (pair) {
+      if (pair) pageDpopKey = pair;
+      return vciWallet.fetchProtected({
+        url: endpoint,
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: vciWallet.encodeForm(params),
+        context: dpopContext()
+        // No accessToken: this request is how one is obtained, so the proof
+        // carries no ath.
       });
+    })
+    .then(function (result) {
+      recordTokenBinding(result);
+      return { ok: result.response.ok, statusCode: result.response.status,
+               body: result.body, raw: result.text };
     })
     .then(function (response) {
       var box = el("vc_token_response");
@@ -712,6 +1101,7 @@ function sendTokenRequest() {
       sdJwtVc.set("token_access_token", response.body.access_token);
       if (response.body.id_token) sdJwtVc.set("token_id_token", response.body.id_token);
       if (response.body.refresh_token) sdJwtVc.set("token_refresh_token", response.body.refresh_token);
+      renderDpopPane();
       status("vc_token_status",
         "An access token was issued. The credential request below can now be authorized with it.", "vc-ok");
       showTokens();
@@ -755,17 +1145,24 @@ function approveIssuance() {
     // than rebuilt so the bytes sent are the bytes the pane displayed.
     var encrypted = request.encryptedRequest || "";
     log.debug("Leaving send().");
-    return fetch(request.config.credentialEndpoint, {
+    return vciWallet.fetchProtected({
+      url: request.config.credentialEndpoint,
       method: "POST",
-      headers: {
-        "Content-Type": encrypted ? "application/jwt" : "application/json",
-        "Authorization": "Bearer " + accessToken
-      },
-      body: encrypted || JSON.stringify(request.body || buildRequestBody())
-    }).then(function (r) {
-      return r.text().then(function (text) {
-        return readCredentialResponse(r, text);
-      });
+      headers: { "Content-Type": encrypted ? "application/jwt" : "application/json" },
+      body: encrypted || JSON.stringify(request.body || buildRequestBody()),
+      accessToken: accessToken,
+      context: dpopContext()
+    }).then(function (result) {
+      // The proof that went with THIS call, shown decoded — including the case
+      // where the first attempt was answered with `use_dpop_nonce` and the
+      // second carried the server's nonce, which is worth seeing.
+      showLastProof(result.sent, result.retriedForNonce
+        ? "the DPoP proof for the Credential Request (second attempt, carrying the server's nonce)"
+        : "the DPoP proof for the Credential Request");
+      if (result.retriedForNonce) {
+        setText("vc_dpop_nonce", result.nonceUsed || sdJwtVc.dpopNonce());
+      }
+      return readCredentialResponse(result.response, result.text);
     });
   };
 
@@ -899,7 +1296,7 @@ function renderDeferredRequest() {
     method: "POST",
     url: endpoint || "(this issuer publishes no deferred_credential_endpoint)",
     contentType: "application/json",
-    authorization: "Bearer " + (accessToken || "(no access token)"),
+    authorization: authorizationLineFor(accessToken, "(no access token)"),
     body: JSON.stringify({ transaction_id: deferred.transactionId }, null, 2)
   }));
   log.debug("Leaving renderDeferredRequest().");
@@ -968,18 +1365,20 @@ function pollDeferred() {
   }
   deferred.polling = true;
   renderDeferredRequest();
-  fetch(endpoint, {
+  // The Deferred Credential Endpoint is a protected endpoint like the others, so
+  // it carries a proof too. A DPoP deployment where deferred issuance quietly
+  // fell back to Bearer would be one where the long poll is the weak point.
+  vciWallet.fetchProtected({
+    url: endpoint,
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + (sdJwtVc.get("token_access_token") || "")
-    },
-    body: JSON.stringify({ transaction_id: deferred.transactionId })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_id: deferred.transactionId }),
+    accessToken: sdJwtVc.get("token_access_token") || "",
+    context: dpopContext()
   })
-    .then(function (r) {
-      return r.text().then(function (text) {
-        return readCredentialResponse(r, text);
-      });
+    .then(function (result) {
+      showLastProof(result.sent, "the DPoP proof for the Deferred Credential Request");
+      return readCredentialResponse(result.response, result.text);
     })
     .then(function (response) {
       deferred.polling = false;
@@ -1156,6 +1555,7 @@ function onload() {
   loadOrGenerateHolderKey()
     .then(function (pub) {
       setJson("vc_holder_jwk", pub);
+      renderDpopPane();
       // Build the request now, so the pane shows what approving will send.
       // Deliberately NOT conditional on having an access token: the proof of
       // possession is signed with the holder key and addressed to the issuer,
@@ -1184,6 +1584,13 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   approveIssuance: approveIssuance,
+  onDpopEnabledChange: onDpopEnabledChange,
+  onBindingModeChange: onBindingModeChange,
+  onDpopAlgChange: onDpopAlgChange,
+  regenerateDpopKey: regenerateDpopKey,
+  renderDpopPane: renderDpopPane,
+  dpopContext: dpopContext,
+  ensureDpopKey: ensureDpopKey,
   sendTokenRequest: sendTokenRequest,
   onTxCodeChange: onTxCodeChange,
   showPreAuthorizedPane: showPreAuthorizedPane,

@@ -45,6 +45,7 @@ const jwt = require('jsonwebtoken');
 const app = require('./app');
 const { log, logArtifact, STS, baseUrlOf, b64u, jsonFromB64u, nowSec, randomId,
         xmlEscape, parseBody, oauthError, signJwt, userFor } = require('./helpers');
+const dpop = require('./dpop');
 const { VCI_CONFIGS, VCI_CONFIG_ID, VCI_SCOPE } = require('./vc_configs');
 const { deferredAccessTokens, issuerStates, preAuthorizedCodes } = require('./vc_offers');
 // ---------------------------------------------------------------------------
@@ -97,7 +98,11 @@ function asMetadata(req) {
     introspection_endpoint: base + '/oauth2/introspect',
     introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt'],
     introspection_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256', 'PS256'],
-    code_challenge_methods_supported: ['S256', 'plain']
+    code_challenge_methods_supported: ['S256', 'plain'],
+    // RFC 9449 section 5.1. Its presence is how a wallet learns DPoP is on offer
+    // at all — there is no other signal, so an authorization server that supports
+    // DPoP and does not advertise it will simply never be asked for it.
+    dpop_signing_alg_values_supported: dpop.SIGNING_ALGS
     // signed_metadata is added below — it is a JWT OF this object, so it cannot
     // be one of the claims it signs.
   };
@@ -218,6 +223,12 @@ function accessToken(base, opts) {
     username: user.username
   };
   if (opts.act) payload.act = opts.act;
+  // RFC 9449 section 6.1: a DPoP-bound access token names the key it is bound to
+  // in the `cnf.jkt` confirmation claim (RFC 7800's `cnf`, with RFC 9449's `jkt`
+  // member). The claim travels INSIDE the signed token, which is what lets a
+  // resource server check the binding without asking the authorization server
+  // anything — and what stops the wallet nominating its own key.
+  if (opts.jkt) payload.cnf = { jkt: opts.jkt };
   // OID4VCI section 6.2: when the authorization was expressed as
   // authorization_details, the token response grants credential_identifiers and
   // the Credential Request must use one of them. They ride in the access token
@@ -238,7 +249,14 @@ function refreshToken(base, opts) {
     // the person who actually signed in.
     iss: base, sub: opts.sub || user.sub, aud: base, client_id: opts.client_id,
     scope: opts.scope || '', typ: 'Refresh', jti: randomId(16), username: user.username,
-    iat: iat, nbf: iat, exp: iat + REFRESH_TOKEN_TTL
+    iat: iat, nbf: iat, exp: iat + REFRESH_TOKEN_TTL,
+    // RFC 9449 section 5: a refresh token issued to a PUBLIC client alongside a
+    // DPoP-bound access token is itself bound to the same key. A wallet is a
+    // public client and cannot authenticate, so without this the long-lived half
+    // of the grant would stay a bearer credential and binding the short-lived
+    // half would buy very little. The refresh grant enforces it, which is what
+    // makes the OID4VCI section 14.5 refresh on step 4 carry a proof of its own.
+    cnf: opts.jkt ? { jkt: opts.jkt } : undefined
   });
   log.debug("Leaving refreshToken().");
   return token;
@@ -282,7 +300,10 @@ function tokenSet(base, opts) {
   const access = accessToken(base, opts);
   const body = {
     access_token: access,
-    token_type: 'Bearer',
+    // RFC 9449 section 5: `DPoP`, not `Bearer`, when the token is bound. This is
+    // how the wallet learns it must send a proof on every subsequent call — a
+    // bound token announced as Bearer would be presented as one and refused.
+    token_type: opts.jkt ? 'DPoP' : 'Bearer',
     expires_in: ACCESS_TOKEN_TTL,
     scope: opts.scope || ''
   };
@@ -469,6 +490,11 @@ function issueAuthorizationResponse(req, res, query, user, authTime) {
       client_id: String(query.client_id), redirect_uri: redirectUri, scope: scope,
       nonce: query.nonce, user: user, auth_time: authTime,
       code_challenge: query.code_challenge, code_challenge_method: query.code_challenge_method || 'plain',
+      // RFC 9449 section 10: the JWK Thumbprint of the DPoP key the client
+      // intends to use, taken at the authorization request so the code itself is
+      // bound. Stored verbatim and never derived — the whole value of the
+      // parameter is that it was fixed BEFORE the code existed.
+      dpop_jkt: query.dpop_jkt ? String(query.dpop_jkt) : '',
       // What the wallet asked to be authorized for, if it used
       // authorization_details rather than a scope. The token response has to
       // echo it back with the credential_identifiers it grants.
@@ -635,6 +661,49 @@ app.get('/oauth2/logout', function (req, res) {
 });
 
 // --- token endpoint ---------------------------------------------------------
+// ---------------------------------------------------------------------------
+// NON-SPEC: the DPoP nonce switch.
+//
+// RFC 9449 sections 8 and 9 let a server demand a server-supplied nonce in every
+// proof, which turns the first request of a session into a 401/retry handshake.
+// Whether to do that is a deployment's choice, and both answers are worth being
+// able to try — a wallet that handles the happy path but not the handshake is a
+// wallet that works until it meets a server that asks.
+//
+// So it is a runtime switch rather than configuration: a test, or somebody
+// reading the page, can turn it on, watch the retry, and turn it off again
+// without restarting the service. GET reports; POST {"required": true|false}
+// sets. Listed on /sts-metadata as non-spec, because it is.
+// ---------------------------------------------------------------------------
+app.get('/dpop/nonce-mode', function (req, res) {
+  log.debug("Entering the DPoP nonce-mode endpoint (read).");
+  res.status(200).type('application/json').set('Cache-Control', 'no-store')
+    .send(JSON.stringify(dpop.state(), null, 2));
+  log.debug("Leaving the DPoP nonce-mode endpoint (read).");
+});
+
+app.post('/dpop/nonce-mode', function (req, res) {
+  log.debug("Entering the DPoP nonce-mode endpoint (write).");
+  const body = parseBody(req);
+  // Only an explicit boolean, so a typo cannot silently leave the switch in a
+  // state nobody chose: a test that means to turn nonces OFF and leaves them on
+  // makes every later section in the run fail for an invisible reason.
+  const wanted = body.required;
+  if (wanted !== true && wanted !== false && wanted !== 'true' && wanted !== 'false') {
+    log.debug("Leaving the DPoP nonce-mode endpoint. Refused.");
+    return oauthError(res, 400, 'invalid_request',
+      'Send {"required": true} or {"required": false}.');
+  }
+  dpop.setNonceMode(wanted === true || wanted === 'true');
+  // A change of policy invalidates nothing already issued, but the replay cache
+  // is process-wide and a test that has just been refusing proofs on purpose
+  // wants a clean slate for the next section.
+  dpop.forgetProofs();
+  res.status(200).type('application/json').set('Cache-Control', 'no-store')
+    .send(JSON.stringify(dpop.state(), null, 2));
+  log.debug("Leaving the DPoP nonce-mode endpoint (write). required=" + dpop.nonceModeOn());
+});
+
 app.post('/oauth2/token', function (req, res) {
   log.debug("Entering the token endpoint.");
   const base = baseUrlOf(req);
@@ -642,6 +711,40 @@ app.post('/oauth2/token', function (req, res) {
   const client = clientFrom(req, body);
   const grant = String(body.grant_type || '');
   res.set('Cache-Control', 'no-store');
+
+  // --- DPoP (RFC 9449 section 5) -------------------------------------------
+  // Optional, and checked before any grant is considered so that every grant
+  // gets the same treatment: a wallet that sends a proof gets a bound token
+  // whether it arrived by authorization code, by pre-authorized code or by
+  // refresh. A wallet that sends none gets a Bearer token exactly as before,
+  // which is what keeps this switch invisible to the workflows that do not use
+  // it.
+  let dpopJkt = '';
+  if (req.headers['dpop'] !== undefined) {
+    const checked = dpop.verifyProof(req.headers['dpop'], {
+      htm: req.method, htu: dpop.htuOf(req)
+    });
+    if (!checked.ok) {
+      // Section 8: when the server wants a nonce it does not refuse outright —
+      // it ASKS, with a fresh nonce in the header and `use_dpop_nonce` as the
+      // error, and the wallet retries once. Answering a plain invalid_dpop_proof
+      // here would leave a conforming client with no way forward.
+      if (checked.needNonce) {
+        res.set('DPoP-Nonce', dpop.issueNonce());
+        log.debug("Leaving the token endpoint. Asking the client for a DPoP nonce.");
+        return oauthError(res, 400, 'use_dpop_nonce',
+          'Authorization server requires nonce in DPoP proof');
+      }
+      log.debug("Leaving the token endpoint. The DPoP proof was refused.");
+      return oauthError(res, 400, 'invalid_dpop_proof', checked.description);
+    }
+    dpopJkt = checked.jkt;
+    log.debug("This Token Request carries a valid DPoP proof. jkt=" + dpopJkt);
+  }
+  // Note there is no "DPoP required" mode here. Nonce mode makes proofs FRESHER;
+  // it does not make them mandatory. A request with no DPoP header is a Bearer
+  // request and is answered as one, so turning nonce mode on cannot break the
+  // Bearer clients this server also exists to exercise.
 
   const respond = function (payload) {
     res.status(200).type('application/json').send(JSON.stringify(payload));
@@ -689,7 +792,27 @@ app.post('/oauth2/token', function (req, res) {
         return oauthError(res, 400, 'invalid_grant', 'The code_verifier does not match the code_challenge.');
       }
     }
+    // RFC 9449 section 10: when the authorization request named a key with
+    // `dpop_jkt`, the code is bound to it and only that key may redeem it. This
+    // closes the window PKCE does not: an attacker who steals the code AND the
+    // code_verifier still cannot use them, because they cannot sign for the key.
+    if (record.dpop_jkt) {
+      if (!dpopJkt) {
+        log.debug("Leaving the token endpoint. The code is DPoP-bound and no proof came with it.");
+        return oauthError(res, 400, 'invalid_grant',
+          'The authorization request bound this code to a DPoP key (dpop_jkt), so the Token ' +
+          'Request must carry a DPoP proof from that key.');
+      }
+      if (record.dpop_jkt !== dpopJkt) {
+        log.debug("Leaving the token endpoint. The code's dpop_jkt does not match the proof.");
+        return oauthError(res, 400, 'invalid_grant',
+          'This authorization code is bound to DPoP key ' + record.dpop_jkt +
+          ', but the proof was signed by ' + dpopJkt + '.');
+      }
+      log.debug("The authorization code's dpop_jkt matches the proof. jkt=" + dpopJkt);
+    }
     return respond(tokenSet(base, {
+      jkt: dpopJkt,
       user: record.user, client_id: record.client_id, scope: record.scope,
       nonce: record.nonce, auth_time: record.auth_time,
       authorization_details: grantIdentifiers(record.authorization_details, record.user)
@@ -729,6 +852,7 @@ app.post('/oauth2/token', function (req, res) {
     // Single use, like an authorization code.
     preAuthorizedCodes.delete(code);
     const issued = tokenSet(base, {
+      jkt: dpopJkt,
       user: record.user, client_id: client.client_id, scope: VCI_SCOPE, withRefresh: false
     });
     // Remember which access token belongs to a deferred issuance, so the
@@ -750,7 +874,31 @@ app.post('/oauth2/token', function (req, res) {
       return oauthError(res, 400, 'invalid_grant', 'The refresh token is not valid: ' + e.message);
     }
     if (revokedJtis.has(claims.jti)) return oauthError(res, 400, 'invalid_grant', 'The refresh token was revoked.');
+    // RFC 9449 section 5: a bound refresh token may only be redeemed by its own
+    // key. Without this the refresh token would be a bearer credential that
+    // mints bound access tokens for whoever holds it — which is worse than not
+    // binding at all, because the token_type would say `DPoP` and imply a
+    // guarantee that was never checked.
+    const boundTo = dpop.jktOf(claims);
+    if (boundTo) {
+      if (!dpopJkt) {
+        log.debug("Leaving the token endpoint. The refresh token is bound and no proof came.");
+        return oauthError(res, 400, 'invalid_grant',
+          'This refresh token is bound to a DPoP key, so the Token Request must carry a DPoP ' +
+          'proof from that key.');
+      }
+      if (boundTo !== dpopJkt) {
+        log.debug("Leaving the token endpoint. The refresh token's cnf.jkt does not match.");
+        return oauthError(res, 400, 'invalid_grant',
+          'This refresh token is bound to DPoP key ' + boundTo + ', but the proof was signed ' +
+          'by ' + dpopJkt + '.');
+      }
+    }
     return respond(tokenSet(base, {
+      // A refresh keeps whatever binding it had: re-binding to the key that
+      // happens to have signed this request would let a stolen bound token be
+      // laundered into one bound to the thief's key.
+      jkt: boundTo || dpopJkt,
       user: userFor(claims.username), client_id: claims.client_id,
       scope: body.scope ? String(body.scope) : claims.scope
     }));
@@ -759,6 +907,7 @@ app.post('/oauth2/token', function (req, res) {
   if (grant === 'client_credentials') {
     // No user is involved, so no refresh token and no ID token.
     return respond(tokenSet(base, {
+      jkt: dpopJkt,
       sub: client.client_id || 'unknown-client', username: client.client_id,
       client_id: client.client_id, scope: String(body.scope || ''), withRefresh: false,
       user: Object.assign(userFor(client.client_id), { sub: client.client_id || 'unknown-client' })
@@ -778,6 +927,7 @@ app.post('/oauth2/token', function (req, res) {
       return oauthError(res, 400, 'invalid_grant', 'Authentication failed for user ' + username + '.');
     }
     return respond(tokenSet(base, {
+      jkt: dpopJkt,
       user: userFor(username), client_id: client.client_id, scope: String(body.scope || 'openid')
     }));
   }
@@ -809,6 +959,7 @@ app.post('/oauth2/token', function (req, res) {
       }
     }
     const exchanged = tokenSet(base, {
+      jkt: dpopJkt,
       sub: subject.sub || 'urn:sts-mock:exchanged',
       user: Object.assign(userFor(subject.username), subject.sub ? { sub: subject.sub } : {}),
       client_id: client.client_id, scope: String(body.scope || subject.scope || ''),
@@ -848,7 +999,13 @@ app.post('/oauth2/introspect', function (req, res) {
     scope: claims.scope || '',
     client_id: claims.client_id,
     username: claims.username,
-    token_type: claims.typ === 'Refresh' ? 'refresh_token' : 'Bearer',
+    // A bound token is not a Bearer token, and an introspection response that
+    // says otherwise invites the caller to accept it as one.
+    token_type: claims.typ === 'Refresh' ? 'refresh_token'
+                                        : (dpop.jktOf(claims) ? 'DPoP' : 'Bearer'),
+    // RFC 9449 section 6.1 / RFC 7662: the confirmation travels to the resource
+    // server so it can check the binding itself.
+    cnf: claims.cnf,
     exp: claims.exp, iat: claims.iat, nbf: claims.nbf,
     sub: claims.sub, aud: claims.aud, iss: claims.iss, jti: claims.jti
   }));

@@ -3,6 +3,7 @@ const appconfig = require(process.env.CONFIG_FILE);
 // both Configuration Parameters panes carry the same fields and defaults.
 const opMetadata = require("./op_metadata");
 const sdJwtVc = require("./sd_jwt_vc");
+const vciWallet = require("./vci_wallet");
 const bunyan = require("bunyan");
 const DOMPurify = require("dompurify");
 const $ = require("jquery");
@@ -126,17 +127,40 @@ function tokenButtonClick() {
   var formData = buildInternalTokenAPIRequestMessage();
   if (useFrontEnd) {
     log.debug("Using frontend to call Token Endpoint. formData=" + JSON.stringify(formData));
-    $.ajax({
-      type: "POST",
-      crossdomain: true,
-      url: localStorage.getItem("token_endpoint"),
-      data: convertToOAuth2Format(formData),
-      contentType: "application/x-www-form-urlencoded",
-      success: successfulInternalTokenAPICall,
-      error: errorInternalTokenAPICall
-    });
+    // RFC 9449: when the SD-JWT VC workflow has DPoP switched on, this Token
+    // Request carries a proof and the token comes back bound. Building it is
+    // asynchronous (Web Crypto), so the call is made from the promise rather than
+    // inline — and when DPoP is off, dpopTokenRequestHeaders() resolves to an
+    // empty object and this is the request it always was.
+    dpopTokenRequestHeaders(localStorage.getItem("token_endpoint"))
+      .then(function (headers) {
+        $.ajax({
+          type: "POST",
+          crossdomain: true,
+          url: localStorage.getItem("token_endpoint"),
+          data: convertToOAuth2Format(formData),
+          contentType: "application/x-www-form-urlencoded",
+          headers: headers,
+          success: successfulInternalTokenAPICall,
+          error: errorInternalTokenAPICall
+        });
+      });
   } else {
     log.debug("Using backend to call Token Endpoint. formData=" + JSON.stringify(formData));
+    // The proxied call cannot carry a DPoP proof: the api makes the request to the
+    // token endpoint, so a proof built here would either name the api as its htu
+    // (and be refused) or name an endpoint this browser is not calling. Saying so
+    // beats sending an unbound token onward as if it were bound — which is the
+    // failure this whole mechanism exists to prevent.
+    if (sdJwtVc.dpopEnabled()) {
+      log.debug("DPoP is on, but this call is proxied through the api, which does not forward " +
+                "DPoP proofs.");
+      $("#sdjwtvc_banner").append(
+        "<p class='vc-bad'>DPoP is on, but this Token Request is being <strong>proxied through " +
+        "the api</strong>, which does not forward DPoP proofs \u2014 so the token will come back " +
+        "as an ordinary Bearer token. Untick <em>Call the token endpoint from the api</em> to " +
+        "send the request from the browser and have it bound.</p>");
+    }
     $.ajax({
       type: "POST",
       crossdomain: true,
@@ -149,6 +173,53 @@ function tokenButtonClick() {
   }
   log.debug("Leaving tokenButtonClick().");
   return false; // don't reload the page.
+}
+
+// ---------------------------------------------------------------------------
+// The DPoP proof for this page's Token Request (RFC 9449).
+//
+// This page is shared: it is the OAuth2/OIDC workflow's token exchange AND the
+// SD-JWT VC issuance workflow's authorization-code leg. DPoP is a decision the VC
+// workflow makes, so it is read from that workflow's state and is simply absent
+// for everybody else — which is why this resolves to {} rather than refusing when
+// there is nothing to sign with.
+//
+// It applies only to the BROWSER-DIRECT call. The proxied call goes to the api,
+// which then calls the token endpoint itself: a proof made here would name the
+// api's URL as its htu and be refused, and one naming the token endpoint would be
+// a proof for a request this browser is not making. Forwarding proofs through the
+// api is not implemented, so the pane says so instead of sending something that
+// cannot work.
+// ---------------------------------------------------------------------------
+function dpopTokenRequestHeaders(tokenEndpoint) {
+  log.debug("Entering dpopTokenRequestHeaders().");
+  var context = null;
+  try {
+    context = sdJwtVc.dpopContext();
+  } catch (e) {
+    // sd_jwt_vc's storage is unavailable (private mode, or storage disabled).
+    // A Bearer request is the right fallback and needs no headers.
+    log.debug("dpopTokenRequestHeaders(): no DPoP state is readable: " + e.message);
+    context = null;
+  }
+  if (!context) {
+    log.debug("Leaving dpopTokenRequestHeaders(). No DPoP context; a Bearer request.");
+    return Promise.resolve({});
+  }
+  return vciWallet.dpopHeadersFor({
+    context: context, method: "POST", url: tokenEndpoint
+    // No accessToken: this request is how one is obtained.
+  }).then(function (built) {
+    log.debug("Leaving dpopTokenRequestHeaders(). A DPoP proof was built.");
+    return built.headers;
+  }).catch(function (e) {
+    // A proof that cannot be built must not silently become a Bearer request:
+    // the token would come back unbound and the workflow would carry on as if it
+    // were bound. Reported and then sent without, which the step 2 pane will show
+    // as "NOT bound".
+    log.error("could not build a DPoP proof for the token request: " + e.message);
+    return {};
+  });
 }
 
 function buildInternalTokenAPIRequestMessage() {
@@ -264,6 +335,13 @@ function successfulInternalTokenAPICall(data, textStatus, request)
           + ", request=" 
           + JSON.stringify(request));
   var token_endpoint_result_html = "";
+  // What the server said about the binding. Recorded rather than inferred,
+  // because asking for a DPoP-bound token does not make one: a server that
+  // ignored the proof answers Bearer, and the VC workflow's DPoP pane reports
+  // that difference.
+  if (!!data.token_type) {
+    localStorage.setItem(sdJwtVc.KEYS.DPOP_TOKEN_TYPE, DOMPurify.sanitize(String(data.token_type)));
+  }
   if (!!data.refresh_token && 
       data.refresh_token != 'undefined') {
     currentRefreshToken = DOMPurify.sanitize(data.refresh_token);

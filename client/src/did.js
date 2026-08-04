@@ -926,6 +926,109 @@ function verifyOriginLinkage(origin, wantedDid, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// The DID Configuration members the Configuration Parameters pane shows, in the
+// same shape op_metadata.js, vci_metadata.js and DID_METADATA use so one row
+// builder renders them all. Ids and storage keys are prefixed "didcfg_".
+//
+// The resource itself has only two members, so a section listing just those would
+// say very little. The rest are DERIVED from the credential it carries — the DID it
+// links, the origin it claims, which of the two forms it is in, its validity window
+// and the verification method its signature names — because those are the facts a
+// reader has come to this pane for, and every one of them is buried inside a JWT
+// that a table of two members would show as one unreadable line.
+//
+// Marked as derived in their descriptions rather than being hidden: this pane is
+// editable like the others, and someone changing `linked_dids` by hand should be able
+// to see that the fields below came from it and will not change until it is applied
+// again.
+// ---------------------------------------------------------------------------
+var DID_CONFIGURATION_METADATA = [
+  { name: "@context", type: "string", dflt: DID_CONFIGURATION_CONTEXT,
+    desc: "REQUIRED. DIF Well Known DID Configuration: the resource's @context MUST be exactly \"" +
+          DID_CONFIGURATION_CONTEXT + "\". No other value is permitted, and no members beyond this " +
+          "and linked_dids." },
+  { name: "linked_dids", type: "json", dflt: "",
+    desc: "REQUIRED. The Domain Linkage Credentials this origin publishes, each either a JWT string " +
+          "or a credential object with an embedded proof. An origin may link more than one DID." },
+  { name: "linked_did", type: "string", dflt: "",
+    desc: "Derived from linked_dids: the DID this origin claims to be the same entity as. It is both " +
+          "the issuer and the subject of the credential — a domain linkage is self-issued, because " +
+          "nobody but the DID's controller can say which origin it controls." },
+  { name: "origin", type: "string", dflt: "",
+    desc: "Derived: the origin the credential names (credentialSubject.origin). A verifier MUST " +
+          "check this against the origin it fetched the resource from; if they differ the credential " +
+          "belongs to a different site." },
+  { name: "credential_form", type: "string", dflt: "",
+    desc: "Derived: JWT or Linked Data Proof. The specification allows either. The JWT form is the " +
+          "one where the header MUST NOT carry typ and the payload permits nothing beyond " +
+          "iss/sub/nbf/exp/vc — both things a JWT library adds unless told not to." },
+  { name: "verification_method", type: "string", dflt: "",
+    desc: "Derived: the kid the signature names, which is the verification method in the DID's own " +
+          "document that a verifier resolves to check it." },
+  { name: "valid_from", type: "string", dflt: "",
+    desc: "Derived from the credential's issuanceDate (nbf in the JWT form)." },
+  { name: "valid_until", type: "string", dflt: "",
+    desc: "Derived from expirationDate (exp in the JWT form). The specification requires one: a " +
+          "linkage with no expiry asks a verifier to trust it indefinitely." }
+];
+
+var DID_CONFIGURATION_PREFIX = "didcfg_";
+function didConfigurationIdFor(name) { return DID_CONFIGURATION_PREFIX + name; }
+
+// The derived facts above, read off a resource. Returns the same member names so the
+// pane can populate its fields without knowing which are derived.
+//
+// It reads the FIRST credential, and says so: an origin may link several DIDs, and a
+// two-column table cannot show a set. The pane names how many were found; a reader
+// who needs another one has linked_dids in front of them.
+function didConfigurationDetails(resource) {
+  log.debug("Entering didConfigurationDetails().");
+  var out = { "@context": (resource || {})["@context"] || "", linked_dids: "",
+              linked_did: "", origin: "", credential_form: "", verification_method: "",
+              valid_from: "", valid_until: "" };
+  var entries = (resource && resource.linked_dids) || [];
+  if (!Array.isArray(entries) || !entries.length) {
+    log.debug("Leaving didConfigurationDetails(). No linked_dids.");
+    return out;
+  }
+  out.linked_dids = JSON.stringify(entries, null, 2);
+  var entry = entries[0];
+  var vc = null;
+  if (typeof entry === "string") {
+    out.credential_form = "JWT";
+    var parts = entry.split(".");
+    if (parts.length === 3) {
+      try {
+        var header = metadataClient.b64uToJson(parts[0]);
+        var claims = metadataClient.b64uToJson(parts[1]);
+        out.verification_method = header.kid || "";
+        vc = claims.vc || null;
+        // nbf/exp are the JWT's own form of the credential's dates; the vc claim
+        // carries them too, and the ISO strings read better in a field.
+        if (!vc || !vc.issuanceDate) out.valid_from = claims.nbf ? String(claims.nbf) : "";
+        if (!vc || !vc.expirationDate) out.valid_until = claims.exp ? String(claims.exp) : "";
+      } catch (e) {
+        // An undecodable entry is reported by the schema check; here it simply
+        // leaves the derived fields empty rather than throwing on a pane load.
+        log.debug("didConfigurationDetails(): the JWT form did not decode: " + e.message);
+      }
+    }
+  } else if (entry && typeof entry === "object") {
+    out.credential_form = "Linked Data Proof";
+    vc = entry;
+    out.verification_method = ((entry.proof || {}).verificationMethod) || "";
+  }
+  if (vc) {
+    out.linked_did = vc.issuer || ((vc.credentialSubject || {}).id) || "";
+    out.origin = (vc.credentialSubject || {}).origin || "";
+    if (vc.issuanceDate) out.valid_from = vc.issuanceDate;
+    if (vc.expirationDate) out.valid_until = vc.expirationDate;
+  }
+  log.debug("Leaving didConfigurationDetails(). form=" + out.credential_form);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // The DID Document members the Configuration Parameters pane shows and lets you
 // edit, in the same shape op_metadata.js and vci_metadata.js use so one row
 // builder renders all three. Ids and storage keys are prefixed "did_".
@@ -982,6 +1085,9 @@ module.exports = {
   verifyDomainLinkage: verifyDomainLinkage,
   verifyOriginLinkage: verifyOriginLinkage,
   DID_CONFIGURATION_PATH: DID_CONFIGURATION_PATH,
+  DID_CONFIGURATION_METADATA: DID_CONFIGURATION_METADATA,
+  didConfigurationIdFor: didConfigurationIdFor,
+  didConfigurationDetails: didConfigurationDetails,
   DID_CONFIGURATION_CONTEXT: DID_CONFIGURATION_CONTEXT,
   CODECS: CODECS,
   // Exported for tests/did_document.js only, which checks p and b against their

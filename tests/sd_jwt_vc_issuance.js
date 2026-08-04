@@ -174,7 +174,8 @@ async function stepOne(driver) {
   var coverage = await driver.executeScript(
     "return { rows: document.querySelectorAll('#config_rows tr').length," +
     "         fields: document.querySelectorAll('#config_rows input, #config_rows select').length," +
-    "         groups: document.querySelectorAll('#config_rows tr.vc-group-heading').length };");
+    "         groups: document.querySelectorAll(" +
+    "           '#config_rows tr.vc-group-heading, #config_rows .vc-config-group').length };");
   assert.ok(coverage.groups >= 4,
     "the Configuration Parameters pane should be grouped by document, got " + coverage.groups + " groups.");
   assert.ok(coverage.fields > 50,
@@ -1003,6 +1004,159 @@ async function stepFour(driver, context) {
 // geometric claim, so it is checked geometrically — every item on the same top
 // edge — rather than by looking at the CSS.
 // ---------------------------------------------------------------------------
+// The DID Configuration pane (DIF Well Known DID Configuration), modelled on the
+// authorization server pane: a URL, Retrieve, Upload, Clear, a table, the values
+// pushed into Configuration Parameters, and a schema report.
+//
+// What makes it worth a section of its own is that this document can be checked two
+// ways that do not imply each other, and the pane does both:
+//
+//   * the SCHEMA — is it well formed. Transcribed rules, covered exhaustively (and
+//     cheaply) by tests/metadata_schema_validation.js; here it is checked that the
+//     pane runs them and shows the result.
+//   * the LINKAGE — is it TRUE. Resolve the DID it names, verify the credential's
+//     signature against the keys that DID authorises to assert, and check the origin
+//     it claims is the origin it came from.
+//
+// The case that earns the section is a document that passes the first and fails the
+// second: perfectly well formed, retrieved from an origin it does not name. A pane
+// that ran only the schema check would call it good.
+// Save the whole of localStorage, and give back a function that puts it back.
+//
+// Sections that run AFTER the workflow and need a clean page to measure must
+// restore what they cleared: later sections run on the state the workflow left
+// behind, and presentationHandoff() in particular asserts that a credential is
+// still there to hand off. metadataSignatureValidation() and presentationHandoff()
+// already did this by hand; the two sections below share this one so they cannot
+// drift apart in how they do it.
+//
+// This is the convention for this file and it is not optional — clearing without
+// restoring fails a LATER section, several hundred lines away, with a message about
+// a missing credential that says nothing about who removed it.
+async function preservingLocalStorage(driver) {
+  log.debug("Entering preservingLocalStorage().");
+  var saved = await driver.executeScript(
+    "var out = {};" +
+    "for (var i = 0; i < localStorage.length; i++) { var k = localStorage.key(i); out[k] = localStorage.getItem(k); }" +
+    "return out;");
+  log.debug("Leaving preservingLocalStorage(). " + Object.keys(saved).length + " key(s) held.");
+  return async function () {
+    await driver.executeScript(
+      "localStorage.clear();" +
+      "var o = arguments[0];" +
+      "Object.keys(o).forEach(function (k) { localStorage.setItem(k, o[k]); });", saved);
+    log.debug("localStorage restored: " + Object.keys(saved).length + " key(s).");
+  };
+}
+
+async function didConfigurationPane(driver) {
+  log.info("=== The DID Configuration pane ===");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
+  // This section needs an empty pane to measure, and the sections after it need the
+  // credential the workflow issued. See preservingLocalStorage().
+  var restoreStorage = await preservingLocalStorage(driver);
+  await driver.executeScript("localStorage.clear();");
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
+
+  // The resource's path is fixed by the specification, so the pane should offer the
+  // URL once it knows the issuer's origin rather than asking for it.
+  await driver.executeScript(
+    "document.getElementById('vci_metadata_endpoint').value = arguments[0];",
+    issuerMetadataUrl);
+  await click(driver, By.id("vci_retrieve_button"));
+  await waitForStatus(driver, "vci_signed_metadata_status",
+    function (t) { return /^Retrieved/.test(t); }, "the credential issuer metadata did not load");
+  var offered = await value(driver, "didcfg_url");
+  assert.ok(/\/\.well-known\/did-configuration\.json$/.test(offered),
+    "retrieving the issuer metadata should offer the DID Configuration URL — its path is fixed by " +
+    'the specification, so only the origin was ever unknown. Got "' + offered + '".');
+
+  await click(driver, By.id("didcfg_retrieve_button"));
+  var loaded = await waitForStatus(driver, "didcfg_status",
+    function (t) { return /^Retrieved|^Could not/.test(t); }, "the DID Configuration did not load");
+  assert.ok(/^Retrieved a DID Configuration linking \d+ DID\(s\)/.test(loaded),
+    "the pane should say what it loaded and how many DIDs it links. Got: " + loaded);
+  var report = await driver.executeScript(
+    "return document.getElementById('didcfg_schema_report').textContent;");
+  assert.ok(/satisfies every rule/.test(report),
+    "and the STS's own document should satisfy every rule the specification states. Got: " +
+    report.slice(0, 200));
+
+  // The new Configuration Parameters section: the resource's two members plus the
+  // facts derived from the credential, which are otherwise buried in a JWT.
+  var expected = {
+    "didcfg_@context": /^https:\/\/identity\.foundation\/\.well-known\/did-configuration\/v1$/,
+    didcfg_linked_did: /^did:web:/,
+    didcfg_origin: /^https?:\/\//,
+    didcfg_credential_form: /^JWT$|^Linked Data Proof$/,
+    didcfg_verification_method: /#/,
+    didcfg_valid_from: /\d{4}-\d\d-\d\d|^\d+$/,
+    didcfg_valid_until: /\d{4}-\d\d-\d\d|^\d+$/
+  };
+  for (var id of Object.keys(expected)) {
+    var v = await value(driver, id);
+    assert.ok(expected[id].test(String(v || "")),
+      "the DID Configuration section of Configuration Parameters should carry " + id + "; got " +
+      JSON.stringify(v));
+  }
+  assert.ok(String(await value(driver, "didcfg_linked_dids") || "").indexOf("[") === 0,
+    "and linked_dids itself, as the JSON the resource carries.");
+  log.info("[didcfg] OK — retrieved, schema-checked, and the Configuration section populated.");
+
+  // The linkage: the check the schema cannot make.
+  await click(driver, By.id("didcfg_verify_button"));
+  var linked = await waitForStatus(driver, "didcfg_status",
+    function (t) { return /^LINKED|^NOT LINKED|^The linkage/.test(t); },
+    "Verify Linkage produced no verdict");
+  assert.ok(/^LINKED:/.test(linked),
+    "the STS publishes a Domain Linkage Credential for its own DID at its own origin, so this must " +
+    "come back linked. Got: " + linked);
+  var checks = await driver.executeScript(
+    "return document.getElementById('didcfg_verify_table').textContent;");
+  assert.ok(/Issuer signature/.test(checks) && /Origin/.test(checks),
+    "and the per-check table should show which checks passed, not just a verdict.");
+  log.info("[didcfg] OK — the linkage verifies, check by check.");
+
+  // Well formed, and not true: the same document read from an origin it does not
+  // name. This is the pair of checks doing different work.
+  //
+  // The wrong origin is http rather than https ON PURPOSE. This pane derives the
+  // scheme for resolving the linked did:web from the origin it is checking against
+  // — did:web mandates https and this project's stacks do not have it — so an https
+  // origin here would make the DID resolve over https to a plain-HTTP STS, fail
+  // with ERR_SSL_PROTOCOL_ERROR, and be counted by severeErrors() as a browser
+  // error that fails the whole run. The scheme is not what this case is about: the
+  // ORIGIN MISMATCH is, and an http origin exercises exactly that.
+  await driver.executeScript(
+    "document.getElementById('didcfg_url').value = 'http://somewhere.else.example" +
+    "/.well-known/did-configuration.json';");
+  await click(driver, By.id("didcfg_verify_button"));
+  var wrong = await waitForStatus(driver, "didcfg_status",
+    function (t) { return /^LINKED|^NOT LINKED|^The linkage/.test(t); },
+    "no verdict for the wrong-origin case");
+  assert.ok(/^NOT LINKED/.test(wrong),
+    "a document is not linked to an origin it does not name, however well formed it is — this is the " +
+    "case a schema check alone would pass. Got: " + wrong);
+  var stillClean = await driver.executeScript(
+    "return document.getElementById('didcfg_schema_report').textContent;");
+  assert.ok(/satisfies every rule/.test(stillClean),
+    "and the schema verdict should still say the document is well formed: the two checks answer " +
+    "different questions and must not be conflated.");
+  log.info("[didcfg] OK — a well-formed document read from the wrong origin is NOT linked.");
+
+  await click(driver, By.id("didcfg_clear_button"));
+  await driver.sleep(300);
+  assert.strictEqual(await value(driver, "didcfg_linked_did"), "",
+    "Clear should empty the Configuration section it populated.");
+  assert.strictEqual(await value(driver, "didcfg_url"), "",
+    "and the URL field.");
+  log.info("[didcfg] OK — Clear empties the pane and its Configuration section.");
+
+  await restoreStorage();
+}
+
 // Step 0 is a CHOOSER, and a chooser that scrolls cannot do its job: you cannot
 // compare four options by scrolling between them. So everything it offers — the four
 // use-case cards, the selected-use-case line, and the VC Tools pane at the foot —
@@ -1022,6 +1176,159 @@ async function stepFour(driver, context) {
 // The FOOTER is deliberately not included: it is 200px of shared site furniture on
 // every page in the project, and requiring it above the fold would be a constraint on
 // the footer rather than on this page.
+// ---------------------------------------------------------------------------
+// Step 1's metadata panes sit FOUR ACROSS in one row, and the row's height must not
+// depend on what has been retrieved into it.
+//
+// The row is what makes the page usable without scrolling: stacked full-width, its
+// four discovery panes spent 1,234px on content that fits in a quarter of the width.
+// But a quarter of the width wraps every value over several lines, and a row is as
+// tall as its tallest pane — the credential issuer metadata document measured
+// 23,299px in a 287px pane against roughly 4,000 at full width, so ONE retrieved
+// document made the page TEN TIMES longer than the layout the row replaced. That is
+// the failure this section exists for, and it is invisible on an empty page: every
+// geometry check here passed before the ceiling was added, because nothing had been
+// retrieved yet. So the panes are filled first and measured second.
+//
+// Checked, in order of what has actually gone wrong:
+//   * the four panes are on ONE row at a desktop width (a fold means the grid's
+//     minmax no longer fits, and the page silently doubles in height)
+//   * with all four documents loaded, each pane still CONTAINS its table, and the
+//     row is bounded — the assertion the ceiling exists for
+//   * no member name in the Configuration Parameters columns overlaps its input.
+//     At a third of the width a 40-character identifier with no break opportunity
+//     ran straight over the field beside it and BOTH were unreadable, which no
+//     height or containment check can see.
+async function stepOneFitsInOneRow(driver) {
+  log.debug("Entering stepOneFitsInOneRow().");
+  log.info("=== Step 1's metadata panes, four across, bounded ===");
+  var before = await driver.manage().window().getRect();
+  await driver.manage().window().setRect({ width: 1512, height: 982 });
+  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
+  // Measured empty first and populated second, so the workflow's own state has to be
+  // put back before the sections that need it. See preservingLocalStorage().
+  var restoreStorage = await preservingLocalStorage(driver);
+  await driver.executeScript("localStorage.clear();");
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
+  await driver.sleep(300);
+
+  var MEASURE =
+    "var ids = ['pane_vci','pane_did','pane_as','pane_didcfg'];" +
+    "var doc = document.documentElement;" +
+    "var row = document.querySelector('.vc-pane-row');" +
+    "var tops = [], panes = [];" +
+    "ids.forEach(function (id) {" +
+    "  var p = document.getElementById(id), pr = p.getBoundingClientRect();" +
+    "  var top = Math.round(pr.top + window.scrollY);" +
+    "  if (tops.indexOf(top) === -1) tops.push(top);" +
+    "  var over = 0, tables = 0;" +
+    "  Array.prototype.slice.call(p.querySelectorAll('*')).forEach(function (el) {" +
+    "    var r = el.getBoundingClientRect();" +
+    "    if (r.width) over = Math.max(over, Math.round(r.right - pr.right));" +
+    "  });" +
+    "  Array.prototype.slice.call(p.querySelectorAll('.discovery_info_table table'))" +
+    "    .forEach(function () { tables++; });" +
+    "  panes.push({ id: id, w: Math.round(pr.width), h: Math.round(pr.height)," +
+    "               over: over, tables: tables });" +
+    "});" +
+    "return { panes: panes, lines: tops.length," +
+    "         rowHeight: Math.round(row.getBoundingClientRect().height)," +
+    "         sideways: doc.scrollWidth > doc.clientWidth + 2 };";
+
+  var empty = await driver.executeScript(MEASURE);
+  assert.strictEqual(empty.lines, 1,
+    "step 1's four metadata panes should be on ONE row at 1512px — they are on " +
+    empty.lines + " lines, so the grid folded and the page is about " +
+    "1,200px taller than it needs to be. Widths: " +
+    empty.panes.map(function (p) { return p.id + "=" + p.w; }).join(", "));
+  assert.strictEqual(empty.sideways, false,
+    "and the row must not have bought that height with sideways scroll.");
+
+  // Now fill all four, which is the state the ceiling exists for.
+  await driver.executeScript(
+    "document.getElementById('vci_metadata_endpoint').value = arguments[0];",
+    issuerMetadataUrl);
+  await click(driver, By.id("vci_retrieve_button"));
+  await waitForStatus(driver, "vci_signed_metadata_status",
+    function (t) { return /^Retrieved/.test(t); }, "the credential issuer metadata did not load");
+  await click(driver, By.id("didcfg_retrieve_button"));
+  await waitForStatus(driver, "didcfg_status",
+    function (t) { return /^Retrieved|^Could not/.test(t); }, "the DID Configuration did not load");
+  var didOrigin = issuerMetadataUrl.replace(/\/\.well-known\/.*$/, "");
+  await driver.executeScript(
+    "document.getElementById('did_resolution_url').value = arguments[0];",
+    didOrigin + "/.well-known/did.json");
+  await click(driver, By.id("did_retrieve_button"));
+  await waitForStatus(driver, "did_status",
+    function (t) { return /^Retrieved|^Could not|^That/.test(t); }, "the DID document did not load");
+
+  var full = await driver.executeScript(MEASURE);
+  var loaded = full.panes.filter(function (p) { return p.tables > 0; });
+  assert.ok(loaded.length >= 3,
+    "this section proves nothing unless the panes actually hold documents: only " +
+    loaded.length + " of 4 rendered a table. " +
+    full.panes.map(function (p) { return p.id + "=" + p.tables; }).join(", "));
+  full.panes.forEach(function (p) {
+    assert.ok(p.over <= 2,
+      p.id + " lets its content out of the pane by " + p.over + "px once a document is " +
+      "loaded. At a quarter of the width the values are base64url and long member names, " +
+      "so a table that is not table-layout: fixed sizes itself to its longest line.");
+  });
+  assert.strictEqual(full.lines, 1,
+    "and the four panes must STAY on one row once they hold documents; they are on " +
+    full.lines + " lines.");
+  assert.ok(full.rowHeight <= 1100,
+    "the row is " + full.rowHeight + "px tall with all four documents loaded. Each pane's " +
+    "retrieved-document table is meant to be bounded and scrolled, because the row is as " +
+    "tall as its tallest pane: unbounded, the credential issuer metadata alone measured " +
+    "23,299px here and the page came to 25,846px — ten times the stacked layout this row " +
+    "replaced. The readable full-width rendering of the same values is the Configuration " +
+    "Parameters pane below.");
+
+  // The Configuration Parameters columns: a name must not sit on top of its value.
+  var overlap = await driver.executeScript(
+    "var bad = [];" +
+    "Array.prototype.slice.call(document.querySelectorAll('#config_rows tr')).forEach(function (tr) {" +
+    "  var td = tr.children[0];" +
+    "  var field = tr.querySelector('input, textarea, select');" +
+    "  if (!td || !field) return;" +
+    "  var b = field.getBoundingClientRect();" +
+    "  if (!b.width) return;" +
+    "  var range = document.createRange();" +
+    "  range.selectNodeContents(td);" +
+    "  var a = range.getBoundingClientRect();" +
+    "  range.detach();" +
+    "  if (!a.width) return;" +
+    "  if (a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1) {" +
+    "    bad.push(td.textContent.trim().slice(0, 48) + ' (over by ' +" +
+    "             Math.round(a.right - b.left) + 'px)');" +
+    "  }" +
+    "});" +
+    "return { bad: bad, rows: document.querySelectorAll('#config_rows tr').length," +
+    "         columns: document.querySelectorAll('#config_rows .vc-config-group').length };");
+  assert.ok(overlap.rows > 40,
+    "the Configuration Parameters pane should have been built by now; it has " +
+    overlap.rows + " rows.");
+  assert.ok(overlap.columns >= 5,
+    "and it should be grouped by document — found " + overlap.columns + " groups.");
+  assert.deepStrictEqual(overlap.bad, [],
+    "these member names are drawn on top of their own input in the Configuration " +
+    "Parameters columns: " + overlap.bad.join(", ") + ". A long identifier with no break " +
+    "opportunity has to WRAP in a third of the width; without that both the name and the " +
+    "value are unreadable, and nothing about the page's height or containment shows it.");
+
+  log.info("[step 1] OK — four panes on one row (" + full.panes[0].w + "px each), row " +
+           full.rowHeight + "px tall with " + loaded.length + " documents loaded, " +
+           overlap.rows + " configuration rows in " + overlap.columns +
+           " groups with no name over its value.");
+
+  await restoreStorage();
+  await driver.manage().window().setRect({ width: before.width, height: before.height });
+  log.debug("Leaving stepOneFitsInOneRow().");
+}
+
 async function chooserFitsOnOneScreen(driver) {
   log.debug("Entering chooserFitsOnOneScreen().");
   log.info("=== Step 0 fits on one screen ===");
@@ -3476,6 +3783,8 @@ async function test() {
     await panesContainTheirContent(driver);
     await stepLinksOnEveryPage(driver);
     await chooserFitsOnOneScreen(driver);
+    await stepOneFitsInOneRow(driver);
+    await didConfigurationPane(driver);
 
     var errors = await severeErrors(driver);
     assert.strictEqual(errors.length, 0,

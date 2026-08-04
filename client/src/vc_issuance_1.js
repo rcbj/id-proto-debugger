@@ -138,14 +138,34 @@ function fieldRow(id, label, desc, type) {
          '</tr>';
 }
 
+// One GROUP of the Configuration Parameters pane. Closing the previous group's table
+// and opening the next is what turns a single 3,988px table into blocks that can sit
+// side by side — nothing about a group depends on being in the same table as its
+// neighbours, and the pane was that tall only because they were.
+//
+// `first` suppresses the closing tags before the first group, so the caller does not
+// have to special-case it.
+var configGroupOpen = false;
 function groupRow(title, subtitle) {
-  return '<tr class="vc-group-heading"><td colspan="2">' + esc(title) +
-         (subtitle ? ' <span>' + esc(subtitle) + '</span>' : '') + '</td></tr>';
+  var out = configGroupOpen ? "</tbody></table></div>" : "";
+  configGroupOpen = true;
+  return out +
+    '<div class="vc-config-group">' +
+    '<h4 class="vc-group-heading">' + esc(title) +
+    (subtitle ? ' <span>' + esc(subtitle) + '</span>' : '') + "</h4>" +
+    '<table class="vc-config-table" border="0"><tbody>';
+}
+
+function closeConfigGroups() {
+  var out = configGroupOpen ? "</tbody></table></div>" : "";
+  configGroupOpen = false;
+  return out;
 }
 
 function buildConfigRows() {
   log.debug("Entering buildConfigRows().");
   var html = "";
+  configGroupOpen = false;
 
   html += groupRow("OAuth 2.0 client", "used by the authorization request in step 2");
   CLIENT_FIELDS.forEach(function (f) { html += fieldRow(f.name, f.name, f.desc); });
@@ -188,6 +208,15 @@ function buildConfigRows() {
     html += fieldRow(didLib.idFor(m.name), m.name, m.desc, m.type);
   });
 
+  // The DID Configuration sits directly after the DID document, because it is what
+  // makes that document worth anything: the document says which keys a DID has, and
+  // this says why the DID should be believed to be this issuer at all.
+  html += groupRow("DID Configuration",
+                   "DIF Well Known DID Configuration \u2014 the origin's claim on the DID above");
+  didLib.DID_CONFIGURATION_METADATA.forEach(function (m) {
+    html += fieldRow(didLib.didConfigurationIdFor(m.name), m.name, m.desc, m.type);
+  });
+
   html += groupRow("Credential configuration", "the chosen entry of credential_configurations_supported");
   // The chooser sits at the head of the fields it FILLS IN, not up in the
   // metadata pane. Every field below is one of these hard-to-guess values —
@@ -207,6 +236,8 @@ function buildConfigRows() {
   vciMetadata.VCI_CONFIG_METADATA.forEach(function (m) {
     html += fieldRow(vciMetadata.idFor(m.name), m.name, m.desc, m.type);
   });
+
+  html += closeConfigGroups();
 
   var body = el("config_rows");
   if (body) body.innerHTML = html;
@@ -231,6 +262,11 @@ function loadConfiguration() {
   didLib.DID_METADATA.forEach(function (m) {
     var v = sdJwtVc.get(didLib.idFor(m.name));
     if (v !== null && v !== undefined) setVal(didLib.idFor(m.name), v);
+  });
+  didLib.DID_CONFIGURATION_METADATA.forEach(function (m) {
+    var id = didLib.didConfigurationIdFor(m.name);
+    var v = sdJwtVc.get(id);
+    if (v !== null && v !== undefined) setVal(id, v);
   });
   setVal(DID_ID_KEY, sdJwtVc.get(DID_ID_KEY) || "");
   renderDidEnabled();
@@ -448,6 +484,7 @@ function applyVciDocument(doc, provenance, verb) {
   // hand-edit, or after choosing another credential).
   var used = populateFromVciDocument();
   offerAdvertisedIssuerDid();
+  defaultDidConfigurationUrl();
   status("vci_signed_metadata_status",
     (verb || "Loaded") + " " + Object.keys(vciInfo).length + " members; " +
     Object.keys(vciInfo.credential_configurations_supported || {}).length +
@@ -1291,6 +1328,20 @@ function onload() {
     renderAsTable();
     opMetadata.applyNotes(asInfo);
   }
+  // The DID Configuration too, with its schema verdict — a pane that showed the
+  // table but not the verdict would look as though the document had never been
+  // checked. The linkage verdict is NOT restored: it depends on resolving a DID over
+  // the network, and a remembered "LINKED" would be a claim about a fetch that may
+  // no longer be true.
+  didcfgInfo = DIDCFG_STORE.read() || {};
+  if (Object.keys(didcfgInfo).length) {
+    renderDidcfgTable();
+    renderSchemaReport("didcfg_schema_report",
+                       metadataSchema.validateDidConfiguration(didcfgInfo),
+                       metadataSchema.DIDCFG_SPEC);
+  }
+  setVal(DIDCFG_URL_KEY, sdJwtVc.get(DIDCFG_URL_KEY) || "");
+  defaultDidConfigurationUrl();
 
   var step = document.getElementById("vc_step_1");
   if (step) step.className = "vc-step-current";
@@ -1311,6 +1362,214 @@ if (typeof window !== "undefined") {
   window.addEventListener("load", onload);
 }
 
+
+// ---------------------------------------------------------------------------
+// The DID Configuration pane (DIF Well Known DID Configuration).
+//
+// Modelled on the authorization server pane above — a URL, Retrieve, Upload, Clear,
+// a table of what came back, the values pushed into Configuration Parameters, and a
+// schema report — because it is the same job on a third document and a reader should
+// not have to learn a third set of controls.
+//
+// It differs in one way that is not cosmetic. The other two panes can only check a
+// document's SHAPE; this one can also check whether it is TRUE. A DID Configuration
+// exists to assert that an origin and a DID are the same entity, and that assertion
+// is verifiable: resolve the DID independently, check the credential's signature
+// against the keys it authorises to assert, and check the origin it names is the one
+// it came from. So the pane has both — a schema report saying whether the document is
+// well formed, and Verify Linkage saying whether it is honest. A document can pass
+// either and fail the other.
+// ---------------------------------------------------------------------------
+var DIDCFG_URL_KEY = "didcfg_url";
+var DIDCFG_DOC_LABEL = "DIF Well Known DID Configuration";
+var DIDCFG_STORE = metadataClient.createStore("didcfg_info", "didcfg_source");
+var didcfgInfo = {};
+var didcfgStored = true;
+
+function renderDidcfgTable() {
+  var host = el("didcfg_metadata_table");
+  if (!host) return;
+  host.innerHTML = Object.keys(didcfgInfo).length
+    ? metadataClient.buildInfoTable(didcfgInfo, DIDCFG_STORE.readProvenance())
+    : "";
+}
+
+// The document's own two members, plus the facts derived from the credential it
+// carries. did.js does the deriving, so this pane and the DID Tools page cannot
+// disagree about what a linkage says.
+function populateFromDidConfiguration() {
+  log.debug("Entering populateFromDidConfiguration().");
+  var details = didLib.didConfigurationDetails(didcfgInfo);
+  didLib.DID_CONFIGURATION_METADATA.forEach(function (m) {
+    var id = didLib.didConfigurationIdFor(m.name);
+    var v = details[m.name];
+    var shown = (v === undefined || v === null) ? ""
+      : (typeof v === "string" ? v : JSON.stringify(v, null, 2));
+    setVal(id, shown);
+    sdJwtVc.set(id, shown);
+    // "not defined" is about the RESOURCE, not about the derived reading: a missing
+    // origin is the document's omission, and marking it says so.
+    opMetadata.markNotDefined(id, !shown);
+  });
+  log.debug("Leaving populateFromDidConfiguration().");
+}
+
+function applyDidConfigurationDocument(doc, provenance, verb) {
+  log.debug("Entering applyDidConfigurationDocument().");
+  didcfgInfo = doc || {};
+  didcfgStored = DIDCFG_STORE.save(didcfgInfo, provenance);
+  renderDidcfgTable();
+  populateFromDidConfiguration();
+  var check = metadataSchema.validateDidConfiguration(didcfgInfo);
+  renderSchemaReport("didcfg_schema_report", check, metadataSchema.DIDCFG_SPEC);
+  var linked = (didcfgInfo.linked_dids || []).length;
+  status("didcfg_status",
+    (verb || "Loaded") + " a DID Configuration linking " + linked + " DID(s), and populated the DID " +
+    "Configuration section of Configuration Parameters. " +
+    metadataSchema.summarize(check, "Schema check") +
+    " Press Verify Linkage to check the signature and the origin, which the schema cannot." +
+    notStoredNote(didcfgStored),
+    check.errors.length ? "vc-bad" : (check.warnings.length ? "vc-pending" : "vc-ok"));
+  log.debug("Leaving applyDidConfigurationDocument(). " + linked + " linked DID(s).");
+}
+
+// The resource's location is fixed by the specification, so the field is offered
+// rather than demanded: the origin comes from the credential issuer this browser
+// discovered, and the path is the one the spec names.
+function defaultDidConfigurationUrl() {
+  log.debug("Entering defaultDidConfigurationUrl().");
+  if ((val(DIDCFG_URL_KEY) || "").trim()) {
+    log.debug("Leaving defaultDidConfigurationUrl(). A URL is already there.");
+    return;
+  }
+  var issuer = (vciInfo || {}).credential_issuer ||
+               sdJwtVc.get(vciMetadata.idFor("credential_issuer")) || "";
+  if (!issuer) {
+    log.debug("Leaving defaultDidConfigurationUrl(). No issuer to derive an origin from.");
+    return;
+  }
+  var url = "";
+  try {
+    url = didLib.didConfigurationUrl(new URL(issuer).origin);
+  } catch (e) {
+    // Not a URL, so it has no origin. The field stays empty and the user types one.
+    log.debug("defaultDidConfigurationUrl(): the credential issuer is not a URL.");
+    return;
+  }
+  setVal(DIDCFG_URL_KEY, url);
+  sdJwtVc.set(DIDCFG_URL_KEY, url);
+  log.debug("Leaving defaultDidConfigurationUrl(). Offered " + url);
+}
+
+function retrieveDidConfiguration() {
+  log.debug("Entering retrieveDidConfiguration().");
+  var url = (val(DIDCFG_URL_KEY) || "").trim();
+  sdJwtVc.set(DIDCFG_URL_KEY, url);
+  if (!isUrl(url)) {
+    status("didcfg_status", "That is not a valid URL. The resource lives at " +
+      didLib.DID_CONFIGURATION_PATH + " at an origin's root.", "vc-bad");
+    return false;
+  }
+  status("didcfg_status", "Retrieving " + url + " …", "vc-pending");
+  log.debug("Leaving retrieveDidConfiguration().");
+  return metadataClient.fetchJson(url)
+    .then(function (doc) {
+      applyDidConfigurationDocument(doc, { docLabel: DIDCFG_DOC_LABEL, url: url }, "Retrieved");
+    })
+    .catch(function (e) {
+      status("didcfg_status", "Could not retrieve the resource: " + e.message +
+        (/Failed to fetch|NetworkError|CORS/i.test(e.message)
+          ? " An origin that sends no CORS headers cannot be read by a browser however right the URL " +
+            "is — fetch it with curl and use Upload instead."
+          : ""), "vc-bad");
+    });
+}
+
+function uploadDidConfiguration() {
+  var f = el("didcfg_file");
+  if (f) f.click();
+  return false;
+}
+
+function onDidConfigurationFileChange(evt) {
+  return readMetadataFile(evt, "didcfg_status", function (doc, name) {
+    applyDidConfigurationDocument(doc, { docLabel: DIDCFG_DOC_LABEL, file: name },
+                                  "Loaded");
+  });
+}
+
+function clearDidConfiguration() {
+  log.debug("Entering clearDidConfiguration().");
+  didcfgInfo = {};
+  DIDCFG_STORE.forget();
+  if (el("didcfg_metadata_table")) el("didcfg_metadata_table").innerHTML = "";
+  if (el("didcfg_schema_report")) el("didcfg_schema_report").innerHTML = "";
+  if (el("didcfg_verify_table")) el("didcfg_verify_table").innerHTML = "";
+  setVal(DIDCFG_URL_KEY, "");
+  sdJwtVc.set(DIDCFG_URL_KEY, "");
+  didLib.DID_CONFIGURATION_METADATA.forEach(function (m) {
+    var id = didLib.didConfigurationIdFor(m.name);
+    setVal(id, "");
+    sdJwtVc.set(id, "");
+  });
+  status("didcfg_status", "Cleared.", "vc-ok");
+  log.debug("Leaving clearDidConfiguration().");
+  return false;
+}
+
+// The check the schema cannot make. Verified against the origin the resource was
+// FETCHED FROM, not the origin the credential names — comparing the credential with
+// itself would pass for any document.
+function verifyLoadedDidConfiguration() {
+  log.debug("Entering verifyLoadedDidConfiguration().");
+  if (!Object.keys(didcfgInfo).length) {
+    status("didcfg_status", "Retrieve or upload a DID Configuration first.", "vc-bad");
+    return false;
+  }
+  var url = (val(DIDCFG_URL_KEY) || "").trim();
+  var origin = "";
+  try {
+    origin = new URL(url).origin;
+  } catch (e) {
+    status("didcfg_status", "The Document URL is not a URL, so there is no origin to check this " +
+      "linkage against. A linkage is a claim about one origin, and it has to be the origin the " +
+      "resource came from.", "vc-bad");
+    return false;
+  }
+  var host = el("didcfg_verify_table");
+  if (host) host.innerHTML = "";
+  status("didcfg_status", "Verifying the linkage against " + origin + " …", "vc-pending");
+  var allowHttp = /^http:/.test(origin);
+  var entries = didcfgInfo.linked_dids || [];
+  return Promise.all(entries.map(function (entry) {
+    return didLib.verifyDomainLinkage(entry, origin, { allowHttp: allowHttp });
+  })).then(function (results) {
+    var rows = results.map(function (r) {
+      var checks = r.checks.map(function (c) {
+        return '<span class="' + (c.ok ? "vc-ok" : "vc-bad") + '">' + (c.ok ? "OK" : "FAILED") +
+               "</span> " + esc(c.name + " — " + c.detail);
+      }).join("<br />");
+      return "<tr><td>" + esc(r.did || "(no DID)") + "<br /><span class=\"" +
+             (r.valid ? "vc-ok" : "vc-bad") + "\">" + (r.valid ? "verified" : "not verified") +
+             "</span></td><td>" + checks + "</td></tr>";
+    }).join("");
+    if (host) {
+      host.innerHTML = "<table border='2' style='border:2px;'>" +
+        "<tr><td><strong>Linked DID</strong></td><td><strong>Checks</strong></td></tr>" +
+        rows + "</table>";
+    }
+    var good = results.filter(function (r) { return r.valid; }).length;
+    status("didcfg_status", good
+      ? "LINKED: " + good + " of " + results.length + " credential(s) verify, so " + origin +
+        " and the DID(s) they name are the same entity."
+      : "NOT LINKED: none of the " + results.length + " credential(s) verify against " + origin +
+        ". See the checks below — a document can be perfectly well formed and still not be true.",
+      good ? "vc-ok" : "vc-bad");
+    log.debug("Leaving verifyLoadedDidConfiguration(). " + good + "/" + results.length + " verified.");
+  }).catch(function (e) {
+    status("didcfg_status", "The linkage could not be checked: " + e.message, "vc-bad");
+  });
+}
 
 // ---------------------------------------------------------------------------
 // The DID pane (W3C DID Core 1.0).
@@ -1794,6 +2053,11 @@ function verifyDomainLinkage() {
 }
 
 module.exports = {
+  retrieveDidConfiguration: retrieveDidConfiguration,
+  uploadDidConfiguration: uploadDidConfiguration,
+  onDidConfigurationFileChange: onDidConfigurationFileChange,
+  clearDidConfiguration: clearDidConfiguration,
+  verifyLoadedDidConfiguration: verifyLoadedDidConfiguration,
   resolveDid: resolveDid,
   retrieveDidDocument: retrieveDidDocument,
   uploadDidDocument: uploadDidDocument,

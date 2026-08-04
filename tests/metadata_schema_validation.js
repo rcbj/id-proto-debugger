@@ -304,6 +304,152 @@ var AS_NEGATIVES = [
     break: function (d) { delete d.scopes_supported; } }
 ];
 
+// ---------------------------------------------------------------------------
+// DIF Well Known DID Configuration.
+//
+// A third document with a schema worth checking, and the one whose rules are most
+// easily broken by accident: the resource permits NO members beyond two, and in the
+// JWT form the header MUST NOT carry `typ` while the payload permits nothing beyond
+// iss/sub/nbf/exp/vc — both of which a JWT library adds for you unless told
+// otherwise. A document with either is well formed to the eye and refused by a
+// conforming verifier.
+// ---------------------------------------------------------------------------
+var DIDCFG_CONTEXT = "https://identity.foundation/.well-known/did-configuration/v1";
+var VC_V1 = "https://www.w3.org/2018/credentials/v1";
+var LINKED_DID = "did:web:issuer.example%3A8081";
+
+function b64u(obj) {
+  return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
+}
+
+// The credential, as the JWT form's `vc` claim.
+function validLinkageVc() {
+  return {
+    "@context": [VC_V1, DIDCFG_CONTEXT],
+    issuer: LINKED_DID,
+    issuanceDate: "2026-01-01T00:00:00Z",
+    expirationDate: "2027-01-01T00:00:00Z",
+    type: ["VerifiableCredential", "DomainLinkageCredential"],
+    credentialSubject: { id: LINKED_DID, origin: "https://issuer.example" }
+  };
+}
+
+// A conforming resource in the JWT form. The signature is a placeholder: this checks
+// the SCHEMA, and whether the signature verifies is did.js's job — tests/did_tools.js
+// and tests/vc_did.js cover that against a real one.
+function validDidConfiguration() {
+  var header = { alg: "RS256", kid: LINKED_DID + "#key-1" };
+  var claims = { iss: LINKED_DID, sub: LINKED_DID, nbf: 1767225600, exp: 1798761600,
+                 vc: validLinkageVc() };
+  return {
+    "@context": DIDCFG_CONTEXT,
+    linked_dids: [b64u(header) + "." + b64u(claims) + ".c2lnbmF0dXJl"]
+  };
+}
+
+// And in the Linked Data Proof form, which the specification equally allows.
+function validDidConfigurationLd() {
+  var vc = validLinkageVc();
+  vc.proof = { type: "JsonWebSignature2020", proofPurpose: "assertionMethod",
+               verificationMethod: LINKED_DID + "#key-1", created: "2026-01-01T00:00:00Z",
+               jws: "eyJ..placeholder" };
+  return { "@context": DIDCFG_CONTEXT, linked_dids: [vc] };
+}
+
+// Rewrite the JWT entry after mutating its header or claims.
+function rebuild(doc, mutate) {
+  var parts = doc.linked_dids[0].split(".");
+  var header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
+  var claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+  mutate(header, claims);
+  doc.linked_dids[0] = b64u(header) + "." + b64u(claims) + "." + parts[2];
+}
+
+var DIDCFG_NEGATIVES = [
+  { what: "@context is not the one value the specification fixes", kind: "error", member: "@context",
+    break: function (d) { d["@context"] = "https://example.com/v1"; } },
+  { what: "@context absent", kind: "error", member: "@context",
+    break: function (d) { delete d["@context"]; } },
+  { what: "linked_dids absent", kind: "error", member: "linked_dids",
+    break: function (d) { delete d.linked_dids; } },
+  { what: "linked_dids is not an array", kind: "error", member: "linked_dids",
+    break: function (d) { d.linked_dids = "a credential"; } },
+  { what: "linked_dids empty — legal, but the origin vouches for nothing", kind: "warning",
+    member: "linked_dids", break: function (d) { d.linked_dids = []; } },
+  { what: "a member the specification does not permit", kind: "error", member: "(document)",
+    break: function (d) { d.linked_did = LINKED_DID; } },
+  { what: "an entry that is neither a JWT nor a credential object", kind: "error",
+    member: "linked_dids[0]", break: function (d) { d.linked_dids = [42]; } },
+  { what: "a JWT entry that is not three parts", kind: "error", member: "linked_dids[0]",
+    break: function (d) { d.linked_dids = ["not.ajwt"]; } },
+  // The two a JWT library does for you.
+  { what: "typ in the JWT header, which MUST NOT be there", kind: "error",
+    member: "linked_dids[0].typ",
+    break: function (d) { rebuild(d, function (h) { h.typ = "JWT"; }); } },
+  { what: "iat in the payload, which is not among the permitted claims", kind: "error",
+    member: "linked_dids[0] claims",
+    break: function (d) { rebuild(d, function (h, c) { c.iat = 1767225600; }); } },
+  { what: "an extra JWT header member", kind: "error", member: "linked_dids[0] header",
+    break: function (d) { rebuild(d, function (h) { h.cty = "application/json"; }); } },
+  { what: "kid absent, so the signature names no verification method", kind: "error",
+    member: "linked_dids[0].kid",
+    break: function (d) { rebuild(d, function (h) { delete h.kid; }); } },
+  { what: "sub differs from iss, so it is not self-issued", kind: "error",
+    member: "linked_dids[0].sub",
+    break: function (d) { rebuild(d, function (h, c) { c.sub = "did:web:somebody.else"; }); } },
+  { what: "iss is not a DID", kind: "error", member: "linked_dids[0].iss",
+    break: function (d) { rebuild(d, function (h, c) { c.iss = "https://issuer.example"; }); } },
+  { what: "the vc claim absent", kind: "error", member: "linked_dids[0].vc",
+    break: function (d) { rebuild(d, function (h, c) { delete c.vc; }); } },
+  // The credential's own rules.
+  { what: "the credential @context missing the did-configuration context", kind: "error",
+    member: "linked_dids[0].vc.@context",
+    break: function (d) { rebuild(d, function (h, c) { c.vc["@context"] = [VC_V1]; }); } },
+  { what: "type missing DomainLinkageCredential", kind: "error", member: "linked_dids[0].vc.type",
+    break: function (d) { rebuild(d, function (h, c) { c.vc.type = ["VerifiableCredential"]; }); } },
+  { what: "an id at the credential root, which MUST NOT be present", kind: "error",
+    member: "linked_dids[0].vc.id",
+    break: function (d) { rebuild(d, function (h, c) { c.vc.id = "urn:uuid:no"; }); } },
+  { what: "credentialSubject.id differs from the issuer", kind: "error",
+    member: "linked_dids[0].vc.credentialSubject.id",
+    break: function (d) { rebuild(d, function (h, c) { c.vc.credentialSubject.id = "did:web:other"; }); } },
+  { what: "no origin, so the credential links nothing", kind: "error",
+    member: "linked_dids[0].vc.credentialSubject.origin",
+    break: function (d) { rebuild(d, function (h, c) { delete c.vc.credentialSubject.origin; }); } },
+  { what: "an origin carrying a path, which a verifier comparing origins will not match",
+    kind: "warning", member: "linked_dids[0].vc.credentialSubject.origin",
+    break: function (d) {
+      rebuild(d, function (h, c) { c.vc.credentialSubject.origin = "https://issuer.example/tenant"; });
+    } },
+  { what: "a proof inside the JWT's vc claim, where the JWS already IS the proof",
+    kind: "error", member: "linked_dids[0].vc.proof",
+    break: function (d) { rebuild(d, function (h, c) { c.vc.proof = {}; }); } },
+  { what: "no expirationDate — required, so an indefinite linkage is at least a warning",
+    kind: "warning", member: "linked_dids[0].vc.expirationDate",
+    break: function (d) { rebuild(d, function (h, c) { delete c.vc.expirationDate; }); } }
+];
+
+var DIDCFG_LD_NEGATIVES = [
+  { what: "the Linked Data form with no proof", kind: "error", member: "linked_dids[0].proof",
+    break: function (d) { delete d.linked_dids[0].proof; } },
+  { what: "the Linked Data form with an id at the root", kind: "error", member: "linked_dids[0].id",
+    break: function (d) { d.linked_dids[0].id = "urn:uuid:no"; } }
+];
+
+function didConfigurationFormsBothPass() {
+  log.info("=== DID Configuration: both forms the specification allows ===");
+  [["JWT", validDidConfiguration()], ["Linked Data Proof", validDidConfigurationLd()]]
+    .forEach(function (pair) {
+      var result = schema.validateDidConfiguration(pair[1]);
+      assert.deepStrictEqual(result.errors, [],
+        "a conforming " + pair[0] + "-form resource should report no errors: " +
+        JSON.stringify(result.errors));
+      assert.deepStrictEqual(result.warnings, [],
+        "and no warnings: " + JSON.stringify(result.warnings));
+    });
+  log.info("[valid] OK — both the JWT and the Linked Data Proof form pass clean.");
+}
+
 function runNegatives(label, makeValid, validate, cases) {
   log.debug("Entering runNegatives().");
   log.info("=== " + label + ": each rule, broken on purpose ===");
@@ -496,6 +642,11 @@ async function test() {
   minimalDocumentsPass();
   runNegatives("OpenID4VCI", validVci, schema.validateVciMetadata, VCI_NEGATIVES);
   runNegatives("RFC 8414", validAs, schema.validateAsMetadata, AS_NEGATIVES);
+  didConfigurationFormsBothPass();
+  runNegatives("DIF DID Configuration", validDidConfiguration,
+               schema.validateDidConfiguration, DIDCFG_NEGATIVES);
+  runNegatives("DIF DID Configuration (Linked Data form)", validDidConfigurationLd,
+               schema.validateDidConfiguration, DIDCFG_LD_NEGATIVES);
   nonObjectsAreRejected();
   plainHttpIsOneWarning();
   everyFindingCitesTheSpec();

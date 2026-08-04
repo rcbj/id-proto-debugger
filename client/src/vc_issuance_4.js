@@ -39,6 +39,7 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var vciWallet = require("./vci_wallet");
+var dpopLib = require("./dpop");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_4',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -618,6 +619,29 @@ function onRefreshScopeChange() {
   return true;
 }
 
+// The DPoP context for this page's calls (RFC 9449). Step 4 makes the same two
+// calls step 2 does — a Token Request and a Credential Request — so it needs the
+// same proofs, and a refresh token bound by RFC 9449 section 5 cannot be redeemed
+// without one at all.
+//
+// Unlike step 2 this page never GENERATES a DPoP key: if one is not in storage,
+// the wallet cannot prove possession of the key its tokens are bound to, and
+// minting a fresh key here would produce proofs for a key nothing is bound to.
+// Saying so is the useful answer.
+function dpopContext() {
+  if (!sdJwtVc.dpopEnabled()) return null;
+  return sdJwtVc.dpopContext();
+}
+
+function dpopProblem() {
+  if (!sdJwtVc.dpopEnabled()) return "";
+  if (sdJwtVc.dpopContext()) return "";
+  return "DPoP is on but this browser holds no DPoP key pair, so no proof can be made. A " +
+         "bound access or refresh token cannot be used without it — which is a " +
+         "sender-constrained token behaving exactly as intended. Go back to step 2 to " +
+         "generate a key and obtain a token bound to it.";
+}
+
 function sendRefreshRequest() {
   log.debug("Entering sendRefreshRequest().");
   var params = refreshParams();
@@ -630,21 +654,21 @@ function sendRefreshRequest() {
   var previousRefresh = params.refresh_token;
   disable("vc_refresh_button", true);
   status("vc_refresh_status", "Exchanging the refresh token for a fresh access token …", "vc-pending");
-  fetch(endpoint, {
+  vciWallet.fetchProtected({
+    url: endpoint,
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: vciWallet.encodeForm(params)
+    body: vciWallet.encodeForm(params),
+    context: dpopContext()
+    // No accessToken: a refresh request presents the REFRESH token in the body,
+    // not an access token in a header, so the proof carries no ath.
   })
-    .then(function (r) {
-      return r.text().then(function (text) {
-        var body = null;
-        try {
-          body = JSON.parse(text);
-        } catch (e) {
-          // Not JSON: the raw text is what gets shown.
-        }
-        return { ok: r.ok, statusCode: r.status, body: body, raw: text };
-      });
+    .then(function (result) {
+      if (result.body && result.body.token_type) {
+        sdJwtVc.set(sdJwtVc.KEYS.DPOP_TOKEN_TYPE, String(result.body.token_type));
+      }
+      return { ok: result.response.ok, statusCode: result.response.status,
+               body: result.body, raw: result.text };
     })
     .then(function (response) {
       var box = el("vc_refresh_response");
@@ -883,7 +907,12 @@ function renderReissueCall() {
     method: "POST",
     url: endpoint,
     contentType: "application/json",
-    authorization: "Bearer " + (accessToken || "(no access token — refresh one above, or run step 1)"),
+    // The scheme has to match what fetchProtected() will actually send, or this
+    // pane describes a request the page does not make.
+    authorization: ((sdJwtVc.dpopEnabled() && dpopContext()) ? "DPoP " : "Bearer ") +
+      (accessToken || "(no access token — refresh one above, or run step 1)"),
+    dpop: (sdJwtVc.dpopEnabled() && dpopContext())
+      ? "<a fresh dpop+jwt proof, signed at send time>" : "",
     body: JSON.stringify(state.request.body, null, 2)
   });
   setValue("vc_reissue_request", text);
@@ -961,17 +990,15 @@ function requestRefreshedCredential() {
     log.debug("Entering send().");
     status("vc_reissue_status", "Asking the Credential Endpoint for a refreshed credential …", "vc-pending");
     log.debug("Leaving send().");
-    return fetch(state.config.credentialEndpoint, {
+    return vciWallet.fetchProtected({
+      url: state.config.credentialEndpoint,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + (sdJwtVc.get("token_access_token") || "")
-      },
-      body: JSON.stringify(state.request.body)
-    }).then(function (r) {
-      return r.text().then(function (text) {
-        return vciWallet.readCredentialResponse(r, text, null);
-      });
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state.request.body),
+      accessToken: sdJwtVc.get("token_access_token") || "",
+      context: dpopContext()
+    }).then(function (result) {
+      return vciWallet.readCredentialResponse(result.response, result.text, null);
     });
   };
 
@@ -1194,16 +1221,16 @@ function pollDeferred() {
     return false;
   }
   status("vc_reissue_status", "Asking the Deferred Credential Endpoint …", "vc-pending");
-  fetch(endpoint, {
+  vciWallet.fetchProtected({
+    url: endpoint,
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": "Bearer " + (sdJwtVc.get("token_access_token") || "")
-    },
-    body: JSON.stringify({ transaction_id: state.deferred.transactionId })
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_id: state.deferred.transactionId }),
+    accessToken: sdJwtVc.get("token_access_token") || "",
+    context: dpopContext()
   })
-    .then(function (r) {
-      return r.text().then(function (text) { return vciWallet.readCredentialResponse(r, text, null); });
+    .then(function (result) {
+      return vciWallet.readCredentialResponse(result.response, result.text, null);
     })
     .then(function (response) {
       var credential = vciWallet.extractCredential(response.body);

@@ -414,6 +414,20 @@ function buildJobs() {
     env: {},
   });
 
+  // DPoP's own arithmetic (client/src/dpop.js): the RFC 7638 JWK Thumbprint that
+  // becomes cnf.jkt, the htu normalization, the ath hash, and the shape of the
+  // proof itself. Every one of those fails SILENTLY when it is wrong — a proof with
+  // a wrong thumbprint or a wrong htu is perfectly well formed and simply matches
+  // nothing, so the server's refusal reads as "your key is wrong" rather than "your
+  // encoding is wrong". The oracle is not a second implementation but the RFCs' own
+  // published values: RFC 9449 prints an EC key and the jkt of the token bound to
+  // it, RFC 7638 section 3.1 does the same for RSA. Node only, never skipped.
+  jobs.push({
+    name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own vectors, htu/ath/jti)",
+    script: "dpop.js",
+    env: {},
+  });
+
   // The api's outbound address policy (api/ssrf_guard.js): the service fetches
   // URLs its caller supplies, so it must refuse loopback and private destinations
   // or it is an SSRF probe into whatever network it runs in. Node only — no
@@ -625,6 +639,33 @@ function buildJobs() {
   // presentation, a KB-JWT signed by the wrong key, an invented Disclosure, one
   // removed after signing, and a claim the verifier asked for withheld.
   if (env.WSTRUST_STS_URL) {
+    // The SERVER half of DPoP, over HTTP with no browser: all twelve RFC 9449
+    // section 4.3 proof checks, the cnf.jkt binding on access and refresh tokens,
+    // the dpop_jkt code binding, jti replay detection, and the nonce handshake in
+    // both of its shapes. It is almost entirely negatives, because a DPoP server
+    // that issues bound tokens and accepts good proofs looks finished and can be
+    // worth nothing — the value is all in what it refuses. Needs only the STS.
+    jobs.push({
+      name: "DPoP server checks (RFC 9449: the twelve proof checks, binding, replay, nonces)",
+      script: "sts_dpop.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // And DPoP through the PAGES, which is the part neither of the two above can
+    // reach: that the wallet really sends the proofs, that the token which comes
+    // back is really bound (checked against the token's own cnf.jkt, not against
+    // what the pane says), and that Holder of Key really binds the credential to
+    // the DPoP key. Driven with the pre-authorized code grant, so no IdP is needed.
+    jobs.push({
+      name: "DPoP through the VC Issuance pages (the pane, the real binding, Holder of Key)",
+      script: "dpop_workflow.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
     jobs.push({
       name: "VC Presentation — SD-JWT VC (OID4VP: selective disclosure, positive and negative)",
       script: "sd_jwt_vc_presentation.js",

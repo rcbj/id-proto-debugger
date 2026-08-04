@@ -19,19 +19,17 @@
 <!--#include file="/partials/header.html"-->
 </div>
 
-    <div class="container">
+    <div class="container vc-fit">
 
 <script type="text/javascript" src="/js/vc_issuance_1.js">
 </script>
 
 <!--#include file="/partials/vc_steps.html"-->
 
-<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
-
-<h3 class="vc-title">VC Issuance &mdash; Step 1 of 4: Discover the Issuer</h3>
+<h3 class="vc-title">VC Issuance &mdash; Step 1 of 4: Discover the Issuer<a class="vc-title-return" id="return_link" href="/index.html">&larr; Return to home</a></h3>
 
 
-<p class="vc-intro">Issue a <strong>Selective Disclosure JWT Verifiable Credential</strong>
+<details class="vc-hint vc-intro-fold"><summary>What step 1 does</summary><p class="vc-intro">Issue a <strong>Selective Disclosure JWT Verifiable Credential</strong>
 (<a href="https://www.rfc-editor.org/rfc/rfc9901.html" target="_blank" rel="noopener noreferrer">SD-JWT, RFC 9901</a>)
 using <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OpenID for Verifiable Credential Issuance</a>
 (OID4VCI). This page plays the wallet's part of the discovery phase: retrieve the
@@ -40,7 +38,7 @@ using <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-
 of the server that authorizes issuance, and settle the parameters both documents define. Step&nbsp;2 authenticates the
 user through the existing OIDC Authorization Code flow on the
 <a href="/debugger.html">debugger</a> pages and asks the user to approve issuance; step&nbsp;3 shows the credential the
-issuer returns.</p>
+issuer returns.</p></details>
 
 <p class="dbg-controls">
   <label class="dbg-toggle" title="Expand or collapse every pane.">
@@ -53,7 +51,7 @@ issuer returns.</p>
 
 <script type="text/javascript">
 function vcSetAllPanes(expand) {
-  var fieldsets = ['vci_fieldset', 'did_fieldset', 'as_fieldset', 'config_fieldset', 'handoff_fieldset', 'vc_tools_fieldset'];
+  var fieldsets = ['vci_fieldset', 'did_fieldset', 'as_fieldset', 'didcfg_fieldset', 'config_fieldset', 'handoff_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -106,47 +104,20 @@ function vcSetAllPanes(expand) {
   </fieldset>
 </div>
 
-<!-- ====== Taking an offer that arrived on another device (H.2 / H.3) ====== -->
-<div class="step0 dbg-pane" id="pane_scan">
-  <legend class="dbg-legend" id="scan_expand_button" onclick="return vcissuance1.togglePane('scan_fieldset');">Receive a Credential Offer</legend>
-  <fieldset name="scan_fieldset" id="scan_fieldset" style="display: block;">
-    <p class="vc-note">In a cross-device flow the issuer shows a QR code on its own screen and your wallet is
-    somewhere else, so the offer does not arrive in this browser by itself. Paste what the QR code contains
-    &mdash; an <code>openid-credential-offer://</code> URI, an <code>https://</code> link carrying
-    <code>credential_offer</code> or <code>credential_offer_uri</code>, or the Credential Offer JSON itself.</p>
-    <table border="0">
-      <tbody>
-        <tr>
-          <td>
-            <div class="tooltip"><label for="scan_offer_input">Scanned offer</label>
-              <span class="tooltiptext">Whatever the QR code encodes. OID4VCI defines the openid-credential-offer:// URI scheme for exactly this hand-over.</span>
-            </div>
-          </td>
-          <td><textarea id="scan_offer_input" name="scan_offer_input" rows="3" cols="90" placeholder="openid-credential-offer://?credential_offer=%7B%22credential_issuer%22..."></textarea></td>
-        </tr>
-        <tr>
-          <td>
-            <div class="tooltip">
-              <input class="btn2" id="scan_offer_button" type="button" value="Take this offer" onclick="return vcissuance1.takeScannedOffer();" />
-              <span class="tooltiptext">Read the offer, then discover the issuer it names and the authorization server that issuer names — the same thing that happens when an offer arrives in the URL.</span>
-            </div>
-          </td>
-          <td><div class="vc-status" id="scan_status">&nbsp;</div></td>
-        </tr>
-      </tbody>
-    </table>
-  </fieldset>
-</div>
 
 <!-- ============ Pane 1: Credential Issuer Metadata (OID4VCI) ============ -->
+<!-- The four metadata panes side by side: each is a URL, a few buttons and a
+     status, and stacking them spent 1,234px of height on content that fits in a
+     quarter of the width. A grid rather than a fixed four columns, so a narrow
+     window folds them instead of overflowing. -->
+<div class="vc-pane-row">
 <div class="step0 dbg-pane" id="pane_vci">
-  <legend class="dbg-legend" id="vci_expand_button" onclick="return vcissuance1.togglePane('vci_fieldset');">Credential Issuer Metadata (OID4VCI)</legend>
+  <legend class="dbg-legend" id="vci_expand_button" onclick="return vcissuance1.togglePane('vci_fieldset');">Credential Issuer Metadata</legend>
   <fieldset name="vci_fieldset" id="vci_fieldset" style="display: block;">
     <table border="0">
       <tbody>
         <tr>
-          <td>&nbsp;</td>
-          <td><p id="vci_source_hint">An OID4VCI Credential Issuer publishes its metadata at a path that ends in <code>/.well-known/openid-credential-issuer</code>. See the <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a> spec.</p></td>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="vci_source_hint">An OID4VCI Credential Issuer publishes its metadata at a path that ends in <code>/.well-known/openid-credential-issuer</code>. See the <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html" target="_blank" rel="noopener noreferrer">OID4VCI</a> spec.</p></details></td>
         </tr>
         <tr>
           <td>
@@ -198,13 +169,12 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Pane 1b: DID Document (W3C DID Core 1.0) ====== -->
 <div class="step0 dbg-pane" id="pane_did">
-  <legend class="dbg-legend" id="did_expand_button" onclick="return vcissuance1.togglePane('did_fieldset');">Issuer DID Document (W3C DID Core 1.0)</legend>
+  <legend class="dbg-legend" id="did_expand_button" onclick="return vcissuance1.togglePane('did_fieldset');">Issuer DID Document</legend>
   <fieldset name="did_fieldset" id="did_fieldset" style="display: block;">
     <table border="0">
       <tbody>
         <tr>
-          <td>&nbsp;</td>
-          <td><p id="did_source_hint">A credential may name its issuer by <a href="https://www.w3.org/TR/did-1.0/" target="_blank" rel="noopener noreferrer">DID</a> instead of by URL. <code>did:jwk</code> and <code>did:key</code> <em>are</em> their key &mdash; they resolve here with no network call. Only <code>did:web</code> has a document to retrieve. Note that <a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/" target="_blank" rel="noopener noreferrer">SD-JWT VC</a> defines no DID-based issuer signature mechanism &mdash; using one with <code>dc+sd-jwt</code> is a profile extension. <code>ldp_vc</code> is DID-native under <a href="https://www.w3.org/TR/vc-data-model-2.0/" target="_blank" rel="noopener noreferrer">VC Data Model 2.0</a>.</p></td>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="did_source_hint">A credential may name its issuer by <a href="https://www.w3.org/TR/did-1.0/" target="_blank" rel="noopener noreferrer">DID</a> instead of by URL. <code>did:jwk</code> and <code>did:key</code> <em>are</em> their key &mdash; they resolve here with no network call. Only <code>did:web</code> has a document to retrieve. Note that <a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/" target="_blank" rel="noopener noreferrer">SD-JWT VC</a> defines no DID-based issuer signature mechanism &mdash; using one with <code>dc+sd-jwt</code> is a profile extension. <code>ldp_vc</code> is DID-native under <a href="https://www.w3.org/TR/vc-data-model-2.0/" target="_blank" rel="noopener noreferrer">VC Data Model 2.0</a>.</p></details></td>
         </tr>
         <tr>
           <td>
@@ -278,13 +248,12 @@ function vcSetAllPanes(expand) {
 
 <!-- ====== Pane 2: Authorization Server Metadata (RFC 8414) ====== -->
 <div class="step0 dbg-pane" id="pane_as">
-  <legend class="dbg-legend" id="as_expand_button" onclick="return vcissuance1.togglePane('as_fieldset');">Authorization Server Metadata (RFC 8414)</legend>
+  <legend class="dbg-legend" id="as_expand_button" onclick="return vcissuance1.togglePane('as_fieldset');">Authorization Server Metadata</legend>
   <fieldset name="as_fieldset" id="as_fieldset" style="display: block;">
     <table border="0">
       <tbody>
         <tr>
-          <td>&nbsp;</td>
-          <td><p id="as_source_hint">An OAuth 2.0 Authorization Server Metadata endpoint uses a path that ends in <code>/.well-known/oauth-authorization-server</code>. See the <a href="https://www.rfc-editor.org/rfc/rfc8414.html" target="_blank" rel="noopener noreferrer">RFC 8414</a> spec. This document is stored under the same names <a href="/debugger.html">debugger.html</a> uses, so retrieving it here also configures the OAuth2 / OIDC workflow.</p></td>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="as_source_hint">An OAuth 2.0 Authorization Server Metadata endpoint uses a path that ends in <code>/.well-known/oauth-authorization-server</code>. See the <a href="https://www.rfc-editor.org/rfc/rfc8414.html" target="_blank" rel="noopener noreferrer">RFC 8414</a> spec. This document is stored under the same names <a href="/debugger.html">debugger.html</a> uses, so retrieving it here also configures the OAuth2 / OIDC workflow.</p></details></td>
         </tr>
         <tr>
           <td>
@@ -333,23 +302,112 @@ function vcSetAllPanes(expand) {
   </fieldset>
 </div>
 
+<!-- ====== Pane 2b: DID Configuration (DIF Well Known DID Configuration) ====== -->
+<div class="step0 dbg-pane" id="pane_didcfg">
+  <legend class="dbg-legend" id="didcfg_expand_button" onclick="return vcissuance1.togglePane('didcfg_fieldset');">DID Configuration</legend>
+  <fieldset name="didcfg_fieldset" id="didcfg_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="didcfg_source_hint">An issuer named by <code>did:web</code> presents a problem this document exists to solve: resolving <code>did:web:example.com</code> means fetching <code>example.com</code>, so reading a DID document off that origin to decide whether the DID belongs to it is circular. A <a href="https://identity.foundation/well-known-did-configuration/resources/did-configuration/" target="_blank" rel="noopener noreferrer">Domain Linkage Credential</a> breaks the circle: the DID signs, with its own key, a credential naming the origin. The resource lives at the fixed path <code>/.well-known/did-configuration.json</code> at the origin root.</p></details></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="didcfg_url">DID Configuration URL: </label><span class="tooltiptext">The resource's location is fixed by the specification: /.well-known/did-configuration.json at the origin root. Filled in from the credential issuer's origin once its metadata is retrieved; editable, because the copy you want to inspect may be somewhere else.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="didcfg_url" name="didcfg_url" type="text" max="512" size="60" />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="didcfg_retrieve_button" type="button" value="Retrieve" onclick="return vcissuance1.retrieveDidConfiguration();" />
+              <span class="tooltiptext">Fetch the resource from the URL above, check it against the specification, and populate the DID Configuration section of Configuration Parameters.</span>
+            </div>
+            <div class="tooltip">
+              <input class="btn2" id="didcfg_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadDidConfiguration();" />
+              <span class="tooltiptext">Load the resource from a file instead. Use this when the origin sends no CORS headers, which stops a browser reading it however right the URL is: fetch it with curl, save it, and load it here.</span>
+            </div>
+            <input type="file" id="didcfg_file" name="didcfg_file" accept=".json,application/json,.jsonld,text/plain" style="display:none;" onchange="return vcissuance1.onDidConfigurationFileChange(event);" />
+          </td>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="didcfg_clear_button" type="button" value="Clear" onclick="return vcissuance1.clearDidConfiguration();" />
+              <span class="tooltiptext">Forget the resource, its table, and the DID Configuration values it populated (on screen and in local storage).</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="didcfg_verify_button" type="button" value="Verify Linkage" onclick="return vcissuance1.verifyLoadedDidConfiguration();" />
+              <span class="tooltiptext">Check the loaded resource cryptographically, not just structurally: resolve the DID it links, verify the credential's signature against the keys that DID authorises to assert, and check the origin it names is the origin it was fetched from. The schema check below says whether the document is well formed; this says whether it is true.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="didcfg_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="discovery_info_table" id="didcfg_metadata_table">&nbsp;</div>
+    <div class="discovery_info_meta_data_populate" id="didcfg_metadata_populate">&nbsp;</div>
+    <div class="vc-schema-report" id="didcfg_schema_report"></div>
+    <div class="discovery_info_table" id="didcfg_verify_table">&nbsp;</div>
+  </fieldset>
+</div>
+</div>
+
+<!-- ====== Taking an offer that arrived on another device (H.2 / H.3) ====== -->
+<div class="step0 dbg-pane" id="pane_scan">
+  <legend class="dbg-legend" id="scan_expand_button" onclick="return vcissuance1.togglePane('scan_fieldset');">Receive a Credential Offer</legend>
+  <fieldset name="scan_fieldset" id="scan_fieldset" style="display: block;">
+    <details class="vc-hint"><summary>When you need this</summary><p class="vc-note">In a cross-device flow the issuer shows a QR code on its own screen and your wallet is
+    somewhere else, so the offer does not arrive in this browser by itself. Paste what the QR code contains
+    &mdash; an <code>openid-credential-offer://</code> URI, an <code>https://</code> link carrying
+    <code>credential_offer</code> or <code>credential_offer_uri</code>, or the Credential Offer JSON itself.</p></details>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="scan_offer_input">Scanned offer</label>
+              <span class="tooltiptext">Whatever the QR code encodes. OID4VCI defines the openid-credential-offer:// URI scheme for exactly this hand-over.</span>
+            </div>
+          </td>
+          <td><textarea id="scan_offer_input" name="scan_offer_input" rows="3" cols="90" placeholder="openid-credential-offer://?credential_offer=%7B%22credential_issuer%22..."></textarea></td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="scan_offer_button" type="button" value="Take this offer" onclick="return vcissuance1.takeScannedOffer();" />
+              <span class="tooltiptext">Read the offer, then discover the issuer it names and the authorization server that issuer names — the same thing that happens when an offer arrives in the URL.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="scan_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
 <!-- ============ Pane 3: Configuration Parameters ============ -->
 <div class="step0 dbg-pane" id="pane_config">
   <legend class="dbg-legend" id="config_expand_button" onclick="return vcissuance1.togglePane('config_fieldset');">Configuration Parameters</legend>
   <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
-    <p class="vc-note">Every parameter the two metadata documents above can define, plus the client settings the
+    <details class="vc-hint"><summary>What this pane is</summary><p class="vc-note">Every parameter the two metadata documents above can define, plus the client settings the
     authorization request needs. Retrieving either document fills its half of this pane; each value can then be
     overridden by hand, and <em>Populate Meta Data</em> in that pane re-applies the document. The OAuth 2.0 / OpenID Provider parameters are
     stored under the same names <a href="/debugger.html">debugger.html</a> uses, so what is set here is what the OIDC
     workflow will run with. A member the retrieved document leaves out is marked
-    <span class="not-defined-sample">--&gt;not defined&lt;--</span>.</p>
+    <span class="not-defined-sample">--&gt;not defined&lt;--</span>.</p></details>
     <form action="" id="config_form" name="config_form" onsubmit="return false;">
-      <table border="0" id="config_table">
-        <tbody id="config_rows">
-          <!-- Rows are generated from op_metadata.js and vci_metadata.js so the
-               pane cannot drift from the member lists it is meant to cover. -->
-        </tbody>
-      </table>
+      <!-- Generated from op_metadata.js, vci_metadata.js and did.js so the pane
+           cannot drift from the member lists it is meant to cover. One block per
+           GROUP rather than one long table: the groups are laid out in columns, which
+           is what took this pane from 3,988px to something a screen can hold. -->
+      <div id="config_rows" class="vc-config-groups"></div>
     </form>
     <p>
       <input class="btn2" id="config_save_button" type="button" value="Save" onclick="return vcissuance1.saveConfiguration();" />

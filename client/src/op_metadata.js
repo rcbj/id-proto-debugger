@@ -91,6 +91,13 @@ var AS_ONLY_METADATA = [
   { name: "introspection_endpoint_auth_methods_supported", type: "array", dflt: "client_secret_basic, client_secret_post, private_key_jwt" },
   { name: "introspection_endpoint_auth_signing_alg_values_supported", type: "array", dflt: "RS256, ES256, PS256" },
   { name: "code_challenge_methods_supported", type: "array", dflt: "S256, plain" },
+  // RFC 9449 section 5.1, registered by that document rather than by RFC 8414.
+  // It belongs in this list because its presence is the ONLY signal a client has
+  // that DPoP is on offer: there is no other discovery mechanism, so an
+  // authorization server that supports DPoP and omits this will never be asked
+  // for it. Default empty, because absent means "has not said so" and inventing
+  // a default would claim support nobody advertised.
+  { name: "dpop_signing_alg_values_supported", type: "array", dflt: "" },
   { name: "signed_metadata", type: "string", dflt: "" }
 ];
 

@@ -49,7 +49,7 @@ Nothing is sent until you press Present.</p>
 
 <script type="text/javascript">
 function vpSetAllPanes(expand) {
-  var fieldsets = ['ask_fieldset', 'choose_fieldset', 'presentation_fieldset', 'present_fieldset', 'vc_tools_fieldset'];
+  var fieldsets = ['ask_fieldset', 'choose_fieldset', 'presentation_fieldset', 'dpop_note_fieldset', 'present_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -162,6 +162,39 @@ function vpSetAllPanes(expand) {
 </div>
 
 <!-- ============ Pane 4: sending it ============ -->
+<!-- ====== Why there is no DPoP here (RFC 9449 / OID4VP) ====== -->
+<div class="step0 dbg-pane" id="pane_dpop_note">
+  <legend class="dbg-legend" id="dpop_note_expand_button" onclick="return vcpresentation2.togglePane('dpop_note_fieldset');">Key Binding and DPoP</legend>
+  <fieldset name="dpop_note_fieldset" id="dpop_note_fieldset" style="display: block;">
+    <p class="vc-note" id="vp_dpop_note">&nbsp;</p>
+    <details class="vc-hint"><summary>Why this workflow has no DPoP switch</summary>
+    <p><a href="https://www.rfc-editor.org/rfc/rfc9449" target="_blank" rel="noopener noreferrer">DPoP (RFC 9449)</a>
+    sender-constrains an <strong>OAuth access token</strong>. OpenID4VP does not mention DPoP at all, and the
+    reason is structural rather than an omission: in its own words, &ldquo;the result of an OpenID4VP interaction
+    is one or more Verifiable Presentations and/or Presentations in the same or different Credential formats
+    &hellip; <strong>instead of an Access Token</strong>&rdquo;. There is no token in this exchange to bind.</p>
+    <p>What plays the same role here is the <strong>Key Binding JWT</strong>
+    (<a href="https://www.rfc-editor.org/rfc/rfc9901" target="_blank" rel="noopener noreferrer">RFC 9901</a> section 4.3),
+    and the parallel is close enough to be worth seeing side by side. Both are short-lived JWTs of their own
+    media type, signed by a key the holder possesses, that commit to the specific request they accompany:</p>
+    <table class="vc-config-table" id="vp_dpop_comparison">
+      <tbody>
+        <tr><td><strong>&nbsp;</strong></td><td><strong>DPoP proof</strong></td><td><strong>Key Binding JWT</strong></td></tr>
+        <tr><td>typ</td><td><code>dpop+jwt</code></td><td><code>kb+jwt</code></td></tr>
+        <tr><td>proves possession of</td><td>the key in the token's <code>cnf.jkt</code></td><td>the key in the credential's <code>cnf.jwk</code></td></tr>
+        <tr><td>freshness from</td><td><code>iat</code>, <code>jti</code>, and a server <code>nonce</code></td><td>the verifier's <code>nonce</code> and <code>iat</code></td></tr>
+        <tr><td>bound to the recipient by</td><td><code>htu</code> (the endpoint URI)</td><td><code>aud</code> (the Client Identifier)</td></tr>
+        <tr><td>commits to the payload by</td><td><code>ath</code>, the hash of the access token</td><td><code>sd_hash</code>, the hash of the exact bytes sent</td></tr>
+      </tbody>
+    </table>
+    <p>So the wallet's proof of possession in a presentation is the KB-JWT, and the thing DPoP would have
+    protected &mdash; a bearer token that anyone holding the bytes could spend &mdash; does not exist here.
+    DPoP <em>does</em> apply to the <a href="/vc-issuance-2.html">issuance</a> side, where there is an access
+    token, and it is switched on there.</p>
+    </details>
+  </fieldset>
+</div>
+
 <div class="step0 dbg-pane" id="pane_present">
   <legend class="dbg-legend" id="present_expand_button" onclick="return vcpresentation2.togglePane('present_fieldset');">Present It</legend>
   <fieldset name="present_fieldset" id="present_fieldset" style="display: block;">

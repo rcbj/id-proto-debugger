@@ -291,9 +291,13 @@ function renderDisclosureTable() {
 function buildPresentation() {
   log.debug("Entering buildPresentation().");
   var params = (state.request && state.request.params) || {};
-  // Storage first; falling back to the field the user pasted the downloaded key
-  // into when holder-key saving is turned off on issuance step 2.
-  var holderKey = sdJwtVc.readHolderPrivateJwk("vp_holder_private_jwk");
+  // The key the credential is actually bound to, chosen by matching its own
+  // cnf.jwk rather than by assuming the holder key: under Holder of Key (issuance
+  // step 2's DPoP pane) the credential is bound to the DPoP key, and signing with
+  // the holder key would produce a presentation the verifier refuses for a reason
+  // that reads as a broken wallet. Falls back to the pasted field when
+  // holder-key saving is off.
+  var holderKey = sdJwtVc.boundPrivateJwk(credentialCnfJwk(), "vp_holder_private_jwk");
   var priv = holderKey.jwk;
   renderHolderKeyRow(holderKey);
   if (!state.parsed || !params.client_id || !params.nonce) {
@@ -644,8 +648,82 @@ function togglePane(id) {
 
 // The paste-in row only appears when there is nothing in storage to sign with:
 // with saving on it would be a field asking for something the page already has.
+// The DPoP note, filled from the credential in hand rather than written into the
+// markup, because the interesting half is conditional: a credential issued under
+// Holder of Key is bound to the wallet's DPoP key, and THAT is the key this page
+// signs the Key Binding JWT with. A static note could not say so.
+// The cnf.jwk of the credential in hand.
+//
+// Read from the credential rather than from `state.parsed`, because state.parsed is
+// the parse of a credential in the context of a verifier's REQUEST and is empty
+// until one has arrived — while this note is about the credential, which is there
+// either way. Sourcing it from state.parsed made the pane describe a wallet with no
+// credential whenever the page was opened directly, which is exactly how it is
+// opened when somebody wants to know what they are holding.
+function credentialCnfJwk() {
+  log.debug("Entering credentialCnfJwk().");
+  var fromRequest = (state.parsed && state.parsed.payload && state.parsed.payload.cnf &&
+                     state.parsed.payload.cnf.jwk) || null;
+  if (fromRequest) {
+    log.debug("Leaving credentialCnfJwk(). From the parsed request context.");
+    return fromRequest;
+  }
+  var held = sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "";
+  if (!held) {
+    log.debug("Leaving credentialCnfJwk(). No credential is held.");
+    return null;
+  }
+  var parsed = null;
+  try {
+    parsed = sdJwtVc.parseCredential(held);
+  } catch (e) {
+    // An unparseable credential is a state the other panes already report; this
+    // note simply has nothing to add about its key binding.
+    log.debug("credentialCnfJwk(): the held credential could not be parsed: " + e.message);
+    return null;
+  }
+  // payload, not claims: `cnf` is a claim of the ISSUER-SIGNED JWT, while
+  // parsed.claims is the disclosed claim set. jwt_vc_json and ldp_vc carry no cnf
+  // at all — their holder binding is the credentialSubject's id — so null here is
+  // a legitimate answer rather than a failure.
+  var payload = (parsed && parsed.payload) || {};
+  log.debug("Leaving credentialCnfJwk(). From the held credential. bound=" +
+            (payload.cnf && payload.cnf.jwk ? "yes" : "no"));
+  return (payload.cnf && payload.cnf.jwk) || null;
+}
+
+function renderDpopNote() {
+  log.debug("Entering renderDpopNote().");
+  var e = document.getElementById("vp_dpop_note");
+  if (!e) return;
+  var cnfJwk = credentialCnfJwk();
+  var lines = [
+    "OpenID4VP defines no DPoP: this exchange produces a Verifiable Presentation rather than an " +
+    "access token, so there is no token to sender-constrain. The wallet's proof of possession " +
+    "here is the Key Binding JWT below."
+  ];
+  if (!cnfJwk) {
+    lines.push("This credential carries no cnf.jwk, so it has no key binding at all and no " +
+               "Key Binding JWT is required.");
+  } else {
+    var dpopPublic = sdJwtVc.getJson(sdJwtVc.KEYS.DPOP_PUBLIC_JWK);
+    if (dpopPublic && sdJwtVc.samePublicKey(dpopPublic, cnfJwk)) {
+      lines.push("This credential was issued under Holder of Key: its cnf.jwk IS this wallet's " +
+                 "DPoP key, so the same key that sender-constrains the access token on the " +
+                 "issuance side signs the Key Binding JWT here. One key, two mechanisms.");
+    } else {
+      lines.push("This credential is bound to a holder key of its own (Proof of Possession), " +
+                 "which is independent of any DPoP key used during issuance \u2014 so it stays " +
+                 "presentable even if that DPoP key is gone.");
+    }
+  }
+  e.textContent = lines.join(" ");
+  log.debug("Leaving renderDpopNote().");
+}
+
 function renderHolderKeyRow(holderKey) {
   log.debug("Entering renderHolderKeyRow().");
+  renderDpopNote();
   var row = document.getElementById("vp_holder_key_row");
   var note = document.getElementById("vp_holder_key_note");
   if (!row) return;
@@ -653,7 +731,13 @@ function renderHolderKeyRow(holderKey) {
   row.style.display = needed ? "" : "none";
   if (!note) return;
   if (!needed) {
-    note.textContent = "";
+    // Which key it is matters now that there can be two: under Holder of Key the
+    // credential is bound to the DPoP key, and a reader who does not know which
+    // key signed the Key Binding JWT cannot tell a correct presentation from a
+    // lucky one.
+    note.textContent = holderKey.boundTo
+      ? "Signing with " + holderKey.boundTo + ", which is the key this credential's cnf.jwk names."
+      : "";
   } else if (holderKey.problem) {
     note.textContent = holderKey.problem;
   } else if (holderKey.jwk) {
@@ -684,6 +768,11 @@ function onload() {
   });
 
   loadState();
+  // The DPoP note describes the credential in hand, so it is rendered here rather
+  // than only from renderHolderKeyRow(): buildPresentation() returns early when
+  // there is no verifier request, and a wallet holding a credential should still be
+  // able to see which key binds it.
+  renderDpopNote();
   // ldp_vc needs its canonical statements before anything can be selected or
   // derived, and that is async. The issuer's BBS key is fetched from the
   // credential's own verificationMethod — the credential says where its key is.
@@ -716,7 +805,7 @@ function onload() {
   // buildPresentation() also renders it, but it returns early when there is not
   // enough state yet, which is exactly the case where the user most needs to be
   // told the key is missing and given somewhere to put it.
-  renderHolderKeyRow(sdJwtVc.readHolderPrivateJwk("vp_holder_private_jwk"));
+  renderHolderKeyRow(sdJwtVc.boundPrivateJwk(credentialCnfJwk(), "vp_holder_private_jwk"));
   var params = (state.request && state.request.params) || {};
   setText("vp_verifier", params.client_id || "—");
   setText("vp_nonce", params.nonce || "—");
@@ -757,6 +846,7 @@ if (typeof window !== "undefined") {
 }
 
 module.exports = {
+  renderDpopNote: renderDpopNote,
   onHolderKeyPasted: onHolderKeyPasted,
   onSelectionChange: onSelectionChange,
   selectRequestedOnly: selectRequestedOnly,

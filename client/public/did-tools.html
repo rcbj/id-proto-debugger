@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — DID Tools</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/did_tools.js">
+</script>
+
+<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="vc-title">DID Tools &mdash; resolve and verify a Decentralized Identifier</h3>
+
+<p class="vc-intro">Resolve a <a href="https://www.w3.org/TR/did-1.0/" target="_blank" rel="noopener noreferrer">DID</a>
+to its document, read the keys it publishes, and check the two things a document cannot establish about itself:
+that a key it publishes really signed the credential this browser is holding, and that the DID and an origin are
+the same entity (<a href="https://identity.foundation/well-known-did-configuration/resources/did-configuration/" target="_blank" rel="noopener noreferrer">DIF
+Well Known DID Configuration</a>). Nothing here is specific to issuance or presentation &mdash; open it beside
+either workflow at any point.</p>
+
+<p class="vc-intro"><code>did:jwk</code> and <code>did:key</code> <em>are</em> their key: the identifier carries
+it, so they resolve with no network call at all. Only <code>did:web</code> has a document to retrieve. Note that
+<a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/" target="_blank" rel="noopener noreferrer">SD-JWT VC</a>
+defines no DID-based issuer signature mechanism &mdash; naming an issuer by DID with <code>dc+sd-jwt</code> is a
+profile extension &mdash; while <code>ldp_vc</code> is DID-native under
+<a href="https://www.w3.org/TR/vc-data-model-2.0/" target="_blank" rel="noopener noreferrer">VC Data Model 2.0</a>.</p>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" onchange="didSetAllPanes(this.checked);" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<script type="text/javascript">
+function didSetAllPanes(expand) {
+  var fieldsets = ['did_fieldset', 'did_members_fieldset', 'did_linkage_fieldset', 'vc_tools_fieldset'];
+  for (var i = 0; i < fieldsets.length; i++) {
+    var fs = document.getElementById(fieldsets[i]);
+    if (fs) fs.style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  return false;
+}
+</script>
+
+<!-- ============ Pane 1: the DID and its document ============ -->
+<div class="step0 dbg-pane" id="pane_did">
+  <legend class="dbg-legend" id="did_expand_button" onclick="return didtools.togglePane('did_fieldset');">DID Document (W3C DID Core 1.0)</legend>
+  <fieldset name="did_fieldset" id="did_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="did_identifier">DID: </label><span class="tooltiptext">The DID to resolve. did:jwk and did:key are decoded here with no network call; did:web is fetched from the document URL the method defines.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="did_identifier" name="did_identifier" type="text" max="512" size="60" placeholder="did:web:example.com, did:jwk:eyJrdHki…, did:key:zDnae…" />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn_did_resolve btn2" id="did_resolve_button" type="button" value="Resolve" onclick="didtools.resolveDid(); return false;" />
+              <span class="tooltiptext">Resolve the DID above. did:jwk and did:key are decoded locally; did:web is fetched over HTTP(S) from the document URL the method defines.</span>
+            </div>
+            <div class="tooltip">
+              <input class="btn2" id="did_upload_button" type="button" value="Upload" onclick="return didtools.uploadDidDocument();" />
+              <span class="tooltiptext">Load a DID Document from a file instead of resolving it. Use this when a did:web host sends no CORS headers, which stops a browser reading its document however correct the URL is: fetch it with curl, save it, and load it here.</span>
+            </div>
+            <input type="file" id="did_document_file" name="did_document_file" accept=".json,application/json,.jsonld,text/plain" style="display:none;" onchange="return didtools.onDidFileChange(event);" />
+          </td>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_clear_button" type="button" value="Clear" onclick="return didtools.clearDidDocument();" />
+              <span class="tooltiptext">Forget the resolved DID Document, its table, and the values it populated (on screen and in local storage).</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="did_resolution_url">Document URL: </label><span class="tooltiptext">Where a did:web document is fetched from. Resolve fills this in from the DID: the host with its port percent-decoded, then /.well-known/did.json, or /&lt;path&gt;/did.json when the DID carries path segments. It stays empty for did:jwk and did:key, which have nothing to fetch. You can also type a URL here and press Retrieve, for a document that is not where the method's rules say it should be.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="did_resolution_url" name="did_resolution_url" type="text" max="512" size="60" />
+            <div class="tooltip">
+              <input class="btn2" id="did_retrieve_button" type="button" value="Retrieve" onclick="return didtools.retrieveDidDocument();" />
+              <span class="tooltiptext">Fetch the DID Document from the URL above and use it here exactly as a resolved one. This is a retrieval, not a resolution: it is for a document that is not at the location the DID method derives &mdash; on a staging host, behind a tunnel, or at a path the issuer has not published yet. Because you chose the URL, a document whose id is a different DID is reported rather than refused.</span>
+            </div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_verify_button" type="button" value="Verify Signing Key" onclick="return didtools.verifyDidBinding();" />
+              <span class="tooltiptext">Check that a key in this DID Document actually verifies the credential this browser is holding. Resolving a document proves nothing on its own &mdash; what matters is whether the key it publishes is the one that signed.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="did_status">&nbsp;</div>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Credential in this browser: </label><span class="tooltiptext">What the VC workflows last stored. Verify Signing Key checks the document against this credential, so it is worth knowing whether there is one and who it says issued it.</span></div>
+          </td>
+          <td>
+            <div class="vc-status" id="did_credential_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="discovery_info_table" id="did_document_table">&nbsp;</div>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 2: the document's members, editable ============ -->
+<div class="step0 dbg-pane" id="pane_did_members">
+  <legend class="dbg-legend" id="did_members_expand_button" onclick="return didtools.togglePane('did_members_fieldset');">DID Document Members</legend>
+  <fieldset name="did_members_fieldset" id="did_members_fieldset" style="display: block;">
+    <p class="vc-note">The members of the document above, filled in when it resolves. Editable on purpose:
+    this is where you try a document that has not been published yet, or break one deliberately to see what
+    the verification does about it.</p>
+    <div id="did_members_table">&nbsp;</div>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_save_button" type="button" value="Save" onclick="return didtools.saveState();" />
+              <span class="tooltiptext">Keep the DID, the document URL and the origin in this browser's local storage so they survive a reload.</span>
+            </div>
+          </td>
+          <td><div class="vc-status" id="did_save_status">&nbsp;</div></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 3: domain linkage ============ -->
+<div class="step0 dbg-pane" id="pane_did_linkage">
+  <legend class="dbg-legend" id="did_linkage_expand_button" onclick="return didtools.togglePane('did_linkage_fieldset');">Domain Linkage (DIF Well Known DID Configuration)</legend>
+  <fieldset name="did_linkage_fieldset" id="did_linkage_fieldset" style="display: block;">
+    <p class="vc-note">A DID document says which keys a DID has. It cannot say why that DID should be believed
+    to be the same party as some website &mdash; and for <code>did:web</code> the appearance of an answer is
+    worse than none, because resolving <code>did:web:example.com</code> means fetching
+    <code>example.com</code>. A <strong>Domain Linkage Credential</strong> breaks that circle: the DID signs,
+    with its own key, a credential naming the origin, and a verifier checks the signature against the keys that
+    DID authorises to assert.</p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label for="did_tools_origin">Origin: </label><span class="tooltiptext">The origin whose word is in question — scheme, host and port. Defaulted from the credential issuer this browser last discovered, but any origin can be asked about: a linkage is a claim between an origin and a DID and need have nothing to do with a credential.</span>
+            </div>
+          </td>
+          <td>
+            <input class="stored" id="did_tools_origin" name="did_tools_origin" type="text" max="512" size="60" placeholder="https://example.com" />
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip">
+              <input class="btn2" id="did_linkage_button" type="button" value="Verify Linkage" onclick="return didtools.verifyDomainLinkage();" />
+              <span class="tooltiptext">Fetch /.well-known/did-configuration.json from the origin above and verify its Domain Linkage Credential. On success the origin's controller and the DID's controller are the same entity.</span>
+            </div>
+          </td>
+          <td>
+            <div class="signed_metadata_status" id="did_linkage_status">&nbsp;</div>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="discovery_info_table" id="did_linkage_table">&nbsp;</div>
+  </fieldset>
+</div>
+
+<!--#include file="/partials/vc_tools.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

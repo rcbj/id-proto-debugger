@@ -89,8 +89,62 @@ var KEYS = {
   // Whether the holder key pair's PRIVATE half may be written to localStorage
   // at all. "0" means no; anything else (including absent) means yes, which is
   // the default. See holderPrivateKeyMayBeStored() below.
-  SAVE_HOLDER_KEY: "sdjwtvc_save_holder_key"
+  SAVE_HOLDER_KEY: "sdjwtvc_save_holder_key",
+
+  // --- DPoP (RFC 9449) ----------------------------------------------------
+  // Whether the wallet sender-constrains its access token. "1" is on; absent or
+  // anything else is off, so an existing wallet keeps behaving exactly as it did
+  // and the Bearer path stays the default the workflow demonstrates first.
+  DPOP_ENABLED: "sdjwtvc_dpop_enabled",
+  // How the CREDENTIAL is bound, which is a separate question from whether the
+  // TOKEN is: "pop" generates a holder key of its own and proves possession of it
+  // in the Credential Request (what the workflow has always done), "hok" reuses
+  // the DPoP key so the token's cnf.jkt and the credential's cnf.jwk name one
+  // key. See BINDING_MODES below.
+  DPOP_BINDING: "sdjwtvc_dpop_binding",
+  DPOP_ALG: "sdjwtvc_dpop_alg",
+  DPOP_PUBLIC_JWK: "sdjwtvc_dpop_public_jwk",
+  DPOP_PRIVATE_JWK: "sdjwtvc_dpop_private_jwk",
+  // The RFC 7638 thumbprint of the public half. Stored rather than recomputed
+  // because step 1 needs it for the dpop_jkt authorization parameter before any
+  // page has had a reason to hash the key, and because it is what step 2 compares
+  // against the token's cnf.jkt to show the binding took.
+  DPOP_JKT: "sdjwtvc_dpop_jkt",
+  // The most recent server-supplied nonce (RFC 9449 sections 8 and 9). Kept
+  // because the next request should use it WITHOUT waiting to be asked again —
+  // a wallet that discards it pays for the 401 handshake on every single call.
+  DPOP_NONCE: "sdjwtvc_dpop_nonce",
+  // What the token endpoint actually said, so step 2 can show whether the token
+  // came back bound rather than assuming that asking made it so.
+  DPOP_TOKEN_TYPE: "sdjwtvc_dpop_token_type",
+  DPOP_TOKEN_JKT: "sdjwtvc_dpop_token_jkt"
 };
+
+// How the credential's own key binding is chosen. The two are genuinely
+// different mechanisms, not two names for one:
+//
+//   pop   Proof of Possession. A holder key of the wallet's own, whose private
+//         half is proved in the Credential Request with an openid4vci-proof+jwt
+//         (OID4VCI section 8.2). The credential's cnf.jwk is that key. This is
+//         what the workflow has always done and is what SD-JWT VC assumes.
+//
+//   hok   Holder of Key. The DPoP key IS the holder key: one key appears as the
+//         access token's cnf.jkt and as the credential's cnf.jwk, and the
+//         Credential Request's proof is signed by it.
+//
+// Neither is more correct. hok means the holder has one key to protect instead of
+// two and the issuer can see that the party presenting the token is the party the
+// credential will be bound to; pop keeps the credential's lifetime independent of
+// the token's, which matters because the credential outlives the token by months
+// and a key rotated for OAuth reasons should not invalidate a credential. Note
+// hok requires DPoP to be on at all — without a DPoP key there is nothing to
+// reuse — which is why the two checkboxes are not independent, and the pane says
+// so rather than silently ignoring one of them.
+var BINDING_MODES = {
+  POP: "pop",
+  HOK: "hok"
+};
+var DEFAULT_BINDING_MODE = BINDING_MODES.POP;
 
 // The keys that hold private key material. Every one of these is the private
 // half of a holder key pair, and every one of them is refused when the user has
@@ -98,7 +152,14 @@ var KEYS = {
 var HOLDER_PRIVATE_KEYS = [
   "sdjwtvc_holder_private_jwk",
   "sdjwtvc_refreshed_holder_private_jwk",
-  "sdjwtvc_previous_holder_private_jwk"
+  "sdjwtvc_previous_holder_private_jwk",
+  // The DPoP key's private half belongs on this list for the same reason as the
+  // others, and doubly so under Holder of Key, where it IS the holder key. The
+  // consequence is deliberate and the pane says it: with saving off, the DPoP key
+  // does not survive a page load, so the access token bound to it becomes
+  // unusable — which is precisely what a sender-constrained token is supposed to
+  // do when the key is gone.
+  "sdjwtvc_dpop_private_jwk"
 ];
 
 // ---------------------------------------------------------------------------
@@ -426,6 +487,237 @@ function readHolderPrivateJwk(inputId) {
   }
   log.debug("Leaving readHolderPrivateJwk().");
   return { jwk: parsed, source: "pasted", problem: null };
+}
+
+// ---------------------------------------------------------------------------
+// DPoP state (RFC 9449).
+//
+// Kept here rather than in dpop.js for the same reason every other storage key
+// is: dpop.js is the MECHANISM and has no DOM and no storage in it, so it can be
+// unit-tested against the RFCs' own vectors without a browser. This half is the
+// wallet's memory of what it decided.
+// ---------------------------------------------------------------------------
+function dpopEnabled() {
+  // Opt IN, unlike the holder-key saving switch above, which is opt out. A wallet
+  // that has never heard of DPoP must go on getting Bearer tokens, and the
+  // workflow's default path is the one the specifications describe first.
+  return get(KEYS.DPOP_ENABLED) === "1";
+}
+
+function setDpopEnabled(on) {
+  log.debug("Entering setDpopEnabled(). on=" + !!on);
+  set(KEYS.DPOP_ENABLED, on ? "1" : "0");
+  if (!on) {
+    // The key goes with the switch. Leaving it behind would mean a wallet that
+    // turned DPoP off still had a key pair lying in storage that nothing would
+    // ever use again, and — under Holder of Key — one that a later session might
+    // pick up and bind a credential to by accident.
+    remove(KEYS.DPOP_PRIVATE_JWK);
+    remove(KEYS.DPOP_PUBLIC_JWK);
+    remove(KEYS.DPOP_JKT);
+    remove(KEYS.DPOP_NONCE);
+    remove(KEYS.DPOP_ALG);
+    log.debug("setDpopEnabled(): DPoP turned off, so its key pair and nonce were discarded.");
+  }
+  log.debug("Leaving setDpopEnabled().");
+}
+
+// Which mechanism binds the CREDENTIAL. Holder of Key needs a DPoP key to reuse,
+// so with DPoP off the answer is always Proof of Possession however the checkbox
+// was left — reported as the effective mode rather than silently corrected, so
+// the pane can say why.
+function credentialBindingMode() {
+  var stored = get(KEYS.DPOP_BINDING);
+  var wanted = stored === BINDING_MODES.HOK ? BINDING_MODES.HOK : DEFAULT_BINDING_MODE;
+  if (wanted === BINDING_MODES.HOK && !dpopEnabled()) return BINDING_MODES.POP;
+  return wanted;
+}
+
+// What the checkbox itself is set to, which is NOT the same question: with DPoP
+// off the effective mode is pop while the preference may still say hok, and the
+// checkbox must go on showing what the user chose rather than resetting itself.
+function credentialBindingPreference() {
+  return get(KEYS.DPOP_BINDING) === BINDING_MODES.HOK ? BINDING_MODES.HOK : DEFAULT_BINDING_MODE;
+}
+
+function setCredentialBindingMode(mode) {
+  log.debug("Entering setCredentialBindingMode(). mode=" + mode);
+  set(KEYS.DPOP_BINDING, mode === BINDING_MODES.HOK ? BINDING_MODES.HOK : BINDING_MODES.POP);
+  log.debug("Leaving setCredentialBindingMode().");
+}
+
+function usingHolderOfKey() {
+  return credentialBindingMode() === BINDING_MODES.HOK;
+}
+
+// The DPoP key pair as dpop.js wants it: { alg, publicJwk, privateJwk }. Returns
+// null when there is nothing usable, which is a normal state — the key may never
+// have been generated, or its private half may have been refused by the storage
+// gate above.
+function dpopKeyPair() {
+  var privateJwk = getJson(KEYS.DPOP_PRIVATE_JWK);
+  var publicJwk = getJson(KEYS.DPOP_PUBLIC_JWK);
+  if (!privateJwk || !publicJwk) return null;
+  return {
+    alg: get(KEYS.DPOP_ALG) || "ES256",
+    publicJwk: publicJwk,
+    privateJwk: privateJwk
+  };
+}
+
+function storeDpopKeyPair(pair, jkt) {
+  log.debug("Entering storeDpopKeyPair().");
+  setJson(KEYS.DPOP_PUBLIC_JWK, pair.publicJwk);
+  setJson(KEYS.DPOP_PRIVATE_JWK, pair.privateJwk);
+  set(KEYS.DPOP_ALG, pair.alg || "ES256");
+  if (jkt) set(KEYS.DPOP_JKT, jkt);
+  log.debug("Leaving storeDpopKeyPair(). The private half was " +
+            (getJson(KEYS.DPOP_PRIVATE_JWK) ? "stored" : "REFUSED by the key-saving opt-out"));
+}
+
+// Whether the wallet can actually make a proof right now. The distinction that
+// matters: DPoP switched on with no private key is not a configuration, it is a
+// wallet that will fail its next call — and it happens routinely, because with
+// holder-key saving off the private half does not survive a page load.
+function dpopReadiness() {
+  var on = dpopEnabled();
+  if (!on) return { on: false, ready: false, problem: null };
+  var pair = dpopKeyPair();
+  if (pair) return { on: true, ready: true, problem: null, jkt: get(KEYS.DPOP_JKT) || "" };
+  if (!holderPrivateKeyMayBeStored()) {
+    return { on: true, ready: false, problem:
+      "DPoP is on but there is no key pair in storage, because saving private keys is turned " +
+      "off. A fresh key is generated for this page, and an access token bound to it stops " +
+      "working as soon as you navigate away \u2014 which is a sender-constrained token behaving " +
+      "exactly as it should." };
+  }
+  return { on: true, ready: false, problem:
+    "DPoP is on but no key pair has been generated yet." };
+}
+
+function dpopNonce() { return get(KEYS.DPOP_NONCE) || ""; }
+
+// Everything vci_wallet.js needs to sign a request, and nothing it does not.
+// This is the seam between the three DPoP modules and it is deliberate:
+// dpop.js is the cryptography (no storage, no DOM, unit-tested against the RFCs'
+// own vectors), this module is the wallet's memory, and vci_wallet.js is the
+// wire. Passing a descriptor rather than letting the wire module read storage is
+// what keeps the first two testable without a browser.
+//
+// null means "send a Bearer request", which is the answer both when DPoP is off
+// and when it is on but the key is gone — the caller does not have to tell those
+// apart to make a call, only to explain itself, which is what dpopReadiness() is
+// for.
+function dpopContext() {
+  if (!dpopEnabled()) return null;
+  var pair = dpopKeyPair();
+  if (!pair) return null;
+  return { key: pair, nonce: dpopNonce(), remember: rememberDpopNonce };
+}
+
+function rememberDpopNonce(nonce) {
+  if (!nonce) return;
+  log.debug("Entering rememberDpopNonce().");
+  set(KEYS.DPOP_NONCE, String(nonce));
+  log.debug("Leaving rememberDpopNonce().");
+}
+
+// ---------------------------------------------------------------------------
+// The private key the credential in hand is actually bound to.
+//
+// Before DPoP there was only one candidate, so the presentation pages read
+// HOLDER_PRIVATE_JWK and that was always right. Under Holder of Key the
+// credential's cnf.jwk is the DPoP key instead, and signing the Key Binding JWT
+// with the holder key would produce a presentation the verifier refuses — with a
+// complaint about the KB-JWT's signature, which reads as a broken wallet rather
+// than as the wrong key having been chosen.
+//
+// So the key is chosen by MATCHING against the credential's own cnf.jwk rather
+// than by remembering which mode was used at issuance. That is deliberate: the
+// mode may have been switched since, the credential may have come from another
+// generation in Credential History, and the credential is the only thing that
+// actually knows which key it is bound to.
+//
+// Comparison is on the public coordinates — x/y for EC, n for RSA — which is the
+// same test step 4 uses to decide whether a pasted key is the bound one.
+// ---------------------------------------------------------------------------
+function samePublicKey(a, b) {
+  if (!a || !b || a.kty !== b.kty) return false;
+  if (a.kty === "EC") return a.crv === b.crv && a.x === b.x && a.y === b.y;
+  if (a.kty === "RSA") return a.n === b.n && a.e === b.e;
+  if (a.kty === "OKP") return a.crv === b.crv && a.x === b.x;
+  return false;
+}
+
+// The public half of a private JWK, for comparison against a cnf. A private EC
+// JWK carries x and y beside d, and a private RSA JWK carries n and e, so no
+// derivation is needed — which is why this works without Web Crypto and can be
+// used from a synchronous render.
+function publicHalfOf(privateJwk) {
+  if (!privateJwk) return null;
+  if (privateJwk.kty === "EC") {
+    return { kty: "EC", crv: privateJwk.crv, x: privateJwk.x, y: privateJwk.y };
+  }
+  if (privateJwk.kty === "RSA") return { kty: "RSA", n: privateJwk.n, e: privateJwk.e };
+  if (privateJwk.kty === "OKP") return { kty: "OKP", crv: privateJwk.crv, x: privateJwk.x };
+  return null;
+}
+
+// cnfJwk: the credential's own cnf.jwk, or null when it has none (a credential
+// with no key binding at all, which is legal — OID4VCI section 8 makes the proof
+// optional when the issuer does not require binding).
+//
+// Returns the same shape readHolderPrivateJwk() does, plus `boundTo` naming which
+// key was chosen, so the pane can say "the DPoP key" rather than just "a key".
+function boundPrivateJwk(cnfJwk, inputId) {
+  log.debug("Entering boundPrivateJwk(). cnf=" + (cnfJwk ? cnfJwk.kty : "(none)"));
+  var candidates = [];
+  var holder = getJson(KEYS.HOLDER_PRIVATE_JWK);
+  if (holder) candidates.push({ jwk: holder, source: "storage", boundTo: "the holder key" });
+  var dpop = getJson(KEYS.DPOP_PRIVATE_JWK);
+  if (dpop) candidates.push({ jwk: dpop, source: "storage", boundTo: "the DPoP key (Holder of Key)" });
+
+  // With no cnf to match against there is nothing to choose BY, so the holder key
+  // is used as it always was. Guessing the DPoP key here would change behaviour
+  // for every credential that has no key binding.
+  if (!cnfJwk) {
+    if (candidates.length) {
+      log.debug("Leaving boundPrivateJwk(). No cnf; using " + candidates[0].boundTo + ".");
+      return Object.assign({ problem: null }, candidates[0]);
+    }
+    return readHolderPrivateJwk(inputId);
+  }
+
+  for (var i = 0; i < candidates.length; i++) {
+    if (samePublicKey(publicHalfOf(candidates[i].jwk), cnfJwk)) {
+      log.debug("Leaving boundPrivateJwk(). Matched " + candidates[i].boundTo + ".");
+      return Object.assign({ problem: null }, candidates[i]);
+    }
+  }
+
+  // Nothing in storage matches. A pasted key may — and it is checked against the
+  // cnf too, because a pasted key that is not the bound one produces exactly the
+  // same unhelpful verifier complaint.
+  var pasted = readHolderPrivateJwk(inputId);
+  if (pasted.jwk && samePublicKey(publicHalfOf(pasted.jwk), cnfJwk)) {
+    log.debug("Leaving boundPrivateJwk(). A pasted key matched the credential's cnf.");
+    return { jwk: pasted.jwk, source: "pasted", boundTo: "the pasted key", problem: null };
+  }
+  if (pasted.jwk) {
+    return { jwk: null, source: "pasted", boundTo: "",
+             problem: "the pasted key is not the key this credential is bound to — its cnf.jwk " +
+                      "names a different key, so a Key Binding JWT signed with it would be " +
+                      "refused" };
+  }
+  if (candidates.length) {
+    return { jwk: null, source: "storage", boundTo: "",
+             problem: "this browser holds " + candidates.length + " key(s) but none of them is " +
+                      "the one this credential is bound to (its cnf.jwk names another). If it " +
+                      "was issued under Holder of Key, the DPoP key is the one needed — and DPoP " +
+                      "keys are discarded when DPoP is switched off." };
+  }
+  log.debug("Leaving boundPrivateJwk(). No key at all.");
+  return Object.assign({ boundTo: "" }, pasted);
 }
 
 function setHolderKeySaving(on) {
@@ -1254,9 +1546,26 @@ function disclosedClaims(parsed) {
 module.exports = {
   KEYS: KEYS,
   HOLDER_PRIVATE_KEYS: HOLDER_PRIVATE_KEYS,
+  BINDING_MODES: BINDING_MODES,
+  DEFAULT_BINDING_MODE: DEFAULT_BINDING_MODE,
+  dpopEnabled: dpopEnabled,
+  setDpopEnabled: setDpopEnabled,
+  credentialBindingMode: credentialBindingMode,
+  credentialBindingPreference: credentialBindingPreference,
+  setCredentialBindingMode: setCredentialBindingMode,
+  usingHolderOfKey: usingHolderOfKey,
+  dpopKeyPair: dpopKeyPair,
+  storeDpopKeyPair: storeDpopKeyPair,
+  dpopReadiness: dpopReadiness,
+  dpopNonce: dpopNonce,
+  dpopContext: dpopContext,
+  rememberDpopNonce: rememberDpopNonce,
   holderPrivateKeyMayBeStored: holderPrivateKeyMayBeStored,
   setHolderKeySaving: setHolderKeySaving,
   readHolderPrivateJwk: readHolderPrivateJwk,
+  boundPrivateJwk: boundPrivateJwk,
+  samePublicKey: samePublicKey,
+  publicHalfOf: publicHalfOf,
   forgetStoredHolderPrivateKeys: forgetStoredHolderPrivateKeys,
   USE_CASES: USE_CASES,
   DEFAULT_USE_CASE: DEFAULT_USE_CASE,
