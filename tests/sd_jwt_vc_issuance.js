@@ -1680,7 +1680,11 @@ async function presentationHandoff(driver, generations) {
       "Object.keys(o).forEach(function (k) { localStorage.setItem(k, o[k]); });", saved);
   };
   var credential = saved["sdjwtvc_credential"] || "";
-  assert.ok(credential, "the workflow should have left a credential in storage for this section to hand off.");
+  assert.ok(credential,
+    "there is no credential in storage to hand off. stepFour() left one, so it was removed by a " +
+    "section between there and here: the layout and pane sections clear localStorage to measure " +
+    "an empty page and MUST restore it (see preservingLocalStorage()). Keys present: " +
+    (Object.keys(saved).sort().join(", ") || "(none at all)"));
 
   // What the offer reports, on either page.
   var offerOn = async function (page) {
