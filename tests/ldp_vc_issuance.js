@@ -58,6 +58,7 @@ const sdJwtVc = paths.requireSharedModule(
 const LDP_CONFIG_ID = process.env.OID4VCI_LDP_CONFIG_ID || "IdentityCredentialLdpVc";
 
 async function test() {
+  log.debug("Entering test().");
   log.info("Running ldp_vc issuance against " + issuerBase);
   const meta = await common.issuerMetadata(issuerBase);
   assert.ok(meta, "no credential issuer metadata at " + issuerBase + ". Start the STS mock.");
@@ -195,6 +196,7 @@ async function test() {
   log.info("[tamper] OK — an edited claim is refused; the control still verifies.");
 
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

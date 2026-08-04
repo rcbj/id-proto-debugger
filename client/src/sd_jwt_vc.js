@@ -186,6 +186,7 @@ function currentUseCase() {
 }
 
 function setUseCase(id) {
+  log.debug("Entering setUseCase().");
   var uc = useCaseById(id);
   if (!uc) return null;
   set(KEYS.USE_CASE, uc.id);
@@ -195,11 +196,13 @@ function setUseCase(id) {
   if (typeof document !== "undefined" && document.getElementById("vc_use_case_badge")) {
     renderUseCaseBadge();
   }
+  log.debug("Leaving setUseCase().");
   return uc;
 }
 
 // Show which use case is running, in the step indicator every page includes.
 function renderUseCaseBadge() {
+  log.debug("Entering renderUseCaseBadge().");
   var host = document.getElementById("vc_steps");
   if (!host) return null;
   var uc = currentUseCase();
@@ -211,6 +214,7 @@ function renderUseCaseBadge() {
   badge.innerHTML = 'Use case: <strong>' + uc.spec + ' &middot; ' + uc.label + '</strong> — ' +
                     uc.mechanics + ' <a href="/vc-issuance-0.html">change</a>';
   host.parentNode.insertBefore(badge, host.nextSibling);
+  log.debug("Leaving renderUseCaseBadge().");
   return uc;
 }
 
@@ -348,6 +352,7 @@ function forgetStoredHolderPrivateKeys() {
 }
 
 function set(key, value) {
+  log.debug("Entering set().");
   var s = ls();
   if (!s) return;
   if (isHolderPrivateKey(key) && !holderPrivateKeyMayBeStored()) {
@@ -364,6 +369,7 @@ function set(key, value) {
   } catch (e) {
     // Over quota, or storage disabled: there is nothing to fall back to.
   }
+  log.debug("Leaving set().");
 }
 
 function remove(key) {
@@ -398,6 +404,7 @@ function setJson(key, value) { set(key, JSON.stringify(value)); }
 // The distinction between "no key" and "a key that will not parse" is returned
 // rather than collapsed, because they need different things said to the user.
 function readHolderPrivateJwk(inputId) {
+  log.debug("Entering readHolderPrivateJwk().");
   var stored = getJson(KEYS.HOLDER_PRIVATE_JWK);
   if (stored) return { jwk: stored, source: "storage", problem: null };
   var e = (typeof document !== "undefined" && inputId) ? document.getElementById(inputId) : null;
@@ -417,6 +424,7 @@ function readHolderPrivateJwk(inputId) {
     return { jwk: null, source: "pasted",
              problem: "that JSON is not a private JWK — it needs at least kty and d" };
   }
+  log.debug("Leaving readHolderPrivateJwk().");
   return { jwk: parsed, source: "pasted", problem: null };
 }
 
@@ -480,8 +488,10 @@ var HISTORY_OUTCOME = {
 // Read the log, upgrading anything written by an earlier build rather than
 // discarding it: those entries were all credentials the wallet held.
 function credentialHistory() {
+  log.debug("Entering credentialHistory().");
   var history = getJson(KEYS.HISTORY);
   if (Object.prototype.toString.call(history) !== "[object Array]") return [];
+  log.debug("Leaving credentialHistory().");
   return history.map(function (entry, index) {
     var upgraded = entry || {};
     if (!upgraded.id) upgraded.id = index + 1;
@@ -508,6 +518,7 @@ function heldGenerations() {
 // longer there (trimmed, cleared) means the newest generation, which is what has
 // just been recorded.
 function activeGeneration() {
+  log.debug("Entering activeGeneration().");
   var held = heldGenerations();
   if (!held.length) return null;
   var wanted = parseInt(get(KEYS.HISTORY_INDEX), 10);
@@ -516,6 +527,7 @@ function activeGeneration() {
                                         generation: held[i].generation, total: held.length };
   }
   var last = held.length - 1;
+  log.debug("Leaving activeGeneration().");
   return { index: last, id: held[last].id, entry: held[last].entry,
            generation: held[last].generation, total: held.length };
 }
@@ -854,6 +866,7 @@ var FORMAT_LDP_VC = "ldp_vc";
 // VC-JWT never does. Counting dot-separated parts does not work — the tildes
 // hang off the signature segment, so an SD-JWT also splits into exactly three.
 function credentialFormat(serialized) {
+  log.debug("Entering credentialFormat().");
   // ldp_vc is the odd one out and is checked first: it is a JSON OBJECT with an
   // embedded proof, where the other two are compact-serialized strings. Stored
   // credentials are strings, so an ldp_vc arrives as JSON text beginning with
@@ -875,6 +888,7 @@ function credentialFormat(serialized) {
   }
   if (raw.indexOf("~") >= 0) return FORMAT_SD_JWT;
   if (raw.split(".").length === 3) return FORMAT_JWT_VC_JSON;
+  log.debug("Leaving credentialFormat().");
   return "";
 }
 
@@ -939,6 +953,7 @@ function parseJwtVc(serialized) {
 // jwt_vc_json it is credentialSubject, minus `id`, which identifies the subject
 // rather than saying anything about them.
 function claimsOf(parsed) {
+  log.debug("Entering claimsOf().");
   var out = {};
   if (!parsed) return out;
   if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
@@ -951,6 +966,7 @@ function claimsOf(parsed) {
   (parsed.disclosures || []).forEach(function (d) {
     if (d && d.name != null) out[d.name] = d.value;
   });
+  log.debug("Leaving claimsOf().");
   return out;
 }
 
@@ -1221,6 +1237,7 @@ function collectSdDigests(node, out) {
 // The claim set a verifier would end up with: the always-visible claims of the
 // payload (minus the SD-JWT machinery) plus every disclosed claim.
 function disclosedClaims(parsed) {
+  log.debug("Entering disclosedClaims().");
   var claims = {};
   Object.keys(parsed.payload || {}).forEach(function (k) {
     if (k === "_sd" || k === "_sd_alg") return;
@@ -1230,6 +1247,7 @@ function disclosedClaims(parsed) {
     if (d.error || d.arrayElement || d.name === null) return;
     claims[d.name] = d.value;
   });
+  log.debug("Leaving disclosedClaims().");
   return claims;
 }
 

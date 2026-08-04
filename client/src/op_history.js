@@ -100,6 +100,7 @@ function createHistory(config) {
   // Append an entry. Its recognized fields are the configured columns plus
   // result/detail. Returns the id, so a caller can resolve it later.
   function record(entry) {
+    log.debug("Entering record().");
     entry = entry || {};
     var saved = {
       id: newEntryId(),
@@ -111,10 +112,12 @@ function createHistory(config) {
     var history = read();
     history.push(saved);
     write(history);
+    log.debug("Leaving record().");
     return saved.id;
   }
 
   function update(id, result, detail) {
+    log.debug("Entering update().");
     if (!id) return false;
     var history = read();
     for (var i = history.length - 1; i >= 0; i--) {
@@ -125,6 +128,7 @@ function createHistory(config) {
       write(history);
       return true;
     }
+    log.debug("Leaving update().");
     return false;
   }
 
@@ -132,6 +136,7 @@ function createHistory(config) {
   // `match` narrows it: a string is matched against the first configured
   // column (the operation), an object against each of its fields.
   function resolvePending(result, detail, match) {
+    log.debug("Entering resolvePending().");
     var want = null;
     if (typeof match === 'string' && COLUMNS.length) {
       want = {}; want[COLUMNS[0].key] = match;
@@ -152,6 +157,7 @@ function createHistory(config) {
       write(history);
       return history[i];
     }
+    log.debug("Leaving resolvePending().");
     return null;
   }
 
@@ -161,6 +167,7 @@ function createHistory(config) {
 
   // Render the log newest-first into `box` (a DOM element).
   function render(box) {
+    log.debug("Entering render().");
     if (!box) return;
     var history = read();
     if (!history.length) {
@@ -187,6 +194,7 @@ function createHistory(config) {
         '</tr>';
     }
     box.innerHTML = html + '</tbody></table></div>';
+    log.debug("Leaving render().");
   }
 
   log.debug("Leaving createHistory().");

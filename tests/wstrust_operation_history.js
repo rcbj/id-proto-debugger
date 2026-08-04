@@ -55,6 +55,8 @@ function btn(page, fn) {
 
 // The rendered log, newest first: # | Time | Operation | Version | User | STS | Result
 async function historyRows(driver) {
+  log.debug("Entering historyRows().");
+  log.debug("Leaving historyRows().");
   return driver.executeScript(
     "var rows = document.querySelectorAll('#wst_operation_history tbody tr');" +
     "var out = [];" +
@@ -88,6 +90,7 @@ async function openTools(driver) {
 
 // A request the STS mock will accept (or refuse, with password "invalid").
 async function configureRequest(driver, opts) {
+  log.debug("Entering configureRequest().");
   await selectValue(driver, 'wst_trust_version', opts.version);
   await selectValue(driver, 'wst_operation', opts.operation);
   await setInput(driver, 'wst_sts_url', opts.stsUrl === undefined ? stsUrl : opts.stsUrl);
@@ -97,9 +100,11 @@ async function configureRequest(driver, opts) {
   // Call the STS straight from the browser: the mock sends permissive CORS, and
   // this test does not require the API proxy to be up.
   await click(driver, By.id('wst_initiateFromFrontEnd'));
+  log.debug("Leaving configureRequest().");
 }
 
 async function operationHistoryActivities(driver) {
+  log.debug("Entering operationHistoryActivities().");
   await openTools(driver);
   await driver.executeScript("window.localStorage.clear();");
   await openTools(driver);
@@ -182,9 +187,11 @@ async function operationHistoryActivities(driver) {
   assert.strictEqual((await historyRows(driver)).length, 0,
     "clearing on the response page should clear the shared log.");
   log.info("[clear] OK — Clear History clears the log for both pages.");
+  log.debug("Leaving operationHistoryActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) options.addArguments("--headless=new");
   options.addArguments("--no-sandbox");
@@ -206,6 +213,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

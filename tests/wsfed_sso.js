@@ -80,6 +80,7 @@ function deriveEndpoint(metadataUrl) {
 }
 
 async function wsfedActivities(driver, metadataUrl, realm, user) {
+  log.debug("Entering wsfedActivities().");
   // Keycloak's login page + the WS-Fed round-trip need a generous timeout.
   var loginWait = Math.max(waitTime, 15000);
 
@@ -179,6 +180,7 @@ async function wsfedActivities(driver, metadataUrl, realm, user) {
   } catch (e) { log.warn("Signature validation step skipped: " + e.message); }
 
   log.info("WS-Federation SSO round-trip succeeded.");
+  log.debug("Leaving wsfedActivities().");
 }
 
 // ---------------------------------------------------------------------------
@@ -203,6 +205,7 @@ async function wsfedActivities(driver, metadataUrl, realm, user) {
 // under /protocol/wsfed.
 // ---------------------------------------------------------------------------
 async function wsfedSignOutActivities(driver, metadataUrl, realm) {
+  log.debug("Entering wsfedSignOutActivities().");
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Return to the WS-Federation Test Tools page to sign out.");
@@ -296,9 +299,11 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
 
   log.info("WS-Federation sign-out succeeded: the IdP reported the sign-out and the session was ended " +
            "(the next sign-in required credentials again).");
+  log.debug("Leaving wsfedSignOutActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) { options.addArguments("--headless"); }
   options.addArguments("--no-sandbox");
@@ -348,6 +353,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

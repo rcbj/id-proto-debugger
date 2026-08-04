@@ -60,6 +60,7 @@ function status(text, cls) {
 // Returns the base and where it came from, because a guessed base that 404s and
 // a configured one that 404s call for different things from the user.
 function verifierBase() {
+  log.debug("Entering verifierBase().");
   var stored = sdJwtVc.get(sdJwtVp.KEYS.VERIFIER_BASE_URL) || "";
   if (stored) return { base: trimBase(stored), source: "configured" };
 
@@ -72,6 +73,7 @@ function verifierBase() {
   var origin = originOf(issuer);
   if (origin) return { base: origin, source: "guessed from the credential issuer" };
 
+  log.debug("Leaving verifierBase().");
   return { base: "", source: "none" };
 }
 
@@ -192,6 +194,7 @@ function setFieldValue(id, v) {
 // The format of the credential this wallet is holding, "" when there is none or
 // it cannot be read.
 function heldFormat() {
+  log.debug("Entering heldFormat().");
   var raw = sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "";
   if (!raw) return "";
   try {
@@ -203,9 +206,11 @@ function heldFormat() {
     log.debug("heldFormat(): the held credential could not be parsed: " + e.message);
     return "";
   }
+  log.debug("Leaving heldFormat().");
 }
 
 function verifierPageUrl(id) {
+  log.debug("Entering verifierPageUrl().");
   var base = verifierBaseUrl();
   var path = (STARTS[id] || {}).verifierPath || "/oid4vp/verifier";
   if (!base) return "";
@@ -224,6 +229,7 @@ function verifierPageUrl(id) {
   // page behaves exactly as before for a wallet with no credential.
   var format = heldFormat();
   if (!format) return base + path;
+  log.debug("Leaving verifierPageUrl().");
   return base + path + (path.indexOf("?") === -1 ? "?" : "&") +
          "format=" + encodeURIComponent(format);
 }

@@ -46,6 +46,7 @@ var issuerBase = process.env.WALTID_ISSUER_URL
   : "";
 
 async function test() {
+  log.debug("Entering test().");
   // Every one of these is a FAILURE rather than a skip: this job is the only
   // thing that proves jwt_vc_json interoperates, and a run where it quietly did
   // nothing reports success for a format nobody tested.
@@ -102,6 +103,7 @@ async function test() {
   log.info("[issuance] OK — walt.id issued a " + parsed.types.join("/") + " with " + claimCount +
            " claim(s), bound by " + binding.kind + ".");
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

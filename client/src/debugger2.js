@@ -414,6 +414,7 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     });
     // If the SD-JWT VC workflow sent us here, the tokens are what it came for.
     returnToSdJwtVcFlow();
+  log.debug("Leaving successfulInternalTokenAPICall().");
 }
 
 function errorInternalTokenAPICall(request, status, error) {
@@ -440,7 +441,7 @@ function errorInternalTokenAPICall(request, status, error) {
 
 function buildInternalRefreshAPIRequestMessage() {
   log.debug("Entering buildInternalRefreshAPIRequestMessage().");
-  log.debug("Entering buildInternalTokenAPIRequestMessage()."); 
+  log.debug("Entering buildInternalRefreshAPIRequestMessage()."); 
   // validate and process form here
   var token_endpoint = $("#token_endpoint").val();
   var client_id = $("#refresh_client_id").val();
@@ -474,7 +475,7 @@ function buildInternalRefreshAPIRequestMessage() {
   {
     formData.client_secret = client_secret
   }
-  log.debug("Leaving buildInternalTokenAPIRequestMessage().");
+  log.debug("Leaving buildInternalRefreshAPIRequestMessage().");
   log.debug("Leaving buildInternalRefreshAPIRequestMessage().");
   return formData;
 }
@@ -555,7 +556,7 @@ function successfulInternalRefreshAPICall(data, textStatus, request) {
 
 function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken, currentIDToken) {
   log.debug("Entering recreateRefreshTokenDisplay().");
-  log.debug("Entering displayRefreshTokenPane().");
+  log.debug("Entering recreateRefreshTokenDisplay().");
   var refresh_endpoint_result_html = "";
   log.debug("displayOpenIDConnectArtifacts=" + displayOpenIDConnectArtifacts);
   var iteration = 0;
@@ -660,11 +661,12 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken, cu
   }
   populateRevocationTokenWithLatestAccessToken();
   populateTokenExchangeSubjectWithLatestAccessToken();
-  log.debug("Leaving displayRefreshTokenPane().");
+  log.debug("Leaving recreateRefreshTokenDisplay().");
   log.debug("Leaving recreateRefreshTokenDisplay().");
 }
 
 function errorInternalRefreshAPICall(request, status, error) {
+  log.debug("Entering errorInternalRefreshAPICall().");
   log.error("An error occurred making a token refresh call to token endpoint.");
   log.error("request: " + JSON.stringify(request));
   log.error("status: " + JSON.stringify(status));
@@ -674,6 +676,7 @@ function errorInternalRefreshAPICall(request, status, error) {
     client_id: $("#refresh_client_id").val(),
     detail: 'error'
   });
+  log.debug("Leaving errorInternalRefreshAPICall().");
 }
 
 function resetUI(value)
@@ -909,6 +912,7 @@ function setAuthorizationGrantType()
   }
   resetUI(authzGrantType);
   log.debug("Entering setAuthorizationGrantType().");
+  log.debug("Leaving setAuthorizationGrantType().");
 }
 
 function loadValuesFromLocalStorage()
@@ -1298,6 +1302,7 @@ function recreateUniqueGrantFlowElements()
     fillGeneratedFields("#display_authz_error_class", { error: error });
   }
   log.debug("Entering recreateUniqueGrantFlowElements().");
+  log.debug("Leaving recreateUniqueGrantFlowElements().");
 }
 
 function recalculateTokenRequestDescription()
@@ -2050,6 +2055,7 @@ function recalculateRefreshErrorDescription(data)
 
 function parseFragment()
 {
+  log.debug("Entering parseFragment().");
   log.debug("hash=" + window.location.hash);
   var hash = window.location.hash.substr(1);
 
@@ -2058,6 +2064,7 @@ function parseFragment()
       result[parts[0]] = parts[1];
       return result;
   }, {});
+  log.debug("Leaving parseFragment().");
   return result;
 }
 
@@ -2080,7 +2087,7 @@ function displayOIDCArtifacts()
 
 function useRefreshTokens()
 {
-  log.debug("Entering useRefreshToken().");
+  log.debug("Entering useRefreshTokens().");
   var yesCheck = $("#useRefreshToken-yes").is(":checked");
   var noCheck = $("#useRefreshToken-no").is(":checked");
   log.debug("useRefreshToken-yes=" + yesCheck, "useRefreshToken-no=" + noCheck);
@@ -2123,6 +2130,7 @@ function clearLocalStorage() {
 // ---- Token History ----
 
 function decodeJwtPayload(token) {
+  log.debug("Entering decodeJwtPayload().");
   try {
     var parts = token.split('.');
     if (parts.length < 2) return null;
@@ -2132,6 +2140,7 @@ function decodeJwtPayload(token) {
   } catch (e) {
     return null;
   }
+  log.debug("Leaving decodeJwtPayload().");
 }
 
 function extractNonce(id_token) {
@@ -2387,6 +2396,7 @@ function regenerateNonce() {
 
 function recreateTokenDisplay()
 {
+  log.debug("Entering recreateTokenDisplay().");
       var token_endpoint_result_html = "";
       log.debug("displayOpenIDConnectArtifacts=" + displayOpenIDConnectArtifacts);
       var refreshToken = localStorage.getItem("token_refresh_token");
@@ -2482,6 +2492,7 @@ function recreateTokenDisplay()
         refresh: refreshToken,
         id: localStorage.getItem("token_id_token")
       });
+  log.debug("Leaving recreateTokenDisplay().");
 }
 
 function displayTokenCustomParametersCheck()
@@ -2509,6 +2520,7 @@ function displayTokenCustomParametersCheck()
 
 function generateCustomParametersListUI()
 {
+  log.debug("Entering generateCustomParametersListUI().");
   var customParametersListHTML = "" +
     "<fieldset>" +
     "<legend>Custom Parameters" +
@@ -2554,6 +2566,7 @@ function generateCustomParametersListUI()
     }
   }
   recalculateTokenRequestDescription();
+  log.debug("Leaving generateCustomParametersListUI().");
 }
 
 function onClickShowFieldSet(expand_button_id, field_set_id) {
@@ -2574,7 +2587,7 @@ function onClickShowFieldSet(expand_button_id, field_set_id) {
   $("#step0_expand_form").on("click", function(event) {
     event.preventDefault();
   });
-  log.debug('Leaving onClickShowConfigFieldSet().');
+  log.debug('Leaving onClickShowFieldSet().');
   log.debug("Leaving onClickShowFieldSet().");
   return false;
 }
@@ -2741,10 +2754,10 @@ function setHeaderAuthStyleRefreshToken() {
 }
 
 function onClickCopyToken(field) {
-  log.debug("Entering copyToken().");
+  log.debug("Entering onClickCopyToken().");
   var copyText = $(field);
   navigator.clipboard.writeText(copyText.val());
-  log.debug("Leaving copyToken().");
+  log.debug("Leaving onClickCopyToken().");
   return false;
 }
 

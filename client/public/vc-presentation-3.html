@@ -46,7 +46,7 @@ gets an accepted too, and this page says so.</p>
 
 <script type="text/javascript">
 function vpSetAllPanes(expand) {
-  var fieldsets = ['sent_fieldset', 'recheck_fieldset', 'verifier_fieldset'];
+  var fieldsets = ['sent_fieldset', 'recheck_fieldset', 'verifier_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -158,6 +158,8 @@ function vpSetAllPanes(expand) {
     </table>
   </fieldset>
 </div>
+<!--#include file="/partials/vc_tools.html"-->
+
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
 <link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">

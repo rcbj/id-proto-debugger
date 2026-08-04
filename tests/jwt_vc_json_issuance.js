@@ -64,6 +64,7 @@ function severeErrors(driver) {
 
 // --- what the issuer says it offers ----------------------------------------
 async function metadataAdvertisesTheFormat() {
+  log.debug("Entering metadataAdvertisesTheFormat().");
   log.info("=== The issuer advertises jwt_vc_json ===");
   const found = await common.jwtVcJsonConfigurationId(issuerBase);
   assert.ok(found.meta, "the mock credential issuer should publish its metadata at " + issuerBase);
@@ -84,11 +85,13 @@ async function metadataAdvertisesTheFormat() {
     "and advertising both would tell a wallet two different things.");
   log.info("[metadata] OK — " + found.id + " offers " + entry.credential_definition.type.join("/") +
            " as " + entry.format + ".");
+  log.debug("Leaving metadataAdvertisesTheFormat().");
   return found;
 }
 
 // --- what actually comes back ----------------------------------------------
 async function issuesARealVcJwt(found) {
+  log.debug("Entering issuesARealVcJwt().");
   log.info("=== The credential endpoint issues a VC-JWT ===");
   const held = await common.mintJwtVcJson(issuerBase, found.id);
   const parsed = common.assertIsJwtVcJson(held.credential, "the mock issuer");
@@ -119,6 +122,7 @@ async function issuesARealVcJwt(found) {
   assert.ok(claimCount > 0, "the credential should assert something about its subject.");
   log.info("[issuance] OK — a " + parsed.types.join("/") + " with " + claimCount +
            " claim(s), signed by " + header.kid + ", bound by " + binding.kind + ".");
+  log.debug("Leaving issuesARealVcJwt().");
   return held;
 }
 
@@ -126,6 +130,7 @@ async function issuesARealVcJwt(found) {
 // Issuing a credential the workflow cannot then display would be a hollow pass,
 // so the credential goes into the wallet and the pages are asked about it.
 async function theWalletPagesReadIt(driver, held) {
+  log.debug("Entering theWalletPagesReadIt().");
   log.info("=== The wallet pages read a jwt_vc_json credential ===");
   await common.plantIntoWallet(driver, {
     By: By, until: until, baseUrl: baseUrl, waitTime: waitTime,
@@ -156,9 +161,11 @@ async function theWalletPagesReadIt(driver, held) {
     "and must NOT report it as a credential with 0 selectively-disclosable claims: it is full of claims, " +
     "none of which can be withheld, which is a different statement. Said: " + state);
   log.info("[wallet] OK — step 3 shows it and step 0 describes the format honestly.");
+  log.debug("Leaving theWalletPagesReadIt().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   log.info("Running jwt_vc_json issuance against " + issuerBase);
   // Not reachable, or not offering the format, is a FAILURE rather than a skip.
   // This job exists to prove jwt_vc_json issuance works; a run in which it
@@ -188,6 +195,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

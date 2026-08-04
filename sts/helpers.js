@@ -82,6 +82,7 @@ const ISSUER = process.env.STS_ISSUER || 'urn:wstrust:mock:sts';
 
 // --- STS signing key/cert (generated once at startup) ----------------------
 function makeStsKeys() {
+  log.debug("Entering makeStsKeys().");
   const kp = forge.pki.rsa.generateKeyPair({ bits: 2048, e: 0x10001 });
   const cert = forge.pki.createCertificate();
   cert.publicKey = kp.publicKey;
@@ -95,6 +96,7 @@ function makeStsKeys() {
   cert.sign(kp.privateKey, forge.md.sha256.create());
   const certB64 = forge.pki.certificateToPem(cert)
     .replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  log.debug("Leaving makeStsKeys().");
   return {
     privateKeyPem: forge.pki.privateKeyToPem(kp.privateKey),
     certPem: forge.pki.certificateToPem(cert),

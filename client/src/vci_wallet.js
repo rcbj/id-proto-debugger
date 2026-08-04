@@ -494,6 +494,7 @@ function readCredentialResponse(r, text, encryption) {
 // leading brace. Returning the live object instead moves the failure one page
 // along, to a step 3 that cannot parse what it was handed.
 function credentialString(value) {
+  log.debug("Entering credentialString().");
   if (typeof value === "string") return value;
   // Any non-null object is taken as an ldp_vc-style credential. The format is
   // not checked here: this function's job is the representation, and refusing
@@ -509,6 +510,7 @@ function credentialString(value) {
       return "";
     }
   }
+  log.debug("Leaving credentialString().");
   return "";
 }
 
@@ -516,6 +518,7 @@ function credentialString(value) {
 // bare `credential`, and some implementations put the credential itself in the
 // array — accept all three, in either representation.
 function extractCredential(body) {
+  log.debug("Entering extractCredential().");
   if (!body) return "";
   var direct = credentialString(body.credential);
   if (direct) return direct;
@@ -526,6 +529,7 @@ function extractCredential(body) {
     // around the credential instead of the credential.
     return entryCredential(list[0]);
   }
+  log.debug("Leaving extractCredential().");
   return "";
 }
 

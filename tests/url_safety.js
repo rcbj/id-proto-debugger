@@ -43,6 +43,7 @@ var urlSafety = paths.requireSharedModule(
 // --- what must be refused ---------------------------------------------------
 
 function dangerousSchemesAreRefused() {
+  log.debug("Entering dangerousSchemesAreRefused().");
   log.info("[refuse] Schemes that are not http/https must be refused.");
   const refused = [
     // The plain article.
@@ -87,6 +88,7 @@ function dangerousSchemesAreRefused() {
       "isSafeExternalUrl should agree about " + JSON.stringify(value));
   });
   log.info("[refuse] OK — " + refused.length + " dangerous or non-navigable URLs all refused.");
+  log.debug("Leaving dangerousSchemesAreRefused().");
 }
 
 function emptyAndMalformedAreRefused() {
@@ -106,6 +108,7 @@ function emptyAndMalformedAreRefused() {
 // the URLs this debugger exists to send people to.
 
 function realEndpointsAreAllowed() {
+  log.debug("Entering realEndpointsAreAllowed().");
   log.info("[allow] Ordinary IdP endpoints must pass through unharmed.");
   const allowed = [
     "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
@@ -124,6 +127,7 @@ function realEndpointsAreAllowed() {
       "isSafeExternalUrl should agree about " + value);
   });
   log.info("[allow] OK — " + allowed.length + " real endpoints all accepted.");
+  log.debug("Leaving realEndpointsAreAllowed().");
 }
 
 // The specific regression that made this module necessary: a SAML redirect
@@ -131,6 +135,7 @@ function realEndpointsAreAllowed() {
 // than one parameter. If the guard mangled `&`, every redirect-binding SSO
 // would break in a way that looks like an IdP problem.
 function queryStringsSurviveIntact() {
+  log.debug("Entering queryStringsSurviveIntact().");
   log.info("[allow] A multi-parameter query string must survive byte for byte.");
   const url = "https://idp.example.com/sso?SAMLRequest=abc%2Bdef&RelayState=xyz&SigAlg=" +
               encodeURIComponent("http://www.w3.org/2001/04/xmldsig-more#rsa-sha256") +
@@ -143,6 +148,7 @@ function queryStringsSurviveIntact() {
   });
   assert.strictEqual(out.split("&").length, 4, "the parameter count changed: " + out);
   log.info("[allow] OK — all four parameters intact, no entity escaping.");
+  log.debug("Leaving queryStringsSurviveIntact().");
 }
 
 
@@ -157,6 +163,7 @@ function queryStringsSurviveIntact() {
 // cannot see that (a mutation removing the check survived a node-only run of
 // this test, which is why this section exists).
 function browserRelativeResolution() {
+  log.debug("Entering browserRelativeResolution().");
   log.info("[browser] With a window.location present, blanks must still be refused.");
   const hadWindow = Object.prototype.hasOwnProperty.call(global, "window");
   const previous = global.window;
@@ -197,6 +204,7 @@ function browserRelativeResolution() {
     }
   }
   log.info("[browser] OK — blanks refused, javascript: refused, relative URLs resolve.");
+  log.debug("Leaving browserRelativeResolution().");
 }
 
 
@@ -205,6 +213,7 @@ function browserRelativeResolution() {
 // This is the claim the whole change rests on, so it is measured rather than
 // asserted in a comment. Skipped when dompurify is not installed for node.
 function dompurifyWouldNotHaveHelped() {
+  log.debug("Entering dompurifyWouldNotHaveHelped().");
   log.info("[contrast] Demonstrating that an HTML sanitizer is not a URL check.");
   let DOMPurify;
   try {
@@ -244,6 +253,7 @@ function dompurifyWouldNotHaveHelped() {
     "url_safety must not entity-escape anything");
   log.info("[contrast] OK — DOMPurify returns `javascript:` URLs unchanged (no protection) and " +
            "drops content from a URL containing markup; the scheme allowlist does neither.");
+  log.debug("Leaving dompurifyWouldNotHaveHelped().");
 }
 
 

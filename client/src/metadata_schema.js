@@ -83,6 +83,7 @@ function requireUrl(r, doc, member, cite, opts) {
 }
 
 function checkUrl(r, doc, member, cite, opts) {
+  log.debug("Entering checkUrl().");
   var value = doc[member];
   if (value === undefined || value === null || value === "") return;
   if (!isString(value)) {
@@ -105,6 +106,7 @@ function checkUrl(r, doc, member, cite, opts) {
   if ((opts || {}).noQueryOrFragment && (u.search || u.hash)) {
     r.error(member, "MUST NOT contain a query string or fragment.", cite);
   }
+  log.debug("Leaving checkUrl().");
 }
 
 function typeName(v) {
@@ -115,6 +117,7 @@ function typeName(v) {
 }
 
 function checkStringArray(r, doc, member, cite, required) {
+  log.debug("Entering checkStringArray().");
   var value = doc[member];
   if (value === undefined) {
     if (required) r.error(member, "is REQUIRED and is missing.", cite);
@@ -125,6 +128,7 @@ function checkStringArray(r, doc, member, cite, required) {
   } else if (required && !value.length) {
     r.error(member, "is REQUIRED and must not be empty.", cite);
   }
+  log.debug("Leaving checkStringArray().");
 }
 
 function checkBoolean(r, doc, member, cite) {
@@ -153,6 +157,7 @@ var VCI = "OpenID4VCI 1.0 §12.2.3";
 // its vct, a W3C VC by its credential_definition.type. A configuration that
 // names neither cannot be requested.
 function checkCredentialConfiguration(r, id, cfg) {
+  log.debug("Entering checkCredentialConfiguration().");
   var where = 'credential_configurations_supported["' + id + '"]';
   if (!isObject(cfg)) {
     r.error(where, "must be an object; this is " + typeName(cfg) + ".", VCI);
@@ -233,6 +238,7 @@ function checkCredentialConfiguration(r, id, cfg) {
     r.error(where + ".claims",
       "must be an array of claim objects, each with a path. (Earlier drafts used an object here.)", VCI);
   }
+  log.debug("Leaving checkCredentialConfiguration().");
 }
 
 function validateVciMetadata(doc) {

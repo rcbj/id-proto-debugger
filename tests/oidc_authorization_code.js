@@ -49,6 +49,7 @@ async function getRefreshToken(driver)
 
 
 async function verifyIDToken(id_token, client_id, user, audience, issuer) {
+  log.debug("Entering verifyIDToken().");
   log.info("Entering verifyIDToken().");
   let decoded_id_token = jwt.decode(id_token, { complete: true });
   let response_text = id_token.match(/responseText: (.*)/);
@@ -62,9 +63,11 @@ async function verifyIDToken(id_token, client_id, user, audience, issuer) {
   assert.strictEqual(decoded_id_token.payload.family_name, client_id, "ID token family_name does not match.");
   assert.strictEqual(decoded_id_token.payload.email, `${client_id}@iyasec.io`, "ID token email does not match.");
   assert.strictEqual(decoded_id_token.payload.typ, "ID", "ID Token typ does not match.");
+  log.debug("Leaving verifyIDToken().");
 }
 
 async function verifyRefreshToken(refresh_token, client_id, user, audience, issuer) {
+  log.debug("Entering verifyRefreshToken().");
   log.info("Entering verifyRefreshToken().");
   let decoded_refresh_token = jwt.decode(refresh_token, { complete: true });
   let response_text = refresh_token.match(/responseText: (.*)/);
@@ -74,10 +77,12 @@ async function verifyRefreshToken(refresh_token, client_id, user, audience, issu
   assert.strictEqual(decoded_refresh_token.payload.iss, issuer, "Refresh token iss does not match " + issuer);
   assert.strictEqual(decoded_refresh_token.payload.azp, client_id, "Refresh token AZP does not match client ID.");
   assert.strictEqual(decoded_refresh_token.payload.typ, "Offline", "Refresh Token typ does not match.");
+  log.debug("Leaving verifyRefreshToken().");
 }
 
 async function tokenDetailPage(driver, type)
 {
+  log.debug("Entering tokenDetailPage().");
   log.info("Entering tokenDetailPage(). type=" + type + ".");
   try {
     var token_field = "";
@@ -228,9 +233,11 @@ async function tokenDetailPage(driver, type)
     log.error("An error occurred: " + e.stack);
     process.exit(1);
   }
+  log.debug("Leaving tokenDetailPage().");
 }
 
 async function refresh_token_call(driver, client_id, scope, user, access, audience) {
+  log.debug("Entering refresh_token_call().");
   log.info("Entering refresh_token_call().");
   // Locate and click the refresh button to exchange the refresh token for new tokens
   log.info("Find Refresh Button");
@@ -278,9 +285,11 @@ async function refresh_token_call(driver, client_id, scope, user, access, audien
   await verifyIDToken(refresh_id_token_value, client_id, user, client_id, audience)
 
   log.info("Leaving refresh_token_call().");
+  log.debug("Leaving refresh_token_call().");
 }
 
 async function logout(driver) {
+  log.debug("Entering logout().");
   log.info("Entering logout().");
   // Locate the post-logout redirect field and set it to the logout landing page
   log.info("Find logout Button");
@@ -321,9 +330,11 @@ async function logout(driver) {
   await driver.wait(until.elementLocated(client_id), waitTime);
   log.info("Wait for client_id to be visible.");
   await driver.wait(until.elementIsVisible(driver.findElement(client_id)), waitTime);
+  log.debug("Leaving logout().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if(headless) {
     options.addArguments("--headless");
@@ -419,6 +430,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

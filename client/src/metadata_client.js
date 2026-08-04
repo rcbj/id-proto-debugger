@@ -412,6 +412,7 @@ function createStore(infoKey, sourceKey) {
     infoKey: infoKey,
     sourceKey: sourceKey,
     save: function (info, provenance) {
+      log.debug("Entering save().");
       try {
         localStorage.setItem(infoKey, JSON.stringify(info));
         localStorage.setItem(sourceKey, JSON.stringify(provenance || null));
@@ -422,6 +423,7 @@ function createStore(infoKey, sourceKey) {
         log.debug("createStore().save(): could not store " + infoKey + ": " + e.message);
         return false;
       }
+      log.debug("Leaving save().");
     },
     read: function () {
       try {
@@ -561,6 +563,99 @@ function fetchWellKnown(issuer, wellKnown) {
   return Promise.resolve().then(function () { return attempt(0, null); });
 }
 
+// ---------------------------------------------------------------------------
+// Reading a JSON document off disk, and the two builders for an editable
+// document-members table.
+//
+// These live here rather than on a page because two pages need them and a copy in
+// each is a copy that drifts: vc-issuance-1.html uploads credential issuer and
+// authorization server metadata, and did-tools.html uploads a DID Document — the
+// same operation on a different document. The upload route exists at all because a
+// host that sends no CORS headers cannot be read by a browser however right the URL
+// is, so "fetch it with curl and load the file" has to work everywhere.
+//
+// `onStatus(text, cls)` is passed in rather than assumed: each page writes its
+// status to its own element with its own classes, and this module has no business
+// knowing which.
+// ---------------------------------------------------------------------------
+function readJsonFile(evt, onDocument, onStatus) {
+  log.debug("Entering readJsonFile().");
+  var say = onStatus || function () {};
+  var input = evt && evt.target;
+  var file = input && input.files && input.files[0];
+  if (!file) {
+    log.debug("Leaving readJsonFile(). Nothing chosen.");
+    return false;
+  }
+  say("Reading " + file.name + " \u2026", "vc-pending");
+  var reader = new FileReader();
+  reader.onload = function () {
+    log.debug("Entering readJsonFile onload().");
+    var doc = null;
+    try {
+      doc = JSON.parse(String(reader.result || ""));
+    } catch (e) {
+      say("That file is not JSON: " + e.message, "vc-bad");
+      if (input) input.value = "";
+      return;
+    }
+    if (!doc || typeof doc !== "object" || Object.prototype.toString.call(doc) === "[object Array]") {
+      say("That file is JSON, but the document has to be a JSON object.", "vc-bad");
+      if (input) input.value = "";
+      return;
+    }
+    try {
+      onDocument(doc, file.name);
+    } finally {
+      // Cleared whatever happened, so the same file can be chosen again after a
+      // correction — otherwise the second attempt fires no change event and the
+      // button looks broken.
+      if (input) input.value = "";
+    }
+    log.debug("Leaving readJsonFile onload().");
+  };
+  reader.onerror = function () {
+    say("Could not read " + file.name + ".", "vc-bad");
+    if (input) input.value = "";
+  };
+  reader.readAsText(file);
+  log.debug("Leaving readJsonFile().");
+  return false;
+}
+
+// One row of an editable document-members table: a labelled input whose kind
+// follows the member's type, with the specification's own description as the
+// tooltip. `json` members get a textarea because they are structures shown
+// pretty-printed (setMetadataField swaps it back to an input for a scalar).
+function fieldRow(id, label, desc, type) {
+  log.debug("Entering fieldRow().");
+  var input;
+  if (type === "boolean") {
+    input = '<select class="stored" id="' + escapeHtmlText(id) + '" name="' + escapeHtmlText(id) + '">' +
+              '<option value="true">true</option>' +
+              '<option value="false">false</option>' +
+            '</select>';
+  } else if (type === "json") {
+    input = '<textarea class="stored metadata-json-field" id="' + escapeHtmlText(id) + '" name="' +
+            escapeHtmlText(id) + '" rows="3" spellcheck="false"></textarea>';
+  } else {
+    input = '<input class="stored" type="text" id="' + escapeHtmlText(id) + '" name="' +
+            escapeHtmlText(id) + '" max="512" />';
+  }
+  log.debug("Leaving fieldRow().");
+  return '<tr>' +
+           '<td><div class="tooltip"><label>' + escapeHtmlText(label) + ': </label>' +
+             '<span class="tooltiptext">' + escapeHtmlText(desc) + '</span></div></td>' +
+           '<td>' + input + '</td>' +
+         '</tr>';
+}
+
+// A heading spanning both columns, to group the rows below it.
+function groupRow(title, subtitle) {
+  return '<tr class="vc-group-heading"><td colspan="2">' + escapeHtmlText(title) +
+         (subtitle ? ' <span>' + escapeHtmlText(subtitle) + '</span>' : '') + '</td></tr>';
+}
+
 module.exports = {
   escapeHtmlText: escapeHtmlText,
   isJsonStructure: isJsonStructure,
@@ -581,5 +676,8 @@ module.exports = {
   fetchJson: fetchJson,
   documentForValidation: documentForValidation,
   wellKnownCandidates: wellKnownCandidates,
-  fetchWellKnown: fetchWellKnown
+  fetchWellKnown: fetchWellKnown,
+  readJsonFile: readJsonFile,
+  fieldRow: fieldRow,
+  groupRow: groupRow
 };

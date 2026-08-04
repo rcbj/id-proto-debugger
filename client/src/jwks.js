@@ -156,7 +156,7 @@ function buildJWKSInfoTable(discoveryInfo) {
 
 function onSubmitPopulateFormsWithDiscoveryInformation() {
   log.debug("Entering onSubmitPopulateFormsWithDiscoveryInformation().");
-  log.debug('Entering OnSubmitPopulateFormsWithDiscoveryInformation().');
+  log.debug('Entering onSubmitPopulateFormsWithDiscoveryInformation().');
   var authorizationEndpoint = discoveryInfo["authorization_endpoint"];
   var idTokenSigningAlgValuesSupported = discoveryInfo["id_token_signing_alg_values_supported"];
   var issuer = discoveryInfo["issuer"];
@@ -182,7 +182,7 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
       localStorage.setItem("token_scope", scopesSupported );
       localStorage.setItem("jwks_endpoint", jwksUri);
   }
-  log.debug('Leaving OnSubmitPopulateFormsWithDiscoveryInformation().');
+  log.debug('Leaving onSubmitPopulateFormsWithDiscoveryInformation().');
   log.debug("Leaving onSubmitPopulateFormsWithDiscoveryInformation().");
   return true;
 }

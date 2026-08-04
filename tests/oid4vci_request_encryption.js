@@ -73,6 +73,7 @@ async function freshRequestBody(meta, holderKey) {
 }
 
 async function postJwe(endpoint, jwe, accessToken) {
+  log.debug("Entering postJwe().");
   const r = await fetch(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/jwt", "Authorization": "Bearer " + (accessToken || "tok") },
@@ -81,6 +82,7 @@ async function postJwe(endpoint, jwe, accessToken) {
   const text = await r.text();
   let body = null;
   try { body = JSON.parse(text); } catch (e) { /* an encrypted response is not JSON */ }
+  log.debug("Leaving postJwe().");
   return { status: r.status, body: body, raw: text, contentType: r.headers.get("content-type") || "" };
 }
 
@@ -100,6 +102,7 @@ async function postJwe(endpoint, jwe, accessToken) {
 // authentication tag and every case would fail as tampering instead of as the
 // specific refusal under test.
 function forgeJwe(body, jwk, overrides) {
+  log.debug("Entering forgeJwe().");
   const crypto = require("crypto");
   const header = Object.assign(
     { alg: "RSA-OAEP-256", enc: "A256GCM", typ: "JWT", kid: jwk.kid }, overrides || {});
@@ -120,10 +123,12 @@ function forgeJwe(body, jwk, overrides) {
   const ciphertext = Buffer.concat([
     cipher.update(Buffer.from(JSON.stringify(body), "utf8")), cipher.final()
   ]);
+  log.debug("Leaving forgeJwe().");
   return [headerB64, b64(encryptedKey), b64(iv), b64(ciphertext), b64(cipher.getAuthTag())].join(".");
 }
 
 async function assertWaltidStillDoesNotOffer() {
+  log.debug("Entering assertWaltidStillDoesNotOffer().");
   const waltid = process.env.WALTID_ISSUER_URL;
   if (!waltid) {
     log.info("[walt.id] WALTID_ISSUER_URL is unset, so walt.id's support was not re-checked.");
@@ -151,9 +156,11 @@ async function assertWaltidStillDoesNotOffer() {
     log.info("[walt.id] still advertises no credential_request_encryption, so there is no " +
       "interoperability test to run: a wallet cannot encrypt to an issuer that publishes no key.");
   }
+  log.debug("Leaving assertWaltidStillDoesNotOffer().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   log.info("Running OID4VCI section 10 request encryption against " + issuerBase);
   const meta = await common.issuerMetadata(issuerBase);
   assert.ok(meta && meta.credential_endpoint,
@@ -402,6 +409,7 @@ async function test() {
 
   await assertWaltidStillDoesNotOffer();
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

@@ -375,6 +375,7 @@ function usePastedRequest() {
     return false;
   }
   renderRequest();
+  log.debug("Leaving usePastedRequest().");
   return false;
 }
 

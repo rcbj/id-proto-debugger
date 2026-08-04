@@ -94,6 +94,7 @@ async function createVerificationSession(types) {
 }
 
 async function test() {
+  log.debug("Entering test().");
   // Failures, not skips — including the holder-binding gap below. A skip there
   // would let an unfinished interoperability story report as a green run.
   assert.ok(verifierBase, "WALTID_VERIFIER_URL is not set, so walt.id's verifier was never asked to " +
@@ -198,6 +199,7 @@ async function test() {
     "walt.id should accept a correctly built VP JWT over a credential it issued itself. Got HTTP " +
     posted.status + ": " + String(posted.raw).slice(0, 300));
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

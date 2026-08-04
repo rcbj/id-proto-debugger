@@ -27,6 +27,7 @@ var opMetadata = require("./op_metadata");
 var vciMetadata = require("./vci_metadata");
 var sdJwtVc = require("./sd_jwt_vc");
 var didLib = require("./did");
+var urlSafety = require("./url_safety");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_1',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -216,6 +217,7 @@ function buildConfigRows() {
 function plainFields() { return CLIENT_FIELDS.concat(ENDPOINT_FIELDS); }
 
 function loadConfiguration() {
+  log.debug("Entering loadConfiguration().");
   plainFields().forEach(function (f) {
     var v = sdJwtVc.get(f.name);
     setVal(f.name, (v === null || v === undefined) ? defaultFor(f) : v);
@@ -232,6 +234,7 @@ function loadConfiguration() {
   });
   setVal(DID_ID_KEY, sdJwtVc.get(DID_ID_KEY) || "");
   renderDidEnabled();
+  log.debug("Leaving loadConfiguration().");
 }
 
 function defaultFor(f) {
@@ -367,6 +370,7 @@ function readMetadataFile(evt, statusId, onDocument) {
   status(statusId, "Reading " + file.name + " …", "vc-pending");
   var reader = new FileReader();
   reader.onload = function () {
+    log.debug("Entering onload().");
     var doc = null;
     try {
       doc = JSON.parse(String(reader.result || ""));
@@ -388,6 +392,7 @@ function readMetadataFile(evt, statusId, onDocument) {
       // button looks broken.
       if (input) input.value = "";
     }
+    log.debug("Leaving onload().");
   };
   reader.onerror = function () {
     status(statusId, "Could not read " + file.name + ".", "vc-bad");
@@ -449,6 +454,7 @@ function applyVciDocument(doc, provenance, verb) {
     ' credential configuration(s) offered. Configuration Parameters populated (credential "' +
     used + '").' + notStoredNote(vciStored), vciStored ? "vc-ok" : "vc-pending");
   log.debug("credential issuer metadata: " + JSON.stringify(vciInfo));
+  log.debug("Leaving applyVciDocument().");
 }
 
 function retrieveVciMetadata() {
@@ -460,6 +466,7 @@ function retrieveVciMetadata() {
     return false;
   }
   status("vci_signed_metadata_status", "Retrieving " + url + " …", "vc-pending");
+  log.debug("Leaving retrieveVciMetadata().");
   return metadataClient.fetchJson(url)
     .then(function (doc) {
       applyVciDocument(doc, { docLabel: VCI_DOC_LABEL, url: url }, "Retrieved");
@@ -536,6 +543,7 @@ function populateFromVciDocument() {
 // would be ignored within a week.
 // ---------------------------------------------------------------------------
 function renderSchemaReport(hostId, result, spec) {
+  log.debug("Entering renderSchemaReport().");
   var host = el(hostId);
   if (!host) return;
   if (!result.errors.length && !result.warnings.length) {
@@ -557,9 +565,11 @@ function renderSchemaReport(hostId, result, spec) {
     result.errors.map(function (e) { return row(e, "error"); }).join("") +
     result.warnings.map(function (w) { return row(w, "warning"); }).join("") +
     "</tbody></table>";
+  log.debug("Leaving renderSchemaReport().");
 }
 
 function populateFromVci() {
+  log.debug("Entering populateFromVci().");
   if (!vciInfo || !Object.keys(vciInfo).length) {
     status("vci_signed_metadata_status", "Retrieve the credential issuer metadata first.", "vc-bad");
     return false;
@@ -573,6 +583,7 @@ function populateFromVci() {
     'Configuration Parameters populated from the credential issuer metadata (credential "' + used + '"). ' +
     metadataSchema.summarize(check, "Schema check"),
     check.errors.length ? "vc-bad" : (check.warnings.length ? "vc-pending" : "vc-ok"));
+  log.debug("Leaving populateFromVci().");
   return false;
 }
 
@@ -589,9 +600,11 @@ function onCredentialConfigurationChange() {
 // otherwise SD-JWT VC key resolution — /.well-known/jwt-vc-issuer under the
 // credential issuer identifier, whose document carries the jwks_uri.
 function resolveIssuerJwksUri(doc) {
+  log.debug("Entering resolveIssuerJwksUri().");
   if (doc && doc.jwks_uri) return Promise.resolve(doc.jwks_uri);
   var issuer = (doc && doc.credential_issuer) || "";
   if (!issuer) return Promise.resolve("");
+  log.debug("Leaving resolveIssuerJwksUri().");
   return metadataClient.fetchWellKnown(issuer, JWT_VC_ISSUER_WELL_KNOWN)
     .then(function (found) { return (found.doc && found.doc.jwks_uri) || ""; })
     .catch(function (e) {
@@ -671,6 +684,7 @@ function applyAsDocument(doc, provenance, verb) {
     (verb || "Loaded") + " " + Object.keys(asInfo).length + " members and populated the Configuration " +
     "Parameters pane. This document — and those values — are now what debugger.html shows too." +
     notStoredNote(asStored), asStored ? "vc-ok" : "vc-pending");
+  log.debug("Leaving applyAsDocument().");
 }
 
 function retrieveAsMetadata() {
@@ -682,6 +696,7 @@ function retrieveAsMetadata() {
     return false;
   }
   status("as_signed_metadata_status", "Retrieving " + url + " …", "vc-pending");
+  log.debug("Leaving retrieveAsMetadata().");
   return metadataClient.fetchJson(url)
     .then(function (doc) {
       applyAsDocument(doc, { source: "rfc8414", docLabel: AS_DOC_LABEL, url: url }, "Retrieved");
@@ -710,6 +725,7 @@ function clearAsMetadata() {
 }
 
 function populateFromAs() {
+  log.debug("Entering populateFromAs().");
   if (!asInfo || !Object.keys(asInfo).length) {
     status("as_signed_metadata_status", "Retrieve the authorization server metadata first.", "vc-bad");
     return false;
@@ -721,6 +737,7 @@ function populateFromAs() {
     "Configuration Parameters populated. debugger.html will run with these values. " +
     metadataSchema.summarize(asCheck, "Schema check"),
     asCheck.errors.length ? "vc-bad" : (asCheck.warnings.length ? "vc-pending" : "vc-ok"));
+  log.debug("Leaving populateFromAs().");
   return false;
 }
 
@@ -806,6 +823,7 @@ function validateAsSignature() {
 // Pane 4 — the hand-off.
 // ---------------------------------------------------------------------------
 function updateHandoffSummary() {
+  log.debug("Entering updateHandoffSummary().");
   var authz = val("authorization_endpoint");
   var cfg = vciMetadata.currentRequestConfig();
   var e = el("handoff_authorization_endpoint");
@@ -819,6 +837,7 @@ function updateHandoffSummary() {
   // The note depends on the credential chosen and on what the authorization
   // server advertises, so it is refreshed whenever this summary is.
   describeMechanism();
+  log.debug("Leaving updateHandoffSummary().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1121,6 +1140,7 @@ function takeScannedOffer() {
   }
 
   var accept = function (offer, source) {
+    log.debug("Entering accept().");
     // Which cross-device use case this is depends on the offer, not on what was
     // chosen in step 0: only the issuer knows whether it can issue immediately.
     // Deferral shows up later, in the Credential Response, so the offer alone
@@ -1139,6 +1159,7 @@ function takeScannedOffer() {
     renderOffer(sdJwtVc.storedOffer());
     status("scan_status", "Offer taken. Discovering the issuer it names …", "vc-ok");
     offerRetrieved();
+    log.debug("Leaving accept().");
   };
 
   if (read.uri) {
@@ -1326,6 +1347,7 @@ function didEnabled() {
 }
 
 function renderDidEnabled() {
+  log.debug("Entering renderDidEnabled().");
   var box = el("did_enabled");
   if (box) box.checked = didEnabled();
   var format = configuredFormat() || "(no credential chosen yet)";
@@ -1336,6 +1358,7 @@ function renderDidEnabled() {
           "signature mechanism.")
     : "Off for " + format + ": the issuer is identified by its credential_issuer URL and its keys " +
       "come from /.well-known/jwt-vc-issuer.");
+  log.debug("Leaving renderDidEnabled().");
 }
 
 function onDidEnabledChange() {
@@ -1391,6 +1414,7 @@ function offerAdvertisedIssuerDid() {
 
 // Push the resolved document into the editable Configuration Parameters fields.
 function populateFromDidDocument() {
+  log.debug("Entering populateFromDidDocument().");
   var doc = didDocument || {};
   didLib.DID_METADATA.forEach(function (m) {
     var v = doc[m.name];
@@ -1401,6 +1425,7 @@ function populateFromDidDocument() {
     opMetadata.markNotDefined(didLib.idFor(m.name),
       !Object.prototype.hasOwnProperty.call(doc, m.name));
   });
+  log.debug("Leaving populateFromDidDocument().");
 }
 
 function renderDidTable(provenance) {
@@ -1412,6 +1437,7 @@ function renderDidTable(provenance) {
 }
 
 function applyDidDocument(doc, provenance, verb, url) {
+  log.debug("Entering applyDidDocument().");
   didDocument = doc || null;
   setVal("did_resolution_url", url || "");
   renderDidTable(provenance);
@@ -1422,6 +1448,7 @@ function applyDidDocument(doc, provenance, verb, url) {
     methods.length + " verification method(s): " +
     methods.map(function (m) { return (m.id || "").split("#")[1] || m.id; }).join(", ") +
     ". " + (provenance && provenance.note ? provenance.note : ""), "vc-ok");
+  log.debug("Leaving applyDidDocument().");
 }
 
 function resolveDid() {
@@ -1444,6 +1471,7 @@ function resolveDid() {
   setVal("did_resolution_url", url);
   status("did_status", parsed.method === "web"
     ? "Retrieving " + url + " …" : "Decoding the " + parsed.method + " locally …", "vc-pending");
+  log.debug("Leaving resolveDid().");
   return didLib.resolve(didValue, { allowHttp: allowHttp })
     .then(function (r) {
       applyDidDocument(r.document, { url: r.url || "", note: "Source: " + r.from + "." },
@@ -1451,6 +1479,106 @@ function resolveDid() {
     })
     .catch(function (e) {
       status("did_status", "Could not resolve that DID: " + e.message, "vc-bad");
+    });
+}
+
+// Retrieve a DID Document from the URL in the Document URL field, whatever put it
+// there — derived by Resolve above, or typed in by hand.
+//
+// This is not resolution and does not pretend to be. Resolve takes a DID and
+// applies the method's own rules to find the document; this takes a URL and
+// fetches it. The distinction is worth keeping because it is the whole reason to
+// have the button: a did:web document is not always reachable where the method
+// says it should be. It may be on a staging host, behind a tunnel, at a path the
+// issuer has not published yet, or reachable only through a CORS-friendly proxy —
+// and in each of those cases the DID is right, the URL is not the one the method
+// derives, and the document is still the thing you want to look at.
+//
+// One consequence has to be reported rather than enforced. DID Core says a
+// RESOLVED document's id MUST equal the DID that was resolved, and did.js refuses
+// a mismatch for exactly that reason. Here the caller chose the URL, so refusing
+// would defeat the purpose: inspecting a document that identifies itself as
+// somebody else is a thing you would come to this pane to do. So a mismatch is a
+// NOTE, said plainly, and everything downstream then describes the document's own
+// id rather than what happens to be in the DID field.
+//
+// Everything after the fetch goes through applyDidDocument(), which is what makes
+// the rest of the pane behave exactly as it does after a Resolve: the table, the
+// Configuration Parameters fields, Verify Issuer Key and Verify Domain Linkage all
+// read the same state and need to know nothing about where it came from.
+function retrieveDidDocument() {
+  log.debug("Entering retrieveDidDocument().");
+  var url = (val("did_resolution_url") || "").trim();
+  sdJwtVc.set("did_resolution_url", url);
+  if (!url) {
+    status("did_status", "Put a document URL in the Document URL field first, or press Resolve to " +
+      "derive one from a did:web.", "vc-bad");
+    log.debug("Leaving retrieveDidDocument(). No URL.");
+    return false;
+  }
+  // The same allowlist the navigation sinks use (client/src/url_safety.js): only
+  // http and https. A DID document is fetched, not navigated to, so this is not
+  // about script execution — it is that no other scheme can return one, and
+  // saying so beats a fetch that fails with something obscure.
+  if (!urlSafety.isSafeExternalUrl(url)) {
+    status("did_status", 'A DID Document is fetched over http or https; "' + url +
+      '" is neither.', "vc-bad");
+    log.debug("Leaving retrieveDidDocument(). Refused the scheme.");
+    return false;
+  }
+
+  var didValue = (val(DID_ID_KEY) || "").trim();
+  status("did_status", "Retrieving " + url + " …", "vc-pending");
+  log.debug("Leaving retrieveDidDocument(). Fetching " + url);
+  return fetch(url, { credentials: "omit" })
+    .then(function (r) {
+      return r.text().then(function (text) {
+        if (!r.ok) throw new Error(url + " answered HTTP " + r.status + ".");
+        var doc;
+        try {
+          doc = JSON.parse(text);
+        } catch (e) {
+          // An HTML error page from a misconfigured host is the usual cause, and
+          // a bare "Unexpected token <" would not say that.
+          throw new Error(url + " did not return JSON: " + e.message);
+        }
+        if (!doc || typeof doc !== "object") {
+          throw new Error(url + " returned JSON, but not a DID Document object.");
+        }
+        return doc;
+      });
+    })
+    .then(function (doc) {
+      var note = "Retrieved from " + url + ", by URL rather than by resolving the DID.";
+      if (!doc.id) {
+        note += " This document carries no id, so there is nothing to check it against a DID.";
+      } else if (!didValue) {
+        // Fill the DID in from the document so the rest of the pane has something
+        // to work with — Verify Domain Linkage asks about a DID, not a URL.
+        setVal(DID_ID_KEY, doc.id);
+        sdJwtVc.set(DID_ID_KEY, doc.id);
+        note += " The Issuer DID field was empty and has been filled in from the document's id.";
+      } else if (doc.id !== didValue) {
+        note += ' NOTE: this document identifies itself as "' + doc.id + '", not "' + didValue +
+                '". Resolution would refuse that (DID Core: a resolved document\'s id MUST be the ' +
+                "DID resolved); a retrieval by URL cannot, because you chose the URL. Everything " +
+                "below therefore describes " + doc.id + ".";
+      }
+      applyDidDocument(doc, { url: url, note: note }, "Retrieved", url);
+    })
+    .catch(function (e) {
+      // The browser's own message for a blocked cross-origin read is the bare
+      // "Failed to fetch", which says nothing about why — so the likely cause is
+      // named and the way round it is offered. Punctuation is added only when the
+      // message does not already end in some, because these arrive both ways
+      // ("… answered HTTP 404." from above, "Failed to fetch" from the browser).
+      var message = e.message;
+      if (/Failed to fetch|NetworkError|CORS/i.test(message)) {
+        if (!/[.!?]$/.test(message)) message += ".";
+        message += " A host that sends no CORS headers cannot be read by a browser however right " +
+                   "the URL is — fetch it with curl and use Upload instead.";
+      }
+      status("did_status", "Could not retrieve that document: " + message, "vc-bad");
     });
 }
 
@@ -1479,6 +1607,7 @@ function clearDidDocument() {
     sdJwtVc.set(didLib.idFor(m.name), "");
   });
   status("did_status", "Cleared.", "vc-ok");
+  log.debug("Leaving clearDidDocument().");
   return false;
 }
 
@@ -1556,6 +1685,7 @@ function verifyDidBinding() {
     .catch(function (e) {
       status("did_status", "The signature could not be checked: " + e.message, "vc-bad");
     });
+  log.debug("Leaving verifyDidBinding().");
   return false;
 }
 
@@ -1612,17 +1742,36 @@ function verifyDomainLinkage() {
     .then(function (result) {
       // Every entry is shown, not only the matching one: an origin may link
       // several DIDs, and one that fails is as interesting as one that passes.
+      //
+      // Built in the SAME TWO-COLUMN SHAPE as the retrieved-metadata tables above
+      // (see metadata_client.buildInfoTable), and that is a layout requirement, not
+      // a stylistic one. The .discovery_info_table CSS is what keeps these tables
+      // inside their pane, and it does that with table-layout:fixed plus rules on
+      // the FIRST and SECOND columns only — a 34% name column and a value column
+      // pinned to max-width:0 so it wraps instead of stretching. This was a
+      // hand-rolled three-column table with inline width attributes, so its third
+      // column had no cap and no overflow-wrap: the checks column, which is the one
+      // carrying full DID URLs and origins, was the one column free to push the
+      // table past the edge. Measured at a 414px viewport it did exactly that (the
+      // wrapper scrolled, 414px of content in a 380px box).
+      //
+      // So: no inline widths, two columns, and the DID and its verdict share the
+      // name cell. The CSS then governs this table exactly as it governs the other
+      // two in this pane.
       var rows = result.results.map(function (r) {
-        return "<tr><td>" + metadataClient.escapeHtmlText(r.did || "(no DID)") + "</td>" +
-          '<td class="' + (r.valid ? "vc-ok" : "vc-bad") + '">' + (r.valid ? "verified" : "not verified") +
-          "</td><td>" + r.checks.map(function (c) {
-            return '<span class="' + (c.ok ? "vc-ok" : "vc-bad") + '">' + (c.ok ? "OK" : "FAILED") +
-                   "</span> " + metadataClient.escapeHtmlText(c.name + " — " + c.detail);
-          }).join("<br />") + "</td></tr>";
+        var verdict = '<span class="' + (r.valid ? "vc-ok" : "vc-bad") + '">' +
+                      (r.valid ? "verified" : "not verified") + "</span>";
+        var checks = r.checks.map(function (c) {
+          return '<span class="' + (c.ok ? "vc-ok" : "vc-bad") + '">' + (c.ok ? "OK" : "FAILED") +
+                 "</span> " + metadataClient.escapeHtmlText(c.name + " — " + c.detail);
+        }).join("<br />");
+        return "<tr><td>" + metadataClient.escapeHtmlText(r.did || "(no DID)") +
+               "<br />" + verdict + "</td><td>" + checks + "</td></tr>";
       }).join("");
       if (host) {
-        host.innerHTML = "<table><thead><tr><th style='width:26%'>Linked DID</th>" +
-          "<th style='width:10%'>Result</th><th>Checks</th></tr></thead><tbody>" + rows + "</tbody></table>";
+        host.innerHTML = "<table border='2' style='border:2px;'>" +
+          "<tr><td><strong>Linked DID</strong></td><td><strong>Checks</strong></td></tr>" +
+          rows + "</table>";
       }
       status("did_linkage_status", result.linked
         ? "LINKED: " + origin + " and " + didValue + " are the same entity, proved by a Domain " +
@@ -1640,11 +1789,13 @@ function verifyDomainLinkage() {
         "need not publish this document — it is DIF's, not OID4VCI's — so its absence is not a " +
         "failure of the credential.)", "vc-bad");
     });
+  log.debug("Leaving verifyDomainLinkage().");
   return false;
 }
 
 module.exports = {
   resolveDid: resolveDid,
+  retrieveDidDocument: retrieveDidDocument,
   uploadDidDocument: uploadDidDocument,
   onDidFileChange: onDidFileChange,
   clearDidDocument: clearDidDocument,

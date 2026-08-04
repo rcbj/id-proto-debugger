@@ -652,7 +652,9 @@ app.post('/oauth2/token', function (req, res) {
   // Credential Dataset identifiers, and they are the issuer's own names for
   // "this credential, for this End-User".
   const grantIdentifiers = function (details, user) {
+    log.debug("Entering grantIdentifiers().");
     if (!details) return null;
+    log.debug("Leaving grantIdentifiers().");
     return details.map(function (d) {
       return {
         type: 'openid_credential',

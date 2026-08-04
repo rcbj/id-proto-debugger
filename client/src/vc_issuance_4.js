@@ -243,6 +243,7 @@ function renderCurrentCredential() {
 // browser. Without it no proof of possession can be signed for that key, so a
 // refresh would have to bind the new credential to a different one.
 function holderKeyIsHeld(jwk) {
+  log.debug("Entering holderKeyIsHeld().");
   if (!jwk) return false;
   // "Held" means a private half is AVAILABLE to sign with — from storage, or
   // from the field the user pasted the downloaded key into when holder key
@@ -255,6 +256,7 @@ function holderKeyIsHeld(jwk) {
   // half, so the stored value can easily belong to a different key than the one
   // just pasted here — trusting it would refuse a reuse that is perfectly valid.
   // An EC private JWK carries x/y, so it can answer for itself.
+  log.debug("Leaving holderKeyIsHeld().");
   return available.kty === jwk.kty && available.crv === jwk.crv &&
          available.x === jwk.x && available.y === jwk.y;
 }
@@ -323,6 +325,7 @@ function historyTableHead() {
 
 // What the row says about the credential an attempt produced, if it produced one.
 function credentialCell(entry) {
+  log.debug("Entering credentialCell().");
   var s = entry.summary || {};
   if (!entry.credential) return "&mdash;";
   var lines = [];
@@ -331,10 +334,12 @@ function credentialCell(entry) {
   lines.push("key " + esc(String(s.boundKey || "—").slice(0, 10)) + (s.boundKey ? "…" : ""));
   lines.push("sig " + esc(String(s.signature || "—").slice(0, 10)) + (s.signature ? "…" : ""));
   lines.push((s.disclosures || 0) + " disclosure(s)");
+  log.debug("Leaving credentialCell().");
   return '<span style="font-size:90%;">' + lines.join("<br>") + "</span>";
 }
 
 function historyRow(entry, attemptNumber, generation, isActive) {
+  log.debug("Entering historyRow().");
   var outcome = entry.outcome || "success";
   var classes = [];
   if (isActive) classes.push("vc-history-active");
@@ -363,6 +368,7 @@ function historyRow(entry, attemptNumber, generation, isActive) {
     html += '<span class="vc-note">log only</span>';
   }
   html += "</td></tr>";
+  log.debug("Leaving historyRow().");
   return html;
 }
 
@@ -743,6 +749,7 @@ function keyChoice() {
 // The paste-in row appears only when the private half is not in storage: with
 // saving on it would be a field asking for something the page already has.
 function renderHolderKeyRow() {
+  log.debug("Entering renderHolderKeyRow().");
   var row = el("vc_holder_key_row");
   var note = el("vc_holder_key_note");
   if (!row) return;
@@ -760,6 +767,7 @@ function renderHolderKeyRow() {
     note.textContent = "Not in this browser's storage — paste the key pair you downloaded on step 2 to " +
       "reuse the bound key, or choose \"Generate a new holder key pair\".";
   }
+  log.debug("Leaving renderHolderKeyRow().");
 }
 
 // Re-evaluate as the key is pasted: whether "reuse" is available depends on it.
@@ -950,7 +958,9 @@ function requestRefreshedCredential() {
   disable("vc_reissue_button", true);
 
   var send = function () {
+    log.debug("Entering send().");
     status("vc_reissue_status", "Asking the Credential Endpoint for a refreshed credential …", "vc-pending");
+    log.debug("Leaving send().");
     return fetch(state.config.credentialEndpoint, {
       method: "POST",
       headers: {
@@ -1608,6 +1618,7 @@ function discardRefreshed() {
 }
 
 function copyRefreshed() {
+  log.debug("Entering copyRefreshed().");
   var area = el("vc_compare_refreshed_raw");
   if (!area) return false;
   area.select();
@@ -1617,6 +1628,7 @@ function copyRefreshed() {
   } catch (e) {
     status("vc_compare_status", "Could not copy: " + e.message, "vc-bad");
   }
+  log.debug("Leaving copyRefreshed().");
   return false;
 }
 

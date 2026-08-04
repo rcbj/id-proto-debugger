@@ -80,7 +80,9 @@ function b64uDecode(s) {
 function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
 
 function httpJson(url, options) {
+  log.debug("Entering httpJson().");
   options = options || {};
+  log.debug("Leaving httpJson().");
   return fetch(url, options).then(function (r) {
     return r.text().then(function (text) {
       var body = null;
@@ -95,6 +97,7 @@ function httpJson(url, options) {
 }
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
@@ -106,6 +109,7 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", e);
   }
   await driver.sleep(250);
+  log.debug("Leaving click().");
 }
 
 // text()/value() and the waitFor* family live in ./wait_for.js — one
@@ -334,8 +338,8 @@ async function approveAndCollect(driver) {
 // Step 3: what the page concluded, and the same credential checked here so a
 // page that merely claims the credential is fine cannot pass.
 async function checkCredential(driver, what, opts) {
-  opts = opts || {};
   log.debug("Entering checkCredential().");
+  opts = opts || {};
   var credential = await value(driver, "vc_credential_raw");
   assert.ok(credential && credential.indexOf("~") !== -1,
     "step 3 should show the Combined Serialization walt.id returned.");
@@ -869,6 +873,7 @@ async function optionalFeaturesAbsentHere(driver) {
 }
 
 async function test() {
+  log.debug("Entering test().");
   log.info("Starting Test run. waltid=" + issuerId + ", keycloak=" + keycloakBase);
   await whatWaltidPublishes();
 
@@ -902,6 +907,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

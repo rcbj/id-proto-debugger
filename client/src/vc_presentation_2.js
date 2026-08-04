@@ -499,6 +499,7 @@ function selectRequestedOnly() {
       "Selection reset to exactly what the verifier asked for — the minimum that answers this request.",
       "vc-ok");
   });
+  log.debug("Leaving selectRequestedOnly().");
   return false;
 }
 
@@ -512,6 +513,7 @@ function selectAll() {
       "Every Disclosure selected. This is what a credential format without selective disclosure would force " +
       "on you, and you can see how much more it is than the verifier asked for.", "vc-pending");
   });
+  log.debug("Leaving selectAll().");
   return false;
 }
 
@@ -643,6 +645,7 @@ function togglePane(id) {
 // The paste-in row only appears when there is nothing in storage to sign with:
 // with saving on it would be a field asking for something the page already has.
 function renderHolderKeyRow(holderKey) {
+  log.debug("Entering renderHolderKeyRow().");
   var row = document.getElementById("vp_holder_key_row");
   var note = document.getElementById("vp_holder_key_note");
   if (!row) return;
@@ -658,6 +661,7 @@ function renderHolderKeyRow(holderKey) {
   } else {
     note.textContent = "Not in this browser's storage — paste the key pair you downloaded on issuance step 2.";
   }
+  log.debug("Leaving renderHolderKeyRow().");
 }
 
 // Rebuild as the key is typed/pasted, so the presentation appears the moment a

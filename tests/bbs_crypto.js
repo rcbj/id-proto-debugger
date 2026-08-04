@@ -44,6 +44,7 @@ const SK = 0x2eee0f60a8a3a8bec0ee942bfd46cbdae9a0738ee68f5a64e7238311cf09a079n;
 const hex = function (u8) { return Buffer.from(u8).toString("hex"); };
 
 async function test() {
+  log.debug("Entering test().");
   // ESM-only, so it is imported dynamically from this CommonJS test.
   const theirs = await import("@digitalbazaar/bbs-signatures");
   const suite = theirs.CIPHERSUITES.BLS12381_SHA256;
@@ -165,6 +166,7 @@ async function test() {
   log.info("[proof-negative] OK — substituted disclosure and replay both refused; control verifies.");
 
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

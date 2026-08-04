@@ -372,8 +372,8 @@ function buildSdJwtVc(subjectClaims, holderJwk, credentialIssuer, issuerDid) {
   // and a wallet resolves it for the verification key instead of fetching
   // /.well-known/jwt-vc-issuer. cnf.jwk is untouched — holder binding is
   // RFC 7800 either way, and a DID there would be nobody's convention.
-  const issuerId = issuerDid || credentialIssuer;
   log.debug("Entering buildSdJwtVc().");
+  const issuerId = issuerDid || credentialIssuer;
   logArtifact('SD-JWT VC', 'the claims it will assert, before any of them are hidden',
               { subjectClaims: subjectClaims, holderJwk: holderJwk, credentialIssuer: credentialIssuer });
   const now = Math.floor(Date.now() / 1000);
@@ -443,8 +443,8 @@ function buildJwtVcJson(subjectClaims, holderJwk, credentialIssuer, issuerDid) {
   // format (the startup flag covers every JOSE-secured configuration), and a
   // builder that took the argument and ignored it would issue https-named
   // credentials from an issuer whose metadata said otherwise.
-  const issuerId = issuerDid || credentialIssuer;
   log.debug("Entering buildJwtVcJson().");
+  const issuerId = issuerDid || credentialIssuer;
   logArtifact('jwt_vc_json credential', 'the claims it will assert',
               { subjectClaims: subjectClaims, holderJwk: holderJwk, credentialIssuer: credentialIssuer });
   const now = Math.floor(Date.now() / 1000);
@@ -505,10 +505,10 @@ async function buildLdpVc(subjectClaims, holderJwk, credentialIssuer, issuerDid)
   // ordinary rather than an extension. The verification method moves with it:
   // a DID URL fragment into this issuer's DID document instead of a
   // dereferenceable https URL.
+  log.debug("Entering buildLdpVc().");
   const issuerId = issuerDid || credentialIssuer;
   const bbsVerificationMethod = issuerDid ? issuerDid + '#bbs-1'
                                           : credentialIssuer + '/bbs/keys/1';
-  log.debug("Entering buildLdpVc().");
   const keys = await bbsKeyPair();
   const now = Math.floor(Date.now() / 1000);
   const subjectId = 'did:jwk:' + b64u(Buffer.from(JSON.stringify({
@@ -710,6 +710,8 @@ const VCI_REQUEST_ENC_KEY = (function () {
 })();
 
 function credentialRequestEncryptionMetadata() {
+  log.debug("Entering credentialRequestEncryptionMetadata().");
+  log.debug("Leaving credentialRequestEncryptionMetadata().");
   return {
     jwks: { keys: [VCI_REQUEST_ENC_KEY.publicJwk] },
     enc_values_supported: VCI_REQUEST_ENC_VALUES,

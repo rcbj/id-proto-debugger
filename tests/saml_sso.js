@@ -46,6 +46,7 @@ async function clickByValue(driver, value) {
 //     uses this against the deployed HTTPS site, which can't fetch the local
 //     http Keycloak descriptor (mixed content / CORS).
 async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
+  log.debug("Entering loadIdpMetadata().");
   if (metadataFile) {
     log.info("Upload IdP metadata from local file: " + metadataFile);
     var fileInput = By.id("saml_metadata_file");
@@ -69,9 +70,11 @@ async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
   await waitForValue(driver, By.id("saml_metadata_status"),
     function (v) { return v.indexOf("Loaded and parsed") >= 0; },
     "Metadata was not loaded/parsed.");
+  log.debug("Leaving loadIdpMetadata().");
 }
 
 async function samlActivities(driver, metadataUrl, spEntityId, user, binding, metadataFile) {
+  log.debug("Entering samlActivities().");
   // The Keycloak v2 login page (PatternFly + JS modules) can take several seconds
   // to render #username on a cold browser, and POST-binding processing + request
   // signature validation add latency — so give the login/response round-trip a
@@ -180,9 +183,11 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding, me
   }
 
   log.info("SAML SSO round-trip succeeded.");
+  log.debug("Leaving samlActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) { options.addArguments("--headless"); }
   options.addArguments("--no-sandbox");
@@ -232,6 +237,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

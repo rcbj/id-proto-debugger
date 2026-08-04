@@ -72,6 +72,8 @@ function sleep(ms) {
  *   'error', 'response', or 'pending' if neither happened within `settle` ms.
  */
 function attempt(options, agent, settle) {
+  log.debug("Entering attempt().");
+  log.debug("Leaving attempt().");
   return new Promise(function (resolve) {
     var started = Date.now();
     var done = false;
@@ -103,6 +105,7 @@ function hangingLookup() { /* deliberately never calls back */ }
 // 1. A stalled connect is given up on at connectionTimeout.
 // ---------------------------------------------------------------------------
 async function stalledConnectIsAborted() {
+  log.debug("Entering stalledConnectIsAborted().");
   log.info("=== A connect that never completes ===");
   var agent = connectTimeout.withConnectTimeout(
     new http.Agent({ lookup: hangingLookup }), 400);
@@ -127,6 +130,7 @@ async function stalledConnectIsAborted() {
     "and must name the host:port it failed to reach: " + result.error.message);
   log.info("[stalled connect] OK — refused after " + result.elapsed + "ms with " +
            result.error.code + ".");
+  log.debug("Leaving stalledConnectIsAborted().");
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +138,7 @@ async function stalledConnectIsAborted() {
 //    a slow IdP must get the full callTimeout, not the connect budget.
 // ---------------------------------------------------------------------------
 async function connectedSocketSurvives() {
+  log.debug("Entering connectedSocketSurvives().");
   log.info("=== A host that connects and then answers slowly ===");
   var silent = http.createServer(function (req, res) { /* accepts, never answers */ });
   var port = await listen(silent);
@@ -151,6 +156,7 @@ async function connectedSocketSurvives() {
   silent.close();
   log.info("[connected] OK — still waiting after " + result.elapsed +
            "ms, five times the connect budget: the timer disarmed on connect.");
+  log.debug("Leaving connectedSocketSurvives().");
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +164,7 @@ async function connectedSocketSurvives() {
 //    'connect', is what counts as connected).
 // ---------------------------------------------------------------------------
 async function stalledTlsHandshakeIsAborted() {
+  log.debug("Entering stalledTlsHandshakeIsAborted().");
   log.info("=== A TLS handshake that never completes ===");
   // Plain TCP: it accepts the connection, so the socket's 'connect' fires, but it
   // speaks no TLS, so 'secureConnect' never does.
@@ -178,12 +185,14 @@ async function stalledTlsHandshakeIsAborted() {
     "at about the configured 400ms (took " + result.elapsed + "ms).");
   deaf.close();
   log.info("[tls] OK — the stalled handshake was refused after " + result.elapsed + "ms.");
+  log.debug("Leaving stalledTlsHandshakeIsAborted().");
 }
 
 // ---------------------------------------------------------------------------
 // 4. It composes with the SSRF guard rather than replacing its hook.
 // ---------------------------------------------------------------------------
 async function composesWithTheSsrfGuard() {
+  log.debug("Entering composesWithTheSsrfGuard().");
   log.info("=== Wrapping a guarded agent keeps the guard ===");
   var guard = guardModule.createGuard({}, quiet);
   assert.ok(guard.enabled, "the guard must be ON when the configuration says nothing.");
@@ -223,6 +232,7 @@ async function composesWithTheSsrfGuard() {
     "a guarded agent must carry the guard's DNS lookup, which is the layer that " +
     "survives a redirect.");
   log.info("[compose] OK — the guard refuses first, the timeout wraps it, and agent options survive.");
+  log.debug("Leaving composesWithTheSsrfGuard().");
 }
 
 // ---------------------------------------------------------------------------
@@ -230,6 +240,7 @@ async function composesWithTheSsrfGuard() {
 //    rather than arming a timer that fires immediately.
 // ---------------------------------------------------------------------------
 function refusesNonsensicalBudgets() {
+  log.debug("Entering refusesNonsensicalBudgets().");
   log.info("=== A nonsensical budget leaves the agent alone ===");
   [0, -1, NaN, undefined, "400"].forEach(function (bad) {
     var agent = new http.Agent();
@@ -247,6 +258,7 @@ function refusesNonsensicalBudgets() {
   assert.notStrictEqual(wrapped.createConnection, original,
     "a positive budget must wrap createConnection.");
   log.info("[budgets] OK — only a positive, finite number arms anything.");
+  log.debug("Leaving refusesNonsensicalBudgets().");
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +266,7 @@ function refusesNonsensicalBudgets() {
 //    in server.js is bounded by both.
 // ---------------------------------------------------------------------------
 function shippedConfiguration() {
+  log.debug("Entering shippedConfiguration().");
   log.info("=== The shipped configuration and call sites ===");
   var apiDir = fs.existsSync(path.join(__dirname, "..", "api", "env"))
     ? path.join(__dirname, "..", "api")
@@ -325,6 +338,7 @@ function shippedConfiguration() {
       "and drops the SSRF guard's hooks along with the connect timeout.");
     log.info("[shipped] OK — all " + sites + " axios call sites are bounded by both timeouts, the size cap and the redirect cap.");
   }
+  log.debug("Leaving shippedConfiguration().");
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +350,7 @@ function shippedConfiguration() {
 // api's axios is not installed, since the tests package does not depend on it.
 // ---------------------------------------------------------------------------
 async function maxContentLengthIsEnforced() {
+  log.debug("Entering maxContentLengthIsEnforced().");
   log.info("=== The response size cap ===");
   var axios = null;
   try {
@@ -393,6 +408,7 @@ async function maxContentLengthIsEnforced() {
   log.info("[size] OK — " + (CAP / 1024) + "KiB cap: a half-size body arrives, a " +
            "4x body is refused naming maxContentLength, and the same body is " +
            "accepted with no cap set.");
+  log.debug("Leaving maxContentLengthIsEnforced().");
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +417,7 @@ async function maxContentLengthIsEnforced() {
 //    the cap and the guard are talked about together.
 // ---------------------------------------------------------------------------
 async function maxRedirectsIsEnforced() {
+  log.debug("Entering maxRedirectsIsEnforced().");
   log.info("=== The redirect cap ===");
   var axios = null;
   try {
@@ -499,6 +516,7 @@ async function maxRedirectsIsEnforced() {
   log.info("[redirects] OK — 4 hops followed, 9 refused, 0 returns the 3xx, a redirect " +
            "to a blocked address is refused on the hop by the guard, and one to file:// " +
            "is refused as an unsupported protocol.");
+  log.debug("Leaving maxRedirectsIsEnforced().");
 }
 
 // ---------------------------------------------------------------------------
@@ -507,6 +525,7 @@ async function maxRedirectsIsEnforced() {
 //    build version to put in it.
 // ---------------------------------------------------------------------------
 function userAgentIsConfigured() {
+  log.debug("Entering userAgentIsConfigured().");
   log.info("=== The outbound User-Agent ===");
   var repoRoot = path.join(__dirname, "..");
   if (!fs.existsSync(path.join(repoRoot, "api", "env"))) {
@@ -576,6 +595,7 @@ function userAgentIsConfigured() {
     return;
   }
   log.info("[user-agent] OK — every call site sends it and all configs carry the template.");
+  log.debug("Leaving userAgentIsConfigured().");
 }
 
 // ---------------------------------------------------------------------------
@@ -585,6 +605,7 @@ function userAgentIsConfigured() {
 //     closes it, so per-call agents plus keepAlive leak a descriptor per call.
 // ---------------------------------------------------------------------------
 async function keepAliveIsConfigured() {
+  log.debug("Entering keepAliveIsConfigured().");
   log.info("=== Connection pooling ===");
 
   var connections = 0;
@@ -598,6 +619,8 @@ async function keepAliveIsConfigured() {
   var port = await listen(idp);
 
   function get(agent) {
+    log.debug("Entering get().");
+    log.debug("Leaving get().");
     return new Promise(function (resolve, reject) {
       var req = http.request({ host: "127.0.0.1", port: port, path: "/", agent: agent },
         function (res) {
@@ -673,9 +696,11 @@ async function keepAliveIsConfigured() {
 
   log.info("[keep-alive] OK — 3 requests over 1 connection when on, 3 when off, the " +
            "discarded-agent socket leak reproduced, and server.js caches its agents.");
+  log.debug("Leaving keepAliveIsConfigured().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   await stalledConnectIsAborted();
   await connectedSocketSurvives();
   await stalledTlsHandshakeIsAborted();
@@ -687,6 +712,7 @@ async function test() {
   await keepAliveIsConfigured();
   shippedConfiguration();
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

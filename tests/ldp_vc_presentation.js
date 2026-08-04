@@ -57,6 +57,7 @@ function severeErrors(driver) {
 }
 
 async function freshRequest() {
+  log.debug("Entering freshRequest().");
   const r = await fetch(verifierBase + "/oid4vp/start?format=ldp_vc", { redirect: "manual" });
   const location = r.headers.get("location");
   assert.ok(location, "the verifier should redirect the wallet with its ldp_vc request.");
@@ -65,6 +66,7 @@ async function freshRequest() {
     const eq = pair.indexOf("=");
     params[decodeURIComponent(pair.slice(0, eq))] = decodeURIComponent(pair.slice(eq + 1));
   });
+  log.debug("Leaving freshRequest().");
   return { params: params, query: location.split("?")[1] };
 }
 
@@ -87,6 +89,7 @@ async function freshRequest() {
 // DOM, follows them, and lets the verifier hand the request back.
 // ---------------------------------------------------------------------------
 async function startsFromTheWalletsOwnPages(driver, held) {
+  log.debug("Entering startsFromTheWalletsOwnPages().");
   log.info("=== Starting a presentation from the wallet's pages, not a hand-built URL ===");
   await driver.get(baseUrl + "/vc-presentation-0.html");
   await driver.executeScript(
@@ -193,6 +196,7 @@ async function startsFromTheWalletsOwnPages(driver, held) {
     "and must not report the request as unanswerable when it holds exactly the format asked for. " +
     "Got: " + blocked.problems);
   log.info("[route] OK — the verifier asked for ldp_vc and step 1 can answer it.");
+  log.debug("Leaving startsFromTheWalletsOwnPages().");
 }
 
 // The other half of the same rule: when the formats genuinely differ, the wallet
@@ -201,6 +205,7 @@ async function startsFromTheWalletsOwnPages(driver, held) {
 // its shape, which sends the reader looking for a serialization bug instead of at
 // the credential in hand.
 async function refusesAFormatItCannotAnswer(driver) {
+  log.debug("Entering refusesAFormatItCannotAnswer().");
   log.info("=== A request for a format this wallet does not hold ===");
   const sdJwt = await common.mintJwtVcJson(issuerBase, process.env.OID4VCI_CONFIG_ID || "IdentityCredential");
   assert.strictEqual(typeof sdJwt.credential, "string",
@@ -227,9 +232,11 @@ async function refusesAFormatItCannotAnswer(driver) {
     "and must block: unlike a missing holder key, there is nothing the next page can do about it. A " +
     "presentation cannot convert a credential between formats.");
   log.info("[mismatch] OK — blocked at step 1, naming both formats.");
+  log.debug("Leaving refusesAFormatItCannotAnswer().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   log.info("Running ldp_vc presentation. issuer=" + issuerBase + ", verifier=" + verifierBase);
   const meta = await common.issuerMetadata(issuerBase);
   assert.ok(meta && (meta.credential_configurations_supported || {})[LDP_CONFIG_ID],
@@ -354,6 +361,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

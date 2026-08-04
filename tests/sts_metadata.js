@@ -46,6 +46,7 @@ const NON_SPEC_PATHS = ["/oid4vci/last_request", "/oid4vci/notification/:id",
                         "/oid4vp/result/:state", "/sts-metadata", "/healthcheck"];
 
 async function theDocumentIsServed() {
+  log.debug("Entering theDocumentIsServed().");
   log.info("=== The document, in both forms ===");
   const json = await common.httpJson(issuerBase + "/sts-metadata?format=json");
   assert.ok(json.ok, "GET /sts-metadata?format=json should answer 200; got " + json.status);
@@ -78,11 +79,13 @@ async function theDocumentIsServed() {
     "the page must carry no <script>: this service's Content-Security-Policy is script-src 'none'.");
   log.info("[document] OK — " + doc.endpoints.length + " endpoints, " +
            doc.specifications.length + " specifications, in HTML and JSON.");
+  log.debug("Leaving theDocumentIsServed().");
   return doc;
 }
 
 // The heart of it: no drift, in either direction.
 function theIndexMatchesTheRouter(doc) {
+  log.debug("Entering theIndexMatchesTheRouter().");
   log.info("=== The index against the router ===");
   assert.deepStrictEqual(doc.undocumentedPaths, [],
     "these routes are REGISTERED but described nowhere in sts/sts_metadata.js, so the page " +
@@ -103,9 +106,11 @@ function theIndexMatchesTheRouter(doc) {
       e.path + " should name at least one HTTP method.");
   });
   log.info("[drift] OK — every registered route is described and every description is registered.");
+  log.debug("Leaving theIndexMatchesTheRouter().");
 }
 
 function specificationsAreHonest(doc) {
+  log.debug("Entering specificationsAreHonest().");
   log.info("=== The specification list ===");
   const ids = new Set();
   doc.specifications.forEach(function (s) {
@@ -142,12 +147,14 @@ function specificationsAreHonest(doc) {
   });
   log.info("[specs] OK — " + doc.specifications.length + " specifications, each with a coverage note, " +
            "each referenced by an endpoint.");
+  log.debug("Leaving specificationsAreHonest().");
 }
 
 // The methods shown are the methods that answer. Asserted by CALLING them, because
 // a table of methods read off the router is only as true as the router's own idea
 // of what it registered.
 async function theMethodsShownActuallyAnswer(doc) {
+  log.debug("Entering theMethodsShownActuallyAnswer().");
   log.info("=== The methods, called ===");
   // Paths with a parameter or a wildcard need a value; paths that change state or
   // need a body are checked for "not 404/405" rather than for success.
@@ -181,12 +188,14 @@ async function theMethodsShownActuallyAnswer(doc) {
     }
   }
   log.info("[methods] OK — " + checked + " method/path pairs reached a handler.");
+  log.debug("Leaving theMethodsShownActuallyAnswer().");
 }
 
 // The index must not omit the endpoints this service's OTHER documents advertise.
 // Those are discovered by clients, so an index that missed one would be missing
 // exactly the endpoints that matter most.
 async function theAdvertisedEndpointsAreAllListed(doc) {
+  log.debug("Entering theAdvertisedEndpointsAreAllListed().");
   log.info("=== Against the service's own discovery documents ===");
   const listed = new Set(doc.endpoints.map(function (e) { return e.path; }));
   const as = (await common.httpJson(issuerBase + "/.well-known/oauth-authorization-server")).body || {};
@@ -207,6 +216,61 @@ async function theAdvertisedEndpointsAreAllListed(doc) {
   });
   log.info("[discovery] OK — all " + checked + " endpoints named by the RFC 8414 and OID4VCI " +
            "metadata are listed.");
+  log.debug("Leaving theAdvertisedEndpointsAreAllListed().");
+}
+
+// The path of each endpoint is a LINK to that path, where that is honest. This
+// checks both halves of "where that is honest", because either half getting it
+// wrong produces a page that lies about what you can click:
+//
+//   * every link must resolve. A link is a promise, and the specific way to break
+//     it here is to link a path the router only answers for POST — the reader lands
+//     on Express's "Cannot GET /oauth2/token", which reads as a broken service.
+//   * a path that cannot be followed must NOT be linked: no GET, or a route pattern
+//     with a :parameter or a * in it, which is not the address of anything.
+async function pathsAreFollowableLinks(doc) {
+  log.info("=== The path links ===");
+  const page = await (await fetch(issuerBase + "/sts-metadata")).text();
+  let checkedLinks = 0;
+  let checkedPlain = 0;
+
+  for (const e of doc.endpoints) {
+    const followable = e.methods.indexOf("GET") !== -1 &&
+                       e.path.indexOf(":") === -1 && e.path.indexOf("*") === -1;
+    assert.strictEqual(e.linkable, followable,
+      e.path + " (" + e.methods.join(",") + ") is reported linkable=" + e.linkable +
+      " but a browser " + (followable ? "can" : "cannot") + " follow it.");
+
+    // The page must agree with the document about which paths are links.
+    const linked = new RegExp('href="' + e.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+                              '"[^>]*><code>').test(page);
+    if (!followable) {
+      assert.strictEqual(linked, false,
+        e.path + " is rendered as a link but cannot be followed — it would 404 or is a route pattern.");
+      assert.ok(e.notLinkableBecause,
+        e.path + " should say WHY it is not a link; that reason is the most useful thing on the row.");
+      checkedPlain++;
+      continue;
+    }
+    assert.strictEqual(linked, true, e.path + " should be rendered as a link on the page.");
+    assert.ok(e.url && e.url.indexOf(e.path) !== -1,
+      e.path + " should carry an absolute url in the JSON form; got " + e.url);
+
+    // And it must actually answer. Anything but Express's own "Cannot GET" means a
+    // handler was reached — 400 and 401 are fine, they are the endpoint talking.
+    const r = await common.httpJson(e.url);
+    const expressMiss = r.status === 404 && /^Cannot GET/.test(String(r.raw || ""));
+    assert.ok(!expressMiss,
+      "the page links " + e.url + " but nothing answers a GET there: " +
+      String(r.raw || "").slice(0, 80));
+    checkedLinks++;
+  }
+  assert.ok(checkedLinks > 10, "most of this service should be followable; only " + checkedLinks + " was.");
+  assert.ok(checkedPlain > 5,
+    "the POST-only and parameterised paths should still be listed, unlinked; only " +
+    checkedPlain + " were.");
+  log.info("[links] OK — " + checkedLinks + " links all resolve, " + checkedPlain +
+           " unfollowable paths listed with a reason and no link.");
 }
 
 async function test() {
@@ -215,6 +279,7 @@ async function test() {
   theIndexMatchesTheRouter(doc);
   specificationsAreHonest(doc);
   await theMethodsShownActuallyAnswer(doc);
+  await pathsAreFollowableLinks(doc);
   await theAdvertisedEndpointsAreAllListed(doc);
   log.info("Test completed successfully.");
 }

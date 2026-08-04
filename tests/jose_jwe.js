@@ -43,6 +43,7 @@ var jose = paths.requireSharedModule(
 // between the two means something.
 // ---------------------------------------------------------------------------
 function independentConcatKdf(z, keyBytes, algId) {
+  log.debug("Entering independentConcatKdf().");
   function uint32(n) {
     var b = Buffer.alloc(4);
     b.writeUInt32BE(n);
@@ -56,10 +57,12 @@ function independentConcatKdf(z, keyBytes, algId) {
     uint32(0),
     uint32(keyBytes * 8)
   ]);
+  log.debug("Leaving independentConcatKdf().");
   return nodeCrypto.createHash("sha256").update(input).digest().subarray(0, keyBytes);
 }
 
 async function keyDerivationMatchesTheRfc() {
+  log.debug("Entering keyDerivationMatchesTheRfc().");
   log.info("=== The Concat KDF, against an independent implementation ===");
   var z = nodeCrypto.randomBytes(32);
   // Both uses of the KDF: direct ECDH-ES (AlgorithmID is the "enc" value) and the
@@ -87,9 +90,11 @@ async function keyDerivationMatchesTheRfc() {
   assert.ok(!byEnc.equals(byAlg),
     "the AlgorithmID must change the derived key, otherwise it is not bound in.");
   log.info("[kdf] OK — " + cases.length + " derivations match, and the inputs demonstrably matter.");
+  log.debug("Leaving keyDerivationMatchesTheRfc().");
 }
 
 async function everyAlgorithmRoundTrips() {
+  log.debug("Entering everyAlgorithmRoundTrips().");
   log.info("=== Every algorithm pair round-trips ===");
   var rsaSha256 = await crypto.subtle.generateKey(
     { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
@@ -162,9 +167,11 @@ async function everyAlgorithmRoundTrips() {
   }
   log.info("[round trip] OK — " + pairs + " alg/enc pairs encrypt and decrypt: " +
            algs.join(", ") + " over " + encs.join(", ") + ".");
+  log.debug("Leaving everyAlgorithmRoundTrips().");
 }
 
 async function keysInEveryForm() {
+  log.debug("Entering keysInEveryForm().");
   log.info("=== Keys in every form a caller might have ===");
   var rsa = await crypto.subtle.generateKey(
     { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
@@ -193,9 +200,11 @@ async function keysInEveryForm() {
   }
   log.info("[keys] OK — " + forms.length + " key forms accepted: " +
            forms.map(function (f) { return f[0]; }).join("; ") + ".");
+  log.debug("Leaving keysInEveryForm().");
 }
 
 async function tamperingAndBadInputAreRefused() {
+  log.debug("Entering tamperingAndBadInputAreRefused().");
   log.info("=== Tampering and malformed input ===");
   var rsa = await crypto.subtle.generateKey(
     { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
@@ -263,6 +272,7 @@ async function tamperingAndBadInputAreRefused() {
     "so should an unimplemented content encryption algorithm.");
   log.info("[negatives] OK — header edits, bit flips, the wrong key, malformed input and unimplemented " +
            "algorithms are all refused.");
+  log.debug("Leaving tamperingAndBadInputAreRefused().");
 }
 
 async function test() {

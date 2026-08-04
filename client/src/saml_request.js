@@ -112,6 +112,7 @@ function forgetStoredKeyPair() {
 }
 
 function saveState() {
+  log.debug("Entering saveState().");
   if (!window.localStorage) return;
   var storeKeyPair = keyPairMayBeStored();
   var els = persistedEls();
@@ -126,6 +127,7 @@ function saveState() {
   // most interactions, so doing it here means no code path can leave the key
   // pair behind.
   if (!storeKeyPair) forgetStoredKeyPair();
+  log.debug("Leaving saveState().");
 }
 function restoreState() {
   log.debug("Entering restoreState().");
@@ -371,6 +373,7 @@ function hintRuleFor(fmt) {
 }
 
 function onNameIdFormatChange() {
+  log.debug("Entering onNameIdFormatChange().");
   var rule = hintRuleFor(val('saml_nameid_format'));
   var hint = el('saml_username_hint');
   if (hint) {
@@ -380,10 +383,12 @@ function onNameIdFormatChange() {
   setVal('saml_hint_help', rule.help);
   validateHint();
   saveState();
+  log.debug("Leaving onNameIdFormatChange().");
   return false;
 }
 
 function validateHint() {
+  log.debug("Entering validateHint().");
   var rule = hintRuleFor(val('saml_nameid_format'));
   var v = val('saml_username_hint').trim();
   var hint = el('saml_username_hint');
@@ -393,6 +398,7 @@ function validateHint() {
   hint.style.borderColor = ok ? '' : '#e0a800';
   setVal('saml_hint_help', rule.help + (ok ? '' : '  ⚠ value does not match the selected format.'));
   saveState();
+  log.debug("Leaving validateHint().");
   return ok;
 }
 
@@ -416,6 +422,7 @@ function onSignChange() {
 // consequence lands on a different page (the response page's prefill goes away)
 // and after a reload, so it is not something to leave the user to discover.
 function renderKeyPairStorageNote() {
+  log.debug("Entering renderKeyPairStorageNote().");
   var note = el('saml_keypair_storage_note');
   if (!note) return;
   if (keyPairMayBeStored()) {
@@ -426,6 +433,7 @@ function renderKeyPairStorageNote() {
   note.textContent = 'Not saved. Use Download to keep this key pair. After a reload you will need ' +
     'to paste it back into these two fields, and paste the private key into the Decryption Key ' +
     'field on the SAML Response page before an EncryptedAssertion can be decrypted.';
+  log.debug("Leaving renderKeyPairStorageNote().");
 }
 
 function onSaveKeyPairChange() {
@@ -778,6 +786,7 @@ function signRedirect(xml, dest, relayState, doSign) {
 // produced. What it catches is a malformed document being signed or encrypted
 // as though it had parsed.
 function parseXmlStrict(xml, what) {
+  log.debug("Entering parseXmlStrict().");
   var label = what || 'XML';
   if (typeof xml !== 'string' || xml.trim() === '') {
     throw new Error(label + ' is empty.');
@@ -786,6 +795,7 @@ function parseXmlStrict(xml, what) {
   if (!doc || doc.getElementsByTagName('parsererror').length || !doc.documentElement) {
     throw new Error('malformed ' + label + ' — it is not well-formed XML.');
   }
+  log.debug("Leaving parseXmlStrict().");
   return doc;
 }
 
@@ -1002,6 +1012,7 @@ function pemWrapCert(certPemOrB64) {
 
 // Data-encryption algorithm URI -> forge cipher spec.
 function dataAlgSpec(uri) {
+  log.debug("Entering dataAlgSpec().");
   switch (uri) {
     case XENC11_NS + 'aes128-gcm': return { cipher: 'AES-GCM', keyBytes: 16, ivBytes: 12, gcm: true };
     case XENC11_NS + 'aes192-gcm': return { cipher: 'AES-GCM', keyBytes: 24, ivBytes: 12, gcm: true };
@@ -1012,6 +1023,7 @@ function dataAlgSpec(uri) {
     case XENC_NS + 'tripledes-cbc': return { cipher: '3DES-CBC', keyBytes: 24, ivBytes: 8, gcm: false };
     default: throw new Error('Unsupported data encryption algorithm: ' + uri);
   }
+  log.debug("Leaving dataAlgSpec().");
 }
 function forgeMdFor(uri) {
   switch (uri) {
@@ -1448,7 +1460,9 @@ function bindingLabel(b) {
 }
 
 function historyEntry(operation, result, detail, opts) {
+  log.debug("Entering historyEntry().");
   opts = opts || {};
+  log.debug("Leaving historyEntry().");
   return {
     operation: operation,
     result: result,
@@ -1527,6 +1541,7 @@ function togglePane(bodyId) {
 // Tab switching scoped to the pane containing the clicked tab, so multiple tab
 // groups on the page toggle independently (mirrors saml_response.js).
 function showTab(evt, tabId) {
+  log.debug("Entering showTab().");
   var target = el(tabId);
   var scope = (target && target.closest && target.closest('.saml-pane')) || document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
@@ -1535,6 +1550,7 @@ function showTab(evt, tabId) {
   for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
+  log.debug("Leaving showTab().");
   return false;
 }
 
@@ -1542,6 +1558,7 @@ function showTab(evt, tabId) {
 // signer cert or the generated SP cert). The cert is handed over via
 // localStorage ('saml_cert_view') and shown in a new tab.
 function viewCertificate(fieldId) {
+  log.debug("Entering viewCertificate().");
   var pem = val(fieldId);
   if (!pem) { setStatus('saml_metadata_status', 'No certificate to view yet.'); return false; }
   try {
@@ -1550,6 +1567,7 @@ function viewCertificate(fieldId) {
     // No storage available in this context.
   }
   window.open('/saml_cert.html?from=saml_request.html', '_blank');
+  log.debug("Leaving viewCertificate().");
   return false;
 }
 
@@ -1687,6 +1705,7 @@ window.onload = function () {
   // Initial population of the Generated AuthnRequest field + URL validation.
   autoBuildRequest();
   validateConfigUrls();
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

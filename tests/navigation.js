@@ -49,6 +49,7 @@ async function waitVisible(driver, locator) {
 var VERSION_RE = /^v\d+\.\d+\.\d+$/;
 var seenVersion = null;
 async function checkFooterVersion(driver, where) {
+  log.debug("Entering checkFooterVersion().");
   var el = await waitVisible(driver, By.css('.footer-version'));
   var text = (await el.getText()).trim();
   assert.ok(VERSION_RE.test(text),
@@ -61,6 +62,7 @@ async function checkFooterVersion(driver, where) {
     assert.strictEqual(text, seenVersion,
       "[" + where + "] every page must report the same build: " + text + " vs " + seenVersion);
   }
+  log.debug("Leaving checkFooterVersion().");
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +158,7 @@ var DEFAULT_TEXT_COLOUR = "rgb(51, 51, 51)";
 var CARD_HEIGHT_BUDGET = 640;
 
 async function landingFitsOnOneScreen(driver) {
+  log.debug("Entering landingFitsOnOneScreen().");
   log.info("Entering landingFitsOnOneScreen().");
   var was = await driver.manage().window().getRect();
   await driver.manage().window().setRect({ width: 1366, height: 768 });
@@ -218,9 +221,11 @@ async function landingFitsOnOneScreen(driver) {
     await driver.manage().window().setRect(was);
   }
   log.info("Leaving landingFitsOnOneScreen().");
+  log.debug("Leaving landingFitsOnOneScreen().");
 }
 
 async function navigationActivities(driver) {
+  log.debug("Entering navigationActivities().");
   // 1. Hit the base URL -> the landing page (site root serves index.html).
   log.info("Load the base URL (landing page).");
   await driver.get(baseUrl);
@@ -356,9 +361,11 @@ async function navigationActivities(driver) {
   await waitVisible(driver, CHOICES);
   await checkFooterVersion(driver, "landing page (return)");
   log.info("Back on the landing page. Navigation test succeeded.");
+  log.debug("Leaving navigationActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) { options.addArguments("--headless"); }
   options.addArguments("--no-sandbox");
@@ -386,6 +393,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

@@ -335,6 +335,7 @@ function viewSignerCert() {
 }
 
 function showTab(evt, tabId) {
+  log.debug("Entering showTab().");
   var target = el(tabId);
   var scope = (target && target.closest && target.closest('.saml-pane')) || document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
@@ -343,6 +344,7 @@ function showTab(evt, tabId) {
   for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
+  log.debug("Leaving showTab().");
   return false;
 }
 
@@ -486,6 +488,7 @@ function clearOperationHistory() {
 }
 
 window.onload = function () {
+  log.debug("Entering onload().");
   renderOperationHistory();
   // Prefill the decryption key from the requestor private key stored by the
   // WS-Trust Test Tools page (the STS encrypts to the requestor's certificate).
@@ -537,6 +540,7 @@ window.onload = function () {
     log.error('parse exchange: ' + e.message);
     setStatus('Could not read the stored exchange: ' + e.message);
   }
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

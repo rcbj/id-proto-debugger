@@ -701,6 +701,7 @@ function verifyPresentation(presentation, record) {
   const nodeAlg = { 'sha-256': 'sha256', 'sha-384': 'sha384', 'sha-512': 'sha512' }[String(sdAlg).toLowerCase()];
   const signedDigests = [];
   (function collect(node) {
+    log.debug("Entering collect().");
     if (!node || typeof node !== 'object') return;
     if (Array.isArray(node)) {
       node.forEach(function (item) {
@@ -713,6 +714,7 @@ function verifyPresentation(presentation, record) {
       if (k === '_sd' && Array.isArray(node[k])) node[k].forEach(function (d) { signedDigests.push(d); });
       else if (typeof node[k] === 'object') collect(node[k]);
     });
+    log.debug("Leaving collect().");
   })(payload);
 
   let unmatched = 0;

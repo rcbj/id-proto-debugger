@@ -147,6 +147,7 @@ async function setCheckbox(driver, id, want) {
 // --- the body of the check, run identically for both pages ------------------
 
 async function keyPairOptOut(driver, spec) {
+  log.debug("Entering keyPairOptOut().");
   log.info("=== " + spec.what + ": " + spec.page + " ===");
   // Start from a known state: nothing left over from another test in this
   // browser profile, and the signing pane open.
@@ -260,6 +261,7 @@ async function keyPairOptOut(driver, spec) {
 
   // Leave nothing behind for the next test sharing this profile.
   await driver.executeScript("window.localStorage.clear();");
+  log.debug("Leaving keyPairOptOut().");
 }
 
 
@@ -298,6 +300,7 @@ async function waitForHolderKeyOnStep2(driver) {
 }
 
 async function sdJwtVcHolderKeyOptOut(driver) {
+  log.debug("Entering sdJwtVcHolderKeyOptOut().");
   log.info("=== SD-JWT VC: the holder key pair ===");
   var read = function (script) { return driver.executeScript(script); };
 
@@ -336,6 +339,8 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   await waitVisible(driver, By.id("vc_save_holder_key"));
 
   var snapshot = function () {
+    log.debug("Entering snapshot().");
+    log.debug("Leaving snapshot().");
     return read(
       "var h = JSON.parse(localStorage.getItem('sdjwtvc_credential_history') || '[]');" +
       "return {" +
@@ -406,6 +411,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   var vpCredential = b64u({ alg: "ES256", typ: "dc+sd-jwt" }) + "." +
                      b64u({ vct: "demo", iss: "http://i", cnf: { jwk: HOLDER_PUBLIC } }) + ".sig~";
   var continueDisabled = async function (optedOut) {
+    log.debug("Entering continueDisabled().");
     await driver.get(baseUrl + "/vc-presentation-1.html");
     await driver.executeScript(
       "localStorage.clear();" +
@@ -415,6 +421,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
       vpCredential, vpRequest, optedOut ? 1 : 0);
     await driver.navigate().refresh();
     await waitVisible(driver, By.id("vp_continue_button"));
+    log.debug("Leaving continueDisabled().");
     return read("return !!(document.getElementById('vp_continue_button') || {}).disabled;");
   };
   assert.strictEqual(await continueDisabled(true), false,
@@ -503,10 +510,12 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   log.info("[SD-JWT VC] OK — re-enabled: saving resumes.");
 
   await driver.executeScript("window.localStorage.clear();");
+  log.debug("Leaving sdJwtVcHolderKeyOptOut().");
 }
 
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   options.addArguments("--window-size=1500,1400");
   // --headless=new, NOT plain --headless, and this matters more than it looks.
@@ -553,6 +562,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

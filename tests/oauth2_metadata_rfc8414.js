@@ -88,6 +88,8 @@ const NOT_DEFINED_NOTE = "-->not defined<--";
 // Part 1 — the endpoint itself
 // ===========================================================================
 function get(url, headers) {
+  log.debug("Entering get().");
+  log.debug("Leaving get().");
   return new Promise(function (resolve, reject) {
     var mod = url.indexOf("https:") === 0 ? https : http;
     var req = mod.get(url, { headers: headers || {} }, function (res) {
@@ -101,6 +103,7 @@ function get(url, headers) {
 }
 
 async function testMetadataDocument() {
+  log.debug("Entering testMetadataDocument().");
   log.info("=== RFC 8414 metadata document (" + metadataUrl + ") ===");
   var res = await get(metadataUrl);
   assert.strictEqual(res.status, 200, "the metadata endpoint did not answer 200: " + res.status);
@@ -135,6 +138,7 @@ async function testMetadataDocument() {
   });
   log.info("[document] OK — every endpoint sits under the issuer " + doc.issuer + ".");
 
+  log.debug("Leaving testMetadataDocument().");
   return doc;
 }
 
@@ -154,6 +158,7 @@ async function testIssuerTracksHost(doc) {
 // RFC 8414 section 2.1: signed_metadata is a JWT of the metadata, signed by the
 // issuer, carrying iss (and here sub).
 async function testSignedMetadata(doc) {
+  log.debug("Entering testSignedMetadata().");
   var certRes = await get(stsBase + "/sts/cert");
   assert.strictEqual(certRes.status, 200, "could not fetch the STS certificate for verification.");
   var claims;
@@ -172,6 +177,7 @@ async function testSignedMetadata(doc) {
     "signed_metadata claims disagree with the document: " + mismatched.join(", "));
   log.info("[signed_metadata] OK — verifies against the STS certificate and matches all " +
     (Object.keys(doc).length - 1) + " members.");
+  log.debug("Leaving testSignedMetadata().");
 }
 
 // The advertised jwks_uri has to resolve, or the document points at nothing.
@@ -219,6 +225,7 @@ const STRUCTURED_DOC = {
 };
 
 async function structuredValuesActivities(driver) {
+  log.debug("Entering structuredValuesActivities().");
   log.info("=== A metadata member whose value is a JSON structure ===");
 
   // Only the DOCUMENT is planted; every displayed value below is produced by the
@@ -295,12 +302,14 @@ async function structuredValuesActivities(driver) {
   await openDebugger(driver);
   await driver.executeScript("debug.onClickClearAllForms();");
   await driver.sleep(300);
+  log.debug("Leaving structuredValuesActivities().");
 }
 
 // ===========================================================================
 // Part 2 — the Metadata Source radio on debugger.html
 // ===========================================================================
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var el = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", el);
@@ -312,8 +321,11 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", el);
   }
   await driver.sleep(300);
+  log.debug("Leaving click().");
 }
 function paneState(driver) {
+  log.debug("Entering paneState().");
+  log.debug("Leaving paneState().");
   return driver.executeScript(
     "return {" +
     "  url: document.getElementById('oidc_discovery_endpoint').value," +
@@ -340,6 +352,7 @@ function validateButtonShown(driver) {
 
 // Click Validate Signature and wait for the verdict to settle.
 async function validateSignature(driver) {
+  log.debug("Entering validateSignature().");
   await driver.executeScript("document.getElementById('signed_metadata_status').textContent = '';");
   await click(driver, By.id('validate_signed_metadata_button'));
   var text = "";
@@ -348,6 +361,7 @@ async function validateSignature(driver) {
       "return document.getElementById('signed_metadata_status').textContent.trim();");
     return text && text.indexOf("Fetching") !== 0 && text.length > 1;
   }, fetchWait, "the signature validation produced no verdict.");
+  log.debug("Leaving validateSignature().");
   return text;
 }
 
@@ -358,6 +372,7 @@ async function openDebugger(driver) {
 }
 
 async function metadataSourceActivities(driver, doc) {
+  log.debug("Entering metadataSourceActivities().");
   await openDebugger(driver);
   await driver.executeScript("window.localStorage.clear();");
   await openDebugger(driver);
@@ -650,9 +665,11 @@ async function metadataSourceActivities(driver, doc) {
     "Clear returns the source to OIDC, so the Validate Signature button should be hidden again.");
   log.info("[clear] OK — source, URL, table, values, and notes all cleared.");
   await structuredValuesActivities(driver);
+  log.debug("Leaving metadataSourceActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   var doc = await testMetadataDocument();
   await testIssuerTracksHost(doc);
   await testSignedMetadata(doc);
@@ -698,6 +715,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

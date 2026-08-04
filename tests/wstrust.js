@@ -52,6 +52,7 @@ async function textOf(driver, id) {
 // Fill the WS-Trust config page for the given operation and send. `targetToken`
 // (for renew/validate/cancel) is pasted into the Target Token field.
 async function configureAndSend(driver, stsUrl, op, opts) {
+  log.debug("Entering configureAndSend().");
   opts = opts || {};
   log.info("Load the WS-Trust Test Tools page (op=" + op + ", sign=" + !!opts.sign + ", route=" + (opts.route || "back") + ", version=" + (opts.version || "default") + ").");
   await driver.get(baseUrl + "/wstrust_tools.html");
@@ -113,9 +114,11 @@ async function configureAndSend(driver, stsUrl, op, opts) {
     var s = await textOf(driver, "wst_resp_status");
     return s.indexOf("response loaded") >= 0 || s.indexOf("could not parse") >= 0;
   }, Math.max(waitTime, 15000), "WS-Trust response was not rendered.");
+  log.debug("Leaving configureAndSend().");
 }
 
 async function wstrustActivities(driver, stsUrl, op, sign, route, version, encrypt) {
+  log.debug("Entering wstrustActivities().");
   var targetToken = null;
 
   // Renew/Validate/Cancel need an existing token: Issue one first and capture it.
@@ -172,9 +175,11 @@ async function wstrustActivities(driver, stsUrl, op, sign, route, version, encry
   }
 
   log.info("WS-Trust " + op + (sign ? " (signed)" : "") + " round-trip succeeded.");
+  log.debug("Leaving wstrustActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) { options.addArguments("--headless"); }
   options.addArguments("--no-sandbox");
@@ -228,6 +233,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

@@ -56,6 +56,7 @@ function b64u(input) {
 
 // --- base58btc --------------------------------------------------------------
 function base58RoundTrips() {
+  log.debug("Entering base58RoundTrips().");
   log.info("=== base58btc ===");
   for (var length = 1; length <= 40; length++) {
     var bytes = crypto.randomBytes(length);
@@ -85,10 +86,12 @@ function base58RoundTrips() {
       'base58btc must not emit "' + c + '"; it is excluded so a DID can be read aloud.');
   });
   log.info("[base58] OK — 0, O, I and l are never emitted.");
+  log.debug("Leaving base58RoundTrips().");
 }
 
 // --- multicodec -------------------------------------------------------------
 function multicodecIsAVarint() {
+  log.debug("Entering multicodecIsAVarint().");
   log.info("=== multicodec is a varint ===");
   assert.deepStrictEqual(Array.from(did.varintEncode(0x1200)), [0x80, 0x24],
     "0x1200 as an unsigned varint is 0x80 0x24. Written as the literal bytes 0x12 0x00 it " +
@@ -105,6 +108,7 @@ function multicodecIsAVarint() {
       "varintDecode must report how many bytes it consumed, or the key that follows is misread.");
   });
   log.info("[multicodec] OK — 0x1200 encodes as 0x80 0x24 and eleven codes round-trip.");
+  log.debug("Leaving multicodecIsAVarint().");
 }
 
 // The prefix is the OBSERVABLE consequence of the varint being right, and it is
@@ -112,6 +116,7 @@ function multicodecIsAVarint() {
 // string sees the wrong prefix long before anything is verified. These are the
 // prefixes the did:key specification's own vectors show.
 function didKeyPrefixes() {
+  log.debug("Entering didKeyPrefixes().");
   log.info("=== did:key prefixes ===");
   var expected = [
     { crv: "P-256", prefix: "zDn" },
@@ -134,6 +139,7 @@ function didKeyPrefixes() {
       identifier.slice(0, 20) + "…");
   });
   log.info("[did:key] OK — P-256 zDn, P-384 z82, P-521 z2J, Ed25519 z6Mk.");
+  log.debug("Leaving didKeyPrefixes().");
 }
 
 // The curve constants, checked against their published values before any point
@@ -151,6 +157,7 @@ function didKeyPrefixes() {
 // and p = 3 (mod 4) is the property decompressPoint() relies on to take a square
 // root with a single modular exponentiation.
 function curveConstantsArePublishedValues() {
+  log.debug("Entering curveConstantsArePublishedValues().");
   log.info("=== curve constants ===");
   var expected = {
     "P-256": { p: (BigInt(2) ** BigInt(256)) - (BigInt(2) ** BigInt(224)) +
@@ -178,10 +185,12 @@ function curveConstantsArePublishedValues() {
     assert.strictEqual(curve.size, expected[crv].size, crv + ": the coordinate byte length is wrong.");
   });
   log.info("[curves] OK — three primes match their closed forms, all are 3 (mod 4), b is full length.");
+  log.debug("Leaving curveConstantsArePublishedValues().");
 }
 
 // --- did:key against node's own EC implementation ---------------------------
 function didKeyRoundTripsAgainstNode() {
+  log.debug("Entering didKeyRoundTripsAgainstNode().");
   log.info("=== did:key round trip (oracle: node) ===");
   ["P-256", "P-384", "P-521"].forEach(function (crv) {
     // Several keys per curve: y's parity decides which square root is the right
@@ -217,10 +226,12 @@ function didKeyRoundTripsAgainstNode() {
   assert.throws(function () { did.didKeyToJwk("did:key:z" + did.base58Encode(new Uint8Array([0x99, 0x01, 1, 2]))); },
     /multicodec/, "an unknown multicodec must be refused by name rather than guessed at.");
   log.info("[did:key] OK — a wrong multibase prefix and an unknown multicodec are refused.");
+  log.debug("Leaving didKeyRoundTripsAgainstNode().");
 }
 
 // --- did:jwk ----------------------------------------------------------------
 function didJwkRoundTrips() {
+  log.debug("Entering didJwkRoundTrips().");
   log.info("=== did:jwk ===");
   var pair = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   var jwk = pair.publicKey.export({ format: "jwk" });
@@ -242,10 +253,12 @@ function didJwkRoundTrips() {
   assert.strictEqual(did.didJwkToJwk("did:jwk:notbase64url{"), null,
     "an undecodable did:jwk resolves to nothing rather than throwing: callers have other routes.");
   log.info("[did:jwk] OK — round trip, fragment tolerated, private members stripped.");
+  log.debug("Leaving didJwkRoundTrips().");
 }
 
 // --- did:web URL rules ------------------------------------------------------
 function didWebUrlRules() {
+  log.debug("Entering didWebUrlRules().");
   log.info("=== did:web URL rules ===");
   assert.strictEqual(did.didWebToUrl("did:web:example.com"),
     "https://example.com/.well-known/did.json",
@@ -265,10 +278,12 @@ function didWebUrlRules() {
   assert.strictEqual(did.didWebToUrl("did:key:z6Mkabc"), "",
     "only did:web has a URL, and asking for another method's must not invent one.");
   log.info("[did:web] OK — well-known vs path, %3A ports, and the http variant.");
+  log.debug("Leaving didWebUrlRules().");
 }
 
 // --- resolution -------------------------------------------------------------
 function fakeFetch(routes) {
+  log.debug("Entering fakeFetch().");
   var calls = [];
   var impl = function (url) {
     calls.push(url);
@@ -281,10 +296,12 @@ function fakeFetch(routes) {
     });
   };
   impl.calls = calls;
+  log.debug("Leaving fakeFetch().");
   return impl;
 }
 
 async function resolutionIsLocalWherePossible() {
+  log.debug("Entering resolutionIsLocalWherePossible().");
   log.info("=== resolve() ===");
   var pair = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   var jwk = pair.publicKey.export({ format: "jwk" });
@@ -336,10 +353,12 @@ async function resolutionIsLocalWherePossible() {
   await assert.rejects(did.resolve("not-a-did", { fetch: fakeFetch({}) }), /is not a DID/,
     "and something that is not a DID at all must say that.");
   log.info("[resolve] OK — id mismatch, non-JSON, HTTP status, unknown method and non-DIDs refused.");
+  log.debug("Leaving resolutionIsLocalWherePossible().");
 }
 
 // --- reading a document -----------------------------------------------------
 function documentReading() {
+  log.debug("Entering documentReading().");
   log.info("=== assertionKeys / keyForKid / assertionJwks ===");
   var rsa = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   var rsaJwk = rsa.publicKey.export({ format: "jwk" });
@@ -405,6 +424,7 @@ function documentReading() {
   assert.strictEqual(did.keyForKid(document, "").id, webDid + "#sig-1",
     "with no kid, the first assertion key is the unambiguous choice.");
   log.info("[document] OK — references, embedded methods, Multikey, kid preservation, fallbacks.");
+  log.debug("Leaving documentReading().");
 }
 
 // --- a proof's verificationMethod, both forms -------------------------------
@@ -417,6 +437,7 @@ function documentReading() {
 // issuer's key reported as unreachable, i.e. a broken issuer rather than a wallet
 // that cannot follow a DID.
 async function verificationMethodsResolveBothWays() {
+  log.debug("Entering verificationMethodsResolveBothWays().");
   log.info("=== resolveVerificationMethod() ===");
   var subject = "did:web:issuer.example%3A8081";
   var multibase = "uSGVsbG8gQkJT";
@@ -464,6 +485,7 @@ async function verificationMethodsResolveBothWays() {
   await assert.rejects(did.resolveVerificationMethod("", { fetch: fetchImpl }),
     /names no verificationMethod/, "an empty verificationMethod must say so.");
   log.info("[verificationMethod] OK — DID URL by fragment, https by fetch, no silent fallback.");
+  log.debug("Leaving verificationMethodsResolveBothWays().");
 }
 
 // --- Well Known DID Configuration -------------------------------------------
@@ -472,6 +494,7 @@ async function verificationMethodsResolveBothWays() {
 // the one way it is named after. `mutate` is handed the header, the payload and
 // the credential before signing.
 function linkageJwt(options) {
+  log.debug("Entering linkageJwt().");
   var subject = options.did;
   var now = Math.floor(Date.now() / 1000);
   var vc = {
@@ -488,10 +511,12 @@ function linkageJwt(options) {
   if (options.mutate) options.mutate(header, payload, vc);
   var signing = b64u(JSON.stringify(header)) + "." + b64u(JSON.stringify(payload));
   var key = options.signWith || options.key;
+  log.debug("Leaving linkageJwt().");
   return signing + "." + b64u(crypto.sign("sha256", Buffer.from(signing), key));
 }
 
 function linkageFixture() {
+  log.debug("Entering linkageFixture().");
   var rsa = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   var origin = "http://issuer.example:8081";
   var subject = "did:web:issuer.example%3A8081";
@@ -504,6 +529,7 @@ function linkageFixture() {
   };
   var routes = {};
   routes[did.didWebToUrlInsecure(subject)] = { body: document };
+  log.debug("Leaving linkageFixture().");
   return { key: rsa.privateKey, origin: origin, did: subject, document: document, routes: routes,
            fetch: fakeFetch(routes) };
 }
@@ -520,6 +546,7 @@ function checkNamed(verdict, name) {
 // what makes each negative meaningful: a verifier that failed everything, or that
 // failed for a different reason than the mutation introduced, does not pass.
 function assertOnlyFailure(verdict, name, label) {
+  log.debug("Entering assertOnlyFailure().");
   assert.strictEqual(verdict.valid, false, label + ": the verdict should be invalid.");
   assert.strictEqual(checkNamed(verdict, name).ok, false,
     label + ': the "' + name + '" check should have failed. Details: ' +
@@ -529,9 +556,11 @@ function assertOnlyFailure(verdict, name, label) {
     assert.strictEqual(c.ok, true,
       label + ': only "' + name + '" should have failed, but "' + c.name + '" did too: ' + c.detail);
   });
+  log.debug("Leaving assertOnlyFailure().");
 }
 
 async function domainLinkageVerifies() {
+  log.debug("Entering domainLinkageVerifies().");
   log.info("=== Well Known DID Configuration: the positive ===");
   var f = linkageFixture();
   var verdict = await did.verifyDomainLinkage(
@@ -544,9 +573,11 @@ async function domainLinkageVerifies() {
   assert.ok(checkNamed(verdict, "Issuer signature").ok,
     "the signature must be verified against the DID's own assertionMethod key.");
   log.info("[linkage] OK — the positive verifies, all " + verdict.checks.length + " checks pass.");
+  log.debug("Leaving domainLinkageVerifies().");
 }
 
 async function domainLinkageNegatives() {
+  log.debug("Entering domainLinkageNegatives().");
   log.info("=== Well Known DID Configuration: the negatives ===");
   var f = linkageFixture();
   var opts = { fetch: f.fetch, allowHttp: true };
@@ -633,9 +664,11 @@ async function domainLinkageNegatives() {
     "an LD-proof entry must be reported as unverifiable-here, not as malformed: " +
     checkNamed(ldForm, "Credential form").detail);
   log.info("[linkage] OK — the LD-proof form is reported as unverifiable here, not as invalid.");
+  log.debug("Leaving domainLinkageNegatives().");
 }
 
 async function originLinkageAsksAboutOneDid() {
+  log.debug("Entering originLinkageAsksAboutOneDid().");
   log.info("=== verifyOriginLinkage() ===");
   var f = linkageFixture();
   var configuration = {
@@ -677,9 +710,11 @@ async function originLinkageAsksAboutOneDid() {
     "http://host:1/.well-known/did-configuration.json",
     "the resource sits at a fixed path at the origin root, trailing slash or not.");
   log.info("[linkage] OK — the resource's own rules are checked.");
+  log.debug("Leaving originLinkageAsksAboutOneDid().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   base58RoundTrips();
   multicodecIsAVarint();
   didKeyPrefixes();
@@ -694,6 +729,7 @@ async function test() {
   await domainLinkageNegatives();
   await originLinkageAsksAboutOneDid();
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

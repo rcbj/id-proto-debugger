@@ -51,6 +51,7 @@ var verifierBase = process.env.OID4VP_VERIFIER_URL || issuerBase;
 const { text, waitForStatus, waitForValue } = require("./wait_for");
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
@@ -62,6 +63,7 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", e);
   }
   await driver.sleep(250);
+  log.debug("Leaving click().");
 }
 
 function severeErrors(driver) {
@@ -75,6 +77,7 @@ function severeErrors(driver) {
 
 // --- through the pages ------------------------------------------------------
 async function presentThroughThePages(driver, held) {
+  log.debug("Entering presentThroughThePages().");
   log.info("=== jwt_vc_json presented through the four pages ===");
   await common.plantIntoWallet(driver, {
     By: By, until: until, baseUrl: baseUrl, waitTime: waitTime,
@@ -141,6 +144,7 @@ async function presentThroughThePages(driver, held) {
     "the request WAS answered — every claim it asked for went. Said: " + answered);
 
   log.info("[pages] OK — VP JWT accepted, nothing reported as withheld, over-disclosure named.");
+  log.debug("Leaving presentThroughThePages().");
   return presentation;
 }
 
@@ -148,9 +152,11 @@ async function presentThroughThePages(driver, held) {
 // Presentations a correct wallet would never build, so the only way to find out
 // whether the verifier enforces its rules is to build them here.
 async function verifierNegatives(held, acceptedPresentation) {
+  log.debug("Entering verifierNegatives().");
   log.info("=== The verifier's checks on a VP JWT ===");
 
   const signVp = function (privateKey, request, credential) {
+    log.debug("Entering signVp().");
     const header = common.b64u(JSON.stringify({ alg: "ES256", typ: "JWT" }));
     const payload = common.b64u(JSON.stringify({
       iss: "urn:holder", aud: request.params.client_id, nonce: request.params.nonce,
@@ -160,9 +166,11 @@ async function verifierNegatives(held, acceptedPresentation) {
     }));
     const sig = common.b64u(crypto.sign(null, Buffer.from(header + "." + payload),
       { key: privateKey, dsaEncoding: "ieee-p1363" }));
+    log.debug("Leaving signVp().");
     return header + "." + payload + "." + sig;
   };
   const submit = async function (request, presentation) {
+    log.debug("Entering submit().");
     await common.httpJson(request.params.response_uri, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -172,6 +180,7 @@ async function verifierNegatives(held, acceptedPresentation) {
       }).toString()
     });
     const result = await common.verdictFor(verifierBase, request.params.state);
+    log.debug("Leaving submit().");
     return result.verdict || {};
   };
   const failedCheck = function (verdict) {
@@ -219,9 +228,11 @@ async function verifierNegatives(held, acceptedPresentation) {
   assert.ok(/Format/.test(failedCheck(v4)),
     "and named as a format problem rather than an undecodable JWT. Failed: " + failedCheck(v4));
   log.info("[verifier] OK — an SD-JWT answering a jwt_vc_json query is refused (" + failedCheck(v4) + ").");
+  log.debug("Leaving verifierNegatives().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   log.info("Running jwt_vc_json presentation against issuer " + issuerBase + ", verifier " + verifierBase);
   // Failures, not skips: see the note in jwt_vc_json_issuance.js.
   const found = await common.jwtVcJsonConfigurationId(issuerBase);
@@ -247,6 +258,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

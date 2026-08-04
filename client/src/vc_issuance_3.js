@@ -354,6 +354,7 @@ function isoOf(seconds) {
 
 // --- page actions -----------------------------------------------------------
 function copyCredential() {
+  log.debug("Entering copyCredential().");
   var area = el("vc_credential_raw");
   area.select();
   try {
@@ -362,6 +363,7 @@ function copyCredential() {
   } catch (e) {
     status("vc_copy_status", "Could not copy: " + e.message, "vc-bad");
   }
+  log.debug("Leaving copyCredential().");
   return false;
 }
 
@@ -579,6 +581,7 @@ function presentIt() {
 // Reflect on load whether either next step has anything to act on, so both offers
 // are honest before they are clicked rather than after.
 function renderNextStep() {
+  log.debug("Entering renderNextStep().");
   var held = (sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "").trim();
   var button = document.getElementById("vc_goto_step4_button");
   if (button) button.disabled = !held;
@@ -592,6 +595,7 @@ function renderNextStep() {
   var present = document.getElementById("vc_present_button");
   if (present) present.disabled = !readiness.ready;
   status("vc_present_status", readiness.message, readiness.level);
+  log.debug("Leaving renderNextStep().");
 }
 
 function onload() {

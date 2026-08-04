@@ -40,6 +40,7 @@ async function clickByValue(driver, value) {
 }
 
 async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
+  log.debug("Entering loadIdpMetadata().");
   if (metadataFile) {
     log.info("Upload IdP metadata from local file: " + metadataFile);
     var fileInput = By.id("saml_metadata_file");
@@ -55,9 +56,11 @@ async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
   }
   await waitForValue(driver, By.id("saml_metadata_status"),
     function (v) { return v.indexOf("Loaded and parsed") >= 0; }, "Metadata was not loaded/parsed.");
+  log.debug("Leaving loadIdpMetadata().");
 }
 
 async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, metadataFile) {
+  log.debug("Entering encryptedSsoActivities().");
   var loginWait = Math.max(waitTime, 15000);
   log.info("Load the SAML Test Tools page (encrypted SP, POST binding).");
   await driver.get(baseUrl + "/saml_request.html");
@@ -184,9 +187,11 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, met
   }, loginWait, "Attributes table (from the decrypted assertion) did not include a NameID row.");
 
   log.info("SAML EncryptedAssertion decryption succeeded.");
+  log.debug("Leaving encryptedSsoActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) { options.addArguments("--headless"); }
   options.addArguments("--no-sandbox");
@@ -225,6 +230,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

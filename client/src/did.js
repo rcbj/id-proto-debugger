@@ -52,6 +52,7 @@ var metadataClient = require("./metadata_client");
 var B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function base58Encode(bytes) {
+  log.debug("Entering base58Encode().");
   if (!bytes.length) return "";
   // Leading zero bytes are not carried by the arithmetic below — base 58 has no
   // way to express them — so they are counted and re-emitted as "1"s, which is
@@ -74,10 +75,12 @@ function base58Encode(bytes) {
   var out = "";
   for (var z = 0; z < zeros; z++) out += B58.charAt(0);
   for (var k = digits.length - 1; k >= 0; k--) out += B58.charAt(digits[k]);
+  log.debug("Leaving base58Encode().");
   return out;
 }
 
 function base58Decode(str) {
+  log.debug("Entering base58Decode().");
   var s = String(str || "");
   if (!s) return new Uint8Array(0);
   var zeros = 0;
@@ -99,6 +102,7 @@ function base58Decode(str) {
   }
   var out = new Uint8Array(zeros + bytes.length);
   for (var k = 0; k < bytes.length; k++) out[zeros + k] = bytes[bytes.length - 1 - k];
+  log.debug("Leaving base58Decode().");
   return out;
 }
 
@@ -140,6 +144,7 @@ function varintEncode(value) {
 }
 
 function varintDecode(bytes) {
+  log.debug("Entering varintDecode().");
   var result = 0;
   var shift = 0;
   var i = 0;
@@ -150,6 +155,7 @@ function varintDecode(bytes) {
     shift += 7;
     if (shift > 28) break;
   }
+  log.debug("Leaving varintDecode().");
   throw new Error("the multicodec prefix is not a valid unsigned varint.");
 }
 
@@ -212,6 +218,7 @@ function bigIntToBytes(value, size) {
 }
 
 function modPow(base, exponent, modulus) {
+  log.debug("Entering modPow().");
   var result = BigInt(1);
   var b = ((base % modulus) + modulus) % modulus;
   var e = exponent;
@@ -222,6 +229,7 @@ function modPow(base, exponent, modulus) {
     e = e / two;
     b = (b * b) % modulus;
   }
+  log.debug("Leaving modPow().");
   return result;
 }
 
@@ -236,6 +244,7 @@ function compressPoint(crv, xBytes, yBytes) {
 
 // 02/03 || x  ->  { x, y }
 function decompressPoint(crv, compressed) {
+  log.debug("Entering decompressPoint().");
   var curve = CURVES[crv];
   if (!curve) throw new Error("no parameters for curve " + crv + ", so its point cannot be decompressed.");
   var prefix = compressed[0];
@@ -257,6 +266,7 @@ function decompressPoint(crv, compressed) {
   var wantOdd = prefix === 0x03;
   var isOdd = (y % BigInt(2)) === BigInt(1);
   if (wantOdd !== isOdd) y = p - y;
+  log.debug("Leaving decompressPoint().");
   return { x: xBytes, y: bigIntToBytes(y, curve.size) };
 }
 
@@ -294,6 +304,7 @@ function didJwkToJwk(did) {
 
 // --- did:key ---------------------------------------------------------------
 function jwkToDidKey(jwk) {
+  log.debug("Entering jwkToDidKey().");
   var codec = codecFor(function (c) {
     return c.kty === jwk.kty && c.crv === jwk.crv;
   });
@@ -312,10 +323,12 @@ function jwkToDidKey(jwk) {
   var all = new Uint8Array(prefix.length + keyBytes.length);
   all.set(prefix, 0);
   all.set(keyBytes, prefix.length);
+  log.debug("Leaving jwkToDidKey().");
   return "did:key:z" + base58Encode(all);
 }
 
 function didKeyToJwk(did) {
+  log.debug("Entering didKeyToJwk().");
   var parsed = parse(did);
   if (!parsed || parsed.method !== "key") return null;
   var id = parsed.id;
@@ -339,6 +352,7 @@ function didKeyToJwk(did) {
     return { kty: codec.kty, crv: codec.crv, x: metadataClient.bytesToB64u(keyBytes) };
   }
   var point = decompressPoint(codec.crv, keyBytes);
+  log.debug("Leaving didKeyToJwk().");
   return {
     kty: codec.kty, crv: codec.crv,
     x: metadataClient.bytesToB64u(point.x),
@@ -379,6 +393,7 @@ function didWebToUrlInsecure(did) {
 // caller renders one table.
 // ---------------------------------------------------------------------------
 function documentForKey(did, jwk, methodType) {
+  log.debug("Entering documentForKey().");
   var vmId = did + "#0";
   var vm = {
     id: vmId,
@@ -386,6 +401,7 @@ function documentForKey(did, jwk, methodType) {
     controller: did,
     publicKeyJwk: publicPart(jwk)
   };
+  log.debug("Leaving documentForKey().");
   return {
     "@context": ["https://www.w3.org/ns/did/v1", "https://w3id.org/security/suites/jws-2020/v1"],
     id: did,
@@ -396,6 +412,7 @@ function documentForKey(did, jwk, methodType) {
 }
 
 function resolveLocally(did) {
+  log.debug("Entering resolveLocally().");
   var parsed = parse(did);
   if (!parsed) return null;
   if (parsed.method === "jwk") {
@@ -408,6 +425,7 @@ function resolveLocally(did) {
     return keyJwk ? { document: documentForKey(parsed.did, keyJwk),
                       from: "the did:key itself (no network call)" } : null;
   }
+  log.debug("Leaving resolveLocally().");
   return null;
 }
 
@@ -468,6 +486,7 @@ function resolve(did, opts) {
 // assertionMethod instead of embedding it, which is why these are resolved
 // against verificationMethod rather than read where they stand.
 function verificationMethods(doc) {
+  log.debug("Entering verificationMethods().");
   var out = [];
   var list = (doc && doc.verificationMethod) || [];
   for (var i = 0; i < list.length; i++) {
@@ -488,6 +507,7 @@ function verificationMethods(doc) {
     out.push({ id: vm.id || "", type: vm.type || "", controller: vm.controller || "", jwk: jwk,
                publicKeyMultibase: vm.publicKeyMultibase || "" });
   }
+  log.debug("Leaving verificationMethods().");
   return out;
 }
 
@@ -497,6 +517,7 @@ function verificationMethods(doc) {
 // common in the wild, and refusing to verify against it would report a working
 // credential as unverifiable.
 function assertionKeys(doc) {
+  log.debug("Entering assertionKeys().");
   var all = verificationMethods(doc);
   var refs = (doc && doc.assertionMethod) || [];
   if (!refs.length) return all;
@@ -511,6 +532,7 @@ function assertionKeys(doc) {
       if (all[i].id === ref) { out.push(all[i]); return; }
     }
   });
+  log.debug("Leaving assertionKeys().");
   return out.length ? out : all;
 }
 
@@ -518,6 +540,7 @@ function assertionKeys(doc) {
 // fragment. Falls back to the first assertion key, because a document with one
 // key and a signature with no kid is the common case and is unambiguous.
 function keyForKid(doc, kid) {
+  log.debug("Entering keyForKid().");
   var keys = assertionKeys(doc);
   if (kid) {
     for (var i = 0; i < keys.length; i++) {
@@ -527,6 +550,7 @@ function keyForKid(doc, kid) {
           keys[i].id.split("#")[1] === String(kid).replace(/^#/, "")) return keys[i];
     }
   }
+  log.debug("Leaving keyForKid().");
   return keys[0] || null;
 }
 

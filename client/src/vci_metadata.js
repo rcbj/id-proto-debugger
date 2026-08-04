@@ -113,6 +113,7 @@ function writeToLocalStorage() {
 }
 
 function loadFromLocalStorage() {
+  log.debug("Entering loadFromLocalStorage().");
   VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
     var v = null;
     try {
@@ -122,6 +123,7 @@ function loadFromLocalStorage() {
     }
     setFieldValue(idFor(m.name), (v === null || v === undefined) ? m.dflt : v);
   });
+  log.debug("Leaving loadFromLocalStorage().");
 }
 
 function clearFields() {
@@ -134,6 +136,7 @@ function clearFields() {
 }
 
 function clearStorage() {
+  log.debug("Entering clearStorage().");
   // "" rather than removed: an ABSENT key falls back to the dummy default on
   // the next load, which would undo the clear.
   VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
@@ -143,6 +146,7 @@ function clearStorage() {
       // No storage available in this context.
     }
   });
+  log.debug("Leaving clearStorage().");
 }
 
 // Fill the pane from a retrieved credential issuer metadata document, plus the
@@ -199,6 +203,8 @@ function populateFromMetadata(info, configId) {
 // What the rest of the workflow needs to make a Credential Request, read back
 // out of the pane (so a hand-edited override is honoured).
 function currentRequestConfig() {
+  log.debug("Entering currentRequestConfig().");
+  log.debug("Leaving currentRequestConfig().");
   return {
     credentialIssuer: fieldValue(idFor("credential_issuer")),
     credentialEndpoint: fieldValue(idFor("credential_endpoint")),

@@ -56,6 +56,8 @@ var schema = paths.requireSharedModule(
 // Deliberately https and complete, so any error at all is the validator's fault
 // rather than the fixture's. The negatives below each break exactly one thing.
 function validVci() {
+  log.debug("Entering validVci().");
+  log.debug("Leaving validVci().");
   return {
     credential_issuer: "https://issuer.example.com",
     credential_endpoint: "https://issuer.example.com/oid4vci/credential",
@@ -93,6 +95,8 @@ function validVci() {
 }
 
 function validAs() {
+  log.debug("Entering validAs().");
+  log.debug("Leaving validAs().");
   return {
     issuer: "https://as.example.com",
     authorization_endpoint: "https://as.example.com/authorize",
@@ -122,6 +126,7 @@ function warningOn(result, member) {
 
 // --- the positive cases -----------------------------------------------------
 function validDocumentsPass() {
+  log.debug("Entering validDocumentsPass().");
   log.info("=== A document that satisfies the specification is reported clean ===");
 
   var vci = schema.validateVciMetadata(validVci());
@@ -139,12 +144,14 @@ function validDocumentsPass() {
     "and no warnings. Got: " + JSON.stringify(as.warnings));
 
   log.info("[positive] OK — both valid documents report 0 errors and 0 warnings.");
+  log.debug("Leaving validDocumentsPass().");
 }
 
 // A valid document is still valid with every OPTIONAL member removed. This is
 // the case that catches a validator quietly promoting an optional member to
 // required, which is the most common way one of these becomes wrong over time.
 function minimalDocumentsPass() {
+  log.debug("Entering minimalDocumentsPass().");
   log.info("=== The minimum each specification actually requires ===");
 
   var vci = schema.validateVciMetadata({
@@ -171,6 +178,7 @@ function minimalDocumentsPass() {
     JSON.stringify(as.errors));
 
   log.info("[positive] OK — minimal documents are accepted; nothing optional has been made mandatory.");
+  log.debug("Leaving minimalDocumentsPass().");
 }
 
 // --- the negative cases -----------------------------------------------------
@@ -297,6 +305,7 @@ var AS_NEGATIVES = [
 ];
 
 function runNegatives(label, makeValid, validate, cases) {
+  log.debug("Entering runNegatives().");
   log.info("=== " + label + ": each rule, broken on purpose ===");
   cases.forEach(function (c) {
     var doc = makeValid();
@@ -328,10 +337,12 @@ function runNegatives(label, makeValid, validate, cases) {
   });
   log.info("[negative] OK — " + cases.length + " " + label + " rule(s), each caught, each with the " +
            "severity the specification implies.");
+  log.debug("Leaving runNegatives().");
 }
 
 // A non-object is not a document at all, whichever pane it reached.
 function nonObjectsAreRejected() {
+  log.debug("Entering nonObjectsAreRejected().");
   log.info("=== Something that is not a JSON object ===");
   [null, "a string", 42, [1, 2], undefined].forEach(function (v) {
     ["validateVciMetadata", "validateAsMetadata"].forEach(function (fn) {
@@ -341,12 +352,14 @@ function nonObjectsAreRejected() {
     });
   });
   log.info("[negative] OK — non-objects are refused by both validators.");
+  log.debug("Leaving nonObjectsAreRejected().");
 }
 
 // The http warning is FOLDED into one line. Asserted because the first version
 // emitted one per member — ten warnings on a perfectly good local document,
 // which is how a reader learns to skip them.
 function plainHttpIsOneWarning() {
+  log.debug("Entering plainHttpIsOneWarning().");
   log.info("=== Plain http is reported once, not once per member ===");
   var doc = validAs();
   ["issuer", "authorization_endpoint", "token_endpoint", "jwks_uri",
@@ -363,11 +376,13 @@ function plainHttpIsOneWarning() {
   assert.strictEqual(r.errors.length, 0,
     "plain http is not an error — every local deployment this tool is used against serves it.");
   log.info("[negative] OK — 7 http members produce exactly 1 warning, and no error.");
+  log.debug("Leaving plainHttpIsOneWarning().");
 }
 
 // Every finding cites where the rule comes from, so a disagreement is settled by
 // reading the specification rather than this code.
 function everyFindingCitesTheSpec() {
+  log.debug("Entering everyFindingCitesTheSpec().");
   log.info("=== Every finding cites a specification section ===");
   var doc = validVci();
   delete doc.credential_endpoint;
@@ -378,10 +393,12 @@ function everyFindingCitesTheSpec() {
       'the finding on "' + f.member + '" carries no citation.');
   });
   log.info("[cite] OK — all " + (r.errors.length + r.warnings.length) + " findings cite a section.");
+  log.debug("Leaving everyFindingCitesTheSpec().");
 }
 
 // --- the wiring -------------------------------------------------------------
 async function populateRunsTheCheck() {
+  log.debug("Entering populateRunsTheCheck().");
   log.info("=== Populate Meta Data runs the check and shows it ===");
   const { Builder, By, until } = require("selenium-webdriver");
   const chrome = require("selenium-webdriver/chrome");
@@ -394,6 +411,7 @@ async function populateRunsTheCheck() {
   var driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
   try {
     var plant = async function (vci, as) {
+      log.debug("Entering plant().");
       await driver.get(baseUrl + "/vc-issuance-1.html");
       await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
       await driver.executeScript(
@@ -404,11 +422,14 @@ async function populateRunsTheCheck() {
       await driver.navigate().refresh();
       await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
       await driver.sleep(700);
+      log.debug("Leaving plant().");
     };
     var clickPopulate = async function (buttonId, reportId) {
+      log.debug("Entering clickPopulate().");
       await driver.executeScript(
         "var b = document.getElementById(arguments[0]); if (b) b.click();", buttonId);
       await driver.sleep(700);
+      log.debug("Leaving clickPopulate().");
       return await driver.executeScript(
         "var host = document.getElementById(arguments[0]);" +
         "if (!host) return null;" +
@@ -466,9 +487,11 @@ async function populateRunsTheCheck() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving populateRunsTheCheck().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   validDocumentsPass();
   minimalDocumentsPass();
   runNegatives("OpenID4VCI", validVci, schema.validateVciMetadata, VCI_NEGATIVES);
@@ -478,6 +501,7 @@ async function test() {
   everyFindingCitesTheSpec();
   await populateRunsTheCheck();
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

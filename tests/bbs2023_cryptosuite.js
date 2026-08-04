@@ -49,6 +49,7 @@ const stsSuite = paths.requireSharedModule(
 const enc = function (s) { return new TextEncoder().encode(s); };
 
 async function test() {
+  log.debug("Entering test().");
   log.info("=== The STS issues an ldp_vc credential with a bbs-2023 base proof ===");
   const keys = await stsSuite.generateKeyPair();
   const unsecured = {
@@ -140,6 +141,7 @@ async function test() {
   log.info("[negative] OK — replay, substitution and an edited credential all refused; control verifies.");
 
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

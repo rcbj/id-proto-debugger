@@ -58,6 +58,7 @@ function serialize(node) { try { return new XMLSerializer().serializeToString(no
 function row(k, v) { return '<tr><td class="saml-key">' + esc(k) + '</td><td>' + v + '</td></tr>'; }
 
 function formatXml(xml) {
+  log.debug("Entering formatXml().");
   if (!xml) return '';
   xml = xml.replace(/(>)(<)(\/*)/g, '$1\n$2$3');
   var pad = 0, out = '';
@@ -68,6 +69,7 @@ function formatXml(xml) {
     out += new Array(pad + 1).join('  ') + node + '\n';
     pad += indent;
   });
+  log.debug("Leaving formatXml().");
   return out.trim();
 }
 
@@ -92,6 +94,7 @@ function looksLikeJwt(s) { return /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-
 function prettyJson(s) { try { return JSON.stringify(JSON.parse(s), null, 2); } catch (e) { return s; } }
 
 function buildFieldsTable(doc, meta) {
+  log.debug("Entering buildFieldsTable().");
   var container = el('wsfed_fields_table');
   var root = doc.documentElement;
   if (!root) { container.innerHTML = '<em>No response to parse.</em>'; return; }
@@ -126,9 +129,11 @@ function buildFieldsTable(doc, meta) {
 
   html += '</table>';
   container.innerHTML = html;
+  log.debug("Leaving buildFieldsTable().");
 }
 
 function buildTokenDetails(tokenEl) {
+  log.debug("Entering buildTokenDetails().");
   var container = el('wsfed_token_details');
   if (!tokenEl) { container.innerHTML = '<em>No token in the response.</em>'; return; }
 
@@ -215,9 +220,11 @@ function buildTokenDetails(tokenEl) {
   }
 
   container.innerHTML = '<em>Token type &lt;' + esc(local || '?') + '&gt; — see the Token XML tab.</em>';
+  log.debug("Leaving buildTokenDetails().");
 }
 
 function render(wresultXml, context) {
+  log.debug("Entering render().");
   setVal('wsfed_response_xml', formatXml(wresultXml));
 
   var doc = new DOMParser().parseFromString(wresultXml || '', 'application/xml');
@@ -248,6 +255,7 @@ function render(wresultXml, context) {
   }
 
   setStatus('wresult loaded.');
+  log.debug("Leaving render().");
 }
 
 // Load a manually-pasted wresult (raw XML — no decoding).
@@ -259,6 +267,7 @@ function loadPasted() {
 }
 
 function copyField(id) {
+  log.debug("Entering copyField().");
   var e = el(id);
   if (!e) return false;
   var text = e.value || '';
@@ -267,6 +276,7 @@ function copyField(id) {
   } else {
     try { e.focus(); e.select(); document.execCommand('copy'); } catch (err) { log.error('copyField fallback: ' + err.message); }
   }
+  log.debug("Leaving copyField().");
   return false;
 }
 
@@ -278,6 +288,7 @@ function viewSignerCert() {
 }
 
 function showTab(evt, tabId) {
+  log.debug("Entering showTab().");
   var target = el(tabId);
   var scope = (target && target.closest && target.closest('.saml-pane')) || document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
@@ -286,10 +297,12 @@ function showTab(evt, tabId) {
   for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
+  log.debug("Leaving showTab().");
   return false;
 }
 
 function formatSigResult(res) {
+  log.debug("Entering formatSigResult().");
   if (res.error) return '<span style="color:#b00;">Cannot validate: ' + esc(res.error) + '</span>';
   var color = res.valid ? '#2e7d32' : '#b00';
   var refs = (res.references || []).length;
@@ -301,12 +314,14 @@ function formatSigResult(res) {
   html += '<tr><td class="saml-key">Canonicalization</td><td>' + esc(res.canonicalization || '') + '</td></tr>';
   html += '<tr><td class="saml-key">Signer (cert CN)</td><td>' + esc(res.signerSubject || '(from KeyInfo)') + '</td></tr>';
   html += '</table>';
+  log.debug("Leaving formatSigResult().");
   return html;
 }
 
 // Validate the enveloped XML digital signature on the issued assertion, using
 // the certificate embedded in the signature's KeyInfo.
 function validateTokenSignature() {
+  log.debug("Entering validateTokenSignature().");
   var details = el('wsfed_sig_details');
   if (!lastTokenXml || lastTokenXml.indexOf('<') < 0) {
     setVal('wsfed_sig_status', 'No XML token available to validate.');
@@ -318,12 +333,14 @@ function validateTokenSignature() {
   catch (e) { setVal('wsfed_sig_status', 'Validation error: ' + e.message); return false; }
   setVal('wsfed_sig_status', res.error ? ('Cannot validate: ' + res.error) : (res.valid ? 'Token signature VALID.' : 'Token signature INVALID.'));
   if (details) details.innerHTML = formatSigResult(res);
+  log.debug("Leaving validateTokenSignature().");
   return false;
 }
 
 // Decrypt an EncryptedAssertion/EncryptedData with the RP private key, then show
 // and re-render the plaintext token. Reuses xmldsig.js decryptXml.
 function decryptToken() {
+  log.debug("Entering decryptToken().");
   if (!lastEncryptedXml) { setVal('wsfed_dec_status', 'No <xenc:EncryptedData> / <EncryptedAssertion> found in this response.'); return false; }
   var key = val('wsfed_dec_key');
   if (!key.trim()) { setVal('wsfed_dec_status', 'Paste the RP private key to decrypt.'); return false; }
@@ -337,6 +354,7 @@ function decryptToken() {
     if (!d.getElementsByTagName('parsererror').length && d.documentElement) buildTokenDetails(d.documentElement);
   } catch (e) { log.error('decrypt render: ' + e.message); }
   setVal('wsfed_dec_status', 'Decrypted. Token shown in the Token XML tab; use Validate Signature to verify it.');
+  log.debug("Leaving decryptToken().");
   return false;
 }
 
@@ -387,6 +405,7 @@ function handleEdgeHandoff(posted) {
 }
 
 window.onload = function () {
+  log.debug("Entering onload().");
   // Prefill the decryption key from the RP private key stored by the tools page
   // (the IdP encrypts the token to the RP certificate).
   try {
@@ -439,6 +458,7 @@ window.onload = function () {
   }
 
   setStatus('No wresult loaded. Complete a sign-in from the WS-Federation Test Tools page, or paste a wresult below.');
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

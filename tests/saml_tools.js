@@ -74,6 +74,7 @@ async function getValue(driver, id) {
   return await driver.findElement(By.id(id)).getAttribute("value");
 }
 async function waitForValue(driver, id, pred, msg, timeout) {
+  log.debug("Entering waitForValue().");
   await driver.wait(async function () {
     try {
       return pred((await driver.findElement(By.id(id)).getAttribute("value")) || "");
@@ -82,6 +83,7 @@ async function waitForValue(driver, id, pred, msg, timeout) {
       return false;
     }
   }, timeout || cryptoWait, msg);
+  log.debug("Leaving waitForValue().");
   return await getValue(driver, id);
 }
 async function selectValue(driver, id, value) {
@@ -113,6 +115,7 @@ function isOptionHidden(driver, selectId, value) {
 // Pane 1 — Compose
 // ===========================================================================
 async function testDefaults(driver) {
+  log.debug("Entering testDefaults().");
   log.info("=== Pane #1 Compose — defaults ===");
   var xml = await waitForValue(driver, 'sa_assertion',
     function (v) { return v.indexOf('saml:Assertion') !== -1; },
@@ -140,9 +143,11 @@ async function testDefaults(driver) {
   assert.ok(xml.indexOf('AttributeStatement') === -1,
     "An <AttributeStatement> was emitted before any attribute was added.");
   log.info("[defaults] OK — SAML 2.0 assertion, Issuer=" + issuer + ", instants populated.");
+  log.debug("Leaving testDefaults().");
 }
 
 async function testOptionalElements(driver) {
+  log.debug("Entering testOptionalElements().");
   log.info("=== Pane #1 Compose — optional elements ===");
   // Each toggle must add and remove its element. Checkbox id -> marker in the XML.
   var toggles = [
@@ -171,9 +176,11 @@ async function testOptionalElements(driver) {
   await waitForValue(driver, 'sa_assertion', function (v) { return v.indexOf('<saml:Conditions') !== -1; },
     "<Conditions> did not come back when re-enabled.");
   log.info("[optional] OK — Conditions toggles on and off.");
+  log.debug("Leaving testOptionalElements().");
 }
 
 async function testCustomAttribute(driver) {
+  log.debug("Entering testCustomAttribute().");
   log.info("=== Pane #1 Compose — custom attributes ===");
   // The section is gated by a checkbox that is unchecked by default.
   assert.ok(await isHidden(driver, 'sa_attr_group'),
@@ -225,11 +232,13 @@ async function testCustomAttribute(driver) {
   await waitForValue(driver, 'sa_assertion', function (v) { return v.indexOf('employeeNumber') === -1; },
     "removing an attribute did not update the assertion.");
   log.info("[attributes] OK — add (typed, prefixed), list, and remove.");
+  log.debug("Leaving testCustomAttribute().");
 }
 
 // Every checkbox collapses the fields it governs, so nothing that cannot apply
 // is left on screen.
 async function testDependentFieldCollapse(driver) {
+  log.debug("Entering testDependentFieldCollapse().");
   log.info("=== Pane #1 Compose — dependent-field collapse ===");
   var deps = [
     ['sa_opt_conditions', 'sa_conditions_group'],
@@ -255,10 +264,12 @@ async function testDependentFieldCollapse(driver) {
     if (wasOn) await click(driver, By.id(box));          // restore
   }
   log.info("[dependencies] OK — " + deps.length + " checkbox/field-group pairs collapse and expand.");
+  log.debug("Leaving testDependentFieldCollapse().");
 }
 
 // Every field carries a tooltip, as on the other tool pages.
 async function testTooltips(driver) {
+  log.debug("Entering testTooltips().");
   log.info("=== Tooltips ===");
   var missing = await driver.executeScript(
     "var bad = [];" +
@@ -272,11 +283,13 @@ async function testTooltips(driver) {
   assert.strictEqual(missing.length, 0,
     "These controls have no tooltip: " + JSON.stringify(missing));
   log.info("[tooltips] OK — every field, label, and button carries a title.");
+  log.debug("Leaving testTooltips().");
 }
 
 // The Generated Assertion box sits at the top of pane 1 and has a Pretty Print
 // button that re-indents it without changing the XML.
 async function testPrettyPrint(driver) {
+  log.debug("Entering testPrettyPrint().");
   log.info("=== Pane #1 Compose — layout + pretty print ===");
   var firstField = await driver.executeScript(
     "var b = document.getElementById('pane_compose_body');" +
@@ -300,6 +313,7 @@ async function testPrettyPrint(driver) {
   assert.strictEqual(pretty.replace(/>\s+</g, '><'), flat,
     "Pretty Print changed the XML, not just its whitespace.");
   log.info("[pretty print] OK — re-indents the generated assertion.");
+  log.debug("Leaving testPrettyPrint().");
 }
 
 async function checkCompliance(driver, label) {
@@ -311,6 +325,7 @@ async function checkCompliance(driver, label) {
 // Pane 2 — Sign, and Pane 3 — Encrypt
 // ===========================================================================
 async function signAndVerify(driver, label, expect) {
+  log.debug("Entering signAndVerify().");
   await driver.executeScript("document.getElementById('sa_signed_assertion').value = '';");
   await click(driver, onclickBtn('signAssertion'));
   var signed = await waitForValue(driver, 'sa_signed_assertion',
@@ -357,10 +372,12 @@ async function signAndVerify(driver, label, expect) {
   await driver.executeScript(
     "document.getElementById('sa_verify_input').value = arguments[0];" +
     "document.getElementById('sa_verify_output').value = '';", signed);
+  log.debug("Leaving signAndVerify().");
   return signed;
 }
 
 async function encryptAndDecrypt(driver, label, signed, expectWrapper) {
+  log.debug("Entering encryptAndDecrypt().");
   await driver.executeScript(
     "document.getElementById('sa_encrypted').value = '';" +
     "document.getElementById('sa_dec_input').value = '';");
@@ -386,12 +403,14 @@ async function encryptAndDecrypt(driver, label, signed, expectWrapper) {
   assert.strictEqual(dec, signed,
     "[" + label + "] the decrypted assertion does not match the signed one:\n" + dec.slice(0, 300));
   log.info("[" + label + "] OK — encrypt/decrypt round-trip (sign-then-encrypt).");
+  log.debug("Leaving encryptAndDecrypt().");
 }
 
 // Signing and encryption stay engaged: pane 1 shows the signed assertion, and
 // any later edit — in any pane — rebuilds it, re-signs it, and re-encrypts it
 // with no button pressed.
 async function testAutoUpdate(driver) {
+  log.debug("Entering testAutoUpdate().");
   log.info("=== Live updates — re-sign and re-encrypt on change ===");
   var signed = await getValue(driver, 'sa_signed_assertion');
   assert.strictEqual(await getValue(driver, 'sa_assertion'), signed,
@@ -437,10 +456,12 @@ async function testAutoUpdate(driver) {
   await waitForValue(driver, 'sa_signed_assertion', function (v) { return v.indexOf('rsa-sha256') !== -1; },
     "restoring the signature algorithm did not re-sign the assertion.");
   log.info("[live updates] OK — edits re-sign and re-encrypt; pane 1 tracks the signed form.");
+  log.debug("Leaving testAutoUpdate().");
 }
 
 // Reset returns every pane to its declared defaults.
 async function testReset(driver) {
+  log.debug("Entering testReset().");
   log.info("=== Reset ===");
   assert.strictEqual((await driver.findElements(By.xpath('//input[@value="Rebuild"]'))).length, 0,
     "The Rebuild button should be gone — the assertion updates automatically.");
@@ -484,6 +505,7 @@ async function testReset(driver) {
   assert.ok(xml.indexOf('<ds:Signature') === -1, "Reset should leave the assertion unsigned.");
   assert.ok(xml.indexOf('AttributeStatement') === -1, "Reset should drop the AttributeStatement.");
   log.info("[reset] OK — all three panes restored to their defaults.");
+  log.debug("Leaving testReset().");
 }
 
 // ===========================================================================
@@ -526,6 +548,7 @@ async function complianceIsClean(driver, context) {
 // Every option of every <select> in pane 1, checking the assertion picks it up
 // and stays compliant.
 async function testAllSelectOptions(driver, v) {
+  log.debug("Entering testAllSelectOptions().");
   var v2 = v === '2.0';
   var cmPrefix = v2 ? 'urn:oasis:names:tc:SAML:2.0:cm:' : 'urn:oasis:names:tc:SAML:1.0:cm:';
   var cases = [
@@ -551,11 +574,13 @@ async function testAllSelectOptions(driver, v) {
     }
   }
   log.info("[" + v + "] OK — " + total + " select option(s) exercised, each reflected and compliant.");
+  log.debug("Leaving testAllSelectOptions().");
 }
 
 // Every free-text field in pane 1: set a distinctive value and confirm it lands
 // in the assertion in the right place for this version.
 async function testAllTextFields(driver, v) {
+  log.debug("Entering testAllTextFields().");
   var v2 = v === '2.0';
   var fields = [
     { id: 'sa_issuer', value: 'https://sweep-' + v + '.example.com/issuer',
@@ -639,10 +664,12 @@ async function testAllTextFields(driver, v) {
     "[" + v + "] the new assertion ID did not reach the assertion.");
   await complianceIsClean(driver, "[" + v + "] after the timestamp/ID controls");
   log.info("[" + v + "] OK — " + fields.length + " text field(s) plus the timestamp and ID controls.");
+  log.debug("Leaving testAllTextFields().");
 }
 
 // Every attribute value type, and both the prefixed and unprefixed name forms.
 async function testAllAttributeTypes(driver, v) {
+  log.debug("Entering testAllAttributeTypes().");
   var v2 = v === '2.0';
   await click(driver, onclickBtn('clearAttributes'));
   var types = await visibleOptions(driver, 'sa_attr_type');
@@ -698,6 +725,7 @@ async function testAllAttributeTypes(driver, v) {
   await setInput(driver, 'sa_attr_value', ATTR_VALUE);
   await click(driver, onclickBtn('addAttribute'));
   log.info("[" + v + "] OK — " + types.length + " attribute value type(s), prefixed and unprefixed.");
+  log.debug("Leaving testAllAttributeTypes().");
 }
 
 // The complete power set of the optional-element checkboxes. Driven in-page (a
@@ -768,6 +796,7 @@ var POWER_SET_SCRIPT = [
 ].join("\n");
 
 async function testOptionalElementPowerSet(driver, v) {
+  log.debug("Entering testOptionalElementPowerSet().");
   var v2 = v === '2.0';
   var markers = {
     subject: '<saml:Subject>',
@@ -788,12 +817,14 @@ async function testOptionalElementPowerSet(driver, v) {
   assert.strictEqual(result.states, 1024, "[" + v + "] expected 1024 combinations, ran " + result.states);
   log.info("[" + v + "] OK — " + result.states + " optional-element combinations: structure and compliance both correct.");
   await setCheckboxes(driver, ALL_ON);
+  log.debug("Leaving testOptionalElementPowerSet().");
 }
 
 // ===========================================================================
 // Version-specific structure
 // ===========================================================================
 async function testSaml1x(driver, minor) {
+  log.debug("Entering testSaml1x().");
   var label = "SAML 1." + minor;
   log.info("=== " + label + " structure ===");
   await selectValue(driver, 'sa_version', '1.' + minor);
@@ -868,11 +899,13 @@ async function testSaml1x(driver, minor) {
     "[" + label + "] the SAML 2.0-only NameID formats must be hidden.");
 
   await checkCompliance(driver, label);
+  log.debug("Leaving testSaml1x().");
 }
 
 // The signing and encryption round-trips, run once with key pairs generated
 // fresh in pane 2 (signing) and pane 3 (recipient) — two distinct certificates.
 async function testCryptoOnce(driver) {
+  log.debug("Entering testCryptoOnce().");
   log.info("=== Panes #2 and #3 — key generation, sign/validate, encrypt/decrypt ===");
 
   await click(driver, onclickBtn('generateKeys'));
@@ -898,11 +931,13 @@ async function testCryptoOnce(driver) {
     placement: 'Signature directly after Issuer',
   });
   await encryptAndDecrypt(driver, "SAML 2.0", signed, true);
+  log.debug("Leaving testCryptoOnce().");
   return signed;
 }
 
 // Nothing on the page may raise a browser console error over the whole run.
 async function testNoConsoleErrors(driver) {
+  log.debug("Entering testNoConsoleErrors().");
   log.info("=== Browser console ===");
   var entries;
   try {
@@ -916,9 +951,11 @@ async function testNoConsoleErrors(driver) {
   }).map(function (e) { return e.message; });
   assert.strictEqual(severe.length, 0, "the page logged console errors:\n  " + severe.join("\n  "));
   log.info("[console] OK — no console errors across " + (entries || []).length + " log entr(y|ies).");
+  log.debug("Leaving testNoConsoleErrors().");
 }
 
 async function testToolsPane(driver) {
+  log.debug("Entering testToolsPane().");
   log.info("=== SAML Test Tools — Tools pane ===");
   await driver.get(baseUrl + "/saml_request.html");
   await driver.wait(until.elementLocated(By.id('pane_tools')), waitTime);
@@ -954,11 +991,13 @@ async function testToolsPane(driver) {
   assert.ok(ret.indexOf('/saml_request.html') !== -1,
     "The assertion page should return to the SAML Test Tools page. Found: " + ret);
   log.info("[tools pane] OK — links to the SAML Assertion Tool and back.");
+  log.debug("Leaving testToolsPane().");
 }
 
 // The same Tools pane is carried on the SAML Response page (whose panes are not
 // collapsible, so only the links are checked here).
 async function testResponseToolsPane(driver) {
+  log.debug("Entering testResponseToolsPane().");
   log.info("=== SAML Response — Tools pane ===");
   await driver.get(baseUrl + "/saml_response.html");
   await driver.wait(until.elementLocated(By.id('pane_tools')), waitTime);
@@ -972,10 +1011,12 @@ async function testResponseToolsPane(driver) {
   await link.click();
   await driver.wait(until.urlContains('saml_tools.html'), waitTime);
   log.info("[tools pane] OK — the SAML Response page carries the same pane.");
+  log.debug("Leaving testResponseToolsPane().");
 }
 
 // ===========================================================================
 async function samlAssertionActivities(driver) {
+  log.debug("Entering samlAssertionActivities().");
   await driver.get(baseUrl + "/saml_tools.html");
   // The page persists everything to localStorage; start from a clean slate so a
   // previous run's attributes or toggles cannot skew the assertions below.
@@ -1028,9 +1069,11 @@ async function samlAssertionActivities(driver) {
 
   await testToolsPane(driver);
   await testResponseToolsPane(driver);
+  log.debug("Leaving samlAssertionActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) options.addArguments("--headless=new");
   options.addArguments("--no-sandbox");
@@ -1063,6 +1106,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

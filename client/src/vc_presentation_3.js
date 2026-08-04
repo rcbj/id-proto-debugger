@@ -313,6 +313,7 @@ function recheckOwnPresentation() {
 // The wallet's own verdict table. Shared by both formats: the checks differ, how
 // they are shown does not.
 function renderRecheck(checks) {
+  log.debug("Entering renderRecheck().");
   setHtml("vp_recheck_table",
     "<thead><tr><th style='width:22%'>Check</th><th style='width:10%'>Result</th><th>Detail</th></tr></thead>" +
     "<tbody>" + checks.map(function (c) {
@@ -324,6 +325,7 @@ function renderRecheck(checks) {
     ? "The wallet's own checks on what it sent all pass."
     : failed + " of the wallet's own checks on what it sent FAIL — the verifier was right to refuse.",
     failed === 0 ? "vc-ok" : "vc-bad");
+  log.debug("Leaving renderRecheck().");
 }
 
 // --- what the verifier said -------------------------------------------------
@@ -435,6 +437,7 @@ function startOver() {
 }
 
 function copyPresentation() {
+  log.debug("Entering copyPresentation().");
   var area = el("vp_sent_presentation");
   if (!area) return false;
   area.select();
@@ -444,6 +447,7 @@ function copyPresentation() {
   } catch (e) {
     status("vp_copy_status", "Could not copy: " + e.message, "vc-bad");
   }
+  log.debug("Leaving copyPresentation().");
   return false;
 }
 

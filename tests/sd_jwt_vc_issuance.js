@@ -107,7 +107,9 @@ function b64u(buf) {
 function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
 
 function httpJson(url, options) {
+  log.debug("Entering httpJson().");
   options = options || {};
+  log.debug("Leaving httpJson().");
   return fetch(url, options).then(function (r) {
     return r.text().then(function (text) {
       var body = null;
@@ -122,6 +124,7 @@ function httpJson(url, options) {
 }
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
@@ -133,6 +136,7 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", e);
   }
   await driver.sleep(250);
+  log.debug("Leaving click().");
 }
 
 // text()/value() and the waitFor* family live in ./wait_for.js — one
@@ -157,6 +161,7 @@ function severeErrors(driver) {
 // Step 1 — discovery and configuration
 // ---------------------------------------------------------------------------
 async function stepOne(driver) {
+  log.debug("Entering stepOne().");
   log.info("=== Step 1: discover the issuer ===");
   await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
@@ -418,12 +423,14 @@ async function stepOne(driver) {
   assert.ok(summary.indexOf("IdentityCredential") !== -1 && summary.indexOf(EXPECTED_VCT) !== -1,
     "the hand-off pane should say which credential will be requested, got: " + summary);
   log.info("[step1] OK — hand-off summary: " + summary);
+  log.debug("Leaving stepOne().");
 }
 
 // ---------------------------------------------------------------------------
 // The OIDC leg — driven by the workflow, so the only interaction is the login
 // ---------------------------------------------------------------------------
 async function oidcLeg(driver) {
+  log.debug("Entering oidcLeg().");
   log.info("=== The OIDC Authorization Code leg ===");
   var handoffUrl = await text(driver, "handoff_url");
   assert.ok(handoffUrl.indexOf("/debugger.html?sdjwtvc=1") !== -1,
@@ -451,12 +458,14 @@ async function oidcLeg(driver) {
   await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "debugger2.html should have exchanged the code for tokens and returned to step 2.");
   log.info("[oidc] OK — debugger2.html exchanged the code and returned to step 2.");
+  log.debug("Leaving oidcLeg().");
 }
 
 // ---------------------------------------------------------------------------
 // Step 2 — the tokens, the approval, and the credential request
 // ---------------------------------------------------------------------------
 async function stepTwo(driver) {
+  log.debug("Entering stepTwo().");
   log.info("=== Step 2: approve and request the credential ===");
   await driver.wait(until.elementLocated(By.id("vc_access_token")), waitTime);
   // The fields exist before the page restores them; wait for the values.
@@ -549,6 +558,7 @@ async function stepTwo(driver) {
   await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
     "approving should obtain the credential and open step 3.");
   log.info("[step2] OK — approving fetched a nonce, signed a proof, and got a credential.");
+  log.debug("Leaving stepTwo().");
   return { accessToken: accessToken, holderJwk: holderJwk, idClaims: idClaims };
 }
 
@@ -556,6 +566,7 @@ async function stepTwo(driver) {
 // Step 3 — the credential, checked by the page AND by this test
 // ---------------------------------------------------------------------------
 async function stepThree(driver, context) {
+  log.debug("Entering stepThree().");
   log.info("=== Step 3: the issued credential ===");
   await driver.wait(until.elementLocated(By.id("vc_credential_raw")), waitTime);
   var raw = await waitForFilled(driver, "vc_credential_raw", "step 3 should show the credential");
@@ -666,6 +677,7 @@ async function stepThree(driver, context) {
       "the resulting claim set should include the disclosed claim " + name + ".");
   });
   log.info("[step3] OK — the resulting claim set matches the disclosures.");
+  log.debug("Leaving stepThree().");
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +695,7 @@ async function stepThree(driver, context) {
 // are therefore compared here as well, independently of the page.
 // ---------------------------------------------------------------------------
 async function stepFour(driver, context) {
+  log.debug("Entering stepFour().");
   log.info("=== Step 4: refresh the credential ===");
 
   // Step 3 has to offer the way in; a page that can be reached only by typing
@@ -977,6 +990,7 @@ async function stepFour(driver, context) {
   log.info("[step4] OK — the refreshed credential was kept, and step 3 verifies it.");
   // Handed to the history section, which checks that going back to generation 1
   // really restores this credential AND the key it is bound to.
+  log.debug("Leaving stepFour().");
   return { original: before.credential, refreshed: refreshed, holderJwk: before.holderJwk };
 }
 
@@ -989,7 +1003,73 @@ async function stepFour(driver, context) {
 // geometric claim, so it is checked geometrically — every item on the same top
 // edge — rather than by looking at the CSS.
 // ---------------------------------------------------------------------------
+// Step 0 is a CHOOSER, and a chooser that scrolls cannot do its job: you cannot
+// compare four options by scrolling between them. So everything it offers — the four
+// use-case cards, the selected-use-case line, and the VC Tools pane at the foot —
+// has to be visible at once on an ordinary laptop.
+//
+// It did not start that way. Four full-width cards stacked in a 1100px column ran to
+// 757px of the page's 1450px total, against a viewport of 839px on a 1512x982
+// display, while the horizontal space beyond the cards sat empty. The fix was a grid
+// plus a denser vertical rhythm scoped to that page (.vc-fit in css/sd_jwt_vc.css);
+// this is what stops the next paragraph or use case quietly undoing it.
+//
+// Measured at 839px of VIEWPORT height, which is what a 1512x982 screen leaves after
+// the browser's own chrome — note that setRect() sets the OUTER height, so the window
+// is opened at 982 to get 839 inside it. Headless has no toolbar, so measuring the
+// window height rather than the viewport would flatter the result by ~143px.
+//
+// The FOOTER is deliberately not included: it is 200px of shared site furniture on
+// every page in the project, and requiring it above the fold would be a constraint on
+// the footer rather than on this page.
+async function chooserFitsOnOneScreen(driver) {
+  log.debug("Entering chooserFitsOnOneScreen().");
+  log.info("=== Step 0 fits on one screen ===");
+  var before = await driver.manage().window().getRect();
+  await driver.manage().window().setRect({ width: 1512, height: 982 });
+  await driver.get(baseUrl + "/vc-issuance-0.html");
+  await driver.wait(until.elementLocated(By.id("vc_usecases")), waitTime * 4);
+  await driver.sleep(300);
+
+  var m = await driver.executeScript(
+    "var doc = document.documentElement;" +
+    "var cards = Array.prototype.slice.call(document.querySelectorAll('button.vc-usecase'));" +
+    "var tops = [];" +
+    "cards.forEach(function (c) {" +
+    "  var t = Math.round(c.getBoundingClientRect().top);" +
+    "  if (tops.indexOf(t) === -1) tops.push(t);" +
+    "});" +
+    "var tools = document.getElementById('pane_vc_tools');" +
+    "var status = document.getElementById('vc_usecase_status');" +
+    "var bottom = function (el) { return Math.round(el.getBoundingClientRect().bottom + window.scrollY); };" +
+    "return { viewport: doc.clientHeight, cards: cards.length, rows: tops.length," +
+    "         cardWidth: Math.round(cards[0].getBoundingClientRect().width)," +
+    "         panesEnd: Math.max(bottom(tools), bottom(status))," +
+    "         sideways: doc.scrollWidth > doc.clientWidth + 2 };");
+
+  assert.ok(m.cards >= 4, "step 0 should offer the use cases; found " + m.cards + " cards.");
+  assert.ok(m.rows < m.cards,
+    "the cards should be laid out in a GRID, using the horizontal room — " + m.cards +
+    " cards on " + m.rows + " rows means they are still stacked one per row, which is what made this " +
+    "page scroll.");
+  assert.ok(m.cardWidth >= 380,
+    "and the columns must stay wide enough to read: " + m.cardWidth + "px per card. Squeezing in more " +
+    "columns buys height back only by making every card taller.");
+  assert.ok(m.panesEnd <= m.viewport,
+    "everything step 0 offers must fit in one screen: its last pane ends at " + m.panesEnd +
+    "px against a viewport of " + m.viewport + "px, so " + (m.panesEnd - m.viewport) +
+    "px of it is below the fold. A chooser you have to scroll cannot be used to compare.");
+  assert.strictEqual(m.sideways, false,
+    "and it must not have gained sideways scroll in exchange for the height.");
+  log.info("[step 0] OK — " + m.cards + " cards on " + m.rows + " rows at " + m.cardWidth +
+           "px each; everything ends " + (m.viewport - m.panesEnd) + "px above the fold.");
+
+  await driver.manage().window().setRect({ width: before.width, height: before.height });
+  log.debug("Leaving chooserFitsOnOneScreen().");
+}
+
 async function stepLinksOnEveryPage(driver) {
+  log.debug("Entering stepLinksOnEveryPage().");
   log.info("=== The step links, on every page, on one row ===");
   var pages = ["vc-issuance-0.html", "vc-issuance-1.html", "vc-issuance-2.html",
                "vc-issuance-3.html", "vc-issuance-4.html"];
@@ -1034,6 +1114,7 @@ async function stepLinksOnEveryPage(driver) {
     log.info("[steps] " + pages[i] + ": " + row.labels.join(" | ") + " (one " + row.rowHeight + "px row)");
   }
   log.info("[steps] OK — all five links, on one row, at the top of all five pages.");
+  log.debug("Leaving stepLinksOnEveryPage().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1071,6 +1152,7 @@ async function stepLinksOnEveryPage(driver) {
 // pin the messages without proving the branches are load-bearing.
 // ---------------------------------------------------------------------------
 async function metadataSignatureValidation(driver) {
+  log.debug("Entering metadataSignatureValidation().");
   log.info("=== Validate Signature on the step 1 metadata panes ===");
   var asUrl = issuerBase + "/.well-known/oauth-authorization-server";
   var panes = [
@@ -1251,6 +1333,7 @@ async function metadataSignatureValidation(driver) {
     "this section clears storage and must hand back what the workflow left; the sections after it need " +
     "the credential and the access token.");
   log.info("[signature] OK — Validate Signature survives navigation and still catches tampering.");
+  log.debug("Leaving metadataSignatureValidation().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1273,6 +1356,7 @@ async function metadataSignatureValidation(driver) {
 // the workflow left behind.
 // ---------------------------------------------------------------------------
 async function presentationHandoff(driver, generations) {
+  log.debug("Entering presentationHandoff().");
   log.info("=== The hand-off into the presentation workflow ===");
   var pages = ["vc-issuance-3.html", "vc-issuance-4.html"];
 
@@ -1293,6 +1377,7 @@ async function presentationHandoff(driver, generations) {
 
   // What the offer reports, on either page.
   var offerOn = async function (page) {
+    log.debug("Entering offerOn().");
     await driver.get(baseUrl + "/" + page);
     await driver.wait(until.elementLocated(By.id("vc_present_button")), waitTime,
       page + " should carry a Present It button.");
@@ -1300,19 +1385,32 @@ async function presentationHandoff(driver, generations) {
     // rather than sleeping and hoping.
     await waitForStatus(driver, "vc_present_status", function (v) { return v.trim() !== ""; },
       page + ": the presentation offer never said anything", waitTime);
+    log.debug("Leaving offerOn().");
     return await driver.executeScript(
       "var b = document.getElementById('vc_present_button');" +
       "var s = document.getElementById('vc_present_status');" +
-      "var panes = document.querySelectorAll('.dbg-pane');" +
+      // The offer must be the last thing the WORKFLOW says on the page. Every page
+      // now also ends with the shared VC Tools pane (partials/vc_tools.html), which
+      // belongs to no step and is deliberately below everything — so it is excluded
+      // here rather than the assertion being dropped. Its presence is checked too:
+      // without that, this would still pass if the tools pane vanished.
+      "var all = Array.prototype.slice.call(document.querySelectorAll('.dbg-pane'));" +
+      "var panes = all.filter(function (p) { return p.id !== 'pane_vc_tools'; });" +
       "return { disabled: b.disabled, message: s.textContent.trim(), cls: s.className," +
-      "         inLastPane: panes[panes.length - 1].contains(b) };");
+      "         inLastPane: panes[panes.length - 1].contains(b)," +
+      "         toolsPaneIsBelow: all.length === panes.length + 1 &&" +
+      "                           all[all.length - 1].id === 'pane_vc_tools' };");
   };
 
   for (var i = 0; i < pages.length; i++) {
     // --- the credential the workflow actually issued -----------------------
     await restore();
     var ready = await offerOn(pages[i]);
-    assert.ok(ready.inLastPane, pages[i] + ": the offer belongs in the last pane on the page.");
+    assert.ok(ready.inLastPane,
+      pages[i] + ": the offer belongs in the last pane the workflow itself puts on the page.");
+    assert.ok(ready.toolsPaneIsBelow,
+      pages[i] + ": the shared VC Tools pane should be the one pane below the offer. If it is " +
+      "missing, the exclusion above is hiding a real regression rather than accommodating it.");
     assert.strictEqual(ready.disabled, false,
       pages[i] + ": a held credential with its holder key should be presentable. Said: " + ready.message);
     assert.ok(/vc-ok/.test(ready.cls),
@@ -1473,6 +1571,7 @@ async function presentationHandoff(driver, generations) {
 
   await driver.get(baseUrl + "/" + pages[0]);
   await restore();
+  log.debug("Leaving presentationHandoff().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1489,6 +1588,7 @@ async function presentationHandoff(driver, generations) {
 // Cheap, and it fails on the exact regression rather than on a screenshot diff.
 // ---------------------------------------------------------------------------
 async function panesContainTheirContent(driver) {
+  log.debug("Entering panesContainTheirContent().");
   log.info("=== Nothing overflows its pane ===");
   var pages = ["vc-issuance-1.html", "vc-issuance-2.html",
                "vc-issuance-3.html", "vc-issuance-4.html"];
@@ -1543,6 +1643,7 @@ async function panesContainTheirContent(driver) {
   assert.ok(Math.max.apply(null, rights) - Math.min.apply(null, rights) <= 2,
     "and a right edge. Got: " + JSON.stringify(boxes));
   log.info("[layout] OK — the request pane's boxes align on both edges.");
+  log.debug("Leaving panesContainTheirContent().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1559,6 +1660,7 @@ async function panesContainTheirContent(driver) {
 // generation 2 from the refresh that was kept.
 // ---------------------------------------------------------------------------
 async function credentialHistoryNavigation(driver, generations) {
+  log.debug("Entering credentialHistoryNavigation().");
   log.info("=== Step 4: the Credential History pane ===");
   await driver.get(baseUrl + "/vc-issuance-4.html");
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
@@ -1567,6 +1669,8 @@ async function credentialHistoryNavigation(driver, generations) {
   }, fetchWait, "step 4 should have built its request before the history is used.");
 
   function historyRows() {
+    log.debug("Entering historyRows().");
+    log.debug("Leaving historyRows().");
     return driver.executeScript(
       "return Array.prototype.slice.call(document.querySelectorAll('#vc_history_table tbody tr'))" +
       "  .map(function (tr) {" +
@@ -1789,6 +1893,7 @@ async function credentialHistoryNavigation(driver, generations) {
   assert.ok(clearedNav.older && clearedNav.newer,
     "with nothing recorded there is nowhere to navigate. Got: " + JSON.stringify(clearedNav));
   log.info("[history] OK — Clear History forgets the generations and keeps the credential.");
+  log.debug("Leaving credentialHistoryNavigation().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1804,6 +1909,7 @@ async function credentialHistoryNavigation(driver, generations) {
 // 400, which Chrome logs as a page error.
 // ---------------------------------------------------------------------------
 async function refreshNegatives(driver) {
+  log.debug("Entering refreshNegatives().");
   log.info("=== Step 4 without a usable refresh token ===");
 
   // A refresh token the authorization server will not accept. Poisoned rather
@@ -1918,6 +2024,7 @@ async function refreshNegatives(driver) {
     "the credential itself should be gone — discarded has to mean discarded. Got: " + discardedRow.credential);
   log.info("[step4] OK — section 14.3 works without a refresh token, declining changes nothing, and both " +
            "attempts are on record.");
+  log.debug("Leaving refreshNegatives().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1926,6 +2033,7 @@ async function refreshNegatives(driver) {
 // which is where it goes by default.
 // ---------------------------------------------------------------------------
 async function inspectLinksReturnHere(driver) {
+  log.debug("Entering inspectLinksReturnHere().");
   log.info("=== The Inspect links on step 2 ===");
   await driver.get(baseUrl + "/vc-issuance-2.html");
   await driver.wait(until.elementLocated(By.id("vc_access_token")), waitTime);
@@ -1980,6 +2088,7 @@ async function inspectLinksReturnHere(driver) {
       "with " + query + " the return link should stay on the default. Got: " + (await link.getAttribute("href")));
   }
   log.info("[inspect] OK — an unknown or hostile from= falls back to debugger2.html.");
+  log.debug("Leaving inspectLinksReturnHere().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1988,6 +2097,7 @@ async function inspectLinksReturnHere(driver) {
 // is missing, and it says so.
 // ---------------------------------------------------------------------------
 async function stepTwoWithoutTokens(driver) {
+  log.debug("Entering stepTwoWithoutTokens().");
   log.info("=== Step 2 opened directly, before authenticating ===");
   await driver.executeScript(
     "localStorage.removeItem('token_access_token');" +
@@ -2013,6 +2123,7 @@ async function stepTwoWithoutTokens(driver) {
     "the approval status should say what is missing rather than showing three blank boxes. Got: " +
     state.approval);
   log.info("[step2] OK — the request is shown without tokens, and the missing token is named.");
+  log.debug("Leaving stepTwoWithoutTokens().");
 }
 
 // ---------------------------------------------------------------------------
@@ -2025,6 +2136,7 @@ async function stepTwoWithoutTokens(driver) {
 // 400 from the issuer, which Chrome logs as a page error.
 // ---------------------------------------------------------------------------
 async function staleProofRecovery(driver) {
+  log.debug("Entering staleProofRecovery().");
   log.info("=== A proof that went stale before Approve ===");
   await driver.get(baseUrl + "/vc-issuance-2.html");
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
@@ -2065,6 +2177,7 @@ async function staleProofRecovery(driver) {
   assert.ok(credential && credential.indexOf("~") > 0,
     "the retry should have produced a credential.");
   log.info("[stale proof] OK — a spent c_nonce is rebuilt and the request retried.");
+  log.debug("Leaving staleProofRecovery().");
 }
 
 // ---------------------------------------------------------------------------
@@ -2109,6 +2222,7 @@ async function misconfigureTheWallet(driver) {
 }
 
 async function credentialOfferSameDevice(driver) {
+  log.debug("Entering credentialOfferSameDevice().");
   log.info("=== H.1: Credential Offer - Same-Device ===");
 
   // ---- step 0: the chooser ------------------------------------------------
@@ -2330,6 +2444,7 @@ async function credentialOfferSameDevice(driver) {
   assert.ok(afterDiscard.badge.indexOf("H.6") !== -1,
     "discarding should fall back to the wallet-initiated use case. Got: " + afterDiscard.badge);
   log.info("[H.1] OK — the offer can be discarded, and the workflow falls back to wallet-initiated.");
+  log.debug("Leaving credentialOfferSameDevice().");
 }
 
 // ---------------------------------------------------------------------------
@@ -2351,6 +2466,7 @@ async function credentialOfferSameDevice(driver) {
 // issuer refuses a wrong one, and that the code is single use.
 // ---------------------------------------------------------------------------
 async function crossDeviceOffer(driver) {
+  log.debug("Entering crossDeviceOffer().");
   log.info("=== H.2: Credential Offer - Cross-Device ===");
 
   // Step 0 needs to know which issuer to send the End-User to; the offer that
@@ -2510,6 +2626,7 @@ async function crossDeviceOffer(driver) {
   await driver.sleep(800);
   await assertStepThreeIsHappy(driver, "H.2");
   log.info("[H.2] OK — the offered credential was issued with no authorization request anywhere in the flow.");
+  log.debug("Leaving crossDeviceOffer().");
 }
 
 // ---------------------------------------------------------------------------
@@ -2521,6 +2638,7 @@ async function crossDeviceOffer(driver) {
 // (OID4VCI section 9).
 // ---------------------------------------------------------------------------
 async function deferredIssuance(driver) {
+  log.debug("Entering deferredIssuance().");
   log.info("=== H.3: Credential Offer - Cross-Device & Deferred ===");
 
   var meta = (await httpJson(issuerMetadataUrl)).body;
@@ -2636,6 +2754,7 @@ async function deferredIssuance(driver) {
   assert.ok(replay.body && replay.body.error === "invalid_transaction_id",
     "and the error should be invalid_transaction_id. Got: " + JSON.stringify(replay.body));
   log.info("[H.3] OK — the transaction_id stopped working once the credential had been collected.");
+  log.debug("Leaving deferredIssuance().");
 }
 
 // Step 3's verdicts, for a credential that a working issuer has just issued.
@@ -2673,6 +2792,7 @@ async function assertStepThreeIsHappy(driver, label) {
 // backwards is the mistake worth catching, so both wrong ways are checked too.
 // ---------------------------------------------------------------------------
 async function authorizationDetailsFlow(driver) {
+  log.debug("Entering authorizationDetailsFlow().");
   log.info("=== authorization_details and credential_identifier ===");
 
   var asMeta = (await httpJson(issuerBase + "/.well-known/oauth-authorization-server")).body;
@@ -2770,6 +2890,7 @@ async function authorizationDetailsFlow(driver) {
   await driver.sleep(800);
   await assertStepThreeIsHappy(driver, "authorization_details");
   log.info("[authz details] OK — the credential was issued against a granted credential_identifier.");
+  log.debug("Leaving authorizationDetailsFlow().");
 }
 
 // ---------------------------------------------------------------------------
@@ -2782,6 +2903,7 @@ async function authorizationDetailsFlow(driver) {
 // the endpoint indistinguishable from a black hole.
 // ---------------------------------------------------------------------------
 async function notificationFlow(driver) {
+  log.debug("Entering notificationFlow().");
   log.info("=== The Notification Endpoint ===");
   var record = await driver.executeScript(
     "return JSON.parse(window.localStorage.getItem('sdjwtvc_credential_meta') || '{}');");
@@ -2857,6 +2979,7 @@ async function notificationFlow(driver) {
   assert.strictEqual(recorded.body.event_description, "stored in the wallet",
     "including the description the wallet sent. Got: " + JSON.stringify(recorded.body));
   log.info("[notification] OK — the issuer recorded credential_accepted for " + record.notificationId + ".");
+  log.debug("Leaving notificationFlow().");
 }
 
 // ---------------------------------------------------------------------------
@@ -2890,6 +3013,7 @@ async function notificationFlow(driver) {
 // in the module and unreachable from the page.
 // ---------------------------------------------------------------------------
 async function encryptedCredentialRequest(driver) {
+  log.debug("Entering encryptedCredentialRequest().");
   log.info("=== An encrypted Credential Request (section 10, issuer-published keys) ===");
   var meta = (await httpJson(issuerMetadataUrl)).body;
   var offered = meta.credential_request_encryption;
@@ -3022,9 +3146,11 @@ async function encryptedCredentialRequest(driver) {
   assert.ok(reverted.indexOf("credential_configuration_id") !== -1,
     "and the body is the JSON request again.");
   log.info("[request-enc] OK — unticking returns the call to plain JSON with no stale ciphertext.");
+  log.debug("Leaving encryptedCredentialRequest().");
 }
 
 async function batchAndEncryptedIssuance(driver) {
+  log.debug("Entering batchAndEncryptedIssuance().");
   log.info("=== Batch issuance and an encrypted Credential Response ===");
   var meta = (await httpJson(issuerMetadataUrl)).body;
   var batchSize = (meta.batch_credential_issuance || {}).batch_size;
@@ -3151,6 +3277,7 @@ async function batchAndEncryptedIssuance(driver) {
   assert.strictEqual(refused.body.error, "invalid_encryption_parameters",
     "with invalid_encryption_parameters. Got: " + refused.raw.slice(0, 240));
   log.info("[batch] OK — an encryption algorithm this issuer does not implement is refused.");
+  log.debug("Leaving batchAndEncryptedIssuance().");
 }
 
 // Step 1, configured and ready to hand off. Shared by the sections above, which
@@ -3207,6 +3334,7 @@ async function stepOneConfigured(driver, mechanism) {
 }
 
 async function issuerNegatives() {
+  log.debug("Entering issuerNegatives().");
   log.info("=== The credential endpoint's checks ===");
   var meta = (await httpJson(issuerMetadataUrl)).body;
 
@@ -3272,6 +3400,7 @@ async function issuerNegatives() {
   });
   assert.strictEqual(wrongAud.status, 400, "a proof addressed to another issuer must be refused.");
   log.info("[issuer] OK — no token, no proof, replayed nonce, bad signature and wrong audience are all refused.");
+  log.debug("Leaving issuerNegatives().");
 }
 
 // ---------------------------------------------------------------------------
@@ -3280,6 +3409,7 @@ async function issuerNegatives() {
 // which is also the only way to observe the parameter's effect without racing
 // the redirect it normally causes.
 async function handoffParameterCheck(driver) {
+  log.debug("Entering handoffParameterCheck().");
   log.info("=== The ?sdjwtvc=1 hand-off parameter ===");
   await driver.get(baseUrl + "/debugger.html");
   await driver.wait(until.elementLocated(By.id("oidc_discovery_endpoint")), waitTime);
@@ -3312,10 +3442,12 @@ async function handoffParameterCheck(driver) {
   assert.strictEqual(banners, 0, "without the parameter debugger.html must behave exactly as before.");
   await driver.executeScript("window.localStorage.clear();");
   log.info("[handoff] OK — the parameter drives the page, and its absence changes nothing.");
+  log.debug("Leaving handoffParameterCheck().");
 }
 
 // ---------------------------------------------------------------------------
 async function test() {
+  log.debug("Entering test().");
   log.info("Starting Test run. issuer=" + issuerMetadataUrl + ", as=" + asMetadataUrl);
   await issuerNegatives();
 
@@ -3343,6 +3475,7 @@ async function test() {
     await credentialHistoryNavigation(driver, generations);
     await panesContainTheirContent(driver);
     await stepLinksOnEveryPage(driver);
+    await chooserFitsOnOneScreen(driver);
 
     var errors = await severeErrors(driver);
     assert.strictEqual(errors.length, 0,
@@ -3379,6 +3512,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

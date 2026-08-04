@@ -222,7 +222,7 @@ const ENDPOINTS = [
     what: 'The signing key as a single RS256 JWK with its x5c. Regenerated on every start, so it is ' +
           'served no-store.' },
   { path: '/oauth2/authorize', group: 'OAuth 2.0 / OIDC', name: 'Authorization endpoint',
-    specs: ['rfc6749', 'oidc', 'rfc7636', 'rfc9396'],
+    specs: ['rfc6749', 'oidc', 'rfc7636', 'rfc9396'], effect: 'needs client_id and redirect_uri — answers 400 when followed bare, then shows the login screen once they are supplied',
     what: 'Shows a login screen, then issues a code, token and/or id_token per response_type. ' +
           'Carries PKCE, nonce, authorization_details and OID4VCI issuer_state.' },
   { path: '/oauth2/login', group: 'OAuth 2.0 / OIDC', name: 'Login form target',
@@ -230,7 +230,7 @@ const ENDPOINTS = [
     what: 'Where the login screen posts. No password is checked; the username typed becomes the ' +
           'identity in every token that follows.' },
   { path: '/oauth2/logout', group: 'OAuth 2.0 / OIDC', name: 'Session end',
-    specs: ['oidc'], what: 'Drops the session cookie and returns to post_logout_redirect_uri.' },
+    specs: ['oidc'], effect: 'drops the mock session cookie', what: 'Drops the session cookie and returns to post_logout_redirect_uri.' },
   { path: '/oauth2/token', group: 'OAuth 2.0 / OIDC', name: 'Token endpoint',
     specs: ['rfc6749', 'oidc', 'rfc8693', 'rfc9396', 'oid4vci'],
     what: 'authorization_code, refresh_token, client_credentials, password, token-exchange, and ' +
@@ -288,7 +288,7 @@ const ENDPOINTS = [
   { path: '/issuer', group: 'VC Issuance (OID4VCI)', name: 'Issuer web page',
     specs: ['oid4vci'], what: 'Appendix H.1: where an End-User starts an issuer-initiated flow.' },
   { path: '/issuer/offer', group: 'VC Issuance (OID4VCI)', name: 'Build a Credential Offer',
-    specs: ['oid4vci'],
+    specs: ['oid4vci'], effect: 'mints an offer and redirects the browser to the wallet',
     what: 'Builds an offer and either sends the browser to the wallet or renders a QR code. ' +
           '?mode=cross-device (H.2) and ?mode=deferred (H.3) select the pre-authorized code grant ' +
           'with a Transaction Code.' },
@@ -302,6 +302,12 @@ const ENDPOINTS = [
     name: 'DID document (did:web)', specs: ['did-core'],
     what: 'This issuer as a did:web, with the RS256 key as a JsonWebKey2020 and the BBS key as a ' +
           'Multikey. The DID is derived from the request Host, so one container works at any address.' },
+  { path: '/did/generate', group: 'Decentralized Identifiers',
+    name: 'Generate a verifiable DID (not a spec endpoint)', specs: [],
+    what: 'NON-SPEC, for tests and for trying the DID Tools page: ?method=jwk mints a fresh P-256 ' +
+          'key and returns a did:jwk with a credential signed by it; ?method=web returns this ' +
+          "service's own did:web with one signed by the RS256 key its document publishes. A DID " +
+          'with nothing signed by it could only be parsed, not verified.' },
   { path: '/.well-known/did-configuration.json', group: 'Decentralized Identifiers',
     name: 'Domain Linkage Credential', specs: ['did-config', 'vcdm', 'rfc7519'],
     what: 'Proves this origin and this DID are the same entity. For did:web it is the only ' +
@@ -311,7 +317,7 @@ const ENDPOINTS = [
   { path: '/oid4vp/verifier', group: 'VC Presentation (OID4VP)', name: 'Verifier web page',
     specs: ['oid4vp'], what: 'Where a presentation starts: the verifier asks, the wallet answers.' },
   { path: '/oid4vp/start', group: 'VC Presentation (OID4VP)', name: 'Build an Authorization Request',
-    specs: ['oid4vp'],
+    specs: ['oid4vp'], effect: 'builds a request and redirects the browser to the wallet',
     what: 'response_type=vp_token with a DCQL query, a fresh nonce and response_mode=direct_post, ' +
           'passed by value or by reference, with a QR screen for cross-device.' },
   { path: '/oid4vp/request/:id', group: 'VC Presentation (OID4VP)', name: 'Request Object',
@@ -413,6 +419,58 @@ function groupsOf(rows) {
 
 function esc(v) { return xmlEscape(v == null ? '' : String(v)); }
 
+// ---------------------------------------------------------------------------
+// Whether a path can be turned into a link a reader can actually follow.
+//
+// The temptation is to link all of them, and it produces a page with 22 dead
+// links out of 41. A path is followable from a browser only if it answers a GET
+// and is a concrete URL:
+//
+//   * no GET — a link on POST /oauth2/token issues a GET, and the router has no
+//     GET for it, so the reader lands on Express's "Cannot GET /oauth2/token".
+//     That reads as a broken service rather than as a wrong link.
+//   * a parameter — "/oauth2/register/:client_id" is a route pattern. The literal
+//     string with the colon in it is not an address of anything.
+//   * a wildcard — same, and the concrete form of each of these is already listed
+//     as its own row (the well-known documents), so nothing is lost.
+//
+// So the ones that work become links and the rest say why not. The reason is worth
+// showing rather than hiding: "POST only" is the single most useful thing to know
+// about an endpoint you were about to click.
+function linkabilityOf(row) {
+  var methods = row.methods || [];
+  if (methods.indexOf('GET') === -1) {
+    return { linkable: false, reason: methods.length === 1 ? methods[0] + ' only'
+                                                           : 'no GET (' + methods.join(', ') + ')' };
+  }
+  if (row.path.indexOf(':') !== -1) {
+    var name = (/:([A-Za-z0-9_]+)/.exec(row.path) || [])[0] || 'a parameter';
+    return { linkable: false, reason: 'takes ' + name };
+  }
+  if (row.path.indexOf('*') !== -1) return { linkable: false, reason: 'wildcard' };
+  return { linkable: true, reason: '' };
+}
+
+// The path column: a link where that is honest, the bare path where it is not.
+//
+// Links are root-relative, so they follow the host this page was reached at —
+// localhost:8081, sts:8081 on the compose network, or a published port — without
+// this document having to know which. They open in a new tab so the index survives
+// the click, which matters because most of these return a document to read and
+// compare against the row it came from.
+function pathCell(row) {
+  var link = linkabilityOf(row);
+  if (!link.linkable) {
+    return '<code>' + esc(row.path) + '</code> <span class="why" title="' +
+           'This path is listed because it is registered, but it cannot be followed from a browser.">' +
+           esc(link.reason) + '</span>';
+  }
+  var title = 'GET ' + row.path + ' in a new tab' + (row.effect ? ' — ' + row.effect : '');
+  return '<a href="' + esc(row.path) + '" target="_blank" rel="noopener noreferrer" title="' +
+         esc(title) + '"><code>' + esc(row.path) + '</code></a>' +
+         (row.effect ? ' <span class="eff" title="' + esc(row.effect) + '">&#8599;</span>' : '');
+}
+
 function specLinks(ids) {
   if (!ids || !ids.length) return '<span class="none">&mdash;</span>';
   return ids.map(function (id) {
@@ -441,6 +499,8 @@ function renderPage(base, report) {
     'th{background:#f0f0f5}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;' +
     'font-size:.85rem;background:#f4f4f8;padding:.1rem .25rem;border-radius:3px;word-break:break-all}' +
     '.m{font-weight:600;color:#0b6b4f;white-space:nowrap}.none{color:#999}' +
+    '.why{color:#999;font-size:.8em;font-style:italic;white-space:nowrap}' +
+    '.eff{color:#b26a00;cursor:help}td.p a{text-decoration:none}td.p a:hover code{text-decoration:underline}' +
     '.bad{color:#b00020;font-weight:600}.warn{background:#fff8e1;border:1px solid #ffe082;' +
     'padding:.6rem .8rem;margin:.5rem 0;border-radius:4px}' +
     '.ok{background:#e8f5e9;border:1px solid #a5d6a7;padding:.6rem .8rem;margin:.5rem 0;border-radius:4px}' +
@@ -493,7 +553,7 @@ function renderPage(base, report) {
     rows.filter(function (r) { return r.group === group; })
       .sort(function (a, b) { return a.path < b.path ? -1 : (a.path > b.path ? 1 : 0); })
       .forEach(function (r) {
-        html += '<tr><td class="p"><code>' + esc(r.path) + '</code></td>' +
+        html += '<tr><td class="p">' + pathCell(r) + '</td>' +
           '<td class="m">' + esc(r.methods.join(', ')) + '</td>' +
           '<td class="n">' + (r.documented === false ? '<span class="bad">' + esc(r.name) + '</span>'
                                                      : esc(r.name)) + '</td>' +
@@ -524,6 +584,8 @@ function renderPage(base, report) {
 }
 
 function metadataJson(base, report) {
+  log.debug("Entering metadataJson().");
+  log.debug("Leaving metadataJson().");
   return {
     service: 'idptools mock Security Token Service',
     issuer: base,
@@ -531,8 +593,16 @@ function metadataJson(base, report) {
     port: PORT,
     testDouble: true,
     endpoints: report.rows.map(function (r) {
+      var link = linkabilityOf(r);
       return { path: r.path, methods: r.methods, name: r.name, group: r.group,
-               description: r.what, specs: r.specs, documented: r.documented !== false };
+               description: r.what, specs: r.specs, documented: r.documented !== false,
+               // Whether the path can be followed from a browser, and the absolute
+               // URL when it can. Reported rather than left for a client to work
+               // out, because getting it wrong is what produces a dead link.
+               linkable: link.linkable,
+               notLinkableBecause: link.linkable ? undefined : link.reason,
+               url: link.linkable ? base + r.path : undefined,
+               effect: r.effect };
     }),
     specifications: SPECS,
     // The drift report is part of the document, not just the page: a test asserts

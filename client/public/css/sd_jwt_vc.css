@@ -39,18 +39,34 @@ ol.vc-steps li.vc-step-done { border-left-color: #2e7d32; }
 /* --- step 0: the use-case chooser ---
    Big, calm buttons: a full-width card each, so the choice reads as "which of
    these situations are you in" rather than "pick a protocol variant". */
+/* The chooser's cards. A GRID rather than a single column, because the page's job
+   is to let you compare four options and pick one, and it could not do that without
+   scrolling: four full-width cards stacked in a 1100px column ran to 757px, on a
+   page whose total came to 1450px against a 839px viewport. All of that space was
+   vertical while the horizontal space sat unused — a card 1100px wide holding two
+   lines of prose.
+
+   auto-fit with a 400px floor gives two columns in the ~1170px container and one on
+   a narrow screen, without a breakpoint. It is a floor rather than a fixed count so
+   a fifth use case lands in the grid instead of needing this rule changed; note
+   that an odd count leaves one card alone on the last row, which is why the number
+   of columns is left to the container rather than pinned at two.
+
+   `align-items: start` matters: without it every card in a row stretches to the
+   tallest, which is how a grid quietly reintroduces the height this saved. */
 .vc-usecases {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  max-width: 1100px;
-  margin: 18px 0 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  align-items: start;
+  gap: 12px;
+  margin: 14px 0 8px;
 }
 button.vc-usecase {
   display: block;
   width: 100%;
+  height: 100%;
   text-align: left;
-  padding: 18px 22px;
+  padding: 14px 18px;
   border: 1px solid #c9c9d4;
   border-left: 6px solid #12107c;
   border-radius: 10px;
@@ -95,16 +111,70 @@ button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
   color: #2e7d32;
 }
 .vc-usecase-flag-soon { color: #8a6d00; }
-.vc-usecase-summary { display: block; margin-top: 8px; font-size: .95em; line-height: 1.45; }
-.vc-usecase-detail { display: block; margin-top: 6px; font-size: .85em; color: #555; line-height: 1.45; }
+.vc-usecase-summary { display: block; margin-top: 6px; font-size: .95em; line-height: 1.4; }
+.vc-usecase-detail { display: block; margin-top: 5px; font-size: .85em; color: #555; line-height: 1.4; }
 .vc-usecase-mechanics {
   display: block;
-  margin-top: 10px;
+  margin-top: 7px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .76em;
   color: #666;
 }
-.vc-usecase-cta { display: block; margin-top: 12px; font-weight: 700; color: #12107c; }
+.vc-usecase-cta { display: block; margin-top: 8px; font-weight: 700; color: #12107c; }
+
+/* --- the chooser's own density (vc-issuance-0.html) ------------------------
+   A chooser has to show everything it is choosing between at once: four options
+   you have to scroll between cannot be compared, which is the whole job of that
+   page. Measured, the page came to 1450px against a 839px viewport — so this
+   reclaims the vertical space the shared rhythm spends, and the cards grid above
+   reclaims the rest by using the horizontal room that was sitting empty.
+   Scoped to .vc-fit so the other eight workflow pages, which are meant to be read
+   top to bottom and may legitimately scroll, are untouched. */
+.vc-fit .vc-title {
+  margin: 2px 0 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+/* The return link rides on the title's line: two stacked blocks for one line of
+   text each was the cheapest space on the page. */
+.vc-fit .vc-title-return {
+  font-size: .62em;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.vc-fit .vc-intro {
+  /* Full container width, not the 1100px the reading measure caps other pages at:
+     a wider paragraph is fewer lines, and on this page height is the scarce thing. */
+  max-width: none;
+  margin: 0 0 6px;
+  line-height: 1.4;
+}
+.vc-fit .vc-usecases { margin: 10px 0 6px; }
+.vc-fit #vc_usecase_status { margin: 4px 0 6px; }
+/* Measured: 14px of card padding and the gaps between a card's four blocks came to
+   23px per card, twice over for two rows. Trimmed rather than removed — the cards
+   still have to look like cards. */
+.vc-fit button.vc-usecase { padding: 11px 16px; }
+.vc-fit .vc-usecase-summary { margin-top: 4px; }
+.vc-fit .vc-usecase-detail { margin-top: 4px; }
+.vc-fit .vc-usecase-mechanics { margin-top: 5px; }
+.vc-fit .vc-usecase-cta { margin-top: 6px; }
+/* The VC Tools pane belongs at the foot of the page, and on a page that must fit it
+   should cost as little height as it can while staying legible: its legend was 49px
+   for one line of text. */
+.vc-fit .dbg-pane { margin-top: 6px; margin-bottom: 6px; }
+.vc-fit .dbg-legend { font-size: 1em; padding: 2px 0; margin-bottom: 2px; }
+.vc-fit .dbg-pane p.vc-note { margin: 3px 0 5px; }
+
+/* The VC Tools pane's label column. Its table is the same two-column shape the
+   other panes use, where the left cell is sized to its content — and "DID Tools"
+   was breaking across two lines in it, which reads as a squeezed layout rather than
+   a label. Not scoped to .vc-fit: the pane is on all nine workflow pages and looks
+   the same on each. */
+#pane_vc_tools td:first-child { white-space: nowrap; vertical-align: top; }
+#vc_tools_did_link { white-space: nowrap; font-weight: 700; }
 
 /* Which use case is running, under the step indicator on every page. */
 .vc-use-case-badge {

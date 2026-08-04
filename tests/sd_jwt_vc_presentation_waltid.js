@@ -88,7 +88,9 @@ function b64u(buf) {
 function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
 
 function httpJson(url, options) {
+  log.debug("Entering httpJson().");
   options = options || {};
+  log.debug("Leaving httpJson().");
   return fetch(url, options).then(function (r) {
     return r.text().then(function (text) {
       var body = null;
@@ -103,6 +105,7 @@ function httpJson(url, options) {
 }
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
@@ -114,6 +117,7 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", e);
   }
   await driver.sleep(250);
+  log.debug("Leaving click().");
 }
 
 // text()/value() and the waitFor* family live in ./wait_for.js — one
@@ -152,6 +156,7 @@ async function signOutOfKeycloak(driver) {
 }
 
 async function issueFromWaltid(driver) {
+  log.debug("Entering issueFromWaltid().");
   log.info("=== Phase 1: walt.id issues the credential (through our own pages) ===");
   await signOutOfKeycloak(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
@@ -259,6 +264,7 @@ async function issueFromWaltid(driver) {
   });
   log.info("[phase1] OK — walt.id issued a " + payload.vct + " (alg " + header.alg + ", iss " +
            String(payload.iss).slice(0, 24) + "…) with Disclosures: " + disclosures.join(", "));
+  log.debug("Leaving issueFromWaltid().");
   return { credential: credential, payload: payload, disclosures: disclosures };
 }
 
@@ -339,6 +345,7 @@ function requestQuery(session, byReference) {
 // Phase 3 — present it, through our pages.
 // ---------------------------------------------------------------------------
 async function presentToWaltid(driver, session, opts) {
+  log.debug("Entering presentToWaltid().");
   var byReference = !!(opts || {}).byReference;
   var withhold = (opts || {}).withhold || "";
   log.info("=== Phase 3: presenting to walt.id (" +
@@ -432,6 +439,7 @@ async function presentToWaltid(driver, session, opts) {
   assert.ok(/all pass/.test(sent.recheck),
     "the wallet's own checks on what it sent should pass. Got: " + sent.recheck);
   log.info("[phase3] " + sent.status.replace(/\s+/g, " ").slice(0, 140));
+  log.debug("Leaving presentToWaltid().");
   return { presentation: sent.presentation, request: request, askedFor: askedFor };
 }
 
@@ -461,6 +469,7 @@ async function waltidVerdict(sessionId, label) {
 // POSITIVE
 // ---------------------------------------------------------------------------
 async function positiveFlow(driver, held, byReference) {
+  log.debug("Entering positiveFlow().");
   var session = await createVerificationSession({ vct: held.payload.vct });
   var presented = await presentToWaltid(driver, session, { byReference: byReference });
   var verdict = await waltidVerdict(session.sessionId,
@@ -493,6 +502,7 @@ async function positiveFlow(driver, held, byReference) {
   log.info("[positive] OK — walt.id accepted a presentation of a credential it issued, with " +
            REQUESTED.join(" + ") + " disclosed and nothing else. Policies: " +
            policies.slice(0, 200));
+  log.debug("Leaving positiveFlow().");
   return { session: session, verdict: verdict, presented: presented };
 }
 
@@ -517,6 +527,7 @@ async function positiveFlow(driver, held, byReference) {
 // not receive the claim, and OUR step 3 says the request went unanswered.
 // ---------------------------------------------------------------------------
 async function negativeWithheldClaim(driver, held) {
+  log.debug("Entering negativeWithheldClaim().");
   log.info("=== NEGATIVE 1: withholding a claim walt.id asked for ===");
   var session = await createVerificationSession({ vct: held.payload.vct });
   await presentToWaltid(driver, session, { withhold: REQUESTED[0] });
@@ -547,6 +558,7 @@ async function negativeWithheldClaim(driver, held) {
   log.info("[negative 1] OK — " + REQUESTED[0] + " never reached walt.id, our step 3 reports the " +
            "shortfall, and walt.id itself said status=" + JSON.stringify(verdict.status) +
            " (it runs no DCQL-fulfilment policy — recorded here as an interop finding).");
+  log.debug("Leaving negativeWithheldClaim().");
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +574,7 @@ async function negativeWithheldClaim(driver, held) {
 // presentation carrying someone else's nonce, and that is the point of it.
 // ---------------------------------------------------------------------------
 async function negativeReplay(held, accepted) {
+  log.debug("Entering negativeReplay().");
   log.info("=== NEGATIVE 2: replaying an accepted presentation into a fresh session ===");
   var session = await createVerificationSession({ vct: held.payload.vct });
   var params = new URLSearchParams(requestQuery(session, false));
@@ -595,10 +608,12 @@ async function negativeReplay(held, accepted) {
     JSON.stringify(verdict.failure || null).slice(0, 300));
   log.info("[negative 2] OK — walt.id refused the replay (HTTP " + posted.status + ", status=" + status +
            "), so its acceptance of the honest presentations is a real verdict.");
+  log.debug("Leaving negativeReplay().");
 }
 
 // ---------------------------------------------------------------------------
 async function test() {
+  log.debug("Entering test().");
   log.info("Starting Test run. verifier=" + verifierBase + ", issuer=" + issuerBase +
            ", wallet=" + baseUrl);
 
@@ -644,6 +659,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

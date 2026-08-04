@@ -65,6 +65,7 @@ function get(url, options) {
   return fetch(url, Object.assign({ redirect: "manual" }, options || {}));
 }
 async function postForm(url, body, headers) {
+  log.debug("Entering postForm().");
   const r = await fetch(url, {
     method: "POST",
     headers: Object.assign({ "Content-Type": "application/x-www-form-urlencoded" }, headers || {}),
@@ -77,6 +78,7 @@ async function postForm(url, body, headers) {
   } catch (e) {
     // Not JSON: the caller gets the raw text instead.
   }
+  log.debug("Leaving postForm().");
   return { status: r.status, body: json, raw: text };
 }
 
@@ -89,7 +91,9 @@ function halfHash(value) {
 // Every token this server issues must verify against the key its own metadata
 // advertises — an unverifiable "token" would make every other check hollow.
 function makeVerifier(jwks) {
+  log.debug("Entering makeVerifier().");
   const key = crypto.createPublicKey({ key: jwks.keys[0], format: "jwk" });
+  log.debug("Leaving makeVerifier().");
   return function (token, what) {
     const parts = String(token).split(".");
     assert.strictEqual(parts.length, 3, what + " should be a three-part JWS. Got: " + String(token).slice(0, 40));
@@ -122,6 +126,7 @@ function parseRedirect(location) {
 // options.username  who to sign in as (their name ends up in the tokens)
 // options.cookie    reuse an existing session instead of signing in again
 async function authorize(meta, params, options) {
+  log.debug("Entering authorize().");
   options = options || {};
   const username = options.username || "test-user";
   let r = await get(meta.authorization_endpoint + "?" + form(params),
@@ -168,6 +173,7 @@ async function authorize(meta, params, options) {
   out.username = username;
   out.page = page;
   out.viaAuthorize = next;
+  log.debug("Leaving authorize().");
   return out;
 }
 
@@ -177,6 +183,7 @@ async function authorize(meta, params, options) {
 // anything — and the username typed in is the identity every token describes.
 // ---------------------------------------------------------------------------
 async function testLoginScreen(meta, verify) {
+  log.debug("Entering testLoginScreen().");
   log.info("=== The login screen ===");
   const params = {
     response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
@@ -292,10 +299,12 @@ async function testLoginScreen(meta, verify) {
     { headers: { cookie: authz.cookie } });
   assert.strictEqual(afterLogout.status, 200, "after signing out the login screen should come back.");
   log.info("[login] OK — signing out ends the session.");
+  log.debug("Leaving testLoginScreen().");
 }
 
 // ---------------------------------------------------------------------------
 async function testEveryAdvertisedEndpointAnswers(meta) {
+  log.debug("Entering testEveryAdvertisedEndpointAnswers().");
   log.info("=== Every advertised endpoint answers ===");
   const simple = ["jwks_uri", "service_documentation", "op_policy_uri", "op_tos_uri"];
   for (const member of simple) {
@@ -325,9 +334,11 @@ async function testEveryAdvertisedEndpointAnswers(meta) {
   assert.ok(authz.params.get("code"), "the authorization endpoint should issue a code after the login.");
   log.info("[endpoints] OK — authorization, token, jwks, registration, introspection, revocation and the " +
            "three document URLs all answer.");
+  log.debug("Leaving testEveryAdvertisedEndpointAnswers().");
 }
 
 async function testAuthorizationCode(meta, verify) {
+  log.debug("Entering testAuthorizationCode().");
   log.info("=== Authorization Code + PKCE ===");
   const verifier = b64u(crypto.randomBytes(32));
   const challenge = b64u(crypto.createHash("sha256").update(verifier, "ascii").digest());
@@ -393,10 +404,12 @@ async function testAuthorizationCode(meta, verify) {
   });
   assert.strictEqual(replay.body.error, "invalid_grant", "an authorization code must be single use.");
   log.info("[code] OK — a replayed authorization code is refused.");
+  log.debug("Leaving testAuthorizationCode().");
   return set;
 }
 
 async function testAuthorizationErrors(meta) {
+  log.debug("Entering testAuthorizationErrors().");
   log.info("=== Authorization endpoint errors ===");
   // No usable redirect_uri: the error cannot be sent to the client, so it is
   // shown to the user agent instead (OAuth 2.0 section 4.1.2.1).
@@ -416,9 +429,11 @@ async function testAuthorizationErrors(meta) {
   const noClient = await authorize(meta, { response_type: "code", redirect_uri: REDIRECT_URI });
   assert.strictEqual(noClient.params.get("error"), "invalid_request", "a missing client_id is invalid_request.");
   log.info("[authorize] OK — errors are reported where OAuth 2.0 says they should be.");
+  log.debug("Leaving testAuthorizationErrors().");
 }
 
 async function testImplicitAndHybrid(meta, verify) {
+  log.debug("Entering testImplicitAndHybrid().");
   log.info("=== Implicit and hybrid response types ===");
   for (const responseType of ["token", "id_token", "code id_token", "code id_token token"]) {
     const authz = await authorize(meta, {
@@ -448,9 +463,11 @@ async function testImplicitAndHybrid(meta, verify) {
     }
   }
   log.info("[authorize] OK — implicit and hybrid responses are in the fragment with matching at_hash / c_hash.");
+  log.debug("Leaving testImplicitAndHybrid().");
 }
 
 async function testOtherGrants(meta, verify, codeTokens) {
+  log.debug("Entering testOtherGrants().");
   log.info("=== The other grants the metadata advertises ===");
   const advertised = meta.grant_types_supported || [];
 
@@ -508,9 +525,11 @@ async function testOtherGrants(meta, verify, codeTokens) {
   assert.ok(advertised.indexOf("urn:ietf:params:oauth:grant-type:device_code") < 0,
     "the metadata must not advertise a grant the token endpoint refuses.");
   log.info("[grants] OK — " + advertised.length + " advertised grants all work, and nothing else does.");
+  log.debug("Leaving testOtherGrants().");
 }
 
 async function testIntrospectionAndRevocation(meta, verify) {
+  log.debug("Entering testIntrospectionAndRevocation().");
   log.info("=== Introspection and revocation ===");
   // A fresh token set, so revoking it cannot disturb the other checks.
   const authz = await authorize(meta, {
@@ -554,9 +573,11 @@ async function testIntrospectionAndRevocation(meta, verify) {
   assert.strictEqual(afterRevoke.status, 400, "a revoked refresh token must not mint new tokens.");
   assert.strictEqual(afterRevoke.body.error, "invalid_grant", "using a revoked refresh token is invalid_grant.");
   log.info("[revoke] OK — revocation takes effect for both introspection and refresh.");
+  log.debug("Leaving testIntrospectionAndRevocation().");
 }
 
 async function testRegistration(meta) {
+  log.debug("Entering testRegistration().");
   log.info("=== Dynamic client registration (RFC 7591 / 7592) ===");
   const r = await fetch(meta.registration_endpoint, {
     method: "POST", headers: { "Content-Type": "application/json" },
@@ -599,10 +620,12 @@ async function testRegistration(meta) {
   const gone = await fetch(reg.registration_client_uri, { headers: authed });
   assert.strictEqual(gone.status, 404, "the client should be gone after a delete.");
   log.info("[register] OK — register, read, update and delete, with the management calls protected.");
+  log.debug("Leaving testRegistration().");
 }
 
 // ---------------------------------------------------------------------------
 async function test() {
+  log.debug("Entering test().");
   log.info("Starting Test run. metadata=" + metadataUrl);
   const metaResponse = await get(metadataUrl);
   assert.strictEqual(metaResponse.status, 200, "the metadata document is not available: HTTP " + metaResponse.status);
@@ -620,6 +643,7 @@ async function test() {
   await testIntrospectionAndRevocation(meta, verify);
   await testRegistration(meta);
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

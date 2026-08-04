@@ -85,7 +85,9 @@ function b64u(buf) {
 function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
 
 function httpJson(url, options) {
+  log.debug("Entering httpJson().");
   options = options || {};
+  log.debug("Leaving httpJson().");
   return fetch(url, options).then(function (r) {
     return r.text().then(function (text) {
       var body = null;
@@ -100,6 +102,7 @@ function httpJson(url, options) {
 }
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
@@ -111,6 +114,7 @@ async function click(driver, locator) {
     await driver.executeScript("arguments[0].click();", e);
   }
   await driver.sleep(250);
+  log.debug("Leaving click().");
 }
 
 // text()/value() and the waitFor* family live in ./wait_for.js — one
@@ -223,6 +227,7 @@ function sdHash(prefix) {
 }
 
 function signKbJwt(opts) {
+  log.debug("Entering signKbJwt().");
   var header = b64u(JSON.stringify({ typ: opts.typ || "kb+jwt", alg: "ES256" }));
   var payload = b64u(JSON.stringify({
     iat: opts.iat || Math.floor(Date.now() / 1000),
@@ -232,12 +237,14 @@ function signKbJwt(opts) {
   }));
   var sig = b64u(crypto.sign("sha256", Buffer.from(header + "." + payload),
     { key: opts.key, dsaEncoding: "ieee-p1363" }));
+  log.debug("Leaving signKbJwt().");
   return header + "." + payload + "." + sig;
 }
 
 // A presentation, exactly as a correct wallet would build it — and the knobs the
 // negatives need to break one of the rules at a time.
 function buildPresentation(held, opts) {
+  log.debug("Entering buildPresentation().");
   var issuerJwt = held.credential.split("~")[0];
   var selected = opts.disclosures || held.disclosures.filter(function (d) {
     var arr = JSON.parse(b64uDecode(d).toString("utf8"));
@@ -255,6 +262,7 @@ function buildPresentation(held, opts) {
     sdHash: sdHash(opts.sdHashOver || prefix)
   });
   var body = opts.presentPrefix || prefix;
+  log.debug("Leaving buildPresentation().");
   return { presentation: body + kb, prefix: prefix, kb: kb, selected: selected };
 }
 
@@ -302,6 +310,7 @@ async function verdictFor(state) {
 // tests itself proves nothing.
 // ---------------------------------------------------------------------------
 async function verifierNegatives(held) {
+  log.debug("Entering verifierNegatives().");
   log.info("=== NEGATIVE: presentations the verifier must refuse ===");
 
   function failedChecks(verdict) {
@@ -403,12 +412,14 @@ async function verifierNegatives(held) {
     "with exactly the claims asked for. Got: " + goodVerdict.disclosed.join(", "));
   log.info("[negative] OK — the control case is accepted, so the refusals above are about the defects and " +
            "not about the verifier.");
+  log.debug("Leaving verifierNegatives().");
 }
 
 // ---------------------------------------------------------------------------
 // POSITIVE: the workflow, through the pages.
 // ---------------------------------------------------------------------------
 async function presentThroughThePages(driver, held, byReference) {
+  log.debug("Entering presentThroughThePages().");
   log.info("=== POSITIVE: presenting through the pages (" +
            (byReference ? "signed request by reference" : "request by value") + ") ===");
 
@@ -649,6 +660,7 @@ async function presentThroughThePages(driver, held, byReference) {
   });
   log.info("[step3] OK — verifier accepted; " + checks.length + " checks passed; it knows " +
            Object.keys(verifierClaims).join(", ") + " and nothing else.");
+  log.debug("Leaving presentThroughThePages().");
   return { checks: checks, claims: verifierClaims };
 }
 
@@ -660,6 +672,7 @@ async function presentThroughThePages(driver, held, byReference) {
 // pages have to say which check failed rather than "no".
 // ---------------------------------------------------------------------------
 async function withholdARequestedClaim(driver, held) {
+  log.debug("Entering withholdARequestedClaim().");
   log.info("=== NEGATIVE: withholding a claim the verifier asked for ===");
   await planCredentialIntoWallet(driver, held);
   var request = await freshRequest();
@@ -733,6 +746,7 @@ async function withholdARequestedClaim(driver, held) {
     "and name the withheld claim. Got: " + answered);
   log.info("[negative] OK — refused for " + failed[0].name + ": " + failed[0].detail.slice(0, 90) +
            "; the wallet's own account: " + answered.slice(0, 90));
+  log.debug("Leaving withholdARequestedClaim().");
 }
 
 // ---------------------------------------------------------------------------
@@ -743,6 +757,7 @@ async function withholdARequestedClaim(driver, held) {
 // the defect.
 // ---------------------------------------------------------------------------
 async function panesContainTheirContent(driver) {
+  log.debug("Entering panesContainTheirContent().");
   log.info("=== Nothing overflows its pane ===");
   var pages = ["vc-presentation-0.html", "vc-presentation-1.html",
                "vc-presentation-2.html", "vc-presentation-3.html"];
@@ -786,12 +801,14 @@ async function panesContainTheirContent(driver) {
     log.info("[layout] " + pages[i] + ": every box fits its pane, four step links on one row.");
   }
   log.info("[layout] OK — all four presentation pages.");
+  log.debug("Leaving panesContainTheirContent().");
 }
 
 // ---------------------------------------------------------------------------
 // Refusing is an answer too (OID4VP section 8.4).
 // ---------------------------------------------------------------------------
 async function refusingIsAnAnswer(driver, held) {
+  log.debug("Entering refusingIsAnAnswer().");
   log.info("=== The holder refuses ===");
   await planCredentialIntoWallet(driver, held);
   var request = await freshRequest();
@@ -814,10 +831,12 @@ async function refusingIsAnAnswer(driver, held) {
     "with the error OID4VP defines for it. Got: " + doc.verdict.error);
   assert.ok(!doc.verdict.claims, "and no claims should have reached it.");
   log.info("[refuse] OK — access_denied reached the verifier and nothing was disclosed.");
+  log.debug("Leaving refusingIsAnAnswer().");
 }
 
 // ---------------------------------------------------------------------------
 async function test() {
+  log.debug("Entering test().");
   log.info("Starting Test run. issuer/verifier=" + issuerBase + ", wallet=" + baseUrl);
   var held = await mintCredential("the positive flow");
   await verifierNegatives(held);
@@ -854,6 +873,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

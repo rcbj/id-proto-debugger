@@ -138,6 +138,7 @@ function downloadHolderKey() {
 // consequences land on other pages (step 4, and the whole presentation
 // workflow), so leaving the user to discover them is not good enough.
 function renderHolderKeyStorageNote() {
+  log.debug("Entering renderHolderKeyStorageNote().");
   var note = document.getElementById("vc_holder_key_storage_note");
   if (!note) return;
   if (sdJwtVc.holderPrivateKeyMayBeStored()) {
@@ -148,6 +149,7 @@ function renderHolderKeyStorageNote() {
   note.textContent = "Not saved. Download the key pair now — without the private half in storage, " +
     "step 4 cannot refresh this credential and the presentation pages cannot sign a Key Binding " +
     "JWT, and any earlier generation in Credential History has lost its key too.";
+  log.debug("Leaving renderHolderKeyStorageNote().");
 }
 
 function onSaveHolderKeyChange() {
@@ -743,6 +745,7 @@ function approveIssuance() {
   el("vc_approve_button").disabled = true;
 
   var send = function () {
+    log.debug("Entering send().");
     status("vc_approval_status",
       request.encryptedRequest ? "Sending the encrypted Credential Request …"
                                : "Sending the Credential Request …", "vc-pending");
@@ -751,6 +754,7 @@ function approveIssuance() {
     // built in prepareRequest() over the finished body; it is reused here rather
     // than rebuilt so the bytes sent are the bytes the pane displayed.
     var encrypted = request.encryptedRequest || "";
+    log.debug("Leaving send().");
     return fetch(request.config.credentialEndpoint, {
       method: "POST",
       headers: {

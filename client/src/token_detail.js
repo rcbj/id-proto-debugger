@@ -48,6 +48,7 @@ function getParameterByName(name, url)
 var JWS_REGEX = /^[a-zA-Z0-9\-_]+?\.[a-zA-Z0-9\-_]+?\.([a-zA-Z0-9\-_]+)?$/;
 
 function b64uToUtf8(segment) {
+  log.debug("Entering b64uToUtf8().");
   var b64 = segment.replace(/-/g, "+").replace(/_/g, "/");
   while (b64.length % 4 !== 0) {
     b64 = b64 + "=";
@@ -68,6 +69,7 @@ function b64uToUtf8(segment) {
     log.debug("Segment is not valid UTF-8; showing the raw bytes: " + e.message);
     return raw;
   }
+  log.debug("Leaving b64uToUtf8().");
 }
 
 // The contract callers depend on is jsonwebtoken's decode(token, {complete:true}):
@@ -684,6 +686,7 @@ var RETURN_LABELS = {
 };
 
 function setReturnLinks() {
+  log.debug("Entering setReturnLinks().");
   var from = getParameterByName('from');
   var target = RETURN_TARGETS[from];
   if (!target) return;                       // no (or unknown) origin: leave the default
@@ -694,6 +697,7 @@ function setReturnLinks() {
     if (label) links[i].textContent = label;
   }
   log.debug('Return link points back at ' + target + '.');
+  log.debug("Leaving setReturnLinks().");
 }
 
 window.onload = function() {
@@ -723,7 +727,7 @@ window.onload = function() {
   fetch(appconfig.apiUrl + "/claimdescription")
   .then((response) => response.text())
   .then((body_text) => {
-    console.log(body_text);
+    log.debug(body_text);
     parser = new DOMParser();
     xmlDoc = parser.parseFromString(body_text, "application/xml");
     records = xmlDoc.getElementsByTagName("record");
@@ -731,7 +735,6 @@ window.onload = function() {
     {
       claim = records[i].getElementsByTagName("value")[0].textContent;
       description = records[i].getElementsByTagName("description")[0].textContent;
-  //    console.log(claim + ":" + description);
       claimDescriptionDictionary[claim] = description;
     }
   }).then( () => {
@@ -823,6 +826,7 @@ window.onload = function() {
   .catch( (error) => {
     log.error("An error was encountered: " + error.stack);
   });
+  log.debug("Leaving onload().");
 }
 
 function populateTable(evt, tabName) {
@@ -851,6 +855,7 @@ function copyHtmlToClipboard(elementId) {
   navigator.clipboard.writeText(el.innerHTML).catch(function(err) {
     log.error("copyHtmlToClipboard: failed to write to clipboard: " + err);
   });
+  log.debug("Leaving copyHtmlToClipboard().");
   return false;
 }
 

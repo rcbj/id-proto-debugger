@@ -53,7 +53,7 @@ issuer returns.</p>
 
 <script type="text/javascript">
 function vcSetAllPanes(expand) {
-  var fieldsets = ['vci_fieldset', 'did_fieldset', 'as_fieldset', 'config_fieldset', 'handoff_fieldset'];
+  var fieldsets = ['vci_fieldset', 'did_fieldset', 'as_fieldset', 'config_fieldset', 'handoff_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -195,6 +195,7 @@ function vcSetAllPanes(expand) {
   </fieldset>
 </div>
 
+
 <!-- ====== Pane 1b: DID Document (W3C DID Core 1.0) ====== -->
 <div class="step0 dbg-pane" id="pane_did">
   <legend class="dbg-legend" id="did_expand_button" onclick="return vcissuance1.togglePane('did_fieldset');">Issuer DID Document (W3C DID Core 1.0)</legend>
@@ -235,11 +236,15 @@ function vcSetAllPanes(expand) {
         </tr>
         <tr>
           <td>
-            <div class="tooltip"><label for="did_resolution_url">Document URL: </label><span class="tooltiptext">Where a did:web document is fetched from. Derived from the DID: the host with its port percent-decoded, then /.well-known/did.json, or /&lt;path&gt;/did.json when the DID carries path segments. Empty for did:jwk and did:key, which have nothing to fetch.</span>
+            <div class="tooltip"><label for="did_resolution_url">Document URL: </label><span class="tooltiptext">Where a did:web document is fetched from. Resolve fills this in from the DID: the host with its port percent-decoded, then /.well-known/did.json, or /&lt;path&gt;/did.json when the DID carries path segments. It stays empty for did:jwk and did:key, which have nothing to fetch. You can also type a URL here and press Retrieve, for a document that is not where the method's rules say it should be.</span>
             </div>
           </td>
           <td>
-            <input class="stored" id="did_resolution_url" name="did_resolution_url" type="text" max="512" size="60" readonly />
+            <input class="stored" id="did_resolution_url" name="did_resolution_url" type="text" max="512" size="60" />
+            <div class="tooltip">
+              <input class="btn2" id="did_retrieve_button" type="button" value="Retrieve" onclick="return vcissuance1.retrieveDidDocument();" />
+              <span class="tooltiptext">Fetch the DID Document from the URL above and use it here exactly as a resolved one. This is a retrieval, not a resolution: it is for a document that is not at the location the DID method derives &mdash; on a staging host, behind a tunnel, or at a path the issuer has not published yet. Because you chose the URL, a document whose id is a different DID is reported rather than refused.</span>
+            </div>
           </td>
         </tr>
         <tr>
@@ -256,7 +261,7 @@ function vcSetAllPanes(expand) {
         <tr>
           <td>
             <div class="tooltip">
-              <input class="btn2" id="did_linkage_button" type="button" value="Verify Domain Linkage" onclick="return vcissuance1.verifyDomainLinkage();" />
+              <input class="btn2" id="did_linkage_button" type="button" value="Verify Linkage" onclick="return vcissuance1.verifyDomainLinkage();" />
               <span class="tooltiptext">Fetch /.well-known/did-configuration.json from the issuer's origin and verify its Domain Linkage Credential (DIF Well Known DID Configuration). This is what proves the DID and the https issuer are the same entity. For did:web it is the only non-circular proof: resolving did:web:host means fetching host, so the DID document alone cannot establish that the origin's controller and the DID's controller are one party.</span>
             </div>
           </td>
@@ -417,6 +422,8 @@ function vcSetAllPanes(expand) {
     </table>
   </fieldset>
 </div>
+
+<!--#include file="/partials/vc_tools.html"-->
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">

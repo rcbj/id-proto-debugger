@@ -392,7 +392,7 @@ function initValuesToLocalStorage()
       localStorage.setItem("initialized", "true");
       initialized = true;
   }
-  log.debug("Leaving writeValuesToLocalStorage().");
+  log.debug("Leaving initValuesToLocalStorage().");
 }
 
 function loadValuesFromLocalStorage()
@@ -870,6 +870,7 @@ function triggerDeviceAuthorizationCall()
   // Shared success/error handlers for the device authorization response,
   // whether it comes from the backend proxy or a direct (frontend) call.
   var onDeviceSuccess = function(data) {
+    log.debug("Entering onDeviceSuccess().");
     log.debug("Device Authorization Endpoint Response: " + JSON.stringify(data));
     if (localStorage) {
       localStorage.setItem("device_code", data.device_code || "");
@@ -880,6 +881,7 @@ function triggerDeviceAuthorizationCall()
       localStorage.setItem("device_interval", data.interval || "");
     }
     window.location.href = "/debugger2.html";
+    log.debug("Leaving onDeviceSuccess().");
   };
   var onDeviceError = function(request, status, error) {
     log.debug("Entering onDeviceError().");
@@ -1360,7 +1362,7 @@ function displayOIDCArtifacts()
 
 function useRefreshTokens()
 {
-  log.debug("Entering useRefreshToken().");
+  log.debug("Entering useRefreshTokens().");
   var yesCheck = $("#useRefreshToken-yes").is(":checked");
   var noCheck = $("#useRefreshToken-no").is(":checked");
   log.debug("useRefreshToken-yes=" + yesCheck, "useRefreshToken-no=" + noCheck);
@@ -1428,6 +1430,7 @@ var verifyJwsWithJwks = metadataClient.verifyJwsWithJwks;
 
 // Button handler in the discovery pane.
 function validateSignedMetadata(evt) {
+  log.debug("Entering validateSignedMetadata().");
   // Keep the click off the form's onclick, which would fire a retrieval.
   if (evt && evt.stopPropagation) evt.stopPropagation();
   var out = function (text) { $("#signed_metadata_status").text(text); };
@@ -1452,6 +1455,7 @@ function validateSignedMetadata(evt) {
     progress: out
   }).then(out)
     .catch(function (e) { out("Could not validate the signature: " + e.message); });
+  log.debug("Leaving validateSignedMetadata().");
   return false;
 }
 
@@ -1719,7 +1723,7 @@ function buildDiscoveryInfoTable(discoveryInfo) {
 
 function onSubmitPopulateFormsWithDiscoveryInformation() {
   log.debug("Entering onSubmitPopulateFormsWithDiscoveryInformation().");
-  log.debug('Entering OnSubmitPopulateFormsWithDiscoveryInformation().');
+  log.debug('Entering onSubmitPopulateFormsWithDiscoveryInformation().');
   var authorizationEndpoint = discoveryInfo["authorization_endpoint"];
   var idTokenSigningAlgValuesSupported = discoveryInfo["id_token_signing_alg_values_supported"];
   var issuer = discoveryInfo["issuer"];
@@ -1815,7 +1819,7 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   // Pre-fill the Dynamic Client Registration pane (registration_endpoint and a
   // default client metadata document) from the discovery metadata.
   populateClientMetadataFromDiscovery();
-  log.debug('Leaving OnSubmitPopulateFormsWithDiscoveryInformation().');
+  log.debug('Leaving onSubmitPopulateFormsWithDiscoveryInformation().');
   log.debug("Leaving onSubmitPopulateFormsWithDiscoveryInformation().");
   return true;
 }
@@ -2170,6 +2174,7 @@ function setPKCEValues()
   $("#authz_pkce_code_method").val(localStorage.getItem("PKCE_code_challenge_method"));
   recalculateAuthorizationRequestDescription();
   log.debug("leaving setPKCEValues().");
+  log.debug("Leaving setPKCEValues().");
   return code_challenge
 }
 
@@ -2290,6 +2295,7 @@ function parseDcrMetadata() {
 // returning the new value, so this must run after every successful operation
 // that returns one or the subsequent call would fail to authenticate.
 function captureRegistrationArtifacts(data) {
+  log.debug("Entering captureRegistrationArtifacts().");
   if (!data) {
     return;
   }
@@ -2300,6 +2306,7 @@ function captureRegistrationArtifacts(data) {
     $("#registration_access_token").val(data.registration_access_token);
   }
   writeDcrValuesToLocalStorage();
+  log.debug("Leaving captureRegistrationArtifacts().");
 }
 
 // Common proxy invocation for all four registration operations.
@@ -2375,6 +2382,7 @@ function registerClient() {
 function readClient() {
   log.debug("Entering readClient().");
   writeDcrValuesToLocalStorage();
+  log.debug("Leaving readClient().");
   return callRegistrationProxy("GET", $("#registration_client_uri").val(),
     $("#registration_access_token").val(), null, function (data) {
       // Reflect the current registration back into the metadata editor and pick

@@ -227,6 +227,7 @@ function parseRequestUri(text) {
 // The JSON-valued parameters, parsed. Kept separate from parseRequestQuery so a
 // malformed one is reported rather than throwing while the request is read.
 function requestObjectValue(params, name) {
+  log.debug("Entering requestObjectValue().");
   var raw = params && params[name];
   if (!raw) return null;
   if (typeof raw === "object") return raw;
@@ -236,6 +237,7 @@ function requestObjectValue(params, name) {
     log.error("the " + name + " parameter is not JSON: " + e.message);
     return null;
   }
+  log.debug("Leaving requestObjectValue().");
 }
 
 // ---------------------------------------------------------------------------
@@ -457,6 +459,7 @@ function buildPresentationFor(opts) {
   var format = sdJwtVc.credentialFormat(opts.credential);
   if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) return buildPresentation(opts);
   log.debug("Entering buildPresentationFor(). jwt_vc_json — nothing to select.");
+  log.debug("Leaving buildPresentationFor().");
   return signVpJwt({
     credential: opts.credential,
     holderPrivateJwk: opts.holderPrivateJwk,

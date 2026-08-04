@@ -82,6 +82,7 @@ function forgetStoredKeyPair() {
 // lands on the response page after an IdP round trip, which is a long way from
 // here to discover it.
 function renderKeyPairStorageNote() {
+  log.debug("Entering renderKeyPairStorageNote().");
   var note = el('wsfed_keypair_storage_note');
   if (!note) return;
   if (keyPairMayBeStored()) {
@@ -92,6 +93,7 @@ function renderKeyPairStorageNote() {
   note.textContent = 'Not saved. Use Download to keep this key pair. After a reload you will need ' +
     'to paste it back into these two fields, and paste the private key into the Decryption Key ' +
     'field on the WS-Federation Response page before an encrypted token can be decrypted.';
+  log.debug("Leaving renderKeyPairStorageNote().");
 }
 
 function onSaveKeyPairChange() {
@@ -105,6 +107,7 @@ function onSaveKeyPairChange() {
 }
 
 function saveState() {
+  log.debug("Entering saveState().");
   if (!window.localStorage) return;
   var storeKeyPair = keyPairMayBeStored();
   var els = persistedEls();
@@ -118,8 +121,10 @@ function saveState() {
   // session, before the box was cleared) already put there. saveState() runs on
   // most interactions, so no code path can leave the key pair behind.
   if (!storeKeyPair) forgetStoredKeyPair();
+  log.debug("Leaving saveState().");
 }
 function restoreState() {
+  log.debug("Entering restoreState().");
   if (!window.localStorage) return;
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
@@ -129,6 +134,7 @@ function restoreState() {
     if (els[i].type === 'checkbox') els[i].checked = (v === '1' || v === 'true' || v === 'on');
     else els[i].value = v;
   }
+  log.debug("Leaving restoreState().");
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +147,7 @@ function onIncludeWreqChange() { show('wsfed_wreq_section', checked('wsfed_inclu
 // fetch), parse the WS-Federation RoleDescriptor, and populate the config pane.
 // ---------------------------------------------------------------------------
 function loadMetadata() {
+  log.debug("Entering loadMetadata().");
   var url = val('wsfed_metadata_url').trim();
   if (!url) { setStatus('wsfed_metadata_status', 'Enter a federation metadata URL first.'); return false; }
   setStatus('wsfed_metadata_status', 'Loading metadata…');
@@ -162,6 +169,7 @@ function loadMetadata() {
       setStatus('wsfed_metadata_status', 'Metadata load failed: ' + e.message +
         (appconfig.backendAvailable ? '' : ' — the metadata endpoint likely blocks direct browser calls (CORS); paste the XML into the box below instead.'));
     });
+  log.debug("Leaving loadMetadata().");
   return false;
 }
 
@@ -171,6 +179,7 @@ function uploadMetadata() {
   return false;
 }
 function onMetadataFile(evt) {
+  log.debug("Entering onMetadataFile().");
   var file = evt && evt.target && evt.target.files && evt.target.files[0];
   if (!file) return;
   var reader = new FileReader();
@@ -181,6 +190,7 @@ function onMetadataFile(evt) {
     autoBuildRequest();
   };
   reader.readAsText(file);
+  log.debug("Leaving onMetadataFile().");
 }
 
 // Parse an XML federation-metadata document and populate the config fields. The
@@ -189,6 +199,7 @@ function onMetadataFile(evt) {
 // pick the RoleDescriptor that CONTAINS a PassiveRequestorEndpoint. Endpoints and
 // the signing certificate are read namespace-agnostically.
 function parseWsFedMetadata(xmlText) {
+  log.debug("Entering parseWsFedMetadata().");
   var doc;
   try { doc = new DOMParser().parseFromString(xmlText || '', 'application/xml'); }
   catch (e) { setStatus('wsfed_metadata_status', 'Parse error: ' + e.message); return; }
@@ -248,6 +259,7 @@ function parseWsFedMetadata(xmlText) {
   setStatus('wsfed_metadata_status', bits.length
     ? ('Parsed metadata (' + bits.join(', ') + ').')
     : 'Parsed metadata, but no PassiveRequestorEndpoint was found — enter the sign-in endpoint manually.');
+  log.debug("Leaving parseWsFedMetadata().");
 }
 
 // ---------------------------------------------------------------------------
@@ -256,6 +268,7 @@ function parseWsFedMetadata(xmlText) {
 // key is used on the response page to decrypt an EncryptedAssertion.
 // ---------------------------------------------------------------------------
 function generateKeys() {
+  log.debug("Entering generateKeys().");
   var bits = parseInt(val('wsfed_key_bits'), 10) || 2048;
   setStatus('wsfed_call_status', 'Generating ' + bits + '-bit RSA key pair…');
   setTimeout(function () {
@@ -270,6 +283,7 @@ function generateKeys() {
       setStatus('wsfed_call_status', 'Key generation error: ' + e.message);
     }
   }, 20);
+  log.debug("Leaving generateKeys().");
   return false;
 }
 
@@ -293,6 +307,8 @@ function downloadKeys() {
 // Request construction — delegate the parameter set to the DOM-free wsfed_msg.
 // ---------------------------------------------------------------------------
 function signInOptions() {
+  log.debug("Entering signInOptions().");
+  log.debug("Leaving signInOptions().");
   return {
     realm: val('wsfed_realm'),
     reply: val('wsfed_reply'),
@@ -319,6 +335,7 @@ function buildSignOutUrl() {
 
 function autoBuildRequest() { try { buildRequestUi(); } catch (e) { log.error('autoBuildRequest: ' + e.message); } return false; }
 function buildRequestUi() {
+  log.debug("Entering buildRequestUi().");
   try {
     var url = buildSignInUrl();
     setVal('wsfed_generated_request', url);
@@ -327,6 +344,7 @@ function buildRequestUi() {
     log.error('buildRequestUi: ' + e.message);
     setStatus('wsfed_call_status', 'Build failed: ' + e.message);
   }
+  log.debug("Leaving buildRequestUi().");
   return false;
 }
 
@@ -335,6 +353,7 @@ function buildRequestUi() {
 // then auto-POSTs wresult back to wreply), so there is no fetch/CORS here.
 // ---------------------------------------------------------------------------
 function callIdp() {
+  log.debug("Entering callIdp().");
   var endpoint = val('wsfed_signin_endpoint').trim();
   if (!endpoint) { setStatus('wsfed_call_status', 'Enter (or load from metadata) the IdP passive sign-in endpoint first.'); return false; }
   if (!val('wsfed_realm').trim()) { setStatus('wsfed_call_status', 'Enter the RP realm (wtrealm) first.'); return false; }
@@ -352,9 +371,11 @@ function callIdp() {
   setStatus('wsfed_call_status', 'Navigating to the IdP…');
   saveState();
   window.location.assign(target);
+  log.debug("Leaving callIdp().");
   return false;
 }
 function signOut() {
+  log.debug("Entering signOut().");
   var endpoint = (val('wsfed_signout_endpoint') || val('wsfed_signin_endpoint')).trim();
   if (!endpoint) { setStatus('wsfed_call_status', 'Enter (or load from metadata) the IdP sign-in/sign-out endpoint first.'); return false; }
   var url = buildSignOutUrl();
@@ -368,6 +389,7 @@ function signOut() {
   setStatus('wsfed_call_status', 'Navigating to the IdP sign-out…');
   saveState();
   window.location.assign(target);
+  log.debug("Leaving signOut().");
   return false;
 }
 
@@ -375,6 +397,7 @@ function signOut() {
 // Misc UI (shared shapes with wstrust_tools.js / saml_tools.js).
 // ---------------------------------------------------------------------------
 function copyField(id) {
+  log.debug("Entering copyField().");
   var e = el(id);
   if (!e) return false;
   var text = e.value || '';
@@ -383,6 +406,7 @@ function copyField(id) {
   } else {
     try { e.focus(); e.select(); document.execCommand('copy'); } catch (err) { log.error('copyField fallback: ' + err.message); }
   }
+  log.debug("Leaving copyField().");
   return false;
 }
 function togglePane(bodyId) {
@@ -391,6 +415,7 @@ function togglePane(bodyId) {
   return false;
 }
 function showTab(evt, tabId) {
+  log.debug("Entering showTab().");
   var target = el(tabId);
   var scope = (target && target.closest && target.closest('.saml-pane')) || document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
@@ -399,6 +424,7 @@ function showTab(evt, tabId) {
   for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
+  log.debug("Leaving showTab().");
   return false;
 }
 function viewCertificate(fieldId) {
@@ -492,6 +518,7 @@ window.onload = function () {
   }
 
   autoBuildRequest();
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

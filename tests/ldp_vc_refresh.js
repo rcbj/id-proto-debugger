@@ -149,6 +149,7 @@ function waitPastSecondBoundary() {
 }
 
 async function test() {
+  log.debug("Entering test().");
   log.info("Running ldp_vc refresh against " + issuerBase);
   const meta = await common.issuerMetadata(issuerBase);
   assert.ok(meta && meta.credential_endpoint,
@@ -513,6 +514,7 @@ async function test() {
   log.info("[reader] OK — and still reports nothing for a deferred/empty response.");
 
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

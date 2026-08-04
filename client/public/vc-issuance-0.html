@@ -19,16 +19,18 @@
 <!--#include file="/partials/header.html"-->
 </div>
 
-    <div class="container">
+    <!-- vc-fit: this page is a CHOOSER, so everything it offers has to be visible
+         at once — you cannot compare four options by scrolling between them. The
+         class scopes a denser vertical rhythm to this page rather than tightening
+         .vc-title/.vc-intro for all nine workflow pages. See css/sd_jwt_vc.css. -->
+    <div class="container vc-fit">
 
 <script type="text/javascript" src="/js/vc_issuance_0.js">
 </script>
 
 <!--#include file="/partials/vc_steps.html"-->
 
-<p class="vc-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
-
-<h3 class="vc-title">VC Issuance &mdash; How do you want to start?</h3>
+<h3 class="vc-title">VC Issuance &mdash; How do you want to start?<a class="vc-title-return" id="return_link" href="/index.html">&larr; Return to home</a></h3>
 
 
 <p class="vc-intro">There is more than one way for a credential to end up in a wallet, and
@@ -43,6 +45,8 @@ come back and change it at any time; nothing you have already configured is lost
 </div>
 
 <p class="vc-note" id="vc_usecase_status">&nbsp;</p>
+
+<!--#include file="/partials/vc_tools.html"-->
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">

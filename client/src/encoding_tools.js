@@ -137,6 +137,7 @@ function crc32(bytes) {
 }
 
 function checksum() {
+  log.debug("Entering checksum().");
   try {
     var bytes = strToBytes(val('checksum_unencoded'));
     var value = crc32(bytes);
@@ -146,6 +147,7 @@ function checksum() {
     log.error('checksum: ' + e.message);
     setStatus('checksum_status', 'Checksum error: ' + e.message);
   }
+  log.debug("Leaving checksum().");
   return false;
 }
 
@@ -227,6 +229,7 @@ window.onload = function () {
   uriEncode();
   checksum();
   shaHash();
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

@@ -84,6 +84,7 @@ function issuerOrigin() {
 
 // --- 1. what the issuer advertises ------------------------------------------
 async function metadataAdvertisesTheDid() {
+  log.debug("Entering metadataAdvertisesTheDid().");
   log.info("=== What the issuer advertises ===");
   const meta = await common.issuerMetadata(issuerBase);
   assert.ok(meta, "no credential issuer metadata at " + issuerBase + ". Start the STS mock.");
@@ -150,11 +151,13 @@ async function metadataAdvertisesTheDid() {
     "and it should name the same DID the credential issuer metadata does. Two documents disagreeing " +
     "about which DID this issuer answers to is worse than neither of them saying.");
   log.info("[metadata] OK — jwt-vc-issuer keeps its https issuer and names the DID beside it.");
+  log.debug("Leaving metadataAdvertisesTheDid().");
   return meta;
 }
 
 // --- 2 and 3. the DID resolves, and the origin proves it owns it -------------
 async function theDidResolvesAndTheOriginProvesIt(meta) {
+  log.debug("Entering theDidResolvesAndTheOriginProvesIt().");
   log.info("=== The DID document ===");
   const resolved = await did.resolve(meta.issuer_did, RESOLVE);
   assert.strictEqual(resolved.document.id, meta.issuer_did,
@@ -201,10 +204,12 @@ async function theDidResolvesAndTheOriginProvesIt(meta) {
   assert.strictEqual(impostor.linked, false,
     "an origin that links its OWN DID must not read as vouching for anybody else's.");
   log.info("[linkage] OK — and it vouches for no other DID.");
+  log.debug("Leaving theDidResolvesAndTheOriginProvesIt().");
 }
 
 // --- 4 and 5. the credentials, and the keys that verify them -----------------
 async function sdJwtVcNamesTheDidAndVerifies(meta) {
+  log.debug("Entering sdJwtVcNamesTheDidAndVerifies().");
   log.info("=== dc+sd-jwt issued by a DID-named issuer ===");
   const held = await common.mintJwtVcJson(issuerBase, "IdentityCredentialDid");
   const issuerJwt = String(held.credential).split("~")[0];
@@ -260,9 +265,11 @@ async function sdJwtVcNamesTheDidAndVerifies(meta) {
     "the DID configuration should assert the same claims as its sibling — it is the same credential " +
     "with the issuer named differently, not a different credential.");
   log.info("[dc+sd-jwt] OK — the plain sibling keeps its https iss and asserts the same claims.");
+  log.debug("Leaving sdJwtVcNamesTheDidAndVerifies().");
 }
 
 async function ldpVcNamesTheDidAndVerifies(meta) {
+  log.debug("Entering ldpVcNamesTheDidAndVerifies().");
   log.info("=== ldp_vc issued by a DID-named issuer ===");
   const held = await common.mintJwtVcJson(issuerBase, "IdentityCredentialLdpVcDid");
   const credential = held.credential;
@@ -319,6 +326,7 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
   assert.strictEqual(claimsOf(credential), claimsOf(plain.credential),
     "and both configurations should assert the same claims about the subject.");
   log.info("[ldp_vc] OK — the same claims from both.");
+  log.debug("Leaving ldpVcNamesTheDidAndVerifies().");
 }
 
 async function test() {

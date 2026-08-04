@@ -53,6 +53,7 @@ function b64uDecode(s) { return Buffer.from(String(s), "base64url"); }
 function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
 
 async function httpJson(url, options) {
+  log.debug("Entering httpJson().");
   let r;
   try {
     r = await fetch(url, options);
@@ -75,6 +76,7 @@ async function httpJson(url, options) {
     // status and the raw text, which says more than a parse error would.
     body = raw;
   }
+  log.debug("Leaving httpJson().");
   return { ok: r.ok, status: r.status, body: body, raw: raw };
 }
 
