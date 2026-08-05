@@ -179,11 +179,53 @@ function buildJobs() {
       for (const OIDC_DPOP of ["off", "on"]) {
         jobs.push({
           name: `${label} — mock STS, DPoP ${OIDC_DPOP}`,
-          script: "oidc_flows_sts.js",
+          script: "oidc_flows.js",
           // The client id, scope and username are the script's own: the mock
           // registers no clients and checks no passwords, so there is nothing for
           // the suite to provision and nothing to keep in step here.
           env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL, OIDC_FLOW, OIDC_DPOP },
+        });
+      }
+    }
+  }
+
+  // The same twelve against KEYCLOAK, which asks the other half of the question:
+  // whether any of it interoperates with a real OP. Gated on the client
+  // configureKeycloak() provisions for it (OIDC_ALL_FLOWS_PUBLIC) — one client
+  // with standardFlowEnabled AND implicitFlowEnabled, since Keycloak gates the
+  // response types on that pair, and without "always use DPoP" so that both
+  // halves of the DPoP axis run against it.
+  //
+  // Note what differs from the mock and is passed in rather than assumed:
+  // Keycloak's `sub` is a UUID (OIDC_EXPECT_SUB), which is a different string
+  // from the name typed at the login screen (OIDC_LOGIN_USER). The DPoP jobs also
+  // need the server started with --features=dpop; the test checks the metadata
+  // advertises DPoP and says so by name rather than failing at the last assertion.
+  if (env.OIDC_ALL_FLOWS_PUBLIC_DISCOVERY_ENDPOINT) {
+    const OIDC_FLOWS_KC = [
+      ["oidc_authorization_code_flow", "OIDC Authorization Code Flow (code)"],
+      ["oidc_implicit_flow", "OIDC Implicit Flow (id_token token)"],
+      ["oidc_implicit_flow_id_token", "OIDC Implicit Flow (id_token)"],
+      ["oidc_hybrid_code_id_token", "OIDC Hybrid (code id_token)"],
+      ["oidc_hybrid_code_token", "OIDC Hybrid (code token)"],
+      ["oidc_hybrid_code_id_token_token", "OIDC Hybrid (code id_token token)"],
+    ];
+    for (const [OIDC_FLOW, label] of OIDC_FLOWS_KC) {
+      for (const OIDC_DPOP of ["off", "on"]) {
+        jobs.push({
+          name: `${label} — Keycloak, DPoP ${OIDC_DPOP}`,
+          script: "oidc_flows.js",
+          env: {
+            DISCOVERY_ENDPOINT: env.OIDC_ALL_FLOWS_PUBLIC_DISCOVERY_ENDPOINT,
+            CLIENT_ID: env.OIDC_ALL_FLOWS_PUBLIC_CLIENT_ID,
+            // No offline_access: it is refused on the Implicit flows, and a
+            // refresh token is not what any of these twelve are about.
+            SCOPE: `openid profile email ${env.OIDC_ALL_FLOWS_PUBLIC_SCOPE || ""}`.trim(),
+            OIDC_LOGIN_USER: env.OIDC_ALL_FLOWS_PUBLIC_USERNAME,
+            OIDC_EXPECT_SUB: env.OIDC_ALL_FLOWS_PUBLIC_USER,
+            OIDC_FLOW,
+            OIDC_DPOP,
+          },
         });
       }
     }

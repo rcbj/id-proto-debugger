@@ -35,6 +35,7 @@ const chrome = require("selenium-webdriver/chrome");
 const crypto = require("crypto");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -216,9 +217,16 @@ async function test() {
     options.addArguments("--headless");
   }
   options.addArguments("--no-sandbox");
+  // Use /tmp instead of the container's tiny (64MB) /dev/shm.
   options.addArguments("--disable-dev-shm-usage");
-  options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  // The private-network flags AND the secure-context relaxing, from one place.
+  // The second is what this test cannot run without in the containerized suite:
+  // the debugger is served from http://client:3000 — plain HTTP on a DNS name,
+  // which is NOT a secure context — so window.crypto.subtle is undefined there
+  // and the DPoP key pair can never be generated. The failure would be a timeout
+  // waiting for a key, naming nothing about crypto or about the origin. See
+  // tests/browser_flags.js.
+  browserFlags.addBrowserAccessFlags(options, baseUrl);
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
   const driver = await new Builder()

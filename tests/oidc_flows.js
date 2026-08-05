@@ -1,25 +1,31 @@
-// File: oidc_flows_sts.js
+// File: oidc_flows.js
 //
 // Every OIDC authentication flow, with DPoP and without, driven through
-// debugger.html / debugger2.html against the mock STS:
+// debugger.html / debugger2.html against EITHER OP — the mock STS and Keycloak
+// both run the whole matrix:
 //
 //   OIDC Authorization Code Flow (code)      OIDC Hybrid (code id_token)
 //   OIDC Implicit Flow (id_token token)      OIDC Hybrid (code token)
 //   OIDC Implicit Flow (id_token)            OIDC Hybrid (code id_token token)
 //
-// One script, twelve jobs — six flows times DPoP on and off. The flows differ
-// only in which artifacts come back and where from, and DPoP differs only in
-// what rides along, so both are tables (FLOWS below, and the DPoP expectations
-// in dpopExpectation()) rather than twelve files that would drift apart.
-// `oidc_authorization_code.js` covers the same first flow against Keycloak,
-// which is a different question: this is about the debugger, that is about
-// interoperating with a real OP.
+// One script per (flow, DPoP) pair per OP. The flows differ only in which
+// artifacts come back and where from, and DPoP differs only in what rides along,
+// so both are tables (FLOWS below, and the DPoP expectations in
+// dpopExpectation()) rather than two dozen files that would drift apart.
 //
-// It runs against the mock STS rather than Keycloak, for two reasons. The mock
-// advertises and implements all seven response types (its RFC 8414 and OIDC
-// discovery documents both say so), and it is in this project's control — so a
-// failure here is a failure in the debugger, which is what these tests are for.
-// It also means the jobs are gated on the STS alone: no identity provider.
+// Two OPs, twenty-four jobs, and they answer different questions. Against the
+// MOCK STS a failure is a failure in the debugger — the mock is in this
+// project's control, implements all seven response types, and needs no identity
+// provider, so those twelve jobs are gated on the STS alone. Against KEYCLOAK
+// the same twelve ask whether any of it interoperates with a real OP, which is
+// where the differences live: Keycloak gates the response types on the client's
+// standardFlowEnabled/implicitFlowEnabled pair, its `sub` is a UUID rather than
+// anything derived from the login name, and DPoP is a PREVIEW feature that is
+// off unless the server was started with --features=dpop.
+//
+// Everything OP-specific arrives in the environment (DISCOVERY_ENDPOINT,
+// CLIENT_ID, SCOPE, OIDC_LOGIN_USER, OIDC_EXPECT_SUB), so the assertions below
+// are about the protocol and the page, not about either server.
 //
 // What each flow is checked for, and why these and not "a token came back":
 //
@@ -64,8 +70,9 @@
 // the two Implicit flows are exactly where a DPoP implementation can look busy
 // and achieve nothing.
 //
-// The STS mock is located from WSTRUST_STS_URL, as the other STS-backed tests
-// are. OIDC_FLOW selects the flow; OIDC_DPOP selects on or off (default off).
+// With no DISCOVERY_ENDPOINT the STS mock is located from WSTRUST_STS_URL, as the
+// other STS-backed tests are. OIDC_FLOW selects the flow; OIDC_DPOP selects on or
+// off (default off).
 
 const { Builder, By, until, logging } = require("selenium-webdriver");
 const { Select } = require('selenium-webdriver/lib/select');
@@ -73,10 +80,11 @@ const chrome = require("selenium-webdriver/chrome");
 const crypto = require("crypto");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
-var log = bunyan.createLogger({ name: 'oidc_flows_sts',
+var log = bunyan.createLogger({ name: 'oidc_flows',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 
@@ -197,13 +205,24 @@ function halfHash(value) {
 function assertDescribesUser(claims, user, what) {
   log.debug("Entering assertDescribesUser(). what=" + what);
   assert.ok(claims.sub, what + " carries no sub.");
+  // `sub` is opaque, and the two OPs this runs against prove it: the mock
+  // namespaces the login name (`urn:sts-mock:user:<name>`) and Keycloak issues a
+  // UUID that contains nothing recognisable. So the login name is checked through
+  // `preferred_username`, and `sub` is only compared when the caller was told
+  // what it should be (Keycloak's provisioning knows the UUID; the mock's does
+  // not have one to give).
   if (claims.preferred_username !== undefined) {
-    assert.strictEqual(claims.preferred_username, user,
-      what + " describes " + claims.preferred_username + ", not the user who signed in (" + user + ").");
-  } else {
-    assert.ok(String(claims.sub).indexOf(user) >= 0,
-      what + "'s sub (" + claims.sub + ") does not identify the user who signed in (" + user + "), and " +
-      "there is no preferred_username to check instead.");
+    assert.strictEqual(claims.preferred_username, user.login,
+      what + " describes " + claims.preferred_username + ", not the user who signed in (" +
+      user.login + ").");
+  } else if (!user.sub) {
+    assert.ok(String(claims.sub).indexOf(user.login) >= 0,
+      what + "'s sub (" + claims.sub + ") does not identify the user who signed in (" + user.login +
+      "), and there is no preferred_username to check instead.");
+  }
+  if (user.sub) {
+    assert.strictEqual(claims.sub, user.sub,
+      what + "'s sub is " + claims.sub + ", not the subject the suite provisioned (" + user.sub + ").");
   }
   log.debug("Leaving assertDescribesUser().");
 }
@@ -221,18 +240,80 @@ async function getJson(url) {
 // metadata points at. A token that merely decodes proves nothing: the fragment
 // is attacker-reachable, and the signature is the only thing that says the OP
 // issued what arrived.
+// How a JWS `alg` maps onto node's verifier. Kept explicit rather than inferred
+// because the two that are easy to get silently wrong are here: ECDSA JWS
+// signatures are raw R||S (IEEE P1363) and node defaults to DER, and PS* is
+// RSA-PSS with a salt the length of the digest — get either wrong and a perfectly
+// good signature reports as invalid.
+const JWS_ALGS = {
+  RS256: { hash: "sha256" },
+  RS384: { hash: "sha384" },
+  RS512: { hash: "sha512" },
+  PS256: { hash: "sha256", padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+           saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST },
+  PS384: { hash: "sha384", padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+           saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST },
+  PS512: { hash: "sha512", padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+           saltLength: crypto.constants.RSA_PSS_SALTLEN_DIGEST },
+  ES256: { hash: "sha256", dsaEncoding: "ieee-p1363" },
+  ES384: { hash: "sha384", dsaEncoding: "ieee-p1363" },
+  ES512: { hash: "sha512", dsaEncoding: "ieee-p1363" }
+};
+
+// Every token the flow produces must verify against the key the OP's own
+// metadata points at. A token that merely decodes proves nothing: the fragment is
+// attacker-reachable, and the signature is the only thing that says the OP issued
+// what arrived.
+//
+// The key is chosen BY KID, not by position. Taking jwks.keys[0] worked against
+// the mock, which publishes exactly one key, and failed every Keycloak job at the
+// first token: Keycloak publishes its RSA-OAEP **encryption** key first and its
+// RS256 signing key second, so the assertion said "should name the advertised
+// key" about a key that signs nothing. A JWKS is a set, and its order means
+// nothing.
 function makeVerifier(jwks) {
-  log.debug("Entering makeVerifier().");
-  const key = crypto.createPublicKey({ key: jwks.keys[0], format: "jwk" });
+  log.debug("Entering makeVerifier(). " + (jwks.keys || []).length + " key(s) published.");
+  const byKid = {};
+  (jwks.keys || []).forEach(function (k) { if (k.kid) byKid[k.kid] = k; });
+  // The keys that could legitimately have signed anything: `use` absent (RFC 7517
+  // makes it optional) or "sig". Used only when a token names no kid.
+  const signing = (jwks.keys || []).filter(function (k) { return !k.use || k.use === "sig"; });
   log.debug("Leaving makeVerifier().");
   return function verify(token, what) {
     const parts = partsOf(token);
     const header = headerOf(token);
-    assert.strictEqual(header.alg, "RS256", what + " should be signed RS256, not " + header.alg + ".");
-    assert.strictEqual(header.kid, jwks.keys[0].kid,
-      what + " should name the advertised key (kid " + jwks.keys[0].kid + "), got " + header.kid + ".");
-    assert.ok(crypto.verify("sha256", Buffer.from(parts[0] + "." + parts[1]), key, b64uDecode(parts[2])),
-      what + "'s signature does not verify against jwks_uri.");
+    const spec = JWS_ALGS[header.alg];
+    assert.ok(spec, what + " is signed with " + header.alg + ", which this test cannot verify. " +
+                    "Known: " + Object.keys(JWS_ALGS).join(", ") + ".");
+
+    let jwk;
+    if (header.kid) {
+      jwk = byKid[header.kid];
+      assert.ok(jwk, what + " names kid " + header.kid + ", which the OP's own jwks_uri does not " +
+                     "publish. It publishes: " + Object.keys(byKid).join(", ") + ".");
+    } else {
+      // No kid. Legal, and only unambiguous when one key could have signed it.
+      assert.strictEqual(signing.length, 1,
+        what + " carries no kid and the OP publishes " + signing.length + " signing keys, so which " +
+        "one to verify against is a guess.");
+      jwk = signing[0];
+    }
+    // A token signed by a key the OP published for ENCRYPTION is a real finding,
+    // not a detail: it would mean the key's advertised purpose and its actual use
+    // disagree.
+    assert.ok(!jwk.use || jwk.use === "sig",
+      what + " is signed by a key the OP publishes with use=\"" + jwk.use + "\", not for signing.");
+    if (jwk.alg) {
+      assert.strictEqual(header.alg, jwk.alg,
+        what + " is signed " + header.alg + " with a key the OP advertises for " + jwk.alg + ".");
+    }
+
+    const key = crypto.createPublicKey({ key: jwk, format: "jwk" });
+    const params = Object.assign({ key: key }, spec);
+    delete params.hash;
+    assert.ok(crypto.verify(spec.hash, Buffer.from(parts[0] + "." + parts[1]), params,
+                            b64uDecode(parts[2])),
+      what + "'s signature does not verify against jwks_uri (kid " + (header.kid || "(none)") + ").");
     return claimsOf(token);
   };
 }
@@ -576,7 +657,18 @@ async function exchangeCode(driver, flow, sent, expected, { dpopJkt } = {}) {
       return false;
     }, waitTime * 5);
   } catch (e) {
-    throw new Error("Exchanging the authorization code produced no access token. " + e.message);
+    // A `status: 0` here is not the OP refusing anything — it is the browser
+    // never sending the request. The Token Request goes browser-direct, and with
+    // DPoP on it carries a `DPoP` header, which makes it a non-simple
+    // cross-origin request: the OP must both allow this origin (Keycloak's
+    // webOrigins) and name DPoP in Access-Control-Allow-Headers on the preflight.
+    // Worth saying, because the raw symptom names neither.
+    const hint = /status: 0/.test(e.message)
+      ? " The request never left the browser (status 0), which is a CORS problem rather than a " +
+        "protocol one: check that the OP allows this origin, and — with DPoP on — that its " +
+        "preflight response allows the DPoP request header."
+      : "";
+    throw new Error("Exchanging the authorization code produced no access token. " + e.message + hint);
   }
 
   const claims = expected.verify(value, "the token endpoint's access token");
@@ -632,10 +724,14 @@ async function test() {
   options.addArguments("--no-sandbox");
   // Use /tmp instead of the container's tiny (64MB) /dev/shm.
   options.addArguments("--disable-dev-shm-usage");
-  // The debugger may be a deployed HTTPS site while the STS is on loopback; see
-  // tests/browser_flags.js for the reasoning behind these two.
-  options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  // The private-network flags AND the secure-context relaxing, from one place.
+  // The second is what this test cannot run without in the containerized suite:
+  // the debugger is served from http://client:3000 — plain HTTP on a DNS name,
+  // which is NOT a secure context — so window.crypto.subtle is undefined there
+  // and the DPoP key pair can never be generated. The failure would be a timeout
+  // waiting for a key, naming nothing about crypto or about the origin. See
+  // tests/browser_flags.js.
+  browserFlags.addBrowserAccessFlags(options, baseUrl);
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
@@ -662,7 +758,15 @@ async function test() {
     // run signed in as whoever started it and the assertions then described that
     // person. The mock accepts any username and checks no password, so the test
     // picks its own — OIDC_FLOW_USER only exists to override it.
-    const user = process.env.OIDC_FLOW_USER || "oidcflowuser";
+    // Who signs in, and (when the suite knows it) the subject identifier the
+    // tokens must then carry. Keycloak's provisioning exports both — the login
+    // name and the UUID — and they are different strings; the mock has only the
+    // one. Deliberately NOT process.env.USER for the login name: every shell sets
+    // that, so a standalone run signed in as whoever started it.
+    const user = {
+      login: process.env.OIDC_LOGIN_USER || process.env.OIDC_FLOW_USER || "oidcflowuser",
+      sub: process.env.OIDC_EXPECT_SUB || ""
+    };
     const dpopSetting = String(process.env.OIDC_DPOP || "off").toLowerCase();
     assert(["on", "off"].indexOf(dpopSetting) >= 0,
       "OIDC_DPOP must be \"on\" or \"off\", not \"" + process.env.OIDC_DPOP + "\".");
@@ -676,6 +780,20 @@ async function test() {
     assert.ok(metadata.response_types_supported.indexOf(flow.responseType) >= 0,
       "The OP does not advertise response_type \"" + flow.responseType + "\", so this flow cannot be " +
       "tested against it. It advertises: " + metadata.response_types_supported.join(" | ") + ".");
+    // An OP that does not support DPoP answers every proof with a perfectly
+    // ordinary Bearer token, so a DPoP-on job against one fails at the very end
+    // with "the token came back unbound" — which reads as a client bug. RFC 9449
+    // section 5.1 makes dpop_signing_alg_values_supported the way to discover
+    // support, so it is checked first and the failure names the cause. Keycloak
+    // needs --features=dpop (it is a preview feature); the mock always has it.
+    if (dpopOn) {
+      assert.ok((metadata.dpop_signing_alg_values_supported || []).length,
+        "This OP does not advertise dpop_signing_alg_values_supported, so it does not support DPoP " +
+        "(RFC 9449 section 5.1) and this job cannot mean anything. For Keycloak, start it with " +
+        "--features=dpop — DPoP is a preview feature and is off by default. Metadata: " +
+        discovery_endpoint);
+      log.info("The OP advertises DPoP: " + metadata.dpop_signing_alg_values_supported.join(" | ") + ".");
+    }
     const jwks = await getJson(metadata.jwks_uri);
     const expected = {
       issuer: metadata.issuer,
@@ -686,7 +804,7 @@ async function test() {
     };
 
     log.info("Running the " + flow.label + " flow against " + metadata.issuer +
-             ", DPoP " + dpopSetting + ".");
+             ", DPoP " + dpopSetting + ", signing in as " + user.login + ".");
     await driver.manage().deleteAllCookies();
     await driver.get(baseUrl + "/debugger.html");
     // A previous flow's state in localStorage would otherwise decide which
@@ -739,7 +857,7 @@ async function test() {
     }
 
     await driver.findElement(By.css("input[type=\"submit\"][value=\"Authorize\"]")).click();
-    await signIn(driver, user);
+    await signIn(driver, user.login);
 
     const params = await checkAuthorizationResponse(driver, flow, sent, expected);
     await checkPanesShowArtifacts(driver, flow, params);
@@ -776,7 +894,7 @@ async function test() {
 
 const program = new Command();
 program
-  .name('oidc_flows_sts')
+  .name('oidc_flows')
   .description("Run one of the five non-Authorization-Code OIDC flows against the mock STS.")
   .addOption(
     new Option(

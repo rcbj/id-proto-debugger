@@ -944,7 +944,7 @@ configureKeycloak()
     -d '{"realm": "debugger-testing", "enabled": true}'
   check_return_code $?
   
-  for FLOW_VARIABLE in CLIENT_CREDENTIALS AUTHORIZATION_CODE_CONFIDENTIAL AUTHORIZATION_CODE_PUBLIC IMPLICIT OIDC_AUTHORIZATION_CODE_CONFIDENTIAL OIDC_AUTHORIZATION_CODE_PUBLIC RESOURCE_OWNER_CREDENTIAL TOKEN_EXCHANGE_TARGET TOKEN_EXCHANGE DEVICE_AUTHORIZATION_GRANT TOKEN_INTROSPECTION
+  for FLOW_VARIABLE in CLIENT_CREDENTIALS AUTHORIZATION_CODE_CONFIDENTIAL AUTHORIZATION_CODE_PUBLIC IMPLICIT OIDC_AUTHORIZATION_CODE_CONFIDENTIAL OIDC_AUTHORIZATION_CODE_PUBLIC OIDC_ALL_FLOWS_PUBLIC RESOURCE_OWNER_CREDENTIAL TOKEN_EXCHANGE_TARGET TOKEN_EXCHANGE DEVICE_AUTHORIZATION_GRANT TOKEN_INTROSPECTION
   do
     FLOW_NAME=$(echo ${FLOW_VARIABLE} | tr '[:upper:]' '[:lower:]' | tr '_' '-')
 
@@ -1074,6 +1074,53 @@ configureKeycloak()
                 "serviceAccountsEnabled": false,
                 "authorizationServicesEnabled": false,
                 "standardFlowEnabled": true,
+                "directAccessGrantsEnabled": false,
+                "clientAuthenticatorType": null,
+                "frontchannelLogout": true,
+                "redirectUris": ["'${DEBUGGER_BASE_URL}/callback'"],
+                "webOrigins": ["'${DEBUGGER_BASE_URL}'"],
+                "attributes": {
+                  "frontchannel.logout.url": "'${DEBUGGER_BASE_URL}/logout.html'",
+                  "post.logout.redirect.uris": "'${DEBUGGER_BASE_URL}/logout.html'",
+                  "access.token.lifespan": 3600
+                }
+             }'
+            check_return_code $?
+            ;;
+        OIDC_ALL_FLOWS_PUBLIC)
+            # The client tests/oidc_flows_sts.js drives against Keycloak, for all
+            # six OIDC authentication flows and for DPoP in both states.
+            #
+            # ONE client for all twelve jobs, and each part of that is load-bearing:
+            #
+            #   * standardFlowEnabled AND implicitFlowEnabled. Keycloak gates the
+            #     response types on these two together — `code` needs the first,
+            #     `id_token`/`id_token token` the second, and the three Hybrids
+            #     need BOTH. A client with only the standard flow answers
+            #     unsupported_response_type for four of the six, which arrives as
+            #     a redirect carrying an error rather than as anything the page
+            #     did wrong.
+            #   * dpop.bound.access.tokens is deliberately NOT set. In Keycloak
+            #     that attribute means "always REQUIRE DPoP" for this client, and
+            #     turning it on would make the six DPoP-off jobs fail. Left off,
+            #     DPoP is optional exactly as the debugger's own switch is: a
+            #     proof binds the token, no proof gets a Bearer token, and both
+            #     halves of the matrix run against one client.
+            #   * webOrigins must carry the debugger's origin, because these jobs
+            #     call the token endpoint from the BROWSER (the api cannot forward
+            #     a DPoP proof). Without it the exchange dies in a CORS preflight
+            #     with no status, which reads as the OP being down.
+            curl -X POST "${KEYCLOAK_LOCALHOST_BASE_URL}/admin/realms/debugger-testing/clients" \
+              -H "Authorization: Bearer ${KEYCLOAK_ACCESS_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "clientId": "'${FLOW_NAME}'",
+                "protocol": "openid-connect",
+                "publicClient": true,
+                "serviceAccountsEnabled": false,
+                "authorizationServicesEnabled": false,
+                "standardFlowEnabled": true,
+                "implicitFlowEnabled": true,
                 "directAccessGrantsEnabled": false,
                 "clientAuthenticatorType": null,
                 "frontchannelLogout": true,
@@ -1366,6 +1413,12 @@ configureKeycloak()
     declare -gx ${FLOW_VARIABLE}_CLIENT_SECRET="${CLIENT_SECRET}"
     declare -gx ${FLOW_VARIABLE}_SCOPE="${SCOPE_NAME}"
     declare -gx ${FLOW_VARIABLE}_USER="${USER_ID}"
+    # The name typed at the login screen, which is NOT ${FLOW_VARIABLE}_USER: that
+    # one is Keycloak's UUID for the user, which is what appears in a token's
+    # `sub`. Both are needed by a test that signs in and then checks who the token
+    # describes, and conflating them is easy — the username happens to equal the
+    # client id here, so a test that used the wrong variable would still log in.
+    declare -gx ${FLOW_VARIABLE}_USERNAME="${FLOW_NAME}"
 
   done
 
