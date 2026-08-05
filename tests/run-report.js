@@ -231,6 +231,36 @@ function buildJobs() {
     }
   }
 
+  // The UserInfo endpoint through all three of debugger2.html's "UserInfo Data"
+  // links — the token set the flow produced, the one the refresh call produced,
+  // and the one selected from Token History. The three differ only in which
+  // access token they carry, which is exactly the failure a single call cannot
+  // see: every token in the run belongs to the same user, so a link carrying the
+  // wrong one still returns a correct-looking answer.
+  //
+  // Runs against both OPs, like the flow matrix. Unlike it, this one exercises
+  // the UserInfo page's DEFAULT configuration, which initiates the call from the
+  // api — so these two jobs need the api service as well as the OP.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "OIDC UserInfo through all three token sets — mock STS",
+      script: "oidc_userinfo.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+  if (env.OIDC_ALL_FLOWS_PUBLIC_DISCOVERY_ENDPOINT) {
+    jobs.push({
+      name: "OIDC UserInfo through all three token sets — Keycloak",
+      script: "oidc_userinfo.js",
+      env: {
+        DISCOVERY_ENDPOINT: env.OIDC_ALL_FLOWS_PUBLIC_DISCOVERY_ENDPOINT,
+        CLIENT_ID: env.OIDC_ALL_FLOWS_PUBLIC_CLIENT_ID,
+        SCOPE: `openid profile email ${env.OIDC_ALL_FLOWS_PUBLIC_SCOPE || ""}`.trim(),
+        OIDC_LOGIN_USER: env.OIDC_ALL_FLOWS_PUBLIC_USERNAME,
+      },
+    });
+  }
+
   // DPoP is OPTIONAL on the OAuth2 / OIDC workflow: off by default, on when the
   // pane asks for it, and — the case this exists for — not decided by the SD-JWT
   // VC workflow's own switch, which is what used to make it mandatory here.
