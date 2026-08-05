@@ -189,9 +189,9 @@ function resetUI(value)
       $("#code").hide();
       $("#step2").show();
       $("#nonce").show();
-      $("response_type").val("id_token token");
-      if($("scope").val() == "") {
-        $("scope").val("openid profile");
+      $("#response_type").val("id_token token");
+      if($("#scope").val() == "") {
+        $("#scope").val("openid profile");
       }
       recalculateAuthorizationRequestDescription();
       recalculateAuthorizationErrorDescription();
@@ -206,9 +206,9 @@ function resetUI(value)
       $("#code").hide();
       $("#step2").show();
       $("#nonce").show();
-      $("response_type").val("id_token");
-      if($("scope").val() == "") {
-        $("scope").val("openid profile");
+      $("#response_type").val("id_token");
+      if($("#scope").val() == "") {
+        $("#scope").val("openid profile");
       }
       recalculateAuthorizationRequestDescription();
       recalculateAuthorizationErrorDescription();
@@ -223,9 +223,9 @@ function resetUI(value)
       $("#code").show();
       $("#step2").show();
       $("#nonce").show();
-      $("response_type").val("code");
-      if($("scope").val() == "") {
-        $("scope").val("openid profile");
+      $("#response_type").val("code");
+      if($("#scope").val() == "") {
+        $("#scope").val("openid profile");
       }
       recalculateAuthorizationRequestDescription();
       recalculateAuthorizationErrorDescription();
@@ -240,9 +240,9 @@ function resetUI(value)
       $("#code").show();
       $("#step2").show();
       $("#nonce").show();
-      $("response_type").val("code id_token");
-      if($("scope").val() == "") {
-        $("scope").val("openid profile");
+      $("#response_type").val("code id_token");
+      if($("#scope").val() == "") {
+        $("#scope").val("openid profile");
       }
       recalculateAuthorizationRequestDescription();
       recalculateAuthorizationErrorDescription();
@@ -260,9 +260,9 @@ function resetUI(value)
       $("#code").show();
       $("#step2").show();
       $("#nonce").show();
-      $("response_type").val("code token");
-      if($("scope").val() == "") {
-        $("scope").val("openid profile");
+      $("#response_type").val("code token");
+      if($("#scope").val() == "") {
+        $("#scope").val("openid profile");
       }
       recalculateAuthorizationRequestDescription();
       recalculateAuthorizationErrorDescription();
@@ -277,9 +277,9 @@ function resetUI(value)
       $("#code").show();
       $("#step2").show();
       $("#nonce").show();
-      $("response_type").val("code id_token token");
-      if($("scope").val() == "") {
-        $("scope").val("openid profile");
+      $("#response_type").val("code id_token token");
+      if($("#scope").val() == "") {
+        $("#scope").val("openid profile");
       }
       recalculateAuthorizationRequestDescription();
       recalculateAuthorizationErrorDescription();

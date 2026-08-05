@@ -1262,7 +1262,11 @@ function recreateUniqueGrantFlowElements()
     log.debug("access_token=" + access_token);
     log.debug("fragement: " + parseFragment());
     id_token = parseFragment()["id_token"];
-    if(!!id_token)
+    // `!id_token`, not `!!id_token`. Inverted, this replaced every id_token that
+    // DID arrive with the placeholder and left a genuinely missing one showing
+    // as blank — so the one flow that returns all three artifacts was the one
+    // flow that never displayed its ID token.
+    if(!id_token)
     {
       id_token = "NO_ID_TOKEN_PRESENTED_IN_EXPECTED_LOCATIONS";
     }
@@ -1279,7 +1283,12 @@ function recreateUniqueGrantFlowElements()
 				      "</tr>" + 
 				      "<tr>" +
 				        "<td>id_token</td>" + 
-				        "<td><textarea id=\"implicit_grant_access_token\" rows=3 cols=100 data-token-field=\"id\"></textarea></td>" +
+				        // Its own id: both textareas in this pane were
+				        // implicit_grant_access_token, so getElementById returned
+				        // the access token for either and the markup was invalid.
+				        // fillGeneratedFields kept working only because it selects
+				        // on data-token-field rather than on the id.
+				        "<td><textarea id=\"implicit_grant_id_token\" rows=3 cols=100 data-token-field=\"id\"></textarea></td>" +
 				      "</tr>" +
 				    "</table>" +
                                     "</fieldset>";

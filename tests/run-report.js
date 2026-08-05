@@ -151,6 +151,34 @@ function buildJobs() {
     });
   }
 
+  // The other five OIDC flows — the two Implicit variants and the three Hybrid
+  // ones — against the mock STS rather than Keycloak.
+  //
+  // One script, five jobs, because the flows differ only in which artifacts come
+  // back and where from. The STS is the OP for two reasons: it advertises and
+  // implements all seven response types, and it is in this project's control, so
+  // a failure is a failure in the debugger. That also means these need no
+  // identity provider — the gate is the STS, like the WS-Trust jobs.
+  if (env.WSTRUST_STS_URL) {
+    const OIDC_FLOWS = [
+      ["oidc_implicit_flow", "OIDC Implicit Flow (id_token token)"],
+      ["oidc_implicit_flow_id_token", "OIDC Implicit Flow (id_token)"],
+      ["oidc_hybrid_code_id_token", "OIDC Hybrid (code id_token)"],
+      ["oidc_hybrid_code_token", "OIDC Hybrid (code token)"],
+      ["oidc_hybrid_code_id_token_token", "OIDC Hybrid (code id_token token)"],
+    ];
+    for (const [OIDC_FLOW, label] of OIDC_FLOWS) {
+      jobs.push({
+        name: `${label} — mock STS`,
+        script: "oidc_flows_sts.js",
+        // The client id, scope and username are the script's own: the mock
+        // registers no clients and checks no passwords, so there is nothing for
+        // the suite to provision and nothing to keep in step here.
+        env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL, OIDC_FLOW },
+      });
+    }
+  }
+
   // Token Revocation (RFC 7009). Uses the OIDC public client with the
   // offline_access scope so a refresh token is issued and can be revoked
   // alongside the access token.
