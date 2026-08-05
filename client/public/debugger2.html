@@ -681,6 +681,24 @@ function dbgSetAllPanes(expand) {
             <input class="input" id="token_redirect_uri" name="redirect_uri" type="text" value="" />
           </td>
         </tr>
+        <!-- DPoP (RFC 9449) for this workflow. OFF by default and independent of
+             the SD-JWT VC workflow's own DPoP switch: the two share this page but
+             not the decision, and not the key. See client/src/oauth_dpop.js. -->
+        <tr>
+          <td>
+            <div class="tooltip"><label>DPoP (RFC 9449): </label><span class="tooltiptext">Sender-constrain the access token to a key held by this browser. The authorization request carries dpop_jkt (binding the code), and the Token Request carries a DPoP proof; the token then comes back with cnf.jkt naming that key, so the bytes alone are not enough to spend it. Optional, and off by default — with it off this is an ordinary Bearer exchange.</span>
+            </div>
+          </td>
+          <td>
+            <input id="dpop_enabled" name="dpop_enabled" type="checkbox" onclick="debugger2.setDpopEnabled();" />
+            <label for="dpop_enabled">Sender-constrain the access token with DPoP</label>
+            <span id="dpop_controls" style="display:none">
+              <input id="dpop_generate_key" type="button" value="Generate Key Pair" onclick="return debugger2.generateDpopKey();" />
+              <span id="dpop_key_summary"></span>
+            </span>
+            <div id="dpop_status"></div>
+          </td>
+        </tr>
         <tr>
           <td>
             <div class="tooltip"><label>Scope </label><span class="tooltiptext">The desired scope of the access token.</span>

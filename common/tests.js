@@ -53,7 +53,33 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     await driver.wait(until.elementIsVisible(driver.findElement(btn_oidc_populate_meta_data)), waitTime);
     await driver.executeScript("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", await driver.findElement(btn_oidc_populate_meta_data));
     await driver.findElement(btn_oidc_populate_meta_data).click();
-    log.info("Leaving populateMetadata().");
+
+    // Wait for the CONTENT, not for the click to return. Populate fetches the
+    // discovery document and fills these fields asynchronously, and until this
+    // was here every caller raced it: the fields still held the dummy defaults
+    // that initValuesToLocalStorage() seeds (`https://localhost/oauth2/...`), so
+    // the authorization request went to a host nothing is listening on. It
+    // failed roughly one run in a dozen, and the symptom named the OP — "the OP
+    // did not show its login screen", at https://localhost — rather than the
+    // race. See tests/wait_for.js for the general form of this mistake.
+    const endpointField = By.id("authorization_endpoint");
+    let seen = "";
+    try {
+      await driver.wait(async function () {
+        const fields = await driver.findElements(endpointField);
+        if (!fields.length) return false;
+        seen = (await fields[0].getAttribute("value")) || "";
+        // Filled, and no longer the seeded placeholder. Checked this way rather
+        // than against an expected URL so that every caller — Keycloak's realms,
+        // the mock STS, a deployed OP — is covered by the one condition.
+        return !!seen && seen.indexOf("https://localhost/oauth2/") !== 0;
+      }, waitTime * 5);
+    } catch (e) {
+      throw new Error("Metadata retrieval did not populate the endpoints: #authorization_endpoint " +
+                      "still reads \"" + seen + "\" after Populate. The discovery document is " +
+                      discovery_endpoint + ".");
+    }
+    log.info("Leaving populateMetadata(). authorization_endpoint=" + seen);
   }
 
   // Authorization-Code family flow (OAuth2 Authorization Code Grant / OIDC

@@ -151,16 +151,24 @@ function buildJobs() {
     });
   }
 
-  // The other five OIDC flows — the two Implicit variants and the three Hybrid
-  // ones — against the mock STS rather than Keycloak.
+  // Every OIDC authentication flow against the mock STS, with DPoP and without:
+  // six flows times two, twelve jobs from one script.
   //
-  // One script, five jobs, because the flows differ only in which artifacts come
-  // back and where from. The STS is the OP for two reasons: it advertises and
-  // implements all seven response types, and it is in this project's control, so
-  // a failure is a failure in the debugger. That also means these need no
-  // identity provider — the gate is the STS, like the WS-Trust jobs.
+  // The STS is the OP for two reasons: it advertises and implements all seven
+  // response types, and it is in this project's control, so a failure is a
+  // failure in the debugger. That also means these need no identity provider —
+  // the gate is the STS, like the WS-Trust jobs.
+  //
+  // Both halves of the DPoP axis earn their place. `on` is not simply "and it
+  // still works": for the four code-bearing flows it requires dpop_jkt on the
+  // authorization request and cnf.jkt on the exchanged token, and for the two
+  // Implicit ones it requires the opposite — nothing bound, and the pane saying
+  // why, since those flows never reach a token endpoint. `off` is what keeps the
+  // Bearer path, which is what the specifications describe first, from quietly
+  // becoming un-runnable.
   if (env.WSTRUST_STS_URL) {
     const OIDC_FLOWS = [
+      ["oidc_authorization_code_flow", "OIDC Authorization Code Flow (code)"],
       ["oidc_implicit_flow", "OIDC Implicit Flow (id_token token)"],
       ["oidc_implicit_flow_id_token", "OIDC Implicit Flow (id_token)"],
       ["oidc_hybrid_code_id_token", "OIDC Hybrid (code id_token)"],
@@ -168,15 +176,28 @@ function buildJobs() {
       ["oidc_hybrid_code_id_token_token", "OIDC Hybrid (code id_token token)"],
     ];
     for (const [OIDC_FLOW, label] of OIDC_FLOWS) {
-      jobs.push({
-        name: `${label} — mock STS`,
-        script: "oidc_flows_sts.js",
-        // The client id, scope and username are the script's own: the mock
-        // registers no clients and checks no passwords, so there is nothing for
-        // the suite to provision and nothing to keep in step here.
-        env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL, OIDC_FLOW },
-      });
+      for (const OIDC_DPOP of ["off", "on"]) {
+        jobs.push({
+          name: `${label} — mock STS, DPoP ${OIDC_DPOP}`,
+          script: "oidc_flows_sts.js",
+          // The client id, scope and username are the script's own: the mock
+          // registers no clients and checks no passwords, so there is nothing for
+          // the suite to provision and nothing to keep in step here.
+          env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL, OIDC_FLOW, OIDC_DPOP },
+        });
+      }
     }
+  }
+
+  // DPoP is OPTIONAL on the OAuth2 / OIDC workflow: off by default, on when the
+  // pane asks for it, and — the case this exists for — not decided by the SD-JWT
+  // VC workflow's own switch, which is what used to make it mandatory here.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "OIDC DPoP is optional (RFC 9449: off by default, on when asked, never inherited)",
+      script: "oidc_dpop_optional.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
   }
 
   // Token Revocation (RFC 7009). Uses the OIDC public client with the

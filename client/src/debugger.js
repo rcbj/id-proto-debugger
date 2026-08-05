@@ -4,6 +4,9 @@ var appconfig = require(process.env.CONFIG_FILE);
 var opMetadata = require("./op_metadata");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
+// DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
+// see oauth_dpop.js for why the two are separate state.
+var oauthDpop = require("./oauth_dpop");
 var bunyan = require("bunyan");
 var DOMPurify = require("dompurify");
 // DOMPurify above is for markup going into the DOM, which is what it is for.
@@ -799,19 +802,30 @@ function recalculateAuthorizationRequestDescription()
        // cannot redeem it without the private key. It has to travel on the
        // authorization request, which is why it is here rather than on step 2 with
        // the rest of the DPoP pane.
-       var sdJwtVcDpopJkt = sdJwtVc.dpopEnabled()
-         ? (sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "") : "";
-       if (sdJwtVcDpopJkt) {
+       //
+       // WHICH workflow's DPoP, though. This page serves two, and they answer the
+       // question separately: the VC workflow decides on issuance step 2, the
+       // OAuth2/OIDC workflow on debugger2.html's own DPoP pane. Reading the VC
+       // switch unconditionally — which is what this did — meant that turning DPoP
+       // on there put a dpop_jkt on every OAuth2/OIDC authorization request too,
+       // with no control on these pages to stop it.
+       var dpopJkt = sdJwtVc.isFlowActive()
+         ? (sdJwtVc.dpopEnabled() ? (sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "") : "")
+         : (oauthDpop.enabled() ? oauthDpop.jkt() : "");
+       if (dpopJkt) {
          $("#display_authz_request_form_textarea1").val(
            $("#display_authz_request_form_textarea1").val() + "&\n" +
-           "dpop_jkt=" + encodeURIComponent(sdJwtVcDpopJkt));
-         // Recorded so step 2 can report whether the code was bound, and to WHICH
-         // key: a jkt sent for a key that has since been regenerated makes the code
-         // unredeemable, and that is worth naming rather than presenting as a
-         // mysterious invalid_grant.
-         sdJwtVc.set("dpop_jkt_sent", sdJwtVcDpopJkt);
+           "dpop_jkt=" + encodeURIComponent(dpopJkt));
+       }
+       // Recorded so the next page can report whether the code was bound, and to
+       // WHICH key: a jkt sent for a key that has since been regenerated makes the
+       // code unredeemable, and that is worth naming rather than presenting as a
+       // mysterious invalid_grant. Written on both sides of the branch, because a
+       // stale "yes it was sent" is exactly the reading that would mislead.
+       if (sdJwtVc.isFlowActive()) {
+         sdJwtVc.set("dpop_jkt_sent", dpopJkt);
        } else {
-         sdJwtVc.set("dpop_jkt_sent", "");
+         oauthDpop.rememberJktSent(dpopJkt);
        }
     } else if (	grant_type == "token" || 
 		grant_type == "id_token token" || 
