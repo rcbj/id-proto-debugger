@@ -67,6 +67,13 @@ check_return_code $?
 renderWaltidConfig "${CURRENT_DIR}"
 check_return_code $?
 
+# The mock STS is a submodule (https://github.com/rcbj/mock-sts.git): the same
+# class of hazard as the walt.id render above, and for the same reason it is
+# checked here rather than left to the build. This run uses --abort-on-container-
+# exit, so a service that cannot be built or started takes the whole run down.
+requireMockStsCheckout "${CURRENT_DIR}"
+check_return_code $?
+
 mkdir -p coverage/frontend/.nyc_output coverage/api
 
 # Tear the stack down on ANY exit, including the early ones the checks below can

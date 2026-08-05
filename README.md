@@ -121,17 +121,28 @@ The debugger has been tested with recent versions of Chrome.
 ## Getting Started
 If you have docker / docker-compose installed already:
 ```
-git clone https://github.com/rcbj/oauth2-oidc-debugger.git
+git clone --recurse-submodules https://github.com/rcbj/oauth2-oidc-debugger.git
 cd oauth2-oidc-debugger
 sudo CONFIG_FILE=./env/local.js docker-compose build
 sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
 Note, you will need at least 950MB of disk space ree in order to build this Docker image.
 
+`--recurse-submodules` matters: the mock STS the test suite and the local stack
+run against lives in its own repository, [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts),
+and is linked here as the `sts/` submodule. Cloned without it, `sts/` is an empty
+directory and the build fails with `failed to read dockerfile`. In a checkout that
+is already in that state:
+```
+git submodule update --init sts
+```
+The test launchers do this for you — `requireMockStsCheckout()` in
+[`common/common.sh`](common/common.sh) — but a bare `docker-compose build` does not.
+
 From a bash command prompt on Fedora or RHEL 7.x, run the following::
 ```
 dnf install git # Or, yum install git
-git clone https://github.com/rcbj/oauth2-oidc-debugger.git
+git clone --recurse-submodules https://github.com/rcbj/oauth2-oidc-debugger.git
 dnf install docker
 systemctl start docker
 cd oauth2-oidc-debugger
@@ -200,6 +211,20 @@ If you need to pop up the browser for troubleshooting, pass in the --browser opt
 
 To generate a code coverage report, run ```./run-coverage.sh```. The report will be under the coverage directory.
 
+### The mock STS is a submodule
+Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier and the `did:web` document — is one small Node service that used to live in `sts/` in this repository and now lives in [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts). This repository records a link to it (branch `main`) as the `sts/` submodule; the code is fetched, not vendored.
+
+Two things build from it, and both fail unhelpfully if the submodule was never initialised:
+
+| What | Where | What it says when `sts/` is empty |
+|---|---|---|
+| the STS image | `context: ./sts` in all four compose files | `failed to read dockerfile` |
+| the tests image | `COPY sts/bbs2023.js` in `tests/Dockerfile`, so `tests/bbs2023_cryptosuite.js` can check the wallet's cryptosuite against the issuer's | `COPY sts/bbs2023.js: not found` |
+
+Neither message mentions a submodule, so every launcher (`./docker-run-tests.sh`, `./local-run-tests.sh`, `./remote-run-tests.sh`, `./run-coverage.sh`) calls `requireMockStsCheckout()` from [`common/common.sh`](common/common.sh) before building: it initialises the submodule if it can and stops the run with the reason if it cannot. The CI workflows that build the stack check out with `submodules: true` for the same reason.
+
+By default the build uses the commit this repository records, which is what makes a run repeatable. To build against the tip of `main` instead, set `MOCK_STS_TRACK_REMOTE=1` — that is `git submodule update --remote`, so the run is no longer repeatable and `git status` will show the submodule pointer as modified.
+
 ### The SAML SP key pair
 The SAML tests sign the AuthnRequest and LogoutRequest, and decrypt an encrypted assertion, with a Service Provider key pair. **No key pair is stored in this repository.** `generateSpKeyPair()` in [`common/common.sh`](common/common.sh) creates a fresh self-signed RSA 2048 pair at the start of every run — in a temporary directory that is deleted as soon as the PEMs have been read — and exports it:
 
@@ -218,7 +243,7 @@ To run this project you will need to install docker.
 
 ## Building the docker image
 ``` yum install git
- git clone https://github.com/rcbj/oauth2-oidc-debugger.git
+ git clone --recurse-submodules https://github.com/rcbj/oauth2-oidc-debugger.git
  yum install docker
  system start docker
  cd oauth2-oidc-debugger/client
@@ -632,7 +657,7 @@ The service logs with **bunyan**, at the level its `CONFIG_FILE` names (`sts/env
 Set the level to `info` (`sts/env/test.js`) for a quiet run.
 
 ### STS for testing
-The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite this repository also ships a small **WS-Trust STS mock** (`sts/`) that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. Against a **deployed static site** the same mock is started on the host and reached over loopback (`http://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would be blocked as mixed content. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
+The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite it also runs against a small **WS-Trust STS mock** — [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts), linked here as the `sts/` submodule (see *The mock STS is a submodule* above) — that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. Against a **deployed static site** the same mock is started on the host and reached over loopback (`http://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would be blocked as mixed content. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
 
 ## VC Issuance (OID4VCI)
 

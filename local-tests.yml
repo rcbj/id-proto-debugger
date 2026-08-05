@@ -107,8 +107,9 @@ services:
     image: rcbj/sts
     network_mode: "host"
     build:
-      context: .
-      dockerfile: sts/Dockerfile
+      # The submodule's own root: see docker-compose.yml for why the context is
+      # ./sts rather than this repository with dockerfile: sts/Dockerfile.
+      context: ./sts
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8081/healthcheck',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
       interval: 10s

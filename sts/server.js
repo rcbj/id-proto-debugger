@@ -82,13 +82,15 @@ require('./sts_metadata');
 
 app.listen(PORT, '0.0.0.0', function () {
   log.info('WS-Trust STS mock listening on :' + PORT + ' (issuer ' + ISSUER + '); POST SOAP RST to /sts');
-  log.info('RFC 8414 metadata at /.well-known/oauth-authorization-server; JWKS at /oauth2/jwks');
+  log.info('RFC 8414 metadata at /.well-known/oauth-authorization-server; ' +
+           'OpenID Provider Configuration at /.well-known/openid-configuration; JWKS at /oauth2/jwks');
   log.info('OID4VCI issuer metadata at /.well-known/openid-credential-issuer; ' +
            'credential endpoint at /oid4vci/credential');
   log.info('Issuer-initiated (OID4VCI H.1): the issuer web page is at /issuer; ' +
            'it builds a Credential Offer and sends the browser to the wallet.');
   log.info('Mock authorization server endpoints: /oauth2/authorize (login screen), /oauth2/login, ' +
-           '/oauth2/token, /oauth2/introspect, /oauth2/revoke, /oauth2/register, /oauth2/logout');
+           '/oauth2/token, /oauth2/userinfo, /oauth2/introspect, /oauth2/revoke, /oauth2/register, ' +
+           '/oauth2/logout');
   log.info('Every endpoint call, and every token or assertion before and after it was signed, ' +
            'is written to this log at debug level.');
   log.info('Every endpoint and every specification this service implements is listed at ' +

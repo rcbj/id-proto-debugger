@@ -12,9 +12,12 @@
 //   GET  /oauth2/authorize   authorization endpoint (code / implicit / hybrid)
 //   POST /oauth2/token       authorization_code, refresh_token, password,
 //                            client_credentials, token-exchange
+//   *    /oauth2/userinfo    OIDC Core 5.3, on GET and POST — the one protected
+//                            endpoint here that verifies the token first
 //   POST /oauth2/introspect  RFC 7662
 //   POST /oauth2/revoke      RFC 7009
 //   *    /oauth2/register    RFC 7591 registration + RFC 7592 management
+//   GET  /oauth2/logout      end_session_endpoint (RP-Initiated Logout)
 //   GET  /oauth2/jwks        the signing key (above, with the metadata)
 //   GET  /docs /policy /tos  the documents the metadata links to
 //
@@ -27,10 +30,13 @@
 // that actually takes effect.
 // ===========================================================================
 //
-// It also serves the RFC 8414 metadata document and the JWKS that document
-// advertises, because those describe THIS server: the endpoints below are the ones
-// the metadata promises, and keeping the promise beside the thing that keeps it is
-// what stops the two drifting.
+// It also serves BOTH discovery documents — the RFC 8414 metadata and the OpenID
+// Provider Configuration an OIDC client looks for — and the JWKS they advertise,
+// because those describe THIS server: the endpoints below are the ones the
+// metadata promises, and keeping the promise beside the thing that keeps it is
+// what stops the two drifting. The OIDC document is the RFC 8414 one extended, for
+// the same reason at one remove: two documents describing one server must not be
+// two hand-kept copies of the members they share.
 //
 // The one place it reaches outside itself is the OID4VCI pre-authorized code
 // grant: the codes and the issuer_states are minted by the Credential Offer
@@ -68,12 +74,30 @@ function asMetadata(req) {
     issuer: base,
     authorization_endpoint: base + '/oauth2/authorize',
     token_endpoint: base + '/oauth2/token',
-    response_types_supported: ['code', 'token', 'id_token', 'code token', 'code id_token', 'code id_token token'],
+    // Every combination the authorization endpoint actually issues: it splits
+    // response_type on whitespace and accepts any mixture of code, token and
+    // id_token, so `id_token token` belongs here too — OpenID Connect Dynamic
+    // Registration names it as one an OP should support, and leaving it out of
+    // the list while honouring it is the same drift as the reverse.
+    response_types_supported: ['code', 'token', 'id_token', 'code token', 'code id_token',
+                               'id_token token', 'code id_token token'],
     // --- RECOMMENDED / OPTIONAL ---
     jwks_uri: base + '/oauth2/jwks',
     registration_endpoint: base + '/oauth2/register',
-    scopes_supported: ['openid', 'profile', 'email', 'address', 'phone', 'offline_access'],
-    response_modes_supported: ['query', 'fragment', 'form_post'],
+    // `address` and `phone` were listed here and are gone: OIDC Core section 5.4
+    // makes each of these scopes a request for a NAMED set of claims, and userFor()
+    // mints no address and no phone_number, so the two were a promise of claims
+    // that could never arrive. It reads as an omission next to the
+    // claims_supported list in the OIDC document, which is the whole reason the
+    // two documents are built from this one object.
+    scopes_supported: ['openid', 'profile', 'email', 'offline_access'],
+    // query and fragment only. `form_post` was advertised here and is NOT
+    // implemented: redirectBack() answers every authorization request with a 302
+    // to the redirect_uri, so a client that asked for form_post would be sent a
+    // redirect anyway and would sit waiting for a POST that never arrives. A
+    // metadata member is a promise the endpoint has to keep, and the failure of
+    // this particular one is silent at the client end, which is the worst kind.
+    response_modes_supported: ['query', 'fragment'],
     // Only what the token endpoint below actually implements — the metadata
     // should not promise a grant this server would refuse. (No device_code:
     // there is no device authorization endpoint to start that flow.)
@@ -89,7 +113,11 @@ function asMetadata(req) {
                                             'client_secret_jwt', 'private_key_jwt', 'none'],
     token_endpoint_auth_signing_alg_values_supported: ['RS256', 'RS384', 'RS512', 'ES256', 'PS256', 'HS256'],
     service_documentation: base + '/docs',
-    ui_locales_supported: ['en-US', 'en-GB', 'fr-CA', 'de-DE'],
+    // One locale, because there is one: the login screen is the only UI this
+    // server renders and it is written in English, and nothing here reads the
+    // ui_locales request parameter. The list used to name four, which a client
+    // is entitled to read as "ask for fr-CA and you will get it".
+    ui_locales_supported: ['en-US'],
     op_policy_uri: base + '/policy',
     op_tos_uri: base + '/tos',
     revocation_endpoint: base + '/oauth2/revoke',
@@ -99,6 +127,12 @@ function asMetadata(req) {
     introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'private_key_jwt'],
     introspection_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256', 'PS256'],
     code_challenge_methods_supported: ['S256', 'plain'],
+    // RFC 9207. redirectBack() puts `iss` on every authorization response this
+    // server sends, success and error alike, so this is simply true — and it was
+    // true and unadvertised, which is the half that buys a client nothing: a
+    // client only knows it may REQUIRE the parameter (and so refuse a mix-up
+    // attacker's response that lacks it) if the metadata says the server sends it.
+    authorization_response_iss_parameter_supported: true,
     // RFC 9449 section 5.1. Its presence is how a wallet learns DPoP is on offer
     // at all — there is no other signal, so an authorization server that supports
     // DPoP and does not advertise it will simply never be asked for it.
@@ -143,6 +177,174 @@ app.get('/.well-known/oauth-authorization-server', sendAsMetadata);
 
 // Issuer-with-path form, e.g. /.well-known/oauth-authorization-server/tenant1.
 app.get('/.well-known/oauth-authorization-server/*', sendAsMetadata);
+
+// ---------------------------------------------------------------------------
+// OpenID Connect Discovery 1.0 — GET /.well-known/openid-configuration
+//
+// The OTHER discovery document, and the one most OIDC clients look for first:
+// a relying party given nothing but an issuer identifier finds this path and
+// expects everything it needs to be in what comes back. Without it this server
+// spoke OIDC — id_token, nonce, at_hash, c_hash, three flows — and could not be
+// CONFIGURED by an OIDC client, which is a strange thing for a mock whose whole
+// job is to be pointed at by clients.
+//
+// **It is built by extending the RFC 8414 document rather than beside it.** The
+// two documents describe one server, they overlap in about twenty members, and
+// two hand-kept copies of twenty members disagree the first time somebody edits
+// one of them — a client configured from openid-configuration would then behave
+// differently from one configured from oauth-authorization-server against the
+// same endpoints, and nothing would report it. So asMetadata() is the single
+// source and this function adds only what OpenID Connect Discovery defines on
+// top of it. RFC 8414 was written from this document and the member names are
+// the same registry, so the overlap is genuine and not a coincidence worth
+// preserving by hand.
+//
+// What is DELIBERATELY ABSENT, since a discovery document is read as a promise:
+//
+//   * `acr_values_supported`, `display_values_supported`, the id_token and
+//     userinfo ENCRYPTION members, `check_session_iframe`: none are implemented,
+//     and an empty or invented value for any of them is worse than the member's
+//     absence, which says exactly the right thing.
+//   * WebFinger (section 2). Issuer discovery from an e-mail address is a
+//     separate endpoint (/.well-known/webfinger) and this service does not have
+//     one; the issuer is expected to be known already.
+//
+// One honesty note that has no metadata member to live in, so it lives here:
+// claims_supported below is the exact set idToken() emits, not a menu, and the
+// id_token carries all of it whatever scope was asked for. The UserInfo endpoint
+// is the one place a scope changes the answer (section 5.4), so the two can
+// return different subsets of the same list — which is what that section
+// describes rather than a disagreement between them.
+// ---------------------------------------------------------------------------
+function oidcMetadata(req, issuer) {
+  log.debug("Entering oidcMetadata(). issuer=" + (issuer || '(the request base URL)'));
+  const base = baseUrlOf(req);
+  const metadata = Object.assign(asMetadata(req), {
+    // --- REQUIRED by OpenID Connect Discovery 1.0 section 3 -----------------
+    // issuer, authorization_endpoint, token_endpoint, jwks_uri and
+    // response_types_supported come from the RFC 8414 document above.
+    //
+    // RECOMMENDED, and here: the section 5.3 UserInfo Endpoint. It is a
+    // protected resource, it accepts a Bearer or a DPoP-bound token through the
+    // same check as every other protected endpoint in this service, and — unlike
+    // them — it verifies the token before answering, because a profile is a
+    // statement about somebody this server authenticated.
+    userinfo_endpoint: base + '/oauth2/userinfo',
+    // Section 5.3.2's signed response, offered because RFC 7591 registration is
+    // offered: a client that registers `userinfo_signed_response_alg: "RS256"`
+    // gets `application/jwt` back, signed with the same key as everything else.
+    // `none` is the default and means the plain JSON of section 5.3.2.
+    userinfo_signing_alg_values_supported: ['RS256', 'none'],
+    //
+    // `public`: the `sub` userFor() mints is urn:sts-mock:user:<username> and is
+    // the same value for every client that asks, which is what public MEANS.
+    // Claiming `pairwise` would be a claim about a calculation this server does
+    // not perform.
+    subject_types_supported: ['public'],
+    // Every JWT this service signs goes through signJwt(), which is RS256 and
+    // only RS256. The id_token is not encrypted, so there is no *_enc member.
+    id_token_signing_alg_values_supported: ['RS256'],
+
+    // --- RECOMMENDED / OPTIONAL, and true of this server --------------------
+    // Exactly what idToken() puts in the token, in the order it puts it there.
+    // A client can read this list and know that asking for anything else — an
+    // address, a phone number, an acr — gets it nothing.
+    claims_supported: ['iss', 'sub', 'aud', 'exp', 'iat', 'nbf', 'auth_time', 'nonce', 'azp',
+                       'jti', 'at_hash', 'c_hash', 'name', 'given_name', 'family_name',
+                       'preferred_username', 'email', 'email_verified'],
+    claim_types_supported: ['normal'],
+    // Three parameters this server reads and three it does not, stated as the
+    // booleans the specification defines rather than left to a client to
+    // discover by sending one and watching it be ignored. The authorization
+    // endpoint honours prompt=none and prompt=login (and nothing else), and it
+    // does not accept a `claims` parameter, a `request` object or a `request_uri`
+    // — which is the same "no request object here" the /sts-metadata coverage
+    // note already says in prose.
+    prompt_values_supported: ['none', 'login'],
+    claims_parameter_supported: false,
+    request_parameter_supported: false,
+    request_uri_parameter_supported: false,
+    // Moot while request_uri_parameter_supported is false, and stated anyway:
+    // the member's default is true, so leaving it out would have this server
+    // promising to enforce a registration requirement it has no code for.
+    require_request_uri_registration: false,
+    // OpenID Connect RP-Initiated Logout 1.0. /oauth2/logout drops the session
+    // cookie and returns to post_logout_redirect_uri — but it neither requires
+    // nor checks id_token_hint, and it does not validate the redirect target
+    // against anything, so this is the shape of RP-initiated logout rather than
+    // its security. It is advertised because the alternative is a client with no
+    // way to end a session that this server really does end.
+    end_session_endpoint: base + '/oauth2/logout',
+    // Neither logout notification specification is implemented: no front-channel
+    // iframe is rendered and no back-channel POST is sent. Both members default
+    // to false, and both are stated because "the OP did not mention it" and "the
+    // OP said no" read identically to a client and only one of them is a fact
+    // this server is prepared to stand behind.
+    frontchannel_logout_supported: false,
+    backchannel_logout_supported: false
+  });
+  // The path-appended form's issuer (see below). Assigned after the merge so it
+  // replaces the base URL asMetadata() derived, and assigned rather than merged
+  // so the member keeps its position at the top of the document.
+  if (issuer) metadata.issuer = issuer;
+  log.debug("Leaving oidcMetadata(). " + Object.keys(metadata).length + " member(s).");
+  return metadata;
+}
+
+// signed_metadata is an RFC 8414 member and OpenID Connect Discovery does not
+// define it. It is included anyway: the two documents share one member registry,
+// an OIDC client ignores members it does not know, and a signed copy of THIS
+// document — the OIDC members included — is the only way to check that what
+// arrived is what the issuer published.
+function sendOidcMetadata(req, res, issuer) {
+  log.debug("Entering sendOidcMetadata().");
+  const meta = oidcMetadata(req, issuer);
+  const signed = signedMetadata(meta);
+  if (signed) meta.signed_metadata = signed;
+  res.status(200).type('application/json').set('Cache-Control', 'no-store')
+     .send(JSON.stringify(meta, null, 2));
+  log.debug("Leaving sendOidcMetadata().");
+}
+
+app.get('/.well-known/openid-configuration', function (req, res) {
+  log.debug("Entering the OpenID Connect Discovery endpoint.");
+  sendOidcMetadata(req, res);
+  log.debug("Leaving the OpenID Connect Discovery endpoint.");
+});
+
+// ---------------------------------------------------------------------------
+// An issuer identifier with a path component, which the two specifications
+// resolve to two DIFFERENT URLs — the single most common reason a discovery
+// fetch 404s, so both are served.
+//
+//   OpenID Connect Discovery 1.0 section 4  APPENDS:  https://host/tenant1/.well-known/openid-configuration
+//   RFC 8414 section 3.1                    INSERTS:  https://host/.well-known/openid-configuration/tenant1
+//
+// The appended form gets the issuer it was asked for, built back up from the path
+// the request arrived on: that shape exists precisely so a multi-tenant server can
+// answer for one tenant, and a document at /tenant1/... claiming to be issued by
+// https://host is one a conforming client MUST reject (the issuer has to match the
+// one the URL was built from). The endpoints inside it stay where they really are,
+// since nothing requires them to live under the issuer.
+//
+// The inserted form is the RFC 8414 shape and is answered the way the
+// oauth-authorization-server route above answers it — with the request's base URL
+// as the issuer — so the two behave alike.
+// ---------------------------------------------------------------------------
+app.get('/.well-known/openid-configuration/*', function (req, res) {
+  log.debug("Entering the OpenID Connect Discovery endpoint (RFC 8414 inserted-path form).");
+  sendOidcMetadata(req, res);
+  log.debug("Leaving the OpenID Connect Discovery endpoint (RFC 8414 inserted-path form).");
+});
+
+app.get('/*/.well-known/openid-configuration', function (req, res) {
+  log.debug("Entering the OpenID Connect Discovery endpoint (issuer-path form).");
+  // req.params[0] is everything before /.well-known — the issuer's path
+  // component, one segment or several.
+  const path = String(req.params[0] || '').replace(/^\/+|\/+$/g, '');
+  sendOidcMetadata(req, res, baseUrlOf(req) + (path ? '/' + path : ''));
+  log.debug("Leaving the OpenID Connect Discovery endpoint (issuer-path form). path=" + path);
+});
 
 // The JWKS the metadata advertises, so jwks_uri actually resolves: the STS
 // signing key as a single RS256 JWK.
@@ -659,6 +861,200 @@ app.get('/oauth2/logout', function (req, res) {
   res.status(200).type('text/plain').send('Signed out of the mock authorization server.\n');
   log.debug("Leaving the logout endpoint.");
 });
+
+// ---------------------------------------------------------------------------
+// OpenID Connect Core 1.0 section 5.3 — the UserInfo Endpoint.
+//
+// A protected resource: present the access token from an OIDC flow and get back
+// the claims about the person it was issued for. GET and POST both, because
+// section 5.3.1 requires both, and the token comes from the Authorization header
+// only — RFC 6750 section 2.3's query-parameter form is NOT RECOMMENDED by its
+// own specification, leaks the token into logs and referrers, and could not carry
+// a DPoP-bound token in any case.
+//
+// **This is the one protected endpoint here that refuses a token it did not
+// issue, and the exception is the point rather than an inconsistency.** The
+// Credential, Deferred Credential and Notification endpoints accept a foreign
+// token because OID4VCI lets the authorization server be somebody else, so
+// refusing one would break the flow this mock exists to exercise. UserInfo is
+// defined the other way round: it answers "who did YOU authenticate", and about
+// the subject of a signature it cannot check this server knows nothing at all. A
+// mock that made up a profile for an unverifiable token would be teaching the
+// wrong lesson to the client reading its output — and it is also what makes
+// `cnf.jkt` mean something here, since the binding is only real on a token whose
+// signature was checked first.
+//
+// So four things are checked, and each has a distinct answer so a client can tell
+// them apart:
+//
+//   * the signature, issuer and expiry (401 invalid_token, with the reason — an
+//     expired token and a forged one are different problems and "invalid_token"
+//     alone sends people looking in the wrong place)
+//   * `typ`, so a refresh token or an id_token presented here is refused rather
+//     than quietly answered. They are all RS256 JWTs from the same key, so
+//     nothing but this claim distinguishes them
+//   * revocation, because /oauth2/revoke has to mean the same thing at every
+//     endpoint that reads a token — introspection reporting `active: false`
+//     while UserInfo still answers would make revocation decorative
+//   * the `openid` scope (403 insufficient_scope), which is what a token from the
+//     client_credentials or token-exchange grant lacks: those have no end-user,
+//     and there is no profile to return for a token that never described one
+//
+// Scope gating, and why the id_token does NOT do the same. Section 5.4 makes
+// `profile` and `email` requests for a named set of claims AT THIS ENDPOINT, so
+// this is one place in this mock where a scope genuinely changes the answer, and
+// that is worth being able to watch. The id_token still carries everything
+// whatever was asked for, which the same section permits — the claims go in the
+// id_token when there is no access token to fetch them with — and it is also the
+// only behaviour that can serve the implicit flow this server offers.
+// ---------------------------------------------------------------------------
+
+// Which claims each scope asks for (section 5.4), restricted to the ones
+// userFor() actually mints — `address` and `phone` are not in scopes_supported
+// for exactly that reason, so they are not here either.
+const USERINFO_SCOPE_CLAIMS = {
+  profile: ['name', 'given_name', 'family_name', 'preferred_username'],
+  email: ['email', 'email_verified']
+};
+
+// The reason a token failed to verify, in the words a person debugging it needs.
+// jwt.verify() throws one of a small set of named errors and the distinction
+// between them is the whole diagnosis, so it is not collapsed into "invalid".
+function tokenFailure(token) {
+  log.debug("Entering tokenFailure().");
+  try {
+    jwt.verify(token, STS.certPem, { algorithms: ['RS256'] });
+    log.debug("Leaving tokenFailure(). It verifies after all.");
+    return '';
+  } catch (e) {
+    let why;
+    if (e.name === 'TokenExpiredError') {
+      why = 'This access token expired at ' + new Date(e.expiredAt).toISOString() + '.';
+    } else if (e.name === 'NotBeforeError') {
+      why = 'This access token is not valid yet (nbf is in the future).';
+    } else {
+      // Everything else — a bad signature, a token from another issuer, an
+      // opaque string that is not a JWT at all. They are one answer because the
+      // server genuinely cannot tell them apart, and saying so is honest.
+      why = 'This access token was not issued by this server, or its signature does not verify ' +
+            'against the key at /oauth2/jwks (' + e.message + '). Unlike the OID4VCI credential ' +
+            'endpoints, UserInfo cannot accept a token from a separate authorization server: it ' +
+            'has nothing to say about a subject it did not authenticate.';
+    }
+    log.debug("Leaving tokenFailure(). " + e.name);
+    return why;
+  }
+}
+
+function userinfoResponse(req, res) {
+  log.debug("Entering userinfoResponse(). method=" + req.method);
+  const base = baseUrlOf(req);
+
+  // The Bearer/DPoP check every protected endpoint in this service shares. It
+  // answers the request itself and returns null when the token is missing, is
+  // bound and presented as Bearer, or comes with a proof that does not hold up.
+  const presented = dpop.presentedAccessToken(req, res, 'the userinfo endpoint');
+  if (!presented) {
+    log.debug("Leaving userinfoResponse(). No usable access token was presented.");
+    return;
+  }
+
+  // RFC 6750 section 3: a 401 from a protected resource carries a challenge
+  // naming the scheme, and 403 insufficient_scope names the scope that was
+  // missing. Without them a client is told it failed but not what to change.
+  //
+  // The description goes out twice — in the header and in the JSON body — and
+  // the header copy has to be cut down to ASCII first. An HTTP field value is
+  // ASCII (RFC 9110 section 5.5), node's setHeader THROWS on anything else
+  // rather than mangling it, and the descriptions in this file are prose written
+  // with em dashes and curly quotes like every other comment here. The first one
+  // that reached the header turned a 401 into a 500 — which is the worst place
+  // in the service to have one, because the exception replaces the very message
+  // that was explaining what went wrong. Quotes go too: they would close the
+  // quoted-string early. The body keeps the real text; JSON is UTF-8.
+  const headerSafe = function (text) {
+    return String(text)
+      .replace(/[‘’]/g, "'").replace(/[“”]/g, "'")
+      .replace(/[–—]/g, '-').replace(/…/g, '...')
+      .replace(/"/g, "'")
+      .replace(/[^\x20-\x7E]/g, '');
+  };
+  const challenge = function (status, error, description, extra) {
+    const scheme = presented.scheme === 'dpop' ? 'DPoP' : 'Bearer';
+    res.set('WWW-Authenticate', scheme + ' error="' + error + '", error_description="' +
+            headerSafe(description) + '"' + (extra || ''));
+    log.debug("Leaving userinfoResponse(). " + error + ".");
+    return oauthError(res, status, error, description);
+  };
+
+  if (!presented.verified) {
+    return challenge(401, 'invalid_token', tokenFailure(presented.accessToken));
+  }
+  const claims = presented.claims || {};
+  if (claims.typ !== 'Bearer') {
+    return challenge(401, 'invalid_token',
+      'This is a "' + (claims.typ || 'unknown') + '" token, not an access token. Every token this ' +
+      'server issues is an RS256 JWT signed with the same key, so the typ claim is the only thing ' +
+      'that tells a refresh token or an id_token apart from the access token UserInfo needs.');
+  }
+  if (claims.jti && revokedJtis.has(claims.jti)) {
+    return challenge(401, 'invalid_token',
+      'This access token was revoked at /oauth2/revoke. Introspection reports it inactive, and ' +
+      'UserInfo answers the same way — a revocation that only some endpoints honoured would be ' +
+      'worse than none.');
+  }
+  if (!hasScope(claims.scope, 'openid')) {
+    return challenge(403, 'insufficient_scope',
+      'UserInfo needs an access token issued with the "openid" scope; this one was issued with ' +
+      (claims.scope ? '"' + claims.scope + '"' : 'no scope at all') + '. A client_credentials or ' +
+      'token-exchange token has no end-user behind it, so there is no profile to return.',
+      ', scope="openid"');
+  }
+
+  // Who the token was issued for. `sub` comes from the token rather than from
+  // userFor(), because section 5.3.2 requires the sub here to be the one the
+  // client saw in the id_token and the token is the record of what that was; the
+  // rest is rebuilt from the username that travels with it.
+  const user = userFor(claims.username);
+  const body = { sub: claims.sub || user.sub };
+  Object.keys(USERINFO_SCOPE_CLAIMS).forEach(function (scope) {
+    if (!hasScope(claims.scope, scope)) return;
+    USERINFO_SCOPE_CLAIMS[scope].forEach(function (name) { body[name] = user[name]; });
+  });
+  logArtifact('UserInfo response', 'as returned', body);
+
+  // Section 5.3.2: the response is JSON unless the client registered a
+  // `userinfo_signed_response_alg`, in which case it is a JWT of the same claims
+  // with `iss` and `aud` added — the two members that make a signed response
+  // worth having, since without them it could be replayed to another client.
+  // This is read from the RFC 7591 registration the client already did here, so
+  // the two features meet where they should: register asking for a signed
+  // response and this endpoint starts signing for that client.
+  const registered = registeredClients.get(String(claims.client_id || '')) || {};
+  const alg = String(registered.userinfo_signed_response_alg || 'none');
+  if (alg !== 'none') {
+    if (alg !== 'RS256') {
+      // Refused rather than downgraded to JSON: silently ignoring the algorithm
+      // a client registered would leave it verifying a signature that is not
+      // there, and this key signs RS256 only.
+      log.debug("Leaving userinfoResponse(). The client registered an alg this server cannot sign.");
+      return oauthError(res, 500, 'server_error',
+        'This client registered userinfo_signed_response_alg="' + alg + '", and this server signs ' +
+        'RS256 only (see userinfo_signing_alg_values_supported).');
+    }
+    const signed = signJwt(Object.assign({ iss: base, aud: claims.client_id, typ: 'UserInfo' }, body));
+    res.status(200).type('application/jwt').set('Cache-Control', 'no-store').send(signed);
+    log.debug("Leaving userinfoResponse(). A signed UserInfo response for " + body.sub + ".");
+    return;
+  }
+  res.status(200).type('application/json').set('Cache-Control', 'no-store')
+     .send(JSON.stringify(body, null, 2));
+  log.debug("Leaving userinfoResponse(). " + Object.keys(body).length + " claim(s) for " + body.sub + ".");
+}
+
+app.get('/oauth2/userinfo', userinfoResponse);
+
+app.post('/oauth2/userinfo', userinfoResponse);
 
 // --- token endpoint ---------------------------------------------------------
 // ---------------------------------------------------------------------------

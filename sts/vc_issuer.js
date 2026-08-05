@@ -628,121 +628,6 @@ function spendProofNonces(proofJwts) {
   log.debug("Leaving spendProofNonces(). Spent " + spent.length + " distinct nonce(s).");
 }
 
-// ---------------------------------------------------------------------------
-// The access token on a protected endpoint — Bearer (RFC 6750) or DPoP (RFC
-// 9449 section 7).
-//
-// All three of this issuer's protected endpoints — Credential, Deferred
-// Credential and Notification — used to carry their own copy of a Bearer-only
-// check. They now share this one, because a per-endpoint copy is how one of
-// three ends up not demanding the proof, and the endpoint that forgot is the one
-// an attacker would use.
-//
-// It answers the request itself on failure and returns null, so a caller reads:
-//
-//   const presented = presentedAccessToken(req, res, 'the credential endpoint');
-//   if (!presented) return;
-//
-// What it will and will not vouch for. OID4VCI lets the authorization server be
-// somebody else (this suite points the metadata at Keycloak), so a token this
-// issuer cannot verify is still accepted — that is stated at the top of this
-// file and has not changed. The consequence for DPoP is worth being explicit
-// about: `cnf.jkt` is read from a token whose signature may be unverifiable
-// here, so for a foreign token the binding is checked between the proof and a
-// claim anyone could have written. When the token IS one of ours the signature
-// is checked first and the binding is real. A production resource server has no
-// such excuse and must verify the token before trusting its cnf.
-// ---------------------------------------------------------------------------
-function presentedAccessToken(req, res, where) {
-  log.debug("Entering presentedAccessToken(). where=" + where);
-  const auth = String(req.headers['authorization'] || '');
-  const match = /^(Bearer|DPoP)\s+(\S+)\s*$/i.exec(auth);
-  if (!match) {
-    // Both schemes are offered in the challenge, since either is acceptable
-    // here; RFC 9449 section 7.1 requires DPoP to appear when the server
-    // supports it, or a client has no way to discover that it may use it.
-    res.set('WWW-Authenticate', 'DPoP algs="' + dpop.SIGNING_ALGS.join(' ') + '", Bearer');
-    log.debug("Leaving presentedAccessToken(). No access token.");
-    vciError(res, 401, 'invalid_token',
-      'An access token is required, presented as "Bearer <token>" or, when it is DPoP-bound, ' +
-      'as "DPoP <token>" with a DPoP proof.');
-    return null;
-  }
-  const scheme = match[1].toLowerCase();
-  const accessToken = match[2];
-
-  // What the token says about its own binding. Verified where possible: an
-  // unverified token could have a cnf its holder wrote.
-  let claims = null;
-  let verified = false;
-  try {
-    claims = jwt.verify(accessToken, STS.certPem, { algorithms: ['RS256'] });
-    verified = true;
-  } catch (e) {
-    log.debug("This access token is not one of ours, so its claims are read unverified: " +
-              e.message);
-    try {
-      claims = jsonFromB64u(String(accessToken).split('.')[1]) || {};
-    } catch (e2) {
-      // Not a JWT at all. Opaque tokens are legal, and this issuer accepts them
-      // as it always has — there is simply no binding to find in one.
-      log.debug("...and it is not a JWT either, so there is no cnf to read: " + e2.message);
-      claims = {};
-    }
-  }
-  const boundTo = dpop.jktOf(claims);
-
-  // A bound token presented as Bearer is a protocol error even though the bytes
-  // are the same. Accepting it would throw the binding away silently, which is
-  // the single most likely way to implement DPoP and gain nothing.
-  if (boundTo && scheme !== 'dpop') {
-    res.set('WWW-Authenticate', 'DPoP error="invalid_token", error_description="the token is ' +
-                                'DPoP-bound and must be presented with the DPoP scheme"');
-    log.debug("Leaving presentedAccessToken(). A bound token was presented as Bearer.");
-    vciError(res, 401, 'invalid_token',
-      'This access token is DPoP-bound (it carries cnf.jkt), so it must be presented as ' +
-      '"Authorization: DPoP <token>" with a DPoP proof — not as a Bearer token.');
-    return null;
-  }
-
-  // No binding and no proof: a plain Bearer request, exactly as before.
-  if (!boundTo && req.headers['dpop'] === undefined) {
-    log.debug("Leaving presentedAccessToken(). A Bearer request. verified=" + verified);
-    return { accessToken: accessToken, claims: claims, scheme: scheme, jkt: '', verified: verified };
-  }
-
-  const checked = dpop.verifyProof(req.headers['dpop'], {
-    htm: req.method,
-    htu: dpop.htuOf(req),
-    accessToken: accessToken,
-    expectedJkt: boundTo
-  });
-  if (!checked.ok) {
-    // RFC 9449 section 9: a RESOURCE server asks for a nonce with a 401 and
-    // `use_dpop_nonce` in WWW-Authenticate — not with the 400 JSON body an
-    // authorization server uses. Getting this shape wrong leaves a conforming
-    // wallet unable to proceed, so the two are deliberately not shared.
-    if (checked.needNonce) {
-      res.set('DPoP-Nonce', dpop.issueNonce());
-      res.set('WWW-Authenticate', 'DPoP error="use_dpop_nonce", error_description="Resource ' +
-                                  'server requires nonce in DPoP proof"');
-      log.debug("Leaving presentedAccessToken(). Asking the wallet for a DPoP nonce.");
-      vciError(res, 401, 'use_dpop_nonce', 'Resource server requires nonce in DPoP proof');
-      return null;
-    }
-    res.set('WWW-Authenticate', 'DPoP error="invalid_dpop_proof"');
-    log.debug("Leaving presentedAccessToken(). The DPoP proof was refused.");
-    vciError(res, 401, 'invalid_dpop_proof', checked.description);
-    return null;
-  }
-  log.debug("Leaving presentedAccessToken(). A valid DPoP request. jkt=" + checked.jkt +
-            ", token verified=" + verified);
-  return {
-    accessToken: accessToken, claims: claims, scheme: scheme, jkt: checked.jkt,
-    verified: verified, dpop: checked
-  };
-}
-
 function grantedIdentifiers(accessToken) {
   log.debug("Entering grantedIdentifiers().");
   let claims;
@@ -1111,7 +996,7 @@ app.get('/bbs/keys/1', async function (req, res) {
 
 app.post('/oid4vci/credential', async function (req, res) {
   log.debug("Entering the OID4VCI credential endpoint.");
-  const presented = presentedAccessToken(req, res, 'the credential endpoint');
+  const presented = dpop.presentedAccessToken(req, res, 'the credential endpoint');
   if (!presented) return;
   const accessToken = presented.accessToken;
 
@@ -1270,7 +1155,7 @@ app.post('/oid4vci/credential', async function (req, res) {
 // this issuer never made or has already handed over.
 app.post('/oid4vci/deferred_credential', async function (req, res) {
   log.debug("Entering the OID4VCI deferred credential endpoint.");
-  if (!presentedAccessToken(req, res, 'the deferred credential endpoint')) return;
+  if (!dpop.presentedAccessToken(req, res, 'the deferred credential endpoint')) return;
 
   // Section 10 covers the Deferred Credential Request too, in the same words as
   // the Credential Request — so it goes through the same reader rather than
@@ -1335,7 +1220,7 @@ const NOTIFICATION_EVENTS = ['credential_accepted', 'credential_failure', 'crede
 
 app.post('/oid4vci/notification', function (req, res) {
   log.debug("Entering the OID4VCI notification endpoint.");
-  if (!presentedAccessToken(req, res, 'the notification endpoint')) return;
+  if (!dpop.presentedAccessToken(req, res, 'the notification endpoint')) return;
 
   let body = {};
   try {

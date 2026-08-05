@@ -39,8 +39,9 @@ services:
       # is right for a local dev site.
       - OID4VCI_WALLET_URL=${OID4VCI_WALLET_URL}
     build:
-      context: .
-      dockerfile: sts/Dockerfile
+      # The submodule's own root: see docker-compose.yml for why the context is
+      # ./sts rather than this repository with dockerfile: sts/Dockerfile.
+      context: ./sts
   # walt.id issuer-api2 — the real OpenID4VCI issuer the interop suite
   # (tests/sd_jwt_vc_waltid.js) runs against. Host networking, so the host-run
   # browser reaches it at localhost:7005 and it reaches Keycloak on the same

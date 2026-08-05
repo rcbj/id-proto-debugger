@@ -131,10 +131,31 @@ const SPECS = [
     where: 'IETF', url: 'https://www.rfc-editor.org/rfc/rfc9396',
     coverage: 'partial: authorization_details of type openid_credential, which is how OID4VCI asks ' +
               'for a credential without a scope. Granted details come back on the token response.' },
+  { id: 'rfc9207', name: 'RFC 9207 — Authorization Server Issuer Identification',
+    where: 'IETF', url: 'https://www.rfc-editor.org/rfc/rfc9207',
+    coverage: 'full: every authorization response carries iss, errors included, and both discovery ' +
+              'documents advertise authorization_response_iss_parameter_supported so a client knows ' +
+              'it may require it.' },
   { id: 'oidc', name: 'OpenID Connect Core 1.0',
     where: 'OpenID Foundation', url: 'https://openid.net/specs/openid-connect-core-1_0.html',
-    coverage: 'partial: id_token with nonce, at_hash and c_hash, and the three authentication ' +
-              'flows. There is no userinfo endpoint and no request object here.' },
+    coverage: 'partial: id_token with nonce, at_hash and c_hash, the three authentication flows, and ' +
+              'the section 5.3 UserInfo endpoint — which is the one place a scope changes what comes ' +
+              'back, since the id_token carries every claim whatever was asked for. No request object.' },
+  { id: 'oidc-discovery', name: 'OpenID Connect Discovery 1.0',
+    where: 'OpenID Foundation', url: 'https://openid.net/specs/openid-connect-discovery-1_0.html',
+    coverage: 'partial: the provider configuration document with every REQUIRED member of section 3, ' +
+              'built by extending the RFC 8414 document so the two cannot disagree about the twenty ' +
+              'members they share. Served at the well-known path, at the section 4 issuer-with-path ' +
+              'form, and at the RFC 8414 inserted-path form. The acr, display and encryption members ' +
+              'are ABSENT because none of them is implemented, and an invented value would be worse ' +
+              'than the silence. WebFinger issuer discovery (section 2) is not implemented.' },
+  { id: 'oidc-logout', name: 'OpenID Connect RP-Initiated Logout 1.0',
+    where: 'OpenID Foundation',
+    url: 'https://openid.net/specs/openid-connect-rpinitiated-1_0.html',
+    coverage: 'mock: end_session_endpoint really does end the session, but id_token_hint is neither ' +
+              'required nor checked and post_logout_redirect_uri is not validated against any ' +
+              'registration. Front-channel and back-channel logout are not implemented and the ' +
+              'discovery document says so rather than staying silent.' },
   { id: 'oid4vci', name: 'OpenID for Verifiable Credential Issuance 1.0',
     where: 'OpenID Foundation',
     url: 'https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html',
@@ -228,20 +249,43 @@ const ENDPOINTS = [
   { path: '/.well-known/oauth-authorization-server/*', group: 'OAuth 2.0 / OIDC',
     name: 'Authorization Server Metadata (issuer with a path)', specs: ['rfc8414'],
     what: 'The same document at the section 3.1 shape, where the issuer identifier carries a path.' },
+  { path: '/.well-known/openid-configuration', group: 'OAuth 2.0 / OIDC',
+    name: 'OpenID Provider Configuration', specs: ['oidc-discovery', 'oidc', 'oidc-logout', 'rfc8414',
+                                                   'rfc9207', 'rfc9449'],
+    what: 'What an OIDC client looks for first. The RFC 8414 document extended with what OpenID ' +
+          'Connect Discovery adds — subject_types_supported, id_token_signing_alg_values_supported, ' +
+          'claims_supported, the request/claims parameter booleans and end_session_endpoint. Built ' +
+          'from the same source as the RFC 8414 document so the two cannot drift. No ' +
+          'userinfo_endpoint: there is no userinfo endpoint, and the claims are in the id_token.' },
+  { path: '/.well-known/openid-configuration/*', group: 'OAuth 2.0 / OIDC',
+    name: 'OpenID Provider Configuration (RFC 8414 inserted-path form)',
+    specs: ['oidc-discovery', 'rfc8414'],
+    what: 'The same document where the well-known segment is INSERTED before the issuer\'s path, ' +
+          'which is RFC 8414 section 3.1\'s shape rather than OIDC\'s. Answered like the ' +
+          'oauth-authorization-server route: the issuer is the base URL the request arrived on.' },
+  { path: '/*/.well-known/openid-configuration', group: 'OAuth 2.0 / OIDC',
+    name: 'OpenID Provider Configuration (issuer with a path)', specs: ['oidc-discovery'],
+    what: 'Discovery 1.0 section 4 APPENDS the well-known path to an issuer that carries one, which ' +
+          'is the other URL from the row above and the usual reason a discovery fetch 404s. Here the ' +
+          'issuer in the document is rebuilt from the path, since a document a client fetched at ' +
+          '/tenant1/... and that claims a different issuer is one it must reject.' },
   { path: '/oauth2/jwks', group: 'OAuth 2.0 / OIDC', name: 'JWKS',
     specs: ['rfc7515', 'rfc7519'],
     what: 'The signing key as a single RS256 JWK with its x5c. Regenerated on every start, so it is ' +
           'served no-store.' },
   { path: '/oauth2/authorize', group: 'OAuth 2.0 / OIDC', name: 'Authorization endpoint',
-    specs: ['rfc6749', 'oidc', 'rfc7636', 'rfc9396'], effect: 'needs client_id and redirect_uri — answers 400 when followed bare, then shows the login screen once they are supplied',
+    specs: ['rfc6749', 'oidc', 'rfc7636', 'rfc9396', 'rfc9207'], effect: 'needs client_id and redirect_uri — answers 400 when followed bare, then shows the login screen once they are supplied',
     what: 'Shows a login screen, then issues a code, token and/or id_token per response_type. ' +
           'Carries PKCE, nonce, authorization_details and OID4VCI issuer_state.' },
   { path: '/oauth2/login', group: 'OAuth 2.0 / OIDC', name: 'Login form target',
     specs: ['oidc'],
     what: 'Where the login screen posts. No password is checked; the username typed becomes the ' +
           'identity in every token that follows.' },
-  { path: '/oauth2/logout', group: 'OAuth 2.0 / OIDC', name: 'Session end',
-    specs: ['oidc'], effect: 'drops the mock session cookie', what: 'Drops the session cookie and returns to post_logout_redirect_uri.' },
+  { path: '/oauth2/logout', group: 'OAuth 2.0 / OIDC', name: 'Session end (end_session_endpoint)',
+    specs: ['oidc', 'oidc-logout'], effect: 'drops the mock session cookie',
+    what: 'What end_session_endpoint in the OIDC discovery document points at. Drops the session ' +
+          'cookie and returns to post_logout_redirect_uri. id_token_hint is neither required nor ' +
+          'checked and the redirect target is not validated.' },
   { path: '/oauth2/token', group: 'OAuth 2.0 / OIDC', name: 'Token endpoint',
     specs: ['rfc6749', 'oidc', 'rfc8693', 'rfc9396', 'oid4vci', 'rfc9449', 'rfc7800'],
     what: 'authorization_code, refresh_token, client_credentials, password, token-exchange, and ' +
@@ -254,6 +298,17 @@ const ENDPOINTS = [
           '8/9 server-supplied nonce requirement on and off at runtime, so the 401/retry exchange ' +
           'can be exercised without restarting the service. GET reports the current state; POST ' +
           '{"required": true|false} sets it.' },
+  { path: '/oauth2/userinfo', group: 'OAuth 2.0 / OIDC', name: 'UserInfo endpoint',
+    specs: ['oidc', 'rfc6750', 'rfc9449', 'rfc7591'],
+    effect: 'answers 401 with a WWW-Authenticate challenge when followed bare — it is a protected ' +
+            'resource and needs the access token from an OIDC flow',
+    what: 'OIDC Core section 5.3, on GET and POST. The claims about whoever the access token was ' +
+          'issued for, gated by its scope (section 5.4) — which is the only place in this mock a ' +
+          'scope changes the answer. THE ONE PROTECTED ENDPOINT HERE THAT REFUSES A TOKEN IT DID NOT ' +
+          'ISSUE: it verifies the signature, the typ (so a refresh token or an id_token is refused), ' +
+          'revocation and the openid scope, each with its own error. Bearer or DPoP-bound, through ' +
+          'the same check the credential endpoints use. Returns application/jwt instead of JSON to a ' +
+          'client that registered userinfo_signed_response_alg=RS256.' },
   { path: '/oauth2/introspect', group: 'OAuth 2.0 / OIDC', name: 'Introspection endpoint',
     specs: ['rfc7662'], what: 'Honest active/inactive with the presented token\'s claims.' },
   { path: '/oauth2/revoke', group: 'OAuth 2.0 / OIDC', name: 'Revocation endpoint',
@@ -593,7 +648,8 @@ function renderPage(base, report) {
 
   html += '<p><small>Machine-readable: <code>' + esc(base) +
     '/sts-metadata?format=json</code>. This document is not a specification-defined discovery ' +
-    'document &mdash; for those, see <code>/.well-known/oauth-authorization-server</code>, ' +
+    'document &mdash; for those, see <code>/.well-known/openid-configuration</code>, ' +
+    '<code>/.well-known/oauth-authorization-server</code>, ' +
     '<code>/.well-known/openid-credential-issuer</code>, <code>/.well-known/jwt-vc-issuer</code>, ' +
     '<code>/.well-known/did.json</code> and ' +
     '<code>/.well-known/did-configuration.json</code>.</small></p>';

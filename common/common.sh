@@ -487,6 +487,95 @@ renderWaltidConfig()
 }
 
 # ---------------------------------------------------------------------------
+# Make sure the mock STS is on disk before anything tries to build it.
+#
+# sts/ is a SUBMODULE, not code in this repository: it is
+# https://github.com/rcbj/mock-sts.git on branch main, and what this repository
+# records is a link to it. Two things then depend on the checkout existing, and
+# both fail a long way from the cause when it does not:
+#
+#   * four compose files build the image with `context: ./sts`, and compose says
+#     "failed to read dockerfile" — a message about a path, not about a submodule;
+#   * tests/Dockerfile copies sts/bbs2023.js into the tests image so that
+#     tests/bbs2023_cryptosuite.js can check the wallet's cryptosuite against the
+#     issuer's, and the build says "COPY sts/bbs2023.js: not found".
+#
+# A `git clone` without --recurse-submodules leaves exactly that state: sts/
+# present and EMPTY. So this initialises it when it is missing and refuses the run
+# when it cannot, rather than letting either message stand as the explanation.
+#
+# WHICH COMMIT. By default the one this repository records, which is the point of
+# a submodule and is what makes a build repeatable. Set MOCK_STS_TRACK_REMOTE=1 to
+# take the tip of the branch .gitmodules names (main) instead — `git submodule
+# update --remote` — which resolves the link at build time in the strongest sense,
+# at the cost of the run not being repeatable and of leaving the submodule pointer
+# showing as modified in `git status`.
+# ---------------------------------------------------------------------------
+requireMockStsCheckout()
+{
+  echo "Entering requireMockStsCheckout()."
+  local root="${1:-.}"
+  local dir="${root}/sts"
+  local track_remote="${MOCK_STS_TRACK_REMOTE:-0}"
+
+  # Two FILES, not a directory test: an interrupted `git submodule update`, and
+  # compose itself, both leave an empty sts/ behind, so "the directory is there"
+  # is precisely the state this exists to catch. The Dockerfile is what compose
+  # reads and server.js is what the image runs, so between them they say the
+  # checkout is real rather than merely present.
+  if [ -f "${dir}/Dockerfile" ] && [ -f "${dir}/server.js" ] && [ "${track_remote}" != "1" ];
+  then
+    echo "Leaving requireMockStsCheckout(). ${dir} is populated."
+    return 0
+  fi
+
+  if [ ! -d "${root}/.git" ] && [ ! -f "${root}/.git" ];
+  then
+    echo "ERROR: ${dir} has no checkout of the mock STS in it, and ${root} is not a git" >&2
+    echo "       working tree, so the submodule cannot be initialised here. Clone it directly:" >&2
+    echo "         git clone -b main https://github.com/rcbj/mock-sts.git ${dir}" >&2
+    return 1
+  fi
+  if [ ! -f "${root}/.gitmodules" ] || ! grep -q '^[[:space:]]*path[[:space:]]*=[[:space:]]*sts[[:space:]]*$' "${root}/.gitmodules";
+  then
+    echo "ERROR: ${dir} has no checkout of the mock STS in it and ${root}/.gitmodules does not" >&2
+    echo "       declare it, so there is nothing to initialise. The STS lives in its own" >&2
+    echo "       repository now; see the 'Mock STS' section of CLAUDE.md." >&2
+    return 1
+  fi
+
+  local update_args="--init"
+  if [ "${track_remote}" = "1" ];
+  then
+    # --remote checks out the tip of the branch named in .gitmodules rather than
+    # the recorded commit. Deliberately opt-in: see the note above.
+    update_args="--init --remote"
+    echo "MOCK_STS_TRACK_REMOTE=1: taking the tip of the branch .gitmodules names, not the recorded commit."
+  fi
+  echo "Initialising the mock STS submodule in ${dir}."
+  git -C "${root}" submodule update ${update_args} -- sts
+  if [ $? -ne 0 ];
+  then
+    echo "ERROR: 'git submodule update ${update_args} -- sts' failed in ${root}." >&2
+    echo "       The mock STS is fetched over https from https://github.com/rcbj/mock-sts.git," >&2
+    echo "       so this is usually network access or a proxy rather than credentials." >&2
+    return 1
+  fi
+
+  # Asked again rather than assumed: `git submodule update` exits 0 for a
+  # submodule it does not know about, which is the one case that would otherwise
+  # walk straight into the compose error this function exists to prevent.
+  if [ ! -f "${dir}/Dockerfile" ] || [ ! -f "${dir}/server.js" ];
+  then
+    echo "ERROR: ${dir} is still empty after 'git submodule update ${update_args} -- sts'." >&2
+    echo "       Run 'git submodule status sts' in ${root} to see what it thinks is there." >&2
+    return 1
+  fi
+  echo "Leaving requireMockStsCheckout(). ${dir} is populated."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Wait for the walt.id services to answer.
 #
 # Both are JVM services that take tens of seconds to start listening. The

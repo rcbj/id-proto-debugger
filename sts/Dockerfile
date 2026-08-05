@@ -1,6 +1,7 @@
-# WS-Trust STS mock (CI fallback for the WS-Trust workflow tests; see the plan /
-# README). A small standalone Node service. Uses the same nvm-based Node 24.16.0
-# install as api/client/tests for consistency (rather than an official node image).
+# The mock STS: eight protocol families in one small Node service. See README.md.
+#
+# Pinned to Node 24.16.0 via nvm rather than an official node image, which is what
+# the project this was extracted from does for all of its services.
 FROM ubuntu:latest
 
 # replace shell with bash so we can source files
@@ -42,7 +43,7 @@ RUN npm -v
 
 # Install dependencies (package-lock.json is optional; wildcard copies it when
 # present so `npm ci`-style reproducibility works once a lock is committed).
-COPY sts/package*.json ./
+COPY package*.json ./
 RUN npm install --omit=dev && npm cache clean --force
 
 # The service is eleven modules, and server.js is only the shell that requires the
@@ -53,14 +54,16 @@ RUN npm install --omit=dev && npm cache clean --force
 # nothing about the cause. This wildcard is deliberate — a per-file list here
 # would have to be edited every time a module is added, and forgetting is silent
 # until the containerized run.
-COPY sts/*.js ./
-# The JSON-LD contexts the bbs-2023 cryptosuite (sts/bbs2023.js, copied above)
-# loads AT REQUIRE TIME. Mandatory: the module reads them at module scope, so a
-# missing one is not a degraded feature — the service does not start at all.
-COPY client/src/contexts ./contexts
+COPY *.js ./
+# The JSON-LD contexts the bbs-2023 cryptosuite (bbs2023.js, copied above) loads AT
+# REQUIRE TIME. Mandatory: the module reads them at module scope, so a missing one is
+# not a degraded feature — the service does not start at all. In the parent project
+# these live in the client's tree and bbs2023.js looks there first; here they are a
+# sibling directory, which is that function's second candidate.
+COPY contexts ./contexts
 # The service selects its configuration (log level) with CONFIG_FILE, the same
 # way api and client do. The compose files override this per stack.
-COPY sts/env ./env
+COPY env ./env
 ENV CONFIG_FILE=./env/local.js
 
 EXPOSE 8081
