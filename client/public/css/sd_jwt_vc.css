@@ -287,7 +287,20 @@ button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
 .vc-config-group { break-inside: auto; }
 h4.vc-group-heading { break-after: avoid; break-inside: avoid; }
 .vc-config-table { width: 100%; table-layout: fixed; }
-.vc-config-table tr { break-inside: avoid; }
+/* A row must not be split by a column break: the name is in one cell and its input
+   in the next, so a break between them strands the tail of a wrapped identifier at
+   the top of the following column, a whole column away from the field it labels.
+   `break-inside: avoid` on the tr alone does NOT achieve that in Chrome — the row
+   box is kept together but its CELL CONTENTS still fragment, so a two-line member
+   name puts its first line beside the input at the foot of one column and its
+   second line at the head of the next. It has to be declared on the cells (and the
+   tbody) as well. The symptom is easy to misread: because getBoundingClientRect()
+   returns the UNION of an element's fragments, a fragmented label reports a box
+   spanning both columns, which overlaps the input's box and reads as "the member
+   name is drawn on top of its own input" when nothing is overlapping at all. */
+.vc-config-table tr,
+.vc-config-table tbody,
+.vc-config-table td { break-inside: avoid; }
 /* A member name is a long unbroken identifier — `id_token_encryption_enc_values_supported`
    is 40 characters with no break opportunity — and in a third of the width it ran
    straight over the input beside it, so both were unreadable. It wraps instead. */
