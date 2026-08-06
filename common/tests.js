@@ -52,32 +52,60 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     await driver.wait(until.elementLocated(btn_oidc_populate_meta_data), waitTime);
     await driver.wait(until.elementIsVisible(driver.findElement(btn_oidc_populate_meta_data)), waitTime);
     await driver.executeScript("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", await driver.findElement(btn_oidc_populate_meta_data));
-    await driver.findElement(btn_oidc_populate_meta_data).click();
 
-    // Wait for the CONTENT, not for the click to return. Populate fetches the
-    // discovery document and fills these fields asynchronously, and until this
-    // was here every caller raced it: the fields still held the dummy defaults
-    // that initValuesToLocalStorage() seeds (`https://localhost/oauth2/...`), so
-    // the authorization request went to a host nothing is listening on. It
-    // failed roughly one run in a dozen, and the symptom named the OP — "the OP
-    // did not show its login screen", at https://localhost — rather than the
-    // race. See tests/wait_for.js for the general form of this mistake.
+    // Click Populate and wait for the CONTENT, and be willing to click AGAIN.
+    //
+    // Two separate things are being waited on here, and conflating them is what
+    // made this flaky. Retrieve fetches the discovery document asynchronously and
+    // the Populate button is rendered only when it arrives, so waiting for that
+    // button does gate on the fetch. But the click itself can still land without
+    // effect — the button is re-rendered as the table is built, so a click can
+    // reach the copy that is being replaced — and the handler leaves every field
+    // untouched when it runs against an empty document (jQuery's .val(undefined)
+    // is a no-op, so the seeded placeholders simply remain). One click and a bare
+    // wait therefore fails with "still reads https://localhost/..." roughly once
+    // per cold run, which is what happened to the OAuth2 Client Credentials job
+    // on 2026-08-05.
+    //
+    // Re-finding the button each time also avoids a stale reference to the copy
+    // that was replaced. If the document genuinely never arrives we never get
+    // here — that failure belongs to the wait above, and says so.
     const endpointField = By.id("authorization_endpoint");
+    const deadline = Date.now() + waitTime * 8;
     let seen = "";
-    try {
-      await driver.wait(async function () {
-        const fields = await driver.findElements(endpointField);
-        if (!fields.length) return false;
-        seen = (await fields[0].getAttribute("value")) || "";
-        // Filled, and no longer the seeded placeholder. Checked this way rather
-        // than against an expected URL so that every caller — Keycloak's realms,
-        // the mock STS, a deployed OP — is covered by the one condition.
-        return !!seen && seen.indexOf("https://localhost/oauth2/") !== 0;
-      }, waitTime * 5);
-    } catch (e) {
-      throw new Error("Metadata retrieval did not populate the endpoints: #authorization_endpoint " +
-                      "still reads \"" + seen + "\" after Populate. The discovery document is " +
-                      discovery_endpoint + ".");
+    let clicks = 0;
+    let filled = false;
+    while (Date.now() < deadline && !filled) {
+      const buttons = await driver.findElements(btn_oidc_populate_meta_data);
+      if (buttons.length) {
+        try {
+          await buttons[buttons.length - 1].click();
+          clicks++;
+        } catch (e) {
+          // Replaced between find and click. The next pass picks up the new one.
+          log.debug("populateMetadata(): the Populate button went stale; retrying. " + e.message);
+        }
+      }
+      try {
+        await driver.wait(async function () {
+          const fields = await driver.findElements(endpointField);
+          if (!fields.length) return false;
+          seen = (await fields[0].getAttribute("value")) || "";
+          // Filled, and no longer the seeded placeholder. Checked this way rather
+          // than against an expected URL so the one condition covers Keycloak's
+          // realms, the mock STS and a deployed OP alike.
+          return !!seen && seen.indexOf("https://localhost/oauth2/") !== 0;
+        }, Math.min(waitTime, Math.max(500, deadline - Date.now())));
+        filled = true;
+      } catch (e) {
+        // Not yet. Loop and click again while there is time left.
+        log.debug("populateMetadata(): endpoints not populated yet after " + clicks + " click(s).");
+      }
+    }
+    if (!filled) {
+      throw new Error("Metadata retrieval did not populate the endpoints after " + clicks +
+                      " Populate click(s): #authorization_endpoint still reads \"" + seen +
+                      "\". The discovery document is " + discovery_endpoint + ".");
     }
     log.info("Leaving populateMetadata(). authorization_endpoint=" + seen);
   }

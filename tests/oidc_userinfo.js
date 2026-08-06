@@ -93,11 +93,62 @@ function claimsOf(token) {
   return JSON.parse(b64uDecode(parts[1]).toString("utf8"));
 }
 
+// Read a field's value on a page that may still be rearranging itself.
+//
+// Stale-tolerant for the same reason clickStable() is, and the window is easy to
+// miss: it is between findElements() and getAttribute(), two round trips to the
+// browser with a re-render able to land in between. debugger2.html rebuilds its
+// panes on load, so every read taken just after "Return to debugger" is exposed.
+// Returns null when the field genuinely is not there, which callers already
+// handle; only staleness is retried.
 async function valueOf(driver, id) {
-  const found = await driver.findElements(By.id(id));
-  if (!found.length) return null;
-  return await found[0].getAttribute("value");
+  const deadline = Date.now() + waitTime * 2;
+  for (;;) {
+    try {
+      const found = await driver.findElements(By.id(id));
+      if (!found.length) return null;
+      return await found[0].getAttribute("value");
+    } catch (e) {
+      if (Date.now() >= deadline || !/stale element/i.test(e.message)) throw e;
+      await wait(100);
+    }
+  }
 }
+
+// Click something on a page that is still rearranging itself.
+//
+// debugger2.html re-renders its panes on load and after every token call, so an
+// element found a moment ago can be detached by the time it is clicked —
+// StaleElementReferenceError, which is not a product fault and not something the
+// caller can do anything about. Re-finding on each attempt is the fix; the
+// element is located afresh inside the loop rather than passed in, because a
+// WebElement handle is exactly the thing that goes stale.
+async function clickStable(driver, locator, what, { within } = {}) {
+  log.debug("Entering clickStable(). what=" + what);
+  const deadline = Date.now() + waitTime * 4;
+  let last = null;
+  while (Date.now() < deadline) {
+    try {
+      const root = within ? await driver.findElement(By.id(within)) : driver;
+      const found = await root.findElements(locator);
+      if (found.length) {
+        await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", found[0]);
+        await found[0].click();
+        log.debug("Leaving clickStable(). Clicked " + what + ".");
+        return;
+      }
+      last = new Error("not present yet");
+    } catch (e) {
+      // Stale, detached, or momentarily not interactable: the page is mid-render.
+      last = e;
+    }
+    await wait(150);
+  }
+  throw new Error("Could not click " + what + " — the page kept changing underneath it. Last: " +
+                  (last ? last.message.split("\n")[0] : "(never found)"));
+}
+
+const wait = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 // ---------------------------------------------------------------------------
 // Tokens, through the Authorization Code flow.
@@ -179,11 +230,8 @@ async function obtainTokens(driver, { clientId, scope, user }) {
 async function refreshTokens(driver) {
   log.info("Entering refreshTokens().");
   const before = (await valueOf(driver, "refresh_access_token")) || "";
-  const btn = By.id("refresh_btn");
-  await driver.wait(until.elementLocated(btn), waitTime * 3);
-  await driver.executeScript("arguments[0].scrollIntoView({block:'center'});",
-                             await driver.findElement(btn));
-  await driver.findElement(btn).click();
+  await driver.wait(until.elementLocated(By.id("refresh_btn")), waitTime * 3);
+  await clickStable(driver, By.id("refresh_btn"), "the refresh button");
   let refreshed = "";
   await driver.wait(async function () {
     refreshed = (await valueOf(driver, "refresh_access_token")) || "";
@@ -218,8 +266,8 @@ async function exerciseUserInfoLink(driver, source, expected) {
     "The \"" + source.name + "\" pane holds no ID token, so it should not be offering a UserInfo " +
     "Data link at all.");
 
-  await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", links[0]);
-  await links[0].click();
+  await clickStable(driver, By.css(source.link), "the UserInfo Data link in \"" + source.name + "\"",
+                    { within: source.pane });
   await driver.wait(until.urlContains("/userinfo.html"), waitTime * 3);
 
   // The default configuration, asserted rather than assumed — and left alone,
@@ -252,7 +300,8 @@ async function exerciseUserInfoLink(driver, source, expected) {
     "\" pane. The response would still look right — every token here belongs to the same user — " +
     "so this is the only place the wrong one shows up.");
 
-  await driver.findElement(By.css("input[type=\"submit\"][value=\"Retrieve UserInfo\"]")).click();
+  await clickStable(driver, By.css("input[type=\"submit\"][value=\"Retrieve UserInfo\"]"),
+                    "Retrieve UserInfo");
 
   // Wait for the CONTENT: the textarea ships with whitespace in it, which is
   // truthy and is not JSON. See tests/wait_for.js.
@@ -289,9 +338,7 @@ async function exerciseUserInfoLink(driver, source, expected) {
            " (sub " + claims.sub + "), matching the ID token in that pane.");
 
   // ...and back, which is the other half of "exercise the page".
-  const back = By.partialLinkText("Return to debugger");
-  await driver.wait(until.elementLocated(back), waitTime);
-  await driver.findElement(back).click();
+  await clickStable(driver, By.partialLinkText("Return to debugger"), "Return to debugger");
   await driver.wait(until.urlContains("/debugger2.html"), waitTime * 3);
   await driver.wait(until.elementLocated(By.id(source.pane)), waitTime * 3);
   log.info("[" + source.name + "] OK — Return to debugger came back with the pane intact.");
@@ -325,8 +372,7 @@ async function activateHistoryGeneration(driver, generation) {
   assert.strictEqual(found.length, 1,
     "Token History has no Activate button for generation " + generation + " (found " + found.length +
     "). Either the refresh call did not add a second set, or that generation is already active.");
-  await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", found[0]);
-  await found[0].click();
+  await clickStable(driver, button, "the Activate button for generation " + generation);
   await driver.wait(async function () {
     const pane = await driver.findElements(By.id("cv_access_token"));
     if (!pane.length) return false;
@@ -340,7 +386,15 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    options.addArguments("--headless");
+    // "=new", not bare --headless. The tests image pins Chrome 121, where plain
+    // --headless selects the OLD headless implementation — and in that one
+    // --unsafely-treat-insecure-origin-as-secure has no effect, so on the
+    // containerized suite's http://client:3000 origin window.crypto.subtle stays
+    // undefined and the DPoP key pair is never generated. The symptom is a
+    // timeout waiting for a key, naming nothing about crypto or headless mode.
+    // Invisible locally: from Chrome 132 the old mode is gone and --headless IS
+    // the new one, so this passes on a modern browser and fails only in CI.
+    options.addArguments("--headless=new");
   }
   options.addArguments("--no-sandbox");
   options.addArguments("--disable-dev-shm-usage");

@@ -214,7 +214,15 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    options.addArguments("--headless");
+    // "=new", not bare --headless. The tests image pins Chrome 121, where plain
+    // --headless selects the OLD headless implementation — and in that one
+    // --unsafely-treat-insecure-origin-as-secure has no effect, so on the
+    // containerized suite's http://client:3000 origin window.crypto.subtle stays
+    // undefined and the DPoP key pair is never generated. The symptom is a
+    // timeout waiting for a key, naming nothing about crypto or headless mode.
+    // Invisible locally: from Chrome 132 the old mode is gone and --headless IS
+    // the new one, so this passes on a modern browser and fails only in CI.
+    options.addArguments("--headless=new");
   }
   options.addArguments("--no-sandbox");
   // Use /tmp instead of the container's tiny (64MB) /dev/shm.
