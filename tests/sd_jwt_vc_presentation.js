@@ -755,7 +755,65 @@ async function withholdARequestedClaim(driver, held) {
 // the side of a pane and the page must not scroll sideways. Checked with values
 // far longer than the real ones, because the real ones are short enough to hide
 // the defect.
+//
+// SPILL_SCAN and spillReport() below exist for the same reason they do in
+// tests/sd_jwt_vc_issuance.js, and are deliberately a copy of them rather than a
+// shared module: tests/Dockerfile copies test files in FLAT by an explicit list,
+// so a new helper file that nobody remembers to add to that COPY does not fail —
+// it vanishes from the image and takes its callers with it. The page-scroll
+// assertion used to report only "Got 8px.", which names neither the element nor
+// the box model behind it; this reports both, and marks the elements that sit
+// inside an `overflow-x: hidden` ancestor (the header and footer bars) because
+// those stick out in the geometry without being able to scroll the document.
 // ---------------------------------------------------------------------------
+var SPILL_SCAN =
+  "var vw = document.documentElement.clientWidth;" +
+  "var past = [];" +
+  "Array.prototype.slice.call(document.querySelectorAll('body *')).forEach(function (e) {" +
+  "  var r = e.getBoundingClientRect();" +
+  "  if (r.width <= 0 && r.height <= 0) return;" +
+  "  var spill = Math.round(r.right - vw);" +
+  "  if (spill <= 0) return;" +
+  "  var clippedBy = '';" +
+  "  for (var p = e.parentElement; p && p !== document.body; p = p.parentElement) {" +
+  "    var pov = getComputedStyle(p).overflowX;" +
+  "    if (pov !== 'visible') {" +
+  "      clippedBy = p.tagName + (p.id ? '#' + p.id : '') +" +
+  "                  (p.className ? '.' + String(p.className).split(' ')[0] : '');" +
+  "      break;" +
+  "    }" +
+  "  }" +
+  "  var cs = getComputedStyle(e);" +
+  "  past.push({ tag: e.tagName, id: e.id || '', cls: String(e.className || '').slice(0, 40)," +
+  "              left: Math.round(r.left), right: Math.round(r.right)," +
+  "              width: Math.round(r.width), spill: spill, clippedBy: clippedBy," +
+  "              pos: cs.position, ws: cs.whiteSpace, ovx: cs.overflowX," +
+  "              text: (e.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) });" +
+  "});" +
+  "past.sort(function (a, b) {" +
+  "  if (!a.clippedBy !== !b.clippedBy) return a.clippedBy ? 1 : -1;" +
+  "  return b.spill - a.spill;" +
+  "});" +
+  "past = past.slice(0, 12);";
+
+function spillReport(result) {
+  var head = "(viewport " + result.vw + "px, window " + result.iw + "px, content " +
+             result.sw + "px, body margin " + result.bodyMargin + ")";
+  if (!result.past || !result.past.length) {
+    return head + " — but no element's right edge passes the viewport, so the width " +
+           "comes from the box model (a margin, a negative offset or a transform) " +
+           "rather than from any one box.";
+  }
+  var lines = result.past.map(function (o) {
+    return "    " + o.tag + (o.id ? "#" + o.id : "") + (o.cls ? "." + o.cls : "") +
+           " spills " + o.spill + "px (left " + o.left + ", width " + o.width +
+           ", position " + o.pos + ", white-space " + o.ws + ", overflow-x " + o.ovx + ")" +
+           (o.clippedBy ? " [clipped by " + o.clippedBy + " — cannot scroll the page]" : "") +
+           (o.text ? " “" + o.text + "”" : "");
+  });
+  return head + " past the right edge:\n" + lines.join("\n");
+}
+
 async function panesContainTheirContent(driver) {
   log.debug("Entering panesContainTheirContent().");
   log.info("=== Nothing overflows its pane ===");
@@ -782,7 +840,13 @@ async function panesContainTheirContent(driver) {
       "});" +
       "var ol = document.getElementById('vp_steps');" +
       "var items = Array.prototype.slice.call(ol.querySelectorAll('li'));" +
-      "return { overflowing: out," +
+      SPILL_SCAN +
+      "return { overflowing: out, past: past," +
+      "         vw: document.documentElement.clientWidth," +
+      "         iw: window.innerWidth," +
+      "         sw: document.documentElement.scrollWidth," +
+      "         bodyMargin: getComputedStyle(document.body).marginLeft + '/' +" +
+      "                     getComputedStyle(document.body).marginRight," +
       "         doc: document.documentElement.scrollWidth - document.documentElement.clientWidth," +
       "         steps: items.length," +
       "         stepTops: items.map(function (li) { return Math.round(li.getBoundingClientRect().top); }) };");
@@ -792,7 +856,8 @@ async function panesContainTheirContent(driver) {
         return o.id + " (" + o.tag + " in " + o.pane + ", " + o.over + "px)";
       }).join(", "));
     assert.ok(result.doc <= 0,
-      pages[i] + " should not scroll horizontally, even with values this long. Got " + result.doc + "px.");
+      pages[i] + " should not scroll horizontally, even with values this long. Got " +
+      result.doc + "px. " + spillReport(result));
     // And the workflow's own step links: all four, on one row, like the issuance
     // workflow's five.
     assert.strictEqual(result.steps, 4, pages[i] + " should link to all four steps.");

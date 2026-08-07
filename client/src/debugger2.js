@@ -3,6 +3,9 @@ const appconfig = require(process.env.CONFIG_FILE);
 // both Configuration Parameters panes carry the same fields and defaults.
 const opMetadata = require("./op_metadata");
 const sdJwtVc = require("./sd_jwt_vc");
+// DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
+// see oauth_dpop.js for why the two are separate state.
+const oauthDpop = require("./oauth_dpop");
 const vciWallet = require("./vci_wallet");
 const bunyan = require("bunyan");
 const DOMPurify = require("dompurify");
@@ -152,14 +155,24 @@ function tokenButtonClick() {
     // (and be refused) or name an endpoint this browser is not calling. Saying so
     // beats sending an unbound token onward as if it were bound — which is the
     // failure this whole mechanism exists to prevent.
-    if (sdJwtVc.dpopEnabled()) {
+    var dpopOnHere = sdJwtVc.isFlowActive() ? sdJwtVc.dpopEnabled() : oauthDpop.enabled();
+    if (dpopOnHere) {
       log.debug("DPoP is on, but this call is proxied through the api, which does not forward " +
                 "DPoP proofs.");
-      $("#sdjwtvc_banner").append(
-        "<p class='vc-bad'>DPoP is on, but this Token Request is being <strong>proxied through " +
-        "the api</strong>, which does not forward DPoP proofs \u2014 so the token will come back " +
-        "as an ordinary Bearer token. Untick <em>Call the token endpoint from the api</em> to " +
-        "send the request from the browser and have it bound.</p>");
+      var proxyNote = "DPoP is on, but this Token Request is being <strong>proxied through " +
+                      "the api</strong>, which does not forward DPoP proofs \u2014 so the token will " +
+                      "come back as an ordinary Bearer token. Choose <em>Front End</em> for " +
+                      "<em>Initiate call from</em> to send the request from the browser and have " +
+                      "it bound.";
+      // Two workflows, two places to say it: the VC workflow has its hand-off
+      // banner, and this page's own DPoP pane has a status line. Writing only to
+      // the banner (which does not exist here) meant an OAuth2/OIDC user got no
+      // warning at all and an unbound token with no explanation.
+      if (sdJwtVc.isFlowActive()) {
+        $("#sdjwtvc_banner").append("<p class='vc-bad'>" + proxyNote + "</p>");
+      } else {
+        $("#dpop_status").html(DOMPurify.sanitize("<span class='dbg-bad'>" + proxyNote + "</span>"));
+      }
     }
     $.ajax({
       type: "POST",
@@ -195,10 +208,16 @@ function dpopTokenRequestHeaders(tokenEndpoint) {
   log.debug("Entering dpopTokenRequestHeaders().");
   var context = null;
   try {
-    context = sdJwtVc.dpopContext();
+    // WHICH workflow is asking. This page is the OAuth2/OIDC token exchange and
+    // the VC workflow's authorization-code leg, and each decides DPoP for itself:
+    // the VC workflow on issuance step 2, this one in its own DPoP pane below.
+    // Reading the VC switch unconditionally — which is what this did — put a proof
+    // on every browser-direct Token Request once DPoP had been turned on over
+    // there, with nothing on this page able to turn it off again.
+    context = sdJwtVc.isFlowActive() ? sdJwtVc.dpopContext() : oauthDpop.context();
   } catch (e) {
-    // sd_jwt_vc's storage is unavailable (private mode, or storage disabled).
-    // A Bearer request is the right fallback and needs no headers.
+    // The storage backing either one is unavailable (private mode, or storage
+    // disabled). A Bearer request is the right fallback and needs no headers.
     log.debug("dpopTokenRequestHeaders(): no DPoP state is readable: " + e.message);
     context = null;
   }
@@ -220,6 +239,139 @@ function dpopTokenRequestHeaders(tokenEndpoint) {
     log.error("could not build a DPoP proof for the token request: " + e.message);
     return {};
   });
+}
+
+// ---------------------------------------------------------------------------
+// The OAuth2 / OIDC workflow's own DPoP pane.
+//
+// Three functions and no more, because everything else lives in oauth_dpop.js:
+// the checkbox handler, the key generator, and the status line. The pane is the
+// only place this workflow's DPoP can be switched on, which is the point — it
+// used to have no switch at all and inherited the VC workflow's.
+// ---------------------------------------------------------------------------
+// Whether the selected flow reaches the token endpoint at all. The three that do
+// not are the two OIDC Implicit variants and the OAuth2 Implicit grant: their
+// tokens are delivered by the authorization endpoint in the fragment, so there is
+// no request for a DPoP proof to ride on and no code for dpop_jkt to bind.
+// Everything else here — the Authorization Code flow and all three Hybrids —
+// redeems a code, which is exactly where DPoP applies.
+function flowHasTokenRequest() {
+  var agt = $("#authorization_grant_type").val() || localStorage.getItem("authorization_grant_type");
+  return ["implicit_grant", "oidc_implicit_flow", "oidc_implicit_flow_id_token"].indexOf(agt) < 0;
+}
+
+function setDpopEnabled() {
+  log.debug("Entering setDpopEnabled().");
+  var on = $("#dpop_enabled").is(":checked");
+  oauthDpop.setEnabled(on);
+  $("#dpop_controls").toggle(on);
+  if (on) {
+    // A key is generated on the spot rather than at the first request, because
+    // the authorization request needs its thumbprint (dpop_jkt) and is assembled
+    // on the OTHER page — synchronously, from storage. No key here means no
+    // dpop_jkt there, and a code that is not bound after all.
+    ensureDpopKey();
+  } else {
+    $("#dpop_key_summary").text("");
+    renderOauthDpopStatus();
+  }
+  // The preview shows the request that will actually be sent, headers included.
+  recalculateTokenRequestDescription();
+  log.debug("Leaving setDpopEnabled().");
+  return false;
+}
+
+function ensureDpopKey() {
+  log.debug("Entering ensureDpopKey().");
+  return oauthDpop.ensureKeyPair()
+    .then(function (made) {
+      renderOauthDpopStatus();
+      log.debug("Leaving ensureDpopKey(). jkt=" + (made ? made.jkt : "(none)"));
+      return made;
+    })
+    .catch(function (e) {
+      // Web Crypto is absent (an insecure origin) or refused the algorithm.
+      // Reported in the pane rather than thrown: the page must stay usable, and
+      // the honest state is "DPoP is on and cannot work here".
+      log.error("could not generate a DPoP key pair: " + e.message);
+      $("#dpop_status").html(DOMPurify.sanitize(
+        "<span class='dbg-bad'>No DPoP key pair could be generated: " + e.message +
+        ". The Token Request will go out unbound.</span>"));
+      return null;
+    });
+}
+
+function generateDpopKey() {
+  log.debug("Entering generateDpopKey().");
+  // Explicitly a NEW pair, not ensureKeyPair(): the button is there to rotate.
+  // Rotating invalidates a code already bound to the old key, which the status
+  // line says rather than leaving as a later invalid_grant.
+  oauthDpop.generateKeyPair()
+    .then(function () {
+      renderOauthDpopStatus();
+      recalculateTokenRequestDescription();
+    })
+    .catch(function (e) {
+      log.error("could not generate a DPoP key pair: " + e.message);
+      $("#dpop_status").html(DOMPurify.sanitize(
+        "<span class='dbg-bad'>No DPoP key pair could be generated: " + e.message + ".</span>"));
+    });
+  log.debug("Leaving generateDpopKey().");
+  return false;
+}
+
+// What the pane says. Called after every state change, and after the token
+// response — the verdict there is read off the token itself rather than from
+// whether a proof was sent, because those are different facts.
+function renderOauthDpopStatus(accessToken) {
+  log.debug("Entering renderOauthDpopStatus().");
+  var state = oauthDpop.readiness();
+  $("#dpop_enabled").prop("checked", state.on);
+  $("#dpop_controls").toggle(state.on);
+  $("#dpop_key_summary").text(state.ready ? ("jkt: " + state.jkt) : "");
+  if (!state.on) {
+    $("#dpop_status").html("");
+    log.debug("Leaving renderOauthDpopStatus(). DPoP is off.");
+    return;
+  }
+  if (!state.ready) {
+    $("#dpop_status").html(DOMPurify.sanitize("<span class='dbg-bad'>" + state.problem + "</span>"));
+    log.debug("Leaving renderOauthDpopStatus(). On, but not ready.");
+    return;
+  }
+  // A flow with no Token Request has nothing for DPoP to bind, and saying so is
+  // the whole job of this line. RFC 9449 sender-constrains a token issued at the
+  // TOKEN endpoint: it proves possession on the request that mints the token, and
+  // section 10's dpop_jkt binds the authorization CODE. The Implicit flows have
+  // neither — the access token arrives in the fragment straight from the
+  // authorization endpoint — so a ready key and a ticked box here would otherwise
+  // read as "this token will be bound", which it will not be.
+  if (!flowHasTokenRequest()) {
+    $("#dpop_status").html(DOMPurify.sanitize(
+      "<span class='dbg-bad'>DPoP is on, but this flow has no Token Request: the access token " +
+      "comes straight from the authorization endpoint in the fragment. RFC 9449 binds tokens " +
+      "issued at the token endpoint, so nothing here will be sender-constrained. Use a flow " +
+      "that returns a <code>code</code> to see the binding.</span>"));
+    log.debug("Leaving renderOauthDpopStatus(). On, but this flow has no token request.");
+    return;
+  }
+  var sent = oauthDpop.jktSent();
+  var lines = [];
+  if (sent && sent !== state.jkt) {
+    lines.push("<span class='dbg-bad'>The authorization request was sent with dpop_jkt=" + sent +
+               ", but the key has been regenerated since (" + state.jkt + "). The code cannot be " +
+               "redeemed — start the authorization request again.</span>");
+  } else if (sent) {
+    lines.push("The authorization request carried <code>dpop_jkt=" + sent + "</code>, so the code " +
+               "is bound to this key as well as the token.");
+  }
+  var verdict = oauthDpop.bindingVerdict(accessToken);
+  if (verdict.state !== "off") {
+    lines.push("<span class='" + (verdict.state === "bound" ? "dbg-good" : "dbg-bad") + "'>" +
+               verdict.text + "</span>");
+  }
+  $("#dpop_status").html(DOMPurify.sanitize(lines.join("<br/>")));
+  log.debug("Leaving renderOauthDpopStatus(). verdict=" + verdict.state);
 }
 
 function buildInternalTokenAPIRequestMessage() {
@@ -337,11 +489,26 @@ function successfulInternalTokenAPICall(data, textStatus, request)
   var token_endpoint_result_html = "";
   // What the server said about the binding. Recorded rather than inferred,
   // because asking for a DPoP-bound token does not make one: a server that
-  // ignored the proof answers Bearer, and the VC workflow's DPoP pane reports
-  // that difference.
+  // ignored the proof answers Bearer, and both DPoP panes report that difference.
+  // Recorded against whichever workflow asked, for the same reason the proof is
+  // built from that workflow's key.
   if (!!data.token_type) {
-    localStorage.setItem(sdJwtVc.KEYS.DPOP_TOKEN_TYPE, DOMPurify.sanitize(String(data.token_type)));
+    if (sdJwtVc.isFlowActive()) {
+      localStorage.setItem(sdJwtVc.KEYS.DPOP_TOKEN_TYPE, DOMPurify.sanitize(String(data.token_type)));
+    } else if (oauthDpop.enabled()) {
+      oauthDpop.rememberBinding(DOMPurify.sanitize(String(data.token_type)),
+                                oauthDpop.jktOfToken(data.access_token));
+    }
   }
+  if (!sdJwtVc.isFlowActive()) {
+    renderOauthDpopStatus(data.access_token);
+  }
+  // Deferred to the end of this handler: the verdict describes the RESPONSE, so
+  // it belongs with the results rather than with the request form — which this
+  // handler collapses (`$("#token_fieldset").hide()`), taking the pane's own
+  // status line off the screen with it.
+  var dpopVerdictToShow = (!sdJwtVc.isFlowActive() && oauthDpop.enabled())
+    ? oauthDpop.bindingVerdict(data.access_token) : null;
   if (!!data.refresh_token && 
       data.refresh_token != 'undefined') {
     currentRefreshToken = DOMPurify.sanitize(data.refresh_token);
@@ -490,6 +657,16 @@ function successfulInternalTokenAPICall(data, textStatus, request)
       client_id: $("#token_client_id").val(),
       tokenHistoryIndex: getLatestTokenHistoryIndex()
     });
+    // Whether the token actually came back sender-constrained, shown beside the
+    // token it is about. Read off the token's own cnf.jkt rather than from the
+    // fact that a proof was sent: asking does not make it so, and an authorization
+    // server that ignores DPoP answers with a perfectly ordinary Bearer token.
+    if (dpopVerdictToShow) {
+      $("#token_endpoint_result").append(DOMPurify.sanitize(
+        "<p id='dpop_result_status' class='" +
+        (dpopVerdictToShow.state === "bound" ? "dbg-good" : "dbg-bad") + "'>DPoP: " +
+        dpopVerdictToShow.text + "</p>"));
+    }
     // If the SD-JWT VC workflow sent us here, the tokens are what it came for.
     returnToSdJwtVcFlow();
   log.debug("Leaving successfulInternalTokenAPICall().");
@@ -1262,7 +1439,11 @@ function recreateUniqueGrantFlowElements()
     log.debug("access_token=" + access_token);
     log.debug("fragement: " + parseFragment());
     id_token = parseFragment()["id_token"];
-    if(!!id_token)
+    // `!id_token`, not `!!id_token`. Inverted, this replaced every id_token that
+    // DID arrive with the placeholder and left a genuinely missing one showing
+    // as blank — so the one flow that returns all three artifacts was the one
+    // flow that never displayed its ID token.
+    if(!id_token)
     {
       id_token = "NO_ID_TOKEN_PRESENTED_IN_EXPECTED_LOCATIONS";
     }
@@ -1279,7 +1460,12 @@ function recreateUniqueGrantFlowElements()
 				      "</tr>" + 
 				      "<tr>" +
 				        "<td>id_token</td>" + 
-				        "<td><textarea id=\"implicit_grant_access_token\" rows=3 cols=100 data-token-field=\"id\"></textarea></td>" +
+				        // Its own id: both textareas in this pane were
+				        // implicit_grant_access_token, so getElementById returned
+				        // the access token for either and the markup was invalid.
+				        // fillGeneratedFields kept working only because it selects
+				        // on data-token-field rather than on the id.
+				        "<td><textarea id=\"implicit_grant_id_token\" rows=3 cols=100 data-token-field=\"id\"></textarea></td>" +
 				      "</tr>" +
 				    "</table>" +
                                     "</fieldset>";
@@ -1458,6 +1644,19 @@ function recalculateTokenRequestDescription()
      }
      if (customParametersComponent.length > 0) {
        $("#display_token_request_form_textarea1").val( $("#display_token_request_form_textarea1").val() + "&\n" +  customParametersComponent + "\n");
+     }
+     // RFC 9449: the proof rides in a DPoP header, so a preview that showed only
+     // the body would describe a different request from the one being sent. It is
+     // named rather than rendered, because a proof covers its own jti and iat and
+     // is single use — any proof shown in advance would not be the one that goes.
+     if (!sdJwtVc.isFlowActive() && oauthDpop.enabled()) {
+       var dpopLine = useFrontEnd
+         ? "\n\nHeaders:\nDPoP: <a fresh RFC 9449 proof over POST " + $("#token_endpoint").val() +
+           ", signed by the key with thumbprint " + (oauthDpop.jkt() || "(none generated yet)") + ">"
+         : "\n\n(DPoP is on, but this call is proxied through the api, which does not forward " +
+           "proofs — the request that reaches the token endpoint will carry none.)";
+       $("#display_token_request_form_textarea1").val(
+         $("#display_token_request_form_textarea1").val() + dpopLine);
      }
   }
   log.debug("Leaving recalculateTokenRequestDescription().");
@@ -1653,6 +1852,10 @@ $(document).ready(function() {
 
   loadValuesFromLocalStorage();
   enforceBackendAvailability();
+  // The DPoP pane reflects stored state on load, so a switch left on in a
+  // previous session is visible rather than silently in force — which is the
+  // failure this whole pane exists to end.
+  renderOauthDpopStatus();
   recreateUniqueGrantFlowElements();
   recalculateAuthorizationErrorDescription();
   recalculateTokenRequestDescription();
@@ -3637,6 +3840,10 @@ module.exports = {
   setHeaderAuthStyleRefreshToken,
   onClickCopyToken,
   setInitiateFromEnd,
+  // The OAuth2/OIDC workflow's DPoP pane. Exported because the markup calls
+  // them through the bundle's standalone name, like every other handler here.
+  setDpopEnabled,
+  generateDpopKey,
   setInitiateRefreshFromEnd,
   logoutButtonClick,
   clickLink,

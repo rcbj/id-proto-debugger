@@ -27,7 +27,14 @@ services:
       start_period: 45s
   keycloak:
     image: quay.io/keycloak/keycloak:26.6.4
-    command: ["start-dev"]
+    # DPoP (RFC 9449) is a PREVIEW feature in Keycloak 26 and is off unless it is
+    # named here: without it the server ignores the DPoP header entirely, issues a
+    # perfectly ordinary Bearer token, and advertises no
+    # dpop_signing_alg_values_supported — so the OIDC DPoP jobs would fail with "the
+    # token came back unbound", which reads as a client bug rather than as a server
+    # that was never asked to support it. tests/oidc_flows.js checks that
+    # advertisement before running an OIDC_DPOP=on job and says so by name.
+    command: ["start-dev", "--features=dpop"]
     hostname: keycloak
     network_mode: "host"
     environment:
@@ -107,8 +114,9 @@ services:
     image: rcbj/sts
     network_mode: "host"
     build:
-      context: .
-      dockerfile: sts/Dockerfile
+      # The submodule's own root: see docker-compose.yml for why the context is
+      # ./sts rather than this repository with dockerfile: sts/Dockerfile.
+      context: ./sts
     healthcheck:
       test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8081/healthcheck',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
       interval: 10s

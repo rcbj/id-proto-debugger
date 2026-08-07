@@ -487,6 +487,95 @@ renderWaltidConfig()
 }
 
 # ---------------------------------------------------------------------------
+# Make sure the mock STS is on disk before anything tries to build it.
+#
+# sts/ is a SUBMODULE, not code in this repository: it is
+# https://github.com/rcbj/mock-sts.git on branch main, and what this repository
+# records is a link to it. Two things then depend on the checkout existing, and
+# both fail a long way from the cause when it does not:
+#
+#   * four compose files build the image with `context: ./sts`, and compose says
+#     "failed to read dockerfile" — a message about a path, not about a submodule;
+#   * tests/Dockerfile copies sts/bbs2023.js into the tests image so that
+#     tests/bbs2023_cryptosuite.js can check the wallet's cryptosuite against the
+#     issuer's, and the build says "COPY sts/bbs2023.js: not found".
+#
+# A `git clone` without --recurse-submodules leaves exactly that state: sts/
+# present and EMPTY. So this initialises it when it is missing and refuses the run
+# when it cannot, rather than letting either message stand as the explanation.
+#
+# WHICH COMMIT. By default the one this repository records, which is the point of
+# a submodule and is what makes a build repeatable. Set MOCK_STS_TRACK_REMOTE=1 to
+# take the tip of the branch .gitmodules names (main) instead — `git submodule
+# update --remote` — which resolves the link at build time in the strongest sense,
+# at the cost of the run not being repeatable and of leaving the submodule pointer
+# showing as modified in `git status`.
+# ---------------------------------------------------------------------------
+requireMockStsCheckout()
+{
+  echo "Entering requireMockStsCheckout()."
+  local root="${1:-.}"
+  local dir="${root}/sts"
+  local track_remote="${MOCK_STS_TRACK_REMOTE:-0}"
+
+  # Two FILES, not a directory test: an interrupted `git submodule update`, and
+  # compose itself, both leave an empty sts/ behind, so "the directory is there"
+  # is precisely the state this exists to catch. The Dockerfile is what compose
+  # reads and server.js is what the image runs, so between them they say the
+  # checkout is real rather than merely present.
+  if [ -f "${dir}/Dockerfile" ] && [ -f "${dir}/server.js" ] && [ "${track_remote}" != "1" ];
+  then
+    echo "Leaving requireMockStsCheckout(). ${dir} is populated."
+    return 0
+  fi
+
+  if [ ! -d "${root}/.git" ] && [ ! -f "${root}/.git" ];
+  then
+    echo "ERROR: ${dir} has no checkout of the mock STS in it, and ${root} is not a git" >&2
+    echo "       working tree, so the submodule cannot be initialised here. Clone it directly:" >&2
+    echo "         git clone -b main https://github.com/rcbj/mock-sts.git ${dir}" >&2
+    return 1
+  fi
+  if [ ! -f "${root}/.gitmodules" ] || ! grep -q '^[[:space:]]*path[[:space:]]*=[[:space:]]*sts[[:space:]]*$' "${root}/.gitmodules";
+  then
+    echo "ERROR: ${dir} has no checkout of the mock STS in it and ${root}/.gitmodules does not" >&2
+    echo "       declare it, so there is nothing to initialise. The STS lives in its own" >&2
+    echo "       repository now; see the 'Mock STS' section of CLAUDE.md." >&2
+    return 1
+  fi
+
+  local update_args="--init"
+  if [ "${track_remote}" = "1" ];
+  then
+    # --remote checks out the tip of the branch named in .gitmodules rather than
+    # the recorded commit. Deliberately opt-in: see the note above.
+    update_args="--init --remote"
+    echo "MOCK_STS_TRACK_REMOTE=1: taking the tip of the branch .gitmodules names, not the recorded commit."
+  fi
+  echo "Initialising the mock STS submodule in ${dir}."
+  git -C "${root}" submodule update ${update_args} -- sts
+  if [ $? -ne 0 ];
+  then
+    echo "ERROR: 'git submodule update ${update_args} -- sts' failed in ${root}." >&2
+    echo "       The mock STS is fetched over https from https://github.com/rcbj/mock-sts.git," >&2
+    echo "       so this is usually network access or a proxy rather than credentials." >&2
+    return 1
+  fi
+
+  # Asked again rather than assumed: `git submodule update` exits 0 for a
+  # submodule it does not know about, which is the one case that would otherwise
+  # walk straight into the compose error this function exists to prevent.
+  if [ ! -f "${dir}/Dockerfile" ] || [ ! -f "${dir}/server.js" ];
+  then
+    echo "ERROR: ${dir} is still empty after 'git submodule update ${update_args} -- sts'." >&2
+    echo "       Run 'git submodule status sts' in ${root} to see what it thinks is there." >&2
+    return 1
+  fi
+  echo "Leaving requireMockStsCheckout(). ${dir} is populated."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # Wait for the walt.id services to answer.
 #
 # Both are JVM services that take tens of seconds to start listening. The
@@ -855,7 +944,7 @@ configureKeycloak()
     -d '{"realm": "debugger-testing", "enabled": true}'
   check_return_code $?
   
-  for FLOW_VARIABLE in CLIENT_CREDENTIALS AUTHORIZATION_CODE_CONFIDENTIAL AUTHORIZATION_CODE_PUBLIC IMPLICIT OIDC_AUTHORIZATION_CODE_CONFIDENTIAL OIDC_AUTHORIZATION_CODE_PUBLIC RESOURCE_OWNER_CREDENTIAL TOKEN_EXCHANGE_TARGET TOKEN_EXCHANGE DEVICE_AUTHORIZATION_GRANT TOKEN_INTROSPECTION
+  for FLOW_VARIABLE in CLIENT_CREDENTIALS AUTHORIZATION_CODE_CONFIDENTIAL AUTHORIZATION_CODE_PUBLIC IMPLICIT OIDC_AUTHORIZATION_CODE_CONFIDENTIAL OIDC_AUTHORIZATION_CODE_PUBLIC OIDC_ALL_FLOWS_PUBLIC RESOURCE_OWNER_CREDENTIAL TOKEN_EXCHANGE_TARGET TOKEN_EXCHANGE DEVICE_AUTHORIZATION_GRANT TOKEN_INTROSPECTION
   do
     FLOW_NAME=$(echo ${FLOW_VARIABLE} | tr '[:upper:]' '[:lower:]' | tr '_' '-')
 
@@ -985,6 +1074,53 @@ configureKeycloak()
                 "serviceAccountsEnabled": false,
                 "authorizationServicesEnabled": false,
                 "standardFlowEnabled": true,
+                "directAccessGrantsEnabled": false,
+                "clientAuthenticatorType": null,
+                "frontchannelLogout": true,
+                "redirectUris": ["'${DEBUGGER_BASE_URL}/callback'"],
+                "webOrigins": ["'${DEBUGGER_BASE_URL}'"],
+                "attributes": {
+                  "frontchannel.logout.url": "'${DEBUGGER_BASE_URL}/logout.html'",
+                  "post.logout.redirect.uris": "'${DEBUGGER_BASE_URL}/logout.html'",
+                  "access.token.lifespan": 3600
+                }
+             }'
+            check_return_code $?
+            ;;
+        OIDC_ALL_FLOWS_PUBLIC)
+            # The client tests/oidc_flows_sts.js drives against Keycloak, for all
+            # six OIDC authentication flows and for DPoP in both states.
+            #
+            # ONE client for all twelve jobs, and each part of that is load-bearing:
+            #
+            #   * standardFlowEnabled AND implicitFlowEnabled. Keycloak gates the
+            #     response types on these two together — `code` needs the first,
+            #     `id_token`/`id_token token` the second, and the three Hybrids
+            #     need BOTH. A client with only the standard flow answers
+            #     unsupported_response_type for four of the six, which arrives as
+            #     a redirect carrying an error rather than as anything the page
+            #     did wrong.
+            #   * dpop.bound.access.tokens is deliberately NOT set. In Keycloak
+            #     that attribute means "always REQUIRE DPoP" for this client, and
+            #     turning it on would make the six DPoP-off jobs fail. Left off,
+            #     DPoP is optional exactly as the debugger's own switch is: a
+            #     proof binds the token, no proof gets a Bearer token, and both
+            #     halves of the matrix run against one client.
+            #   * webOrigins must carry the debugger's origin, because these jobs
+            #     call the token endpoint from the BROWSER (the api cannot forward
+            #     a DPoP proof). Without it the exchange dies in a CORS preflight
+            #     with no status, which reads as the OP being down.
+            curl -X POST "${KEYCLOAK_LOCALHOST_BASE_URL}/admin/realms/debugger-testing/clients" \
+              -H "Authorization: Bearer ${KEYCLOAK_ACCESS_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{
+                "clientId": "'${FLOW_NAME}'",
+                "protocol": "openid-connect",
+                "publicClient": true,
+                "serviceAccountsEnabled": false,
+                "authorizationServicesEnabled": false,
+                "standardFlowEnabled": true,
+                "implicitFlowEnabled": true,
                 "directAccessGrantsEnabled": false,
                 "clientAuthenticatorType": null,
                 "frontchannelLogout": true,
@@ -1277,6 +1413,12 @@ configureKeycloak()
     declare -gx ${FLOW_VARIABLE}_CLIENT_SECRET="${CLIENT_SECRET}"
     declare -gx ${FLOW_VARIABLE}_SCOPE="${SCOPE_NAME}"
     declare -gx ${FLOW_VARIABLE}_USER="${USER_ID}"
+    # The name typed at the login screen, which is NOT ${FLOW_VARIABLE}_USER: that
+    # one is Keycloak's UUID for the user, which is what appears in a token's
+    # `sub`. Both are needed by a test that signs in and then checks who the token
+    # describes, and conflating them is easy — the username happens to equal the
+    # client id here, so a test that used the wrong variable would still log in.
+    declare -gx ${FLOW_VARIABLE}_USERNAME="${FLOW_NAME}"
 
   done
 

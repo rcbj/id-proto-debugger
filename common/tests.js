@@ -32,6 +32,72 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     return element;
   }
 
+  const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+  // ---------------------------------------------------------------------------
+  // Clicking and reading on a page that is still rearranging itself.
+  //
+  // debugger2.html rebuilds its panes on load, after every token call, and after
+  // any operation that writes to the Operations History — so a WebElement found a
+  // moment ago can be detached before it is used (StaleElementReferenceError),
+  // which is not a product fault and not something the caller can do anything
+  // about. These two live here rather than in one test because two tests have now
+  // been bitten by the same window: tests/oidc_userinfo.js immediately after
+  // "Return to debugger", and tests/oauth2_token_revocation.js on its SECOND
+  // revocation, where the re-render triggered by the first revocation's
+  // saveOperationToHistory() landed between findElement() and the click.
+  //
+  // Only staleness (and a not-yet-rendered element) is retried: a genuinely
+  // missing element still ends as a timeout or a null, so the tolerance cannot
+  // hide a real regression.
+  // ---------------------------------------------------------------------------
+
+  // Read a field's value, tolerating a re-render. The window is easy to miss on a
+  // READ: findElements() and getAttribute() are two round trips to the browser
+  // with a re-render able to land in between. Returns null when the field
+  // genuinely is not there, which callers already handle.
+  async function valueOf(driver, id) {
+    const deadline = Date.now() + waitTime * 2;
+    for (;;) {
+      try {
+        const found = await driver.findElements(By.id(id));
+        if (!found.length) return null;
+        return await found[0].getAttribute("value");
+      } catch (e) {
+        if (Date.now() >= deadline || !/stale element/i.test(e.message)) throw e;
+        await pause(100);
+      }
+    }
+  }
+
+  // Click something, tolerating a re-render. The element is located afresh inside
+  // the loop rather than passed in, because a WebElement handle is exactly the
+  // thing that goes stale.
+  async function clickStable(driver, locator, what, { within } = {}) {
+    log.debug("Entering clickStable(). what=" + what);
+    const deadline = Date.now() + waitTime * 4;
+    let last = null;
+    while (Date.now() < deadline) {
+      try {
+        const root = within ? await driver.findElement(By.id(within)) : driver;
+        const found = await root.findElements(locator);
+        if (found.length) {
+          await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", found[0]);
+          await found[0].click();
+          log.debug("Leaving clickStable(). Clicked " + what + ".");
+          return;
+        }
+        last = new Error("not present yet");
+      } catch (e) {
+        // Stale, detached, or momentarily not interactable: the page is mid-render.
+        last = e;
+      }
+      await pause(150);
+    }
+    throw new Error("Could not click " + what + " — the page kept changing underneath it. Last: " +
+                    (last ? last.message.split("\n")[0] : "(never found)"));
+  }
+
   async function populateMetadata(driver, discovery_endpoint) {
     log.info("Entering populateMetadata().");
     // Locate the discovery endpoint field and its related buttons
@@ -52,8 +118,62 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     await driver.wait(until.elementLocated(btn_oidc_populate_meta_data), waitTime);
     await driver.wait(until.elementIsVisible(driver.findElement(btn_oidc_populate_meta_data)), waitTime);
     await driver.executeScript("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", await driver.findElement(btn_oidc_populate_meta_data));
-    await driver.findElement(btn_oidc_populate_meta_data).click();
-    log.info("Leaving populateMetadata().");
+
+    // Click Populate and wait for the CONTENT, and be willing to click AGAIN.
+    //
+    // Two separate things are being waited on here, and conflating them is what
+    // made this flaky. Retrieve fetches the discovery document asynchronously and
+    // the Populate button is rendered only when it arrives, so waiting for that
+    // button does gate on the fetch. But the click itself can still land without
+    // effect — the button is re-rendered as the table is built, so a click can
+    // reach the copy that is being replaced — and the handler leaves every field
+    // untouched when it runs against an empty document (jQuery's .val(undefined)
+    // is a no-op, so the seeded placeholders simply remain). One click and a bare
+    // wait therefore fails with "still reads https://localhost/..." roughly once
+    // per cold run, which is what happened to the OAuth2 Client Credentials job
+    // on 2026-08-05.
+    //
+    // Re-finding the button each time also avoids a stale reference to the copy
+    // that was replaced. If the document genuinely never arrives we never get
+    // here — that failure belongs to the wait above, and says so.
+    const endpointField = By.id("authorization_endpoint");
+    const deadline = Date.now() + waitTime * 8;
+    let seen = "";
+    let clicks = 0;
+    let filled = false;
+    while (Date.now() < deadline && !filled) {
+      const buttons = await driver.findElements(btn_oidc_populate_meta_data);
+      if (buttons.length) {
+        try {
+          await buttons[buttons.length - 1].click();
+          clicks++;
+        } catch (e) {
+          // Replaced between find and click. The next pass picks up the new one.
+          log.debug("populateMetadata(): the Populate button went stale; retrying. " + e.message);
+        }
+      }
+      try {
+        await driver.wait(async function () {
+          const fields = await driver.findElements(endpointField);
+          if (!fields.length) return false;
+          seen = (await fields[0].getAttribute("value")) || "";
+          // Filled, and no longer the seeded placeholder. Checked this way rather
+          // than against an expected URL so the one condition covers Keycloak's
+          // realms, the mock STS and a deployed OP alike.
+          return !!seen && seen.indexOf("https://localhost/oauth2/") !== 0;
+        }, Math.min(waitTime, Math.max(500, deadline - Date.now())));
+        filled = true;
+      } catch (e) {
+        // Not yet. Loop and click again while there is time left.
+        log.debug("populateMetadata(): endpoints not populated yet after " + clicks + " click(s).");
+      }
+    }
+    if (!filled) {
+      throw new Error("Metadata retrieval did not populate the endpoints after " + clicks +
+                      " Populate click(s): #authorization_endpoint still reads \"" + seen +
+                      "\". The discovery document is " + discovery_endpoint + ".");
+    }
+    log.info("Leaving populateMetadata(). authorization_endpoint=" + seen);
   }
 
   // Authorization-Code family flow (OAuth2 Authorization Code Grant / OIDC
@@ -431,6 +551,8 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
   }
 
   return {
+    clickStable,
+    valueOf,
     populateMetadata,
     getAccessTokenAuthCode,
     getAccessTokenClientCredentials,

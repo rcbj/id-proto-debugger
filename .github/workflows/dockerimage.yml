@@ -20,6 +20,10 @@ jobs:
          with:
            # Tags are pushed from here; fetch them so an existing tag is seen.
            fetch-depth: 0
+           # docker-compose.yml builds the STS image from the sts/ submodule
+           # (https://github.com/rcbj/mock-sts.git), so this job cannot build
+           # without it: compose would report only a missing Dockerfile.
+           submodules: true
        - name: Compute version
          id: version
          run: |

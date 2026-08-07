@@ -8,9 +8,22 @@ RUN apt-get update
 # libxml2-utils supplies xmllint, the XSD validator the WS-Trust schema test
 # falls back to when the optional native libxmljs2 binding is unusable (no
 # prebuilt binary for this ABI, or one built against a different Node version).
+#
+# fonts-liberation is here for the LAYOUT tests, and is the one thing in this list
+# that is about rendering rather than about a tool. This image installed no
+# fonts-* package at all, so the app's font stacks — bootstrap's
+# `"Helvetica Neue", Helvetica, Arial, sans-serif` and common.css's
+# `arial, sans-serif` — had no Arial-metric font to land on and fell through to
+# whatever fontconfig happened to pull in transitively, which is wider. A host run
+# resolves Arial to Liberation Sans and lays the pages out several pixels
+# narrower, so the two environments disagree about geometry and only the
+# containerized one trips panesContainTheirContent()'s no-horizontal-scroll
+# assertion. Liberation is the metric-compatible substitute for Arial, which is
+# what Chrome's own .deb depends on for the same reason.
 RUN apt-get -y install curl \
         jq \
         openssl \
+        fonts-liberation \
         libxml2-utils \
         libatomic1 \
         libasound2t64 \
@@ -86,6 +99,13 @@ COPY client/src/bbs.js ./
 # so the STS's is renamed on the way in; the test resolves either layout.
 # client/src/bbs2023.js does require("./contexts/..."), so the vendored JSON-LD
 # contexts come too: canonicalization must never depend on fetching one.
+#
+# The STS's copy comes out of the sts/ SUBMODULE
+# (https://github.com/rcbj/mock-sts.git) — the one place outside the compose files
+# where this repository reaches into it. An uninitialised submodule fails this
+# build with "COPY sts/bbs2023.js: not found", which says nothing about the cause;
+# the launchers run requireMockStsCheckout() (common/common.sh) before building so
+# it is explained before it happens.
 COPY client/src/bbs2023.js ./
 COPY sts/bbs2023.js ./sts_bbs2023.js
 COPY client/src/contexts ./contexts

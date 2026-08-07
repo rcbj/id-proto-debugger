@@ -8,6 +8,8 @@
   },
   "dependencies": {
     "@digitalbazaar/bbs-signatures": "^3.1.0",
+    "@noble/curves": "1.4.0",
+    "@noble/hashes": "1.4.0",
     "@xmldom/xmldom": "^0.9.8",
     "bunyan": "latest",
     "commander": "^14.0.2",
