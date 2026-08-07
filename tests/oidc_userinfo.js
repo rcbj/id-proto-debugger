@@ -24,14 +24,21 @@
 // only way the refresh link carrying the stale pre-refresh token, or the history
 // link carrying the live token instead of the generation it names, would show up.
 //
-// "Use the default configuration" is asserted rather than assumed, and the
-// default is the API (back-end) — so this job needs the api service, as a user
-// pressing that button with an untouched page does. The markup reads the other
-// way and is worth knowing about: the front-end radio carries checked="true" and
-// the back-end one checked="false", but `checked="false"` is still the attribute
-// being PRESENT, so both are checked in the source and the last of two radios
-// sharing a name wins. The effective default therefore matches every other
-// initiation pane in the debugger; the front-end checked="true" is dead intent.
+// "Use the default configuration" is asserted rather than assumed, and on a
+// build that has the api the default is the back-end — so this job needs the api
+// service, as a user pressing that button with an untouched page does. The markup
+// reads the other way and is worth knowing about: the front-end radio carries
+// checked="true" and the back-end one checked="false", but `checked="false"` is
+// still the attribute being PRESENT, so both are checked in the source and the
+// last of two radios sharing a name wins. The effective default therefore matches
+// every other initiation pane in the debugger; the front-end checked="true" is
+// dead intent.
+//
+// On the deployed STATIC sites there is no api (backendAvailable: false), so
+// userinfo.js disables the back-end radio and forces the front-end one, and the
+// call goes browser -> OP directly. The default assertion reads which of the two
+// builds it is off the page rather than assuming, and holds either way; see
+// exerciseUserInfoLink().
 //
 // OP-agnostic, like tests/oidc_flows.js: everything server-specific arrives in
 // the environment, so the same script runs against the mock STS and Keycloak.
@@ -53,7 +60,7 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata } = require("../common/tests.js")({ By, until, Select, waitTime, log, assert });
+const { populateMetadata, clickStable, valueOf } = require("../common/tests.js")({ By, until, Select, waitTime, log, assert });
 
 const FLOW_LABEL = "OIDC Authorization Code Flow(code)";
 
@@ -93,62 +100,10 @@ function claimsOf(token) {
   return JSON.parse(b64uDecode(parts[1]).toString("utf8"));
 }
 
-// Read a field's value on a page that may still be rearranging itself.
-//
-// Stale-tolerant for the same reason clickStable() is, and the window is easy to
-// miss: it is between findElements() and getAttribute(), two round trips to the
-// browser with a re-render able to land in between. debugger2.html rebuilds its
-// panes on load, so every read taken just after "Return to debugger" is exposed.
-// Returns null when the field genuinely is not there, which callers already
-// handle; only staleness is retried.
-async function valueOf(driver, id) {
-  const deadline = Date.now() + waitTime * 2;
-  for (;;) {
-    try {
-      const found = await driver.findElements(By.id(id));
-      if (!found.length) return null;
-      return await found[0].getAttribute("value");
-    } catch (e) {
-      if (Date.now() >= deadline || !/stale element/i.test(e.message)) throw e;
-      await wait(100);
-    }
-  }
-}
-
-// Click something on a page that is still rearranging itself.
-//
-// debugger2.html re-renders its panes on load and after every token call, so an
-// element found a moment ago can be detached by the time it is clicked —
-// StaleElementReferenceError, which is not a product fault and not something the
-// caller can do anything about. Re-finding on each attempt is the fix; the
-// element is located afresh inside the loop rather than passed in, because a
-// WebElement handle is exactly the thing that goes stale.
-async function clickStable(driver, locator, what, { within } = {}) {
-  log.debug("Entering clickStable(). what=" + what);
-  const deadline = Date.now() + waitTime * 4;
-  let last = null;
-  while (Date.now() < deadline) {
-    try {
-      const root = within ? await driver.findElement(By.id(within)) : driver;
-      const found = await root.findElements(locator);
-      if (found.length) {
-        await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", found[0]);
-        await found[0].click();
-        log.debug("Leaving clickStable(). Clicked " + what + ".");
-        return;
-      }
-      last = new Error("not present yet");
-    } catch (e) {
-      // Stale, detached, or momentarily not interactable: the page is mid-render.
-      last = e;
-    }
-    await wait(150);
-  }
-  throw new Error("Could not click " + what + " — the page kept changing underneath it. Last: " +
-                  (last ? last.message.split("\n")[0] : "(never found)"));
-}
-
-const wait = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
+// clickStable() and valueOf() — the stale-tolerant click and read this test used
+// to carry its own copies of — now live in common/tests.js, required above. They
+// moved there when tests/oauth2_token_revocation.js hit the same window on its
+// second revocation; the reasoning is in that file.
 
 // ---------------------------------------------------------------------------
 // Tokens, through the Authorization Code flow.
@@ -273,19 +228,39 @@ async function exerciseUserInfoLink(driver, source, expected) {
   // The default configuration, asserted rather than assumed — and left alone,
   // because "just click call" is what this test is about.
   //
-  // That default is the API (back-end), matching every other initiation pane in
-  // the debugger. Worth stating, because the markup reads the other way: the
-  // front-end radio carries checked="true" and the back-end one checked="false"
-  // — and `checked="false"` is still the ATTRIBUTE BEING PRESENT, so both are
-  // checked in the source and, for two radios sharing a name, the last one wins.
-  // The front-end `checked="true"` is dead intent. This assertion pins the real
-  // behaviour so that changing it is a deliberate act rather than a silent switch
-  // to a path that needs no api.
+  // On a build that HAS the api that default is the back-end, matching every
+  // other initiation pane in the debugger. Worth stating, because the markup
+  // reads the other way: the front-end radio carries checked="true" and the
+  // back-end one checked="false" — and `checked="false"` is still the ATTRIBUTE
+  // BEING PRESENT, so both are checked in the source and, for two radios sharing
+  // a name, the last one wins. The front-end `checked="true"` is dead intent.
+  //
+  // The deployed static sites have no api at all (client/src/env/prod.js and
+  // test-idptools-com.js set backendAvailable: false), and userinfo.js's onload
+  // therefore selects the front-end radio and DISABLES the back-end one. Pinning
+  // "the back-end is selected" unconditionally fails there for a reason that has
+  // nothing to do with UserInfo — which is what it did against
+  // https://test.idptools.com. So read which build this is off the page itself,
+  // the way tests/CLAUDE.md asks: whether the back-end option is usable at all.
+  // Either way the assertion still catches a silent switch — a backed build that
+  // stopped defaulting to the api, or a backend-less one that left the disabled
+  // api option selected and so would initiate nothing.
   const backEnd = await driver.findElement(By.id("userinfo_initiateFromBackEnd"));
-  assert.ok(await backEnd.isSelected(),
-    "The UserInfo page no longer defaults to initiating the call from the api. This test presses " +
-    "Retrieve UserInfo without touching the configuration, so a changed default silently exercises " +
-    "a different path.");
+  const backEndAvailable = await backEnd.isEnabled();
+  if (backEndAvailable) {
+    assert.ok(await backEnd.isSelected(),
+      "The UserInfo page no longer defaults to initiating the call from the api. This test presses " +
+      "Retrieve UserInfo without touching the configuration, so a changed default silently exercises " +
+      "a different path.");
+  } else {
+    const frontEnd = await driver.findElement(By.id("userinfo_initiateFromFrontEnd"));
+    assert.ok(await frontEnd.isSelected(),
+      "The UserInfo page has disabled api initiation (a build with backendAvailable: false), but has " +
+      "not selected the browser instead — so pressing Retrieve UserInfo would initiate the call from " +
+      "nowhere.");
+    log.info("This target has no api (the back-end radio is disabled), so the call is initiated from " +
+             "the browser — which needs the OP to send CORS headers for this origin.");
+  }
   const endpoint = await valueOf(driver, "userinfo_endpoint");
   assert.strictEqual(endpoint, expected.userinfoEndpoint,
     "The UserInfo page is pointed at \"" + endpoint + "\", not at the endpoint discovery published (" +

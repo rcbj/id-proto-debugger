@@ -239,8 +239,12 @@ function buildJobs() {
   // wrong one still returns a correct-looking answer.
   //
   // Runs against both OPs, like the flow matrix. Unlike it, this one exercises
-  // the UserInfo page's DEFAULT configuration, which initiates the call from the
-  // api — so these two jobs need the api service as well as the OP.
+  // the UserInfo page's DEFAULT configuration, which on a build that HAS the api
+  // initiates the call from it — so these two jobs need the api service as well
+  // as the OP. On a backend-less target (the deployed static sites) the page
+  // disables that option and calls the OP from the browser instead; the test
+  // reads which build it is off the page rather than being told here, because it
+  // is the page's own state that decides what pressing the button does.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "OIDC UserInfo through all three token sets — mock STS",

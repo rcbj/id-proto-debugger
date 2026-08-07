@@ -14,7 +14,7 @@ var baseUrl = "http://localhost:3000"
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata, getAccessTokenAuthCode } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+const { populateMetadata, getAccessTokenAuthCode, clickStable, valueOf } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
 
 // The public static-content deployments (test.idptools.com / idptools.com) have
 // no api backend, and Keycloak's introspection endpoint is not CORS-enabled, so
@@ -34,31 +34,54 @@ function isStaticContentSite(url) {
 // next to the token of the given type (which populates the pane AND submits the
 // revocation in one action), then wait for the results pane to report a
 // successful (HTTP 200) RFC 7009 response.
+//
+// Two things here are about the SECOND call, because this is called twice and the
+// first revocation leaves the page in a different state from the one the first
+// call found:
+//
+//   * the click goes through clickStable() (common/tests.js). A successful
+//     revocation ends in saveOperationToHistory(), which re-renders the panes
+//     carrying these buttons — asynchronously, so the re-render triggered by the
+//     refresh-token revocation lands during the access-token one and detaches the
+//     button between findElement() and the click. That is a StaleElementReference
+//     the test can do nothing about except re-find, and it took out the live-site
+//     run of 2026-08-07.
+//   * the results box is EMPTIED before the click, and the wait is then for it to
+//     fill. It still holds the previous revocation's "HTTP Status: 200" when the
+//     second click is made, so waiting for that string alone is satisfied before
+//     the second call has even been sent — the test would report a revocation it
+//     never saw. Waiting for the text to *differ* would not do either: both
+//     revocations can legitimately produce the same text (RFC 7009 says 200 with
+//     an empty body either way), and that wait would then time out on a call that
+//     worked. Clearing first is the only version that is neither blind nor flaky.
 async function revokeTokenViaUI(driver, type) {
   log.info("Revoking token via UI. type=" + type);
+  const resultAreaId = "revocation_result_textarea";
+  await driver.executeScript(
+    "var el = document.getElementById(arguments[0]); if (el) { el.value = ''; }", resultAreaId);
+  assert(!((await valueOf(driver, resultAreaId)) || "").trim(),
+    "The revocation results box could not be emptied before the call, so a result left over from an " +
+    "earlier revocation could be mistaken for this one's.");
+
   const revokeBtn = By.css(`input.revoke_token_btn[data-revoke-type='${type}']`);
   await driver.wait(until.elementLocated(revokeBtn), waitTime);
-  const btnEl = await driver.findElement(revokeBtn);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", btnEl);
-  await driver.wait(until.elementIsVisible(btnEl), waitTime);
-  await btnEl.click();
+  await clickStable(driver, revokeBtn, "the Revoke Token button for the " + type + " token");
 
-  const resultArea = By.id("revocation_result_textarea");
-  await driver.wait(until.elementLocated(resultArea), waitTime);
-  await driver.wait(async () => {
-    try {
-      const v = await driver.findElement(resultArea).getAttribute("value");
-      return !!v && v.indexOf("HTTP Status: 200") !== -1;
-    } catch (e) {
-      return false;
-    }
-  }, waitTime, "Token revocation result did not report HTTP 200 for type=" + type);
+  let seen = "";
+  try {
+    await driver.wait(async () => {
+      seen = (await valueOf(driver, resultAreaId)) || "";
+      return !!seen.trim();
+    }, waitTime * 3);
+  } catch (e) {
+    throw new Error("The revocation of the " + type + " token produced no result. The results box " +
+                    "holds: \"" + seen.trim().slice(0, 300) + "\".");
+  }
 
-  const finalText = await driver.findElement(resultArea).getAttribute("value");
-  log.info("Revocation result (" + type + "): " + finalText.replace(/\n/g, " | "));
-  assert(finalText.indexOf("HTTP Status: 200") !== -1,
-    "Revocation call for " + type + " did not return HTTP 200.");
-  return finalText;
+  log.info("Revocation result (" + type + "): " + seen.replace(/\n/g, " | "));
+  assert(seen.indexOf("HTTP Status: 200") !== -1,
+    "Revocation call for " + type + " did not return HTTP 200. Result: " + seen.replace(/\n/g, " | "));
+  return seen;
 }
 
 // Follows the "Introspect Token" link next to the given token (access or

@@ -32,6 +32,72 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     return element;
   }
 
+  const pause = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+  // ---------------------------------------------------------------------------
+  // Clicking and reading on a page that is still rearranging itself.
+  //
+  // debugger2.html rebuilds its panes on load, after every token call, and after
+  // any operation that writes to the Operations History — so a WebElement found a
+  // moment ago can be detached before it is used (StaleElementReferenceError),
+  // which is not a product fault and not something the caller can do anything
+  // about. These two live here rather than in one test because two tests have now
+  // been bitten by the same window: tests/oidc_userinfo.js immediately after
+  // "Return to debugger", and tests/oauth2_token_revocation.js on its SECOND
+  // revocation, where the re-render triggered by the first revocation's
+  // saveOperationToHistory() landed between findElement() and the click.
+  //
+  // Only staleness (and a not-yet-rendered element) is retried: a genuinely
+  // missing element still ends as a timeout or a null, so the tolerance cannot
+  // hide a real regression.
+  // ---------------------------------------------------------------------------
+
+  // Read a field's value, tolerating a re-render. The window is easy to miss on a
+  // READ: findElements() and getAttribute() are two round trips to the browser
+  // with a re-render able to land in between. Returns null when the field
+  // genuinely is not there, which callers already handle.
+  async function valueOf(driver, id) {
+    const deadline = Date.now() + waitTime * 2;
+    for (;;) {
+      try {
+        const found = await driver.findElements(By.id(id));
+        if (!found.length) return null;
+        return await found[0].getAttribute("value");
+      } catch (e) {
+        if (Date.now() >= deadline || !/stale element/i.test(e.message)) throw e;
+        await pause(100);
+      }
+    }
+  }
+
+  // Click something, tolerating a re-render. The element is located afresh inside
+  // the loop rather than passed in, because a WebElement handle is exactly the
+  // thing that goes stale.
+  async function clickStable(driver, locator, what, { within } = {}) {
+    log.debug("Entering clickStable(). what=" + what);
+    const deadline = Date.now() + waitTime * 4;
+    let last = null;
+    while (Date.now() < deadline) {
+      try {
+        const root = within ? await driver.findElement(By.id(within)) : driver;
+        const found = await root.findElements(locator);
+        if (found.length) {
+          await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", found[0]);
+          await found[0].click();
+          log.debug("Leaving clickStable(). Clicked " + what + ".");
+          return;
+        }
+        last = new Error("not present yet");
+      } catch (e) {
+        // Stale, detached, or momentarily not interactable: the page is mid-render.
+        last = e;
+      }
+      await pause(150);
+    }
+    throw new Error("Could not click " + what + " — the page kept changing underneath it. Last: " +
+                    (last ? last.message.split("\n")[0] : "(never found)"));
+  }
+
   async function populateMetadata(driver, discovery_endpoint) {
     log.info("Entering populateMetadata().");
     // Locate the discovery endpoint field and its related buttons
@@ -485,6 +551,8 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
   }
 
   return {
+    clickStable,
+    valueOf,
     populateMetadata,
     getAccessTokenAuthCode,
     getAccessTokenClientCredentials,
