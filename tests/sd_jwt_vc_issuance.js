@@ -1333,7 +1333,6 @@ async function stepOneFitsInOneRow(driver) {
     "  }" +
     "});" +
     "return { bad: bad, fragmented: fragmented," +
-    "         rows: document.querySelectorAll('#config_rows tr').length," +
     "         columns: document.querySelectorAll('#config_rows .vc-config-group').length };");
   assert.ok(overlap.rows > 40,
     "the Configuration Parameters pane should have been built by now; it has " +
