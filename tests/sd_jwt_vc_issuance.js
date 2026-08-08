@@ -1332,7 +1332,14 @@ async function stepOneFitsInOneRow(driver) {
     "    bad.push(td.textContent.trim().slice(0, 48) + ' (over by ' + worst + 'px)');" +
     "  }" +
     "});" +
+    // `rows` is read by the two assertions below AND by this section's log line. It
+    // was dropped from this object when `fragmented` was added, which made the very
+    // next assertion `undefined > 40` — false — so the section could only ever fail,
+    // with a message ("it has undefined rows") that accuses the PAGE of not having
+    // built the pane. Everything a script like this returns has a reader; check the
+    // readers when editing the shape.
     "return { bad: bad, fragmented: fragmented," +
+    "         rows: document.querySelectorAll('#config_rows tr').length," +
     "         columns: document.querySelectorAll('#config_rows .vc-config-group').length };");
   assert.ok(overlap.rows > 40,
     "the Configuration Parameters pane should have been built by now; it has " +
