@@ -12,6 +12,7 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | the deployed static sites, Terraform, the Lambda@Edge landings | `infra/CLAUDE.md` |
 | the walt.id issuer/verifier containers and their configuration | `waltid/CLAUDE.md` |
 | the WS-Federation Keycloak 8.0.1 side-car | `keycloak-wsfed/CLAUDE.md` |
+| the WebAuthn workflow, its decoder, or the read-only browser extension | `docs/webauthn.md` |
 | the mock STS — **a submodule**, so its notes cannot live under `sts/` | `docs/mock-sts.md` |
 
 ## Overview
@@ -28,6 +29,7 @@ The project is split into two independent Node.js services:
 - **`/sts/`** — A mock Security Token Service used by the test suite (OAuth2 AS, OIDC OP, WS-Trust, OID4VCI issuer, OID4VP verifier, DID publisher). **Its code is no longer in this repository** — it is the [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts) submodule, so `git submodule update --init sts` is required once per checkout and an edit under `sts/` is an edit to somebody else's checkout. See `docs/mock-sts.md`.
 - **`/waltid/`** — walt.id's own `issuer-api2` and `verifier-api2` containers, behind CORS proxies, for interoperability testing. See `waltid/CLAUDE.md`.
 - **`/keycloak-wsfed/`** — A dedicated Keycloak 8.0.1 side-car carrying the cloudtrust `keycloak-wsfed` extension, because the main stack's Keycloak 26.x has no WS-Federation support at all. See `keycloak-wsfed/CLAUDE.md`.
+- **`/extension/`** — a **read-only** browser extension that observes `navigator.credentials` on one origin you arm it for and hands the artifacts to the WebAuthn pages. It never alters a ceremony and never starts one, and it will not name an RP ID it does not own — an extension that could would be a working defeat of WebAuthn's phishing resistance. The builds are generated (`extension/build.js`, called by the launchers), not committed. See `docs/webauthn.md`.
 - **`/infra/`** — Terraform and the Lambda@Edge handlers for the static deployments, which is how two protocols get an IdP's **POST** back to a site with no backend. See `infra/CLAUDE.md`.
 
 ## Running the App

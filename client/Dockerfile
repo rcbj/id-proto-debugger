@@ -93,6 +93,8 @@ RUN browserify src/vc_presentation_2.js -o public/js/vc_presentation_2.js --debu
 # DID Tools: a general-purpose DID verifier, reached from the VC Tools pane on
 # every page of both VC workflows.
 RUN browserify src/did_tools.js -o public/js/did_tools.js --debug --standalone didtools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/webauthn_lab.js -o public/js/webauthn_lab.js --debug --standalone webauthnlab -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/webauthn_analyzer.js -o public/js/webauthn_analyzer.js --debug --standalone webauthnanalyzer -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/vc_presentation_3.js -o public/js/vc_presentation_3.js --debug --standalone vcpresentation3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_tools.js -o public/js/wsfed_tools.js --debug --standalone wsfed_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_response.js -o public/js/wsfed_response.js --debug --standalone wsfed_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]

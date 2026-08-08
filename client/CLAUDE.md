@@ -13,6 +13,7 @@ This file holds what applies across the whole frontend: the shared modules, the 
 | `docs/sd-jwt-vc-presentation.md` | any `vc-presentation-*` page, `sd_jwt_vp.js` | `sd_hash` covers the trailing `~`, the KB-JWT must verify against the credential's own `cnf.jwk`, and `vp_token` is keyed by DCQL query id |
 | `docs/dpop.md` | `dpop.js`, `oauth_dpop.js`, `vci_wallet.js`, any protected call | the two workflows share the mechanism and **not** the state; DPoP is off by default on both, and OID4VP has none by design |
 | `docs/dids.md` | `did.js`, `did-tools.html`, the DID panes on issuance step 1 | a `did:web` document read off its own origin is a circular check; the element id and the storage key are different strings, and confusing them fails silently |
+| `docs/webauthn.md` | any `webauthn*` page, `cbor.js`, `cose.js`, `webauthn.js`, or the browser extension | the RP ID is the calling origin and that refusal *is* the phishing resistance; the decoder is checked against the browser's own `getPublicKey()`; and an ECDSA signature arrives DER-encoded while Web Crypto wants raw `r‖s`, which fails by returning `false` rather than throwing |
 
 ## Shared client modules
 
@@ -34,6 +35,10 @@ Several page bundles share modules rather than duplicating behaviour:
 | `jwk_pem.js` | `jwks.js` | a JWK public key as a SubjectPublicKeyInfo **PEM** (RSA, and EC on P-256/384/521), which is the "PEM Format" box on the JWKS page. It is sixty lines of DER rather than the `jwk-to-pem` package because that package builds its EC point through **`elliptic`**, and browserify then ships `elliptic` to the browser — see *Keeping `elliptic` out of the bundles* below. A `d` member is ignored (these are published keys), and an unsupported `kty` throws so the page can mark **one** key unrenderable without losing the table |
 | `jose_jwe.js` | `jwt_tools.js`, the OID4VCI issuance panes | in-browser **JWE** (RFC 7516/7518): RSA-OAEP(-256), ECDH-ES direct and +A*KW, A*GCM, the Concat KDF, flexible key input (CryptoKey / JWK object / JWK text / PEM), and a **Web Crypto capability probe** — Chrome rejects AES-192, so options needing it are marked unusable rather than failing with an OperationError. Extracted from `jwt_tools.js` because OID4VCI section 10 has both sides encrypting, and the KDF must exist once. Tested directly by `tests/jose_jwe.js` against an independent reading of RFC 7518 section 4.6 |
 | `did.js` | `did_tools.js`, `vc_issuance_1.js` (the pane), `vc_issuance_3.js` (issuer verification), `vc_presentation_2.js` (the ldp_vc key) | **DIDs** (W3C DID Core 1.0): `did:jwk`, `did:key` and `did:web`, all resolving to the same document shape so one table renders any of them; reading a document (`assertionKeys`, `keyForKid`, `assertionJwks`); `resolveVerificationMethod`, which handles a proof naming its key by DID URL *or* by https URL; and **DIF Well Known DID Configuration** (`verifyDomainLinkage` / `verifyOriginLinkage`). Tested by `tests/did_document.js` |
+| `cbor.js` | `cose.js`, `webauthn.js` | a decode-only, bounded CBOR reader (RFC 8949). Maps decode to a **`Map`**, because COSE is keyed by integers including negative ones and collapsing those to object keys makes `1` and `"1"` the same thing. Indefinite lengths are refused: CTAP2's canonical CBOR forbids them, so one in an attestation object is a finding rather than something to accept quietly. `decodeFirst()` exists because the credential public key sits mid-buffer inside the authenticator data with the extension data behind it |
+| `cose.js` | `webauthn.js`, `webauthn_panes.js` | COSE_Key → JWK → SPKI PEM, **reusing `jwk_pem.js`** rather than re-encoding DER. A key carrying private material is refused rather than stripped. The negative labels are read per key type, because `-1` is the curve for an EC2 key and the modulus for an RSA one |
+| `webauthn.js` | the two WebAuthn pages, `webauthn_panes.js`, `tests/webauthn_decode.js` | clientData, authenticator data, attestation statements, and assertion verification reporting every check **by name** rather than one boolean. No DOM in it, which is what lets the node test drive it against real ceremonies with no browser |
+| `webauthn_panes.js` | `webauthn_analyzer.js`, `webauthn_lab.js` | the DOM half: the decode panes both pages render. They differ in where the bytes came from and nothing else, so a flags table that disagreed between them would be a bug visible only by comparing the pages. **No `innerHTML` anywhere** — everything here arrived from an authenticator or a paste box |
 
 ## The landing page
 
@@ -68,8 +73,12 @@ Client-side JavaScript lives in `/client/src/` and is compiled into `/client/pub
 | `vc_presentation_2.js` | `vc_presentation_2.js` | SD-JWT VC presentation step 2, choose and present (`vc-presentation-2.html`) |
 | `vc_presentation_3.js` | `vc_presentation_3.js` | SD-JWT VC presentation step 3, the verdict (`vc-presentation-3.html`) |
 | `did_tools.js` | `did_tools.js` | DID Tools, a general-purpose DID verifier (`did-tools.html`) |
+| `webauthn_lab.js` | `webauthn_lab.js` | WebAuthn Lab — this origin as the relying party (`webauthn.html`) |
+| `webauthn_analyzer.js` | `webauthn_analyzer.js` | WebAuthn Analyzer — decode artifacts from anywhere (`webauthn_analyzer.html`) |
 
 The browserify build runs inside Docker. There is no local build script — to rebuild bundles you must use Docker.
+
+**A new page has to be registered in TWO places**, and they are not near each other: the `BUNDLES` array in `client/build.js` (which the static deployments use) and a `RUN browserify` line in `client/Dockerfile` (which the container image uses). Miss the second and the deployed static site is perfectly fine while the containerized page's `<script>` 404s — so the failure appears only in the suite, and only as a page that does nothing.
 
 ### Keeping `elliptic` out of the bundles
 
@@ -85,7 +94,7 @@ It was reaching **five** bundles — `debugger.js`, `debugger2.js`, `jwks.js`, `
 | `jwk-to-pem` | `jwks.js`, genuinely used | `./jwk_pem` |
 | `require('crypto')` | `debugger.js`, for the PKCE `code_challenge` SHA-256 | **`create-hash`** — the very module crypto-browserify uses for `createHash`, so it is the same implementation and the same digest without the ECDSA half. Web Crypto is *not* the answer here: `crypto.subtle.digest` is async while `setPKCEValues()` calls this synchronously, and `crypto.subtle` does not exist at all on the containerized suite's `http://client:3000` origin |
 
-Three rules follow, and `tests/jwk_pem.js` enforces all three:
+Three rules follow, and `tests/jwk_pem_encoding.js` enforces all three:
 
 * **No file in `client/src` may require `jwk-to-pem`, `jsonwebtoken`, `@fidm/x509`, or a bare `crypto`.** Any one of them silently re-adds `elliptic` to whatever bundle it lands in. This is the only check that would catch a *new* page doing it. (Comments discussing these requires are fine — that is where the reasoning lives — so only real code lines count.)
 * Those packages are **removed from `client/package.json`**, so a future `npm install` cannot quietly restore the option.

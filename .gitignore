@@ -31,3 +31,9 @@ api/version.js
 client/public/version.json
 
 *.swp
+
+# The browser extension is BUILT (extension/build.js stamps the version and
+# bakes the CI auto-arm origin), so the output is generated per run and not
+# committed. buildBrowserExtension() in common/common.sh writes it before
+# compose builds, and tests/Dockerfile COPYs extension/dist/ci.
+extension/dist/

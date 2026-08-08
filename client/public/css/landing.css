@@ -28,7 +28,20 @@
    exact problem two columns had at six cards. 4 x 205px + 3 x 16px = 868px. */
 .landing-choices {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(205px, 1fr));
+  /* FIVE across, not four, and the number is forced by the ninth card rather
+   * than chosen: at 205px the grid fits four in the 940px box, so nine cards
+   * become 4+4+1 — three rows ending at 762px against a 625px viewport, past
+   * both the viewport and the 640px budget tests/navigation.js enforces (a real
+   * browser's toolbar, which headless does not have). This is the third time the
+   * column count has had to grow for exactly this reason; see the note above.
+   *
+   * 175px is arithmetic rather than taste, and it is the WIDEST value that
+   * works: n columns fit when n*min + (n-1)*gap <= 940, so five need
+   * min <= 175.2 (5*175 + 4*16 = 939). Anything larger silently stays at four —
+   * 180px did, and the only symptom was the height. Widening the container
+   * instead is not available: this grid sits inside bootstrap's 940px
+   * .container, so a bigger max-width here would do nothing. */
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
   gap: 16px;
   align-items: stretch;
   max-width: 940px;
@@ -62,7 +75,19 @@
    that card's icon silently falls back to the text colour, which is what happened
    to the two newest ones. */
 .landing-icon { margin-bottom: 8px; line-height: 0; }
-.landing-icon svg { width: 48px; height: 48px; }
+/* 40px, not 48px, and the eight pixels are load-bearing. At five columns the
+   cards are narrower, so every description wraps onto more lines and the two
+   rows grew to 633px against a 625px viewport. An icon costs its height once per
+   ROW, so trimming it buys back twice what it gives up, without touching any
+   card's copy — which is the alternative, and a worse one: those descriptions
+   are product text and shortening somebody else's to fit a layout is the tail
+   wagging the dog.
+   44px landed on exactly 625px, which PASSES and is still wrong: this suite has
+   already lost a run to an 8px difference that appeared only in the container,
+   where fonts-liberation gives different metrics from a host's Arial. 40px
+   leaves ~16px of headroom instead of none. Measured at each step, not
+   estimated. */
+.landing-icon svg { width: 40px; height: 40px; }
 .landing-card:nth-child(1) .landing-icon { color: #2680eb; }
 .landing-card:nth-child(2) .landing-icon { color: #5a2a8f; }
 .landing-card:nth-child(3) .landing-icon { color: #0a7d63; }
@@ -71,6 +96,7 @@
 .landing-card:nth-child(6) .landing-icon { color: #1f5f9e; }
 .landing-card:nth-child(7) .landing-icon { color: #7a5c00; }
 .landing-card:nth-child(8) .landing-icon { color: #167a8a; }
+.landing-card:nth-child(9) .landing-icon { color: #6b3fa0; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "IdPTools WebAuthn Observer",
+  "description": "Watches navigator.credentials on one origin you choose and copies what passes, for the IdPTools WebAuthn debugger. Read-only: it never alters a ceremony and never starts one.",
+  "version": "0.0.0",
+  "permissions": ["storage", "scripting", "alarms", "management"],
+  "optional_host_permissions": ["*://*/*"],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "http://localhost:3100/*",
+    "http://client:3000/*",
+    "https://idptools.com/*",
+    "https://test.idptools.com/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost:3000/*",
+        "http://localhost:3100/*",
+        "http://client:3000/*",
+        "https://idptools.com/*",
+        "https://test.idptools.com/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "action": { "default_popup": "popup.html", "default_title": "WebAuthn observer" },
+  "web_accessible_resources": [
+    { "resources": ["autoarm.json"], "matches": ["<all_urls>"] }
+  ]
+}

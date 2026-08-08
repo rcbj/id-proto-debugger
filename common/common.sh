@@ -128,6 +128,34 @@ download_saml_metadata()
 # An outer wrapper may supply SAML_SP_PRIVATE_KEY / SAML_SP_CERT itself; in that
 # case they are used as they are and nothing is generated.
 # ---------------------------------------------------------------------------
+# The browser extension's unpacked builds. Not committed, because they are
+# generated (the version is stamped in) and because the CI build needs to know
+# which origin the browser will see the mock STS on — http://sts:8081 inside the
+# containerized stack, http://localhost:8081 for a host run. Written before
+# compose builds, exactly like renderWaltidConfig: tests/Dockerfile COPYs
+# extension/dist/ci, so an absent build fails that COPY with a message about a
+# missing path rather than anything about extensions.
+#
+# The test that loads it will not run against BRANDED Google Chrome — that build
+# refuses to side-load an unpacked extension and says so only on stderr — but the
+# tests image pins Chrome for Testing, which allows it.
+buildBrowserExtension()
+{
+  echo "Entering buildBrowserExtension()."
+  local dir="${1:-.}"
+  local origins="${EXTENSION_AUTOARM_ORIGINS:-${OID4VCI_ISSUER_URL:-http://localhost:8081}}"
+  if [ ! -f "${dir}/extension/build.js" ];
+  then
+    echo "WARNING: ${dir}/extension/build.js is missing; the extension job will fail its own" >&2
+    echo "         precondition rather than this build failing here." >&2
+    return 0
+  fi
+  ( cd "${dir}" && EXTENSION_AUTOARM_ORIGINS="${origins}" node extension/build.js )
+  check_return_code $?
+  echo "Leaving buildBrowserExtension(). autoarm origins: ${origins}"
+  return 0
+}
+
 generateSpKeyPair()
 {
   echo "Entering generateSpKeyPair()."
