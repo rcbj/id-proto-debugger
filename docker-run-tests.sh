@@ -67,6 +67,13 @@ export WALTID_BASE_URL WALTID_KEYCLOAK_AUTHORIZE_URL WALTID_KEYCLOAK_TOKEN_URL
 export WALTID_KEYCLOAK_CLIENT_ID WALTID_KEYCLOAK_CLIENT_SECRET
 export WALTID_VERIFIER_BASE_URL WALTID_VERIFIER_CLIENT_ID
 
+# The mock STS is a submodule, so its source is fetched rather than committed
+# here. Checked before the build for the same reason the walt.id render below
+# happens before it: without the checkout, compose reports a missing Dockerfile
+# and the tests image a missing COPY, neither of which mentions a submodule.
+requireMockStsCheckout "${CURRENT_DIR}"
+check_return_code $?
+
 # The walt.id issuer's configuration is rendered before compose brings the stack
 # up: the container mounts the result, and the signing key it contains is
 # generated per run and gitignored. See common/common.sh.
@@ -75,6 +82,8 @@ check_return_code $?
 generateWaltidVerifierKey
 check_return_code $?
 renderWaltidConfig "${CURRENT_DIR}"
+check_return_code $?
+buildBrowserExtension "${CURRENT_DIR}"
 check_return_code $?
 
 # Always tear the stack down, even if the tests fail, so the next run starts clean.

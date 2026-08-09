@@ -202,6 +202,11 @@ init()
   fi
   common_setup
   check_return_code $?
+  # The mock STS is a submodule, so its source is fetched rather than committed
+  # here. This launcher builds it too (keycloak-tests.yml), so the checkout has to
+  # exist before compose runs.
+  requireMockStsCheckout "${CURRENT_DIR}"
+  check_return_code $?
   # A fresh SP key pair for this run: the tests sign and decrypt with the private
   # key, configureKeycloak registers the certificate on the SAML client, and
   # nothing is written to the repository.
@@ -217,6 +222,8 @@ init()
   check_return_code $?
   renderWaltidConfig "${CURRENT_DIR}"
   check_return_code $?
+  buildBrowserExtension "${CURRENT_DIR}"
+  check_return_code $?
   NODEJS_BASE_DIR=tests
 
   echo "==> Debugger under test: ${DEBUGGER_BASE_URL}"
@@ -226,6 +233,15 @@ init()
 prepTestEnv()
 {
   npm install --prefix tests
+  # The mock STS's own dependencies: the four host-run tests that load
+  # sts/bbs2023.js in place reach @digitalbazaar/bbs-signatures through a dynamic
+  # import(), which resolves from that file's own directory and ignores NODE_PATH.
+  # See the fuller note in local-run-tests.sh. `npm ci` so the submodule's
+  # committed lock is not rewritten under it.
+  if [ -f sts/package.json ];
+  then
+    npm ci --prefix sts
+  fi
 }
 
 # ---------------------------------------------------------------------------

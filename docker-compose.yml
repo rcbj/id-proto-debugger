@@ -39,8 +39,13 @@ services:
     container_name: sts
     image: rcbj/sts
     build:
-      context: .
-      dockerfile: ./sts/Dockerfile
+      # sts/ is a submodule (https://github.com/rcbj/mock-sts.git, branch main),
+      # and its Dockerfile's COPY paths are relative to ITS root — so the context
+      # is the submodule, not this repository. An uninitialised submodule leaves
+      # sts/ empty and compose then reports only "failed to read dockerfile";
+      # common/common.sh's requireMockStsCheckout() is what turns that into an
+      # explanation, and the launchers call it before building.
+      context: ./sts
     ports:
       - "8081:8081"
   # Keycloak 8.0.1 + cloudtrust keycloak-wsfed module (WS-Federation IdP side-car

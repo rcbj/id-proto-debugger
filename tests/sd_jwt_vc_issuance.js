@@ -1288,25 +1288,58 @@ async function stepOneFitsInOneRow(driver) {
     "Parameters pane below.");
 
   // The Configuration Parameters columns: a name must not sit on top of its value.
+  //
+  // Measured FRAGMENT BY FRAGMENT, which is the whole difficulty. This pane is a CSS
+  // multi-column layout, so an element that crosses a column break is laid out as
+  // two boxes in two different columns — and getBoundingClientRect(), on both the
+  // element and a Range, returns the UNION of those boxes. A wrapped member name
+  // split across a break therefore reports a rect running from the left of one
+  // column to the right of the next, which duly "overlaps" its input and reads as
+  // exactly the defect this check is for, while nothing whatsoever is overlapping.
+  // That false positive is not hypothetical: it is what this assertion reported
+  // before .vc-config-table td got `break-inside: avoid`. Comparing the individual
+  // client rects instead means an overlap has to be real — the two boxes must meet
+  // on BOTH axes, i.e. be on the same line in the same column.
   var overlap = await driver.executeScript(
     "var bad = [];" +
+    "var fragmented = [];" +
     "Array.prototype.slice.call(document.querySelectorAll('#config_rows tr')).forEach(function (tr) {" +
     "  var td = tr.children[0];" +
     "  var field = tr.querySelector('input, textarea, select');" +
     "  if (!td || !field) return;" +
-    "  var b = field.getBoundingClientRect();" +
-    "  if (!b.width) return;" +
+    "  var fieldRects = Array.prototype.slice.call(field.getClientRects())" +
+    "    .filter(function (r) { return r.width > 0; });" +
+    "  if (!fieldRects.length) return;" +
     "  var range = document.createRange();" +
     "  range.selectNodeContents(td);" +
-    "  var a = range.getBoundingClientRect();" +
+    "  var textRects = Array.prototype.slice.call(range.getClientRects())" +
+    "    .filter(function (r) { return r.width > 0; });" +
     "  range.detach();" +
-    "  if (!a.width) return;" +
-    "  if (a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1) {" +
-    "    bad.push(td.textContent.trim().slice(0, 48) + ' (over by ' +" +
-    "             Math.round(a.right - b.left) + 'px)');" +
+    "  if (!textRects.length) return;" +
+    "  if (td.getClientRects().length > 1) {" +
+    "    fragmented.push(td.textContent.trim().slice(0, 48));" +
+    "  }" +
+    "  var worst = 0;" +
+    "  textRects.forEach(function (a) {" +
+    "    fieldRects.forEach(function (b) {" +
+    "      if (a.right > b.left + 1 && a.left < b.right - 1 &&" +
+    "          a.top < b.bottom - 1 && a.bottom > b.top + 1) {" +
+    "        worst = Math.max(worst, Math.round(a.right - b.left));" +
+    "      }" +
+    "    });" +
+    "  });" +
+    "  if (worst > 0) {" +
+    "    bad.push(td.textContent.trim().slice(0, 48) + ' (over by ' + worst + 'px)');" +
     "  }" +
     "});" +
-    "return { bad: bad, rows: document.querySelectorAll('#config_rows tr').length," +
+    // `rows` is read by the two assertions below AND by this section's log line. It
+    // was dropped from this object when `fragmented` was added, which made the very
+    // next assertion `undefined > 40` — false — so the section could only ever fail,
+    // with a message ("it has undefined rows") that accuses the PAGE of not having
+    // built the pane. Everything a script like this returns has a reader; check the
+    // readers when editing the shape.
+    "return { bad: bad, fragmented: fragmented," +
+    "         rows: document.querySelectorAll('#config_rows tr').length," +
     "         columns: document.querySelectorAll('#config_rows .vc-config-group').length };");
   assert.ok(overlap.rows > 40,
     "the Configuration Parameters pane should have been built by now; it has " +
@@ -1318,11 +1351,24 @@ async function stepOneFitsInOneRow(driver) {
     "Parameters columns: " + overlap.bad.join(", ") + ". A long identifier with no break " +
     "opportunity has to WRAP in a third of the width; without that both the name and the " +
     "value are unreadable, and nothing about the page's height or containment shows it.");
+  // The other half of the same rule, and the reason the check above measures each
+  // fragment separately rather than the union of them. A name cell that crosses a
+  // column break puts the tail of a wrapped identifier at the top of the NEXT
+  // column, a column away from the input it labels — as bad to read as an overlap,
+  // and invisible to the overlap check now that the check is fragment-aware. The
+  // css declares `break-inside: avoid` on the row, the cells and the tbody to stop
+  // it; on the row alone Chrome keeps the row box together and fragments the cell
+  // contents anyway.
+  assert.deepStrictEqual(overlap.fragmented, [],
+    "these Configuration Parameters name cells are split across a column break, so " +
+    "the rest of the name is at the top of the next column rather than beside its " +
+    "input: " + overlap.fragmented.join(", ") + ". `break-inside: avoid` needs to be " +
+    "on .vc-config-table td, not only on the tr.");
 
   log.info("[step 1] OK — four panes on one row (" + full.panes[0].w + "px each), row " +
            full.rowHeight + "px tall with " + loaded.length + " documents loaded, " +
            overlap.rows + " configuration rows in " + overlap.columns +
-           " groups with no name over its value.");
+           " groups, no name over its value and none split across a column.");
 
   await restoreStorage();
   await driver.manage().window().setRect({ width: before.width, height: before.height });
@@ -1897,7 +1943,69 @@ async function presentationHandoff(driver, generations) {
 // So this checks the geometry with values far longer than the real ones: no
 // element wider than the pane that contains it, and no horizontal page scroll.
 // Cheap, and it fails on the exact regression rather than on a screenshot diff.
+//
+// The page-scroll half of that used to report only a pixel count ("Got 8px."),
+// which is not enough to act on: it names neither the element nor the box model
+// that produced it, so an overflow that appears in one environment and not
+// another — the containerized suite renders at http://client:3000 in a Chrome
+// with a different font set than a host run has — cannot be chased without
+// reproducing the environment first. SPILL_SCAN therefore collects every element
+// whose right edge passes the viewport, and records whether an ancestor clips it:
+// an element inside an `overflow-x: hidden` box (the header and footer bars both
+// are) sticks out in the geometry but cannot scroll the document, so those are
+// listed last and marked, and the unclipped ones — the ones that actually caused
+// the failure — come first.
 // ---------------------------------------------------------------------------
+var SPILL_SCAN =
+  "var vw = document.documentElement.clientWidth;" +
+  "var past = [];" +
+  "Array.prototype.slice.call(document.querySelectorAll('body *')).forEach(function (e) {" +
+  "  var r = e.getBoundingClientRect();" +
+  "  if (r.width <= 0 && r.height <= 0) return;" +
+  "  var spill = Math.round(r.right - vw);" +
+  "  if (spill <= 0) return;" +
+  "  var clippedBy = '';" +
+  "  for (var p = e.parentElement; p && p !== document.body; p = p.parentElement) {" +
+  "    var pov = getComputedStyle(p).overflowX;" +
+  "    if (pov !== 'visible') {" +
+  "      clippedBy = p.tagName + (p.id ? '#' + p.id : '') +" +
+  "                  (p.className ? '.' + String(p.className).split(' ')[0] : '');" +
+  "      break;" +
+  "    }" +
+  "  }" +
+  "  var cs = getComputedStyle(e);" +
+  "  past.push({ tag: e.tagName, id: e.id || '', cls: String(e.className || '').slice(0, 40)," +
+  "              left: Math.round(r.left), right: Math.round(r.right)," +
+  "              width: Math.round(r.width), spill: spill, clippedBy: clippedBy," +
+  "              pos: cs.position, ws: cs.whiteSpace, ovx: cs.overflowX," +
+  "              text: (e.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) });" +
+  "});" +
+  "past.sort(function (a, b) {" +
+  "  if (!a.clippedBy !== !b.clippedBy) return a.clippedBy ? 1 : -1;" +
+  "  return b.spill - a.spill;" +
+  "});" +
+  "past = past.slice(0, 12);";
+
+// Renders what SPILL_SCAN found into the assertion message. Everything here is
+// for a failure that has already happened, so it errs towards saying too much.
+function spillReport(result) {
+  var head = "(viewport " + result.vw + "px, window " + result.iw + "px, content " +
+             result.sw + "px, body margin " + result.bodyMargin + ")";
+  if (!result.past || !result.past.length) {
+    return head + " — but no element's right edge passes the viewport, so the width " +
+           "comes from the box model (a margin, a negative offset or a transform) " +
+           "rather than from any one box.";
+  }
+  var lines = result.past.map(function (o) {
+    return "    " + o.tag + (o.id ? "#" + o.id : "") + (o.cls ? "." + o.cls : "") +
+           " spills " + o.spill + "px (left " + o.left + ", width " + o.width +
+           ", position " + o.pos + ", white-space " + o.ws + ", overflow-x " + o.ovx + ")" +
+           (o.clippedBy ? " [clipped by " + o.clippedBy + " — cannot scroll the page]" : "") +
+           (o.text ? " “" + o.text + "”" : "");
+  });
+  return head + " past the right edge:\n" + lines.join("\n");
+}
+
 async function panesContainTheirContent(driver) {
   log.debug("Entering panesContainTheirContent().");
   log.info("=== Nothing overflows its pane ===");
@@ -1924,7 +2032,13 @@ async function panesContainTheirContent(driver) {
       "    if (over > 0) out.push({ pane: pane.id, tag: e.tagName, id: e.id || '(none)', over: over });" +
       "  });" +
       "});" +
-      "return { overflowing: out," +
+      SPILL_SCAN +
+      "return { overflowing: out, past: past," +
+      "         vw: document.documentElement.clientWidth," +
+      "         iw: window.innerWidth," +
+      "         sw: document.documentElement.scrollWidth," +
+      "         bodyMargin: getComputedStyle(document.body).marginLeft + '/' +" +
+      "                     getComputedStyle(document.body).marginRight," +
       "         doc: document.documentElement.scrollWidth - document.documentElement.clientWidth };");
     assert.strictEqual(result.overflowing.length, 0,
       pages[i] + ": these elements extend past the pane that contains them — " +
@@ -1932,7 +2046,8 @@ async function panesContainTheirContent(driver) {
         return o.id + " (" + o.tag + " in " + o.pane + ", " + o.over + "px)";
       }).join(", "));
     assert.ok(result.doc <= 0,
-      pages[i] + " should not scroll horizontally, even with values this long. Got " + result.doc + "px.");
+      pages[i] + " should not scroll horizontally, even with values this long. Got " +
+      result.doc + "px. " + spillReport(result));
     log.info("[layout] " + pages[i] + ": every box fits its pane, no horizontal scroll.");
   }
 

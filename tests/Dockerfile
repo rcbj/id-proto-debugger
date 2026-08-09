@@ -8,9 +8,22 @@ RUN apt-get update
 # libxml2-utils supplies xmllint, the XSD validator the WS-Trust schema test
 # falls back to when the optional native libxmljs2 binding is unusable (no
 # prebuilt binary for this ABI, or one built against a different Node version).
+#
+# fonts-liberation is here for the LAYOUT tests, and is the one thing in this list
+# that is about rendering rather than about a tool. This image installed no
+# fonts-* package at all, so the app's font stacks — bootstrap's
+# `"Helvetica Neue", Helvetica, Arial, sans-serif` and common.css's
+# `arial, sans-serif` — had no Arial-metric font to land on and fell through to
+# whatever fontconfig happened to pull in transitively, which is wider. A host run
+# resolves Arial to Liberation Sans and lays the pages out several pixels
+# narrower, so the two environments disagree about geometry and only the
+# containerized one trips panesContainTheirContent()'s no-horizontal-scroll
+# assertion. Liberation is the metric-compatible substitute for Arial, which is
+# what Chrome's own .deb depends on for the same reason.
 RUN apt-get -y install curl \
         jq \
         openssl \
+        fonts-liberation \
         libxml2-utils \
         libatomic1 \
         libasound2t64 \
@@ -58,17 +71,25 @@ RUN node -v
 RUN npm -v
 
 # Bundle app source
-COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem.js tests/url_safety.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop.js tests/sts_dpop.js tests/dpop_workflow.js ./
+COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop.js tests/sts_dpop.js tests/dpop_workflow.js ./
 # The XML Signature/Encryption interop test drives the frontend crypto module
 # directly (no browser); copy it next to the test so it can require('./xmldsig.js')
 # and resolve its deps (node-forge, etc.) from this image's node_modules. The
 # WS-Trust schema test likewise builds messages with the real generator
 # (wstrust_msg.js) and validates them against the derived XSD in ./schemas.
 COPY client/src/xmldsig.js client/src/wstrust_msg.js client/src/jose_jwe.js client/src/edge_landing.js ./
-# The JWK -> SPKI PEM encoder, tested the same way (tests/jwk_pem.js requires it
-# directly). Note that in this image there is no client/src tree, so that test's
-# scan for requires which would pull `elliptic` back into a bundle reports itself
-# skipped — the scan runs in a checkout, where the sources are present.
+# The JWK -> SPKI PEM encoder, tested the same way (tests/jwk_pem_encoding.js
+# requires it directly). Note that in this image there is no client/src tree, so
+# that test's scan for requires which would pull `elliptic` back into a bundle
+# reports itself skipped — the scan runs in a checkout, where the sources are present.
+#
+# The TEST is called jwk_pem_encoding.js precisely because of this COPY. It used
+# to be tests/jwk_pem.js, which lands flat at the same path this line writes —
+# and this line runs second, so the module silently REPLACED the test. `node
+# jwk_pem.js` then loaded a module, printed nothing and exited 0, and run-report
+# recorded the job as passed. The elliptic scan had not run in a containerized
+# build since. Same trap as metadata_schema.js, same remedy: give the test a name
+# no module will land on. cose.js requires ./jwk_pem, so the MODULE keeps its name.
 COPY client/src/jwk_pem.js ./
 # The scheme allowlist, tested directly by tests/url_safety.js.
 COPY client/src/url_safety.js ./
@@ -86,6 +107,13 @@ COPY client/src/bbs.js ./
 # so the STS's is renamed on the way in; the test resolves either layout.
 # client/src/bbs2023.js does require("./contexts/..."), so the vendored JSON-LD
 # contexts come too: canonicalization must never depend on fetching one.
+#
+# The STS's copy comes out of the sts/ SUBMODULE
+# (https://github.com/rcbj/mock-sts.git) — the one place outside the compose files
+# where this repository reaches into it. An uninitialised submodule fails this
+# build with "COPY sts/bbs2023.js: not found", which says nothing about the cause;
+# the launchers run requireMockStsCheckout() (common/common.sh) before building so
+# it is explained before it happens.
 COPY client/src/bbs2023.js ./
 COPY sts/bbs2023.js ./sts_bbs2023.js
 COPY client/src/contexts ./contexts
@@ -110,6 +138,28 @@ COPY client/src/dpop.js ./
 # with the same code the pages use.
 COPY client/src/did.js ./
 COPY client/src/metadata_client.js client/src/vci_metadata.js client/src/op_metadata.js ./
+# The WebAuthn decoder, loaded directly by tests/webauthn_decode.js: the CBOR
+# reader, the COSE_Key decoder (which requires ./jwk_pem, copied above) and the
+# artifact parser/verifier. The vectors beside them are real ceremonies produced
+# by this image's own Chrome 121 via the WebDriver virtual authenticator, kept as
+# data so the test needs no browser and cannot flake.
+COPY client/src/cbor.js client/src/cose.js client/src/webauthn.js ./
+# The STS's WebAuthn verifier, for tests/webauthn_cross_impl.js. Renamed on the
+# way in because its basename collides with the client's module copied on the
+# line above — the same arrangement sts/bbs2023.js is in, and for the same
+# reason. It comes out of the sts/ SUBMODULE, so an uninitialised checkout fails
+# this build with "COPY sts/webauthn.js: not found", which says nothing about the
+# cause; requireMockStsCheckout() in common/common.sh explains it first.
+COPY sts/webauthn.js ./sts_webauthn.js
+COPY tests/webauthn_decode.js tests/webauthn_vectors.json tests/webauthn_analyzer_page.js tests/webauthn_lab_page.js tests/webauthn_cross_impl.js tests/webauthn_oidc_mfa.js tests/webauthn_extension.js ./
+# The browser extension's CI build, side-loaded by tests/webauthn_extension.js.
+# It is GENERATED, not committed: build.js stamps the version in and bakes the
+# origin the browser will see the mock STS on, which differs between the
+# containerized stack and a host run. The launchers call buildBrowserExtension()
+# (common/common.sh) before compose builds, exactly as they render the walt.id
+# configuration — and for the same reason. If this COPY fails with "not found",
+# that call did not happen.
+COPY extension/dist/ci ./extension-ci
 # The two halves of the edge landings' hand-off contract, which
 # tests/edge_landing_contract.js compares: the module deployed to Lambda@Edge by
 # Terraform and the client module browserified into the page (copied just above).

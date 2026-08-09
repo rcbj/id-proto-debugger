@@ -1,0 +1,4 @@
+[submodule "sts"]
+	path = sts
+	url = https://github.com/rcbj/mock-sts.git
+	branch = main

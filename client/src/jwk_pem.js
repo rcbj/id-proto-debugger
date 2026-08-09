@@ -15,7 +15,7 @@
 // ECDSA implementation to be vulnerable.
 //
 // The output is byte-identical to what `jwk-to-pem` produced, and
-// `tests/jwk_pem.js` is what holds it to that: the encoding is a wire format
+// `tests/jwk_pem_encoding.js` is what holds it to that: the encoding is a wire format
 // other tools have to read, so "close enough" is not a thing it can be.
 //
 // Scope is deliberately the same as the call site's: PUBLIC keys, kty RSA and

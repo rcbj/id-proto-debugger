@@ -8,7 +8,14 @@ version: '2.4'
 services:
   keycloak:
     image: quay.io/keycloak/keycloak:26.6.4
-    command: ["start-dev"]
+    # DPoP (RFC 9449) is a PREVIEW feature in Keycloak 26 and is off unless it is
+    # named here: without it the server ignores the DPoP header entirely, issues a
+    # perfectly ordinary Bearer token, and advertises no
+    # dpop_signing_alg_values_supported — so the OIDC DPoP jobs would fail with "the
+    # token came back unbound", which reads as a client bug rather than as a server
+    # that was never asked to support it. tests/oidc_flows.js checks that
+    # advertisement before running an OIDC_DPOP=on job and says so by name.
+    command: ["start-dev", "--features=dpop"]
     hostname: keycloak
     network_mode: "host"
     environment:
@@ -39,8 +46,9 @@ services:
       # is right for a local dev site.
       - OID4VCI_WALLET_URL=${OID4VCI_WALLET_URL}
     build:
-      context: .
-      dockerfile: sts/Dockerfile
+      # The submodule's own root: see docker-compose.yml for why the context is
+      # ./sts rather than this repository with dockerfile: sts/Dockerfile.
+      context: ./sts
   # walt.id issuer-api2 — the real OpenID4VCI issuer the interop suite
   # (tests/sd_jwt_vc_waltid.js) runs against. Host networking, so the host-run
   # browser reaches it at localhost:7005 and it reaches Keycloak on the same

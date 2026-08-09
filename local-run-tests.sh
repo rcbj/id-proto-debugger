@@ -88,6 +88,11 @@ init()
   fi
   common_setup
   check_return_code $?
+  # The mock STS is a submodule, so its source is fetched rather than committed
+  # here. Checked before anything builds: without the checkout, compose reports a
+  # missing Dockerfile and nothing mentions a submodule.
+  requireMockStsCheckout "${CURRENT_DIR}"
+  check_return_code $?
   # A fresh SP key pair for this run: exported for the tests (which sign and
   # decrypt with it) and for configureKeycloak (which registers the certificate
   # on the SAML client). Nothing is written to the repository.
@@ -119,12 +124,32 @@ init()
   check_return_code $?
   renderWaltidConfig "${CURRENT_DIR}"
   check_return_code $?
+  buildBrowserExtension "${CURRENT_DIR}"
+  check_return_code $?
   NODEJS_BASE_DIR=tests
 }
 
 prepTestEnv()
 {
   npm install --prefix tests
+  # And the mock STS's own dependencies, because four tests run on the HOST and
+  # load sts/bbs2023.js from the submodule in place: bbs2023_cryptosuite.js,
+  # ldp_vc_issuance.js, ldp_vc_refresh.js and vc_did.js, each of which compares
+  # the issuer's cryptosuite with the wallet's. That module reaches
+  # @digitalbazaar/bbs-signatures through a dynamic `import()`, and ESM resolution
+  # walks the directory tree from the importing FILE — it does not consult
+  # NODE_PATH, so tests/module_paths.js cannot cover it the way it covers the
+  # module's CommonJS requires. Without sts/node_modules those four fail at load
+  # with ERR_MODULE_NOT_FOUND. The containerized suite is unaffected: there
+  # bbs2023.js is copied flat beside the tests, next to tests/node_modules.
+  #
+  # `npm ci`, not `npm install`: mock-sts commits its lock, and `npm install`
+  # REWRITES it (its lock still carries the pre-rename package name), which would
+  # leave the submodule with a modified file after every run.
+  if [ -f sts/package.json ];
+  then
+    npm ci --prefix sts
+  fi
 }
 
 startDocker()
