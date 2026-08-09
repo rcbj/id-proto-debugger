@@ -33,6 +33,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
 var edge = require("./edge_landing"); // the static landings' hand-off contract
+var history = require("./wsfed_history");
 var log = bunyan.createLogger({ name: 'wsfed_response', level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
@@ -223,6 +224,18 @@ function buildTokenDetails(tokenEl) {
   log.debug("Leaving buildTokenDetails().");
 }
 
+// ---------------------------------------------------------------------------
+// Operations History (shared with wsfed_request.html via ./wsfed_history.js): the
+// tools page can only record that a sign-in/out was dispatched — the IdP's
+// verdict arrives here, so close out the pending entry when the wresult renders.
+// ---------------------------------------------------------------------------
+function renderOperationHistory() { history.render(el('wsfed_operation_history')); }
+function clearOperationHistory() {
+  history.clear();
+  renderOperationHistory();
+  return false;
+}
+
 function render(wresultXml, context) {
   log.debug("Entering render().");
   setVal('wsfed_response_xml', formatXml(wresultXml));
@@ -233,6 +246,9 @@ function render(wresultXml, context) {
     el('wsfed_token_details').innerHTML = '<em>No token.</em>';
     setVal('wsfed_token_xml', wresultXml ? '(wresult is not well-formed XML)' : '(no wresult)');
     setStatus('Could not parse wresult as XML.');
+    history.resolvePending(history.FAILURE,
+      wresultXml ? 'wresult was not well-formed XML' : 'no wresult was returned', history.OP_SIGN_IN);
+    renderOperationHistory();
     return;
   }
 
@@ -255,6 +271,14 @@ function render(wresultXml, context) {
   }
 
   setStatus('wresult loaded.');
+  // Close out the pending sign-in: a wresult carrying a token is the IdP saying
+  // the call worked; a wresult with none is a completed-but-empty answer.
+  if (tokenEl) {
+    history.resolvePending(history.SUCCESS, 'IdP returned a token', history.OP_SIGN_IN);
+  } else {
+    history.resolvePending(history.FAILURE, 'wresult carried no security token', history.OP_SIGN_IN);
+  }
+  renderOperationHistory();
   log.debug("Leaving render().");
 }
 
@@ -430,9 +454,14 @@ window.onload = function () {
     // for the user to paste into.
   }
 
+  // Show the shared log, then let each branch below resolve its pending entry.
+  renderOperationHistory();
+
   var signout = qp('signout');
   if (signout) {
     setStatus('Signed out at the IdP (wa=' + esc(signout) + '). No token is returned for sign-out.');
+    history.resolvePending(history.SUCCESS, 'signed out at the IdP (wa=' + signout + ')', history.OP_SIGN_OUT);
+    renderOperationHistory();
     return;
   }
 
@@ -453,6 +482,8 @@ window.onload = function () {
       .catch(function (e) {
         log.error('fetch wresult: ' + e.message);
         setStatus('Could not load the stashed wresult: ' + e.message + ' — it may have expired. Paste it manually below.');
+        history.resolvePending(history.FAILURE, 'the stashed wresult could not be loaded: ' + e.message, history.OP_SIGN_IN);
+        renderOperationHistory();
       });
     return;
   }
@@ -467,5 +498,6 @@ module.exports = {
   copyField,
   viewSignerCert,
   validateTokenSignature,
-  decryptToken
+  decryptToken,
+  clearOperationHistory
 };

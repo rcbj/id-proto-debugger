@@ -753,6 +753,27 @@ function generateKeyPair(bits, cn) {
   };
 }
 
+// --- Redirect-binding query-string signature -------------------------------
+// The SAML HTTP-Redirect binding signs the URL-encoded query string itself
+// (see saml_request.js signRedirect): RSA-sign the SHA-* digest of the octet
+// string and base64 the result; the caller appends it as the Signature
+// parameter, with SigAlg naming the algorithm. Factored here so the WS-Fed page
+// can carry a redirect-style signature the same way. Detached (no XML): returns
+// the base64 signature over `queryString` exactly as given, so the caller must
+// pass the octets it will actually send (including the SigAlg param).
+// opts: { privateKeyPem, sigAlg }
+function signQueryString(queryString, opts) {
+  log.debug("Entering signQueryString().");
+  opts = opts || {};
+  if (!opts.privateKeyPem) throw new Error('signQueryString: privateKeyPem is required.');
+  var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
+  var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
+  var md = sigAlgSpec(sigAlg).md();
+  md.update(queryString, 'utf8'); // the query string is ASCII
+  log.debug("Leaving signQueryString().");
+  return forge.util.encode64(pk.sign(md));
+}
+
 module.exports = {
   forge: forge,
   DS_NS: DS_NS,
@@ -773,6 +794,7 @@ module.exports = {
   encryptXml: encryptXml,
   decryptXml: decryptXml,
   signEnveloped: signEnveloped,
+  signQueryString: signQueryString,
   signWsSecurity: signWsSecurity,
   verifyXmlSignature: verifyXmlSignature,
   generateKeyPair: generateKeyPair

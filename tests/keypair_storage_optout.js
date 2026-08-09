@@ -87,7 +87,7 @@ var PAGES = [
   ,
   {
     what: "WS-Federation",
-    page: "/wsfed_tools.html",
+    page: "/wsfed_request.html",
     prefix: "wsfedtools_",
     checkbox: "wsfed_save_keypair",
     note: "wsfed_keypair_storage_note",

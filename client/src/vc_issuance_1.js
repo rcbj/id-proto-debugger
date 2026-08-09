@@ -391,7 +391,7 @@ function renderCredentialConfigurations() {
 // list, the Configuration Parameters, Validate Signature, and what
 // debugger.html then shows.
 //
-// Following the pattern already on saml_request.html and wsfed_tools.html: a
+// Following the pattern already on saml_request.html and wsfed_request.html: a
 // visible button, a hidden file input it clicks, and the input's value cleared
 // afterwards so choosing the SAME file again still fires a change event.
 // ---------------------------------------------------------------------------

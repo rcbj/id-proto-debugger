@@ -69,7 +69,7 @@ const BUNDLES = [
   ['vc_presentation_2', 'vcpresentation2'],
   ['vc_presentation_3', 'vcpresentation3'],
   ['did_tools', 'didtools'],
-  ['wsfed_tools', 'wsfed_tools'],
+  ['wsfed_request', 'wsfed_request'],
   ['wsfed_response', 'wsfed_response'],
 ];
 

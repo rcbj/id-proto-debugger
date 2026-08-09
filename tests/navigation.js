@@ -28,7 +28,7 @@ var SAML_CARD = By.css('a.landing-card[href="/saml_request.html"]');
 var WSTRUST_CARD = By.css('a.landing-card[href="/wstrust_tools.html"]');
 var SDJWTVC_CARD = By.css('a.landing-card[href="/vc-issuance-0.html"]');
 var SDJWTVP_CARD = By.css('a.landing-card[href="/vc-presentation-0.html"]');
-var WSFED_CARD = By.css('a.landing-card[href="/wsfed_tools.html"]');
+var WSFED_CARD = By.css('a.landing-card[href="/wsfed_request.html"]');
 // Dynamic Client Registration lives on debugger.html, so its card is told apart
 // from the OAuth2 card by the fragment naming the DCR pane. The OAuth2 locator
 // above is an EXACT href match, so it still resolves to one element.
@@ -343,17 +343,17 @@ async function navigationActivities(driver) {
   await click(driver, HOME_LINK);
   await waitVisible(driver, CHOICES);
 
-  // 16. Choose the WS-Federation debugger -> wsfed_tools.html. Its own suite
+  // 16. Choose the WS-Federation debugger -> wsfed_request.html. Its own suite
   // needs the WS-Federation Keycloak side-car and is skipped without it, so this
   // is the only place the page is loaded on every run — which is how it came to
   // be served unstyled for a while without anything failing.
   log.info("Click the WS-Federation debugger card.");
   await click(driver, WSFED_CARD);
-  await driver.wait(until.urlContains("wsfed_tools.html"), waitTime);
+  await driver.wait(until.urlContains("wsfed_request.html"), waitTime);
   await driver.wait(until.elementLocated(By.id("wsfed_metadata_url")), waitTime);
-  log.info("Landed on wsfed_tools.html.");
-  await checkFooterVersion(driver, "wsfed_tools.html");
-  await checkStylesheetsLoaded(driver, "wsfed_tools.html");
+  log.info("Landed on wsfed_request.html.");
+  await checkFooterVersion(driver, "wsfed_request.html");
+  await checkStylesheetsLoaded(driver, "wsfed_request.html");
 
   // 17. Return to Home -> landing page.
   log.info("Click Home -> landing page.");

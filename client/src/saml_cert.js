@@ -135,21 +135,23 @@ function copyField(id) {
 function setReturnLink() {
   log.debug("Entering setReturnLink().");
   var from = new URLSearchParams(window.location.search).get('from');
+  // Map each caller to its href AND a human label — the return link must read
+  // "← Return to SAML Test Tools", not the raw "...to saml_request.html".
   var allowed = {
-    'saml_request.html': '/saml_request.html',
-    'saml_tools.html': '/saml_tools.html',
-    'saml_response.html': '/saml_response.html',
-    'wstrust_tools.html': '/wstrust_tools.html',
-    'wstrust_response.html': '/wstrust_response.html',
-    'wsfed_tools.html': '/wsfed_tools.html',
-    'wsfed_response.html': '/wsfed_response.html',
-    'digital_signature.html': '/digital_signature.html',
-    'jwt_tools.html': '/jwt_tools.html'
+    'saml_request.html':      { href: '/saml_request.html',      label: 'SAML Test Tools' },
+    'saml_tools.html':        { href: '/saml_tools.html',        label: 'SAML Assertion Tool' },
+    'saml_response.html':     { href: '/saml_response.html',     label: 'SAML Response' },
+    'wstrust_tools.html':     { href: '/wstrust_tools.html',     label: 'WS-Trust Test Tools' },
+    'wstrust_response.html':  { href: '/wstrust_response.html',  label: 'WS-Trust Response' },
+    'wsfed_request.html':       { href: '/wsfed_request.html',       label: 'WS-Federation Test Tools' },
+    'wsfed_response.html':    { href: '/wsfed_response.html',    label: 'WS-Federation Response' },
+    'digital_signature.html': { href: '/digital_signature.html', label: 'Digital Signature (SLH-DSA)' },
+    'jwt_tools.html':         { href: '/jwt_tools.html',         label: 'JWT Tools' }
   };
   var link = el('return_link');
   if (link && allowed[from]) {
-    link.setAttribute('href', allowed[from]);
-    link.textContent = '← Return to ' + from;
+    link.setAttribute('href', allowed[from].href);
+    link.textContent = '← Return to ' + allowed[from].label;
   }
   log.debug("Leaving setReturnLink().");
 }
