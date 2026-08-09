@@ -662,6 +662,36 @@ function buildJobs() {
     env: {},
   });
 
+  // The wallet's DID module (client/src/did.js): did:jwk, did:key and did:web,
+  // reading a DID document, and the DIF Well Known DID Configuration check that
+  // proves a DID and an origin are the same entity. Everything here fails
+  // silently when it is wrong — a multicodec written as a fixed-width number
+  // instead of a varint produces DIDs that decode here and nowhere else, a
+  // compressed EC point decompressed with the wrong square root gives the other
+  // valid point on the curve, and a Domain Linkage Credential with a typ header
+  // or an iat claim is exactly what a JWT library produces by default. It found a
+  // real bug on its first run: P-384's and P-521's field primes were truncated.
+  // Node only, never skipped.
+  jobs.push({
+    name: "DID module (did:jwk/key/web, document reading, DIF domain linkage)",
+    script: "did_document.js",
+    env: {},
+  });
+
+  // DPoP's own arithmetic (client/src/dpop.js): the RFC 7638 JWK Thumbprint that
+  // becomes cnf.jkt, the htu normalization, the ath hash, and the shape of the
+  // proof itself. Every one of those fails SILENTLY when it is wrong — a proof with
+  // a wrong thumbprint or a wrong htu is perfectly well formed and simply matches
+  // nothing, so the server's refusal reads as "your key is wrong" rather than "your
+  // encoding is wrong". The oracle is not a second implementation but the RFCs' own
+  // published values: RFC 9449 prints an EC key and the jkt of the token bound to
+  // it, RFC 7638 section 3.1 does the same for RSA. Node only, never skipped.
+  jobs.push({
+    name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own vectors, htu/ath/jti)",
+    script: "dpop.js",
+    env: {},
+  });
+
   // The api's outbound address policy (api/ssrf_guard.js): the service fetches
   // URLs its caller supplies, so it must refuse loopback and private destinations
   // or it is an SSRF probe into whatever network it runs in. Node only — no
@@ -1115,17 +1145,10 @@ function buildJobs() {
   // exports only when the side-car is provisioned — so this SKIPS (not fails) on
   // runs without it (remote/live, or a static deployment).
   {
-    const wsfedJob = {
-      name: "WS-Federation Passive SSO + Sign-out (Call IdP → Keycloak login → wsfed_response → wsignout1.0)",
-      script: "wsfed_sso.js",
-      env: {
-        WSFED_METADATA_URL: env.WSFED_METADATA_URL,
-        WSFED_REALM: env.WSFED_REALM,
-        WSFED_USER: env.WSFED_USER,
-      },
-    };
+    // Compute the skip reason ONCE — it gates every WS-Fed job below identically.
+    let wsfedSkip = null;
     if (!env.WSFED_METADATA_URL) {
-      wsfedJob.skip = "WS-Federation side-car (Keycloak 8.0.1 + wsfed) not provisioned (WSFED_METADATA_URL unset).";
+      wsfedSkip = "WS-Federation side-car (Keycloak 8.0.1 + wsfed) not provisioned (WSFED_METADATA_URL unset).";
     } else if (env.WSFED_LANDING_AVAILABLE === "false") {
       // The other end of the round trip. The Passive Requestor Profile has ONE
       // way to return the token — the IdP auto-POSTs the wresult to wreply — and
@@ -1140,13 +1163,67 @@ function buildJobs() {
       // remote-run-tests.sh probes the target with a real POST and sets this.
       // Unset (the containerized and local runs) means "not probed", and the job
       // runs against the api backend's landing as it always has.
-      wsfedJob.skip = "the target has no WS-Federation landing at " +
+      wsfedSkip = "the target has no WS-Federation landing at " +
         (env.WSFED_LANDING_URL || "<base>/wsfed") + " to receive the IdP's wresult POST " +
         "(the profile has no redirect binding). On a static deployment, apply the infrastructure " +
         "(./infra/terraform-local.sh test apply) so the Lambda@Edge landing exists, and build the " +
         "site with wsfedEdgeLanding: true.";
     }
-    jobs.push(wsfedJob);
+    const wsfedBaseEnv = {
+      WSFED_METADATA_URL: env.WSFED_METADATA_URL,
+      WSFED_REALM: env.WSFED_REALM,
+      WSFED_USER: env.WSFED_USER,
+    };
+    const pushWsfed = (name, extraEnv) => {
+      const job = { name, script: "wsfed_sso.js", env: Object.assign({}, wsfedBaseEnv, extraEnv) };
+      if (wsfedSkip) { job.skip = wsfedSkip; }
+      jobs.push(job);
+    };
+
+    // Every valid combination of the sign-in request options the workflow
+    // supports: the signing state (unsigned, or signed with each binding × each
+    // algorithm) crossed with where the request is initiated from. The passive
+    // request is not verified by the IdP, so a signature never blocks the round
+    // trip — wsfed_sso.js asserts the signature was BUILT (client-side) and then
+    // confirms the round trip still completes.
+    const signStates = [{ key: "unsigned", env: { WSFED_SIGN: "off" } }];
+    for (const binding of ["redirect", "enveloped"]) {
+      for (const alg of ["rsa-sha256", "rsa-sha1", "rsa-sha384", "rsa-sha512"]) {
+        signStates.push({
+          key: binding + "+" + alg,
+          env: { WSFED_SIGN: "on", WSFED_SIG_BINDING: binding, WSFED_SIG_ALG: alg },
+        });
+      }
+    }
+    for (const s of signStates) {
+      for (const initiate of ["back", "front"]) {
+        pushWsfed(
+          `WS-Federation Sign-in (sign=${s.key}, initiate=${initiate})`,
+          Object.assign({ WSFED_MODE: "signin", WSFED_INITIATE: initiate }, s.env)
+        );
+      }
+    }
+
+    // Optional passthrough request parameters (wctx/wct/wfresh/wauth/wp),
+    // exercised together once — the IdP largely ignores them; this proves the
+    // debugger emits them without breaking the round trip.
+    pushWsfed(
+      "WS-Federation Sign-in (optional params: wctx/wct/wfresh/wauth/wp)",
+      { WSFED_MODE: "signin", WSFED_INITIATE: "back", WSFED_OPT_PARAMS: "true" }
+    );
+    // Unsigned inline wreq (RequestSecurityToken) once.
+    pushWsfed(
+      "WS-Federation Sign-in (inline wreq)",
+      { WSFED_MODE: "signin", WSFED_INITIATE: "back", WSFED_INCLUDE_WREQ: "true" }
+    );
+
+    // Sign-out (wa=wsignout1.0) + session-ended check. Must share a browser with
+    // a sign-in, so this one job does sign-in → sign-out (the original flow);
+    // signing is off here to keep the leg focused on session termination.
+    pushWsfed(
+      "WS-Federation Passive SSO + Sign-out (Call IdP → login → wsfed_response → wsignout1.0)",
+      { WSFED_MODE: "signout", WSFED_INITIATE: "back", WSFED_SIGN: "off" }
+    );
   }
 
   // WS-Trust 1.4 against the STS (the mock STS service, or a real Apache CXF STS

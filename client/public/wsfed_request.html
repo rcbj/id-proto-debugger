@@ -19,7 +19,7 @@
 </div>
 
     <div class="container">
-<script type="text/javascript" src="/js/wsfed_tools.js">
+<script type="text/javascript" src="/js/wsfed_request.js">
 </script>
 
 <p class="saml-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
@@ -54,23 +54,23 @@ function wsfedSetAllPanes(expand) {
 
   <!-- ===================== Pane 1: IdP Metadata ===================== -->
   <fieldset class="saml-pane" id="pane_metadata">
-    <legend class="saml-legend" onclick="return wsfed_tools.togglePane('pane_metadata_body');">IdP Federation Metadata</legend>
+    <legend class="saml-legend" onclick="return wsfed_request.togglePane('pane_metadata_body');">IdP Federation Metadata</legend>
     <div class="saml-pane-body" id="pane_metadata_body">
       <div class="saml-field">
-        <label class="saml-has-copy" title="WS-Federation metadata document URL (e.g. https://adfs.example.com/FederationMetadata/2007-06/FederationMetadata.xml).">Metadata URL <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_metadata_url');">Copy</button></label>
+        <label class="saml-has-copy" title="WS-Federation metadata document URL (e.g. https://adfs.example.com/FederationMetadata/2007-06/FederationMetadata.xml).">Metadata URL <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_metadata_url');">Copy</button></label>
         <input class="stored" type="text" id="wsfed_metadata_url" name="wsfed_metadata_url" title="e.g. https://host/FederationMetadata/2007-06/FederationMetadata.xml" />
       </div>
       <div class="saml-row">
-        <input type="button" class="saml-btn" value="Load Metadata" onclick="return wsfed_tools.loadMetadata();" title="Fetch and parse the metadata (via the API proxy when available, else a direct browser fetch)." />
-        <input type="button" class="saml-btn" value="Upload Metadata" onclick="return wsfed_tools.uploadMetadata();" title="Parse a metadata XML file from disk." />
+        <input type="button" class="saml-btn" value="Load Metadata" onclick="return wsfed_request.loadMetadata();" title="Fetch and parse the metadata (via the API proxy when available, else a direct browser fetch)." />
+        <input type="button" class="saml-btn" value="Upload Metadata" onclick="return wsfed_request.uploadMetadata();" title="Parse a metadata XML file from disk." />
         <input type="file" id="wsfed_metadata_file" accept=".xml,application/xml,text/xml" style="display:none;" />
       </div>
       <div class="saml-tab">
-        <button id="tab_metadata_doc_btn" class="tablinks active" onclick="return wsfed_tools.showTab(event, 'tab_metadata_doc');">Metadata XML</button>
+        <button id="tab_metadata_doc_btn" class="tablinks active" onclick="return wsfed_request.showTab(event, 'tab_metadata_doc');">Metadata XML</button>
       </div>
       <div id="tab_metadata_doc" class="saml-tabcontent" style="display:block;">
         <div class="saml-field">
-          <label class="saml-has-copy" title="The metadata document. Paste it here directly if a browser fetch is blocked (CORS).">Metadata Document <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_metadata_doc');">Copy</button></label>
+          <label class="saml-has-copy" title="The metadata document. Paste it here directly if a browser fetch is blocked (CORS).">Metadata Document <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_metadata_doc');">Copy</button></label>
           <textarea class="stored" rows="10" id="wsfed_metadata_doc" name="wsfed_metadata_doc" placeholder="paste FederationMetadata.xml here, or use Load / Upload"></textarea>
         </div>
       </div>
@@ -80,30 +80,30 @@ function wsfedSetAllPanes(expand) {
 
   <!-- ===================== Pane 2: IdP Configuration ===================== -->
   <fieldset class="saml-pane" id="pane_config">
-    <legend class="saml-legend" onclick="return wsfed_tools.togglePane('pane_config_body');">IdP Configuration</legend>
+    <legend class="saml-legend" onclick="return wsfed_request.togglePane('pane_config_body');">IdP Configuration</legend>
     <div class="saml-pane-body" id="pane_config_body">
       <div class="saml-field">
-        <label class="saml-has-copy" title="IdP entity ID (metadata @entityID).">IdP Entity ID <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_idp_entity_id');">Copy</button></label>
+        <label class="saml-has-copy" title="IdP entity ID (metadata @entityID).">IdP Entity ID <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_idp_entity_id');">Copy</button></label>
         <input class="stored" type="text" id="wsfed_idp_entity_id" name="wsfed_idp_entity_id" />
       </div>
       <div class="saml-field">
-        <label class="saml-has-copy" title="Passive requestor sign-in endpoint (PassiveRequestorEndpoint) — where the browser is sent with wa=wsignin1.0.">Passive Sign-in Endpoint <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_signin_endpoint');">Copy</button></label>
+        <label class="saml-has-copy" title="Passive requestor sign-in endpoint (PassiveRequestorEndpoint) — where the browser is sent with wa=wsignin1.0.">Passive Sign-in Endpoint <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_signin_endpoint');">Copy</button></label>
         <input class="stored" type="text" id="wsfed_signin_endpoint" name="wsfed_signin_endpoint" title="e.g. https://adfs.example.com/adfs/ls/" />
       </div>
       <div class="saml-field">
-        <label class="saml-has-copy" title="Sign-out endpoint (defaults to the passive sign-in endpoint; sign-out uses wa=wsignout1.0).">Sign-out Endpoint <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_signout_endpoint');">Copy</button></label>
+        <label class="saml-has-copy" title="Sign-out endpoint (defaults to the passive sign-in endpoint; sign-out uses wa=wsignout1.0).">Sign-out Endpoint <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_signout_endpoint');">Copy</button></label>
         <input class="stored" type="text" id="wsfed_signout_endpoint" name="wsfed_signout_endpoint" placeholder="(defaults to the passive sign-in endpoint)" />
       </div>
       <div class="saml-field">
-        <label class="saml-has-copy" title="Active (WS-Trust) STS endpoint from the metadata, if present. Informational — you can use it on the WS-Trust page.">STS Endpoint (WS-Trust, optional) <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_sts_endpoint');">Copy</button></label>
+        <label class="saml-has-copy" title="Active (WS-Trust) STS endpoint from the metadata, if present. Informational — you can use it on the WS-Trust page.">STS Endpoint (WS-Trust, optional) <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_sts_endpoint');">Copy</button></label>
         <input class="stored" type="text" id="wsfed_sts_endpoint" name="wsfed_sts_endpoint" placeholder="(SecurityTokenServiceEndpoint, if advertised)" />
       </div>
       <div class="saml-field">
-        <label class="saml-has-copy" title="IdP token-signing certificate (bare base64 DER) from the metadata KeyDescriptor.">Token-signing Certificate <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_signer_cert');">Copy</button></label>
+        <label class="saml-has-copy" title="IdP token-signing certificate (bare base64 DER) from the metadata KeyDescriptor.">Token-signing Certificate <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_signer_cert');">Copy</button></label>
         <textarea class="stored" rows="5" id="wsfed_signer_cert" name="wsfed_signer_cert" placeholder="populated from metadata, or paste the IdP signing cert"></textarea>
       </div>
       <div class="saml-row">
-        <a href="/saml_cert.html?from=wsfed_tools.html" onclick="return wsfed_tools.viewCertificate('wsfed_signer_cert');" title="Show full details of the IdP signing certificate.">View certificate details &rarr;</a>
+        <a href="/saml_cert.html?from=wsfed_request.html" onclick="return wsfed_request.viewCertificate('wsfed_signer_cert');" title="Show full details of the IdP signing certificate.">View certificate details &rarr;</a>
       </div>
       <input class="saml-status" type="text" id="wsfed_config_status" name="wsfed_config_status" readonly />
     </div>
@@ -111,16 +111,16 @@ function wsfedSetAllPanes(expand) {
 
   <!-- ===================== Pane 3: Sign-in Request ===================== -->
   <fieldset class="saml-pane" id="pane_request">
-    <legend class="saml-legend" onclick="return wsfed_tools.togglePane('pane_request_body');">Sign-in Request</legend>
+    <legend class="saml-legend" onclick="return wsfed_request.togglePane('pane_request_body');">Sign-in Request</legend>
     <div class="saml-pane-body" id="pane_request_body">
 
       <!-- ----- Request Parameters ----- -->
       <div class="saml-field">
-        <label class="saml-has-copy" title="Relying-party realm (wtrealm) — must match the RP identifier registered at the IdP.">RP Realm (wtrealm) <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_realm');">Copy</button></label>
+        <label class="saml-has-copy" title="Relying-party realm (wtrealm) — must match the RP identifier registered at the IdP.">RP Realm (wtrealm) <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_realm');">Copy</button></label>
         <input class="stored" type="text" id="wsfed_realm" name="wsfed_realm" title="e.g. urn:wsfed:test:rp or https://rp.example.com/" />
       </div>
       <div class="saml-field">
-        <label class="saml-has-copy" title="Return URL (wreply) the IdP POSTs the token (wresult) to. Defaults to the API /wsfed landing endpoint; on the static build, the response page.">Return URL (wreply) <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_reply');">Copy</button></label>
+        <label class="saml-has-copy" title="Return URL (wreply) the IdP POSTs the token (wresult) to. Defaults to the API /wsfed landing endpoint; on the static build, the response page.">Return URL (wreply) <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_reply');">Copy</button></label>
         <input class="stored" type="text" id="wsfed_reply" name="wsfed_reply" />
       </div>
       <div class="saml-field">
@@ -149,14 +149,39 @@ function wsfedSetAllPanes(expand) {
       </div>
 
       <div class="saml-field saml-check">
-        <input class="stored" type="checkbox" id="wsfed_include_wreq" name="wsfed_include_wreq" onchange="return wsfed_tools.onIncludeWreqChange();" />
+        <input class="stored" type="checkbox" id="wsfed_include_wreq" name="wsfed_include_wreq" onchange="return wsfed_request.onIncludeWreqChange();" />
         <label for="wsfed_include_wreq" title="Include an inline wreq (a WS-Trust RequestSecurityToken) to request a specific token type / claims. Advanced; many IdPs ignore it.">Include inline token request (wreq)</label>
       </div>
       <div class="saml-sub" id="wsfed_wreq_section">
         <div class="saml-field">
-          <label class="saml-has-copy" title="Raw WS-Trust RequestSecurityToken XML placed in wreq.">wreq (RequestSecurityToken XML) <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_wreq');">Copy</button></label>
+          <label class="saml-has-copy" title="Raw WS-Trust RequestSecurityToken XML placed in wreq.">wreq (RequestSecurityToken XML) <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_wreq');">Copy</button></label>
           <textarea class="stored" rows="5" id="wsfed_wreq" name="wsfed_wreq" placeholder="&lt;wst:RequestSecurityToken xmlns:wst=&quot;...&quot;&gt;...&lt;/wst:RequestSecurityToken&gt;"></textarea>
         </div>
+      </div>
+
+      <!-- ----- Request signing ----- -->
+      <div class="saml-field saml-check">
+        <input class="stored" type="checkbox" id="wsfed_sign_request" name="wsfed_sign_request" checked onchange="return wsfed_request.onSignRequestChange();" />
+        <label for="wsfed_sign_request" title="Sign the sign-in request. The Passive Requestor Profile does not require this and many IdPs ignore it — it is here so you can put a signature on the wire and see what an IdP does with it.">Digitally sign request</label>
+      </div>
+      <div class="saml-sub" id="wsfed_signing_options">
+        <div class="saml-field">
+          <label for="wsfed_sig_binding" title="Where the signature goes. Redirect signs the whole query string, so it protects wtrealm and wreply; enveloped signs only the inline wreq, so everything outside it is unprotected.">Signature binding</label>
+          <select class="stored" id="wsfed_sig_binding" name="wsfed_sig_binding" onchange="return wsfed_request.onSigBindingChange();">
+            <option value="redirect">Redirect binding &mdash; signed query string (covers the whole request)</option>
+            <option value="enveloped">Enveloped XML-DSIG in the inline wreq (covers the wreq only)</option>
+          </select>
+        </div>
+        <div class="saml-field">
+          <label for="wsfed_sig_alg" title="Signature algorithm. The RP key is RSA, so these are the RSA XML-DSIG URIs.">Signature algorithm</label>
+          <select class="stored" id="wsfed_sig_alg" name="wsfed_sig_alg" onchange="return wsfed_request.onSigBindingChange();">
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256">RSA-SHA256</option>
+            <option value="http://www.w3.org/2000/09/xmldsig#rsa-sha1">RSA-SHA1</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha384">RSA-SHA384</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512">RSA-SHA512</option>
+          </select>
+        </div>
+        <p class="saml-note">Signing uses the relying-party private key below &mdash; press <em>Generate Keys</em> if there is none. With signing on and no key the request is built <strong>unsigned</strong> and the status says so, rather than quietly sending one that only looks signed. The enveloped binding needs an inline <code>wreq</code> to sign, so selecting it turns that on.</p>
       </div>
 
       <!-- ----- Relying-party key (token decryption) ----- -->
@@ -172,24 +197,24 @@ function wsfedSetAllPanes(expand) {
               <option value="4096">4096</option>
             </select>
           </div>
-          <input type="button" class="saml-btn" value="Generate Keys" onclick="return wsfed_tools.generateKeys();" title="Generate a fresh RSA key pair + self-signed certificate." />
-          <input type="button" class="saml-btn" value="Download" onclick="return wsfed_tools.downloadKeys();" title="Download the key pair as PEM." />
+          <input type="button" class="saml-btn" value="Generate Keys" onclick="return wsfed_request.generateKeys();" title="Generate a fresh RSA key pair + self-signed certificate." />
+          <input type="button" class="saml-btn" value="Download" onclick="return wsfed_request.downloadKeys();" title="Download the key pair as PEM." />
         </div>
         <div class="saml-field">
-          <label class="saml-has-copy" title="RP private key (PKCS#8 PEM) — used to decrypt an encrypted token on the response page.">Private Key <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_rp_private_key');">Copy</button></label>
+          <label class="saml-has-copy" title="RP private key (PKCS#8 PEM) — used to decrypt an encrypted token on the response page.">Private Key <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_rp_private_key');">Copy</button></label>
           <textarea class="stored" rows="4" id="wsfed_rp_private_key" name="wsfed_rp_private_key"></textarea>
         </div>
         <div class="saml-field">
-          <label class="saml-has-copy" title="RP certificate (self-signed X.509 PEM) to register at the IdP for token encryption.">Certificate <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_rp_cert');">Copy</button></label>
+          <label class="saml-has-copy" title="RP certificate (self-signed X.509 PEM) to register at the IdP for token encryption.">Certificate <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_rp_cert');">Copy</button></label>
           <textarea class="stored" rows="4" id="wsfed_rp_cert" name="wsfed_rp_cert"></textarea>
         </div>
         <div class="saml-field saml-check">
-          <input class="stored" type="checkbox" id="wsfed_save_keypair" name="wsfed_save_keypair" checked="checked" onchange="return wsfed_tools.onSaveKeyPairChange();" />
+          <input class="stored" type="checkbox" id="wsfed_save_keypair" name="wsfed_save_keypair" checked="checked" onchange="return wsfed_request.onSaveKeyPairChange();" />
           <label for="wsfed_save_keypair" title="Keep this key pair in this browser's localStorage so it survives a reload and is picked up automatically by the WS-Federation Response page (which needs the private key to decrypt an encrypted token). Turn it off to keep the private key out of storage — you then have to carry the key pair yourself with Download, and paste it back into this pane and into the Decryption Key field on the response page.">Save this key pair in browser localStorage</label>
         </div>
         <div class="saml-note" id="wsfed_keypair_storage_note"></div>
         <div class="saml-row">
-          <a href="/saml_cert.html?from=wsfed_tools.html" onclick="return wsfed_tools.viewCertificate('wsfed_rp_cert');" title="Show full details of the RP certificate.">View certificate details &rarr;</a>
+          <a href="/saml_cert.html?from=wsfed_request.html" onclick="return wsfed_request.viewCertificate('wsfed_rp_cert');" title="Show full details of the RP certificate.">View certificate details &rarr;</a>
         </div>
       </div>
 
@@ -205,20 +230,33 @@ function wsfedSetAllPanes(expand) {
         </div>
 
         <div class="saml-field">
-          <label class="saml-has-copy" title="The full sign-in URL the browser will navigate to — regenerated automatically when a setting changes.">Generated Request (URL) <button type="button" class="saml-copy" onclick="return wsfed_tools.copyField('wsfed_generated_request');">Copy</button></label>
+          <label class="saml-has-copy" title="The full sign-in URL the browser will navigate to — regenerated automatically when a setting changes.">Generated Request (URL) <button type="button" class="saml-copy" onclick="return wsfed_request.copyField('wsfed_generated_request');">Copy</button></label>
           <textarea rows="6" id="wsfed_generated_request" name="wsfed_generated_request" readonly></textarea>
         </div>
 
         <div class="saml-row">
-          <input type="button" class="saml-btn" value="Call IdP (Sign In)" onclick="return wsfed_tools.callIdp();" title="Navigate the browser to the IdP passive endpoint with wa=wsignin1.0." />
-          <input type="button" class="saml-btn" value="Sign Out" onclick="return wsfed_tools.signOut();" title="Navigate the browser to the IdP with wa=wsignout1.0." />
-          <input type="button" class="saml-btn" value="Rebuild" onclick="return wsfed_tools.buildRequestUi();" title="Regenerate the request URL from the current settings." />
+          <input type="button" class="saml-btn" value="Call IdP (Sign In)" onclick="return wsfed_request.callIdp();" title="Navigate the browser to the IdP passive endpoint with wa=wsignin1.0." />
+          <input type="button" class="saml-btn" value="Sign Out" onclick="return wsfed_request.signOut();" title="Navigate the browser to the IdP with wa=wsignout1.0." />
+          <input type="button" class="saml-btn" value="Rebuild" onclick="return wsfed_request.buildRequestUi();" title="Regenerate the request URL from the current settings." />
         </div>
         <input class="saml-status" type="text" id="wsfed_call_status" name="wsfed_call_status" readonly title="Status of the last build/send." />
       </div>
 
     </div>
   </fieldset>
+
+<!-- ===================== Operations History ===================== -->
+<fieldset class="saml-pane" id="pane_history">
+  <legend class="saml-legend" onclick="return wsfed_request.togglePane('pane_history_body');" title="Click to collapse or expand this pane.">Operations History</legend>
+  <div class="saml-pane-body" id="pane_history_body">
+    <p class="saml-note">Chronological history of every attempted call to the IdP from this page &mdash; the <code>wsignin1.0</code> sign-in and the <code>wsignout1.0</code> sign-out &mdash; newest first. <strong>Result</strong> is one of: <span class="saml-bad">Failure</span>, the call never left the browser (no endpoint, no <code>wtrealm</code>, a refused URL scheme); <span class="saml-pending">Sent</span>, the browser was handed to the IdP and no answer has come back yet &mdash; an entry that stays <em>Sent</em> means the IdP never returned a <code>wresult</code> to this debugger, so check the IdP's own error page; <span class="saml-ok">Success</span>, the IdP returned a token (or completed the sign-out). A <em>Sent</em> entry is closed out on the <a href="/wsfed_response.html">WS-Federation Response</a> page, because in the Passive Requestor Profile that is where the IdP's answer lands. The history is kept in this browser's local storage and survives a reload.</p>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Clear History" onclick="return wsfed_request.clearOperationHistory();" title="Discard every recorded operation." />
+    </div>
+    <div id="wsfed_operation_history"></div>
+  </div>
+</fieldset>
+
 
 </div>
 

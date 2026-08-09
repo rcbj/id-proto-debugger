@@ -96,7 +96,7 @@ RUN browserify src/did_tools.js -o public/js/did_tools.js --debug --standalone d
 RUN browserify src/webauthn_lab.js -o public/js/webauthn_lab.js --debug --standalone webauthnlab -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/webauthn_analyzer.js -o public/js/webauthn_analyzer.js --debug --standalone webauthnanalyzer -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/vc_presentation_3.js -o public/js/vc_presentation_3.js --debug --standalone vcpresentation3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/wsfed_tools.js -o public/js/wsfed_tools.js --debug --standalone wsfed_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/wsfed_request.js -o public/js/wsfed_request.js --debug --standalone wsfed_request -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_response.js -o public/js/wsfed_response.js --debug --standalone wsfed_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
@@ -105,12 +105,16 @@ RUN browserify src/wsfed_response.js -o public/js/wsfed_response.js --debug --st
 # instrumentation (babel-plugin-istanbul) and append the coverage beacon so the
 # browser ships its coverage to the client server. The default build
 # (COVERAGE=false) leaves the bundles produced above completely untouched.
+# NOTE: the loop below is a THIRD place every bundle must be listed — after the
+# BUNDLES array in build.js and the RUN browserify lines above. Miss it and the
+# page still works and still ships; it simply reports no coverage, silently. The
+# two webauthn bundles were missing from it until 2026-08-09.
 ARG COVERAGE=false
 RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_tools:wsfed_tools" "wsfed_response:wsfed_response" ; do \
+      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" ; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

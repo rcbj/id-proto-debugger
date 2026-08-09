@@ -1,4 +1,8 @@
-// File: wsfed_tools.js
+// File: wsfed_request.js
+//
+// Renamed from wsfed_tools.js: this page BUILDS AND SENDS the sign-in request,
+// which is what saml_request.html is called for the same reason. The name
+// wsfed_tools survives nowhere — see docs/wsfed.md.
 //
 // WS-Federation Test Tools — configuration page for the WS-Federation Passive
 // Requestor Profile. Loads/parses IdP federation metadata, builds the passive
@@ -21,8 +25,9 @@ var xd = require("./xmldsig");
 // The scheme allowlist applied before navigating anywhere. See url_safety.js
 // for why this is not DOMPurify.
 var urlSafety = require("./url_safety");
+var history = require('./wsfed_history');
 var wm = require("./wsfed_msg");
-var log = bunyan.createLogger({ name: 'wsfed_tools', level: appconfig.logLevel });
+var log = bunyan.createLogger({ name: 'wsfed_request', level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
 var STORE_PREFIX = "wsfedtools_";
@@ -276,8 +281,14 @@ function generateKeys() {
       var kp = xd.generateKeyPair(bits, 'ws-federation-debugger-rp');
       setVal('wsfed_rp_private_key', kp.privateKeyPem);
       setVal('wsfed_rp_cert', kp.certPem);
-      setStatus('wsfed_call_status', 'Key pair generated. The private key is reused on the response page to decrypt an encrypted token.');
       saveState();
+      // Rebuild: with signing on, the request was built unsigned until this
+      // moment, and leaving the old one on screen would show a request that is
+      // not the one the buttons would now send.
+      buildRequestUi();
+      if (!signingEnabled()) {
+        setStatus('wsfed_call_status', 'Key pair generated. The private key is reused on the response page to decrypt an encrypted token.');
+      }
     } catch (e) {
       log.error('generateKeys: ' + e.message);
       setStatus('wsfed_call_status', 'Key generation error: ' + e.message);
@@ -322,10 +333,118 @@ function signInOptions() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Signing the sign-in request.
+//
+// The Passive Requestor Profile does not REQUIRE a signed sign-in request — the
+// IdP is free to ignore one — so this is a debugging affordance: it lets you put
+// a signature on the wire and see what an IdP does with it. Two bindings,
+// because there are two places a signature can go and they are not
+// interchangeable:
+//
+//   redirect   the SAML HTTP-Redirect construction applied to WS-Federation's
+//              query string: append SigAlg, sign the resulting octet string,
+//              append Signature. It covers the WHOLE request, which is the only
+//              way to protect parameters like wtrealm and wreply — they live in
+//              the query and nowhere else.
+//
+//   enveloped  an XML-DSIG inside the inline `wreq`. It covers only the wreq,
+//              because that is the only XML in the request; wtrealm and wreply
+//              are outside it and stay unprotected. Choosing this binding
+//              therefore IMPLIES an inline wreq — there is nothing to sign
+//              without one — and the page turns that on for you rather than
+//              silently producing an unsigned request.
+//
+// Both go through ./xmldsig.js, the same engine the SAML and WS-Trust pages use.
+// Nothing here reimplements a signature.
+// ---------------------------------------------------------------------------
+function signingEnabled() { return checked('wsfed_sign_request'); }
+function signingBinding() { return val('wsfed_sig_binding') || 'redirect'; }
+function signingAlg() { return val('wsfed_sig_alg') || xd.SIG_ALG_RSA_SHA256; }
+
+// The private key, or null. A signed run without one degrades to UNSIGNED and
+// says so — silently sending an unsigned request when the box is ticked is the
+// one outcome that would mislead somebody debugging a signature.
+function signingKey() {
+  var pem = val('wsfed_rp_private_key').trim();
+  return /PRIVATE KEY/.test(pem) ? pem : null;
+}
+
+// Selecting the enveloped binding needs XML to sign.
+function onSigBindingChange() {
+  if (signingBinding() === 'enveloped' && !checked('wsfed_include_wreq')) {
+    var box = el('wsfed_include_wreq');
+    if (box) { box.checked = true; }
+    show('wsfed_wreq_section', true);
+  }
+  saveState();
+  autoBuildRequest();
+  return false;
+}
+
+function onSignRequestChange() {
+  show('wsfed_signing_options', signingEnabled());
+  saveState();
+  autoBuildRequest();
+  return false;
+}
+
 function buildSignInUrl() {
   var endpoint = val('wsfed_signin_endpoint').trim();
-  var params = wm.buildSignInParams(signInOptions());
-  return wm.buildUrl(endpoint, params);
+  var opts = signInOptions();
+  var wantSigned = signingEnabled();
+  var key = wantSigned ? signingKey() : null;
+
+  // Enveloped: sign the wreq itself, then build the query around the signed XML.
+  if (wantSigned && key && signingBinding() === 'enveloped') {
+    if (!opts.request) {
+      lastSigningNote = 'signing is on with the enveloped binding, but there is no inline wreq to ' +
+                        'sign — tick "Include wreq" and put the RequestSecurityToken in it.';
+    } else {
+      opts.request = xd.signEnveloped(opts.request, {
+        privateKeyPem: key,
+        certPem: val('wsfed_rp_cert').trim() || undefined,
+        sigAlg: signingAlg(),
+      });
+      lastSigningNote = 'enveloped signature on the inline wreq (' + shortAlg(signingAlg()) + ').';
+    }
+    return wm.buildUrl(endpoint, wm.buildSignInParams(opts));
+  }
+
+  var params = wm.buildSignInParams(opts);
+  var url = wm.buildUrl(endpoint, params);
+
+  // Redirect: SigAlg is appended BEFORE signing and the signature covers it, so
+  // an IdP can tell which algorithm to verify with and cannot be talked into a
+  // weaker one by rewriting the parameter.
+  if (wantSigned && key) {
+    var qIndex = url.indexOf('?');
+    var query = qIndex >= 0 ? url.slice(qIndex + 1) : '';
+    var base = qIndex >= 0 ? url.slice(0, qIndex) : url;
+    var alg = signingAlg();
+    var toSign = query + '&SigAlg=' + encodeURIComponent(alg);
+    var signature = xd.signQueryString(toSign, { privateKeyPem: key, sigAlg: alg });
+    lastSigningNote = 'signed query string (' + shortAlg(alg) + ').';
+    return base + '?' + toSign + '&Signature=' + encodeURIComponent(signature);
+  }
+
+  if (wantSigned && !key) {
+    lastSigningNote = 'NOT signed: no RP private key. Press Generate Keys, or paste one, and the ' +
+                      'request will be rebuilt.';
+  } else {
+    lastSigningNote = '';
+  }
+  return url;
+}
+
+// Last thing the build said about signing, rendered into the status line. Kept
+// as state rather than returned, because buildSignInUrl() is also called by the
+// two dispatch paths, which want the URL and not a report.
+var lastSigningNote = '';
+
+function shortAlg(uri) {
+  var m = /#(rsa-sha\d+)$/.exec(String(uri));
+  return m ? m[1] : uri;
 }
 function buildSignOutUrl() {
   var endpoint = (val('wsfed_signout_endpoint') || val('wsfed_signin_endpoint')).trim();
@@ -339,7 +458,9 @@ function buildRequestUi() {
   try {
     var url = buildSignInUrl();
     setVal('wsfed_generated_request', url);
-    setStatus('wsfed_call_status', 'Built wsignin1.0 request' + (checked('wsfed_include_wreq') ? ' (with inline wreq).' : '.'));
+    setStatus('wsfed_call_status', 'Built wsignin1.0 request' +
+      (checked('wsfed_include_wreq') ? ' (with inline wreq)' : '') +
+      (lastSigningNote ? ' — ' + lastSigningNote : '.'));
   } catch (e) {
     log.error('buildRequestUi: ' + e.message);
     setStatus('wsfed_call_status', 'Build failed: ' + e.message);
@@ -370,6 +491,19 @@ function callIdp() {
   }
   setStatus('wsfed_call_status', 'Navigating to the IdP…');
   saveState();
+  // Record the attempt BEFORE navigating: this page is about to be replaced by
+  // the IdP's, so anything written after the assign() may never run. The entry
+  // goes in as `Sent` and wsfed_response.html resolves it to Success or Failure
+  // when the wresult arrives — the two pages match on the operation label, which
+  // is why that label is exported from ./wsfed_history rather than typed here.
+  history.record({
+    operation: history.OP_SIGN_IN,
+    result: history.SENT,
+    detail: 'sign-in request dispatched to the IdP',
+    wtrealm: val('wsfed_realm').trim(),
+    wreply: val('wsfed_reply').trim(),
+    idp: endpoint,
+  });
   window.location.assign(target);
   log.debug("Leaving callIdp().");
   return false;
@@ -388,6 +522,14 @@ function signOut() {
   }
   setStatus('wsfed_call_status', 'Navigating to the IdP sign-out…');
   saveState();
+  history.record({
+    operation: history.OP_SIGN_OUT,
+    result: history.SENT,
+    detail: 'sign-out request dispatched to the IdP',
+    wtrealm: val('wsfed_realm').trim(),
+    wreply: val('wsfed_reply').trim(),
+    idp: endpoint,
+  });
   window.location.assign(target);
   log.debug("Leaving signOut().");
   return false;
@@ -396,6 +538,20 @@ function signOut() {
 // ---------------------------------------------------------------------------
 // Misc UI (shared shapes with wstrust_tools.js / saml_tools.js).
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Operations History (shared with wsfed_response.html via ./wsfed_history.js):
+// this page can only record that a sign-in or sign-out was DISPATCHED — the
+// IdP's verdict arrives on the response page, which closes the entry out.
+// ---------------------------------------------------------------------------
+function renderOperationHistory() { history.render(el('wsfed_operation_history')); }
+function clearOperationHistory() {
+  history.clear();
+  renderOperationHistory();
+  // Reflect the restored signing preference before the first build.
+  show('wsfed_signing_options', signingEnabled());
+  return false;
+}
+
 function copyField(id) {
   log.debug("Entering copyField().");
   var e = el(id);
@@ -431,7 +587,7 @@ function viewCertificate(fieldId) {
   var pem = val(fieldId);
   if (!pem) { setStatus('wsfed_config_status', 'No certificate to view yet.'); return false; }
   try { if (window.localStorage) localStorage.setItem('saml_cert_view', pem); } catch (e) { /* ignore */ }
-  window.open('/saml_cert.html?from=wsfed_tools.html', '_blank');
+  window.open('/saml_cert.html?from=wsfed_request.html', '_blank');
   return false;
 }
 
@@ -480,6 +636,11 @@ window.onload = function () {
   var f = el('wsfed_metadata_file');
   if (f) f.addEventListener('change', onMetadataFile);
 
+  // The log survives page loads (it lives in local storage), so it is rendered
+  // on arrival rather than only after a dispatch — coming back from the IdP
+  // should show the entry the response page just closed out.
+  renderOperationHistory();
+
   // Seed defaults for blank fields (fresh page).
   if (!val('wsfed_metadata_url') && appconfig.wsfedMetadataUrlDefault) setVal('wsfed_metadata_url', appconfig.wsfedMetadataUrlDefault);
   if (!val('wsfed_realm')) setVal('wsfed_realm', appconfig.wsfedRealm || appconfig.spEntityId || '');
@@ -525,6 +686,8 @@ module.exports = {
   loadMetadata,
   uploadMetadata,
   onIncludeWreqChange,
+  onSignRequestChange,
+  onSigBindingChange,
   generateKeys,
   downloadKeys,
   buildRequestUi,
@@ -532,6 +695,7 @@ module.exports = {
   signOut,
   viewCertificate,
   copyField,
+  clearOperationHistory,
   onSaveKeyPairChange,
   showTab,
   togglePane

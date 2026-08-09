@@ -222,7 +222,8 @@ init()
   check_return_code $?
   renderWaltidConfig "${CURRENT_DIR}"
   check_return_code $?
-  buildBrowserExtension "${CURRENT_DIR}"
+  EXTENSION_AUTOARM_ORIGINS="http://localhost:8081" \
+  buildBrowserExtension "${CURRENT_DIR}"   # the browser is on the host
   check_return_code $?
   NODEJS_BASE_DIR=tests
 

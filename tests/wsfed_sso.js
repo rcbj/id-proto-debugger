@@ -71,6 +71,59 @@ async function setField(driver, id, value) {
     id, value);
 }
 
+async function setChecked(driver, id, want) {
+  await driver.executeScript(
+    "var e=document.getElementById(arguments[0]); if(e && e.checked!==arguments[1]){ e.checked=arguments[1];" +
+    " e.dispatchEvent(new Event('change',{bubbles:true})); }",
+    id, !!want);
+}
+
+async function setRadio(driver, id) {
+  await driver.executeScript(
+    "var e=document.getElementById(arguments[0]); if(e){ e.checked=true;" +
+    " e.dispatchEvent(new Event('change',{bubbles:true})); }",
+    id);
+}
+
+async function getValue(driver, id) {
+  return await driver.executeScript(
+    "var e=document.getElementById(arguments[0]); return e ? e.value : null;", id);
+}
+async function elementExists(driver, id) {
+  return await driver.executeScript("return !!document.getElementById(arguments[0]);", id);
+}
+
+// The sign-out operation label recorded in the shared Operations History — must
+// match wsfed_history.js's OP_SIGN_OUT exactly.
+var OP_SIGN_OUT = "Sign Out (wsignout1.0)";
+
+// Assert the Operations History (on whichever page is currently loaded) resolved
+// the given operation to Success — a green saml-ok Result cell. This is the
+// user-visible confirmation that the call a button dispatched actually completed:
+// for the sign-out it proves the Logout button's request went out AND the IdP
+// reported it done, not merely that a button was clicked.
+async function assertOperationSuccess(driver, operationLabel, timeout) {
+  await driver.wait(async function () {
+    return await driver.executeScript(function (op) {
+      var box = document.getElementById('wsfed_operation_history');
+      if (!box) return false;
+      var rows = box.getElementsByTagName('tr');
+      for (var i = 0; i < rows.length; i++) {
+        var cells = rows[i].getElementsByTagName('td');
+        if (!cells.length) continue;
+        var isOp = false;
+        for (var c = 0; c < cells.length; c++) {
+          if (cells[c].textContent.indexOf(op) >= 0) { isOp = true; break; }
+        }
+        if (!isOp) continue;
+        var result = cells[cells.length - 1];
+        return result.className.indexOf('saml-ok') >= 0 && /Success/.test(result.textContent);
+      }
+      return false;
+    }, operationLabel);
+  }, timeout, "the Operations History did not record '" + operationLabel + "' as Success.");
+}
+
 // The passive sign-in endpoint is the descriptor URL without the trailing
 // "/descriptor" (Keycloak serves both under /protocol/wsfed). Deriving it makes
 // the test robust to any metadata-parsing quirk in the (EOL) extension's
@@ -79,13 +132,150 @@ function deriveEndpoint(metadataUrl) {
   return String(metadataUrl || "").replace(/\/descriptor\/?(\?.*)?$/, "");
 }
 
-async function wsfedActivities(driver, metadataUrl, realm, user) {
+// ---------------------------------------------------------------------------
+// Option combination for a single run, read from the environment (run-report.js
+// spawns one process per combination — see its WS-Fed job loop). Every option
+// the wsfed_request workflow supports and that this test drives is here:
+//   WSFED_MODE          "signin" (default) | "signout" (sign-in then sign-out)
+//   WSFED_SIGN          "on" | "off"  — the "Digitally sign request" checkbox
+//   WSFED_SIG_BINDING   "redirect" | "enveloped"      (when signing)
+//   WSFED_SIG_ALG       "rsa-sha256"|"rsa-sha1"|"rsa-sha384"|"rsa-sha512"
+//   WSFED_INITIATE      "back" | "front"  — the "Initiate From" radios
+//   WSFED_OPT_PARAMS    "true" — set the optional passthrough params (wctx/wct/
+//                       wfresh/wauth/wp) once
+//   WSFED_INCLUDE_WREQ  "true" — include an (unsigned) inline wreq
+// ---------------------------------------------------------------------------
+var SIG_ALG_URIS = {
+  "rsa-sha256": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+  "rsa-sha1":   "http://www.w3.org/2000/09/xmldsig#rsa-sha1",
+  "rsa-sha384": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha384",
+  "rsa-sha512": "http://www.w3.org/2001/04/xmldsig-more#rsa-sha512"
+};
+
+function combinationFromEnv() {
+  var binding = (process.env.WSFED_SIG_BINDING || "redirect").toLowerCase();
+  return {
+    mode: (process.env.WSFED_MODE || "signin").toLowerCase(),
+    sign: (process.env.WSFED_SIGN || "off").toLowerCase() === "on",
+    binding: binding,
+    sigAlg: (process.env.WSFED_SIG_ALG || "rsa-sha256").toLowerCase(),
+    initiate: (process.env.WSFED_INITIATE || "back").toLowerCase(),
+    optionalParams: (process.env.WSFED_OPT_PARAMS || "") === "true",
+    // Enveloped signing needs an inline wreq to sign, so it implies one.
+    includeWreq: (process.env.WSFED_INCLUDE_WREQ || "") === "true" || (binding === "enveloped")
+  };
+}
+
+function comboLabel(combo) {
+  var sign = combo.sign ? (combo.binding + "+" + combo.sigAlg) : "unsigned";
+  return "mode=" + combo.mode + " sign=" + sign + " initiate=" + combo.initiate +
+    (combo.optionalParams ? " +optparams" : "") +
+    (combo.includeWreq && !combo.sign ? " +wreq" : "");
+}
+
+// A minimal, valid WS-Trust RequestSecurityToken to place in wreq — enough for
+// the enveloped-signature path to have real XML to sign, and for the inline-wreq
+// path to carry a token-type request.
+function sampleWreqXml() {
+  return '<wst:RequestSecurityToken xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512">' +
+    '<wst:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</wst:RequestType>' +
+    '<wst:TokenType>http://docs.oasis-open.org/wss/oasis-wss-saml-token-profile-1.1#SAMLV2.0</wst:TokenType>' +
+    '</wst:RequestSecurityToken>';
+}
+
+// Apply a combination to the form BEFORE the sign-in is sent. Returns nothing;
+// throws (with a rebuild hint) if a signed run is asked for but the signing
+// controls are absent — i.e. the client bundle predates the signing feature.
+async function applyCombination(driver, combo, timeout) {
+  log.info("Applying combination: " + comboLabel(combo));
+
+  // Initiate From. On a backend-available target both radios are live; on a
+  // static one "backend" is disabled, so only set what exists/works.
+  if (combo.initiate === "front") { await setRadio(driver, "wsfed_initiateFromFrontEnd"); }
+  else { if (await elementExists(driver, "wsfed_initiateFromBackEnd")) await setRadio(driver, "wsfed_initiateFromBackEnd"); }
+
+  // Optional passthrough params (wctx echoed back; the rest the IdP mostly
+  // ignores). whr is intentionally omitted: it is a home-realm hint that needs a
+  // federated IdP alias configured at the side-car, and an unknown value breaks
+  // login — that would be an IdP-config failure, not a workflow one.
+  if (combo.optionalParams) {
+    await setField(driver, "wsfed_context", "wsfed-test-ctx");
+    await setChecked(driver, "wsfed_include_wct", true);
+    await setField(driver, "wsfed_freshness", "60");
+    await setField(driver, "wsfed_auth_type", "urn:oasis:names:tc:SAML:2.0:ac:classes:PasswordProtectedTransport");
+    await setField(driver, "wsfed_policy", "urn:wsfed:test:policy");
+  }
+
+  if (!combo.sign) {
+    // Ensure signing is off (the page default is ON) when it exists.
+    if (await elementExists(driver, "wsfed_sign_request")) await setChecked(driver, "wsfed_sign_request", false);
+    // An unsigned inline-wreq run still needs the wreq itself.
+    if (combo.includeWreq) {
+      await setChecked(driver, "wsfed_include_wreq", true);
+      await setField(driver, "wsfed_wreq", sampleWreqXml());
+    }
+    return;
+  }
+
+  // Signed run. The signing controls only exist in a client bundle built with
+  // the request-signing feature; fail loudly (not silently unsigned) otherwise.
+  assert(await elementExists(driver, "wsfed_sign_request"),
+    "WSFED_SIGN=on but the 'Digitally sign request' control is absent — rebuild the client bundle " +
+    "(the request-signing feature must be compiled into public/js/wsfed_request.js).");
+  await setChecked(driver, "wsfed_sign_request", true);
+
+  // A key pair is required to sign (otherwise the page degrades to unsigned).
+  await clickByValue(driver, "Generate Keys");
+  await waitForValue(driver, By.id("wsfed_rp_private_key"),
+    function (v) { return /PRIVATE KEY/.test(v); },
+    "the RP key pair was not generated (needed to sign the request).", timeout);
+
+  await setField(driver, "wsfed_sig_binding", combo.binding);
+  await setField(driver, "wsfed_sig_alg", SIG_ALG_URIS[combo.sigAlg] || SIG_ALG_URIS["rsa-sha256"]);
+
+  if (combo.binding === "enveloped") {
+    // Selecting the enveloped binding auto-enables the inline wreq; give it real
+    // XML to sign.
+    await setChecked(driver, "wsfed_include_wreq", true);
+    await setField(driver, "wsfed_wreq", sampleWreqXml());
+  }
+  // No explicit rebuild needed: the generated request auto-updates on every
+  // field change across the panes, and Generate Keys rebuilds once the key
+  // exists — so the last field set above has already refreshed the request.
+}
+
+// Verify — client-side, before the round trip — that the debugger actually
+// produced the requested signature. This is the deterministic heart of the
+// signing feature; whether the (EOL) IdP then honours it is a separate, best-
+// effort concern (the passive profile does not require request signing).
+async function assertSignatureGenerated(driver, combo, timeout) {
+  await waitForValue(driver, By.id("wsfed_call_status"),
+    function (v) { return /signature|signed query string/i.test(v); },
+    "the request-signature status never appeared.", timeout);
+  var status = await getValue(driver, "wsfed_call_status");
+  var req = (await getValue(driver, "wsfed_generated_request")) || "";
+  log.info("Signing status: " + status);
+  if (combo.binding === "redirect") {
+    assert(/signed query string/i.test(status),
+      "expected a redirect-binding query-string signature; status was: " + status);
+    assert(req.indexOf("SigAlg=") >= 0 && req.indexOf("Signature=") >= 0,
+      "the generated request is missing the SigAlg/Signature parameters.");
+  } else {
+    assert(/enveloped signature on the inline wreq/i.test(status),
+      "expected an enveloped signature on the inline wreq; status was: " + status);
+    assert(decodeURIComponent(req).indexOf("Signature") >= 0,
+      "the generated request's wreq is missing the enveloped ds:Signature.");
+  }
+}
+
+async function wsfedActivities(driver, metadataUrl, realm, user, combo) {
   log.debug("Entering wsfedActivities().");
+  combo = combo || combinationFromEnv();
   // Keycloak's login page + the WS-Fed round-trip need a generous timeout.
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Load the WS-Federation Test Tools page.");
-  await driver.get(baseUrl + "/wsfed_tools.html");
+  await driver.get(baseUrl + "/wsfed_request.html");
 
   // Load + parse the IdP metadata (best-effort: it populates the sign-in
   // endpoint + signer cert; we don't hard-fail on descriptor-format quirks).
@@ -110,6 +300,12 @@ async function wsfedActivities(driver, metadataUrl, realm, user) {
   if (!endpoint) { endpoint = deriveEndpoint(metadataUrl); await setField(driver, "wsfed_signin_endpoint", endpoint); }
   log.info("Sign-in endpoint: " + endpoint);
   await setField(driver, "wsfed_realm", realm);
+
+  // Apply the option combination for this run (signing, initiate-from, optional
+  // params, inline wreq), then — for a signed run — confirm the debugger built
+  // the requested signature before we hand off to the IdP.
+  await applyCombination(driver, combo, loginWait);
+  if (combo.sign) { await assertSignatureGenerated(driver, combo, loginWait); }
 
   // wreply decides whether this test can work at all, and the page's DEFAULT is
   // what is being checked — not something the test sets, because the default is
@@ -209,7 +405,7 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Return to the WS-Federation Test Tools page to sign out.");
-  await driver.get(baseUrl + "/wsfed_tools.html");
+  await driver.get(baseUrl + "/wsfed_request.html");
   await driver.wait(until.elementLocated(By.id("wsfed_metadata_url")), waitTime);
 
   // The sign-out endpoint may have come from the descriptor; if it did not, the
@@ -265,6 +461,12 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   var status = await driver.findElement(By.id("wsfed_resp_status")).getAttribute("value");
   log.info("Sign-out landing: " + status);
 
+  // The Logout (Sign Out) button's operation is recorded in the shared history as
+  // "Sent" when clicked, then resolved here on the response page. Assert it landed
+  // on Success — the user-visible sign that the logout call completed.
+  await assertOperationSuccess(driver, OP_SIGN_OUT, loginWait);
+  log.info("Operations History records the sign-out as Success.");
+
   // And no token came back with it: sign-out returns none.
   var leftover = await driver.findElement(By.id("wsfed_response_xml")).getAttribute("value");
   assert(!leftover || leftover.indexOf("RequestSecurityTokenResponse") < 0,
@@ -274,7 +476,7 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   // re-authenticate. If the SSO cookie survived, this navigation goes straight
   // back to the response page with a fresh token and never shows a login form.
   log.info("Sign in again — Keycloak must now ask for credentials.");
-  await driver.get(baseUrl + "/wsfed_tools.html");
+  await driver.get(baseUrl + "/wsfed_request.html");
   await driver.wait(until.elementLocated(By.id("wsfed_signin_endpoint")), waitTime);
   // callIdp() refuses to navigate with an empty endpoint or wtrealm — it only sets
   // a status — so make sure both are filled. Without this, a page that came back
@@ -327,16 +529,20 @@ async function test() {
     const metadataUrl = process.env.WSFED_METADATA_URL;
     const realm = process.env.WSFED_REALM || "urn:wsfed:test:rp";
     const user = process.env.WSFED_USER || "wsfed";
+    const combo = combinationFromEnv();
     assert(metadataUrl, "WSFED_METADATA_URL environment variable is not set.");
 
     // Cheap, no browser, and it fails with a message that names the cause —
     // so it runs before the round trip rather than after it.
     assertEdgeLandingContract(log);
 
-    await wsfedActivities(driver, metadataUrl, realm, user);
+    log.info("WS-Federation run: " + comboLabel(combo));
+    await wsfedActivities(driver, metadataUrl, realm, user, combo);
     // Sign-out needs the session the sign-in just established, so it runs in the
-    // same browser, in this order, rather than as a separate job.
-    await wsfedSignOutActivities(driver, metadataUrl, realm);
+    // same browser, in this order, and only for the dedicated sign-out job.
+    if (combo.mode === "signout") {
+      await wsfedSignOutActivities(driver, metadataUrl, realm);
+    }
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);

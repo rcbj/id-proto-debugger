@@ -1,7 +1,7 @@
 // File: wsfed_msg.js
 //
 // Pure WS-Federation Passive Requestor Profile message construction, factored
-// out of wsfed_tools.js so it can be unit-tested without a DOM (mirrors the
+// out of wsfed_request.js so it can be unit-tested without a DOM (mirrors the
 // wstrust_msg.js split). Given the values the page reads from its form it
 // produces the sign-in / sign-out request parameter sets and the optional inline
 // <wst:RequestSecurityToken> (wreq). No DOM, no crypto — safe to require from Node.

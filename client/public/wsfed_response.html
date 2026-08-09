@@ -22,7 +22,7 @@
 <script type="text/javascript" src="/js/wsfed_response.js">
 </script>
 
-<p class="saml-return"><a id="return_link" href="/wsfed_tools.html">&larr; Return to WS-Federation Test Tools</a></p>
+<p class="saml-return"><a id="return_link" href="/wsfed_request.html">&larr; Return to WS-Federation Test Tools</a></p>
 
 <p class="saml-intro">The <strong>wresult</strong> returned by the IdP after a WS-Federation passive sign-in. When a backend is available it is captured automatically by the API landing endpoint; otherwise paste it below. wresult is a WS-Trust <code>RequestSecurityTokenResponse</code> carrying a SAML (1.1 or 2.0) assertion. The <strong>Issued Token</strong> pane extracts the assertion from <code>wst:RequestedSecurityToken</code>, decodes it, and lets you validate its signature and decrypt an encrypted token.</p>
 
@@ -95,6 +95,39 @@
       <input type="button" class="saml-btn" value="Decrypt" onclick="return wsfed_response.decryptToken();" title="Decrypt the EncryptedAssertion / EncryptedData and show the plaintext token." />
       <input class="saml-status saml-grow" type="text" id="wsfed_dec_status" readonly />
     </div>
+  </div>
+</fieldset>
+
+<!-- ===================== Tools ===================== -->
+<fieldset class="saml-pane" id="pane_tools">
+  <legend>Tools</legend>
+  <div id="pane_tools_body">
+    <p class="saml-note">Standalone utilities for working with WS-Federation, WS-Trust, and their XML security layers.</p>
+    <table class="saml-table">
+      <tbody>
+        <tr>
+          <td><a href="/wstrust_tools.html?from=wsfed_response.html">WS-Trust Test Tools</a> &mdash; request a security token from an STS over WS-Trust and inspect the RequestSecurityTokenResponse.</td>
+        </tr>
+        <tr>
+          <td><a href="/saml_tools.html?from=wsfed_response.html">SAML Assertion Tool</a> &mdash; compose a spec-compliant SAML 1.0/1.1/2.0 assertion (optional elements, NameID, custom attributes), sign it with XML Signature, and encrypt it with XML Encryption.</td>
+        </tr>
+        <tr>
+          <td><a href="/saml_cert.html?from=wsfed_response.html">Certificate Details</a> &mdash; parse an X.509 certificate (PEM or bare base64 DER) and inspect its subject, issuer, validity, key, extensions, and fingerprints.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</fieldset>
+
+<!-- ===================== Operations History ===================== -->
+<fieldset class="saml-pane" id="pane_history">
+  <legend>Operations History</legend>
+  <div id="pane_history_body">
+    <p class="saml-note">The same log kept on the <a href="/wsfed_request.html">WS-Federation Test Tools</a> page — every attempted call to the IdP, newest first. This page is where a dispatched call is closed out: when a <code>wresult</code> is rendered above, its pending <span class="saml-pending">Sent</span> entry becomes <span class="saml-ok">Success</span> (a token came back, or the sign-out completed) or <span class="saml-bad">Failure</span>.</p>
+    <div class="saml-row">
+      <input type="button" class="saml-btn" value="Clear History" onclick="return wsfed_response.clearOperationHistory();" title="Discard every recorded operation. The log is shared with the WS-Federation Test Tools page." />
+    </div>
+    <div id="wsfed_operation_history"></div>
   </div>
 </fieldset>
 

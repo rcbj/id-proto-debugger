@@ -71,7 +71,7 @@ const BUNDLES = [
   ['did_tools', 'didtools'],
   ['webauthn_lab', 'webauthnlab'],
   ['webauthn_analyzer', 'webauthnanalyzer'],
-  ['wsfed_tools', 'wsfed_tools'],
+  ['wsfed_request', 'wsfed_request'],
   ['wsfed_response', 'wsfed_response'],
 ];
 

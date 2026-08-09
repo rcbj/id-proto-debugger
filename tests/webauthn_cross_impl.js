@@ -40,19 +40,43 @@ function shared(file, what) {
 }
 const webauthn = shared("webauthn.js", "the wallet's WebAuthn decoder");
 
-// The STS's copy. Three layouts: copied flat into the tests image (renamed on
-// the way in, as the STS's bbs2023.js is, because the basenames collide); the
+// The STS's copy. Three layouts: staged into the tests image under sts/ (a
+// directory of its own, because unlike bbs2023.js it has a relative require); the
 // sts/ submodule in a checkout; and the sibling development clone, for the
 // window between writing the STS side and bumping the gitlink. The last one is
 // why this test says WHERE it found the module in its log line — running against
 // a stale submodule while editing the clone would otherwise look like a pass.
 const STS_CANDIDATES = [
-  path.join(__dirname, "sts_webauthn.js"),
+  path.join(__dirname, "sts", "webauthn.js"),
   path.join(ROOT, "sts", "webauthn.js"),
   path.join(ROOT, "..", "mock-sts", "webauthn.js"),
 ];
 const stsWhich = STS_CANDIDATES.filter(function (p) { return fs.existsSync(p); })[0];
-const sts = paths.requireSharedModule(STS_CANDIDATES, "the STS's WebAuthn verifier");
+
+// Load it ourselves rather than letting module_paths' generic error stand. That
+// error ends "run `npm install` in tests/", which is right for a module missing
+// a PACKAGE and badly wrong for this one: the only way this fails is the STS
+// module still requiring ./helpers, i.e. the submodule predating the fix that
+// made it self-contained. Being told to run npm install sends you nowhere.
+let sts;
+try {
+  sts = paths.requireSharedModule(STS_CANDIDATES, "the STS's WebAuthn verifier");
+} catch (e) {
+  if (/Cannot find module '\.\/helpers'/.test(e.message)) {
+    log.error(
+      "The STS's WebAuthn verifier at " + stsWhich + " still does `require('./helpers')`, so it " +
+      "cannot be loaded outside the service — and it is loaded outside the service here, and in " +
+      "the tests image, where only that one file is staged. The fix is in the module itself (a " +
+      "silent-logger fallback when ./helpers is absent); staging the service's helpers.js instead " +
+      "does not work, because it reads process.env.CONFIG_FILE relative to ITS directory. If that " +
+      "fix is already in the mock-sts working tree, it has not been committed and the sts/ gitlink " +
+      "has not been bumped — see docs/webauthn-plan.md on the submodule ordering.");
+    process.exitCode = 1;
+    module.exports = {};
+    return;
+  }
+  throw e;
+}
 
 const VECTORS = JSON.parse(
   fs.readFileSync(path.join(__dirname, "webauthn_vectors.json"), "utf8"));

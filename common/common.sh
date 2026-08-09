@@ -143,7 +143,25 @@ buildBrowserExtension()
 {
   echo "Entering buildBrowserExtension()."
   local dir="${1:-.}"
-  local origins="${EXTENSION_AUTOARM_ORIGINS:-${OID4VCI_ISSUER_URL:-http://localhost:8081}}"
+  # The origin the CI build auto-arms MUST be the one the BROWSER will use to
+  # reach the mock STS, which is not the same string in every stack:
+  #
+  #   containerized  http://sts:8081   (the browser is inside the compose network)
+  #   host launchers http://localhost:8081
+  #
+  # Get it wrong and nothing fails loudly: the extension installs, reports its
+  # version, and observes an origin the browser never visits — so the shim is
+  # never injected and every capture assertion times out with nothing naming the
+  # cause. That is exactly what happened on 2026-08-09, when this defaulted to
+  # localhost for the containerized run. Each launcher therefore states it.
+  local origins="${EXTENSION_AUTOARM_ORIGINS:-}"
+  if [ -z "${origins}" ];
+  then
+    echo "ERROR: buildBrowserExtension needs EXTENSION_AUTOARM_ORIGINS — the origin the browser" >&2
+    echo "       will use for the mock STS (http://sts:8081 containerized, http://localhost:8081" >&2
+    echo "       on a host run). Refusing to guess: a wrong value costs a silent, empty capture." >&2
+    return 1
+  fi
   if [ ! -f "${dir}/extension/build.js" ];
   then
     echo "WARNING: ${dir}/extension/build.js is missing; the extension job will fail its own" >&2

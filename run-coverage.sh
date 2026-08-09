@@ -66,6 +66,15 @@ generateWaltidVerifierKey
 check_return_code $?
 renderWaltidConfig "${CURRENT_DIR}"
 check_return_code $?
+# The browser extension, for tests/webauthn_extension.js. This launcher needs
+# EVERYTHING the plain one does before compose builds — tests/Dockerfile COPYs
+# extension/dist/ci, so without this the IMAGE BUILD fails with
+# '"/extension/dist/ci": not found' three minutes in, and the coverage report
+# that gets uploaded is empty rather than absent. Same omission this file has
+# had before with the walt.id render.
+EXTENSION_AUTOARM_ORIGINS="http://sts:8081" \
+  buildBrowserExtension "${CURRENT_DIR}"   # same stack as docker-run-tests.sh
+check_return_code $?
 
 # The mock STS is a submodule (https://github.com/rcbj/mock-sts.git): the same
 # class of hazard as the walt.id render above, and for the same reason it is
