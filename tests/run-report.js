@@ -26,7 +26,7 @@
 //   node tests/run-report.js          # run the suite, write reports
 //   node tests/run-report.js --demo   # write a SAMPLE report (no tests run)
 //
-const { spawn } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const bunyan = require("bunyan");
@@ -611,11 +611,25 @@ function buildJobs() {
   // against branded Google Chrome, which refuses to side-load an unpacked
   // extension; the image pins Chrome for Testing, which allows it.
   if (env.WSTRUST_STS_URL) {
-    jobs.push({
+    const browser = extensionCapableBrowser();
+    const extensionJob = {
       name: "WebAuthn browser extension (observes a third party, changes nothing)",
       script: "webauthn_extension.js",
       env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
-    });
+    };
+    if (browser.capable && browser.bin) {
+      // Use the binary we probed, not whatever Selenium would pick.
+      extensionJob.env.CHROME_BIN = browser.bin;
+    }
+    if (!browser.capable) {
+      extensionJob.skip =
+        "this browser cannot side-load an unpacked extension: " +
+        (browser.version || "no chrome/chromium found on PATH") + ". Branded Google Chrome refuses " +
+        "the flags and reports it only on stderr, so the job would fail with every assertion timing " +
+        "out and nothing naming the cause. The containerized suite pins Chrome for Testing and does " +
+        "run it; to run it here, point CHROME_BIN at a Chrome-for-Testing or Chromium build.";
+    }
+    jobs.push(extensionJob);
   }
 
   // The wallet's DID module (client/src/did.js): did:jwk, did:key and did:web,
@@ -1424,6 +1438,50 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
   <tbody>${rows}</tbody>
 </table>
 </body></html>`;
+}
+
+
+// Can the browser this run will use side-load an unpacked extension?
+//
+// BRANDED Google Chrome cannot. It refuses the flags and says so only on stderr
+// ("--disable-extensions-except is not allowed in Google Chrome, ignoring"),
+// after which the extension is simply absent and every assertion in the
+// extension job times out naming nothing. Chrome for Testing — which the tests
+// image pins — and Chromium both allow it.
+//
+// So this is an environment capability, not a defect, and the job SKIPS with the
+// browser named rather than failing. It cost a full host run of that job to
+// learn: the containerized suite passed it and local-run-tests.sh, which drives
+// the host's own Chrome, did not.
+function extensionCapableBrowser() {
+  const candidates = [process.env.CHROME_BIN, "chrome", "chromium", "chromium-browser",
+                      "google-chrome"].filter(Boolean);
+  for (const bin of candidates) {
+    let out;
+    try {
+      out = execFileSync(bin, ["--version"],
+                         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch (e) {
+      // Not on PATH under this name; try the next.
+      continue;
+    }
+    // Resolve to an absolute path, because the job is told to USE this exact
+    // binary. Probing one browser and letting Selenium launch another is how a
+    // host with both Chromium and branded Chrome would report capable and then
+    // fail anyway.
+    let resolved = bin;
+    if (!path.isAbsolute(bin)) {
+      try {
+        resolved = execFileSync("which", [bin], { encoding: "utf8" }).trim() || bin;
+      } catch (e) {
+        // `which` is absent or the name is a shell builtin; the PATH name is the
+        // best we have, and Selenium resolves it the same way.
+        resolved = bin;
+      }
+    }
+    return { bin: resolved, version: out, capable: /Chrome for Testing|Chromium/i.test(out) };
+  }
+  return { bin: null, version: null, capable: false };
 }
 
 function renderJUnit(results, generatedAt) {

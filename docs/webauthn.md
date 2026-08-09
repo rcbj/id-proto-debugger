@@ -48,7 +48,7 @@ Four rules make read-only true rather than intended, and they are in `extension/
 
 ## Hazards, all of them measured
 
-**Branded Google Chrome will not side-load an unpacked extension.** It refuses the flags and says so only on stderr (`--disable-extensions-except is not allowed in Google Chrome, ignoring`), after which the extension is simply absent and every assertion times out naming nothing. Chrome for Testing (what the tests image pins) and Chromium allow it. Independently, **chromedriver passes `--disable-extensions` among its default switches**, which cancels `--load-extension` on its own — `excludeSwitches("disable-extensions")` is required too.
+**Branded Google Chrome will not side-load an unpacked extension.** It refuses the flags and says so only on stderr (`--disable-extensions-except is not allowed in Google Chrome, ignoring`), after which the extension is simply absent and every assertion times out naming nothing. Chrome for Testing (what the tests image pins) and Chromium allow it. Independently, **chromedriver passes `--disable-extensions` among its default switches**, which cancels `--load-extension` on its own — `excludeSwitches("disable-extensions")` is required too. `run-report.js` probes the browser and skips the extension job when it cannot side-load, so a host run reports that honestly instead of failing.
 
 **Selenium's `VirtualAuthenticatorOptions` setters return `undefined`** in the JS bindings, unlike the Java ones, so they cannot be chained. The resulting failure is not "no authenticator" but `NotAllowedError: WebAuthn is not supported on sites with TLS certificate errors`, which sends you hunting through origins and certificates.
 
