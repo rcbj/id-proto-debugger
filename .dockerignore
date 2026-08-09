@@ -1,6 +1,11 @@
 # Keep the Docker build context small and reproducible.
 **/node_modules
 client/dist
+# NOTE: extension/dist is deliberately NOT excluded. It is generated the same way
+# client/dist is, but tests/Dockerfile COPYs extension/dist/ci into the tests
+# image, so it must reach the build context. Adding it here by analogy with the
+# line above breaks that COPY with "not found".
+
 coverage
 tests/report
 tests/node_modules

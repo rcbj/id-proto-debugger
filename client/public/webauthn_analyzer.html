@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — WebAuthn Analyzer</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/webauthn.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/webauthn_analyzer.js">
+</script>
+
+<p class="wa-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="wa-title">WebAuthn Analyzer &mdash; decode and verify a ceremony's artifacts</h3>
+
+<p class="wa-intro">Paste what a <a href="https://www.w3.org/TR/webauthn-3/" target="_blank" rel="noopener noreferrer">WebAuthn</a>
+ceremony produced &mdash; from this debugger, from a relying party's console, or from the browser extension &mdash;
+and see what is actually in it. This page performs no ceremony, so it works against artifacts from
+<strong>any</strong> relying party, needs no authenticator, and needs no secure context. It is arithmetic over
+bytes you already have.</p>
+
+<p class="wa-intro">Accepted input: a <code>PublicKeyCredential</code> in its
+<a href="https://www.w3.org/TR/webauthn-3/#dom-publickeycredential-tojson" target="_blank" rel="noopener noreferrer"><code>toJSON()</code></a>
+form (registration or assertion), or a capture from the extension &mdash; which additionally carries the
+<em>request</em> options, the half a relying party never shows anybody.</p>
+
+<fieldset class="wa-pane">
+  <legend>The artifact</legend>
+  <textarea id="wa_input" class="wa-input" rows="10" spellcheck="false"
+            placeholder='{"id":"…","rawId":"…","type":"public-key","response":{"clientDataJSON":"…","attestationObject":"…"}}'></textarea>
+  <div class="wa-buttons">
+    <input type="button" id="wa_analyze_button" class="btn2" value="Decode &amp; Verify">
+    <input type="button" id="wa_fill_button" class="btn2" value="Fill expectations from the artifact">
+    <input type="button" id="wa_clear_button" class="btn2" value="Clear">
+    <input type="button" id="wa_forget_button" class="btn2" value="Forget stored public keys">
+  </div>
+  <div id="wa_input_status" class="wa-status"></div>
+</fieldset>
+
+<fieldset class="wa-pane">
+  <legend>Captures from the browser extension</legend>
+  <p class="wa-note">The extension watches <code>navigator.credentials</code> on one origin you arm it for
+  and copies what passes &mdash; including the <strong>request options</strong>, which no relying party shows
+  its users. It never alters a ceremony and never starts one. Arming happens in the extension's own popup,
+  because the browser requires that gesture to be there.</p>
+  <div id="wa_ext_status" class="wa-status"></div>
+  <div id="wa_ext_body"></div>
+  <div class="wa-buttons">
+    <input type="button" id="wa_ext_refresh" class="btn2" value="Refresh captures">
+    <input type="button" id="wa_ext_clear" class="btn2" value="Clear captures">
+    <input type="button" id="wa_ext_done" class="btn2" value="Done &mdash; stop observing">
+  </div>
+</fieldset>
+
+<fieldset class="wa-pane">
+  <legend>What the relying party asked for</legend>
+  <div id="wa_request_body"></div>
+</fieldset>
+
+<fieldset class="wa-pane">
+  <legend>Client Data</legend>
+  <div id="wa_clientdata_body"></div>
+  <label for="wa_clientdata_raw">Raw clientDataJSON</label>
+  <textarea id="wa_clientdata_raw" class="wa-raw" rows="4" spellcheck="false" readonly></textarea>
+</fieldset>
+
+<fieldset class="wa-pane">
+  <legend>Authenticator Data</legend>
+  <div id="wa_authdata_body"></div>
+</fieldset>
+
+<fieldset class="wa-pane">
+  <legend>Attestation Object</legend>
+  <div id="wa_attestation_body"></div>
+  <label for="wa_attestation_raw">Attestation statement</label>
+  <textarea id="wa_attestation_raw" class="wa-raw" rows="6" spellcheck="false" readonly></textarea>
+</fieldset>
+
+<fieldset class="wa-pane">
+  <legend>Credential Public Key (COSE_Key)</legend>
+  <div id="wa_cose_body"></div>
+  <label for="wa_cose_pem">SubjectPublicKeyInfo PEM</label>
+  <textarea id="wa_cose_pem" class="wa-raw" rows="5" spellcheck="false" readonly></textarea>
+</fieldset>
+
+<fieldset class="wa-pane">
+  <legend>Verification</legend>
+  <p class="wa-note">What a relying party must check (WebAuthn &sect;7.2). These expectations are
+  <strong>yours to supply</strong>: checking a challenge against the challenge the same document carries
+  proves nothing, so <em>Fill expectations from the artifact</em> is a starting point to correct, not an
+  answer.</p>
+  <div class="wa-expect">
+    <label for="wa_expect_challenge">Expected challenge (base64url)</label>
+    <input type="text" id="wa_expect_challenge" class="wa-field">
+    <label for="wa_expect_origin">Expected origin</label>
+    <input type="text" id="wa_expect_origin" class="wa-field">
+    <label for="wa_expect_rpid">Expected RP ID</label>
+    <input type="text" id="wa_expect_rpid" class="wa-field">
+    <label for="wa_expect_signcount">Previous sign count (blank to skip)</label>
+    <input type="text" id="wa_expect_signcount" class="wa-field">
+    <label class="wa-check"><input type="checkbox" id="wa_expect_uv"> Require user verification (UV)</label>
+    <label for="wa_public_key">Credential public key (JWK) &mdash; filled from a registration pasted earlier</label>
+    <textarea id="wa_public_key" class="wa-raw" rows="6" spellcheck="false"></textarea>
+  </div>
+  <div id="wa_verify_status" class="wa-status"></div>
+  <div id="wa_verify_body"></div>
+</fieldset>
+
+<p class="wa-intro"><strong>What no page can show you.</strong> The browser mediates every ceremony: JavaScript
+receives these artifacts and never the authenticator. There is no private key here, no PIN, no biometric, no
+authenticator state, and no CTAP &mdash; not the commands, not the USB frames. That boundary is the reason
+WebAuthn resists phishing, and it is why this is a WebAuthn debugger and not a CTAP debugger.</p>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

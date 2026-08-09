@@ -124,6 +124,8 @@ init()
   check_return_code $?
   renderWaltidConfig "${CURRENT_DIR}"
   check_return_code $?
+  buildBrowserExtension "${CURRENT_DIR}"
+  check_return_code $?
   NODEJS_BASE_DIR=tests
 }
 

@@ -1,0 +1,132 @@
+/* webauthn.css — the WebAuthn workflow's own look.
+ *
+ * Shares nothing with saml_common.css deliberately: that family's panes are a
+ * different shape. What IS borrowed is the constraint that cost the SD-JWT VC
+ * pages a debugging round — a table whose cells hold base64url has no break
+ * opportunity, so it sizes itself to its longest line and pushes out of its
+ * pane. Everything here that can hold an artifact is fixed-layout with
+ * overflow-wrap: anywhere, and `code`/monospace values must not be nowrap
+ * (bootstrap's default), which is what caused that overflow.
+ */
+
+.wa-title { margin-top: 12px; }
+
+.wa-return { margin: 10px 0 0 0; font-size: 0.9em; }
+
+.wa-intro {
+  max-width: 62em;
+  margin: 10px 0;
+  line-height: 1.45;
+}
+
+.wa-pane {
+  border: 1px solid #d5d5dd;
+  border-radius: 6px;
+  padding: 10px 14px 14px 14px;
+  margin: 14px 0;
+  background: #fff;
+}
+
+.wa-pane > legend {
+  width: auto;
+  border: 0;
+  margin-bottom: 0;
+  padding: 0 8px;
+  font-size: 1.0em;
+  font-weight: 600;
+  color: #12107c;
+}
+
+.wa-input, .wa-raw {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82em;
+  /* The whole point: base64url has no break opportunity of its own. */
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.wa-field {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82em;
+}
+
+.wa-buttons { margin: 8px 0 4px 0; }
+.wa-buttons .btn2 { margin-right: 6px; }
+
+.wa-status { margin-top: 6px; font-size: 0.88em; min-height: 1.2em; }
+.wa-good, .wa-status.wa-good { color: #0a7d63; font-weight: 600; }
+.wa-bad, .wa-status.wa-bad { color: #b00020; font-weight: 600; }
+.wa-note {
+  color: #555;
+  font-size: 0.86em;
+  margin: 8px 0 0 0;
+  max-width: 62em;
+  line-height: 1.4;
+}
+.wa-subtle { color: #777; font-size: 0.8em; }
+
+/* Fixed layout so a long value wraps instead of widening the table past the
+ * pane. Measured, not assumed: an auto-layout table sized to a 700-character
+ * base64url value is how the SD-JWT VC panes overflowed. */
+.wa-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-top: 6px;
+}
+.wa-table td {
+  padding: 4px 8px 4px 0;
+  vertical-align: top;
+  border-bottom: 1px solid #f0f0f4;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  /* A cell split across a column break puts half a name a column away from its
+   * value; break-inside on the row alone does not stop Chrome doing it. */
+  break-inside: avoid;
+}
+.wa-table .wa-name {
+  width: 34%;
+  color: #333;
+  font-weight: 600;
+  font-size: 0.86em;
+}
+.wa-table .wa-value {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82em;
+  /* bootstrap sets code { white-space: nowrap }, which is precisely the rule
+   * that made these panes scroll sideways. */
+  white-space: pre-wrap;
+}
+
+.wa-ok-row .wa-name { color: #0a7d63; }
+.wa-bad-row .wa-name { color: #b00020; }
+.wa-bad-row .wa-value { color: #b00020; }
+.wa-note-row .wa-name { color: #7a5c00; }
+
+.wa-flags { display: flex; flex-wrap: wrap; gap: 6px; }
+.wa-flag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 0.78em;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid transparent;
+}
+.wa-flag-set { background: #e6f4f0; color: #0a7d63; border-color: #b9e0d5; }
+.wa-flag-clear { background: #f4f4f6; color: #888; border-color: #e0e0e6; }
+
+.wa-expect label {
+  display: block;
+  margin: 8px 0 2px 0;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: #333;
+}
+.wa-expect label.wa-check { font-weight: 500; }
+.wa-expect label.wa-check input { margin-right: 6px; }

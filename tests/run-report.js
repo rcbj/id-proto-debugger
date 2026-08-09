@@ -26,7 +26,7 @@
 //   node tests/run-report.js          # run the suite, write reports
 //   node tests/run-report.js --demo   # write a SAMPLE report (no tests run)
 //
-const { spawn } = require("child_process");
+const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 const bunyan = require("bunyan");
@@ -519,9 +519,118 @@ function buildJobs() {
   // require that would put elliptic back into a bundle. Node only, never skipped.
   jobs.push({
     name: "JWK to PEM encoder (SPKI DER correctness; elliptic stays out of the bundles)",
-    script: "jwk_pem.js",
+    script: "jwk_pem_encoding.js",
     env: {},
   });
+
+  // The WebAuthn decoder (client/src/cbor.js, cose.js, webauthn.js) against REAL
+  // ceremonies — ES256 and RS256, registration and assertion — produced by the
+  // WebDriver virtual authenticator and committed as tests/webauthn_vectors.json.
+  // Two oracles neither of which is ours: the browser's own getPublicKey(), which
+  // our COSE -> JWK -> SPKI chain must reproduce byte for byte, and node's crypto,
+  // which verifies the same signatures independently. Then the negatives, each
+  // failing exactly one named check — including a UV-clear assertion that must be
+  // rejected on the FLAG while its signature stays valid, because reporting that
+  // as a bad signature would send the user after the wrong thing. Node only, no
+  // browser, no network, never skipped.
+  jobs.push({
+    name: "WebAuthn decoder (CBOR, COSE_Key, authenticator data, assertion verification)",
+    script: "webauthn_decode.js",
+    env: {},
+  });
+
+  // The wallet's WebAuthn decoder and the STS's, over the same real ceremonies,
+  // required to reach the same verdict on each. The two share no code — different
+  // CBOR readers, different COSE mappings, and different signature paths, since
+  // node takes an ECDSA signature as DER while Web Crypto demands raw r‖s — so a
+  // mistake in one is not mirrored in the other. One implementation agreeing
+  // with itself is not a result; two independent readings of section 7.2
+  // agreeing is. Same arrangement as bbs2023_cryptosuite.js. Node only, never
+  // skipped.
+  jobs.push({
+    name: "WebAuthn: the wallet's decoder and the STS's agree (cross-implementation)",
+    script: "webauthn_cross_impl.js",
+    env: {},
+  });
+
+  // The WebAuthn Analyzer PAGE, driven against the same real ceremonies. It
+  // covers what the node test above cannot: that the decoded values reach the
+  // screen. Those are different failures — a pane left empty by a renamed
+  // element id decodes perfectly and shows nothing — and only this one catches
+  // the second. Needs the client and nothing else: the page performs no
+  // ceremony, so there is no authenticator, no IdP and no network involved.
+  jobs.push({
+    name: "WebAuthn Analyzer page (decode and verify pasted artifacts)",
+    script: "webauthn_analyzer_page.js",
+    env: {},
+  });
+
+  // The WebAuthn Lab page, running REAL ceremonies against the WebDriver virtual
+  // authenticator — a CTAP2 authenticator inside the browser, so no hardware, no
+  // touch and no flake. Registration, assertion, the counter advancing across
+  // two assertions, and the no-credential path reported rather than hung. Note
+  // what is NOT here: a UV-required ceremony against an authenticator that
+  // cannot verify is refused by the BROWSER, so the relying party never sees a
+  // UV-clear assertion and that check cannot be exercised from this page; it
+  // lives in webauthn_decode.js, where the material can be manufactured. Needs
+  // the client and nothing else.
+  jobs.push({
+    name: "WebAuthn Lab page (real ceremonies against a virtual authenticator)",
+    script: "webauthn_lab_page.js",
+    env: {},
+  });
+
+  // WebAuthn as the SECOND FACTOR of an OIDC Authorization Code sign-in against
+  // the mock STS — the join between the two protocols, and the reason the
+  // workflow was built against this service. A relying party asks for step-up
+  // with acr_values, a real ceremony happens against the virtual authenticator,
+  // and the ID token records it as amr ["pwd","hwk"] with acr "mfa". The last
+  // section is the one that matters: a sign-in WITHOUT the second factor must
+  // report ["pwd"] and acr "1", because a service that stamped hwk on every
+  // token would pass every other check here. Needs the STS (no Keycloak, no
+  // hardware), so it is gated on WSTRUST_STS_URL like the rest.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "WebAuthn as OIDC second factor (amr/acr earned, not decorative)",
+      script: "webauthn_oidc_mfa.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
+  // The browser extension, side-loaded for real, watching a ceremony on an
+  // origin that is not the debugger's — which is the only way to debug somebody
+  // else's relying party, and the reason the extension exists. Two claims are
+  // checked: that both halves arrive (the REQUEST half especially, which no
+  // relying party shows anybody and pasting a response can never produce), and
+  // that the extension changes NOTHING about the ceremony it watches. Nobody
+  // reviews an unpacked extension on our behalf, so that second one is the whole
+  // of the read-only guarantee.
+  //
+  // Needs the STS, and needs the extension built (buildBrowserExtension() in
+  // common/common.sh, called by the launchers before compose). It will NOT run
+  // against branded Google Chrome, which refuses to side-load an unpacked
+  // extension; the image pins Chrome for Testing, which allows it.
+  if (env.WSTRUST_STS_URL) {
+    const browser = extensionCapableBrowser();
+    const extensionJob = {
+      name: "WebAuthn browser extension (observes a third party, changes nothing)",
+      script: "webauthn_extension.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    };
+    if (browser.capable && browser.bin) {
+      // Use the binary we probed, not whatever Selenium would pick.
+      extensionJob.env.CHROME_BIN = browser.bin;
+    }
+    if (!browser.capable) {
+      extensionJob.skip =
+        "this browser cannot side-load an unpacked extension: " +
+        (browser.version || "no chrome/chromium found on PATH") + ". Branded Google Chrome refuses " +
+        "the flags and reports it only on stderr, so the job would fail with every assertion timing " +
+        "out and nothing naming the cause. The containerized suite pins Chrome for Testing and does " +
+        "run it; to run it here, point CHROME_BIN at a Chrome-for-Testing or Chromium build.";
+    }
+    jobs.push(extensionJob);
+  }
 
   // The wallet's DID module (client/src/did.js): did:jwk, did:key and did:web,
   // reading a DID document, and the DIF Well Known DID Configuration check that
@@ -1329,6 +1438,50 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
   <tbody>${rows}</tbody>
 </table>
 </body></html>`;
+}
+
+
+// Can the browser this run will use side-load an unpacked extension?
+//
+// BRANDED Google Chrome cannot. It refuses the flags and says so only on stderr
+// ("--disable-extensions-except is not allowed in Google Chrome, ignoring"),
+// after which the extension is simply absent and every assertion in the
+// extension job times out naming nothing. Chrome for Testing — which the tests
+// image pins — and Chromium both allow it.
+//
+// So this is an environment capability, not a defect, and the job SKIPS with the
+// browser named rather than failing. It cost a full host run of that job to
+// learn: the containerized suite passed it and local-run-tests.sh, which drives
+// the host's own Chrome, did not.
+function extensionCapableBrowser() {
+  const candidates = [process.env.CHROME_BIN, "chrome", "chromium", "chromium-browser",
+                      "google-chrome"].filter(Boolean);
+  for (const bin of candidates) {
+    let out;
+    try {
+      out = execFileSync(bin, ["--version"],
+                         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    } catch (e) {
+      // Not on PATH under this name; try the next.
+      continue;
+    }
+    // Resolve to an absolute path, because the job is told to USE this exact
+    // binary. Probing one browser and letting Selenium launch another is how a
+    // host with both Chromium and branded Chrome would report capable and then
+    // fail anyway.
+    let resolved = bin;
+    if (!path.isAbsolute(bin)) {
+      try {
+        resolved = execFileSync("which", [bin], { encoding: "utf8" }).trim() || bin;
+      } catch (e) {
+        // `which` is absent or the name is a shell builtin; the PATH name is the
+        // best we have, and Selenium resolves it the same way.
+        resolved = bin;
+      }
+    }
+    return { bin: resolved, version: out, capable: /Chrome for Testing|Chromium/i.test(out) };
+  }
+  return { bin: null, version: null, capable: false };
 }
 
 function renderJUnit(results, generatedAt) {

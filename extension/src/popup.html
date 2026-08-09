@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>WebAuthn observer</title>
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Arial,sans-serif;width:320px;margin:0;padding:14px;color:#222}
+h1{font-size:1.02em;margin:0 0 2px}p.sub{color:#666;font-size:.78em;margin:0 0 12px;line-height:1.4}
+label{display:block;font-size:.8em;font-weight:600;margin:10px 0 3px}
+input[type=text]{width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid #bbb;border-radius:4px;font-size:.85em}
+button{width:100%;padding:7px 10px;margin-top:8px;border-radius:4px;border:1px solid #12107c;background:#12107c;color:#fff;font-size:.85em;cursor:pointer}
+button.secondary{background:#fff;color:#12107c}
+button.danger{background:#fff;color:#b00020;border-color:#b00020}
+.state{font-size:.8em;padding:7px 9px;border-radius:4px;margin-bottom:10px}
+.on{background:#fdecea;border:1px solid #f5c6c2;color:#b00020}
+.off{background:#f2f6f2;border:1px solid #cfe0cf;color:#2c6b2c}
+.note{font-size:.72em;color:#777;margin-top:10px;line-height:1.45}
+</style></head><body>
+<h1>WebAuthn observer</h1>
+<p class="sub">Watches <code>navigator.credentials</code> on one origin and copies what passes. It never
+alters a ceremony and never starts one.</p>
+<div id="state" class="state off">Inactive — nothing is being observed.</div>
+<label for="origin">Origin to observe</label>
+<input type="text" id="origin" placeholder="https://login.example.com">
+<button id="arm">Observe this origin</button>
+<button id="disarm" class="secondary">Stop observing</button>
+<button id="uninstall" class="danger">Remove this extension</button>
+<p class="note">Observation stops by itself after 30 minutes and when the browser restarts. Removing the
+extension asks for confirmation in the browser's own dialog. On Firefox a temporary add-on is gone at
+restart regardless.</p>
+<script src="popup.js"></script></body></html>
