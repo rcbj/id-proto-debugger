@@ -52,7 +52,31 @@ const STS_CANDIDATES = [
   path.join(ROOT, "..", "mock-sts", "webauthn.js"),
 ];
 const stsWhich = STS_CANDIDATES.filter(function (p) { return fs.existsSync(p); })[0];
-const sts = paths.requireSharedModule(STS_CANDIDATES, "the STS's WebAuthn verifier");
+
+// Load it ourselves rather than letting module_paths' generic error stand. That
+// error ends "run `npm install` in tests/", which is right for a module missing
+// a PACKAGE and badly wrong for this one: the only way this fails is the STS
+// module still requiring ./helpers, i.e. the submodule predating the fix that
+// made it self-contained. Being told to run npm install sends you nowhere.
+let sts;
+try {
+  sts = paths.requireSharedModule(STS_CANDIDATES, "the STS's WebAuthn verifier");
+} catch (e) {
+  if (/Cannot find module '\.\/helpers'/.test(e.message)) {
+    log.error(
+      "The STS's WebAuthn verifier at " + stsWhich + " still does `require('./helpers')`, so it " +
+      "cannot be loaded outside the service — and it is loaded outside the service here, and in " +
+      "the tests image, where only that one file is staged. The fix is in the module itself (a " +
+      "silent-logger fallback when ./helpers is absent); staging the service's helpers.js instead " +
+      "does not work, because it reads process.env.CONFIG_FILE relative to ITS directory. If that " +
+      "fix is already in the mock-sts working tree, it has not been committed and the sts/ gitlink " +
+      "has not been bumped — see docs/webauthn-plan.md on the submodule ordering.");
+    process.exitCode = 1;
+    module.exports = {};
+    return;
+  }
+  throw e;
+}
 
 const VECTORS = JSON.parse(
   fs.readFileSync(path.join(__dirname, "webauthn_vectors.json"), "utf8"));
