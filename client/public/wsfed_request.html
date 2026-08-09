@@ -159,6 +159,31 @@ function wsfedSetAllPanes(expand) {
         </div>
       </div>
 
+      <!-- ----- Request signing ----- -->
+      <div class="saml-field saml-check">
+        <input class="stored" type="checkbox" id="wsfed_sign_request" name="wsfed_sign_request" checked onchange="return wsfed_request.onSignRequestChange();" />
+        <label for="wsfed_sign_request" title="Sign the sign-in request. The Passive Requestor Profile does not require this and many IdPs ignore it — it is here so you can put a signature on the wire and see what an IdP does with it.">Digitally sign request</label>
+      </div>
+      <div class="saml-sub" id="wsfed_signing_options">
+        <div class="saml-field">
+          <label for="wsfed_sig_binding" title="Where the signature goes. Redirect signs the whole query string, so it protects wtrealm and wreply; enveloped signs only the inline wreq, so everything outside it is unprotected.">Signature binding</label>
+          <select class="stored" id="wsfed_sig_binding" name="wsfed_sig_binding" onchange="return wsfed_request.onSigBindingChange();">
+            <option value="redirect">Redirect binding &mdash; signed query string (covers the whole request)</option>
+            <option value="enveloped">Enveloped XML-DSIG in the inline wreq (covers the wreq only)</option>
+          </select>
+        </div>
+        <div class="saml-field">
+          <label for="wsfed_sig_alg" title="Signature algorithm. The RP key is RSA, so these are the RSA XML-DSIG URIs.">Signature algorithm</label>
+          <select class="stored" id="wsfed_sig_alg" name="wsfed_sig_alg" onchange="return wsfed_request.onSigBindingChange();">
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256">RSA-SHA256</option>
+            <option value="http://www.w3.org/2000/09/xmldsig#rsa-sha1">RSA-SHA1</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha384">RSA-SHA384</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512">RSA-SHA512</option>
+          </select>
+        </div>
+        <p class="saml-note">Signing uses the relying-party private key below &mdash; press <em>Generate Keys</em> if there is none. With signing on and no key the request is built <strong>unsigned</strong> and the status says so, rather than quietly sending one that only looks signed. The enveloped binding needs an inline <code>wreq</code> to sign, so selecting it turns that on.</p>
+      </div>
+
       <!-- ----- Relying-party key (token decryption) ----- -->
       <div class="saml-sub">
         <div class="saml-sub-title">Relying-party Key Pair (token decryption)</div>

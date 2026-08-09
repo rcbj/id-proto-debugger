@@ -19,6 +19,23 @@ The profile ends with the IdP **auto-POSTing** a form to the RP's `wreply`. That
 
 `wsfed_response.js` handles all three, and `client/src/edge_landing.js` is the client half of the second one's hand-off contract.
 
+## Signing the request
+
+The Passive Requestor Profile does **not** require a signed sign-in request and many IdPs ignore one, so this is a debugging affordance: it puts a signature on the wire so you can see what an IdP does with it. The toggle (`wsfed_sign_request`) is **on by default**, and there are two bindings, which are not interchangeable:
+
+| Binding | Signs | Leaves unprotected |
+|---|---|---|
+| **Redirect** | the whole query string — SigAlg is appended *before* signing and is covered, so an IdP cannot be talked into a weaker algorithm by rewriting the parameter | nothing in the request |
+| **Enveloped** | an XML-DSIG inside the inline `wreq` | everything outside it, including `wtrealm` and `wreply` — they live in the query and nowhere else |
+
+Because the enveloped binding has nothing to sign without an inline `wreq`, selecting it **turns that on for you** rather than silently producing an unsigned request. Four RSA algorithms are offered (SHA-1/256/384/512); the RP key is RSA, so those are the applicable XML-DSIG URIs.
+
+**With signing on and no key, the request is built unsigned and the status says `NOT signed`** — the one outcome that must never be silent, because a request that merely looks signed is exactly what somebody debugging a signature would be misled by. Pressing *Generate Keys* rebuilds the request immediately, so what is on screen is always what the buttons would send.
+
+Both paths go through `client/src/xmldsig.js` — `signQueryString()` and `signEnveloped()` — the same engine the SAML and WS-Trust pages use. Nothing here reimplements a signature.
+
+`tests/wsfed_sso.js` drives all eight combinations (two bindings × four algorithms × two initiation routes) and asserts the signature **client-side, before the round trip**: that is the deterministic part. Whether the EOL side-car then honours it is a separate, best-effort concern.
+
 ## Operations History
 
 `client/src/wsfed_history.js` is the third sibling of `saml_history.js` and `wstrust_history.js` over the shared `op_history.js`. It exists because the two pages each know half of what happened:
