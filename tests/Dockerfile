@@ -150,7 +150,12 @@ COPY client/src/cbor.js client/src/cose.js client/src/webauthn.js ./
 # reason. It comes out of the sts/ SUBMODULE, so an uninitialised checkout fails
 # this build with "COPY sts/webauthn.js: not found", which says nothing about the
 # cause; requireMockStsCheckout() in common/common.sh explains it first.
-COPY sts/webauthn.js ./sts_webauthn.js
+# NOT copied flat, unlike sts/bbs2023.js above: this module has a relative
+# require of its own, so it goes in a directory of its own and keeps its name.
+# (It falls back to a silent logger when ./helpers is absent, which it is here —
+# staging the service's helpers.js instead would drag in its CONFIG_FILE, read
+# relative to ITS directory, and the service's dependencies with it.)
+COPY sts/webauthn.js ./sts/webauthn.js
 COPY tests/webauthn_decode.js tests/webauthn_vectors.json tests/webauthn_analyzer_page.js tests/webauthn_lab_page.js tests/webauthn_cross_impl.js tests/webauthn_oidc_mfa.js tests/webauthn_extension.js ./
 # The browser extension's CI build, side-loaded by tests/webauthn_extension.js.
 # It is GENERATED, not committed: build.js stamps the version in and bakes the
@@ -160,6 +165,11 @@ COPY tests/webauthn_decode.js tests/webauthn_vectors.json tests/webauthn_analyze
 # configuration — and for the same reason. If this COPY fails with "not found",
 # that call did not happen.
 COPY extension/dist/ci ./extension-ci
+# The shipped build too, and only so that tests/webauthn_extension.js can prove
+# the CI build differs from it in exactly one file. Without it that section
+# cannot run at all, which would leave the one assertion that stops a test-only
+# bypass creeping into the arm path checking nothing.
+COPY extension/dist/chrome ./extension-chrome
 # The two halves of the edge landings' hand-off contract, which
 # tests/edge_landing_contract.js compares: the module deployed to Lambda@Edge by
 # Terraform and the client module browserified into the page (copied just above).

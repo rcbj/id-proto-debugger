@@ -40,14 +40,14 @@ function shared(file, what) {
 }
 const webauthn = shared("webauthn.js", "the wallet's WebAuthn decoder");
 
-// The STS's copy. Three layouts: copied flat into the tests image (renamed on
-// the way in, as the STS's bbs2023.js is, because the basenames collide); the
+// The STS's copy. Three layouts: staged into the tests image under sts/ (a
+// directory of its own, because unlike bbs2023.js it has a relative require); the
 // sts/ submodule in a checkout; and the sibling development clone, for the
 // window between writing the STS side and bumping the gitlink. The last one is
 // why this test says WHERE it found the module in its log line — running against
 // a stale submodule while editing the clone would otherwise look like a pass.
 const STS_CANDIDATES = [
-  path.join(__dirname, "sts_webauthn.js"),
+  path.join(__dirname, "sts", "webauthn.js"),
   path.join(ROOT, "sts", "webauthn.js"),
   path.join(ROOT, "..", "mock-sts", "webauthn.js"),
 ];

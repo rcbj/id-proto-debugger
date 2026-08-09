@@ -186,9 +186,16 @@ async function test() {
   }
 
   await section("the CI build differs from the shipped build in exactly one file", () => {
-    const shipped = path.join(EXTENSION_DIR, "..", "chrome");
-    if (!fs.existsSync(shipped)) {
-      throw new Error("no chrome build beside the ci build to compare against");
+    // Two layouts: extension/dist/{ci,chrome} in a checkout, and extension-ci /
+    // extension-chrome side by side in the tests image, which has no extension/
+    // tree at all.
+    const shipped = [
+      path.join(EXTENSION_DIR, "..", "chrome"),
+      path.join(__dirname, "extension-chrome"),
+    ].filter(function (dir) { return fs.existsSync(path.join(dir, "manifest.json")); })[0];
+    if (!shipped) {
+      throw new Error("no shipped (chrome) build to compare the CI build against. It is staged " +
+                      "beside the ci build precisely so this check can run — see tests/Dockerfile.");
     }
     const ciFiles = fs.readdirSync(EXTENSION_DIR).sort();
     const shippedFiles = fs.readdirSync(shipped).sort();
