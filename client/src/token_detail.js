@@ -31,6 +31,34 @@ const vendorClaims = {
 claimDescriptionDictionary = {};
 claimUrlDictionary = {};
 
+// The two claim tables below are built by string concatenation and handed to
+// .html(), so everything quoted into them is escaped here first. Three separate
+// sources reach those cells and none of them is this page's own text: the claim
+// NAMES and VALUES come out of a decoded JWT (an identity provider's document,
+// arriving through localStorage from the token endpoint call), and the
+// DESCRIPTIONS come from the /claimdescription document this page fetches at
+// load. A claim value of "<img src=x onerror=…>" executed before this.
+//
+// Quotes are escaped as well as angle brackets because one of the call sites is
+// an attribute value (the [ref] link's href), where &lt; alone would not close
+// the hole. This is the same implementation as jwks.js's, kept local rather than
+// shared for the reason recorded above the requires: this page deliberately
+// pulls in as little as possible.
+//
+// Note what this is NOT: it is not a defence against a hostile URL scheme in
+// that href — escaping makes the attribute well formed, it does not make
+// "javascript:" safe. Those URLs come from the vendor_claims JSON in this
+// repository, so the question does not arise today; it would if they ever
+// started arriving over the network.
+function escapeHtmlText(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function getParameterByName(name, url)
 {
   log.debug("Entering getParameterByName().");
@@ -771,21 +799,21 @@ window.onload = function() {
         var descCell = '';
         if (desc) {
           var url = claimUrlDictionary[key];
-          descCell = '<td class="description-col">' + desc
-                   + (url ? ' <a href="' + url + '" target="_blank" rel="noopener noreferrer">[ref]</a>' : '')
+          descCell = '<td class="description-col">' + escapeHtmlText(desc)
+                   + (url ? ' <a href="' + escapeHtmlText(url) + '" target="_blank" rel="noopener noreferrer">[ref]</a>' : '')
                    + '</td>';
         }
         if ( typeof decodedJWT.header[key] === "object" )
         {
           keyPairJWTHeader += '<tr>'
-                            + '<td>' + key + '</td>'
-                            + '<td>' + JSON.stringify(decodedJWT.header[key]) + '</td>'
+                            + '<td>' + escapeHtmlText(key) + '</td>'
+                            + '<td>' + escapeHtmlText(JSON.stringify(decodedJWT.header[key])) + '</td>'
                             + descCell
                             + '</tr>';
         } else {
           keyPairJWTHeader += '<tr>'
-                            + '<td>' + key + '</td>'
-                            + '<td>' + decodedJWT.header[key] + '</td>'
+                            + '<td>' + escapeHtmlText(key) + '</td>'
+                            + '<td>' + escapeHtmlText(decodedJWT.header[key]) + '</td>'
                             + descCell
                             + '</tr>';
         }
@@ -802,22 +830,25 @@ window.onload = function() {
         var descCell = '';
         if (desc) {
           var url = claimUrlDictionary[key];
-          descCell = '<td class="description-col">' + desc
-                   + (url ? ' <a href="' + url + '" target="_blank" rel="noopener noreferrer">[ref]</a>' : '')
+          descCell = '<td class="description-col">' + escapeHtmlText(desc)
+                   + (url ? ' <a href="' + escapeHtmlText(url) + '" target="_blank" rel="noopener noreferrer">[ref]</a>' : '')
                    + '</td>';
         }
         var valueCell;
         if (typeof decodedJWT.payload[key] === "object") {
-          valueCell = '<td>' + JSON.stringify(decodedJWT.payload[key]) + '</td>';
+          valueCell = '<td>' + escapeHtmlText(JSON.stringify(decodedJWT.payload[key])) + '</td>';
         } else if (TIMESTAMP_CLAIMS.indexOf(key) !== -1 && typeof decodedJWT.payload[key] === 'number') {
+          // Escaped like the rest even though this branch is reached only for a
+          // value that is already a number: the guard, not the escaping, is what
+          // makes it safe, and a guard is a thing that gets relaxed later.
           var humanDate = new Date(decodedJWT.payload[key] * 1000).toLocaleString(undefined, { timeZoneName: 'short' });
-          valueCell = '<td><span class="ts-tooltip">' + decodedJWT.payload[key]
-                    + '<span class="ts-tooltip-text">' + humanDate + '</span>'
+          valueCell = '<td><span class="ts-tooltip">' + escapeHtmlText(decodedJWT.payload[key])
+                    + '<span class="ts-tooltip-text">' + escapeHtmlText(humanDate) + '</span>'
                     + '</span></td>';
         } else {
-          valueCell = '<td>' + decodedJWT.payload[key] + '</td>';
+          valueCell = '<td>' + escapeHtmlText(decodedJWT.payload[key]) + '</td>';
         }
-        keyPairJWTPayload += '<tr><td>' + key + '</td>' + valueCell + descCell + '</tr>';
+        keyPairJWTPayload += '<tr><td>' + escapeHtmlText(key) + '</td>' + valueCell + descCell + '</tr>';
       });
       keyPairJWTPayload += '</table>';
       $('#key_pair_jwt_payload').html(keyPairJWTPayload);
@@ -867,9 +898,13 @@ function buildClaimSourcesFootnote() {
     var vendorName = data['_vendor_name'] || vendor;
     var sources = data['_sources'];
     if (!sources || !sources.length) return;
-    html += '<p><em>' + vendorName + ':</em></p><ul>';
+    // These three come from the vendor_claims JSON in this repository rather
+    // than from the network, so they are not the hole the claim tables were.
+    // Escaped anyway: it is the same three-line pattern one function away, and
+    // an escaped copy is the one that survives being copied.
+    html += '<p><em>' + escapeHtmlText(vendorName) + ':</em></p><ul>';
     sources.forEach(function(source) {
-      html += '<li><a href="' + source.url + '" target="_blank" rel="noopener noreferrer">' + source.name + '</a></li>';
+      html += '<li><a href="' + escapeHtmlText(source.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtmlText(source.name) + '</a></li>';
     });
     html += '</ul>';
   });
