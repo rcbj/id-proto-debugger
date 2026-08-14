@@ -14,11 +14,14 @@ var baseUrl = "http://localhost:3000"
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata, getAccessTokenClientCredentials, verifyAccessToken } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+const { populateMetadata, getAccessTokenClientCredentials, verifyAccessToken } =
+       require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
+       assert });
 
 
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if(headless) {
     options.addArguments("--headless");
@@ -28,11 +31,14 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
-  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
-  // browsers otherwise block (mixed content / Private Network Access).
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak,
+  // which browsers otherwise block (mixed content / Private Network Access).
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
-  const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  const driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).build();
 
   try {
     log.info("Starting Test run.");
@@ -44,13 +50,15 @@ async function test() {
     log.info("Set environment variables.");
 
     // Ensure all required environment variables are present before proceeding
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
     assert(client_id, "CLIENT_ID environment variable is not set.");
     assert(client_secret, "CLIENT_SECRET environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
     log.info("Assertions completed successfully.");
 
-    // Load the debugger, populate IdP metadata, then request and validate the access token
+    // Load the debugger, populate IdP metadata, then request and validate the
+    // access token
     log.info("Starting driver.get() run.");
     await driver.get(baseUrl + "/debugger.html");
     log.info("Completed driver.get() run.");
@@ -58,10 +66,13 @@ async function test() {
     await populateMetadata(driver, discovery_endpoint);
     log.info("Completed populateMetadata().");
     log.info("Retrieve access_token.");
-    let access_token = await getAccessTokenClientCredentials(driver, client_id, client_secret, scope);
+    let access_token = await getAccessTokenClientCredentials(driver, client_id,
+        client_secret, scope);
     log.info("Obtained token: " + access_token);
     log.info("Validating token.");
-    await verifyAccessToken(access_token, client_id, scope, { clientIdClaim: "client_id", verifyIdentityClaims: false });
+    await verifyAccessToken(access_token, client_id, scope,
+                            { clientIdClaim: "client_id",
+                            verifyIdentityClaims: false });
     log.info("Token validated.");
     log.info("Test completed successfully.")
   } catch (error) {
@@ -70,6 +81,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

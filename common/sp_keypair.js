@@ -15,28 +15,65 @@
 // generated its own would sign with a key Keycloak has never seen.
 //
 // Run the tests through ./local-run-tests.sh, ./docker-run-tests.sh or
-// ./remote-run-tests.sh and this is set for you. Running a single test script by
-// hand needs the two variables in the environment — export them from a run of
-// generateSpKeyPair, or the script says so and stops.
+// ./remote-run-tests.sh and this is set for you. Running a single test script
+// by hand needs the two variables in the environment — export them from a run
+// of generateSpKeyPair, or the script says so and stops.
 // ---------------------------------------------------------------------------
 
+
+// The Entering/Leaving logging convention (see the repo-root CLAUDE.md)
+// wants a `log` here, and bunyan is not reachable from this file:
+// common/ is outside the reach of tests/node_modules — see common/tests.js.
+// So this is the same call shape backed by console. Debug output is off by
+// default, so an ordinary run stays quiet; flip DEBUG to follow a call
+// through. Note the methods below are the one place the convention cannot
+// apply — a log line inside log.debug() is infinite recursion.
+var DEBUG = false;
+var LOG_TAG = "[sp_keypair]";
+var log = {
+  debug: function () {
+    if (!DEBUG) return;
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  info: function () {
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  warn: function () {
+    console.warn.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  error: function () {
+    console.error.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  }
+};
+
 function readSpKeyPair() {
+  log.debug("Entering readSpKeyPair().");
   const privateKey = process.env.SAML_SP_PRIVATE_KEY;
   const certificate = process.env.SAML_SP_CERT;
   if (!privateKey || !certificate) {
     throw new Error(
-      "SAML_SP_PRIVATE_KEY and SAML_SP_CERT are not set. The SP key pair is generated per run " +
-      "(common/common.sh generateSpKeyPair) rather than kept in the repository, and its certificate " +
-      "is what Keycloak validates the request signature against — so run this through " +
-      "./local-run-tests.sh, ./docker-run-tests.sh or ./remote-run-tests.sh, or export the two " +
+      "SAML_SP_PRIVATE_KEY and SAML_SP_CERT are not set. The SP key pair is " +
+          "generated per run " +
+      "(common/common.sh generateSpKeyPair) rather than kept in the " +
+          "repository, and its certificate " +
+      "is what Keycloak validates the request signature against — so run " +
+          "this through " +
+      "./local-run-tests.sh, ./docker-run-tests.sh or ./remote-run-tests.sh, " +
+          "or export the two " +
       "variables yourself.");
   }
   if (privateKey.indexOf("PRIVATE KEY") < 0) {
-    throw new Error("SAML_SP_PRIVATE_KEY does not look like a PEM private key.");
+    throw new Error("SAML_SP_PRIVATE_KEY does not look like a PEM " +
+                    "private key.");
   }
   if (certificate.indexOf("CERTIFICATE") < 0) {
     throw new Error("SAML_SP_CERT does not look like a PEM certificate.");
   }
+  log.debug("Leaving readSpKeyPair().");
   return { privateKey: privateKey, certificate: certificate };
 }
 

@@ -26,19 +26,19 @@
 // wresult is raw XML; SAML's SAMLResponse is base64 (and DEFLATE-compressed on
 // the Redirect binding), and the response page already knows how to decode
 // either, so the SAML landing passes it through untouched rather than decoding
-// at the edge. What they share is everything below: parsing a form body out of a
-// CloudFront event, generating a response CloudFront will accept, and handing a
-// value to a same-origin page through sessionStorage.
+// at the edge. What they share is everything below: parsing a form body out of
+// a CloudFront event, generating a response CloudFront will accept, and handing
+// a value to a same-origin page through sessionStorage.
 //
 // THE HAND-OFF, AND WHY IT IS sessionStorage
 //
 // Neither landing has anywhere to stash anything — that is the whole difficulty
 // of having no server. The api's equivalents (api/server.js) stash server-side
-// and pass a `?id=`; here the value must travel through the browser. It does not
-// go in the URL: a signed assertion is kilobytes and would sit in the address
-// bar, the history entry and any Referer. Instead the generated page writes it
-// into sessionStorage (same origin as the response page, so it is shared) and
-// location.replace()s — replace, so Back does not re-POST.
+// and pass a `?id=`; here the value must travel through the browser. It does
+// not go in the URL: a signed assertion is kilobytes and would sit in the
+// address bar, the history entry and any Referer. Instead the generated page
+// writes it into sessionStorage (same origin as the response page, so it is
+// shared) and location.replace()s — replace, so Back does not re-POST.
 //
 // The key names are a CONTRACT with client/src/edge_landing.js, duplicated
 // because these files ship to AWS via Terraform and that one is browserified
@@ -58,10 +58,39 @@
 // ---------------------------------------------------------------------------
 'use strict';
 
+// The Entering/Leaving logging convention (see the repo-root CLAUDE.md)
+// wants a `log` here, and bunyan is not reachable from this file:
+// Lambda@Edge bundles these handlers alone, with no dependencies.
+// So this is the same call shape backed by console. Debug output is off by
+// default, so an ordinary run stays quiet; flip DEBUG to follow a call
+// through. Note the methods below are the one place the convention cannot
+// apply — a log line inside log.debug() is infinite recursion.
+var DEBUG = false;
+var LOG_TAG = "[edge_common]";
+var log = {
+  debug: function () {
+    if (!DEBUG) return;
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  info: function () {
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  warn: function () {
+    console.warn.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  error: function () {
+    console.error.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  }
+};
+
 // Every generated page carries <meta name="wsfed-landing" content="..."> — the
 // name is historical (this started as the WS-Federation landing) and is kept
-// because remote-run-tests.sh probes for it. It means "an edge landing answered",
-// not "the WS-Federation one".
+// because remote-run-tests.sh probes for it. It means "an edge landing
+// answered", not "the WS-Federation one".
 var LANDING_MARKER = 'cloudfront-edge';
 
 // Kept under CloudFront's 40 KB so headers and the multi-byte-safe measurement
@@ -92,6 +121,8 @@ var CONTRACTS = {
 };
 
 function htmlEscape(text) {
+  log.debug("Entering htmlEscape().");
+  log.debug("Leaving htmlEscape().");
   return String(text == null ? '' : text)
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -107,9 +138,11 @@ function htmlEscape(text) {
 // load-bearing (a mutation test shows it really does execute otherwise).
 //
 // U+2028/U+2029 are belt-and-braces: newlines to a JavaScript parser but legal
-// raw in JSON until ES2019 made them legal in JS strings too. Every runtime that
-// can host this is well past that; two lines, so they stay.
+// raw in JSON until ES2019 made them legal in JS strings too. Every runtime
+// that can host this is well past that; two lines, so they stay.
 function jsLiteral(value) {
+  log.debug("Entering jsLiteral().");
+  log.debug("Leaving jsLiteral().");
   return JSON.stringify(String(value == null ? '' : value))
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
@@ -122,11 +155,15 @@ function jsLiteral(value) {
 // escapes throw in decodeURIComponent; a token is not worth losing over a stray
 // '%' elsewhere in the body, so that one component falls back to its raw text.
 function formDecode(text) {
+  log.debug("Entering formDecode().");
   var plussed = String(text == null ? '' : text).replace(/\+/g, ' ');
   try {
+    log.debug("Leaving formDecode().");
     return decodeURIComponent(plussed);
   } catch (e) {
-    console.log('edge-landing: undecodable form component kept verbatim (' + e.message + ').');
+    console.log('edge-landing: undecodable form component kept verbatim (' +
+                e.message + ').');
+    log.debug("Leaving formDecode().");
     return plussed;
   }
 }
@@ -134,9 +171,13 @@ function formDecode(text) {
 // Parse an urlencoded string (a query string or a form body). Later occurrences
 // win, matching how Express reads req.query/req.body for a repeated name.
 function parseUrlEncoded(text) {
+  log.debug("Entering parseUrlEncoded().");
   var out = {};
   var raw = String(text == null ? '' : text);
-  if (!raw) return out;
+  if (!raw) {
+    log.debug("Leaving parseUrlEncoded().");
+    return out;
+  }
   var pairs = raw.split('&');
   for (var i = 0; i < pairs.length; i++) {
     if (!pairs[i]) continue;
@@ -145,61 +186,79 @@ function parseUrlEncoded(text) {
     var value = eq === -1 ? '' : pairs[i].substring(eq + 1);
     out[formDecode(name)] = formDecode(value);
   }
+  log.debug("Leaving parseUrlEncoded().");
   return out;
 }
 
-// The POSTed form. `include_body` must be set on the association or request.body
-// is absent entirely — indistinguishable here from a genuinely empty POST, so
-// say so in the log: a misconfigured association would otherwise look exactly
-// like a request that legitimately carried nothing.
+// The POSTed form. `include_body` must be set on the association or
+// request.body is absent entirely — indistinguishable here from a genuinely
+// empty POST, so say so in the log: a misconfigured association would otherwise
+// look exactly like a request that legitimately carried nothing.
 function readBody(request) {
+  log.debug("Entering readBody().");
   var body = request.body;
   if (!body || !body.data) {
     if (request.method === 'POST') {
-      console.log('edge-landing: POST arrived with no body. If something was expected, the cache ' +
-                  'behavior is missing include_body = true on the viewer-request association.');
+      console.log('edge-landing: POST arrived with no body. If something was ' +
+                  'expected, the cache ' +
+                  'behavior is missing include_body = true on the ' +
+                      'viewer-request association.');
     }
+    log.debug("Leaving readBody().");
     return { params: {}, truncated: false };
   }
   var text = body.encoding === 'base64'
     ? Buffer.from(body.data, 'base64').toString('utf8')
     : String(body.data);
-  return { params: parseUrlEncoded(text), truncated: body.inputTruncated === true };
+  log.debug("Leaving readBody().");
+  return { params: parseUrlEncoded(text),
+          truncated: body.inputTruncated === true };
 }
 
 // Merge the query string under the body, matching Express's
 // (req.body && req.body.X) || req.query.X precedence in the api's routes.
 function readParams(request) {
+  log.debug("Entering readParams().");
   var query = parseUrlEncoded(request.querystring || '');
   var body = readBody(request);
   var params = {};
   Object.keys(query).forEach(function (k) { params[k] = query[k]; });
-  Object.keys(body.params).forEach(function (k) { params[k] = body.params[k]; });
+  Object.keys(body.params).forEach(function (k) { params[k] =
+              body.params[k]; });
+  log.debug("Leaving readParams().");
   return { params: params, truncated: body.truncated };
 }
 
 function htmlResponse(status, description, html) {
+  log.debug("Entering htmlResponse().");
+  log.debug("Leaving htmlResponse().");
   return {
     status: String(status),
     statusDescription: description,
     headers: {
-      'content-type': [{ key: 'Content-Type', value: 'text/html; charset=utf-8' }],
+      'content-type': [{ key: 'Content-Type',
+                       value: 'text/html; charset=utf-8' }],
       // A landing that carries a security token must never be cached, by
       // CloudFront or by the browser.
-      'cache-control': [{ key: 'Cache-Control', value: 'no-store, no-cache, must-revalidate' }],
-      'x-content-type-options': [{ key: 'X-Content-Type-Options', value: 'nosniff' }]
+      'cache-control': [{ key: 'Cache-Control',
+                        value: 'no-store, no-cache, must-revalidate' }],
+      'x-content-type-options': [{ key: 'X-Content-Type-Options',
+                                 value: 'nosniff' }]
     },
     body: html
   };
 }
 
 function redirectResponse(location) {
+  log.debug("Entering redirectResponse().");
+  log.debug("Leaving redirectResponse().");
   return {
     status: '302',
     statusDescription: 'Found',
     headers: {
       location: [{ key: 'Location', value: location }],
-      'cache-control': [{ key: 'Cache-Control', value: 'no-store, no-cache, must-revalidate' }]
+      'cache-control': [{ key: 'Cache-Control',
+                        value: 'no-store, no-cache, must-revalidate' }]
     }
   };
 }
@@ -207,6 +266,8 @@ function redirectResponse(location) {
 // Every synthetic response carries the marker, so a probe (and a human with
 // curl) can recognise a landing whatever it answered.
 function page(title, bodyHtml, scriptJs) {
+  log.debug("Entering page().");
+  log.debug("Leaving page().");
   return '<!DOCTYPE html>\n<html lang="en">\n<head>\n' +
     '<meta charset="utf-8">\n' +
     '<meta name="wsfed-landing" content="' + LANDING_MARKER + '">\n' +
@@ -220,9 +281,12 @@ function page(title, bodyHtml, scriptJs) {
 // empty response page would read as "the IdP returned nothing" — the page is
 // told the hand-off failed instead, via ?<handoffParam>=blocked.
 function handoffScript(values, okUrl, blockedUrl) {
+  log.debug("Entering handoffScript().");
   var sets = Object.keys(values).map(function (key) {
-    return '    sessionStorage.setItem(' + jsLiteral(key) + ', ' + jsLiteral(values[key]) + ');\n';
+    return '    sessionStorage.setItem(' + jsLiteral(key) + ', ' +
+        jsLiteral(values[key]) + ');\n';
   }).join('');
+  log.debug("Leaving handoffScript().");
   return '(function () {\n' +
     '  var target = ' + jsLiteral(okUrl) + ';\n' +
     '  try {\n' + sets +
@@ -244,24 +308,35 @@ function handoffScript(values, okUrl, blockedUrl) {
 //                   when the response would exceed CloudFront's limit.
 //   opts.tooLarge   extra sentence for the 413 when even one copy will not fit.
 function handoffPage(opts) {
+  log.debug("Entering handoffPage().");
   var contract = opts.contract;
   var okUrl = contract.responsePage + '?' + contract.handoffParam + '=1';
-  var blockedUrl = contract.responsePage + '?' + contract.handoffParam + '=blocked';
+  var blockedUrl = contract.responsePage + '?' + contract.handoffParam +
+      '=blocked';
   var script = handoffScript(opts.values, okUrl, blockedUrl);
   var lead = '<p>' + opts.lead + '</p>\n';
-  var bytesOf = function (s) { return Buffer.byteLength(s, 'utf8'); };
+  var bytesOf = function (s) {
+    log.debug("Entering bytesOf().");
+    log.debug("Leaving bytesOf().");
+    return Buffer.byteLength(s, 'utf8');
+  };
   console.log('Entering handoffPage(). target=' + okUrl + ' payload bytes=' +
-              Object.keys(opts.values).reduce(function (n, k) { return n + bytesOf(opts.values[k]); }, 0));
+              Object.keys(opts.values).reduce(function (n, k) { return n +
+                          bytesOf(opts.values[k]); }, 0));
 
   if (opts.fallback && opts.fallback.value) {
     var withFallback = page(opts.title, lead +
-      '<noscript>\n<p>JavaScript is disabled, so this page cannot forward the response. Copy the ' +
+      '<noscript>\n<p>JavaScript is disabled, so this page cannot forward ' +
+          'the response. Copy the ' +
       htmlEscape(opts.fallback.label) + ' below and paste it into the ' +
       '<a href="' + contract.responsePage + '">response page</a>.</p>\n' +
-      '<textarea rows="20" cols="100">' + htmlEscape(opts.fallback.value) + '</textarea>\n</noscript>',
+      '<textarea rows="20" cols="100">' + htmlEscape(opts.fallback.value) +
+          '</textarea>\n</noscript>',
       script);
     if (bytesOf(withFallback) <= MAX_BODY_BYTES) {
-      console.log('Leaving handoffPage(). Included the no-JavaScript fallback.');
+      console.log('Leaving handoffPage(). Included the no-JavaScript ' +
+                  'fallback.');
+      log.debug("Leaving handoffPage().");
       return htmlResponse(200, 'OK', withFallback);
     }
   }
@@ -269,28 +344,41 @@ function handoffPage(opts) {
   // The hand-off matters more than the fallback, so the fallback goes first.
   var lean = page(opts.title, lead, script);
   if (bytesOf(lean) <= MAX_BODY_BYTES) {
-    console.log('Leaving handoffPage(). Payload too large for the no-JavaScript fallback; dropped it.');
+    console.log('Leaving handoffPage(). Payload too large for the ' +
+                'no-JavaScript fallback; dropped it.');
+    log.debug("Leaving handoffPage().");
     return htmlResponse(200, 'OK', lean);
   }
 
-  console.log('Leaving handoffPage(). Payload exceeds the generated-response limit; refusing.');
+  console.log('Leaving handoffPage(). Payload exceeds the generated-response ' +
+              'limit; refusing.');
+  log.debug("Leaving handoffPage().");
   return htmlResponse(413, 'Payload Too Large', page('Response too large',
     '<h1>The response is too large for the edge landing</h1>\n' +
-    '<p>A CloudFront Lambda@Edge viewer-request function may generate at most 40&nbsp;KB of response ' +
+    '<p>A CloudFront Lambda@Edge viewer-request function may generate at ' +
+        'most 40&nbsp;KB of response ' +
     'body, and this one does not fit. ' + (opts.tooLarge || '') + '</p>\n' +
-    '<p>Capture the POST with the browser\'s developer tools and paste it into the ' +
+    '<p>Capture the POST with the browser\'s developer tools and paste it ' +
+        'into the ' +
     '<a href="' + contract.responsePage + '">response page</a>.</p>'));
 }
 
 // CloudFront truncated the body before this code ran, so whatever arrived is
-// incomplete. Refuse rather than render a partial token as though it were whole.
+// incomplete. Refuse rather than render a partial token as though it were
+// whole.
 function truncatedPage(what, responsePage) {
+  log.debug("Entering truncatedPage().");
+  log.debug("Leaving truncatedPage().");
   return htmlResponse(413, 'Payload Too Large', page('Request truncated',
-    '<h1>The ' + htmlEscape(what) + ' was truncated before this function saw it</h1>\n' +
-    '<p>CloudFront passes a viewer-request Lambda at most 40&nbsp;KB of request body and truncates the ' +
-    'rest, and it did so here — what arrived is incomplete, so it is being refused rather than rendered ' +
+    '<h1>The ' + htmlEscape(what) +
+        ' was truncated before this function saw it</h1>\n' +
+    '<p>CloudFront passes a viewer-request Lambda at most 40&nbsp;KB of ' +
+        'request body and truncates the ' +
+    'rest, and it did so here — what arrived is incomplete, so it is being ' +
+        'refused rather than rendered ' +
     'as though it were whole.</p>\n' +
-    '<p>Capture the POST with the browser\'s developer tools and paste it into the ' +
+    '<p>Capture the POST with the browser\'s developer tools and paste it ' +
+        'into the ' +
     '<a href="' + responsePage + '">response page</a>.</p>'));
 }
 

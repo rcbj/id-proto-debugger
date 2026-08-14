@@ -15,14 +15,18 @@ var logout_post_redirect_uri_value = baseUrl + "/logout.html";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata, getAccessTokenAuthCode, verifyAccessToken } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+const { populateMetadata, getAccessTokenAuthCode, verifyAccessToken } =
+       require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
+       assert });
 
 
 
 async function logout(driver) {
+  log.debug("Entering logout().");
   log.info("Entering logout().");
 
-  // Locate the logout controls and set the post-logout redirect URI, then trigger logout
+  // Locate the logout controls and set the post-logout redirect URI, then
+  // trigger logout
   log.info("Find logout Button");
   logout_button = By.id("logout_btn");
   log.info("Find logout_post_redirect_uri.");
@@ -31,9 +35,11 @@ async function logout(driver) {
   await driver.wait(until.elementLocated(logout_post_redirect_uri), waitTime);
   log.info("Wait for logout_post_redirect_uri to be visible.");
   await driver.findElement(logout_post_redirect_uri).clear();
-  await driver.wait(until.elementIsVisible(driver.findElement(logout_post_redirect_uri)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(
+                    logout_post_redirect_uri)), waitTime);
   log.info("Set post_redirect_uri for logout.");
-  await driver.findElement(logout_post_redirect_uri).sendKeys(logout_post_redirect_uri_value);
+  await driver.findElement(logout_post_redirect_uri)
+                           .sendKeys(logout_post_redirect_uri_value);
   log.info("Click logout_btn.");
   await driver.findElement(logout_button).click();
 
@@ -42,7 +48,8 @@ async function logout(driver) {
   kc_logout = By.id("kc-logout");
   await driver.wait(until.elementLocated(kc_logout), waitTime);
   log.info("Wait for kc-logout to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(kc_logout)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(kc_logout)),
+                    waitTime);
 
   log.info("Click kc_logout.");
   await driver.findElement(kc_logout).click();
@@ -53,22 +60,27 @@ async function logout(driver) {
   await driver.wait(until.elementLocated(returnToDebugLink), waitTime);
   await driver.findElement(returnToDebugLink).click();
 
-  // Re-expand the authorization section and confirm the client_id field is back, verifying we returned to the debugger
+  // Re-expand the authorization section and confirm the client_id field is
+  // back, verifying we returned to the debugger
   log.info("Find authz_expand_button.");
   authz_expand_button = By.id("authz_expand_button");
   await driver.wait(until.elementLocated(authz_expand_button), waitTime);
   log.info("Waiting for authz_expand_button to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(authz_expand_button)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(
+                    authz_expand_button)), waitTime);
 
   log.info("Find client_id.");
   client_id = By.id("client_id");
   log.info("Wait for client_id");
   await driver.findElement(client_id);
   log.info("Wait for client_id to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(client_id)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(client_id)),
+                    waitTime);
+  log.debug("Leaving logout().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if(headless) {
     options.addArguments("--headless");
@@ -78,10 +90,12 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
-  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
-  // browsers otherwise block (mixed content / Private Network Access).
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak,
+  // which browsers otherwise block (mixed content / Private Network Access).
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
 
   // Enable browser-level logging and build the Chrome WebDriver
   log.info("Enabling selinium logging.");
@@ -95,7 +109,8 @@ async function test() {
     .build();
 
   try {
-    // Read test configuration from environment variables and assert all are present
+    // Read test configuration from environment variables and assert all are
+    // present
     const discovery_endpoint = process.env.DISCOVERY_ENDPOINT;
     const client_id = process.env.CLIENT_ID;
     const client_secret = process.env.CLIENT_SECRET;
@@ -103,14 +118,16 @@ async function test() {
     const user = process.env.USER;
     let pkce_enabled = process.env.PKCE_ENABLED
 
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
     assert(client_id, "CLIENT_ID environment variable is not set.");
     assert(client_secret, "CLIENT_SECRET environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
     assert(user, "USER environment variable is not set.");
     assert(pkce_enabled, "PKCE_ENABLED environment variable is not set.");
 
-    // Coerce the PKCE_ENABLED string into a boolean, aborting on an invalid value
+    // Coerce the PKCE_ENABLED string into a boolean, aborting on an invalid
+    // value
     if (pkce_enabled === "true") {
       pkce_enabled = true;
     } else if (pkce_enabled === "false") {
@@ -120,14 +137,16 @@ async function test() {
       process.exit(1);
     }
 
-    // Drive the full flow: load the app, populate IdP metadata, run the auth code grant,
-    // verify the resulting token, then log out
+    // Drive the full flow: load the app, populate IdP metadata, run the auth
+    // code grant, verify the resulting token, then log out
     log.info("Kicking off test.");
     await driver.get(baseUrl + "/debugger.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");
-    let access_token = await getAccessTokenAuthCode(driver, client_id, client_secret, scope, pkce_enabled, { baseUrl, grantType: "OAuth2 Authorization Code Grant" });
+    let access_token = await getAccessTokenAuthCode(driver, client_id,
+        client_secret, scope, pkce_enabled, { baseUrl,
+        grantType: "OAuth2 Authorization Code Grant" });
     log.info("Access token: " + access_token);
     log.info("Calling verifyAccessToken().");
     await verifyAccessToken(access_token, client_id, scope, { user });
@@ -140,6 +159,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

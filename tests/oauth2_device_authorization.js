@@ -14,7 +14,8 @@ var baseUrl = "http://localhost:3000"
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata } = require("../common/tests.js")({ By, until, waitTime, log });
+const { populateMetadata } = require("../common/tests.js")({ By, until,
+       waitTime, log });
 
 // On debugger.html: select the Device Authorization Grant, enter client_id and
 // scope, and click Authorize. This POSTs to the device authorization endpoint
@@ -24,7 +25,8 @@ async function requestDeviceAuthorization(driver, client_id, scope) {
   log.info("Entering requestDeviceAuthorization().");
   const grantType = By.id("authorization_grant_type");
   await driver.wait(until.elementLocated(grantType), waitTime);
-  await new Select(await driver.findElement(grantType)).selectByVisibleText('OAuth2 Device Authorization Grant');
+  await new Select(await driver.findElement(grantType))
+                   .selectByVisibleText('OAuth2 Device Authorization Grant');
 
   const authzExpand = By.id("authz_expand_button");
   await driver.wait(until.elementLocated(authzExpand), waitTime);
@@ -33,7 +35,8 @@ async function requestDeviceAuthorization(driver, client_id, scope) {
   if (!(await driver.findElement(clientIdField).isDisplayed())) {
     await driver.findElement(authzExpand).click();
   }
-  await driver.wait(until.elementIsVisible(driver.findElement(clientIdField)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(clientIdField)),
+                    waitTime);
 
   await driver.findElement(clientIdField).clear();
   await driver.findElement(clientIdField).sendKeys(client_id);
@@ -53,15 +56,19 @@ async function requestDeviceAuthorization(driver, client_id, scope) {
 
   // The device authorization response is shown on debugger2.html.
   await driver.wait(until.elementLocated(By.id("device_user_code")), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(By.id("device_user_code"))), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(By.id(
+                    "device_user_code"))), waitTime);
   log.info("Leaving requestDeviceAuthorization().");
   log.debug("Leaving requestDeviceAuthorization().");
 }
 
 async function findEls(driver, by) {
+  log.debug("Entering findEls().");
   try {
+    log.debug("Leaving findEls().");
     return await driver.findElements(by);
   } catch (e) {
+    log.debug("Leaving findEls().");
     return [];
   }
 }
@@ -91,7 +98,8 @@ async function waitForConsentToSettle(driver, urlBeforeConsent) {
   log.debug("Leaving waitForConsentToSettle().");
 }
 
-async function approveDeviceAuthorization(driver, verification_uri, user_code, username, password) {
+async function approveDeviceAuthorization(driver, verification_uri, user_code,
+                                          username, password) {
   log.debug("Entering approveDeviceAuthorization().");
   log.info("Approving device authorization at " + verification_uri);
   await driver.get(verification_uri);
@@ -112,7 +120,8 @@ async function approveDeviceAuthorization(driver, verification_uri, user_code, u
         await codeInput[0].clear();
         await codeInput[0].sendKeys(user_code);
       }
-      var submit = await findEls(driver, By.css("input[type=submit], button[type=submit]"));
+      var submit = await findEls(driver,
+          By.css("input[type=submit], button[type=submit]"));
       if (submit.length > 0) {
         await submit[0].click();
       }
@@ -127,7 +136,8 @@ async function approveDeviceAuthorization(driver, verification_uri, user_code, u
       if (loginBtn.length > 0) {
         await loginBtn[0].click();
       } else {
-        var submit = await findEls(driver, By.css("input[type=submit], button[type=submit]"));
+        var submit = await findEls(driver,
+            By.css("input[type=submit], button[type=submit]"));
         if (submit.length > 0) {
           await submit[0].click();
         }
@@ -151,7 +161,8 @@ async function approveDeviceAuthorization(driver, verification_uri, user_code, u
     log.info("Device verification: no further action required.");
     granted = true;
   }
-  assert(granted, "Unable to approve the device authorization at the verification URI.");
+  assert(granted,
+         "Unable to approve the device authorization at the verification URI.");
   log.debug("Leaving approveDeviceAuthorization().");
 }
 
@@ -166,10 +177,12 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
-  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
-  // browsers otherwise block (mixed content / Private Network Access).
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak,
+  // which browsers otherwise block (mixed content / Private Network Access).
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
@@ -185,7 +198,8 @@ async function test() {
     const scope = process.env.SCOPE;
     const user = process.env.USER;
 
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
     assert(client_id, "CLIENT_ID environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
     assert(user, "USER environment variable is not set.");
@@ -201,17 +215,26 @@ async function test() {
     await requestDeviceAuthorization(driver, client_id, scope);
 
     // Read the device authorization response shown in the token pane.
-    const user_code = await driver.findElement(By.id("device_user_code")).getAttribute("value");
-    const verification_uri = await driver.findElement(By.id("device_verification_uri")).getAttribute("value");
-    const device_code = await driver.findElement(By.id("device_code")).getAttribute("value");
-    log.info("user_code=" + user_code + ", verification_uri=" + verification_uri);
-    assert(user_code, "No user_code was returned from the device authorization endpoint.");
-    assert(verification_uri, "No verification_uri was returned from the device authorization endpoint.");
-    assert(device_code, "No device_code was returned from the device authorization endpoint.");
+    const user_code = await driver.findElement(By.id("device_user_code"))
+        .getAttribute("value");
+    const verification_uri =
+        await driver.findElement(By.id("device_verification_uri"))
+        .getAttribute("value");
+    const device_code =
+        await driver.findElement(By.id("device_code")).getAttribute("value");
+    log.info("user_code=" + user_code + ", verification_uri=" +
+             verification_uri);
+    assert(user_code,
+           "No user_code was returned from the device authorization endpoint.");
+    assert(verification_uri, "No verification_uri was returned from the " +
+           "device authorization endpoint.");
+    assert(device_code,
+        "No device_code was returned from the device authorization endpoint.");
 
     // Approve the device. The realm user shares the client's name/password,
     // matching how configureKeycloak() provisions per-flow users.
-    await approveDeviceAuthorization(driver, verification_uri, user_code, client_id, client_id);
+    await approveDeviceAuthorization(driver, verification_uri, user_code,
+                                     client_id, client_id);
 
     // Return to the debugger (device_code persists in local storage) and poll
     // the token endpoint for the access token.
@@ -221,36 +244,45 @@ async function test() {
     await driver.wait(until.elementLocated(By.id("device_code")), waitTime);
     await driver.wait(async () => {
       try {
-        return !!(await driver.findElement(By.id("device_code")).getAttribute("value"));
+        return !!(await driver.findElement(By.id("device_code"))
+                  .getAttribute("value"));
       } catch (e) {
         return false;
       }
     }, waitTime, "Device code was not restored on the token exchange page.");
     await driver.wait(until.elementLocated(token_btn), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(token_btn)), waitTime);
+    await driver.wait(until.elementIsVisible(driver.findElement(token_btn)),
+                      waitTime);
     await driver.findElement(token_btn).click();
 
     async function waitForVisibility(element) {
+      log.debug("Entering waitForVisibility().");
       await driver.wait(until.elementLocated(element), waitTime);
-      await driver.wait(until.elementIsVisible(driver.findElement(element)), waitTime);
+      await driver.wait(until.elementIsVisible(driver.findElement(element)),
+                        waitTime);
+      log.debug("Leaving waitForVisibility().");
       return element;
     }
     const token_access_token = By.id("token_access_token");
-    const display_token_error_form_textarea1 = By.id("display_token_error_form_textarea1");
+    const display_token_error_form_textarea1 =
+        By.id("display_token_error_form_textarea1");
     let visibleElement = await Promise.any([
       waitForVisibility(token_access_token),
       waitForVisibility(display_token_error_form_textarea1)
     ]);
 
-    const access_token = await driver.findElement(visibleElement).getAttribute("value");
+    const access_token =
+        await driver.findElement(visibleElement).getAttribute("value");
     log.info("Access token result: " + access_token);
     const decoded = jwt.decode(access_token, { complete: true });
     assert.notStrictEqual(decoded, null,
-      "The device flow did not return a decodable access token. Result: " + access_token);
+      "The device flow did not return a decodable access token. Result: " +
+          access_token);
     assert.strictEqual(decoded.payload.azp, client_id,
       "Access token azp does not match the device client id.");
 
-    log.info("Device Authorization Grant succeeded and returned a valid access token.");
+    log.info("Device Authorization Grant succeeded and returned a valid " +
+             "access token.");
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);

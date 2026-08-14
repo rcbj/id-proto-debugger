@@ -16,20 +16,25 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var cryptoWait = Math.max(waitTime, 20000);
-// node-forge RSA 2048-bit key generation is pure JS and can take several seconds.
+// node-forge RSA 2048-bit key generation is pure JS and can take several
+// seconds.
 var rsaWait = Math.max(waitTime, 60000);
 // SLH-DSA signing (small-signature / high-security sets) can take many seconds.
 var slhWait = Math.max(waitTime, 240000);
 
 // Every hash the RSA and ECC panes offer.
-var HASHES = ['SHA-256', 'SHA-384', 'SHA-512', 'SHA3-256', 'SHA3-384', 'SHA3-512',
+var HASHES = ['SHA-256', 'SHA-384', 'SHA-512', 'SHA3-256', 'SHA3-384',
+    'SHA3-512',
               'BLAKE2b-512', 'BLAKE3-256', 'RIPEMD-160', 'SHA-1', 'MD5'];
 // Hashes with no PKCS#1 v1.5 DigestInfo OID — PSS only.
 var RSA_V15_UNSUPPORTED = { 'BLAKE2b-512': true, 'BLAKE3-256': true };
 var SLH_PARAMS = [
-  "SLH-DSA-SHA2-128s", "SLH-DSA-SHA2-128f", "SLH-DSA-SHA2-192s", "SLH-DSA-SHA2-192f",
-  "SLH-DSA-SHA2-256s", "SLH-DSA-SHA2-256f", "SLH-DSA-SHAKE-128s", "SLH-DSA-SHAKE-128f",
-  "SLH-DSA-SHAKE-192s", "SLH-DSA-SHAKE-192f", "SLH-DSA-SHAKE-256s", "SLH-DSA-SHAKE-256f"
+  "SLH-DSA-SHA2-128s", "SLH-DSA-SHA2-128f", "SLH-DSA-SHA2-192s",
+      "SLH-DSA-SHA2-192f",
+  "SLH-DSA-SHA2-256s", "SLH-DSA-SHA2-256f", "SLH-DSA-SHAKE-128s",
+      "SLH-DSA-SHAKE-128f",
+  "SLH-DSA-SHAKE-192s", "SLH-DSA-SHAKE-192f", "SLH-DSA-SHAKE-256s",
+      "SLH-DSA-SHAKE-256f"
 ];
 var ECC_ECDSA_CURVES = ['P-256', 'P-384', 'P-521', 'secp256k1'];
 var ECC_EDDSA_CURVES = ['Ed25519', 'Ed448'];
@@ -43,74 +48,105 @@ var RSA_KEY_SIZES = ['2048', '3072'];
 // Symmetric MAC panes (prefix + algorithms), grouped by family.
 var MAC_FAMILIES = [
   { name: 'Keyed-Hash MACs', prefix: 'khmac',
-    algs: ['HMAC-SHA256', 'HMAC-SHA384', 'HMAC-SHA512', 'HMAC-SHA3-256', 'HMAC-SHA3-512',
+    algs: ['HMAC-SHA256', 'HMAC-SHA384', 'HMAC-SHA512', 'HMAC-SHA3-256',
+           'HMAC-SHA3-512',
            'HMAC-SHA1', 'KMAC128', 'KMAC256', 'BLAKE2b', 'BLAKE2s', 'BLAKE3'] },
-  { name: 'Block-Cipher MACs', prefix: 'bcmac', algs: ['AES-CMAC', 'AES-CBC-MAC', 'AES-GMAC'] },
-  { name: 'Universal-Hash MACs', prefix: 'uhmac', algs: ['Poly1305', 'SipHash-2-4'] }
+  { name: 'Block-Cipher MACs', prefix: 'bcmac', algs: ['AES-CMAC',
+   'AES-CBC-MAC', 'AES-GMAC'] },
+  { name: 'Universal-Hash MACs', prefix: 'uhmac', algs: ['Poly1305',
+   'SipHash-2-4'] }
 ];
 
 // ===========================================================================
 // UI helpers
 // ===========================================================================
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var el = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(el), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", el);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", el);
   await el.click();
+  log.debug("Leaving click().");
 }
 async function setInput(driver, locator, text) {
+  log.debug("Entering setInput().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var el = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(el), waitTime);
   await el.clear();
   await el.sendKeys(text);
+  log.debug("Leaving setInput().");
 }
 async function getValue(driver, locator) {
+  log.debug("Entering getValue().");
+  log.debug("Leaving getValue().");
   return await driver.findElement(locator).getAttribute("value");
 }
 async function waitForValue(driver, locator, pred, msg, timeout) {
+  log.debug("Entering waitForValue().");
   await driver.wait(async function () {
-    try { return pred((await driver.findElement(locator).getAttribute("value")) || ""); }
-    catch (e) { return false; }
+    try {
+      return pred((await driver.findElement(locator).getAttribute("value")) ||
+                  "");
+    } catch (e) {
+      return false;
+    }
   }, timeout || cryptoWait, msg);
+  log.debug("Leaving waitForValue().");
   return await getValue(driver, locator);
 }
 async function selectValue(driver, id, value) {
+  log.debug("Entering selectValue().");
   await new Select(driver.findElement(By.id(id))).selectByValue(value);
+  log.debug("Leaving selectValue().");
 }
 // The inline handlers read "return digital_signature.<fn>(...)". Match with the
 // "digital_signature." prefix so e.g. "sign" does not also match "rsaSign".
 function onclickBtn(fn) {
-  return By.xpath("//input[contains(@onclick, \"digital_signature." + fn + "(\")]");
+  log.debug("Entering onclickBtn().");
+  log.debug("Leaving onclickBtn().");
+  return By.xpath("//input[contains(@onclick, \"digital_signature." + fn +
+                  "(\")]");
 }
 // MAC buttons pass a pane prefix, e.g. digital_signature.macCompute('khmac').
 // Match the call and the pane prefix without assuming a quote style: the live
 // site's HTML is minified, which rewrites the inline-attribute quotes from
-// single to double (macGenerateKey('khmac') -> macGenerateKey("khmac")). Each of
-// macGenerateKey/macCompute/macVerify references a single prefix, so the
+// single to double (macGenerateKey('khmac') -> macGenerateKey("khmac")). Each
+// of macGenerateKey/macCompute/macVerify references a single prefix, so the
 // conjunction still identifies exactly one button per pane.
 function macBtn(fn, prefix) {
-  return By.xpath("//input[contains(@onclick, \"digital_signature." + fn + "(\") and contains(@onclick, \"" + prefix + "\")]");
+  log.debug("Entering macBtn().");
+  log.debug("Leaving macBtn().");
+  return By.xpath("//input[contains(@onclick, \"digital_signature." + fn +
+                  "(\") and contains(@onclick, \"" + prefix + "\")]");
 }
 
 // Generate a key pair for a pane and wait until both key fields populate.
 async function generateKeys(driver, cfg) {
+  log.debug("Entering generateKeys().");
   await click(driver, onclickBtn(cfg.gen));
-  await waitForValue(driver, By.id(cfg.privId), function (v) { return v.trim().length > 0; },
+  await waitForValue(driver, By.id(cfg.privId),
+                     function (v) { return v.trim().length > 0; },
     "[" + cfg.name + "] private key was not generated.", cfg.wait);
-  await waitForValue(driver, By.id(cfg.pubId), function (v) { return v.trim().length > 0; },
+  await waitForValue(driver, By.id(cfg.pubId),
+                     function (v) { return v.trim().length > 0; },
     "[" + cfg.name + "] public key was not generated.", cfg.wait);
+  log.debug("Leaving generateKeys().");
 }
 
 // Assuming a key pair is present, set a fresh value, sign, and validate.
 async function signAndValidate(driver, cfg, label) {
-  var value = "Digital signature test :: " + label + " :: " + new Date().toISOString();
+  log.debug("Entering signAndValidate().");
+  var value = "Digital signature test :: " + label + " :: " +
+      new Date().toISOString();
   await setInput(driver, By.id(cfg.valueId), value);
 
   await driver.findElement(By.id(cfg.signatureId)).clear();
   await click(driver, onclickBtn(cfg.sign));
-  var sig = await waitForValue(driver, By.id(cfg.signatureId), function (v) { return v.trim().length > 0; },
+  var sig = await waitForValue(driver, By.id(cfg.signatureId),
+      function (v) { return v.trim().length > 0; },
     "[" + label + "] signature was not produced.", cfg.wait);
 
   await click(driver, onclickBtn(cfg.validate));
@@ -119,7 +155,9 @@ async function signAndValidate(driver, cfg, label) {
     "[" + label + "] validation did not complete.", cfg.wait);
   assert.ok(status.indexOf("VALID ✓") !== -1,
     "[" + label + "] signature did not validate. Status: " + status);
-  log.info("[" + label + "] OK — signature (" + sig.length + " b64 chars) validated.");
+  log.info("[" + label + "] OK — signature (" + sig.length +
+           " b64 chars) validated.");
+  log.debug("Leaving signAndValidate().");
 }
 
 // ===========================================================================
@@ -128,36 +166,53 @@ async function signAndValidate(driver, cfg, label) {
 var SLH = { name: 'SLH-DSA', valueId: 'ds_value', signatureId: 'ds_signature',
   privId: 'ds_private_key', pubId: 'ds_public_key', statusId: 'ds_status',
   gen: 'generateKeys', sign: 'sign', validate: 'validate', wait: slhWait,
-  download: 'downloadKeys', ksFormatId: 'ds_slh_ks_format', ksPwId: 'ds_slh_ks_password' };
-var RSA = { name: 'RSA', valueId: 'ds_rsa_value', signatureId: 'ds_rsa_signature',
-  privId: 'ds_rsa_private_key', pubId: 'ds_rsa_public_key', statusId: 'ds_rsa_status',
-  gen: 'rsaGenerateKeys', sign: 'rsaSign', validate: 'rsaValidate', wait: rsaWait,
-  download: 'rsaDownloadKeys', ksFormatId: 'ds_rsa_ks_format', ksPwId: 'ds_rsa_ks_password' };
-var ECC = { name: 'ECC', valueId: 'ds_ecc_value', signatureId: 'ds_ecc_signature',
-  privId: 'ds_ecc_private_key', pubId: 'ds_ecc_public_key', statusId: 'ds_ecc_status',
-  gen: 'eccGenerateKeys', sign: 'eccSign', validate: 'eccValidate', wait: cryptoWait,
-  download: 'eccDownloadKeys', ksFormatId: 'ds_ecc_ks_format', ksPwId: 'ds_ecc_ks_password' };
-var ML = { name: 'ML-DSA', valueId: 'ds_ml_value', signatureId: 'ds_ml_signature',
-  privId: 'ds_ml_private_key', pubId: 'ds_ml_public_key', statusId: 'ds_ml_status',
-  gen: 'mldsaGenerateKeys', sign: 'mldsaSign', validate: 'mldsaValidate', wait: cryptoWait,
-  download: 'mldsaDownloadKeys', ksFormatId: 'ds_ml_ks_format', ksPwId: 'ds_ml_ks_password' };
+  download: 'downloadKeys', ksFormatId: 'ds_slh_ks_format',
+      ksPwId: 'ds_slh_ks_password' };
+var RSA = { name: 'RSA', valueId: 'ds_rsa_value',
+    signatureId: 'ds_rsa_signature',
+  privId: 'ds_rsa_private_key', pubId: 'ds_rsa_public_key',
+      statusId: 'ds_rsa_status',
+  gen: 'rsaGenerateKeys', sign: 'rsaSign', validate: 'rsaValidate',
+      wait: rsaWait,
+  download: 'rsaDownloadKeys', ksFormatId: 'ds_rsa_ks_format',
+      ksPwId: 'ds_rsa_ks_password' };
+var ECC = { name: 'ECC', valueId: 'ds_ecc_value',
+    signatureId: 'ds_ecc_signature',
+  privId: 'ds_ecc_private_key', pubId: 'ds_ecc_public_key',
+      statusId: 'ds_ecc_status',
+  gen: 'eccGenerateKeys', sign: 'eccSign', validate: 'eccValidate',
+      wait: cryptoWait,
+  download: 'eccDownloadKeys', ksFormatId: 'ds_ecc_ks_format',
+      ksPwId: 'ds_ecc_ks_password' };
+var ML = { name: 'ML-DSA', valueId: 'ds_ml_value',
+    signatureId: 'ds_ml_signature',
+  privId: 'ds_ml_private_key', pubId: 'ds_ml_public_key',
+      statusId: 'ds_ml_status',
+  gen: 'mldsaGenerateKeys', sign: 'mldsaSign', validate: 'mldsaValidate',
+      wait: cryptoWait,
+  download: 'mldsaDownloadKeys', ksFormatId: 'ds_ml_ks_format',
+      ksPwId: 'ds_ml_ks_password' };
 
 // Pane #1 — SLH-DSA: key generation depends on the parameter set, so generate
 // keys for each one, then sign + validate.
 async function testSlhDsa(driver) {
-  log.info("=== Pane #1 SLH-DSA — " + SLH_PARAMS.length + " parameter sets ===");
+  log.debug("Entering testSlhDsa().");
+  log.info("=== Pane #1 SLH-DSA — " + SLH_PARAMS.length +
+           " parameter sets ===");
   for (var i = 0; i < SLH_PARAMS.length; i++) {
     var alg = SLH_PARAMS[i];
     await selectValue(driver, 'ds_param', alg);
     await generateKeys(driver, SLH);
     await signAndValidate(driver, SLH, 'SLH-DSA ' + alg);
   }
+  log.debug("Leaving testSlhDsa().");
 }
 
 // Pane #2 — RSA: keys are independent of padding/hash, so generate once, then
 // test every padding × hash combination (v1.5 + BLAKE2b-512 has no DigestInfo
 // OID and is intentionally excluded — that combination uses PSS instead).
 async function testRsa(driver) {
+  log.debug("Entering testRsa().");
   log.info("=== Pane #2 RSA — key size × padding × hash ===");
   var paddings = [['v1_5', 'PKCS#1 v1.5'], ['pss', 'PSS']];
   for (var s = 0; s < RSA_KEY_SIZES.length; s++) {
@@ -168,20 +223,24 @@ async function testRsa(driver) {
       for (var h = 0; h < HASHES.length; h++) {
         var padVal = paddings[p][0], hash = HASHES[h];
         if (padVal === 'v1_5' && RSA_V15_UNSUPPORTED[hash]) {
-          log.info("[RSA " + size + "-bit " + paddings[p][1] + " / " + hash + "] skipped (no PKCS#1 v1.5 OID; PSS covers it).");
+          log.info("[RSA " + size + "-bit " + paddings[p][1] + " / " + hash +
+                   "] skipped (no PKCS#1 v1.5 OID; PSS covers it).");
           continue;
         }
         await selectValue(driver, 'ds_rsa_padding', padVal);
         await selectValue(driver, 'ds_rsa_hash', hash);
-        await signAndValidate(driver, RSA, 'RSA ' + size + '-bit ' + paddings[p][1] + ' / ' + hash);
+        await signAndValidate(driver, RSA, 'RSA ' + size + '-bit ' +
+                              paddings[p][1] + ' / ' + hash);
       }
     }
   }
+  log.debug("Leaving testRsa().");
 }
 
 // Pane #3 — ECC: keys depend on the curve, so generate once per curve. ECDSA
 // curves test every hash; EdDSA curves fix their own hash (tested once).
 async function testEcc(driver) {
+  log.debug("Entering testEcc().");
   log.info("=== Pane #3 ECC — curve × hash combinations ===");
   for (var c = 0; c < ECC_ECDSA_CURVES.length; c++) {
     var curve = ECC_ECDSA_CURVES[c];
@@ -204,26 +263,31 @@ async function testEcc(driver) {
     await generateKeys(driver, ECC);
     await signAndValidate(driver, ECC, scheme);
   }
+  log.debug("Leaving testEcc().");
 }
 
 // Pane #4 — ML-DSA: key generation depends on the parameter set (fast lattice
 // scheme), so generate keys for each set, then sign + validate.
 async function testMldsa(driver) {
+  log.debug("Entering testMldsa().");
   log.info("=== Pane #4 ML-DSA — " + ML_PARAMS.length + " parameter sets ===");
   for (var i = 0; i < ML_PARAMS.length; i++) {
     await selectValue(driver, 'ds_ml_param', ML_PARAMS[i]);
     await generateKeys(driver, ML);
     await signAndValidate(driver, ML, 'ML-DSA ' + ML_PARAMS[i]);
   }
+  log.debug("Leaving testMldsa().");
 }
 
 // Symmetric MAC panes: for every algorithm, generate a key, compute a tag, and
 // verify it (positive). For the first algorithm in each family, also confirm a
 // modified value fails verification (tamper / negative).
 async function testMacs(driver) {
+  log.debug("Entering testMacs().");
   for (var f = 0; f < MAC_FAMILIES.length; f++) {
     var fam = MAC_FAMILIES[f];
-    log.info("=== Symmetric " + fam.name + " — " + fam.algs.length + " algorithm(s) ===");
+    log.info("=== Symmetric " + fam.name + " — " + fam.algs.length +
+             " algorithm(s) ===");
     for (var a = 0; a < fam.algs.length; a++) {
       var alg = fam.algs[a], label = fam.name + " / " + alg;
       // Selecting the algorithm auto-generates a key (onchange); click the
@@ -231,28 +295,35 @@ async function testMacs(driver) {
       await selectValue(driver, 'ds_' + fam.prefix + '_alg', alg);
       await click(driver, macBtn('macGenerateKey', fam.prefix));
       await waitForValue(driver, By.id('ds_' + fam.prefix + '_key'),
-        function (v) { return v.trim().length > 0; }, "[" + label + "] key was not generated.", cryptoWait);
+        function (v) { return v.trim().length > 0; }, "[" + label +
+                  "] key was not generated.", cryptoWait);
 
       await setInput(driver, By.id('ds_' + fam.prefix + '_value'),
         "MAC test :: " + alg + " :: " + new Date().toISOString());
       await driver.findElement(By.id('ds_' + fam.prefix + '_mac')).clear();
       await click(driver, macBtn('macCompute', fam.prefix));
       var tag = await waitForValue(driver, By.id('ds_' + fam.prefix + '_mac'),
-        function (v) { return v.trim().length > 0; }, "[" + label + "] MAC tag was not produced.", cryptoWait);
+        function (v) { return v.trim().length > 0; }, "[" + label +
+                  "] MAC tag was not produced.", cryptoWait);
 
       await click(driver, macBtn('macVerify', fam.prefix));
       var st = await waitForValue(driver, By.id('ds_' + fam.prefix + '_status'),
         function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
         "[" + label + "] verify did not complete.", cryptoWait);
-      assert.ok(st.indexOf("VALID ✓") !== -1, "[" + label + "] MAC did not validate. Status: " + st);
-      log.info("[" + label + "] OK — tag (" + tag.length + " b64 chars) verified.");
+      assert.ok(st.indexOf("VALID ✓") !== -1, "[" + label +
+                "] MAC did not validate. Status: " + st);
+      log.info("[" + label + "] OK — tag (" + tag.length +
+               " b64 chars) verified.");
 
       if (a === 0) {
         // Tamper: change the value, re-verify against the old tag -> INVALID.
-        await setInput(driver, By.id('ds_' + fam.prefix + '_value'), "tampered — different message");
+        await setInput(driver, By.id('ds_' + fam.prefix + '_value'),
+                       "tampered — different message");
         await click(driver, macBtn('macVerify', fam.prefix));
-        var st2 = await waitForValue(driver, By.id('ds_' + fam.prefix + '_status'),
-          function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
+        var st2 = await waitForValue(driver, By.id('ds_' + fam.prefix +
+            '_status'),
+          function (v) { return v.indexOf("✓") !== -1 ||
+                    v.indexOf("✗") !== -1; },
           "[" + label + " tamper] verify did not complete.", cryptoWait);
         assert.ok(st2.indexOf("INVALID ✗") !== -1,
           "[" + label + " tamper] expected INVALID, got: " + st2);
@@ -260,79 +331,115 @@ async function testMacs(driver) {
       }
     }
   }
+  log.debug("Leaving testMacs().");
 }
 
 // Select a keystore format, optionally set a password, click Download Keys, and
 // assert the status line reports the expected outcome. (Consistent with the
 // jwt_tools test, this verifies the reported result — not the file on disk.)
-async function downloadKeystore(driver, cfg, format, password, expectSubstr, label) {
+async function downloadKeystore(driver, cfg, format, password, expectSubstr,
+                                label) {
+  log.debug("Entering downloadKeystore().");
   await selectValue(driver, cfg.ksFormatId, format);
   var pwEl = driver.findElement(By.id(cfg.ksPwId));
   await pwEl.clear();
   if (password) await pwEl.sendKeys(password);
   // Blank the status so we detect the message produced by THIS click.
-  await driver.executeScript("var e=document.getElementById(arguments[0]); if(e) e.value='';", cfg.statusId);
+  await driver.executeScript("var e=document.getElementById(arguments[0]); " +
+                             "if(e) e.value='';", cfg.statusId);
   await click(driver, onclickBtn(cfg.download));
   var status = await waitForValue(driver, By.id(cfg.statusId),
     function (v) { return v.indexOf(expectSubstr) !== -1; },
-    "[" + label + "] download status did not contain \"" + expectSubstr + "\".", cfg.wait);
+    "[" + label + "] download status did not contain \"" + expectSubstr + "\".",
+        cfg.wait);
   log.info("[" + label + "] " + status);
+  log.debug("Leaving downloadKeystore().");
 }
 
 // Exercise every keystore format + optional password on all three panes,
 // including the intentionally-unsupported combinations (which must report a
 // clear message rather than silently do nothing).
 async function testDownloads(driver) {
+  log.debug("Entering testDownloads().");
   log.info("=== Keystore downloads ===");
 
   // SLH-DSA — reuse keys from the sign/validate phase. PEM + JWK (+password);
   // DER/PKCS#12 unsupported; PEM+password steered to JWK.
-  await downloadKeystore(driver, SLH, 'pem', '', 'Downloaded key pair (slh-dsa-keys.pem)', 'SLH-DSA PEM');
-  await downloadKeystore(driver, SLH, 'pem', 'pw123', 'only available in JWK', 'SLH-DSA PEM+pw (steered)');
-  await downloadKeystore(driver, SLH, 'jwk', '', 'Downloaded JWK set', 'SLH-DSA JWK');
-  await downloadKeystore(driver, SLH, 'jwk', 'pw123', 'PBES2-encrypted JWK', 'SLH-DSA JWK+pw');
-  await downloadKeystore(driver, SLH, 'der', '', 'not supported', 'SLH-DSA DER (unsupported)');
-  await downloadKeystore(driver, SLH, 'pkcs12', '', 'not supported', 'SLH-DSA PKCS#12 (unsupported)');
+  await downloadKeystore(driver, SLH, 'pem', '',
+                         'Downloaded key pair (slh-dsa-keys.pem)',
+                         'SLH-DSA PEM');
+  await downloadKeystore(driver, SLH, 'pem', 'pw123', 'only available in JWK',
+                         'SLH-DSA PEM+pw (steered)');
+  await downloadKeystore(driver, SLH, 'jwk', '', 'Downloaded JWK set',
+                         'SLH-DSA JWK');
+  await downloadKeystore(driver, SLH, 'jwk', 'pw123', 'PBES2-encrypted JWK',
+                         'SLH-DSA JWK+pw');
+  await downloadKeystore(driver, SLH, 'der', '', 'not supported',
+                         'SLH-DSA DER (unsupported)');
+  await downloadKeystore(driver, SLH, 'pkcs12', '', 'not supported',
+                         'SLH-DSA PKCS#12 (unsupported)');
 
   // RSA — reuse the key pair generated in testRsa. Full format support.
-  await downloadKeystore(driver, RSA, 'pem', '', 'Downloaded PEM (private + public key)', 'RSA PEM');
-  await downloadKeystore(driver, RSA, 'pem', 'pw123', 'encrypted private key', 'RSA PEM+pw');
-  await downloadKeystore(driver, RSA, 'der', '', 'Downloaded DER (private + public)', 'RSA DER');
-  await downloadKeystore(driver, RSA, 'der', 'pw123', 'encrypted private', 'RSA DER+pw');
-  await downloadKeystore(driver, RSA, 'jwk', '', 'Downloaded JWK set', 'RSA JWK');
-  await downloadKeystore(driver, RSA, 'jwk', 'pw123', 'PBES2-encrypted JWK', 'RSA JWK+pw');
-  await downloadKeystore(driver, RSA, 'pkcs12', '', 'requires a password', 'RSA PKCS#12 (password required)');
-  await downloadKeystore(driver, RSA, 'pkcs12', 'pw123', 'Downloaded password-protected PKCS#12', 'RSA PKCS#12');
+  await downloadKeystore(driver, RSA, 'pem', '',
+                         'Downloaded PEM (private + public key)', 'RSA PEM');
+  await downloadKeystore(driver, RSA, 'pem', 'pw123', 'encrypted private key',
+                         'RSA PEM+pw');
+  await downloadKeystore(driver, RSA, 'der', '',
+                         'Downloaded DER (private + public)', 'RSA DER');
+  await downloadKeystore(driver, RSA, 'der', 'pw123', 'encrypted private',
+                         'RSA DER+pw');
+  await downloadKeystore(driver, RSA, 'jwk', '', 'Downloaded JWK set',
+                         'RSA JWK');
+  await downloadKeystore(driver, RSA, 'jwk', 'pw123', 'PBES2-encrypted JWK',
+                         'RSA JWK+pw');
+  await downloadKeystore(driver, RSA, 'pkcs12', '', 'requires a password',
+                         'RSA PKCS#12 (password required)');
+  await downloadKeystore(driver, RSA, 'pkcs12', 'pw123',
+                         'Downloaded password-protected PKCS#12',
+                         'RSA PKCS#12');
 
   // ECC — JWK for an ECDSA curve (EC JWK) and an EdDSA curve (OKP JWK);
   // PEM/DER/PKCS#12 unsupported.
   await selectValue(driver, 'ds_ecc_curve', 'P-256');
   await generateKeys(driver, ECC);
-  await downloadKeystore(driver, ECC, 'jwk', '', 'Downloaded JWK set', 'ECC EC JWK');
-  await downloadKeystore(driver, ECC, 'jwk', 'pw123', 'PBES2-encrypted JWK', 'ECC EC JWK+pw');
-  await downloadKeystore(driver, ECC, 'pem', '', 'not supported', 'ECC PEM (unsupported)');
-  await downloadKeystore(driver, ECC, 'pkcs12', '', 'not supported', 'ECC PKCS#12 (unsupported)');
+  await downloadKeystore(driver, ECC, 'jwk', '', 'Downloaded JWK set',
+                         'ECC EC JWK');
+  await downloadKeystore(driver, ECC, 'jwk', 'pw123', 'PBES2-encrypted JWK',
+                         'ECC EC JWK+pw');
+  await downloadKeystore(driver, ECC, 'pem', '', 'not supported',
+                         'ECC PEM (unsupported)');
+  await downloadKeystore(driver, ECC, 'pkcs12', '', 'not supported',
+                         'ECC PKCS#12 (unsupported)');
   await selectValue(driver, 'ds_ecc_curve', 'Ed25519');
   await generateKeys(driver, ECC);
-  await downloadKeystore(driver, ECC, 'jwk', '', 'Downloaded JWK set', 'ECC OKP JWK (Ed25519)');
+  await downloadKeystore(driver, ECC, 'jwk', '', 'Downloaded JWK set',
+                         'ECC OKP JWK (Ed25519)');
   // Schnorr/BLS have no standard JWK — export must report that.
   await selectValue(driver, 'ds_ecc_curve', 'secp256k1-schnorr');
   await generateKeys(driver, ECC);
-  await downloadKeystore(driver, ECC, 'jwk', '', 'JWK is not defined', 'Schnorr JWK (unsupported)');
+  await downloadKeystore(driver, ECC, 'jwk', '', 'JWK is not defined',
+                         'Schnorr JWK (unsupported)');
 
   // ML-DSA: PEM + JWK (+password); DER/PKCS#12 unsupported.
   await selectValue(driver, 'ds_ml_param', 'ML-DSA-65');
   await generateKeys(driver, ML);
-  await downloadKeystore(driver, ML, 'pem', '', 'Downloaded key pair (ml-dsa-keys.pem)', 'ML-DSA PEM');
-  await downloadKeystore(driver, ML, 'jwk', '', 'Downloaded JWK set', 'ML-DSA JWK');
-  await downloadKeystore(driver, ML, 'jwk', 'pw123', 'PBES2-encrypted JWK', 'ML-DSA JWK+pw');
-  await downloadKeystore(driver, ML, 'pkcs12', '', 'not supported', 'ML-DSA PKCS#12 (unsupported)');
+  await downloadKeystore(driver, ML, 'pem', '',
+                         'Downloaded key pair (ml-dsa-keys.pem)', 'ML-DSA PEM');
+  await downloadKeystore(driver, ML, 'jwk', '', 'Downloaded JWK set',
+                         'ML-DSA JWK');
+  await downloadKeystore(driver, ML, 'jwk', 'pw123', 'PBES2-encrypted JWK',
+                         'ML-DSA JWK+pw');
+  await downloadKeystore(driver, ML, 'pkcs12', '', 'not supported',
+                         'ML-DSA PKCS#12 (unsupported)');
+  log.debug("Leaving testDownloads().");
 }
 
 async function digitalSignatureActivities(driver) {
+  log.debug("Entering digitalSignatureActivities().");
   log.info("Load the Digital Signature page.");
   await driver.get(baseUrl + "/digital_signature.html");
-  await waitForValue(driver, By.id("ds_value"), function (v) { return v.length > 0; },
+  await waitForValue(driver, By.id("ds_value"),
+                     function (v) { return v.length > 0; },
     "Digital Signature page did not load / defaults not populated.");
 
   // Panes are collapsible; flip the "Expand all panes" switch so every field is
@@ -347,15 +454,19 @@ async function digitalSignatureActivities(driver) {
   await testMldsa(driver);
   await testMacs(driver);
   await testDownloads(driver);
+  log.debug("Leaving digitalSignatureActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   // This test clicks keystore-download buttons. On host runs (local/remote) the
-  // browser is the user's real Chrome, whose default download dir is ~/Downloads.
-  // Point downloads at a throwaway temp dir (removed below) so nothing lands in
-  // the home directory; the test only asserts on the in-page status, never the
-  // downloaded file, so the location is irrelevant to the checks.
-  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "idptools-selenium-dl-"));
+  // browser is the user's real Chrome, whose default download dir is
+  // ~/Downloads. Point downloads at a throwaway temp dir (removed below) so
+  // nothing lands in the home directory; the test only asserts on the in-page
+  // status, never the downloaded file, so the location is irrelevant to the
+  // checks.
+  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(),
+      "idptools-selenium-dl-"));
   const options = new chrome.Options();
   options.setUserPreferences({
     "download.default_directory": downloadDir,
@@ -369,22 +480,29 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   // All three panes are pure-JS (no crypto.subtle), so a secure context is not
-  // strictly required, but keep the trustworthy-origin flags for parity with the
-  // other tool tests (harmless if unused).
+  // strictly required, but keep the trustworthy-origin flags for parity with
+  // the other tool tests (harmless if unused).
   var secureOrigin = baseUrl.replace(/\/+$/, "");
-  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" + secureOrigin);
-  options.addArguments("--user-data-dir=/tmp/digital-signature-chrome-" + Date.now());
-  const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
+                       secureOrigin);
+  options.addArguments("--user-data-dir=/tmp/digital-signature-chrome-" +
+                       Date.now());
+  const driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).build();
 
   // Belt-and-suspenders: also pin the download dir via CDP (independent of the
-  // profile prefs, which a custom --user-data-dir can bypass), so downloads never
-  // fall back to ~/Downloads.
+  // profile prefs, which a custom --user-data-dir can bypass), so downloads
+  // never fall back to ~/Downloads.
   try {
     await driver.sendDevToolsCommand("Browser.setDownloadBehavior",
       { behavior: "allow", downloadPath: downloadDir, eventsEnabled: false });
-  } catch (e) { /* older Chrome/driver — the user-preferences download dir applies */ }
+  } catch (e) {
+    /* older Chrome/driver — the user-preferences download dir applies */
+  }
 
   try {
     log.info("Starting Test run.");
@@ -396,19 +514,29 @@ async function test() {
     process.exit(1);
   } finally {
     await driver.quit();
-    try { fs.rmSync(downloadDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+    try {
+      fs.rmSync(downloadDir, { recursive: true, force: true });
+    } catch (e) {
+      /* ignore */
+    }
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();
 program
   .name('digital_signature')
-  .description("Run Digital Signature UI test (SLH-DSA, RSA, ECC — all hashes).")
-  .addOption(new Option("-u, --url <url>", "Set base URL.").makeOptionMandatory())
-  .addOption(new Option("-b, --browser", "Display browser (only works within device)."))
+  .description("Run Digital Signature UI test (SLH-DSA, RSA, ECC — " +
+      "all hashes).")
+  .addOption(new Option("-u, --url <url>",
+      "Set base URL.").makeOptionMandatory())
+  .addOption(new Option("-b, --browser",
+      "Display browser (only works within device)."))
   .action((options) => {
-    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl = options.url; }
-    if (!!options.browser) { log.info("Using browser. headless = false."); headless = false; }
+    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl =
+        options.url; }
+    if (!!options.browser) { log.info("Using browser. " +
+        "headless = false."); headless = false; }
   });
 program.parse(process.argv).opts();
 

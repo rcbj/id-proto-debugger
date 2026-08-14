@@ -24,30 +24,63 @@ var log = bunyan.createLogger({ name: 'vc_issuance_3',
                                 level: appconfig.LOG_LEVEL || 'info' });
 
 // The SD-JWT VC media types: the current one and the one earlier drafts used.
-var SD_JWT_VC_TYPES = ["dc+sd-jwt", "vc+sd-jwt", "application/dc+sd-jwt", "application/vc+sd-jwt"];
+var SD_JWT_VC_TYPES = ["dc+sd-jwt", "vc+sd-jwt", "application/dc+sd-jwt",
+    "application/vc+sd-jwt"];
 var JWT_VC_ISSUER_WELL_KNOWN = "/.well-known/jwt-vc-issuer";
 
 var parsed = null;
 var meta = null;
 
-function el(id) { return document.getElementById(id); }
-function setText(id, text) { var e = el(id); if (e) e.textContent = (text == null ? "" : String(text)); }
-function val(id) { var e = el(id); return e ? e.value : ""; }
-function setValue(id, v) { var e = el(id); if (e) e.value = (v == null ? "" : v); }
-function setJson(id, value) {
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
+}
+function setText(id, text) {
+  log.debug("Entering setText().");
   var e = el(id);
-  if (e) e.textContent = (value === undefined || value === null) ? "—" : JSON.stringify(value, null, 2);
+  if (e) e.textContent = (text == null ? "" : String(text));
+  log.debug("Leaving setText().");
+}
+function val(id) {
+  log.debug("Entering val().");
+  var e = el(id);
+  log.debug("Leaving val().");
+  return e ? e.value : "";
+}
+function setValue(id, v) {
+  log.debug("Entering setValue().");
+  var e = el(id);
+  if (e) e.value = (v == null ? "" : v);
+  log.debug("Leaving setValue().");
+}
+function setJson(id, value) {
+  log.debug("Entering setJson().");
+  var e = el(id);
+  if (e) e.textContent = (value === undefined || value === null) ?
+      "—" : JSON.stringify(value, null, 2);
+  log.debug("Leaving setJson().");
 }
 function status(id, text, cls) {
+  log.debug("Entering status().");
   var e = el(id);
-  if (!e) return;
+  if (!e) {
+    log.debug("Leaving status().");
+    return;
+  }
   e.textContent = text;
   e.className = "vc-status" + (cls ? " " + cls : "");
+  log.debug("Leaving status().");
 }
-function esc(v) { return metadataClient.escapeHtmlText(v); }
+function esc(v) {
+  log.debug("Entering esc().");
+  log.debug("Leaving esc().");
+  return metadataClient.escapeHtmlText(v);
+}
 
 // --- the serialization, with its parts called out ---------------------------
 function renderSerialized(raw) {
+  log.debug("Entering renderSerialized().");
   var parts = String(raw).split("~");
   var html = parts.map(function (part, i) {
     if (part === "") return "";
@@ -56,6 +89,7 @@ function renderSerialized(raw) {
   }).join('<span class="vc-tilde">~</span>');
   el("vc_serialized").innerHTML = html;
   el("vc_credential_raw").value = raw;
+  log.debug("Leaving renderSerialized().");
 }
 
 // --- the checks table -------------------------------------------------------
@@ -70,34 +104,41 @@ function renderChecks(checks) {
       "</tr>";
   }).join("");
   el("vc_checks").innerHTML =
-    "<thead><tr><th style='width:22%'>Check</th><th style='width:10%'>Result</th><th>Detail</th></tr></thead>" +
+    "<thead><tr><th style='width:22%'>Check</th><th " +
+        "style='width:10%'>Result</th><th>Detail</th></tr></thead>" +
     "<tbody>" + rows + "</tbody>";
   log.debug("Leaving renderChecks().");
 }
 
 // --- disclosures ------------------------------------------------------------
 function renderDisclosures(rows, sdDigests) {
-  // ldp_vc selects over CANONICAL STATEMENTS, not Disclosures, so this table has
-  // no rows to show. Rendering an empty Disclosure table would read as "this
-  // credential reveals nothing", which is the opposite of the truth: the holder
-  // can withhold almost anything here, and unlinkably — just not by carrying
-  // Disclosures. The statements themselves are only known after
+  // ldp_vc selects over CANONICAL STATEMENTS, not Disclosures, so this table
+  // has no rows to show. Rendering an empty Disclosure table would read as
+  // "this credential reveals nothing", which is the opposite of the truth: the
+  // holder can withhold almost anything here, and unlinkably — just not by
+  // carrying Disclosures. The statements themselves are only known after
   // canonicalization, which happens in the presentation workflow where the
   // choice is actually made.
   if (parsed && parsed.format === sdJwtVc.FORMAT_LDP_VC) {
     var claims = parsed.claims || {};
     el("vc_disclosures").innerHTML =
-      "<thead><tr><th style='width:22%'>Claim</th><th>Value</th></tr></thead><tbody>" +
+      "<thead><tr><th " +
+          "style='width:22%'>Claim</th><th>Value</th></tr></thead><tbody>" +
       Object.keys(claims).map(function (k) {
         var v = claims[k];
         return "<tr><td>" + esc(k) + "</td><td>" +
-          esc(typeof v === "object" ? JSON.stringify(v) : String(v)) + "</td></tr>";
+          esc(typeof v === "object" ? JSON.stringify(v) : String(v)) +
+              "</td></tr>";
       }).join("") + "</tbody>";
     el("vc_disclosure_summary").innerHTML =
-      '<span class="vc-status vc-pending">This credential is <code>ldp_vc</code> with a ' +
-      '<code>bbs-2023</code> proof. It carries no Disclosures: selective disclosure here is over the ' +
-      "credential's canonical statements, chosen when it is presented, and each presentation is a " +
+      '<span class="vc-status vc-pending">This credential is ' +
+          '<code>ldp_vc</code> with a ' +
+      '<code>bbs-2023</code> proof. It carries no Disclosures: selective ' +
+          'disclosure here is over the ' +
+      "credential's canonical statements, chosen when it is presented, and " +
+          "each presentation is a " +
       'fresh proof that cannot be linked to the previous one.</span>';
+    log.debug("Leaving renderDisclosures().");
     return;
   }
 
@@ -107,25 +148,31 @@ function renderDisclosures(rows, sdDigests) {
       (typeof r.value === "object" ? JSON.stringify(r.value) : String(r.value));
     return "<tr>" +
       "<td>" + (i + 1) + "</td>" +
-      "<td>" + esc(r.error ? "(unreadable)" : (r.arrayElement ? "(array element)" : r.name)) + "</td>" +
+      "<td>" + esc(r.error ? "(unreadable)" : (r.arrayElement ?
+          "(array element)" : r.name)) + "</td>" +
       "<td>" + esc(r.error ? r.error : valueText) + "</td>" +
       '<td class="vc-mono">' + esc(r.salt) + "</td>" +
       '<td class="vc-mono">' + esc(r.digest || "") + "</td>" +
-      '<td class="' + (r.inSd ? "vc-ok" : "vc-bad") + '">' + (r.inSd ? "yes" : "no") + "</td>" +
+      '<td class="' + (r.inSd ? "vc-ok" : "vc-bad") + '">' + (r.inSd ?
+          "yes" : "no") + "</td>" +
       '<td class="vc-mono">' + esc(r.encoded) + "</td>" +
       "</tr>";
   }).join("");
   el("vc_disclosures").innerHTML =
-    "<thead><tr><th style='width:3%'>#</th><th style='width:12%'>Claim</th><th style='width:22%'>Value</th>" +
-    "<th style='width:14%'>Salt</th><th style='width:16%'>Digest</th><th style='width:6%'>In _sd</th>" +
+    "<thead><tr><th style='width:3%'>#</th><th " +
+        "style='width:12%'>Claim</th><th style='width:22%'>Value</th>" +
+    "<th style='width:14%'>Salt</th><th style='width:16%'>Digest</th><th " +
+        "style='width:6%'>In _sd</th>" +
     "<th>Disclosure (base64url)</th></tr></thead><tbody>" + body + "</tbody>";
 
   var matched = rows.filter(function (r) { return r.inSd; }).length;
   var undisclosed = sdDigests.length - matched;
   el("vc_disclosure_summary").innerHTML =
-    esc(rows.length + " Disclosure(s); " + matched + " matched a digest in _sd. " +
+    esc(rows.length + " Disclosure(s); " + matched +
+        " matched a digest in _sd. " +
         "_sd carries " + sdDigests.length + " digest(s), so " + undisclosed +
-        " digest(s) have no Disclosure here — undisclosed claims, decoys, or both. " +
+        " digest(s) have no Disclosure here — undisclosed claims, decoys, " +
+            "or both. " +
         "A verifier cannot tell which, which is the point.");
   log.debug("Leaving renderDisclosures().");
 }
@@ -155,23 +202,27 @@ function renderDisclosures(rows, sdDigests) {
 // opposite: VC Data Model 2.0 and Data Integrity are DID-native.
 function resolveIssuerDid(iss) {
   log.debug("Entering resolveIssuerDid(). iss=" + String(iss).slice(0, 60));
+  log.debug("Leaving resolveIssuerDid().");
   return didLib.resolve(iss, { allowHttp: true }).then(function (res) {
     // The conversion lives in did.js because the domain linkage check needs the
     // same one: both are asking whether a key this DID authorises to ASSERT
     // signed some bytes, and they must not disagree about which keys those are.
     var converted = didLib.assertionJwks(res.document);
     if (!converted.jwks.keys.length) {
-      throw new Error("the DID document for " + iss + " publishes no assertion key that can verify a JWS" +
-                      (converted.unusable.length ? " — it names " + converted.unusable.join(", ") : "") +
+      throw new Error("the DID document for " + iss +
+                      " publishes no assertion key that can verify a JWS" +
+                      (converted.unusable.length ? " — it names " +
+                       converted.unusable.join(", ") : "") +
                       ".");
     }
-    log.debug("Leaving resolveIssuerDid(). " + converted.jwks.keys.length + " assertion key(s), " +
+    log.debug("Leaving resolveIssuerDid(). " + converted.jwks.keys.length +
+              " assertion key(s), " +
               converted.unusable.length + " unusable.");
     // The caller renders this after "against the keys at", where the well-known
     // path puts a URL. Saying which document it was matters more here than
     // matching that shape: for did:jwk and did:key there is no URL to name, and
-    // reporting a locally-decoded key as though it had been fetched would be the
-    // one misleading thing this pane could say.
+    // reporting a locally-decoded key as though it had been fetched would be
+    // the one misleading thing this pane could say.
     return { jwks: converted.jwks,
              from: res.url ? "the DID document " + res.url : res.from };
   });
@@ -195,7 +246,8 @@ function resolveIssuerJwks(iss) {
   var chain = didLib.isDid(iss)
     ? resolveIssuerDid(iss)
     : iss
-    ? metadataClient.fetchWellKnown(iss, JWT_VC_ISSUER_WELL_KNOWN).then(function (found) {
+    ? metadataClient.fetchWellKnown(iss,
+        JWT_VC_ISSUER_WELL_KNOWN).then(function (found) {
         var m = found.doc;
         if (m && m.jwks) return { jwks: m.jwks, from: found.url };
         if (m && m.jwks_uri) {
@@ -205,11 +257,14 @@ function resolveIssuerJwks(iss) {
         }
         throw new Error("the JWT VC issuer metadata names no keys.");
       })
-    : Promise.reject(new Error("the credential has no iss to resolve keys from."));
+    : Promise.reject(new Error("the credential has no iss to resolve " +
+                     "keys from."));
   log.debug("Leaving resolveIssuerJwks().");
   return chain.catch(function (e) {
     if (direct) {
-      return metadataClient.fetchJson(direct).then(function (j) { return { jwks: j, from: direct }; });
+      return metadataClient.fetchJson(direct)
+                                      .then(function (j) { return { jwks: j,
+                                      from: direct }; });
     }
     // Last resort: the keys of the Credential Issuer this credential was asked
     // for in step 1. An issuer whose iss is not a resolvable URL (a DID method
@@ -219,9 +274,11 @@ function resolveIssuerJwks(iss) {
     if (!issuerId) throw e;
     return metadataClient.fetchWellKnown(issuerId, JWT_VC_ISSUER_WELL_KNOWN)
       .then(function (found) {
-        if (found.doc && found.doc.jwks) return { jwks: found.doc.jwks, from: found.url };
+        if (found.doc && found.doc.jwks) return { jwks: found.doc.jwks,
+            from: found.url };
         if (found.doc && found.doc.jwks_uri) {
-          return metadataClient.fetchJson(found.doc.jwks_uri).then(function (j) {
+          return metadataClient.fetchJson(found.doc.jwks_uri)
+                                          .then(function (j) {
             return { jwks: j, from: found.doc.jwks_uri };
           });
         }
@@ -233,7 +290,10 @@ function resolveIssuerJwks(iss) {
 // --- verification -----------------------------------------------------------
 function verify() {
   log.debug("Entering verify().");
-  if (!parsed) return false;
+  if (!parsed) {
+    log.debug("Leaving verify().");
+    return false;
+  }
   var checks = [];
   var payload = parsed.payload || {};
   var header = parsed.header || {};
@@ -242,38 +302,46 @@ function verify() {
     name: "Media type (typ)",
     ok: SD_JWT_VC_TYPES.indexOf(String(header.typ)) >= 0,
     warn: false,
-    detail: 'typ is "' + header.typ + '"; SD-JWT VC expects dc+sd-jwt (vc+sd-jwt in earlier drafts).'
+    detail: 'typ is "' + header.typ +
+        '"; SD-JWT VC expects dc+sd-jwt (vc+sd-jwt in earlier drafts).'
   });
   checks.push({
     name: "Signing algorithm",
     ok: !!header.alg && header.alg !== "none",
-    detail: "alg is " + header.alg + (header.kid ? " (kid " + header.kid + ")" : "") + "."
+    detail: "alg is " + header.alg + (header.kid ? " (kid " + header.kid +
+        ")" : "") + "."
   });
   checks.push({
     name: "Credential type (vct)",
     ok: !!payload.vct,
-    detail: payload.vct ? String(payload.vct) : "the credential carries no vct claim."
+    detail: payload.vct ?
+        String(payload.vct) : "the credential carries no vct claim."
   });
   checks.push({
     name: "Key binding (cnf)",
     ok: !!(payload.cnf && payload.cnf.jwk),
     detail: (payload.cnf && payload.cnf.jwk)
       ? "cnf.jwk holds a " + payload.cnf.jwk.kty + " key" +
-        (holderKeyMatches(payload.cnf.jwk) ? " — the holder key generated in step 2." :
+        (holderKeyMatches(payload.cnf.jwk) ?
+         " — the holder key generated in step 2." :
          " that is NOT the holder key generated in step 2.")
       : "no cnf claim: this credential is not bound to a holder key."
   });
   checks.push({
     name: "Hash algorithm (_sd_alg)",
     ok: !payload._sd_alg || String(payload._sd_alg).toLowerCase() === "sha-256",
-    warn: !!payload._sd_alg && String(payload._sd_alg).toLowerCase() !== "sha-256",
-    detail: payload._sd_alg ? String(payload._sd_alg) : "absent, so the default sha-256 applies."
+    warn: !!payload._sd_alg &&
+        String(payload._sd_alg).toLowerCase() !== "sha-256",
+    detail: payload._sd_alg ?
+        String(payload._sd_alg) : "absent, so the default sha-256 applies."
   });
   var now = Math.floor(Date.now() / 1000);
   checks.push({
     name: "Validity window",
-    ok: (!payload.exp || payload.exp > now) && (!payload.nbf || payload.nbf <= now),
-    detail: "iat " + isoOf(payload.iat) + ", nbf " + isoOf(payload.nbf) + ", exp " + isoOf(payload.exp) + "."
+    ok: (!payload.exp || payload.exp > now) && (!payload.nbf ||
+         payload.nbf <= now),
+    detail: "iat " + isoOf(payload.iat) + ", nbf " + isoOf(payload.nbf) +
+        ", exp " + isoOf(payload.exp) + "."
   });
   checks.push({
     name: "Key Binding JWT",
@@ -281,20 +349,24 @@ function verify() {
     warn: !parsed.kbJwt,
     detail: parsed.kbJwt
       ? "present — the holder proved possession of the cnf key to a verifier."
-      : "absent, which is correct for a credential as issued: a KB-JWT is added when the holder PRESENTS it."
+      : "absent, which is correct for a credential as issued: a KB-JWT is " +
+          "added when the holder PRESENTS it."
   });
   renderChecks(checks);
 
   // The digests, then the signature (both asynchronous).
   var sdDigests = sdJwtVc.collectSdDigests(payload);
   Promise.all((parsed.disclosures || []).map(function (d) {
-    if (d.error) return Promise.resolve(Object.assign({}, d, { digest: "", inSd: false }));
+    if (d.error) return Promise.resolve(Object.assign({}, d, { digest: "",
+        inSd: false }));
     return sdJwtVc.digestForDisclosure(d.encoded, payload._sd_alg)
       .then(function (digest) {
-        return Object.assign({}, d, { digest: digest, inSd: sdDigests.indexOf(digest) >= 0 });
+        return Object.assign({}, d, { digest: digest,
+                             inSd: sdDigests.indexOf(digest) >= 0 });
       })
       .catch(function (e) {
-        return Object.assign({}, d, { digest: "", inSd: false, error: e.message });
+        return Object.assign({}, d, { digest: "", inSd: false,
+                             error: e.message });
       });
   })).then(function (rows) {
     renderDisclosures(rows, sdDigests);
@@ -309,17 +381,20 @@ function verify() {
     renderChecks(checks);
   });
 
-  status("vc_credential_status", "Verifying the issuer's signature …", "vc-pending");
+  status("vc_credential_status", "Verifying the issuer's signature …",
+         "vc-pending");
   resolveIssuerJwks(payload.iss)
     .then(function (res) {
-      return metadataClient.verifyJwsWithJwks(parsed.issuerJwt, res.jwks, "the issuer-signed JWT")
+      return metadataClient.verifyJwsWithJwks(parsed.issuerJwt, res.jwks,
+          "the issuer-signed JWT")
         .then(function (v) { return { v: v, from: res.from }; });
     })
     .then(function (r) {
       checks.push({
         name: "Issuer signature",
         ok: r.v.valid,
-        detail: (r.v.valid ? "verified" : "DOES NOT verify") + " against the keys at " + r.from +
+        detail: (r.v.valid ? "verified" : "DOES NOT verify") +
+                 " against the keys at " + r.from +
                 " (alg " + r.v.header.alg + ", kid " + r.v.kid + ")."
       });
       renderChecks(checks);
@@ -331,23 +406,36 @@ function verify() {
       checks.push({ name: "Issuer signature", ok: false,
                     detail: "could not be checked: " + e.message });
       renderChecks(checks);
-      status("vc_credential_status", "Could not verify the issuer signature: " + e.message, "vc-bad");
+      status("vc_credential_status", "Could not verify the issuer signature: " +
+             e.message, "vc-bad");
     });
   log.debug("Leaving verify().");
   return false;
 }
 
 function holderKeyMatches(jwk) {
+  log.debug("Entering holderKeyMatches().");
   var holder = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_JWK);
-  if (!holder || !jwk) return false;
-  return holder.kty === jwk.kty && holder.crv === jwk.crv && holder.x === jwk.x && holder.y === jwk.y;
+  if (!holder || !jwk) {
+    log.debug("Leaving holderKeyMatches().");
+    return false;
+  }
+  log.debug("Leaving holderKeyMatches().");
+  return holder.kty === jwk.kty && holder.crv === jwk.crv &&
+      holder.x === jwk.x && holder.y === jwk.y;
 }
 
 function isoOf(seconds) {
-  if (!seconds) return "—";
+  log.debug("Entering isoOf().");
+  if (!seconds) {
+    log.debug("Leaving isoOf().");
+    return "—";
+  }
   try {
+    log.debug("Leaving isoOf().");
     return new Date(seconds * 1000).toISOString();
   } catch (e) {
+    log.debug("Leaving isoOf().");
     return String(seconds);
   }
 }
@@ -368,7 +456,9 @@ function copyCredential() {
 }
 
 function startOver() {
+  log.debug("Entering startOver().");
   window.location.href = "/vc-issuance-1.html";
+  log.debug("Leaving startOver().");
   return false;
 }
 
@@ -376,20 +466,24 @@ function startOver() {
 // because it is a separate pair of calls, made later — often much later, when
 // the validity window is running out.
 function gotoRefresh() {
+  log.debug("Entering gotoRefresh().");
   window.location.href = sdJwtVc.STEP4_URL;
+  log.debug("Leaving gotoRefresh().");
   return false;
 }
 
 function togglePane(id) {
+  log.debug("Entering togglePane().");
   var fs = el(id);
   if (fs) fs.style.display = (fs.style.display === "none") ? "block" : "none";
+  log.debug("Leaving togglePane().");
   return false;
 }
 
 // ---------------------------------------------------------------------------
 // A batch request returns one credential per proof (OID4VCI section 8.3). They
-// are all here; showing only the first would hide the very thing a batch request
-// was made to demonstrate.
+// are all here; showing only the first would hide the very thing a batch
+// request was made to demonstrate.
 // ---------------------------------------------------------------------------
 var credentials = [];
 var showing = 0;
@@ -398,7 +492,10 @@ function renderCredentialPicker() {
   log.debug("Entering renderCredentialPicker().");
   var row = el("vc_batch_row");
   var select = el("vc_credential_select");
-  if (!row || !select) return;
+  if (!row || !select) {
+    log.debug("Leaving renderCredentialPicker().");
+    return;
+  }
   if (credentials.length <= 1) {
     row.style.display = "none";
     log.debug("Leaving renderCredentialPicker(). Only one credential.");
@@ -407,13 +504,16 @@ function renderCredentialPicker() {
   var keys = meta.holderJwks || [];
   select.innerHTML = credentials.map(function (c, i) {
     var key = keys[i];
-    return '<option value="' + i + '"' + (i === showing ? ' selected="selected"' : '') + '>' +
+    return '<option value="' + i + '"' + (i === showing ?
+        ' selected="selected"' : '') + '>' +
            "credential " + (i + 1) + " of " + credentials.length +
-           (key && key.x ? " — bound to key " + String(key.x).slice(0, 12) + "…" : "") +
+           (key && key.x ? " — bound to key " + String(key.x).slice(0, 12) +
+            "…" : "") +
            "</option>";
   }).join("");
   row.style.display = "";
-  setText("vc_batch_summary", "All " + credentials.length + " were issued from one Credential Request.");
+  setText("vc_batch_summary", "All " + credentials.length +
+          " were issued from one Credential Request.");
   log.debug("Leaving renderCredentialPicker().");
 }
 
@@ -428,8 +528,10 @@ function showCredential(index) {
   try {
     parsed = sdJwtVc.parseCredential(raw);
   } catch (e) {
-    status("vc_credential_status", "That credential could not be parsed: " + e.message, "vc-bad");
+    status("vc_credential_status", "That credential could not be parsed: " +
+           e.message, "vc-bad");
     el("vc_credential_raw").value = raw;
+    log.debug("Leaving showCredential().");
     return false;
   }
   renderSerialized(raw);
@@ -440,16 +542,20 @@ function showCredential(index) {
   status("vc_credential_status",
     "Credential parsed: " + parsed.disclosures.length + " Disclosure(s)" +
     (parsed.kbJwt ? " and a Key Binding JWT" : "") +
-    (credentials.length > 1 ? " (credential " + (showing + 1) + " of " + credentials.length + ")" : "") +
-    (meta.encrypted ? ", from an encrypted Credential Response" : "") + ".", "vc-ok");
+    (credentials.length > 1 ? " (credential " + (showing + 1) + " of " +
+     credentials.length + ")" : "") +
+    (meta.encrypted ? ", from an encrypted Credential Response" : "") + ".",
+     "vc-ok");
   verify();
   log.debug("Leaving showCredential().");
   return true;
 }
 
 function onCredentialChange() {
+  log.debug("Entering onCredentialChange().");
   var select = el("vc_credential_select");
   if (select) showCredential(parseInt(select.value, 10) || 0);
+  log.debug("Leaving onCredentialChange().");
   return true;
 }
 
@@ -459,27 +565,36 @@ function onCredentialChange() {
 // something that happens on load — an issuer cannot assume it will be told.
 // ---------------------------------------------------------------------------
 function notificationBody() {
-  var body = { notification_id: meta.notificationId || "", event: val("vc_notification_event") || "credential_accepted" };
+  log.debug("Entering notificationBody().");
+  var body = { notification_id: meta.notificationId || "",
+      event: val("vc_notification_event") || "credential_accepted" };
   var description = (val("vc_notification_description") || "").trim();
   if (description) body.event_description = description;
+  log.debug("Leaving notificationBody().");
   return body;
 }
 
 function renderNotification() {
   log.debug("Entering renderNotification().");
   var pane = el("pane_notification");
-  if (!pane) return false;
+  if (!pane) {
+    log.debug("Leaving renderNotification().");
+    return false;
+  }
   var endpoint = meta.notificationEndpoint || "";
   var id = meta.notificationId || "";
   setText("vc_notification_id", id || "— none returned —");
-  setText("vc_notification_endpoint", endpoint || "— this issuer publishes none —");
+  setText("vc_notification_endpoint", endpoint ||
+          "— this issuer publishes none —");
   if (!id || !endpoint) {
     // Nothing to send, and saying why is more useful than a dead button.
     setValue("vc_notification_request", "");
-    if (el("vc_notification_button")) el("vc_notification_button").disabled = true;
+    if (el("vc_notification_button")) el("vc_notification_button").disabled =
+        true;
     status("vc_notification_status", !endpoint
       ? "This issuer publishes no notification_endpoint, so there is nowhere to report to."
-      : "The Credential Response carried no notification_id, so the issuer is not asking to be told.",
+      : "The Credential Response carried no notification_id, so the issuer " +
+          "is not asking to be told.",
       "vc-pending");
     log.debug("Leaving renderNotification(). Nothing to send.");
     return false;
@@ -488,7 +603,8 @@ function renderNotification() {
   setValue("vc_notification_request", [
     "POST " + endpoint,
     "Content-Type: application/json",
-    "Authorization: Bearer " + (sdJwtVc.get("token_access_token") || "(no access token)"),
+    "Authorization: Bearer " + (sdJwtVc.get("token_access_token") ||
+        "(no access token)"),
     "Content-Length: " + body.length,
     "",
     body
@@ -502,7 +618,10 @@ function sendNotification() {
   var endpoint = meta.notificationEndpoint || "";
   var body = notificationBody();
   if (!endpoint || !body.notification_id) {
-    status("vc_notification_status", "There is nothing to notify: no endpoint or no notification_id.", "vc-bad");
+    status("vc_notification_status",
+           "There is nothing to notify: no endpoint or no notification_id.",
+           "vc-bad");
+    log.debug("Leaving sendNotification().");
     return false;
   }
   el("vc_notification_button").disabled = true;
@@ -517,10 +636,12 @@ function sendNotification() {
   })
     .then(function (r) {
       return r.text().then(function (text) {
-        // 204 with no body is success (section 11.2); anything else should say why.
+        // 204 with no body is success (section 11.2); anything else should say
+        // why.
         if (r.status === 204) {
           status("vc_notification_status",
-            "The issuer accepted the notification: " + body.event + " (204, no body).", "vc-ok");
+            "The issuer accepted the notification: " + body.event +
+                " (204, no body).", "vc-ok");
           return;
         }
         var parsed = null;
@@ -529,14 +650,17 @@ function sendNotification() {
         } catch (e) {
           // Not JSON: the raw text is what gets shown.
         }
-        var why = (parsed && (parsed.error_description || parsed.error)) || text || ("HTTP " + r.status);
-        status("vc_notification_status", "The issuer refused the notification: " + why, "vc-bad");
+        var why = (parsed && (parsed.error_description || parsed.error)) ||
+            text || ("HTTP " + r.status);
+        status("vc_notification_status",
+               "The issuer refused the notification: " + why, "vc-bad");
         el("vc_notification_button").disabled = false;
       });
     })
     .catch(function (e) {
       log.error("the notification failed: " + e.message);
-      status("vc_notification_status", "The notification failed: " + e.message, "vc-bad");
+      status("vc_notification_status", "The notification failed: " + e.message,
+             "vc-bad");
       el("vc_notification_button").disabled = false;
     });
   log.debug("Leaving sendNotification().");
@@ -544,15 +668,16 @@ function sendNotification() {
 }
 
 // Step 4 refreshes whatever the wallet is holding, so it has nothing to work
-// with if nothing is held. A button rather than a redirect, matching step 4's own
-// "Verify in step 3": the page does not move the browser out from under someone
-// still reading the credential above.
+// with if nothing is held. A button rather than a redirect, matching step 4's
+// own "Verify in step 3": the page does not move the browser out from under
+// someone still reading the credential above.
 function refreshInStepFour() {
   log.debug("Entering refreshInStepFour().");
   if (!(sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "").trim()) {
     // Say so here rather than sending them to a page that can only report the
     // same emptiness one navigation later.
-    status("vc_next_status", "There is no credential in this wallet to refresh yet.", "vc-bad");
+    status("vc_next_status",
+           "There is no credential in this wallet to refresh yet.", "vc-bad");
     log.debug("Leaving refreshInStepFour(). Nothing held.");
     return false;
   }
@@ -578,15 +703,16 @@ function presentIt() {
   return false;
 }
 
-// Reflect on load whether either next step has anything to act on, so both offers
-// are honest before they are clicked rather than after.
+// Reflect on load whether either next step has anything to act on, so both
+// offers are honest before they are clicked rather than after.
 function renderNextStep() {
   log.debug("Entering renderNextStep().");
   var held = (sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "").trim();
   var button = document.getElementById("vc_goto_step4_button");
   if (button) button.disabled = !held;
   if (!held) {
-    status("vc_next_status", "Nothing is held yet — step 4 refreshes a credential this wallet already has.", "");
+    status("vc_next_status", "Nothing is held yet — step 4 refreshes a " +
+           "credential this wallet already has.", "");
   } else {
     status("vc_next_status", "", "");
   }
@@ -614,25 +740,31 @@ function onload() {
 
   var raw = sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "";
   meta = sdJwtVc.getJson(sdJwtVc.KEYS.CREDENTIAL_META) || {};
-  setText("vc_meta_issuer", meta.issuer ? meta.issuer + "  (" + (meta.endpoint || "") + ")" : "—");
-  // How this credential was obtained, in one line: what was asked for, when, and
-  // the things about the exchange that are not visible in the credential itself.
+  setText("vc_meta_issuer", meta.issuer ? meta.issuer + "  (" +
+          (meta.endpoint || "") + ")" : "—");
+  // How this credential was obtained, in one line: what was asked for, when,
+  // and the things about the exchange that are not visible in the credential
+  // itself.
   var provenance = meta.configurationId
-    ? meta.configurationId + " / " + (meta.format || "?") + " / vct " + (meta.vct || "?") +
+    ? meta.configurationId + " / " + (meta.format || "?") + " / vct " +
+        (meta.vct || "?") +
       " — requested " + (meta.requestedAt || "?")
     : "—";
   if (meta.configurationId) {
-    if (meta.credentialCount > 1) provenance += " — " + meta.credentialCount + " credentials in one response";
+    if (meta.credentialCount > 1) provenance += " — " + meta.credentialCount +
+        " credentials in one response";
     if (meta.encrypted) provenance += " — the Credential Response was encrypted";
     if (meta.deferred) {
-      provenance += " — deferred, collected after " + (meta.deferredAttempts || "?") + " attempt(s)";
+      provenance += " — deferred, collected after " + (meta.deferredAttempts ||
+          "?") + " attempt(s)";
     }
     // A refreshed credential is not the one step 2 obtained, and step 3 should
     // not read as though it were (OID4VCI section 14.5).
     if (meta.refreshGeneration) {
       provenance += " — refreshed " + meta.refreshGeneration +
                     (meta.refreshGeneration === 1 ? " time" : " times") +
-                    (meta.keyMode === "reuse" ? ", still bound to the original holder key"
+                    (meta.keyMode === "reuse" ?
+                     ", still bound to the original holder key"
                                               : ", bound to a new holder key");
     }
   }
@@ -640,7 +772,9 @@ function onload() {
 
   if (!raw) {
     status("vc_credential_status",
-      "No credential yet. Run step 1 (discovery), authenticate, then approve issuance in step 2.", "vc-bad");
+      "No credential yet. Run step 1 (discovery), authenticate, then approve " +
+          "issuance in step 2.", "vc-bad");
+    log.debug("Leaving onload().");
     return;
   }
   credentials = sdJwtVc.getJson(sdJwtVc.KEYS.CREDENTIALS) || [raw];

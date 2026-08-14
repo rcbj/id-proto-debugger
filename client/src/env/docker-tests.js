@@ -4,9 +4,11 @@ var config = {
   hostname: "0.0.0.0",
   port: "3000",
   logLevel: "debug",
-  // api backend is available, so both frontend and backend initiation are offered.
+  // api backend is available, so both frontend and backend initiation are
+  // offered.
   backendAvailable: true,
-  // SAML Service Provider identity + ACS/SLO endpoints (hosted by the api layer).
+  // SAML Service Provider identity + ACS/SLO endpoints (hosted by the api
+  // layer).
   spEntityId: "http://client:3000/saml/sp",
   acsUrl: "http://api:4000/samlacs",
   sloUrl: "http://api:4000/samlslo",

@@ -18,24 +18,29 @@ var baseUrl = "http://localhost:3000"
 // exercising the full create/read/update/delete lifecycle.
 var STATIC_CONTENT_SITE_HOSTS = ["test.idptools.com", "idptools.com"];
 function isStaticContentSite(url) {
+  log.debug("Entering isStaticContentSite().");
   try {
+    log.debug("Leaving isStaticContentSite().");
     return STATIC_CONTENT_SITE_HOSTS.includes(new URL(url).hostname);
   } catch (e) {
+    log.debug("Leaving isStaticContentSite().");
     return false;
   }
 }
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata } = require("../common/tests.js")({ By, until, waitTime, log });
+const { populateMetadata } = require("../common/tests.js")({ By, until,
+       waitTime, log });
 
 // Drive the OIDC Discovery pane: enter the discovery endpoint, retrieve the
 // metadata, and click "Populate Meta Data". This also fills the Dynamic Client
-// Registration pane (registration_endpoint + a default client metadata document)
-// from the discovery metadata.
+// Registration pane (registration_endpoint + a default client metadata
+// document) from the discovery metadata.
 
 // Expand the Dynamic Client Registration fieldset if it is collapsed.
 async function expandDcrPane(driver) {
+  log.debug("Entering expandDcrPane().");
   log.info("Expanding the Dynamic Client Registration pane.");
   const metadataField = By.id("dcr_client_metadata");
   await driver.wait(until.elementLocated(By.id("dcr_expand_button")), waitTime);
@@ -43,38 +48,53 @@ async function expandDcrPane(driver) {
   if (!(await driver.findElement(metadataField).isDisplayed())) {
     await driver.findElement(By.id("dcr_expand_button")).click();
   }
-  await driver.wait(until.elementIsVisible(driver.findElement(metadataField)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(metadataField)),
+                    waitTime);
+  log.debug("Leaving expandDcrPane().");
 }
 
 async function setFieldValue(driver, id, value) {
+  log.debug("Entering setFieldValue().");
   const el = await driver.findElement(By.id(id));
   await el.clear();
   await el.sendKeys(value);
+  log.debug("Leaving setFieldValue().");
 }
 
 // Set a large/structured value (e.g. the client metadata JSON) directly via the
 // DOM to avoid sendKeys escaping issues with braces, quotes, and newlines.
 async function setFieldValueViaScript(driver, id, value) {
+  log.debug("Entering setFieldValueViaScript().");
   await driver.executeScript(
     "document.getElementById(arguments[0]).value = arguments[1];", id, value);
+  log.debug("Leaving setFieldValueViaScript().");
 }
 
 async function getFieldValue(driver, id) {
+  log.debug("Entering getFieldValue().");
+  log.debug("Leaving getFieldValue().");
   return await driver.findElement(By.id(id)).getAttribute("value");
 }
 
 async function clickButtonByValue(driver, value) {
-  const btn = By.css('input[type="button"][value="' + value + '"], input[type="submit"][value="' + value + '"]');
+  log.debug("Entering clickButtonByValue().");
+  const btn = By.css('input[type="button"][value="' + value +
+      '"], input[type="submit"][value="' + value + '"]');
   const el = await driver.findElement(btn);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", el);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", el);
   await el.click();
+  log.debug("Leaving clickButtonByValue().");
 }
 
 // Clear the response area, run the action, and wait for a fresh response to be
 // rendered into #dcr_response_textarea, returning the parsed JSON.
 async function performAndReadResponse(driver, value) {
-  await driver.executeScript("document.getElementById('dcr_response_textarea').value = '';");
-  await driver.executeScript("document.getElementById('display_dcr_error_class').innerHTML = '';");
+  log.debug("Entering performAndReadResponse().");
+  await driver.executeScript(
+      "document.getElementById('dcr_response_textarea').value = '';");
+  await driver.executeScript(
+      "document.getElementById('display_dcr_error_class').innerHTML = '';");
   await clickButtonByValue(driver, value);
   await driver.wait(async () => {
     const v = await getFieldValue(driver, "dcr_response_textarea");
@@ -83,13 +103,16 @@ async function performAndReadResponse(driver, value) {
   const raw = await getFieldValue(driver, "dcr_response_textarea");
   log.debug(value + " response: " + raw);
   try {
+    log.debug("Leaving performAndReadResponse().");
     return JSON.parse(raw);
   } catch (e) {
-    throw new Error('Response after "' + value + '" was not valid JSON: ' + raw);
+    throw new Error('Response after "' + value + '" was not valid JSON: ' +
+                    raw);
   }
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
     options.addArguments("--headless");
@@ -99,10 +122,12 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
-  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
-  // browsers otherwise block (mixed content / Private Network Access).
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak,
+  // which browsers otherwise block (mixed content / Private Network Access).
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
@@ -118,7 +143,8 @@ async function test() {
     // such as Keycloak require an initial access token for registration.
     const initial_access_token = process.env.INITIAL_ACCESS_TOKEN || "";
 
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
 
     // Open the debugger and seed the Dynamic Client Registration pane from the
     // provider's discovery metadata, then expand the pane for editing.
@@ -132,16 +158,19 @@ async function test() {
 
     // The Registration Endpoint and Client Metadata should be pre-filled from
     // the discovery metadata by the Populate Meta Data step above.
-    const registration_endpoint = await getFieldValue(driver, "registration_endpoint");
+    const registration_endpoint = await getFieldValue(driver,
+        "registration_endpoint");
     assert(registration_endpoint,
-      "Registration Endpoint was not populated from the discovery metadata (registration_endpoint).");
+      "Registration Endpoint was not populated from the discovery metadata " +
+          "(registration_endpoint).");
     const metadata_json = await getFieldValue(driver, "dcr_client_metadata");
     assert(metadata_json && metadata_json.trim().length > 0,
       "Client Metadata was not populated from the discovery metadata.");
     log.info("registration_endpoint=" + registration_endpoint);
 
     if (initial_access_token) {
-      await setFieldValue(driver, "dcr_initial_access_token", initial_access_token);
+      await setFieldValue(driver, "dcr_initial_access_token",
+                          initial_access_token);
     }
 
     // Give the client a recognizable name so the update step can be verified.
@@ -151,7 +180,8 @@ async function test() {
     // Keycloak rejects "openid" in the requested scope on the registration
     // (create) request, so request a fixed scope that omits it.
     metadata.scope = "email profile offline_access";
-    await setFieldValueViaScript(driver, "dcr_client_metadata", JSON.stringify(metadata, null, 2));
+    await setFieldValueViaScript(driver, "dcr_client_metadata",
+                                 JSON.stringify(metadata, null, 2));
 
     // On the static-content deployments there is no backend proxy, and Keycloak
     // rejects browser-origin registration ("Invalid origin"), so DCR cannot run
@@ -159,11 +189,15 @@ async function test() {
     // surfaced) rather than registering a client, then stop — the full CRUD
     // lifecycle below only applies to the containerized/local backend build.
     if (isStaticContentSite(baseUrl)) {
-      log.info("Static content site: Dynamic Client Registration is not available from the " +
-               "browser (no backend proxy; the IdP rejects browser origins). Verifying the " +
+      log.info("Static content site: Dynamic Client Registration is not " +
+               "available from the " +
+               "browser (no backend proxy; the IdP rejects browser origins). " +
+                   "Verifying the " +
                "registration attempt fails as expected.");
-      await driver.executeScript("document.getElementById('dcr_response_textarea').value = '';");
-      await driver.executeScript("document.getElementById('display_dcr_error_class').innerHTML = '';");
+      await driver.executeScript(
+          "document.getElementById('dcr_response_textarea').value = '';");
+      await driver.executeScript(
+          "document.getElementById('display_dcr_error_class').innerHTML = '';");
       await clickButtonByValue(driver, "Register New Client");
       await driver.wait(async () => {
         const errs = await driver.findElements(By.id("dcr_error_textarea"));
@@ -172,10 +206,13 @@ async function test() {
         }
         const v = await errs[0].getAttribute("value");
         return !!(v && v.trim().length > 0);
-      }, waitTime, "Expected Dynamic Client Registration to fail from the browser on the static " +
+      }, waitTime, "Expected Dynamic Client Registration to fail from the " +
+          "browser on the static " +
          "site, but no error was reported.");
-      log.info("Dynamic Client Registration was correctly unavailable from the browser on the static site.");
+      log.info("Dynamic Client Registration was correctly unavailable from " +
+               "the browser on the static site.");
       log.info("Test completed successfully.");
+      log.debug("Leaving test().");
       return;
     }
 
@@ -183,9 +220,11 @@ async function test() {
     log.info("Creating (registering) a new client.");
     const created = await performAndReadResponse(driver, "Register New Client");
     assert(created.client_id,
-      "Create did not return a client_id. Response: " + JSON.stringify(created));
+      "Create did not return a client_id. Response: " +
+          JSON.stringify(created));
     assert(created.registration_client_uri,
-      "Create did not return a registration_client_uri (the client configuration endpoint).");
+      "Create did not return a registration_client_uri (the client " +
+          "configuration endpoint).");
     assert(created.registration_access_token,
       "Create did not return a registration_access_token.");
     const created_client_id = created.client_id;
@@ -196,8 +235,10 @@ async function test() {
     assert.strictEqual(await getFieldValue(driver, "registration_client_uri"),
       created.registration_client_uri,
       "Registration Client URI field was not populated after create.");
-    assert.strictEqual(await getFieldValue(driver, "client_id"), created_client_id,
-      "The Authorization Code flow client_id field was not updated after create.");
+    assert.strictEqual(await getFieldValue(driver, "client_id"),
+                       created_client_id,
+      "The Authorization Code flow client_id field was not updated " +
+          "after create.");
 
     // ---- READ ---------------------------------------------------------------
     log.info("Reading the client registration.");
@@ -213,15 +254,18 @@ async function test() {
     // client_name and update.
     log.info("Updating the client registration.");
     const updated_client_name = original_client_name + " (updated)";
-    const read_metadata = JSON.parse(await getFieldValue(driver, "dcr_client_metadata"));
+    const read_metadata = JSON.parse(await getFieldValue(driver,
+        "dcr_client_metadata"));
     read_metadata.client_name = updated_client_name;
-    await setFieldValueViaScript(driver, "dcr_client_metadata", JSON.stringify(read_metadata, null, 2));
+    await setFieldValueViaScript(driver, "dcr_client_metadata",
+                                 JSON.stringify(read_metadata, null, 2));
 
     const updated = await performAndReadResponse(driver, "Update Client");
     assert.strictEqual(updated.client_id, created_client_id,
       "Update changed or dropped the client_id.");
     assert.strictEqual(updated.client_name, updated_client_name,
-      "Update did not persist the new client_name. Response: " + JSON.stringify(updated));
+      "Update did not persist the new client_name. Response: " +
+          JSON.stringify(updated));
 
     // Confirm the update by reading again.
     const reread = await performAndReadResponse(driver, "Read Client");
@@ -233,12 +277,15 @@ async function test() {
     const deleted = await performAndReadResponse(driver, "Delete Client");
     // The proxy normalizes the IdP's 204 No Content to a 200 JSON summary.
     assert(deleted.message,
-      "Delete did not return a success summary. Response: " + JSON.stringify(deleted));
+      "Delete did not return a success summary. Response: " +
+          JSON.stringify(deleted));
 
     // A read after delete must fail; the error is surfaced in the error pane.
     log.info("Verifying the client no longer exists.");
-    await driver.executeScript("document.getElementById('display_dcr_error_class').innerHTML = '';");
-    await driver.executeScript("document.getElementById('dcr_response_textarea').value = '';");
+    await driver.executeScript(
+        "document.getElementById('display_dcr_error_class').innerHTML = '';");
+    await driver.executeScript(
+        "document.getElementById('dcr_response_textarea').value = '';");
     await clickButtonByValue(driver, "Read Client");
     await driver.wait(async () => {
       const errs = await driver.findElements(By.id("dcr_error_textarea"));
@@ -247,10 +294,12 @@ async function test() {
       }
       const v = await errs[0].getAttribute("value");
       return !!(v && v.trim().length > 0);
-    }, waitTime, "Reading a deleted client did not produce an error as expected.");
+    }, waitTime,
+        "Reading a deleted client did not produce an error as expected.");
     log.info("Confirmed the deleted client can no longer be read.");
 
-    log.info("Dynamic Client Registration create/read/update/delete succeeded.");
+    log.info("Dynamic Client Registration create/read/update/delete " +
+             "succeeded.");
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
@@ -258,6 +307,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

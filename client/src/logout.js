@@ -5,12 +5,15 @@ var log = bunyan.createLogger({ name: 'logout',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 window.onload = function() {
+  log.debug("Entering onload().");
   log.debug("Entering onload function.");
+  log.debug("Leaving onload().");
 }
 
 function loadValuesFromLocalStorage()
 {
   log.debug("Entering loadValuesFromLocalStorage().");
+  log.debug("Leaving loadValuesFromLocalStorage().");
 }
 
 function clickLink() {

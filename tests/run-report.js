@@ -32,19 +32,21 @@ const path = require("path");
 const bunyan = require("bunyan");
 
 // The runner's own progress lines. They used to be console.log, which made this
-// the last thing in this directory writing outside bunyan — every test it spawns
-// already logs bunyan JSON, so the runner's plain lines were the odd ones out.
+// the last thing in this directory writing outside bunyan — every test it
+// spawns already logs bunyan JSON, so the runner's plain lines were the odd
+// ones out.
 //
 // Note what this changes and what it does not. These lines now come out as JSON
-// like everything else, so pipe the run through `npx bunyan` for the old look. The
-// REPORT is unaffected: report.html, report.xml and logs/NN-<test>.log are written
-// with fs.writeFileSync and are what CI reads. And the live echo of each child's
-// output further down stays process.stdout.write — it forwards another process's
-// bytes as they arrive, in arbitrary chunks, so wrapping it would interleave JSON
-// records with fragments of the child's own lines and make both unreadable.
+// like everything else, so pipe the run through `npx bunyan` for the old look.
+// The REPORT is unaffected: report.html, report.xml and logs/NN-<test>.log are
+// written with fs.writeFileSync and are what CI reads. And the live echo of
+// each child's output further down stays process.stdout.write — it forwards
+// another process's bytes as they arrive, in arbitrary chunks, so wrapping it
+// would interleave JSON records with fragments of the child's own lines and
+// make both unreadable.
 //
-// The level is guarded because this runner is started without CONFIG_FILE set (it
-// sets one per job for the tests it spawns), so a bare require would throw.
+// The level is guarded because this runner is started without CONFIG_FILE set
+// (it sets one per job for the tests it spawns), so a bare require would throw.
 const log = bunyan.createLogger({
   name: "run-report",
   level: (function () {
@@ -72,9 +74,11 @@ const env = process.env;
 // common/common.sh runTests(). Each job maps the suite's config vars onto the
 // generic names (AUDIENCE, CLIENT_ID, ...) each test script reads.
 function buildJobs() {
+  log.debug("Entering buildJobs().");
   const jobs = [];
 
-  // Basic navigation: landing page -> OAuth2/OIDC debugger -> Home -> SAML -> Home.
+  // Basic navigation: landing page -> OAuth2/OIDC debugger -> Home -> SAML ->
+  // Home.
   jobs.push({
     name: "Navigation (landing page → OAuth2/OIDC → Home → SAML → Home)",
     script: "navigation.js",
@@ -163,9 +167,9 @@ function buildJobs() {
   // still works": for the four code-bearing flows it requires dpop_jkt on the
   // authorization request and cnf.jkt on the exchanged token, and for the two
   // Implicit ones it requires the opposite — nothing bound, and the pane saying
-  // why, since those flows never reach a token endpoint. `off` is what keeps the
-  // Bearer path, which is what the specifications describe first, from quietly
-  // becoming un-runnable.
+  // why, since those flows never reach a token endpoint. `off` is what keeps
+  // the Bearer path, which is what the specifications describe first, from
+  // quietly becoming un-runnable.
   if (env.WSTRUST_STS_URL) {
     const OIDC_FLOWS = [
       ["oidc_authorization_code_flow", "OIDC Authorization Code Flow (code)"],
@@ -181,26 +185,27 @@ function buildJobs() {
           name: `${label} — mock STS, DPoP ${OIDC_DPOP}`,
           script: "oidc_flows.js",
           // The client id, scope and username are the script's own: the mock
-          // registers no clients and checks no passwords, so there is nothing for
-          // the suite to provision and nothing to keep in step here.
+          // registers no clients and checks no passwords, so there is nothing
+          // for the suite to provision and nothing to keep in step here.
           env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL, OIDC_FLOW, OIDC_DPOP },
         });
       }
     }
   }
 
-  // The same twelve against KEYCLOAK, which asks the other half of the question:
-  // whether any of it interoperates with a real OP. Gated on the client
-  // configureKeycloak() provisions for it (OIDC_ALL_FLOWS_PUBLIC) — one client
-  // with standardFlowEnabled AND implicitFlowEnabled, since Keycloak gates the
-  // response types on that pair, and without "always use DPoP" so that both
-  // halves of the DPoP axis run against it.
+  // The same twelve against KEYCLOAK, which asks the other half of the
+  // question: whether any of it interoperates with a real OP. Gated on the
+  // client configureKeycloak() provisions for it (OIDC_ALL_FLOWS_PUBLIC) — one
+  // client with standardFlowEnabled AND implicitFlowEnabled, since Keycloak
+  // gates the response types on that pair, and without "always use DPoP" so
+  // that both halves of the DPoP axis run against it.
   //
   // Note what differs from the mock and is passed in rather than assumed:
   // Keycloak's `sub` is a UUID (OIDC_EXPECT_SUB), which is a different string
-  // from the name typed at the login screen (OIDC_LOGIN_USER). The DPoP jobs also
-  // need the server started with --features=dpop; the test checks the metadata
-  // advertises DPoP and says so by name rather than failing at the last assertion.
+  // from the name typed at the login screen (OIDC_LOGIN_USER). The DPoP jobs
+  // also need the server started with --features=dpop; the test checks the
+  // metadata advertises DPoP and says so by name rather than failing at the
+  // last assertion.
   if (env.OIDC_ALL_FLOWS_PUBLIC_DISCOVERY_ENDPOINT) {
     const OIDC_FLOWS_KC = [
       ["oidc_authorization_code_flow", "OIDC Authorization Code Flow (code)"],
@@ -220,7 +225,8 @@ function buildJobs() {
             CLIENT_ID: env.OIDC_ALL_FLOWS_PUBLIC_CLIENT_ID,
             // No offline_access: it is refused on the Implicit flows, and a
             // refresh token is not what any of these twelve are about.
-            SCOPE: `openid profile email ${env.OIDC_ALL_FLOWS_PUBLIC_SCOPE || ""}`.trim(),
+            SCOPE: `openid profile email ${env.OIDC_ALL_FLOWS_PUBLIC_SCOPE ||
+                ""}`.trim(),
             OIDC_LOGIN_USER: env.OIDC_ALL_FLOWS_PUBLIC_USERNAME,
             OIDC_EXPECT_SUB: env.OIDC_ALL_FLOWS_PUBLIC_USER,
             OIDC_FLOW,
@@ -235,16 +241,17 @@ function buildJobs() {
   // links — the token set the flow produced, the one the refresh call produced,
   // and the one selected from Token History. The three differ only in which
   // access token they carry, which is exactly the failure a single call cannot
-  // see: every token in the run belongs to the same user, so a link carrying the
-  // wrong one still returns a correct-looking answer.
+  // see: every token in the run belongs to the same user, so a link carrying
+  // the wrong one still returns a correct-looking answer.
   //
   // Runs against both OPs, like the flow matrix. Unlike it, this one exercises
-  // the UserInfo page's DEFAULT configuration, which on a build that HAS the api
-  // initiates the call from it — so these two jobs need the api service as well
-  // as the OP. On a backend-less target (the deployed static sites) the page
-  // disables that option and calls the OP from the browser instead; the test
-  // reads which build it is off the page rather than being told here, because it
-  // is the page's own state that decides what pressing the button does.
+  // the UserInfo page's DEFAULT configuration, which on a build that HAS the
+  // api initiates the call from it — so these two jobs need the api service as
+  // well as the OP. On a backend-less target (the deployed static sites) the
+  // page disables that option and calls the OP from the browser instead; the
+  // test reads which build it is off the page rather than being told here,
+  // because it is the page's own state that decides what pressing the button
+  // does.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "OIDC UserInfo through all three token sets — mock STS",
@@ -259,18 +266,21 @@ function buildJobs() {
       env: {
         DISCOVERY_ENDPOINT: env.OIDC_ALL_FLOWS_PUBLIC_DISCOVERY_ENDPOINT,
         CLIENT_ID: env.OIDC_ALL_FLOWS_PUBLIC_CLIENT_ID,
-        SCOPE: `openid profile email ${env.OIDC_ALL_FLOWS_PUBLIC_SCOPE || ""}`.trim(),
+        SCOPE: `openid profile email ${env.OIDC_ALL_FLOWS_PUBLIC_SCOPE ||
+            ""}`.trim(),
         OIDC_LOGIN_USER: env.OIDC_ALL_FLOWS_PUBLIC_USERNAME,
       },
     });
   }
 
   // DPoP is OPTIONAL on the OAuth2 / OIDC workflow: off by default, on when the
-  // pane asks for it, and — the case this exists for — not decided by the SD-JWT
-  // VC workflow's own switch, which is what used to make it mandatory here.
+  // pane asks for it, and — the case this exists for — not decided by the
+  // SD-JWT VC workflow's own switch, which is what used to make it mandatory
+  // here.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
-      name: "OIDC DPoP is optional (RFC 9449: off by default, on when asked, never inherited)",
+      name: "OIDC DPoP is optional (RFC 9449: off by default, on when asked, " +
+          "never inherited)",
       script: "oidc_dpop_optional.js",
       env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
     });
@@ -330,7 +340,8 @@ function buildJobs() {
 
   // Token Exchange (RFC 8693). The requesting confidential client obtains a
   // subject token via the auth code flow, exchanges it for a token aimed at the
-  // target audience client, and the issued token is confirmed via introspection.
+  // target audience client, and the issued token is confirmed via
+  // introspection.
   jobs.push({
     name: "OAuth2 Token Exchange (RFC 8693)",
     script: "oauth2_token_exchange.js",
@@ -352,8 +363,9 @@ function buildJobs() {
     },
   });
 
-  // Device Authorization Grant (RFC 8628). Requests a device/user code, approves
-  // the device at the Keycloak verification URI, then polls for the access token.
+  // Device Authorization Grant (RFC 8628). Requests a device/user code,
+  // approves the device at the Keycloak verification URI, then polls for the
+  // access token.
   jobs.push({
     name: "OAuth2 Device Authorization Grant (RFC 8628)",
     script: "oauth2_device_authorization.js",
@@ -381,10 +393,10 @@ function buildJobs() {
   // JWT Tools page. First obtains a real OIDC ID Token via the Authorization
   // Code grant (public client), pastes it into the Encoded JWT field and
   // confirms the decoded Payload matches the token. Then, from the debugger,
-  // opens the Tools pane, follows the JWT Tools link, adds string/number/boolean
-  // claims and checks RFC compliance, and exercises signing + X.509
-  // verification and JWE encryption + decryption, including the PEM/JWK format
-  // toggle and the key-download buttons.
+  // opens the Tools pane, follows the JWT Tools link, adds
+  // string/number/boolean claims and checks RFC compliance, and exercises
+  // signing + X.509 verification and JWE encryption + decryption, including the
+  // PEM/JWK format toggle and the key-download buttons.
   jobs.push({
     name: "JWT Tools (ID Token decode, compose, sign/verify, encrypt/decrypt)",
     script: "jwt_tools.js",
@@ -412,38 +424,41 @@ function buildJobs() {
   });
 
   // Digital Signature page. A fully client-side page needing no IdP. For every
-  // pane it sets a value, generates a key, produces a signature/MAC, confirms it
-  // validates, and exercises the keystore downloads. Asymmetric: SLH-DSA (12
+  // pane it sets a value, generates a key, produces a signature/MAC, confirms
+  // it validates, and exercises the keystore downloads. Asymmetric: SLH-DSA (12
   // sets); RSA (v1.5 & PSS × every hash × 2048/3072); ECC (ECDSA over
-  // P-256/384/521/secp256k1 × every hash, EdDSA, Schnorr, BLS); ML-DSA (44/65/87).
-  // Symmetric MACs: keyed-hash (HMAC/KMAC/BLAKE), block-cipher (CMAC/CBC-MAC/
-  // GMAC), universal-hash (Poly1305/SipHash) — compute + verify + tamper check.
+  // P-256/384/521/secp256k1 × every hash, EdDSA, Schnorr, BLS); ML-DSA
+  // (44/65/87). Symmetric MACs: keyed-hash (HMAC/KMAC/BLAKE), block-cipher
+  // (CMAC/CBC-MAC/ GMAC), universal-hash (Poly1305/SipHash) — compute + verify
+  // + tamper check.
   jobs.push({
-    name: "Digital Signature (asymmetric sigs + symmetric MACs — generate, sign/MAC, validate, download)",
+    name: "Digital Signature (asymmetric sigs + symmetric MACs — generate, " +
+        "sign/MAC, validate, download)",
     script: "digital_signature.js",
     env: {},
   });
 
   // SAML Assertion Tool. Another fully client-side page needing no IdP: compose
-  // an assertion for each SAML version (2.0 / 1.1 / 1.0) with its version-specific
-  // structure, toggle the optional elements, add typed + URI-prefixed custom
-  // attributes, run the spec-compliance check, then sign it with an enveloped XML
-  // Signature (whose placement and Reference URI differ per version), verify it,
-  // reject a tampered copy, and round-trip it through XML Encryption. Also checks
-  // the Tools pane on the SAML Test Tools page links here.
-  // Operations History pane on the SAML request page: records every attempted
-  // IdP call (AuthnRequest / Single Logout / metadata load) with its binding,
-  // SAML version, entity IDs, and result. Needs no IdP — the failure paths come
-  // from the page's own pre-flight checks and the dispatch is aimed at a URL on
-  // the site itself.
-  // RFC 8414 (OAuth 2.0 Authorization Server Metadata): the document the STS
-  // mock serves at /.well-known/oauth-authorization-server (all 23 members,
-  // host-derived issuer, verifiable signed_metadata, resolvable jwks_uri) and
-  // the Metadata Source selector on debugger.html that retrieves it. Needs the
-  // STS mock, like the WS-Trust jobs.
+  // an assertion for each SAML version (2.0 / 1.1 / 1.0) with its
+  // version-specific structure, toggle the optional elements, add typed +
+  // URI-prefixed custom attributes, run the spec-compliance check, then sign it
+  // with an enveloped XML Signature (whose placement and Reference URI differ
+  // per version), verify it, reject a tampered copy, and round-trip it through
+  // XML Encryption. Also checks the Tools pane on the SAML Test Tools page
+  // links here. Operations History pane on the SAML request page: records every
+  // attempted IdP call (AuthnRequest / Single Logout / metadata load) with its
+  // binding, SAML version, entity IDs, and result. Needs no IdP — the failure
+  // paths come from the page's own pre-flight checks and the dispatch is aimed
+  // at a URL on the site itself. RFC 8414 (OAuth 2.0 Authorization Server
+  // Metadata): the document the STS mock serves at
+  // /.well-known/oauth-authorization-server (all 23 members, host-derived
+  // issuer, verifiable signed_metadata, resolvable jwks_uri) and the Metadata
+  // Source selector on debugger.html that retrieves it. Needs the STS mock,
+  // like the WS-Trust jobs.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
-      name: "OAuth2 Authorization Server Metadata (RFC 8414 endpoint + debugger Metadata Source)",
+      name: "OAuth2 Authorization Server Metadata (RFC 8414 endpoint + " +
+          "debugger Metadata Source)",
       script: "oauth2_metadata_rfc8414.js",
       env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
     });
@@ -454,7 +469,8 @@ function buildJobs() {
   // against the advertised JWKS. No browser — it drives the endpoints directly.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
-      name: "OAuth2 Authorization Server endpoints (the STS mock's authorize / token / introspect / revoke / register)",
+      name: "OAuth2 Authorization Server endpoints (the STS mock's authorize " +
+          "/ token / introspect / revoke / register)",
       script: "oauth2_sts_endpoints.js",
       env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
     });
@@ -477,21 +493,23 @@ function buildJobs() {
   // appear while the private key went on being written. Only reading storage
   // shows it. Needs the client alone — no IdP, no STS — so it is never skipped.
   jobs.push({
-    name: "Key pair localStorage opt-out (SAML, WS-Trust, WS-Fed, SD-JWT VC — checked and unchecked)",
+    name: "Key pair localStorage opt-out (SAML, WS-Trust, WS-Fed, SD-JWT VC " +
+        "— checked and unchecked)",
     script: "keypair_storage_optout.js",
     env: {},
   });
 
   // The inertness of this app's XML parsing — the invariant behind CodeQL's
-  // js/xss-through-dom reports on every DOMParser call in client/src (alert #147
-  // and eleven siblings). Those are a modelling artefact: parseFromString with
-  // 'application/xml' yields an inert, detached document, and nothing renders it
-  // as markup. Sanitizing the input would be the wrong fix — XML-DSIG signs the
-  // exact octets that get canonicalized, so rewriting them breaks the signature.
-  // What CAN be done is keep the premise true, which is what this asserts.
-  // Node only, never skipped.
+  // js/xss-through-dom reports on every DOMParser call in client/src (alert
+  // #147 and eleven siblings). Those are a modelling artefact: parseFromString
+  // with 'application/xml' yields an inert, detached document, and nothing
+  // renders it as markup. Sanitizing the input would be the wrong fix —
+  // XML-DSIG signs the exact octets that get canonicalized, so rewriting them
+  // breaks the signature. What CAN be done is keep the premise true, which is
+  // what this asserts. Node only, never skipped.
   jobs.push({
-    name: "XML parsing is inert (no DOMParser HTML mode, no markup sink on the XML path)",
+    name: "XML parsing is inert (no DOMParser HTML mode, no markup sink on " +
+        "the XML path)",
     script: "xml_parse_inert.js",
     env: {},
   });
@@ -516,39 +534,54 @@ function buildJobs() {
   // key, and one with NO patched version in existence. That trade is only sound
   // if the replacement encodes correctly, so this checks the DER against node's
   // own SPKI parser, and additionally fails if any file in client/src takes a
-  // require that would put elliptic back into a bundle. Node only, never skipped.
+  // require that would put elliptic back into a bundle. Node only, never
+  // skipped.
+  //
+  // It carries two more source checks of the same kind, both about things that
+  // reach a bundle and break it: no BigInt literal in client/src (envify's
+  // esprima cannot parse one, and the build then fails against a file nobody
+  // touched), and no `require`/`process` in coverage_beacon.js — the one file
+  // there that is APPENDED to finished bundles rather than browserified, so a
+  // require in it is an uncaught ReferenceError on every instrumented page.
+  // That last one is invisible to this suite's own launchers, which never
+  // append the beacon; only ./run-coverage.sh does, and it failed 12 tests and
+  // shipped an empty frontend report on 2026-08-14 for exactly that.
   jobs.push({
-    name: "JWK to PEM encoder (SPKI DER correctness; elliptic stays out of the bundles)",
+    name: "JWK to PEM encoder (SPKI DER correctness; elliptic, BigInt " +
+        "literals and require() stay out of the bundles)",
     script: "jwk_pem_encoding.js",
     env: {},
   });
 
-  // The WebAuthn decoder (client/src/cbor.js, cose.js, webauthn.js) against REAL
-  // ceremonies — ES256 and RS256, registration and assertion — produced by the
-  // WebDriver virtual authenticator and committed as tests/webauthn_vectors.json.
-  // Two oracles neither of which is ours: the browser's own getPublicKey(), which
-  // our COSE -> JWK -> SPKI chain must reproduce byte for byte, and node's crypto,
-  // which verifies the same signatures independently. Then the negatives, each
-  // failing exactly one named check — including a UV-clear assertion that must be
-  // rejected on the FLAG while its signature stays valid, because reporting that
-  // as a bad signature would send the user after the wrong thing. Node only, no
-  // browser, no network, never skipped.
+  // The WebAuthn decoder (client/src/cbor.js, cose.js, webauthn.js) against
+  // REAL ceremonies — ES256 and RS256, registration and assertion — produced by
+  // the WebDriver virtual authenticator and committed as
+  // tests/webauthn_vectors.json. Two oracles neither of which is ours: the
+  // browser's own getPublicKey(), which our COSE -> JWK -> SPKI chain must
+  // reproduce byte for byte, and node's crypto, which verifies the same
+  // signatures independently. Then the negatives, each failing exactly one
+  // named check — including a UV-clear assertion that must be rejected on the
+  // FLAG while its signature stays valid, because reporting that as a bad
+  // signature would send the user after the wrong thing. Node only, no browser,
+  // no network, never skipped.
   jobs.push({
-    name: "WebAuthn decoder (CBOR, COSE_Key, authenticator data, assertion verification)",
+    name: "WebAuthn decoder (CBOR, COSE_Key, authenticator data, assertion " +
+        "verification)",
     script: "webauthn_decode.js",
     env: {},
   });
 
   // The wallet's WebAuthn decoder and the STS's, over the same real ceremonies,
-  // required to reach the same verdict on each. The two share no code — different
-  // CBOR readers, different COSE mappings, and different signature paths, since
-  // node takes an ECDSA signature as DER while Web Crypto demands raw r‖s — so a
-  // mistake in one is not mirrored in the other. One implementation agreeing
-  // with itself is not a result; two independent readings of section 7.2
-  // agreeing is. Same arrangement as bbs2023_cryptosuite.js. Node only, never
-  // skipped.
+  // required to reach the same verdict on each. The two share no code —
+  // different CBOR readers, different COSE mappings, and different signature
+  // paths, since node takes an ECDSA signature as DER while Web Crypto demands
+  // raw r‖s — so a mistake in one is not mirrored in the other. One
+  // implementation agreeing with itself is not a result; two independent
+  // readings of section 7.2 agreeing is. Same arrangement as
+  // bbs2023_cryptosuite.js. Node only, never skipped.
   jobs.push({
-    name: "WebAuthn: the wallet's decoder and the STS's agree (cross-implementation)",
+    name: "WebAuthn: the wallet's decoder and the STS's agree " +
+        "(cross-implementation)",
     script: "webauthn_cross_impl.js",
     env: {},
   });
@@ -565,15 +598,15 @@ function buildJobs() {
     env: {},
   });
 
-  // The WebAuthn Lab page, running REAL ceremonies against the WebDriver virtual
-  // authenticator — a CTAP2 authenticator inside the browser, so no hardware, no
-  // touch and no flake. Registration, assertion, the counter advancing across
-  // two assertions, and the no-credential path reported rather than hung. Note
-  // what is NOT here: a UV-required ceremony against an authenticator that
-  // cannot verify is refused by the BROWSER, so the relying party never sees a
-  // UV-clear assertion and that check cannot be exercised from this page; it
-  // lives in webauthn_decode.js, where the material can be manufactured. Needs
-  // the client and nothing else.
+  // The WebAuthn Lab page, running REAL ceremonies against the WebDriver
+  // virtual authenticator — a CTAP2 authenticator inside the browser, so no
+  // hardware, no touch and no flake. Registration, assertion, the counter
+  // advancing across two assertions, and the no-credential path reported rather
+  // than hung. Note what is NOT here: a UV-required ceremony against an
+  // authenticator that cannot verify is refused by the BROWSER, so the relying
+  // party never sees a UV-clear assertion and that check cannot be exercised
+  // from this page; it lives in webauthn_decode.js, where the material can be
+  // manufactured. Needs the client and nothing else.
   jobs.push({
     name: "WebAuthn Lab page (real ceremonies against a virtual authenticator)",
     script: "webauthn_lab_page.js",
@@ -603,8 +636,8 @@ function buildJobs() {
   // checked: that both halves arrive (the REQUEST half especially, which no
   // relying party shows anybody and pasting a response can never produce), and
   // that the extension changes NOTHING about the ceremony it watches. Nobody
-  // reviews an unpacked extension on our behalf, so that second one is the whole
-  // of the read-only guarantee.
+  // reviews an unpacked extension on our behalf, so that second one is the
+  // whole of the read-only guarantee.
   //
   // Needs the STS, and needs the extension built (buildBrowserExtension() in
   // common/common.sh, called by the launchers before compose). It will NOT run
@@ -613,7 +646,8 @@ function buildJobs() {
   if (env.WSTRUST_STS_URL) {
     const browser = extensionCapableBrowser();
     const extensionJob = {
-      name: "WebAuthn browser extension (observes a third party, changes nothing)",
+      name: "WebAuthn browser extension (observes a third party, " +
+          "changes nothing)",
       script: "webauthn_extension.js",
       env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
     };
@@ -624,9 +658,12 @@ function buildJobs() {
     if (!browser.capable) {
       extensionJob.skip =
         "this browser cannot side-load an unpacked extension: " +
-        (browser.version || "no chrome/chromium found on PATH") + ". Branded Google Chrome refuses " +
-        "the flags and reports it only on stderr, so the job would fail with every assertion timing " +
-        "out and nothing naming the cause. The containerized suite pins Chrome for Testing and does " +
+        (browser.version || "no chrome/chromium found on PATH") +
+         ". Branded Google Chrome refuses " +
+        "the flags and reports it only on stderr, so the job would fail with " +
+            "every assertion timing " +
+        "out and nothing naming the cause. The containerized suite pins " +
+            "Chrome for Testing and does " +
         "run it; to run it here, point CHROME_BIN at a Chrome-for-Testing or Chromium build.";
     }
     jobs.push(extensionJob);
@@ -639,25 +676,27 @@ function buildJobs() {
   // instead of a varint produces DIDs that decode here and nowhere else, a
   // compressed EC point decompressed with the wrong square root gives the other
   // valid point on the curve, and a Domain Linkage Credential with a typ header
-  // or an iat claim is exactly what a JWT library produces by default. It found a
-  // real bug on its first run: P-384's and P-521's field primes were truncated.
-  // Node only, never skipped.
+  // or an iat claim is exactly what a JWT library produces by default. It found
+  // a real bug on its first run: P-384's and P-521's field primes were
+  // truncated. Node only, never skipped.
   jobs.push({
     name: "DID module (did:jwk/key/web, document reading, DIF domain linkage)",
     script: "did_document.js",
     env: {},
   });
 
-  // DPoP's own arithmetic (client/src/dpop.js): the RFC 7638 JWK Thumbprint that
-  // becomes cnf.jkt, the htu normalization, the ath hash, and the shape of the
-  // proof itself. Every one of those fails SILENTLY when it is wrong — a proof with
-  // a wrong thumbprint or a wrong htu is perfectly well formed and simply matches
-  // nothing, so the server's refusal reads as "your key is wrong" rather than "your
-  // encoding is wrong". The oracle is not a second implementation but the RFCs' own
-  // published values: RFC 9449 prints an EC key and the jkt of the token bound to
-  // it, RFC 7638 section 3.1 does the same for RSA. Node only, never skipped.
+  // DPoP's own arithmetic (client/src/dpop.js): the RFC 7638 JWK Thumbprint
+  // that becomes cnf.jkt, the htu normalization, the ath hash, and the shape of
+  // the proof itself. Every one of those fails SILENTLY when it is wrong — a
+  // proof with a wrong thumbprint or a wrong htu is perfectly well formed and
+  // simply matches nothing, so the server's refusal reads as "your key is
+  // wrong" rather than "your encoding is wrong". The oracle is not a second
+  // implementation but the RFCs' own published values: RFC 9449 prints an EC
+  // key and the jkt of the token bound to it, RFC 7638 section 3.1 does the
+  // same for RSA. Node only, never skipped.
   jobs.push({
-    name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own vectors, htu/ath/jti)",
+    name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own " +
+        "vectors, htu/ath/jti)",
     script: "dpop.js",
     env: {},
   });
@@ -669,25 +708,59 @@ function buildJobs() {
   // instead of a varint produces DIDs that decode here and nowhere else, a
   // compressed EC point decompressed with the wrong square root gives the other
   // valid point on the curve, and a Domain Linkage Credential with a typ header
-  // or an iat claim is exactly what a JWT library produces by default. It found a
-  // real bug on its first run: P-384's and P-521's field primes were truncated.
-  // Node only, never skipped.
+  // or an iat claim is exactly what a JWT library produces by default. It found
+  // a real bug on its first run: P-384's and P-521's field primes were
+  // truncated. Node only, never skipped.
   jobs.push({
     name: "DID module (did:jwk/key/web, document reading, DIF domain linkage)",
     script: "did_document.js",
     env: {},
   });
 
-  // DPoP's own arithmetic (client/src/dpop.js): the RFC 7638 JWK Thumbprint that
-  // becomes cnf.jkt, the htu normalization, the ath hash, and the shape of the
-  // proof itself. Every one of those fails SILENTLY when it is wrong — a proof with
-  // a wrong thumbprint or a wrong htu is perfectly well formed and simply matches
-  // nothing, so the server's refusal reads as "your key is wrong" rather than "your
-  // encoding is wrong". The oracle is not a second implementation but the RFCs' own
-  // published values: RFC 9449 prints an EC key and the jkt of the token bound to
-  // it, RFC 7638 section 3.1 does the same for RSA. Node only, never skipped.
+  // DPoP's own arithmetic (client/src/dpop.js): the RFC 7638 JWK Thumbprint
+  // that becomes cnf.jkt, the htu normalization, the ath hash, and the shape of
+  // the proof itself. Every one of those fails SILENTLY when it is wrong — a
+  // proof with a wrong thumbprint or a wrong htu is perfectly well formed and
+  // simply matches nothing, so the server's refusal reads as "your key is
+  // wrong" rather than "your encoding is wrong". The oracle is not a second
+  // implementation but the RFCs' own published values: RFC 9449 prints an EC
+  // key and the jkt of the token bound to it, RFC 7638 section 3.1 does the
+  // same for RSA. Node only, never skipped.
   jobs.push({
-    name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own vectors, htu/ath/jti)",
+    name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own " +
+        "vectors, htu/ath/jti)",
+    script: "dpop.js",
+    env: {},
+  });
+
+  // The wallet's DID module (client/src/did.js): did:jwk, did:key and did:web,
+  // reading a DID document, and the DIF Well Known DID Configuration check that
+  // proves a DID and an origin are the same entity. Everything here fails
+  // silently when it is wrong — a multicodec written as a fixed-width number
+  // instead of a varint produces DIDs that decode here and nowhere else, a
+  // compressed EC point decompressed with the wrong square root gives the other
+  // valid point on the curve, and a Domain Linkage Credential with a typ header
+  // or an iat claim is exactly what a JWT library produces by default. It found
+  // a real bug on its first run: P-384's and P-521's field primes were
+  // truncated. Node only, never skipped.
+  jobs.push({
+    name: "DID module (did:jwk/key/web, document reading, DIF domain linkage)",
+    script: "did_document.js",
+    env: {},
+  });
+
+  // DPoP's own arithmetic (client/src/dpop.js): the RFC 7638 JWK Thumbprint
+  // that becomes cnf.jkt, the htu normalization, the ath hash, and the shape of
+  // the proof itself. Every one of those fails SILENTLY when it is wrong — a
+  // proof with a wrong thumbprint or a wrong htu is perfectly well formed and
+  // simply matches nothing, so the server's refusal reads as "your key is
+  // wrong" rather than "your encoding is wrong". The oracle is not a second
+  // implementation but the RFCs' own published values: RFC 9449 prints an EC
+  // key and the jkt of the token bound to it, RFC 7638 section 3.1 does the
+  // same for RSA. Node only, never skipped.
+  jobs.push({
+    name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own " +
+        "vectors, htu/ath/jti)",
     script: "dpop.js",
     env: {},
   });
@@ -1058,11 +1131,12 @@ function buildJobs() {
   });
 
   // The api's outbound address policy (api/ssrf_guard.js): the service fetches
-  // URLs its caller supplies, so it must refuse loopback and private destinations
-  // or it is an SSRF probe into whatever network it runs in. Node only — no
-  // browser, no services — so it is never skipped.
+  // URLs its caller supplies, so it must refuse loopback and private
+  // destinations or it is an SSRF probe into whatever network it runs in. Node
+  // only — no browser, no services — so it is never skipped.
   jobs.push({
-    name: "API SSRF guard (outbound calls to loopback / private ranges are refused)",
+    name: "API SSRF guard (outbound calls to loopback / private ranges " +
+        "are refused)",
     script: "api_ssrf_guard.js",
     env: {},
   });
@@ -1070,11 +1144,11 @@ function buildJobs() {
   // The api's outbound limits: api/connect_timeout.js plus callTimeout,
   // connectionTimeout, maxContentLength and maxRedirects in api/env/*.js. axios
   // defaults to no timeout, no size cap and 21 redirects, so without these a
-  // caller-named host that goes quiet holds a request open for minutes, one that
-  // streams fills the heap, and one that redirects can walk the service elsewhere.
-  // The interesting half is that a connection which SUCCEEDED must not be cut off
-  // by the connect budget — an AbortSignal-based implementation gets that wrong.
-  // Node only, so never skipped.
+  // caller-named host that goes quiet holds a request open for minutes, one
+  // that streams fills the heap, and one that redirects can walk the service
+  // elsewhere. The interesting half is that a connection which SUCCEEDED must
+  // not be cut off by the connect budget — an AbortSignal-based implementation
+  // gets that wrong. Node only, so never skipped.
   jobs.push({
     name: "API outbound call policy (timeouts, caps, User-Agent, keep-alive)",
     script: "api_connect_timeout.js",
@@ -1105,7 +1179,8 @@ function buildJobs() {
   // agree perfectly with each other and with nobody else.
   {
     jobs.push({
-      name: "BBS signatures (cross-checked against an independent implementation)",
+      name: "BBS signatures (cross-checked against an independent " +
+          "implementation)",
       script: "bbs_crypto.js",
       env: {},
     });
@@ -1134,7 +1209,8 @@ function buildJobs() {
     // cover: the ISSUER publishes the key and the wallet encrypts to it. Needs
     // only the STS mock, so it is registered unconditionally.
     jobs.push({
-      name: "OID4VCI Credential Request encryption (section 10, issuer-published keys)",
+      name: "OID4VCI Credential Request encryption (section 10, " +
+          "issuer-published keys)",
       script: "oid4vci_request_encryption.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
@@ -1143,7 +1219,8 @@ function buildJobs() {
       },
     });
     jobs.push({
-      name: "VC Refresh — ldp_vc / bbs-2023 (OID4VCI 14.5 refresh_token + re-request)",
+      name: "VC Refresh — ldp_vc / bbs-2023 (OID4VCI 14.5 refresh_token + " +
+          "re-request)",
       script: "ldp_vc_refresh.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
@@ -1151,7 +1228,8 @@ function buildJobs() {
       },
     });
     jobs.push({
-      name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, unlinkable)",
+      name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, " +
+          "unlinkable)",
       script: "ldp_vc_presentation.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
@@ -1170,26 +1248,27 @@ function buildJobs() {
     //
     // The chain it checks is advertisement -> resolution -> domain linkage ->
     // credential -> signature, and the last link is the one that matters: a DID
-    // that resolves to the wrong key looks like success until something tries to
-    // verify with it. Needs only the STS mock.
-    // The mock STS's own index of itself: GET /sts-metadata lists every endpoint it
-    // registers, with its methods, and every specification it implements. The list
-    // is read from the running Express router rather than kept by hand, and this
-    // job is what makes that worth something — it fails if a route is registered
-    // and undescribed (the page understates what is callable) or described and not
+    // that resolves to the wrong key looks like success until something tries
+    // to verify with it. Needs only the STS mock. The mock STS's own index of
+    // itself: GET /sts-metadata lists every endpoint it registers, with its
+    // methods, and every specification it implements. The list is read from the
+    // running Express router rather than kept by hand, and this job is what
+    // makes that worth something — it fails if a route is registered and
+    // undescribed (the page understates what is callable) or described and not
     // registered (the page advertises a 404, which is what a rename produces).
-    // Needs only the STS mock.
-    // did-tools.html, the general-purpose DID verifier reached from the VC Tools
-    // pane on every page of both workflows. The DIDs it works on are GENERATED by
-    // the mock STS (GET /did/generate), which hands back a DID together with a
-    // credential signed by the key that DID publishes — so the page's verdict can
-    // be checked against a known-good answer instead of against "the document
-    // parsed". Its two negatives are the point: a document that resolves perfectly
-    // but did not sign the held credential must not read as verified, and an origin
-    // that vouches for a different DID must not read as linked. Needs the STS and
-    // the client; no Keycloak, no walt.id.
+    // Needs only the STS mock. did-tools.html, the general-purpose DID verifier
+    // reached from the VC Tools pane on every page of both workflows. The DIDs
+    // it works on are GENERATED by the mock STS (GET /did/generate), which
+    // hands back a DID together with a credential signed by the key that DID
+    // publishes — so the page's verdict can be checked against a known-good
+    // answer instead of against "the document parsed". Its two negatives are
+    // the point: a document that resolves perfectly but did not sign the held
+    // credential must not read as verified, and an origin that vouches for a
+    // different DID must not read as linked. Needs the STS and the client; no
+    // Keycloak, no walt.id.
     jobs.push({
-      name: "DID Tools page (resolve, verify a signing key, verify a domain linkage)",
+      name: "DID Tools page (resolve, verify a signing key, verify a " +
+          "domain linkage)",
       script: "did_tools.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
@@ -1197,7 +1276,8 @@ function buildJobs() {
       },
     });
     jobs.push({
-      name: "STS metadata page (/sts-metadata lists exactly what the router registers)",
+      name: "STS metadata page (/sts-metadata lists exactly what the router " +
+          "registers)",
       script: "sts_metadata.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
@@ -1205,7 +1285,8 @@ function buildJobs() {
       },
     });
     jobs.push({
-      name: "VC Issuance — issuer named by DID (did:web, domain linkage, both formats)",
+      name: "VC Issuance — issuer named by DID (did:web, domain linkage, " +
+          "both formats)",
       script: "vc_did.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
@@ -1219,7 +1300,8 @@ function buildJobs() {
   // and the wallet derives with the other, so neither marks its own homework.
   {
     jobs.push({
-      name: "bbs-2023 cryptosuite (ldp_vc issue, derive, verify across two implementations)",
+      name: "bbs-2023 cryptosuite (ldp_vc issue, derive, verify across two " +
+          "implementations)",
       script: "bbs2023_cryptosuite.js",
       env: {},
     });
@@ -1231,24 +1313,24 @@ function buildJobs() {
   // Registered unconditionally for the same reason as the four below.
   {
     jobs.push({
-      name: "Metadata schema validation (OID4VCI and RFC 8414 panes, positive and negative)",
+      name: "Metadata schema validation (OID4VCI and RFC 8414 panes, " +
+          "positive and negative)",
       script: "metadata_schema_validation.js",
       env: {},
     });
   }
 
-  // These four are registered UNCONDITIONALLY, unlike their SD-JWT siblings.
-  // A gated job that does not register simply is not in the report, which is the
+  // These four are registered UNCONDITIONALLY, unlike their SD-JWT siblings. A
+  // gated job that does not register simply is not in the report, which is the
   // quietest possible way for a credential format to go untested — the run says
   // "all green" and nothing says the format was never exercised. Each of these
-  // instead runs and FAILS with what is missing and how to supply it.
-  // The SAME issuance workflow in the other credential format this issuer
-  // offers: jwt_vc_json, a W3C VC secured as a JWT. Its own job rather than a
-  // flag on the one above, because that suite is built around Disclosures and
-  // this format has none — a flag would leave most of it skipped and the run
-  // would read as though selective disclosure had been declined rather than
-  // being unavailable. Skips itself when the issuer offers no such
-  // configuration.
+  // instead runs and FAILS with what is missing and how to supply it. The SAME
+  // issuance workflow in the other credential format this issuer offers:
+  // jwt_vc_json, a W3C VC secured as a JWT. Its own job rather than a flag on
+  // the one above, because that suite is built around Disclosures and this
+  // format has none — a flag would leave most of it skipped and the run would
+  // read as though selective disclosure had been declined rather than being
+  // unavailable. Skips itself when the issuer offers no such configuration.
   {
     jobs.push({
       name: "VC Issuance — jwt_vc_json (W3C VC secured as a JWT)",
@@ -1260,8 +1342,8 @@ function buildJobs() {
     });
   }
 
-  // The SD-JWT VC PRESENTATION workflow (OID4VP 1.0 + RFC 9901 section 4.3): the
-  // mock Verifier the STS service hosts, the four vc-presentation pages,
+  // The SD-JWT VC PRESENTATION workflow (OID4VP 1.0 + RFC 9901 section 4.3):
+  // the mock Verifier the STS service hosts, the four vc-presentation pages,
   // and the presentation itself — an SD-JWT+KB whose Key Binding JWT is signed
   // over the request's nonce. Needs only the STS (issuer AND verifier), so no
   // identity provider is involved. Carries its own negatives: a replayed
@@ -1269,26 +1351,30 @@ function buildJobs() {
   // removed after signing, and a claim the verifier asked for withheld.
   if (env.WSTRUST_STS_URL) {
     // The SERVER half of DPoP, over HTTP with no browser: all twelve RFC 9449
-    // section 4.3 proof checks, the cnf.jkt binding on access and refresh tokens,
-    // the dpop_jkt code binding, jti replay detection, and the nonce handshake in
-    // both of its shapes. It is almost entirely negatives, because a DPoP server
-    // that issues bound tokens and accepts good proofs looks finished and can be
-    // worth nothing — the value is all in what it refuses. Needs only the STS.
+    // section 4.3 proof checks, the cnf.jkt binding on access and refresh
+    // tokens, the dpop_jkt code binding, jti replay detection, and the nonce
+    // handshake in both of its shapes. It is almost entirely negatives, because
+    // a DPoP server that issues bound tokens and accepts good proofs looks
+    // finished and can be worth nothing — the value is all in what it refuses.
+    // Needs only the STS.
     jobs.push({
-      name: "DPoP server checks (RFC 9449: the twelve proof checks, binding, replay, nonces)",
+      name: "DPoP server checks (RFC 9449: the twelve proof checks, binding, " +
+          "replay, nonces)",
       script: "sts_dpop.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
-    // And DPoP through the PAGES, which is the part neither of the two above can
-    // reach: that the wallet really sends the proofs, that the token which comes
-    // back is really bound (checked against the token's own cnf.jkt, not against
-    // what the pane says), and that Holder of Key really binds the credential to
-    // the DPoP key. Driven with the pre-authorized code grant, so no IdP is needed.
+    // And DPoP through the PAGES, which is the part neither of the two above
+    // can reach: that the wallet really sends the proofs, that the token which
+    // comes back is really bound (checked against the token's own cnf.jkt, not
+    // against what the pane says), and that Holder of Key really binds the
+    // credential to the DPoP key. Driven with the pre-authorized code grant, so
+    // no IdP is needed.
     jobs.push({
-      name: "DPoP through the VC Issuance pages (the pane, the real binding, Holder of Key)",
+      name: "DPoP through the VC Issuance pages (the pane, the real binding, " +
+          "Holder of Key)",
       script: "dpop_workflow.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
@@ -1296,7 +1382,8 @@ function buildJobs() {
       },
     });
     jobs.push({
-      name: "VC Presentation — SD-JWT VC (OID4VP: selective disclosure, positive and negative)",
+      name: "VC Presentation — SD-JWT VC (OID4VP: selective disclosure, " +
+          "positive and negative)",
       script: "sd_jwt_vc_presentation.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
@@ -1307,13 +1394,14 @@ function buildJobs() {
 
   // The PRESENTATION half of the same format: a Verifiable Presentation JWT
   // instead of an SD-JWT+KB, with holder binding done by that JWT's own
-  // signature rather than by a Key Binding JWT. Carries its own negatives — a VP
-  // JWT signed by the wrong key, a replay, a tampered credential, and an SD-JWT
-  // answering a jwt_vc_json query (which matters because a Combined
+  // signature rather than by a Key Binding JWT. Carries its own negatives — a
+  // VP JWT signed by the wrong key, a replay, a tampered credential, and an
+  // SD-JWT answering a jwt_vc_json query (which matters because a Combined
   // Serialization also splits into three dot-separated parts).
   {
     jobs.push({
-      name: "VC Presentation — jwt_vc_json (Verifiable Presentation JWT, positive and negative)",
+      name: "VC Presentation — jwt_vc_json (Verifiable Presentation JWT, " +
+          "positive and negative)",
       script: "jwt_vc_json_presentation.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
@@ -1330,7 +1418,8 @@ function buildJobs() {
   // that container being up rather than on the STS.
   if (env.WALTID_ISSUER_URL) {
     jobs.push({
-      name: "VC Issuance — SD-JWT VC against walt.id (OID4VCI interoperability)",
+      name: "VC Issuance — SD-JWT VC against walt.id (OID4VCI " +
+          "interoperability)",
       script: "sd_jwt_vc_waltid.js",
       env: {
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL,
@@ -1339,15 +1428,17 @@ function buildJobs() {
     });
   }
 
-  // The SD-JWT VC PRESENTATION workflow driven against walt.id's verifier-api2 —
-  // an independently written OpenID4VP 1.0 verifier with DCQL — instead of our own
-  // mock. The credential it presents is ISSUED BY walt.id in the same run through
-  // our issuance pages, so neither end of the exchange is ours. Gated on that
-  // container being up, like the issuer's interoperability job; it also needs the
-  // walt.id issuer and Keycloak, because that is where the credential comes from.
+  // The SD-JWT VC PRESENTATION workflow driven against walt.id's verifier-api2
+  // — an independently written OpenID4VP 1.0 verifier with DCQL — instead of
+  // our own mock. The credential it presents is ISSUED BY walt.id in the same
+  // run through our issuance pages, so neither end of the exchange is ours.
+  // Gated on that container being up, like the issuer's interoperability job;
+  // it also needs the walt.id issuer and Keycloak, because that is where the
+  // credential comes from.
   if (env.WALTID_VERIFIER_URL) {
     jobs.push({
-      name: "VC Presentation — SD-JWT VC against walt.id (OID4VP interoperability)",
+      name: "VC Presentation — SD-JWT VC against walt.id (OID4VP " +
+          "interoperability)",
       script: "sd_jwt_vc_presentation_waltid.js",
       env: {
         WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
@@ -1357,19 +1448,20 @@ function buildJobs() {
     });
   }
 
-  // jwt_vc_json against walt.id: the interoperability half of the two jobs above.
-  // Both skip with instructions when walt.id offers no jwt_vc_json
+  // jwt_vc_json against walt.id: the interoperability half of the two jobs
+  // above. Both skip with instructions when walt.id offers no jwt_vc_json
   // configuration, which is the state until its container is restarted onto the
   // configuration in waltid/config/credential-issuer-metadata.conf.
   //
   // The presentation one has a second, deliberate skip: walt.id's own
   // jwt_vc_json profiles bind the holder with a SUBJECT DID where our mock uses
-  // cnf.jwk, and a wallet cannot sign a Verifiable Presentation JWT for a key it
-  // has never held. That is reported as an interoperability finding rather than
-  // failed, because neither implementation is wrong.
+  // cnf.jwk, and a wallet cannot sign a Verifiable Presentation JWT for a key
+  // it has never held. That is reported as an interoperability finding rather
+  // than failed, because neither implementation is wrong.
   {
     jobs.push({
-      name: "VC Issuance — jwt_vc_json against walt.id (OID4VCI interoperability)",
+      name: "VC Issuance — jwt_vc_json against walt.id (OID4VCI " +
+          "interoperability)",
       script: "jwt_vc_json_issuance_waltid.js",
       env: {
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL,
@@ -1380,7 +1472,8 @@ function buildJobs() {
 
   {
     jobs.push({
-      name: "VC Presentation — jwt_vc_json against walt.id (OID4VP interoperability)",
+      name: "VC Presentation — jwt_vc_json against walt.id (OID4VP " +
+          "interoperability)",
       script: "jwt_vc_json_presentation_waltid.js",
       env: {
         WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
@@ -1396,20 +1489,23 @@ function buildJobs() {
   // page. Needs the STS mock (WSTRUST_STS_URL), like the other WS-Trust jobs.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
-      name: "WS-Trust Operations History (attempted STS calls: version, operation, user, result)",
+      name: "WS-Trust Operations History (attempted STS calls: version, " +
+          "operation, user, result)",
       script: "wstrust_operation_history.js",
       env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
     });
   }
 
   jobs.push({
-    name: "SAML Operations History (attempted IdP calls: binding, version, entity IDs, result)",
+    name: "SAML Operations History (attempted IdP calls: binding, version, " +
+        "entity IDs, result)",
     script: "saml_operation_history.js",
     env: {},
   });
 
   jobs.push({
-    name: "SAML Assertion Tool (compose 1.0/1.1/2.0, XML-DSIG sign + verify, XML-Enc round-trip)",
+    name: "SAML Assertion Tool (compose 1.0/1.1/2.0, XML-DSIG sign + verify, " +
+        "XML-Enc round-trip)",
     script: "saml_tools.js",
     env: {},
   });
@@ -1419,13 +1515,16 @@ function buildJobs() {
   // artifact = redirect send + SOAP ArtifactResolve back-channel), log in at
   // Keycloak (which validates the request signature), and confirm the
   // ACS-captured SAMLResponse / assertion / NameID render on the response page.
-  // The Artifact binding needs the server-side SOAP ArtifactResolve back-channel,
-  // so it can't run on a backendless (static) deployment. remote-run-tests.sh sets
-  // SAML_BACKEND_AVAILABLE=false for those targets; skip it there rather than fail.
+  // The Artifact binding needs the server-side SOAP ArtifactResolve
+  // back-channel, so it can't run on a backendless (static) deployment.
+  // remote-run-tests.sh sets SAML_BACKEND_AVAILABLE=false for those targets;
+  // skip it there rather than fail.
   const samlBackendAvailable = env.SAML_BACKEND_AVAILABLE !== "false";
   for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
     const job = {
-      name: `SAML 2.0 SSO — HTTP-${SAML_BINDING === 'post' ? 'POST' : SAML_BINDING === 'artifact' ? 'Artifact' : 'Redirect'} binding`,
+      name: `SAML 2.0 SSO — HTTP-${SAML_BINDING === 'post' ?
+          'POST' : SAML_BINDING === 'artifact' ?
+          'Artifact' : 'Redirect'} binding`,
       script: "saml_sso.js",
       env: {
         SAML_METADATA_URL: env.SAML_METADATA_URL,
@@ -1445,23 +1544,23 @@ function buildJobs() {
 
   // SAML 2.0 EncryptedAssertion decryption: SSO against a SAML client with
   // saml.encrypt=true (provisioned in common.sh), so Keycloak returns an
-  // <saml:EncryptedAssertion>; the Response page decrypts it IN THE BROWSER with
-  // the SP private key and renders the plaintext assertion.
+  // <saml:EncryptedAssertion>; the Response page decrypts it IN THE BROWSER
+  // with the SP private key and renders the plaintext assertion.
   //
   // The decryption has never needed a backend — decryptAssertion() in
   // saml_response.js is node-forge in the page, the same XML-Enc engine the
   // WS-Trust and WS-Federation pages use, with no fetch and no Web Crypto. What
   // this job needs is somewhere for the IdP to POST the response: Keycloak's
   // encrypted client is provisioned saml.force.post.binding=true
-  // (common/common.sh), so the response is POSTed whatever the AuthnRequest asks
-  // for, and the Redirect-binding fallback the other SAML jobs use on a static
-  // target is not available to it.
+  // (common/common.sh), so the response is POSTed whatever the AuthnRequest
+  // asks for, and the Redirect-binding fallback the other SAML jobs use on a
+  // static target is not available to it.
   //
   // That used to make this "unavailable on the static deployment". It no longer
-  // is: infra/edge/saml_landing.js answers /samlacs at the CDN edge. So the gate
-  // is whether a landing is actually deployed — remote-run-tests.sh probes for
-  // one — not whether there is an api. Unset means "not probed" (the local and
-  // containerized runs), where the api's ACS has always been there.
+  // is: infra/edge/saml_landing.js answers /samlacs at the CDN edge. So the
+  // gate is whether a landing is actually deployed — remote-run-tests.sh probes
+  // for one — not whether there is an api. Unset means "not probed" (the local
+  // and containerized runs), where the api's ACS has always been there.
   //
   // It is also the case the profile cares about: an encrypted assertion is
   // ciphertext, which does not DEFLATE, so a redirect-bound one roughly doubles
@@ -1480,24 +1579,29 @@ function buildJobs() {
     };
     if (env.SAML_LANDING_AVAILABLE === "false") {
       encJob.skip = "the target has no SAML ACS landing at " +
-        (env.SAML_LANDING_URL || "<base>/samlacs") + " to receive the IdP's POST, and the encrypted " +
-        "client forces the POST binding so the Redirect fallback cannot be used. On a static " +
-        "deployment, apply the infrastructure (./infra/terraform-local.sh test apply) so the " +
+        (env.SAML_LANDING_URL || "<base>/samlacs") +
+         " to receive the IdP's POST, and the encrypted " +
+        "client forces the POST binding so the Redirect fallback cannot be " +
+            "used. On a static " +
+        "deployment, apply the infrastructure (./infra/terraform-local.sh " +
+            "test apply) so the " +
         "Lambda@Edge landing exists, and build the site with samlEdgeLanding: true.";
     }
     jobs.push(encJob);
   }
 
-  // SAML 2.0 Single Logout: log in via SSO (to establish the Keycloak session and
-  // capture the NameID/SessionIndex), then send a signed LogoutRequest and confirm
-  // the LogoutResponse renders with a Success status on the response page.
+  // SAML 2.0 Single Logout: log in via SSO (to establish the Keycloak session
+  // and capture the NameID/SessionIndex), then send a signed LogoutRequest and
+  // confirm the LogoutResponse renders with a Success status on the response
+  // page.
   jobs.push({
-    name: "SAML 2.0 Single Logout (login → LogoutRequest → LogoutResponse Success)",
+    name: "SAML 2.0 Single Logout (login → LogoutRequest → " +
+        "LogoutResponse Success)",
     script: "saml_logout.js",
     env: {
       SAML_METADATA_URL: env.SAML_METADATA_URL,
-      // When set (remote-run-tests.sh), the metadata is uploaded from this local
-      // file instead of fetched from the URL — see loadIdpMetadata().
+      // When set (remote-run-tests.sh), the metadata is uploaded from this
+      // local file instead of fetched from the URL — see loadIdpMetadata().
       SAML_METADATA_FILE: env.SAML_METADATA_FILE,
       SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
       SAML_USER: env.SAML_USER,
@@ -1506,32 +1610,38 @@ function buildJobs() {
 
   // WS-Federation Passive Requestor Profile SSO against the dedicated Keycloak
   // 8.0.1 + cloudtrust keycloak-wsfed side-car (the 26.x Keycloak has no WS-Fed
-  // support). Gated on WSFED_METADATA_URL, which common.sh's configureKeycloakWsfed
-  // exports only when the side-car is provisioned — so this SKIPS (not fails) on
-  // runs without it (remote/live, or a static deployment).
+  // support). Gated on WSFED_METADATA_URL, which common.sh's
+  // configureKeycloakWsfed exports only when the side-car is provisioned — so
+  // this SKIPS (not fails) on runs without it (remote/live, or a static
+  // deployment).
   {
-    // Compute the skip reason ONCE — it gates every WS-Fed job below identically.
+    // Compute the skip reason ONCE — it gates every WS-Fed job below
+    // identically.
     let wsfedSkip = null;
     if (!env.WSFED_METADATA_URL) {
       wsfedSkip = "WS-Federation side-car (Keycloak 8.0.1 + wsfed) not provisioned (WSFED_METADATA_URL unset).";
     } else if (env.WSFED_LANDING_AVAILABLE === "false") {
       // The other end of the round trip. The Passive Requestor Profile has ONE
-      // way to return the token — the IdP auto-POSTs the wresult to wreply — and
-      // no redirect alternative to fall back to the way SAML has. So the target
-      // needs something at /wsfed that answers a POST.
+      // way to return the token — the IdP auto-POSTs the wresult to wreply —
+      // and no redirect alternative to fall back to the way SAML has. So the
+      // target needs something at /wsfed that answers a POST.
       //
-      // This used to be keyed on SAML_BACKEND_AVAILABLE, i.e. "static deployments
-      // cannot do this at all". That was wrong: they can, with a Lambda@Edge on
-      // that path (infra/edge/wsfed_landing.js), which is what the hosted sites
-      // now run. What actually decides it is whether the landing is DEPLOYED —
-      // the site bundle and the Terraform ship independently — so
-      // remote-run-tests.sh probes the target with a real POST and sets this.
-      // Unset (the containerized and local runs) means "not probed", and the job
-      // runs against the api backend's landing as it always has.
+      // This used to be keyed on SAML_BACKEND_AVAILABLE, i.e. "static
+      // deployments cannot do this at all". That was wrong: they can, with a
+      // Lambda@Edge on that path (infra/edge/wsfed_landing.js), which is what
+      // the hosted sites now run. What actually decides it is whether the
+      // landing is DEPLOYED — the site bundle and the Terraform ship
+      // independently — so remote-run-tests.sh probes the target with a real
+      // POST and sets this. Unset (the containerized and local runs) means "not
+      // probed", and the job runs against the api backend's landing as it
+      // always has.
       wsfedSkip = "the target has no WS-Federation landing at " +
-        (env.WSFED_LANDING_URL || "<base>/wsfed") + " to receive the IdP's wresult POST " +
-        "(the profile has no redirect binding). On a static deployment, apply the infrastructure " +
-        "(./infra/terraform-local.sh test apply) so the Lambda@Edge landing exists, and build the " +
+        (env.WSFED_LANDING_URL || "<base>/wsfed") +
+         " to receive the IdP's wresult POST " +
+        "(the profile has no redirect binding). On a static deployment, " +
+            "apply the infrastructure " +
+        "(./infra/terraform-local.sh test apply) so the Lambda@Edge landing " +
+            "exists, and build the " +
         "site with wsfedEdgeLanding: true.";
     }
     const wsfedBaseEnv = {
@@ -1540,23 +1650,28 @@ function buildJobs() {
       WSFED_USER: env.WSFED_USER,
     };
     const pushWsfed = (name, extraEnv) => {
-      const job = { name, script: "wsfed_sso.js", env: Object.assign({}, wsfedBaseEnv, extraEnv) };
+      log.debug("Entering pushWsfed().");
+      const job = { name, script: "wsfed_sso.js", env: Object.assign({},
+          wsfedBaseEnv, extraEnv) };
       if (wsfedSkip) { job.skip = wsfedSkip; }
       jobs.push(job);
+      log.debug("Leaving pushWsfed().");
     };
 
     // Every valid combination of the sign-in request options the workflow
     // supports: the signing state (unsigned, or signed with each binding × each
     // algorithm) crossed with where the request is initiated from. The passive
     // request is not verified by the IdP, so a signature never blocks the round
-    // trip — wsfed_sso.js asserts the signature was BUILT (client-side) and then
-    // confirms the round trip still completes.
+    // trip — wsfed_sso.js asserts the signature was BUILT (client-side) and
+    // then confirms the round trip still completes.
     const signStates = [{ key: "unsigned", env: { WSFED_SIGN: "off" } }];
     for (const binding of ["redirect", "enveloped"]) {
-      for (const alg of ["rsa-sha256", "rsa-sha1", "rsa-sha384", "rsa-sha512"]) {
+      for (const alg of ["rsa-sha256", "rsa-sha1", "rsa-sha384",
+           "rsa-sha512"]) {
         signStates.push({
           key: binding + "+" + alg,
-          env: { WSFED_SIGN: "on", WSFED_SIG_BINDING: binding, WSFED_SIG_ALG: alg },
+          env: { WSFED_SIGN: "on", WSFED_SIG_BINDING: binding,
+                WSFED_SIG_ALG: alg },
         });
       }
     }
@@ -1564,7 +1679,8 @@ function buildJobs() {
       for (const initiate of ["back", "front"]) {
         pushWsfed(
           `WS-Federation Sign-in (sign=${s.key}, initiate=${initiate})`,
-          Object.assign({ WSFED_MODE: "signin", WSFED_INITIATE: initiate }, s.env)
+          Object.assign({ WSFED_MODE: "signin", WSFED_INITIATE: initiate },
+                        s.env)
         );
       }
     }
@@ -1579,47 +1695,56 @@ function buildJobs() {
     // Unsigned inline wreq (RequestSecurityToken) once.
     pushWsfed(
       "WS-Federation Sign-in (inline wreq)",
-      { WSFED_MODE: "signin", WSFED_INITIATE: "back", WSFED_INCLUDE_WREQ: "true" }
+      { WSFED_MODE: "signin", WSFED_INITIATE: "back",
+       WSFED_INCLUDE_WREQ: "true" }
     );
 
-    // Sign-out (wa=wsignout1.0) + session-ended check. Must share a browser with
-    // a sign-in, so this one job does sign-in → sign-out (the original flow);
-    // signing is off here to keep the leg focused on session termination.
+    // Sign-out (wa=wsignout1.0) + session-ended check. Must share a browser
+    // with a sign-in, so this one job does sign-in → sign-out (the original
+    // flow); signing is off here to keep the leg focused on session
+    // termination.
     pushWsfed(
-      "WS-Federation Passive SSO + Sign-out (Call IdP → login → wsfed_response → wsignout1.0)",
+      "WS-Federation Passive SSO + Sign-out (Call IdP → login → " +
+          "wsfed_response → wsignout1.0)",
       { WSFED_MODE: "signout", WSFED_INITIATE: "back", WSFED_SIGN: "off" }
     );
   }
 
-  // WS-Trust 1.4 against the STS (the mock STS service, or a real Apache CXF STS
-  // if WSTRUST_STS_URL points at one). Exercises all four operations — Issue,
-  // Renew, Validate, Cancel — plus a signed Issue (WS-Security XML-DSIG). Each
-  // job builds a SOAP RequestSecurityToken, sends it through the backend proxy
-  // (POST /wstrust), and asserts the RSTR / issued token / status renders on the
-  // response page. Renew/Validate/Cancel first Issue a token to act on.
+  // WS-Trust 1.4 against the STS (the mock STS service, or a real Apache CXF
+  // STS if WSTRUST_STS_URL points at one). Exercises all four operations —
+  // Issue, Renew, Validate, Cancel — plus a signed Issue (WS-Security
+  // XML-DSIG). Each job builds a SOAP RequestSecurityToken, sends it through
+  // the backend proxy (POST /wstrust), and asserts the RSTR / issued token /
+  // status renders on the response page. Renew/Validate/Cancel first Issue a
+  // token to act on.
   //
-  // Skipped when no STS is reachable (WSTRUST_STS_URL unset) rather than failing.
-  // Routing is exercised both ways: "back" sends through the API proxy
-  // (POST /wstrust); "front" makes the browser call the STS directly. Issue runs
-  // once per route; the other operations use backend routing.
+  // Skipped when no STS is reachable (WSTRUST_STS_URL unset) rather than
+  // failing. Routing is exercised both ways: "back" sends through the API proxy
+  // (POST /wstrust); "front" makes the browser call the STS directly. Issue
+  // runs once per route; the other operations use backend routing.
   //
   // On a BACKEND-LESS target (the deployed static site: samlBackendAvailable
   // false) there is no /wstrust proxy — the page disables backend routing and
   // sends every request from the browser. So rewrite "back" to "front" there
-  // (rather than letting the report claim backend routing it never used) and skip
-  // the one job whose entire subject is backend routing. The live-site run
+  // (rather than letting the report claim backend routing it never used) and
+  // skip the one job whose entire subject is backend routing. The live-site run
   // supplies a loopback STS the browser can reach; see remote-run-tests.sh.
   var wstrustStsUrl = env.WSTRUST_STS_URL || "";
   var wstrustSkip = "WS-Trust needs an STS (WSTRUST_STS_URL) — none reachable from this target.";
   var wstrustNoBackendSkip = "This target has no API proxy (POST /wstrust) — backend routing cannot be exercised; the frontend-routing jobs cover the exchange.";
   // Effective routing for a job that asks for the backend proxy.
   var wstrustRoute = function (route) {
+    log.debug("Entering wstrustRoute().");
+    log.debug("Leaving wstrustRoute().");
     return (route === "back" && !samlBackendAvailable) ? "front" : route;
   };
   var wstrustJobs = [
-    { op: "issue", sign: "false", route: "back", label: "Issue (backend routing)", backendOnly: true },
-    { op: "issue", sign: "false", route: "front", label: "Issue (frontend routing)" },
-    { op: "issue", sign: "true", route: "back", label: "Issue (signed, WS-Security XML-DSIG)" },
+    { op: "issue", sign: "false", route: "back",
+     label: "Issue (backend routing)", backendOnly: true },
+    { op: "issue", sign: "false", route: "front",
+     label: "Issue (frontend routing)" },
+    { op: "issue", sign: "true", route: "back",
+     label: "Issue (signed, WS-Security XML-DSIG)" },
     { op: "renew", sign: "false", route: "back", label: "Renew" },
     { op: "validate", sign: "false", route: "back", label: "Validate" },
     { op: "cancel", sign: "false", route: "back", label: "Cancel" },
@@ -1683,18 +1808,19 @@ function buildJobs() {
     jobs.push(job);
   }
 
-  // XML Signature & XML Encryption interop. A pure-Node test (no browser, no IdP)
-  // that runs the WS-Trust workflow's in-browser crypto (client/src/xmldsig.js)
-  // and validates its output against official libraries: xml-crypto verifies the
-  // WS-Security signature; xml-encryption decrypts the XML-Encryption output.
+  // XML Signature & XML Encryption interop. A pure-Node test (no browser, no
+  // IdP) that runs the WS-Trust workflow's in-browser crypto
+  // (client/src/xmldsig.js) and validates its output against official
+  // libraries: xml-crypto verifies the WS-Security signature; xml-encryption
+  // decrypts the XML-Encryption output.
   jobs.push({
     name: "XML Signature & Encryption interop (xml-crypto / xml-encryption)",
     script: "xmlsec_interop.js",
     env: {},
   });
 
-  // WS-Trust message schema validation. A pure-Node test that builds the RST for
-  // every scenario (each version × operation) with the real generator and
+  // WS-Trust message schema validation. A pure-Node test that builds the RST
+  // for every scenario (each version × operation) with the real generator and
   // validates it against a schema derived from the official OASIS WS-Trust 1.3
   // XSD (libxmljs2/libxml2). Self-skips (exit 0) if libxmljs2 — an optional
   // native dependency — isn't installed on the platform.
@@ -1704,18 +1830,26 @@ function buildJobs() {
     env: {},
   });
 
+  log.debug("Leaving buildJobs().");
   return jobs;
 }
 
 function slug(s) {
+  log.debug("Entering slug().");
+  log.debug("Leaving slug().");
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 function logPathFor(name, index) {
-  return path.join(LOGS_DIR, `${String(index + 1).padStart(2, "0")}-${slug(name)}.log`);
+  log.debug("Entering logPathFor().");
+  log.debug("Leaving logPathFor().");
+  return path.join(LOGS_DIR, `${String(index + 1).padStart(2,
+                   "0")}-${slug(name)}.log`);
 }
 
 function logHeader(name, script, startedAt) {
+  log.debug("Entering logHeader().");
+  log.debug("Leaving logHeader().");
   return (
     [
       `Test:     ${name}`,
@@ -1733,6 +1867,8 @@ function logHeader(name, script, startedAt) {
 // output arrives, so the full output survives even if the suite is killed
 // or a test hangs. Returns a Promise resolving to the result.
 function runJob(job, index) {
+  log.debug("Entering runJob().");
+  log.debug("Leaving runJob().");
   return new Promise((resolve) => {
     const startedAt = new Date().toISOString();
     const startMs = Date.now();
@@ -1743,13 +1879,16 @@ function runJob(job, index) {
 
     let output = "";
     const tee = (chunk) => {
+      log.debug("Entering tee().");
       const s = chunk.toString();
       output += s;
       logStream.write(s); // capture
       process.stdout.write(s); // live echo
+      log.debug("Leaving tee().");
     };
 
     const finish = (code, codeLabel) => {
+      log.debug("Entering finish().");
       const durationMs = Date.now() - startMs;
       const passed = code === 0;
       logStream.end(
@@ -1765,9 +1904,11 @@ function runJob(job, index) {
         output,
         logFile: path.relative(TESTS_DIR, logPath),
       });
+      log.debug("Leaving finish().");
     };
 
-    const child = spawn("node", [path.join(TESTS_DIR, job.script), "--url", BASE_URL], {
+    const child = spawn("node", [path.join(TESTS_DIR, job.script), "--url",
+        BASE_URL], {
       env: { ...process.env, ...job.env },
     });
     child.stdout.on("data", tee);
@@ -1781,10 +1922,11 @@ function runJob(job, index) {
   });
 }
 
-// Record a skipped job (a capability the target can't exercise, e.g. Artifact on
-// a backendless deployment). Written to a log + returned as a result that is
+// Record a skipped job (a capability the target can't exercise, e.g. Artifact
+// on a backendless deployment). Written to a log + returned as a result that is
 // neither pass nor fail, so it doesn't count against the suite.
 function makeSkipResult(job, index) {
+  log.debug("Entering makeSkipResult().");
   const startedAt = new Date().toISOString();
   fs.mkdirSync(LOGS_DIR, { recursive: true });
   const logPath = logPathFor(job.name, index);
@@ -1795,6 +1937,7 @@ function makeSkipResult(job, index) {
       "SKIPPED: " + reason + "\n" +
       "\n===== RESULT: SKIP =====\n"
   );
+  log.debug("Leaving makeSkipResult().");
   return {
     name: job.name,
     script: job.script,
@@ -1811,6 +1954,8 @@ function makeSkipResult(job, index) {
 // ---- report rendering ------------------------------------------------------
 
 function esc(s) {
+  log.debug("Entering esc().");
+  log.debug("Leaving esc().");
   return String(s)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -1819,6 +1964,7 @@ function esc(s) {
 }
 
 function renderHtml(results, generatedAt, demo) {
+  log.debug("Entering renderHtml().");
   const total = results.length;
   const skipped = results.filter((r) => r.skipped).length;
   const passed = results.filter((r) => r.passed && !r.skipped).length;
@@ -1831,7 +1977,8 @@ function renderHtml(results, generatedAt, demo) {
       const badge = r.skipped ? "SKIP" : r.passed ? "PASS" : "FAIL";
       const log = esc((r.output || "").trim());
       const logLink = r.logFile
-        ? `<br><a href="logs/${esc(path.basename(r.logFile))}"><code>${esc(r.logFile)}</code></a>`
+        ? `<br><a href="logs/${esc(path.basename(r.logFile))}"><code>${esc(
+            r.logFile)}</code></a>`
         : "";
       return `
       <tr class="${cls}">
@@ -1839,11 +1986,13 @@ function renderHtml(results, generatedAt, demo) {
         <td>${esc(r.name)}<br><code>${esc(r.script)}</code></td>
         <td class="num">${(r.durationMs / 1000).toFixed(1)}s</td>
         <td class="num">${esc(r.code)}</td>
-        <td><details><summary>output</summary><pre>${log || "(no output)"}</pre></details>${logLink}</td>
+        <td><details><summary>output</summary><pre>${log ||
+            "(no output)"}</pre></details>${logLink}</td>
       </tr>`;
     })
     .join("");
 
+  log.debug("Leaving renderHtml().");
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>OAuth2/OIDC Debugger — Selenium Test Report</title>
@@ -1866,14 +2015,16 @@ function renderHtml(results, generatedAt, demo) {
   summary{cursor:pointer;color:#0969da}
 </style></head><body>
 <h1>OAuth2/OIDC Debugger — Selenium Test Report</h1>
-<p class="sub">Generated ${esc(generatedAt)} · base URL <code>${esc(BASE_URL)}</code></p>
+<p class="sub">Generated ${esc(generatedAt)} · base URL <code>${esc(
+                               BASE_URL)}</code></p>
 ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <code>--demo</code>. No tests were run; the data below is illustrative only.</div>' : ""}
 <div class="cards">
   <div class="card"><div class="n">${total}</div><div>total</div></div>
   <div class="card ok"><div class="n">${passed}</div><div>passed</div></div>
   <div class="card bad"><div class="n">${failed}</div><div>failed</div></div>
   ${skipped ? `<div class="card"><div class="n">${skipped}</div><div>skipped</div></div>` : ""}
-  <div class="card"><div class="n">${(totalMs / 1000).toFixed(1)}s</div><div>duration</div></div>
+  <div class="card"><div class="n">${(totalMs / 1000)
+      .toFixed(1)}s</div><div>duration</div></div>
 </div>
 <table>
   <thead><tr><th>Result</th><th>Test</th><th>Time</th><th>Exit</th><th>Output</th></tr></thead>
@@ -1891,18 +2042,21 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
 // extension job times out naming nothing. Chrome for Testing — which the tests
 // image pins — and Chromium both allow it.
 //
-// So this is an environment capability, not a defect, and the job SKIPS with the
-// browser named rather than failing. It cost a full host run of that job to
+// So this is an environment capability, not a defect, and the job SKIPS with
+// the browser named rather than failing. It cost a full host run of that job to
 // learn: the containerized suite passed it and local-run-tests.sh, which drives
 // the host's own Chrome, did not.
 function extensionCapableBrowser() {
-  const candidates = [process.env.CHROME_BIN, "chrome", "chromium", "chromium-browser",
+  log.debug("Entering extensionCapableBrowser().");
+  const candidates = [process.env.CHROME_BIN, "chrome", "chromium",
+      "chromium-browser",
                       "google-chrome"].filter(Boolean);
   for (const bin of candidates) {
     let out;
     try {
       out = execFileSync(bin, ["--version"],
-                         { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+                         { encoding: "utf8", stdio: ["ignore", "pipe",
+                          "ignore"] }).trim();
     } catch (e) {
       // Not on PATH under this name; try the next.
       continue;
@@ -1914,23 +2068,29 @@ function extensionCapableBrowser() {
     let resolved = bin;
     if (!path.isAbsolute(bin)) {
       try {
-        resolved = execFileSync("which", [bin], { encoding: "utf8" }).trim() || bin;
+        resolved = execFileSync("which", [bin], { encoding: "utf8" }).trim() ||
+            bin;
       } catch (e) {
-        // `which` is absent or the name is a shell builtin; the PATH name is the
-        // best we have, and Selenium resolves it the same way.
+        // `which` is absent or the name is a shell builtin; the PATH name is
+        // the best we have, and Selenium resolves it the same way.
         resolved = bin;
       }
     }
-    return { bin: resolved, version: out, capable: /Chrome for Testing|Chromium/i.test(out) };
+    log.debug("Leaving extensionCapableBrowser().");
+    return { bin: resolved, version: out,
+            capable: /Chrome for Testing|Chromium/i.test(out) };
   }
+  log.debug("Leaving extensionCapableBrowser().");
   return { bin: null, version: null, capable: false };
 }
 
 function renderJUnit(results, generatedAt) {
+  log.debug("Entering renderJUnit().");
   const total = results.length;
   const failures = results.filter((r) => !r.passed && !r.skipped).length;
   const skips = results.filter((r) => r.skipped).length;
-  const totalSec = (results.reduce((a, r) => a + r.durationMs, 0) / 1000).toFixed(3);
+  const totalSec = (results.reduce((a, r) => a + r.durationMs,
+      0) / 1000).toFixed(3);
   const cases = results
     .map((r) => {
       const time = (r.durationMs / 1000).toFixed(3);
@@ -1939,10 +2099,12 @@ function renderJUnit(results, generatedAt) {
         ? `<skipped message="${esc(r.reason || "skipped")}"/>`
         : r.passed
         ? ""
-        : `<failure message="exit ${esc(r.code)}">Test exited with status ${esc(r.code)}</failure>`;
+        : `<failure message="exit ${esc(r.code)}">Test exited with status ${esc(
+                                        r.code)}</failure>`;
       return `    <testcase classname="selenium" name="${esc(r.name)}" time="${time}">${body}<system-out>${sys}</system-out></testcase>`;
     })
     .join("\n");
+  log.debug("Leaving renderJUnit().");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <testsuites>
   <testsuite name="oauth2-oidc-debugger" tests="${total}" failures="${failures}" skipped="${skips}" time="${totalSec}" timestamp="${esc(generatedAt)}">
@@ -1953,16 +2115,22 @@ ${cases}
 }
 
 function writeReports(results, demo) {
+  log.debug("Entering writeReports().");
   const generatedAt = new Date().toISOString();
   fs.mkdirSync(RUN_DIR, { recursive: true });
-  fs.writeFileSync(path.join(RUN_DIR, "report.html"), renderHtml(results, generatedAt, demo));
-  fs.writeFileSync(path.join(RUN_DIR, "report.xml"), renderJUnit(results, generatedAt));
+  fs.writeFileSync(path.join(RUN_DIR, "report.html"), renderHtml(results,
+                   generatedAt, demo));
+  fs.writeFileSync(path.join(RUN_DIR, "report.xml"), renderJUnit(results,
+                   generatedAt));
   updateLatestPointer();
+  log.debug("Leaving writeReports().");
 }
 
 // Best-effort convenience pointer to the most recent run. Prefers a symlink;
-// falls back to a small text file where symlinks aren't permitted (e.g. Windows).
+// falls back to a small text file where symlinks aren't permitted (e.g.
+// Windows).
 function updateLatestPointer() {
+  log.debug("Entering updateLatestPointer().");
   const link = path.join(REPORT_DIR, "latest");
   try {
     if (fs.existsSync(link) || fs.lstatSync(link, { throwIfNoEntry: false })) {
@@ -1976,17 +2144,22 @@ function updateLatestPointer() {
   } catch (_) {
     fs.writeFileSync(path.join(REPORT_DIR, "latest.txt"), RUN_ID + "\n");
   }
+  log.debug("Leaving updateLatestPointer().");
 }
 
 function demoResults() {
+  log.debug("Entering demoResults().");
   const startedAt = new Date().toISOString();
   fs.mkdirSync(LOGS_DIR, { recursive: true });
+  log.debug("Leaving demoResults().");
   return buildJobs().map((j, i) => {
     const passed = i !== 2; // pretend one failed, for preview
     const output =
       (passed
         ? "Entering populateMetadata().\nFind oidc_discovery_endpoint.\n... (hundreds of lines in a real run) ...\nToken validated.\nTest completed successfully."
-        : "Entering populateMetadata().\n... (hundreds of lines in a real run) ...\nAssertionError: expected token to contain claim 'aud'") + "\n";
+        : "Entering populateMetadata().\n... (hundreds of lines in a real " +
+            "run) ...\nAssertionError: expected token to contain claim 'aud'") +
+            "\n";
     const result = {
       name: j.name,
       script: j.script,
@@ -2001,13 +2174,16 @@ function demoResults() {
       logPathFor(j.name, i),
       logHeader(j.name, j.script, startedAt) +
         output +
-        `\n===== RESULT: ${passed ? "PASS" : "FAIL"} (exit ${result.code}, ${(result.durationMs / 1000).toFixed(1)}s) =====\n`
+        `\n===== RESULT: ${passed ?
+            "PASS" : "FAIL"} (exit ${result.code}, ${(result.durationMs / 1000)
+            .toFixed(1)}s) =====\n`
     );
     return result;
   });
 }
 
 async function main() {
+  log.debug("Entering main().");
   const demo = process.argv.includes("--demo");
   let results;
 
@@ -2026,9 +2202,11 @@ async function main() {
         continue;
       }
       log.info(`===== [${i + 1}/${jobs.length}] ${job.name} =====`);
-      const r = await runJob(job, i); // sequential: keep streamed output readable
+      const r = await runJob(job,
+          i); // sequential: keep streamed output readable
       results.push(r);
-      log.info(`----- ${r.passed ? "PASS" : "FAIL"} (${(r.durationMs / 1000).toFixed(1)}s) → ${r.logFile}`);
+      log.info(`----- ${r.passed ? "PASS" : "FAIL"} (${(r.durationMs / 1000)
+               .toFixed(1)}s) → ${r.logFile}`);
     }
   }
 
@@ -2039,11 +2217,13 @@ async function main() {
   const passed = results.length - failed - skipped;
   const rel = path.relative(process.cwd(), RUN_DIR);
   log.info(`Report written to ${rel}/report.html (and report.xml, logs/)`);
-  log.info(`Latest run also at ${path.relative(process.cwd(), path.join(REPORT_DIR, "latest"))}`);
+  log.info(`Latest run also at ${path.relative(process.cwd(),
+           path.join(REPORT_DIR, "latest"))}`);
   log.info(`Summary: ${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`);
 
   // Don't fail the demo run; otherwise signal failures to the caller/CI.
   process.exit(demo ? 0 : failed > 0 ? 1 : 0);
+  log.debug("Leaving main().");
 }
 
 main();

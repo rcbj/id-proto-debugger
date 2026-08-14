@@ -85,18 +85,23 @@ var ALGS = {
 };
 var DEFAULT_ALG = "ES256";
 
-// Callers that return a promise turn this into a REJECTION rather than letting it
-// escape synchronously. A function whose contract is "returns a promise" but which
-// sometimes throws before returning one cannot be handled with `.catch()`, so a
-// misconfigured algorithm would take the page down instead of filling in a status
-// line — which is exactly what tests/dpop.js caught on its first run.
+// Callers that return a promise turn this into a REJECTION rather than letting
+// it escape synchronously. A function whose contract is "returns a promise" but
+// which sometimes throws before returning one cannot be handled with
+// `.catch()`, so a misconfigured algorithm would take the page down instead of
+// filling in a status line — which is exactly what tests/dpop.js caught on its
+// first run.
 function algOrThrow(alg) {
+  log.debug("Entering algOrThrow().");
   var spec = ALGS[alg || DEFAULT_ALG];
   if (!spec) {
-    throw new Error("DPoP: " + alg + " is not an algorithm this wallet can sign with. " +
-                    "RFC 9449 requires an asymmetric JWS algorithm; this page offers " +
+    throw new Error("DPoP: " + alg +
+                    " is not an algorithm this wallet can sign with. " +
+                    "RFC 9449 requires an asymmetric JWS algorithm; this " +
+                        "page offers " +
                     Object.keys(ALGS).join(" and ") + ".");
   }
+  log.debug("Leaving algOrThrow().");
   return spec;
 }
 
@@ -120,6 +125,7 @@ function generateKeyPair(alg) {
     log.debug("Leaving generateKeyPair(). Refused: " + e.message);
     return Promise.reject(e);
   }
+  log.debug("Leaving generateKeyPair().");
   return crypto.subtle.generateKey(spec.generate, true, ["sign", "verify"])
     .then(function (pair) {
       return Promise.all([
@@ -142,10 +148,12 @@ function generateKeyPair(alg) {
 }
 
 function publicOnly(jwk, spec) {
+  log.debug("Entering publicOnly().");
   var out = {};
   spec.publicMembers.forEach(function (m) {
     if (jwk[m] !== undefined) out[m] = jwk[m];
   });
+  log.debug("Leaving publicOnly().");
   return out;
 }
 
@@ -154,9 +162,20 @@ function publicOnly(jwk, spec) {
 // being used: RFC 9449 forbids a MAC, and a symmetric key has no public half to
 // put in the header at all.
 function algOfJwk(jwk) {
-  if (!jwk || typeof jwk !== "object") return "";
-  if (jwk.kty === "EC" && jwk.crv === "P-256") return "ES256";
-  if (jwk.kty === "RSA") return "RS256";
+  log.debug("Entering algOfJwk().");
+  if (!jwk || typeof jwk !== "object") {
+    log.debug("Leaving algOfJwk().");
+    return "";
+  }
+  if (jwk.kty === "EC" && jwk.crv === "P-256") {
+    log.debug("Leaving algOfJwk().");
+    return "ES256";
+  }
+  if (jwk.kty === "RSA") {
+    log.debug("Leaving algOfJwk().");
+    return "RS256";
+  }
+  log.debug("Leaving algOfJwk().");
   return "";
 }
 
@@ -194,14 +213,16 @@ function canonicalJwk(jwk) {
   var members = THUMBPRINT_MEMBERS[jwk.kty];
   if (!members) {
     throw new Error("cannot compute a JWK Thumbprint for kty " + jwk.kty +
-                    ": RFC 7638 defines the required members per key type and this is not one " +
+                    ": RFC 7638 defines the required members per key type " +
+                        "and this is not one " +
                     "of them.");
   }
   var missing = members.filter(function (m) {
     return jwk[m] === undefined || jwk[m] === null || jwk[m] === "";
   });
   if (missing.length) {
-    throw new Error("this " + jwk.kty + " key is missing " + missing.join(", ") +
+    throw new Error("this " + jwk.kty + " key is missing " +
+                    missing.join(", ") +
                     ", which RFC 7638 requires in the thumbprint input.");
   }
   // Built member by member in the specification's order rather than by sorting
@@ -216,6 +237,7 @@ function canonicalJwk(jwk) {
 function thumbprint(jwk) {
   log.debug("Entering thumbprint().");
   var canonical = canonicalJwk(jwk);
+  log.debug("Leaving thumbprint().");
   return crypto.subtle.digest("SHA-256", new TextEncoder().encode(canonical))
     .then(function (digest) {
       log.debug("Leaving thumbprint().");
@@ -250,7 +272,8 @@ function htuFor(url) {
   var scheme = parsed.protocol.toLowerCase();
   var host = parsed.hostname.toLowerCase();
   var port = parsed.port;
-  if ((scheme === "https:" && port === "443") || (scheme === "http:" && port === "80")) {
+  if ((scheme === "https:" && port === "443") || (scheme === "http:" &&
+      port === "80")) {
     port = "";
   }
   var htu = scheme + "//" + host + (port ? ":" + port : "") + parsed.pathname;
@@ -271,6 +294,7 @@ function athFor(accessToken) {
   for (var i = 0; i < bytes.length; i++) {
     bytes[i] = String(accessToken).charCodeAt(i) & 0x7f;
   }
+  log.debug("Leaving athFor().");
   return crypto.subtle.digest("SHA-256", bytes).then(function (digest) {
     log.debug("Leaving athFor().");
     return metadataClient.bytesToB64u(digest);
@@ -319,12 +343,15 @@ function proof(opts) {
   // the proof's freshness the SERVER's judgement rather than a matter of
   // trusting the client's clock.
   if (opts.nonce) payload.nonce = opts.nonce;
+  log.debug("Leaving proof().");
   return Promise.resolve(opts.accessToken ? athFor(opts.accessToken) : null)
     .then(function (ath) {
       if (ath) payload.ath = ath;
-      var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) + "." +
+      var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) +
+          "." +
                          metadataClient.utf8ToB64u(JSON.stringify(payload));
-      return crypto.subtle.importKey("jwk", key.privateJwk, spec.importAs, false, ["sign"])
+      return crypto.subtle.importKey("jwk", key.privateJwk, spec.importAs,
+                                     false, ["sign"])
         .then(function (imported) {
           return crypto.subtle.sign(spec.sign, imported,
             new TextEncoder().encode(signingInput));
@@ -347,6 +374,8 @@ function proof(opts) {
 // protocol error even though the bytes are identical, and a resource server
 // that accepts either has thrown away the binding.
 function authorizationHeader(accessToken) {
+  log.debug("Entering authorizationHeader().");
+  log.debug("Leaving authorizationHeader().");
   return "DPoP " + accessToken;
 }
 
@@ -358,10 +387,14 @@ function nonceRequested(status, body, headers) {
   log.debug("Entering nonceRequested(). status=" + status);
   var wanted = false;
   if (body && body.error === "use_dpop_nonce") wanted = true;
-  var authenticate = headers && (headers["www-authenticate"] || headers["WWW-Authenticate"]);
-  if (authenticate && /use_dpop_nonce/.test(String(authenticate))) wanted = true;
-  var nonce = headers ? (headers["dpop-nonce"] || headers["DPoP-Nonce"] || "") : "";
-  log.debug("Leaving nonceRequested(). wanted=" + wanted + ", supplied=" + (nonce ? "yes" : "no"));
+  var authenticate = headers && (headers["www-authenticate"] ||
+      headers["WWW-Authenticate"]);
+  if (authenticate && /use_dpop_nonce/.test(String(authenticate))) wanted =
+      true;
+  var nonce = headers ? (headers["dpop-nonce"] || headers["DPoP-Nonce"] ||
+      "") : "";
+  log.debug("Leaving nonceRequested(). wanted=" + wanted + ", supplied=" +
+            (nonce ? "yes" : "no"));
   return { wanted: wanted, nonce: String(nonce || "") };
 }
 
@@ -369,10 +402,16 @@ function nonceRequested(status, body, headers) {
 // a Headers object is case-insensitive while a plain object is not, and both
 // turn up here (the pages pass Headers, the tests pass objects).
 function nonceFromResponse(response) {
-  if (!response || !response.headers) return "";
+  log.debug("Entering nonceFromResponse().");
+  if (!response || !response.headers) {
+    log.debug("Leaving nonceFromResponse().");
+    return "";
+  }
   if (typeof response.headers.get === "function") {
+    log.debug("Leaving nonceFromResponse().");
     return response.headers.get("DPoP-Nonce") || "";
   }
+  log.debug("Leaving nonceFromResponse().");
   return response.headers["dpop-nonce"] || response.headers["DPoP-Nonce"] || "";
 }
 

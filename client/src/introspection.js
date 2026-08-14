@@ -1,7 +1,8 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var $ = require("jquery");
-var log = bunyan.createLogger({name: 'introspection', level: appconfig.logLevel});
+var log = bunyan.createLogger({name: 'introspection',
+    level: appconfig.logLevel});
 log.info("Log initialized. logLevel=" + log.level());
 
 var useFrontEnd = false;
@@ -14,22 +15,33 @@ function decodeJwtPayload(token) {
   log.debug("Entering decodeJwtPayload().");
   try {
     var parts = token.split('.');
-    if (parts.length < 2) return null;
+    if (parts.length < 2) {
+      log.debug("Leaving decodeJwtPayload().");
+      return null;
+    }
     var b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
     var pad = '==='.slice(0, (4 - b64.length % 4) % 4);
+    log.debug("Leaving decodeJwtPayload().");
     return JSON.parse(atob(b64 + pad));
   } catch (e) {
+    log.debug("Leaving decodeJwtPayload().");
     return null;
   }
   log.debug("Leaving decodeJwtPayload().");
 }
 
 function getCurrentSessionNonce() {
-  var idToken = localStorage.getItem('refresh_id_token') || localStorage.getItem('token_id_token');
+  log.debug("Entering getCurrentSessionNonce().");
+  var idToken = localStorage.getItem('refresh_id_token') ||
+      localStorage.getItem('token_id_token');
   if (!!idToken) {
     var payload = decodeJwtPayload(idToken);
-    if (payload && !!payload.nonce) return payload.nonce;
+    if (payload && !!payload.nonce) {
+      log.debug("Leaving getCurrentSessionNonce().");
+      return payload.nonce;
+    }
   }
+  log.debug("Leaving getCurrentSessionNonce().");
   return localStorage.getItem('nonce_field') || '';
 }
 
@@ -71,23 +83,32 @@ function getParameterByName(name, url) {
 function callIntrospectionEndpoint() {
   log.debug("Entering callIntrospectionEndpoint().");
 
-  var introspection_endpoint = document.getElementById("introspection_endpoint").value;
-  var introspection_token = document.getElementById("introspection_token").value;
-  var introspection_token_type_hint = document.getElementById("introspection_token_type_hint").value;
-  var introspection_authentication_type = document.getElementById("introspection_authentication_type").value;
-  var introspection_client_id = document.getElementById("introspection_client_id").value;
-  var introspection_client_secret = document.getElementById("introspection_client_secret").value;
-  var introspection_bearer_token = document.getElementById("introspection_bearer_token").value;
+  var introspection_endpoint =
+      document.getElementById("introspection_endpoint").value;
+  var introspection_token =
+      document.getElementById("introspection_token").value;
+  var introspection_token_type_hint =
+      document.getElementById("introspection_token_type_hint").value;
+  var introspection_authentication_type =
+      document.getElementById("introspection_authentication_type").value;
+  var introspection_client_id =
+      document.getElementById("introspection_client_id").value;
+  var introspection_client_secret =
+      document.getElementById("introspection_client_secret").value;
+  var introspection_bearer_token =
+      document.getElementById("introspection_bearer_token").value;
 
   var headers = {
         "Authorization": introspection_authentication_type == "basic_auth" ?
-          "Basic " + btoa(introspection_client_id + ":" + introspection_client_secret) :
+          "Basic " + btoa(introspection_client_id + ":" +
+              introspection_client_secret) :
           "Bearer " + introspection_bearer_token,
         "Content-Type": "application/json"
   };
   var body = {
     token: introspection_token,
-    token_type_hint: introspection_token_type_hint != "" ? introspection_token_type_hint : undefined,
+    token_type_hint: introspection_token_type_hint != "" ?
+        introspection_token_type_hint : undefined,
   }
   var url_ = "";
   log.debug("Making introspection call. useFrontEnd=" + useFrontEnd);
@@ -111,7 +132,8 @@ function callIntrospectionEndpoint() {
     success: introspectionSuccess,
     error: introspectionError
   });
-  recordOperation('Introspection Endpoint', introspection_token_type_hint || 'token', introspection_client_id);
+  recordOperation('Introspection Endpoint', introspection_token_type_hint ||
+                  'token', introspection_client_id);
   writeValuesToLocalStorage();
   log.debug("Entering callIntrospectionEndpoint().");
   log.debug("Leaving callIntrospectionEndpoint().");
@@ -131,7 +153,8 @@ function introspectionError(request, status, error) {
     $("#introspection_output").val(JSON.stringify(errorReport));
   } catch (e) {
     log.error("Error occurred while generating error report: " + e.stack);
-    $("#introspection_output").val("Error occurred while generating error report: " + e.stack);
+    $("#introspection_output").val("Error occurred while generating " +
+      "error report: " + e.stack);
   }
   log.debug("Leaving introspectionError().");
 }
@@ -142,12 +165,15 @@ function introspectionSuccess(data, textStatus, jqXHR) {
   log.debug('Introspection textStatus: ' + JSON.stringify(textStatus));
   log.debug('Introspection Endpoint Response: ' + JSON.stringify(data));
   log.debug('Introspection request: ' + JSON.stringify(jqXHR));
-  log.debug('Introspection Response Content-Type: ' + jqXHR.getResponseHeader("Content-Type"));
-  log.debug('Introspection Headers: ' + JSON.stringify(jqXHR.getAllResponseHeaders()));
+  log.debug('Introspection Response Content-Type: ' +
+            jqXHR.getResponseHeader("Content-Type"));
+  log.debug('Introspection Headers: ' +
+            JSON.stringify(jqXHR.getAllResponseHeaders()));
   var responseContentType = jqXHR.getResponseHeader("Content-Type");
   if (responseContentType.includes('application/json')) {
     log.debug('plaintext response detected, no signature, no encryption');
-    log.debug('Introspection Endpoint Response: ' + JSON.stringify(data, null, 2));
+    log.debug('Introspection Endpoint Response: ' + JSON.stringify(data, null,
+              2));
     $("#introspection_output").val(JSON.stringify(data,null,2));
   } else {
     log.error('Unknown response format.');
@@ -159,22 +185,32 @@ function introspectionSuccess(data, textStatus, jqXHR) {
 function loadValuesFromLocalStorage() {
   log.debug("Entering loadValuesFromLocalStorage().");
   if(localStorage) {
-    document.getElementById("introspection_endpoint").value = localStorage.getItem("introspection_endpoint");
+    document.getElementById("introspection_endpoint").value =
+                            localStorage.getItem("introspection_endpoint");
 
     const type = getParameterByName('type');
     if (type == 'access') {
-      document.getElementById("introspection_token").value = localStorage.getItem("token_access_token");
-      document.getElementById("introspection_token_type_hint").value = "access_token";
+      document.getElementById("introspection_token").value =
+                              localStorage.getItem("token_access_token");
+      document.getElementById("introspection_token_type_hint").value =
+                              "access_token";
     } else if (type == 'refresh') {
-      document.getElementById("introspection_token").value = localStorage.getItem("token_refresh_token");
-      document.getElementById("introspection_token_type_hint").value = "refresh_token";
+      document.getElementById("introspection_token").value =
+                              localStorage.getItem("token_refresh_token");
+      document.getElementById("introspection_token_type_hint").value =
+                              "refresh_token";
     } else if (type == 'refresh_access') {
-      document.getElementById("introspection_token").value = localStorage.getItem("refresh_access_token");
-      document.getElementById("introspection_token_type_hint").value = "access_token";
+      document.getElementById("introspection_token").value =
+                              localStorage.getItem("refresh_access_token");
+      document.getElementById("introspection_token_type_hint").value =
+                              "access_token";
     } else if (type == 'refresh_refresh') {
-      document.getElementById("introspection_token").value = localStorage.getItem("refresh_refresh_token");
-      document.getElementById("introspection_token_type_hint").value = "refresh_token";
-    } else if (type == 'history_access' || type == 'history_refresh' || type == 'history_id_token') {
+      document.getElementById("introspection_token").value =
+                              localStorage.getItem("refresh_refresh_token");
+      document.getElementById("introspection_token_type_hint").value =
+                              "refresh_token";
+    } else if (type == 'history_access' || type == 'history_refresh' ||
+               type == 'history_id_token') {
       var generation = parseInt(getParameterByName('generation'), 10);
       var history = [];
       try {
@@ -182,16 +218,22 @@ function loadValuesFromLocalStorage() {
       } catch (e) {
         log.error('Failed to parse token_history: ' + e);
       }
-      if (!isNaN(generation) && generation >= 0 && generation < history.length) {
+      if (!isNaN(generation) && generation >= 0 &&
+          generation < history.length) {
         var entry = history[generation];
         if (type == 'history_access') {
-          document.getElementById("introspection_token").value = entry.access_token || '';
-          document.getElementById("introspection_token_type_hint").value = "access_token";
+          document.getElementById("introspection_token").value =
+                                  entry.access_token || '';
+          document.getElementById("introspection_token_type_hint").value =
+                                  "access_token";
         } else if (type == 'history_refresh') {
-          document.getElementById("introspection_token").value = entry.refresh_token || '';
-          document.getElementById("introspection_token_type_hint").value = "refresh_token";
+          document.getElementById("introspection_token").value =
+                                  entry.refresh_token || '';
+          document.getElementById("introspection_token_type_hint").value =
+                                  "refresh_token";
         } else if (type == 'history_id_token') {
-          document.getElementById("introspection_token").value = entry.id_token || '';
+          document.getElementById("introspection_token").value =
+                                  entry.id_token || '';
           document.getElementById("introspection_token_type_hint").value = "";
         }
       } else {
@@ -202,21 +244,30 @@ function loadValuesFromLocalStorage() {
     }
   }
 
-  document.getElementById("introspection_client_id").value = localStorage.getItem("introspection_client_id");
-  document.getElementById("introspection_bearer_token").value = localStorage.getItem("introspection_bearer_token");
-  $("#introspection_initiateFromFrontEnd").prop("checked", getLSBooleanItem("introspection_initiateFromFrontEnd"));
-  $("#introspection_initiateFromBackEnd").prop("checked", getLSBooleanItem("introspection_initiateFromBackEnd"));
+  document.getElementById("introspection_client_id").value =
+                          localStorage.getItem("introspection_client_id");
+  document.getElementById("introspection_bearer_token").value =
+                          localStorage.getItem("introspection_bearer_token");
+  $("#introspection_initiateFromFrontEnd").prop("checked",
+    getLSBooleanItem("introspection_initiateFromFrontEnd"));
+  $("#introspection_initiateFromBackEnd").prop("checked",
+    getLSBooleanItem("introspection_initiateFromBackEnd"));
   log.debug("Leaving loadValuesFromLocalStorage().");
 }
 
 function writeValuesToLocalStorage() {
   log.debug("Entering writeValuesToLocalStorage().");
   if (localStorage) {
-    localStorage.setItem("introspection_endpoint", document.getElementById("introspection_endpoint").value);
-    localStorage.setItem("introspection_client_id", document.getElementById("introspection_client_id").value);
-    localStorage.setItem("introspection_bearer_token", document.getElementById("introspection_bearer_token").value);
-    localStorage.setItem("introspection_initiateFromFrontEnd", $("#introspection_initiateFromFrontEnd").is(":checked"));
-    localStorage.setItem("introspection_initiateFromBackEnd", $("#introspection_initiateFromBackEnd").is(":checked"));
+    localStorage.setItem("introspection_endpoint",
+        document.getElementById("introspection_endpoint").value);
+    localStorage.setItem("introspection_client_id",
+        document.getElementById("introspection_client_id").value);
+    localStorage.setItem("introspection_bearer_token",
+        document.getElementById("introspection_bearer_token").value);
+    localStorage.setItem("introspection_initiateFromFrontEnd",
+        $("#introspection_initiateFromFrontEnd").is(":checked"));
+    localStorage.setItem("introspection_initiateFromBackEnd",
+        $("#introspection_initiateFromBackEnd").is(":checked"));
   }
   log.debug("Leaving writeValuesToLocalStorage().");
 }
@@ -246,28 +297,34 @@ $(document).on("change", "#introspection_authentication_type", function() {
 });
 
 window.onload = function() {
+  log.debug("Entering onload().");
   log.debug("Entering window.onload() function.");
   loadValuesFromLocalStorage();
   // Static build (appconfig.backendAvailable === false): no api backend, so
   // force the frontend and disable (gray out) the backend initiation option.
   if (appconfig.backendAvailable === false) {
     $("#introspection_initiateFromFrontEnd").prop("checked", true);
-    $("#introspection_initiateFromBackEnd").prop("checked", false).prop("disabled", true);
+    $("#introspection_initiateFromBackEnd").prop("checked",
+      false).prop("disabled", true);
   }
   $("#introspection_authentication_type").trigger("change");
-  var frontEndInitiated = $("#introspection_initiateFromFrontEnd").is(":checked");
+  var frontEndInitiated =
+      $("#introspection_initiateFromFrontEnd").is(":checked");
   if(frontEndInitiated) {
     useFrontEnd = true;
   } else {
     useFrontEnd = false;
   }
-  log.debug("useFrontEnd=" + useFrontEnd + ", typeof(useFrontEnd)=" + typeof(useFrontEnd));
+  log.debug("useFrontEnd=" + useFrontEnd + ", typeof(useFrontEnd)=" +
+            typeof(useFrontEnd));
   log.debug("Leaving window.onload() function.");
+  log.debug("Leaving onload().");
 }
 
 function setInitiateFromEnd(which_end) {
   log.debug("Entering setInitiateFromEnd(). which_end=" + which_end);
-  var frontEndInitiated = $("#introspection_initiateFromFrontEnd").is(":checked");
+  var frontEndInitiated =
+      $("#introspection_initiateFromFrontEnd").is(":checked");
   var backEndInitiated = $("#introspection_initiateFromBackEnd").is(":checked");
   log.debug("typeof(frontEndInitiated): " + typeof(frontEndInitiated));
   if(frontEndInitiated) {
@@ -282,6 +339,8 @@ function setInitiateFromEnd(which_end) {
 
 function getLSBooleanItem(key)
 {
+  log.debug("Entering getLSBooleanItem().");
+  log.debug("Leaving getLSBooleanItem().");
   return localStorage.getItem(key) === 'true';
 }
 

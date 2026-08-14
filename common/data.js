@@ -5,14 +5,16 @@ const log = bunyan.createLogger({ name: 'common',
 log.info("Log initialized. logLevel=" + log.level());
 
 function convertToOAuth2Format(formData) {
-  log.debug("Entering convertToOAuth2Format(): formData=" + JSON.stringify(formData));
+  log.debug("Entering convertToOAuth2Format(): formData=" +
+            JSON.stringify(formData));
   try {
     const body = formData;
     log.debug('body: ' + JSON.stringify(body));
     var grantType = body.grant_type;  				//=authorization_code
     var clientId = body.client_id;  				//=5qqbus6ukft6srjgqlijvk2465
     var code = body.code; 					//=2a795117-43d5-4d4c-bdd6-0fc9632c0594
-    var redirectUri = body.redirect_uri; 			//=http%3A%2F%2Flocalhost%3A3000%2Fcallback
+    var redirectUri =
+        body.redirect_uri; 			//=http%3A%2F%2Flocalhost%3A3000%2Fcallback
     var scope = body.scope || ""; 				//=openid+email+phone+profile
     var tokenEndpoint = body.token_endpoint; 			//=https%3A%2F%2Fblogpost1.auth.us-west-2.amazoncognito.com%2Foauth2%2Ftoken
     var sslValidate = body.sslValidate; 			//=true
@@ -140,6 +142,7 @@ function convertToOAuth2Format(formData) {
   } catch (e) {
     log.error("An error occurred: " + e);
   }
+  log.debug("Leaving convertToOAuth2Format().");
 }
 
 module.exports = {

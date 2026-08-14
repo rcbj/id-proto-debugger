@@ -35,21 +35,30 @@ var waitTime = appconfig.waitTime;
 var callWait = Math.max(waitTime, 20000);
 
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var el = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(el), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", el);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", el);
   await el.click();
+  log.debug("Leaving click().");
 }
 async function setInput(driver, id, text) {
+  log.debug("Entering setInput().");
   var el = driver.findElement(By.id(id));
   await el.clear();
   if (text) await el.sendKeys(text);
+  log.debug("Leaving setInput().");
 }
 async function selectValue(driver, id, value) {
+  log.debug("Entering selectValue().");
   await new Select(driver.findElement(By.id(id))).selectByValue(value);
+  log.debug("Leaving selectValue().");
 }
 function btn(page, fn) {
+  log.debug("Entering btn().");
+  log.debug("Leaving btn().");
   return By.xpath("//input[contains(@onclick, \"" + page + "." + fn + "(\")]");
 }
 
@@ -63,29 +72,38 @@ async function historyRows(driver) {
     "for (var i = 0; i < rows.length; i++) {" +
     "  var c = rows[i].getElementsByTagName('td');" +
     "  out.push({ n: c[0].textContent.trim(), time: c[1].textContent.trim()," +
-    "             operation: c[2].textContent.trim(), version: c[3].textContent.trim()," +
-    "             user: c[4].textContent.trim(), endpoint: c[5].textContent.trim()," +
-    "             result: c[6].textContent.trim(), resultClass: c[6].className });" +
+    "             operation: c[2].textContent.trim(), version: " +
+        "c[3].textContent.trim()," +
+    "             user: c[4].textContent.trim(), endpoint: " +
+        "c[5].textContent.trim()," +
+    "             result: c[6].textContent.trim(), resultClass: " +
+        "c[6].className });" +
     "}" +
     "return out;");
 }
 async function waitForRows(driver, count, what) {
+  log.debug("Entering waitForRows().");
   await driver.wait(async function () {
     return (await historyRows(driver)).length >= count;
   }, callWait, what);
+  log.debug("Leaving waitForRows().");
   return historyRows(driver);
 }
 async function waitForResult(driver, index, prefix, what) {
+  log.debug("Entering waitForResult().");
   await driver.wait(async function () {
     var rows = await historyRows(driver);
     return rows.length > index && rows[index].result.indexOf(prefix) === 0;
   }, callWait, what);
+  log.debug("Leaving waitForResult().");
   return historyRows(driver);
 }
 
 async function openTools(driver) {
+  log.debug("Entering openTools().");
   await driver.get(baseUrl + "/wstrust_tools.html");
   await driver.wait(until.elementLocated(By.id('pane_history')), waitTime);
+  log.debug("Leaving openTools().");
 }
 
 // A request the STS mock will accept (or refuse, with password "invalid").
@@ -93,7 +111,8 @@ async function configureRequest(driver, opts) {
   log.debug("Entering configureRequest().");
   await selectValue(driver, 'wst_trust_version', opts.version);
   await selectValue(driver, 'wst_operation', opts.operation);
-  await setInput(driver, 'wst_sts_url', opts.stsUrl === undefined ? stsUrl : opts.stsUrl);
+  await setInput(driver, 'wst_sts_url', opts.stsUrl === undefined ?
+                 stsUrl : opts.stsUrl);
   await selectValue(driver, 'wst_cred_mode', 'usernametoken');
   await setInput(driver, 'wst_username', opts.user || 'wstrust');
   await setInput(driver, 'wst_password', opts.password || 'wstrust');
@@ -111,63 +130,86 @@ async function operationHistoryActivities(driver) {
 
   // ---- The pane itself ----------------------------------------------------
   log.info("=== Operations History pane ===");
-  var empty = await driver.findElement(By.css('#wst_operation_history .saml-history-empty')).getText();
-  assert.ok(empty.indexOf('No STS calls recorded') !== -1, "The empty log should say so. Found: " + empty);
+  var empty = await driver.findElement(By.css('#wst_operation_history ' +
+      '.saml-history-empty')).getText();
+  assert.ok(empty.indexOf('No STS calls recorded') !== -1,
+            "The empty log should say so. Found: " + empty);
   log.info("[pane] OK — present and empty.");
 
   // ---- Failure before the request leaves the browser ----------------------
   log.info("=== Recording a pre-flight failure ===");
-  await configureRequest(driver, { version: '1.3', operation: 'issue', stsUrl: '' });
+  await configureRequest(driver, { version: '1.3', operation: 'issue',
+                         stsUrl: '' });
   await click(driver, btn('wstrust_tools', 'callSts'));
-  var rows = await waitForRows(driver, 1, "the failed attempt was not recorded.");
-  assert.ok(rows[0].result.indexOf('Failure') === 0, "expected a failure, got: " + rows[0].result);
-  assert.ok(rows[0].result.indexOf('no STS endpoint') !== -1, "the reason is missing: " + rows[0].result);
-  assert.strictEqual(rows[0].operation, 'Issue', "wrong operation: " + rows[0].operation);
-  assert.strictEqual(rows[0].version, '1.3', "wrong WS-Trust version: " + rows[0].version);
+  var rows = await waitForRows(driver, 1,
+      "the failed attempt was not recorded.");
+  assert.ok(rows[0].result.indexOf('Failure') === 0,
+            "expected a failure, got: " + rows[0].result);
+  assert.ok(rows[0].result.indexOf('no STS endpoint') !== -1,
+            "the reason is missing: " + rows[0].result);
+  assert.strictEqual(rows[0].operation, 'Issue', "wrong operation: " +
+                     rows[0].operation);
+  assert.strictEqual(rows[0].version, '1.3', "wrong WS-Trust version: " +
+                     rows[0].version);
   assert.strictEqual(rows[0].user, 'wstrust', "wrong user: " + rows[0].user);
-  assert.strictEqual(rows[0].resultClass, 'saml-bad', "a failure should be styled as one.");
-  assert.ok(/^\d{4}-\d{2}-\d{2}/.test(rows[0].time), "no timestamp recorded: " + rows[0].time);
-  log.info("[failure] OK — recorded with version, operation, user, and reason.");
+  assert.strictEqual(rows[0].resultClass, 'saml-bad',
+                     "a failure should be styled as one.");
+  assert.ok(/^\d{4}-\d{2}-\d{2}/.test(rows[0].time), "no timestamp recorded: " +
+            rows[0].time);
+  log.info("[failure] OK — recorded with version, operation, user, " +
+           "and reason.");
 
   // ---- A real Issue against the STS mock: Sent -> Success -----------------
   log.info("=== Issue against the STS (Sent -> Success) ===");
-  await configureRequest(driver, { version: '1.4', operation: 'issue', user: 'wstrust' });
+  await configureRequest(driver, { version: '1.4', operation: 'issue',
+                         user: 'wstrust' });
   await click(driver, btn('wstrust_tools', 'callSts'));
   // The call navigates to the response page, which resolves the entry.
   await driver.wait(until.urlContains('wstrust_response.html'), callWait,
     "the browser did not land on the response page.");
   await driver.wait(until.elementLocated(By.id('pane_history')), waitTime);
-  rows = await waitForResult(driver, 0, 'Success', "the Issue was not resolved to Success.");
-  assert.strictEqual(rows[0].operation, 'Issue', "wrong operation: " + rows[0].operation);
-  assert.strictEqual(rows[0].version, '1.4', "wrong WS-Trust version: " + rows[0].version);
+  rows = await waitForResult(driver, 0, 'Success',
+      "the Issue was not resolved to Success.");
+  assert.strictEqual(rows[0].operation, 'Issue', "wrong operation: " +
+                     rows[0].operation);
+  assert.strictEqual(rows[0].version, '1.4', "wrong WS-Trust version: " +
+                     rows[0].version);
   assert.strictEqual(rows[0].user, 'wstrust', "wrong user: " + rows[0].user);
   assert.ok(rows[0].result.indexOf('token issued') !== -1,
     "the success detail should say a token came back: " + rows[0].result);
-  assert.strictEqual(rows[0].resultClass, 'saml-ok', "a success should be styled as one.");
+  assert.strictEqual(rows[0].resultClass, 'saml-ok',
+                     "a success should be styled as one.");
   assert.strictEqual(rows.length, 2, "expected 2 entries, got " + rows.length);
-  log.info("[issue] OK — dispatched as Sent and resolved to Success on the response page.");
+  log.info("[issue] OK — dispatched as Sent and resolved to Success on the " +
+           "response page.");
 
   // The response page shows the same shared log.
   var respRows = await historyRows(driver);
-  assert.strictEqual(respRows.length, 2, "the response page should show the shared log.");
+  assert.strictEqual(respRows.length, 2,
+                     "the response page should show the shared log.");
   log.info("[response page] OK — carries the same log.");
 
   // ---- A refused Issue: Sent -> Failure with the SOAP Fault ---------------
   log.info("=== Refused Issue (Sent -> Failure) ===");
   await openTools(driver);
-  await configureRequest(driver, { version: '1.4', operation: 'issue', user: 'wstrust', password: 'invalid' });
+  await configureRequest(driver, { version: '1.4', operation: 'issue',
+                         user: 'wstrust', password: 'invalid' });
   await click(driver, btn('wstrust_tools', 'callSts'));
   await driver.wait(until.urlContains('wstrust_response.html'), callWait,
     "the browser did not land on the response page for the refused call.");
   await driver.wait(until.elementLocated(By.id('pane_history')), waitTime);
-  rows = await waitForResult(driver, 0, 'Failure', "the refused Issue was not resolved to Failure.");
+  rows = await waitForResult(driver, 0, 'Failure',
+      "the refused Issue was not resolved to Failure.");
   assert.ok(rows[0].result.indexOf('SOAP Fault') !== -1,
     "the STS's fault should be recorded: " + rows[0].result);
-  assert.strictEqual(rows[0].resultClass, 'saml-bad', "a refusal should be styled as a failure.");
-  assert.strictEqual(rows.length, 3, "resolving must update the entry, not append one.");
+  assert.strictEqual(rows[0].resultClass, 'saml-bad',
+                     "a refusal should be styled as a failure.");
+  assert.strictEqual(rows.length, 3,
+                     "resolving must update the entry, not append one.");
   assert.ok(rows[1].result.indexOf('Success') === 0,
     "resolving must not disturb the earlier entry: " + rows[1].result);
-  log.info("[refusal] OK — a SOAP Fault is recorded as a Failure with its reason.");
+  log.info("[refusal] OK — a SOAP Fault is recorded as a Failure with " +
+           "its reason.");
 
   // Redisplaying the same exchange must not resolve anything again.
   await driver.navigate().refresh();
@@ -176,7 +218,8 @@ async function operationHistoryActivities(driver) {
   assert.strictEqual(again.map(function (r) { return r.result; }).join('|'),
     rows.map(function (r) { return r.result; }).join('|'),
     "redisplaying a stored exchange must not re-resolve the log.");
-  log.info("[idempotence] OK — a redisplayed exchange resolves nothing further.");
+  log.info("[idempotence] OK — a redisplayed exchange resolves " +
+           "nothing further.");
 
   // ---- Clearing is shared across both pages -------------------------------
   await click(driver, btn('wstrust_response', 'clearOperationHistory'));
@@ -197,10 +240,15 @@ async function test() {
   options.addArguments("--no-sandbox");
   options.addArguments("--disable-dev-shm-usage");
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
-  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" + baseUrl.replace(/\/+$/, ""));
-  options.addArguments("--user-data-dir=/tmp/wstrust-history-chrome-" + Date.now());
-  const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
+                       baseUrl.replace(/\/+$/, ""));
+  options.addArguments("--user-data-dir=/tmp/wstrust-history-chrome-" +
+                       Date.now());
+  const driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).build();
 
   try {
     log.info("Starting Test run. STS=" + stsUrl);
@@ -219,12 +267,17 @@ async function test() {
 const program = new Command();
 program
   .name('wstrust_operation_history')
-  .description("Run the WS-Trust Operations History UI test (needs the STS mock).")
-  .addOption(new Option("-u, --url <url>", "Set base URL.").makeOptionMandatory())
-  .addOption(new Option("-b, --browser", "Display browser (only works within device)."))
+  .description("Run the WS-Trust Operations History UI test (needs the " +
+      "STS mock).")
+  .addOption(new Option("-u, --url <url>",
+      "Set base URL.").makeOptionMandatory())
+  .addOption(new Option("-b, --browser",
+      "Display browser (only works within device)."))
   .action((options) => {
-    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl = options.url; }
-    if (!!options.browser) { log.info("Using browser. headless = false."); headless = false; }
+    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl =
+        options.url; }
+    if (!!options.browser) { log.info("Using browser. " +
+        "headless = false."); headless = false; }
   });
 program.parse(process.argv).opts();
 

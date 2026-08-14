@@ -5,8 +5,8 @@
 //
 // OID4VCI's Appendix H describes several ways a credential gets into a wallet.
 // They are not different protocols — they differ in who starts, how the wallet
-// learns what is on offer, and which grant authorizes it — so the choice is made
-// once here and every later page follows it.
+// learns what is on offer, and which grant authorizes it — so the choice is
+// made once here and every later page follows it.
 //
 // The buttons are generated from the use-case list in sd_jwt_vc.js so this page
 // cannot drift from the badge the other pages show. A use case that is not
@@ -25,8 +25,10 @@ var log = bunyan.createLogger({ name: 'vc_issuance_0',
 // Where each use case sends the user once it is chosen. The offer-based ones
 // start at the issuer, not at the wallet — that is the whole point of them.
 var STARTS = {
-  "wallet-initiated": { url: "/vc-issuance-1.html", cta: "Start at the wallet" },
-  "offer-same-device": { issuerPath: "/issuer", cta: "Go to the issuer's web page" },
+  "wallet-initiated": { url: "/vc-issuance-1.html",
+                       cta: "Start at the wallet" },
+  "offer-same-device": { issuerPath: "/issuer",
+                        cta: "Go to the issuer's web page" },
   // Cross-device: the End-User is standing in front of the issuer's screen, and
   // what it shows is a QR code — so go straight to the screen that displays one
   // rather than to the issuer's front page.
@@ -36,15 +38,28 @@ var STARTS = {
                       cta: "Show the issuer's QR code" }
 };
 
-function esc(v) { return metadataClient.escapeHtmlText(v); }
+function esc(v) {
+  log.debug("Entering esc().");
+  log.debug("Leaving esc().");
+  return metadataClient.escapeHtmlText(v);
+}
 
-function el(id) { return document.getElementById(id); }
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
+}
 
 function status(text, cls) {
+  log.debug("Entering status().");
   var e = el("vc_usecase_status");
-  if (!e) return;
+  if (!e) {
+    log.debug("Leaving status().");
+    return;
+  }
   e.textContent = text;
   e.className = "vc-note vc-status" + (cls ? " " + cls : "");
+  log.debug("Leaving status().");
 }
 
 // The issuer's web page, derived from the configured credential issuer. For the
@@ -67,19 +82,24 @@ function buttonHtml(uc, current) {
   if (!uc.available) classes.push("vc-usecase-soon");
   if (uc.id === current.id) classes.push("vc-usecase-current");
   var html =
-    '<button type="button" class="' + classes.join(" ") + '" id="vc_usecase_' + esc(uc.id) + '"' +
-    (uc.available ? ' onclick="return vcissuance0.choose(\'' + esc(uc.id) + '\');"' : ' disabled="disabled"') +
+    '<button type="button" class="' + classes.join(" ") + '" id="vc_usecase_' +
+        esc(uc.id) + '"' +
+    (uc.available ? ' onclick="return vcissuance0.choose(\'' + esc(uc.id) +
+     '\');"' : ' disabled="disabled"') +
     '>' +
       '<span class="vc-usecase-head">' +
         '<span class="vc-usecase-spec">' + esc(uc.spec) + '</span>' +
         '<span class="vc-usecase-title">' + esc(uc.title) + '</span>' +
-        (uc.id === current.id ? '<span class="vc-usecase-flag">currently selected</span>' : '') +
-        (uc.available ? '' : '<span class="vc-usecase-flag vc-usecase-flag-soon">not implemented yet</span>') +
+        (uc.id === current.id ?
+         '<span class="vc-usecase-flag">currently selected</span>' : '') +
+        (uc.available ? '' : '<span class="vc-usecase-flag ' +
+         'vc-usecase-flag-soon">not implemented yet</span>') +
       '</span>' +
       '<span class="vc-usecase-summary">' + esc(uc.summary) + '</span>' +
       '<span class="vc-usecase-detail">' + esc(uc.detail) + '</span>' +
       '<span class="vc-usecase-mechanics">' + esc(uc.mechanics) + '</span>' +
-      (uc.available ? '<span class="vc-usecase-cta">' + esc(start.cta || "Choose this") + ' &rarr;</span>' : '') +
+      (uc.available ? '<span class="vc-usecase-cta">' + esc(start.cta ||
+       "Choose this") + ' &rarr;</span>' : '') +
     '</button>';
   log.debug("Leaving buttonHtml().");
   return html;
@@ -95,7 +115,8 @@ function render() {
     }).join("");
   }
   status("Currently selected: " + current.spec + " · " + current.label +
-         ". Choosing another one only changes how the issuance starts — the credential issuer and client " +
+         ". Choosing another one only changes how the issuance starts — the " +
+             "credential issuer and client " +
          "settings you have already configured stay as they are.", "");
   log.debug("Leaving render().");
 }
@@ -107,6 +128,7 @@ function choose(id) {
   var uc = sdJwtVc.setUseCase(id);
   if (!uc) {
     status("That use case is not one this workflow knows about.", "vc-bad");
+    log.debug("Leaving choose().");
     return false;
   }
   // A previous run's offer does not belong to this one.
@@ -115,9 +137,13 @@ function choose(id) {
   if ((STARTS[uc.id] || {}).issuerPath) {
     var url = issuerPageUrl(uc.id);
     if (!url) {
-      status("Set the credential issuer first (step 1 has the field) — the issuer's web page is where an " +
-             "offer comes from, and this workflow does not know where it is yet.", "vc-bad");
-      window.setTimeout(function () { window.location.href = "/vc-issuance-1.html"; }, 2500);
+      status("Set the credential issuer first (step 1 has the field) — the " +
+             "issuer's web page is where an " +
+             "offer comes from, and this workflow does not know where " +
+                 "it is yet.", "vc-bad");
+      window.setTimeout(function () { window.location.href =
+                        "/vc-issuance-1.html"; }, 2500);
+      log.debug("Leaving choose().");
       return false;
     }
     status("Taking you to the issuer at " + url + " …", "vc-pending");

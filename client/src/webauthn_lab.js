@@ -5,8 +5,8 @@
 // authenticator performs a real ceremony and every artifact is genuine.
 //
 // The Lab and the Analyzer differ in exactly one thing — where the bytes came
-// from — so the decode panes are shared (./webauthn_panes) and only the ceremony
-// belongs here.
+// from — so the decode panes are shared (./webauthn_panes) and only the
+// ceremony belongs here.
 //
 // **The RP ID is not a free field, and the page says why.** WebAuthn ties the
 // ceremony to the calling origin: the RP ID must be this origin's host or a
@@ -35,32 +35,37 @@ var appconfig = require(process.env.CONFIG_FILE);
 var webauthn = require("./webauthn");
 var panes = require("./webauthn_panes");
 
-var log = bunyan.createLogger({ name: "webauthn_lab", level: appconfig.logLevel });
+var log = bunyan.createLogger({ name: "webauthn_lab",
+    level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
 var $ = panes.byId;
 var el = panes.el;
 var status = panes.status;
 
-// The credentials this page has created, by credential id: the public key (so an
-// assertion can be verified) and the sign count last seen (so a regression can
-// be noticed). Public keys only — a WebAuthn private key never leaves the
+// The credentials this page has created, by credential id: the public key (so
+// an assertion can be verified) and the sign count last seen (so a regression
+// can be noticed). Public keys only — a WebAuthn private key never leaves the
 // authenticator, so nothing here is covered by the key-material opt-out rule.
 var STORE = "webauthn_lab_credentials";
 var HANDOFF = "webauthn_analyzer_input";
 
 function loadCredentials() {
+  log.debug("Entering loadCredentials().");
   try {
+    log.debug("Leaving loadCredentials().");
     return JSON.parse(localStorage.getItem(STORE) || "{}");
   } catch (e) {
-    // Unreadable store: start again rather than refusing to run. Every entry can
-    // be recreated by registering again.
+    // Unreadable store: start again rather than refusing to run. Every entry
+    // can be recreated by registering again.
     log.warn("Could not read " + STORE + ": " + e.message);
+    log.debug("Leaving loadCredentials().");
     return {};
   }
 }
 
 function saveCredentials(creds) {
+  log.debug("Entering saveCredentials().");
   try {
     localStorage.setItem(STORE, JSON.stringify(creds));
   } catch (e) {
@@ -68,21 +73,28 @@ function saveCredentials(creds) {
     // result is on screen; only reuse on a later visit is lost.
     log.warn("Could not store the credential: " + e.message);
   }
+  log.debug("Leaving saveCredentials().");
 }
 
 function randomBytes(n) {
+  log.debug("Entering randomBytes().");
   var b = new Uint8Array(n);
   crypto.getRandomValues(b);
+  log.debug("Leaving randomBytes().");
   return b;
 }
 
 function b64u(bytes) {
+  log.debug("Entering b64u().");
+  log.debug("Leaving b64u().");
   return webauthn.bytesToBase64url(bytes);
 }
 
-// --- capabilities -------------------------------------------------------------
+// --- capabilities
+// -------------------------------------------------------------
 
 function reportCapabilities() {
+  log.debug("Entering reportCapabilities().");
   log.info("Entering reportCapabilities().");
   var pane = $("wl_caps_body");
   panes.clear(pane);
@@ -90,7 +102,8 @@ function reportCapabilities() {
 
   var secure = window.isSecureContext;
   var hasApi = typeof window.PublicKeyCredential !== "undefined";
-  panes.row(t, "secure context", secure ? "yes" : "no — WebAuthn is unavailable here",
+  panes.row(t, "secure context", secure ?
+            "yes" : "no — WebAuthn is unavailable here",
             secure ? "wa-ok-row" : "wa-bad-row");
   panes.row(t, "PublicKeyCredential", hasApi ? "available" : "absent",
             hasApi ? "wa-ok-row" : "wa-bad-row");
@@ -99,9 +112,12 @@ function reportCapabilities() {
 
   if (!secure || !hasApi) {
     pane.appendChild(el("p", "wa-bad",
-      "WebAuthn needs a secure context: HTTPS, or a localhost origin. On plain HTTP from any other " +
-      "host the API is not merely restricted — navigator.credentials does not exist. Nothing on " +
-      "this page can run until that is fixed; the Analyzer, which decodes artifacts rather than " +
+      "WebAuthn needs a secure context: HTTPS, or a localhost origin. On " +
+          "plain HTTP from any other " +
+      "host the API is not merely restricted — navigator.credentials does " +
+          "not exist. Nothing on " +
+      "this page can run until that is fixed; the Analyzer, which decodes " +
+          "artifacts rather than " +
       "producing them, works anywhere."));
     ["wl_create_button", "wl_get_button"].forEach(function (id) {
       if ($(id)) {
@@ -109,6 +125,7 @@ function reportCapabilities() {
       }
     });
     log.info("Leaving reportCapabilities(). unavailable");
+    log.debug("Leaving reportCapabilities().");
     return;
   }
 
@@ -117,30 +134,37 @@ function reportCapabilities() {
   if (window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
     window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
       .then(function (available) {
-        panes.row(t, "platform authenticator", available ? "available" : "not available");
+        panes.row(t, "platform authenticator", available ?
+                  "available" : "not available");
       })
       .catch(function (e) {
-        panes.row(t, "platform authenticator", "could not be determined: " + e.message);
+        panes.row(t, "platform authenticator", "could not be determined: " +
+                  e.message);
       });
   }
   if (window.PublicKeyCredential.isConditionalMediationAvailable) {
     window.PublicKeyCredential.isConditionalMediationAvailable()
       .then(function (available) {
-        panes.row(t, "conditional mediation", available ? "available" : "not available");
+        panes.row(t, "conditional mediation", available ?
+                  "available" : "not available");
       })
       .catch(function (e) {
-        panes.row(t, "conditional mediation", "could not be determined: " + e.message);
+        panes.row(t, "conditional mediation", "could not be determined: " +
+                  e.message);
       });
   }
   log.info("Leaving reportCapabilities(). ready");
+  log.debug("Leaving reportCapabilities().");
 }
 
-// --- the ceremony trace ---------------------------------------------------------
+// --- the ceremony trace
+// ---------------------------------------------------------
 
 // A running account of what happened, in order, with the boundary the browser
 // enforces drawn explicitly. This is the pane that answers "why can I not see
 // the private key" before anybody asks it.
 function trace(lines) {
+  log.debug("Entering trace().");
   var pane = $("wl_trace_body");
   panes.clear(pane);
   var ol = el("ol", "wa-trace");
@@ -150,9 +174,13 @@ function trace(lines) {
   });
   pane.appendChild(ol);
   pane.appendChild(el("p", "wa-note",
-    "Everything below the authenticator boundary — the private key, the PIN, the biometric, the " +
-    "CTAP commands and the USB frames — is invisible to every page in every browser, by design. " +
-    "This is a WebAuthn debugger; a CTAP debugger would have to be a native application."));
+    "Everything below the authenticator boundary — the private key, the PIN, " +
+        "the biometric, the " +
+    "CTAP commands and the USB frames — is invisible to every page in every " +
+        "browser, by design. " +
+    "This is a WebAuthn debugger; a CTAP debugger would have to be a native " +
+        "application."));
+  log.debug("Leaving trace().");
 }
 
 // --- registration -----------------------------------------------------------
@@ -171,7 +199,8 @@ function creationOptions() {
   }
   var challenge = $("wl_reg_challenge").value.trim();
   var options = {
-    rp: { name: $("wl_rp_name").value || "OAuth2/OIDC Debugger", id: $("wl_rp_id").value || undefined },
+    rp: { name: $("wl_rp_name").value || "OAuth2/OIDC Debugger",
+         id: $("wl_rp_id").value || undefined },
     user: {
       id: webauthn.base64urlToBytes($("wl_user_id").value),
       name: $("wl_user_name").value || "debugger@example.com",
@@ -187,7 +216,8 @@ function creationOptions() {
     timeout: parseInt($("wl_timeout").value, 10) || 60000,
   };
   if ($("wl_attachment").value) {
-    options.authenticatorSelection.authenticatorAttachment = $("wl_attachment").value;
+    options.authenticatorSelection.authenticatorAttachment =
+        $("wl_attachment").value;
   }
   log.debug("Leaving creationOptions(). algs=" + algs.length);
   return options;
@@ -197,11 +227,14 @@ function creationOptions() {
 // describing it. Byte arrays render as base64url, which is what the Level 3
 // JSON form uses.
 function showCreationOptions() {
+  log.debug("Entering showCreationOptions().");
   var o;
   try {
     o = creationOptions();
   } catch (e) {
-    status("wl_reg_status", "Those options cannot be assembled: " + e.message, "bad");
+    status("wl_reg_status", "Those options cannot be assembled: " + e.message,
+           "bad");
+    log.debug("Leaving showCreationOptions().");
     return;
   }
   var shown = JSON.parse(JSON.stringify(o, function (k, v) {
@@ -209,37 +242,51 @@ function showCreationOptions() {
   }));
   shown.user.id = $("wl_user_id").value;
   shown.challenge = $("wl_reg_challenge").value;
-  panes.setValue("wl_reg_request", JSON.stringify({ publicKey: shown }, null, 2));
+  panes.setValue("wl_reg_request", JSON.stringify({ publicKey: shown }, null,
+                 2));
+  log.debug("Leaving showCreationOptions().");
 }
 
 function createCredential() {
+  log.debug("Entering createCredential().");
   log.info("Entering createCredential().");
   var options;
   try {
     options = creationOptions();
   } catch (e) {
-    status("wl_reg_status", "Those options cannot be assembled: " + e.message, "bad");
+    status("wl_reg_status", "Those options cannot be assembled: " + e.message,
+           "bad");
+    log.debug("Leaving createCredential().");
     return;
   }
   if (!options.pubKeyCredParams.length) {
-    status("wl_reg_status", "Choose at least one algorithm — an empty pubKeyCredParams lets the " +
-                            "authenticator pick anything, and most will refuse outright.", "bad");
+    status("wl_reg_status",
+        "Choose at least one algorithm — an empty pubKeyCredParams lets the " +
+                            "authenticator pick anything, and most will " +
+                                "refuse outright.", "bad");
+    log.debug("Leaving createCredential().");
     return;
   }
   showCreationOptions();
-  status("wl_reg_status", "Waiting for the authenticator — touch it, or complete whatever it asks for.", "");
+  status("wl_reg_status", "Waiting for the authenticator — touch it, or " +
+         "complete whatever it asks for.", "");
   trace([
-    { text: "This page called navigator.credentials.create() with the options above." },
-    { text: "The browser is now mediating: it checked the RP ID against this origin, and is " +
+    { text: "This page called navigator.credentials.create() with the " +
+     "options above." },
+    { text: "The browser is now mediating: it checked the RP ID against this " +
+     "origin, and is " +
             "asking the authenticator." },
     { text: "The authenticator is waiting for you.", kind: "pending" },
   ]);
 
-  navigator.credentials.create({ publicKey: options }).then(function (credential) {
+  navigator.credentials.create({ publicKey: options })
+                               .then(function (credential) {
     log.info("Registration returned a credential.");
     var response = credential.response;
-    var att = webauthn.parseAttestationObject(new Uint8Array(response.attestationObject));
-    var cd = webauthn.parseClientDataJSON(new Uint8Array(response.clientDataJSON));
+    var att = webauthn.parseAttestationObject(new Uint8Array(
+        response.attestationObject));
+    var cd =
+        webauthn.parseClientDataJSON(new Uint8Array(response.clientDataJSON));
 
     panes.renderClientData("wl_clientdata_body", "wl_clientdata_raw", cd);
     panes.renderAttestation("wl_attestation_body", "wl_attestation_raw", att);
@@ -262,52 +309,68 @@ function createCredential() {
     }
 
     trace([
-      { text: "navigator.credentials.create() with the options shown above.", kind: "done" },
-      { text: "The browser checked the RP ID against this origin and wrote clientDataJSON — " +
-              "including the origin, which is what the authenticator's signature ends up covering.",
+      { text: "navigator.credentials.create() with the options shown above.",
+       kind: "done" },
+      { text: "The browser checked the RP ID against this origin and wrote " +
+       "clientDataJSON — " +
+              "including the origin, which is what the authenticator's " +
+                  "signature ends up covering.",
         kind: "done" },
-      { text: "The authenticator generated a key pair, kept the private half, and returned the " +
+      { text: "The authenticator generated a key pair, kept the private " +
+       "half, and returned the " +
               "public half inside the attestation object.", kind: "done" },
-      { text: "The private key did not cross that boundary and never will.", kind: "boundary" },
+      { text: "The private key did not cross that boundary and never will.",
+       kind: "boundary" },
       { text: "This page decoded the result: " +
               (jwk ? jwk.alg || jwk.kty : "no key") + ", credential " +
               json.rawId.slice(0, 16) + "…", kind: "done" },
     ]);
-    status("wl_reg_status", "Registered. The credential's public key has been kept, so the " +
-                            "authentication pane below can verify an assertion from it.", "good");
+    status("wl_reg_status",
+           "Registered. The credential's public key has been kept, so the " +
+                            "authentication pane below can verify an " +
+                                "assertion from it.", "good");
     log.info("Leaving createCredential(). ok");
   }).catch(function (e) {
     reportCeremonyFailure("wl_reg_status", e);
     log.info("Leaving createCredential(). refused: " + e.name);
   });
+  log.debug("Leaving createCredential().");
 }
 
 // WebAuthn deliberately collapses "no credential", "user declined" and "timed
 // out" into one error for privacy reasons. Say that, rather than guessing at a
 // cause the browser refused to give.
 function reportCeremonyFailure(statusId, e) {
+  log.debug("Entering reportCeremonyFailure().");
   log.warn("The ceremony did not complete: " + e.name + ": " + e.message);
   var text = e.name + ": " + e.message;
   if (e.name === "NotAllowedError") {
-    text += "  —  WebAuthn reports one error for several situations on purpose: no matching " +
-            "credential, a declined prompt, and a timeout are indistinguishable to this page. " +
+    text += "  —  WebAuthn reports one error for several situations on " +
+        "purpose: no matching " +
+            "credential, a declined prompt, and a timeout are " +
+                "indistinguishable to this page. " +
             "That is a privacy property, not a gap in this debugger.";
   }
   if (e.name === "SecurityError") {
-    text += "  —  usually the RP ID: it must be this origin's host (" + window.location.hostname +
-            ") or a registrable parent of it. A page cannot run a ceremony for a domain it does " +
+    text += "  —  usually the RP ID: it must be this origin's host (" +
+        window.location.hostname +
+            ") or a registrable parent of it. A page cannot run a ceremony " +
+                "for a domain it does " +
             "not own, which is exactly the phishing resistance WebAuthn exists to provide.";
   }
   status(statusId, text, "bad");
   trace([
     { text: "The ceremony was started." , kind: "done" },
-    { text: "The browser or the authenticator refused it: " + e.name, kind: "bad" },
+    { text: "The browser or the authenticator refused it: " + e.name,
+     kind: "bad" },
   ]);
+  log.debug("Leaving reportCeremonyFailure().");
 }
 
 // --- authentication ----------------------------------------------------------
 
 function getAssertion() {
+  log.debug("Entering getAssertion().");
   log.info("Entering getAssertion().");
   var creds = loadCredentials();
   var chosen = $("wl_credential_select").value;
@@ -326,7 +389,8 @@ function getAssertion() {
   panes.setValue("wl_auth_request", JSON.stringify({
     publicKey: Object.assign({}, options, {
       challenge: $("wl_auth_challenge").value.trim(),
-      allowCredentials: chosen ? [{ type: "public-key", id: chosen }] : undefined,
+      allowCredentials: chosen ? [{ type: "public-key",
+          id: chosen }] : undefined,
     })
   }, null, 2));
   status("wl_auth_status", "Waiting for the authenticator.", "");
@@ -340,8 +404,10 @@ function getAssertion() {
     var record = creds[json.rawId];
     if (!record) {
       status("wl_auth_status",
-        "The authenticator returned an assertion for a credential this page did not create, so " +
-        "there is no public key here to check it with. Paste it into the Analyzer with the key.",
+        "The authenticator returned an assertion for a credential this page " +
+            "did not create, so " +
+        "there is no public key here to check it with. Paste it into the " +
+            "Analyzer with the key.",
         "bad");
       return;
     }
@@ -359,48 +425,59 @@ function getAssertion() {
       },
     }).then(function (result) {
       panes.renderChecks("wl_verify_body", "wl_auth_status", result);
-      panes.renderAuthenticatorData("wl_authdata_body", result.authenticatorData);
-      panes.renderClientData("wl_clientdata_body", "wl_clientdata_raw", result.clientData);
+      panes.renderAuthenticatorData("wl_authdata_body",
+                                    result.authenticatorData);
+      panes.renderClientData("wl_clientdata_body", "wl_clientdata_raw",
+                             result.clientData);
       // Only advance the remembered counter on a ceremony that verified;
-      // recording a counter from an assertion we just rejected would launder the
-      // very regression the next check is supposed to catch.
+      // recording a counter from an assertion we just rejected would launder
+      // the very regression the next check is supposed to catch.
       if (result.valid) {
         record.signCount = result.authenticatorData.signCount;
         creds[json.rawId] = record;
         saveCredentials(creds);
       }
       trace([
-        { text: "navigator.credentials.get() with the options shown above.", kind: "done" },
-        { text: "The browser wrote clientDataJSON with this origin in it and asked the " +
+        { text: "navigator.credentials.get() with the options shown above.",
+         kind: "done" },
+        { text: "The browser wrote clientDataJSON with this origin in it and " +
+         "asked the " +
                 "authenticator.", kind: "done" },
-        { text: "The authenticator signed authenticatorData ‖ SHA-256(clientDataJSON) with the " +
+        { text: "The authenticator signed authenticatorData ‖ " +
+         "SHA-256(clientDataJSON) with the " +
                 "private key it kept at registration.", kind: "done" },
-        { text: "The private key did not cross that boundary. What came back is a signature.",
+        { text: "The private key did not cross that boundary. What came back " +
+         "is a signature.",
           kind: "boundary" },
         { text: result.valid
             ? "This page verified that signature against the public key from the registration."
-            : "This page checked the signature and the ceremony's other conditions, and " +
+            : "This page checked the signature and the ceremony's other " +
+                "conditions, and " +
               "something did not hold — see the checks above.",
           kind: result.valid ? "done" : "bad" },
       ]);
       log.info("Leaving getAssertion(). valid=" + result.valid);
     }).catch(function (e) {
-      status("wl_auth_status", "Verification could not run: " + e.message, "bad");
+      status("wl_auth_status", "Verification could not run: " + e.message,
+             "bad");
       log.error("verifyAssertion threw: " + e.message);
     });
   }).catch(function (e) {
     reportCeremonyFailure("wl_auth_status", e);
     log.info("Leaving getAssertion(). refused: " + e.name);
   });
+  log.debug("Leaving getAssertion().");
 }
 
-// --- the Level 3 JSON form ----------------------------------------------------
+// --- the Level 3 JSON form
+// ----------------------------------------------------
 
-// PublicKeyCredential.toJSON() is WebAuthn Level 3 and is ABSENT from the Chrome
-// the test suite pins (measured: present on 151, absent on 121). The interchange
-// format for this whole workflow is that JSON, so it is produced here rather
-// than depended on — unconditionally, not behind a feature test, because a
-// browser-dependent code path would mean CI exercising something users do not.
+// PublicKeyCredential.toJSON() is WebAuthn Level 3 and is ABSENT from the
+// Chrome the test suite pins (measured: present on 151, absent on 121). The
+// interchange format for this whole workflow is that JSON, so it is produced
+// here rather than depended on — unconditionally, not behind a feature test,
+// because a browser-dependent code path would mean CI exercising something
+// users do not.
 function credentialToJson(credential, ceremony) {
   log.debug("Entering credentialToJson(). ceremony=" + ceremony);
   var r = credential.response;
@@ -409,13 +486,15 @@ function credentialToJson(credential, ceremony) {
         clientDataJSON: b64u(new Uint8Array(r.clientDataJSON)),
         attestationObject: b64u(new Uint8Array(r.attestationObject)),
         transports: r.getTransports ? r.getTransports() : undefined,
-        publicKeyAlgorithm: r.getPublicKeyAlgorithm ? r.getPublicKeyAlgorithm() : undefined,
+        publicKeyAlgorithm: r.getPublicKeyAlgorithm ?
+            r.getPublicKeyAlgorithm() : undefined,
       }
     : {
         clientDataJSON: b64u(new Uint8Array(r.clientDataJSON)),
         authenticatorData: b64u(new Uint8Array(r.authenticatorData)),
         signature: b64u(new Uint8Array(r.signature)),
-        userHandle: r.userHandle ? b64u(new Uint8Array(r.userHandle)) : undefined,
+        userHandle: r.userHandle ?
+            b64u(new Uint8Array(r.userHandle)) : undefined,
       };
   var out = {
     id: credential.id,
@@ -429,9 +508,11 @@ function credentialToJson(credential, ceremony) {
   return out;
 }
 
-// --- page wiring ---------------------------------------------------------------
+// --- page wiring
+// ---------------------------------------------------------------
 
 function refreshCredentialList() {
+  log.debug("Entering refreshCredentialList().");
   var select = $("wl_credential_select");
   var creds = loadCredentials();
   panes.clear(select);
@@ -439,32 +520,42 @@ function refreshCredentialList() {
   any.value = "";
   select.appendChild(any);
   Object.keys(creds).forEach(function (id) {
-    var o = el("option", null, id.slice(0, 24) + "…  " + (creds[id].jwk.alg || creds[id].jwk.kty) +
+    var o = el("option", null, id.slice(0, 24) + "…  " + (creds[id].jwk.alg ||
+        creds[id].jwk.kty) +
                                 "  count " + creds[id].signCount);
     o.value = id;
     select.appendChild(o);
   });
-  $("wl_credential_count").textContent = Object.keys(creds).length + " credential(s) registered here";
+  $("wl_credential_count").textContent = Object.keys(creds).length +
+    " credential(s) registered here";
+  log.debug("Leaving refreshCredentialList().");
 }
 
 function newChallenge(id) {
+  log.debug("Entering newChallenge().");
   panes.setValue(id, b64u(randomBytes(32)));
+  log.debug("Leaving newChallenge().");
 }
 
 function sendToAnalyzer(sourceId) {
+  log.debug("Entering sendToAnalyzer().");
   var text = $(sourceId).value;
   if (!text.trim()) {
+    log.debug("Leaving sendToAnalyzer().");
     return;
   }
   try {
     localStorage.setItem(HANDOFF, text);
     window.location.href = "/webauthn_analyzer.html";
   } catch (e) {
-    status("wl_reg_status", "Could not hand off to the Analyzer: " + e.message, "bad");
+    status("wl_reg_status", "Could not hand off to the Analyzer: " + e.message,
+           "bad");
   }
+  log.debug("Leaving sendToAnalyzer().");
 }
 
 window.onload = function () {
+  log.debug("Entering onload().");
   log.debug("Entering window.onload().");
   // Prefill the two things the browser, not the user, decides.
   panes.setValue("wl_rp_id", window.location.hostname);
@@ -496,11 +587,14 @@ window.onload = function () {
   $("wl_forget_button").addEventListener("click", function () {
     localStorage.removeItem(STORE);
     refreshCredentialList();
-    status("wl_reg_status", "This page has forgotten the credentials it registered. The " +
-                            "authenticator still holds them — this page is not able to delete " +
+    status("wl_reg_status",
+           "This page has forgotten the credentials it registered. The " +
+                            "authenticator still holds them — this page is " +
+                                "not able to delete " +
                             "anything from it.", "");
   });
   log.debug("Leaving window.onload().");
+  log.debug("Leaving onload().");
 };
 
 module.exports = {

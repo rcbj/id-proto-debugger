@@ -1,23 +1,24 @@
 // File: jwt_vc_json_common.js
 //
 // ---------------------------------------------------------------------------
-// The parts of a jwt_vc_json test that do not depend on WHOSE issuer or verifier
-// is on the other end.
+// The parts of a jwt_vc_json test that do not depend on WHOSE issuer or
+// verifier is on the other end.
 //
 // Four tests use this — issuance and presentation, against the mock STS and
-// against walt.id — and they differ only in the base URLs they are handed and in
-// what they are allowed to assume about the implementation. Everything else (how
-// a credential of this format is obtained, what it must look like, how a
+// against walt.id — and they differ only in the base URLs they are handed and
+// in what they are allowed to assume about the implementation. Everything else
+// (how a credential of this format is obtained, what it must look like, how a
 // Verifiable Presentation JWT is built and submitted) is the same, so it lives
 // here rather than four times over.
 //
-// Why jwt_vc_json needs its own tests rather than a flag on the SD-JWT ones: the
-// two formats differ in the thing those tests are ABOUT. The SD-JWT suites are
-// built around Disclosures — selecting them, hashing them, withholding them, the
-// sd_hash that commits to exactly which ones went. None of that exists here.
-// Threading a format flag through them would leave most of their assertions
-// skipped and the rest reading as though selective disclosure had merely been
-// declined, which is not the same statement as "this format cannot do it".
+// Why jwt_vc_json needs its own tests rather than a flag on the SD-JWT ones:
+// the two formats differ in the thing those tests are ABOUT. The SD-JWT suites
+// are built around Disclosures — selecting them, hashing them, withholding
+// them, the sd_hash that commits to exactly which ones went. None of that
+// exists here. Threading a format flag through them would leave most of their
+// assertions skipped and the rest reading as though selective disclosure had
+// merely been declined, which is not the same statement as "this format cannot
+// do it".
 // ---------------------------------------------------------------------------
 
 const crypto = require("crypto");
@@ -40,17 +41,30 @@ var log = bunyan.createLogger({
 const FORMAT = "jwt_vc_json";
 
 // The wallet's client identifier, used in TWO places that must agree: the
-// client_id sent with the pre-authorized code grant, and the iss of the proof of
-// possession. walt.id enforces that they match ("Credential proof issuer claim
-// must match the access token client_id") and it is right to — a proof made by
-// one client and presented by another proves nothing about the presenter. Our
-// mock does not check, so a mismatch only shows up against walt.id, which is
-// exactly the kind of thing an interoperability run is for.
-const WALLET_CLIENT_ID = process.env.OID4VCI_WALLET_CLIENT_ID || "idptools-debugger-tests";
+// client_id sent with the pre-authorized code grant, and the iss of the proof
+// of possession. walt.id enforces that they match ("Credential proof issuer
+// claim must match the access token client_id") and it is right to — a proof
+// made by one client and presented by another proves nothing about the
+// presenter. Our mock does not check, so a mismatch only shows up against
+// walt.id, which is exactly the kind of thing an interoperability run is for.
+const WALLET_CLIENT_ID = process.env.OID4VCI_WALLET_CLIENT_ID ||
+    "idptools-debugger-tests";
 
-function b64u(buf) { return Buffer.from(buf).toString("base64url"); }
-function b64uDecode(s) { return Buffer.from(String(s), "base64url"); }
-function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
+function b64u(buf) {
+  log.debug("Entering b64u().");
+  log.debug("Leaving b64u().");
+  return Buffer.from(buf).toString("base64url");
+}
+function b64uDecode(s) {
+  log.debug("Entering b64uDecode().");
+  log.debug("Leaving b64uDecode().");
+  return Buffer.from(String(s), "base64url");
+}
+function jsonFromB64u(s) {
+  log.debug("Entering jsonFromB64u().");
+  log.debug("Leaving jsonFromB64u().");
+  return JSON.parse(b64uDecode(s).toString("utf8"));
+}
 
 async function httpJson(url, options) {
   log.debug("Entering httpJson().");
@@ -59,10 +73,12 @@ async function httpJson(url, options) {
     r = await fetch(url, options);
   } catch (e) {
     // A refused connection or an unresolvable host arrives as an undici
-    // TypeError whose message is "fetch failed" and whose stack is all internals.
-    // These tests fail rather than skip when a service is missing, so the
-    // failure has to name WHICH service and WHERE — the raw error names neither.
-    const err = new Error("could not reach " + url + ": " + (e.cause ? e.cause.message : e.message) +
+    // TypeError whose message is "fetch failed" and whose stack is all
+    // internals. These tests fail rather than skip when a service is missing,
+    // so the failure has to name WHICH service and WHERE — the raw error names
+    // neither.
+    const err = new Error("could not reach " + url + ": " + (e.cause ?
+        e.cause.message : e.message) +
       ". Is the service running, and is its URL right?");
     err.cause = e;
     throw err;
@@ -84,8 +100,8 @@ async function httpJson(url, options) {
 // issuer's path rather than appended (RFC 8414), which is what walt.id needs —
 // its Credential Issuer Identifier is `…/openid4vci`, so the document lives at
 // `…/.well-known/openid-credential-issuer/openid4vci`. Appending finds nothing.
-// Both forms are tried, insertion first, because the mock issuer has no path and
-// either works for it.
+// Both forms are tried, insertion first, because the mock issuer has no path
+// and either works for it.
 async function issuerMetadata(issuerBase) {
   log.debug("Entering issuerMetadata(). issuerBase=" + issuerBase);
   const base = String(issuerBase || "").replace(/\/+$/, "");
@@ -96,11 +112,13 @@ async function issuerMetadata(issuerBase) {
     origin = u.origin;
     path = u.pathname.replace(/\/+$/, "");
   } catch (e) {
-    // Not an absolute URL: fall back to appending, which is all that can be done.
+    // Not an absolute URL: fall back to appending, which is all that can be
+    // done.
     log.debug("issuerMetadata(): " + base + " is not an absolute URL.");
   }
   const candidates = [];
-  if (path) candidates.push(origin + "/.well-known/openid-credential-issuer" + path);
+  if (path) candidates.push(origin + "/.well-known/openid-credential-issuer" +
+      path);
   candidates.push(base + "/.well-known/openid-credential-issuer");
   for (let i = 0; i < candidates.length; i++) {
     const r = await httpJson(candidates[i]);
@@ -119,8 +137,8 @@ async function issuerMetadata(issuerBase) {
 // Returned rather than asserted so a caller can SKIP. The mock issuer and
 // walt.id name their configurations differently — and walt.id only offers the
 // format once its configuration has been added and the container restarted — so
-// a test that hard-coded an id would fail for a configuration reason wearing the
-// costume of a protocol failure.
+// a test that hard-coded an id would fail for a configuration reason wearing
+// the costume of a protocol failure.
 async function jwtVcJsonConfigurationId(issuerBase) {
   log.debug("Entering jwtVcJsonConfigurationId().");
   const meta = await issuerMetadata(issuerBase);
@@ -131,34 +149,37 @@ async function jwtVcJsonConfigurationId(issuerBase) {
   const configs = meta.credential_configurations_supported || {};
   const preferred = process.env.OID4VCI_JWT_VC_CONFIG_ID || "";
   if (preferred && configs[preferred] && configs[preferred].format === FORMAT) {
-    log.debug("Leaving jwtVcJsonConfigurationId(). Using the configured " + preferred);
+    log.debug("Leaving jwtVcJsonConfigurationId(). Using the configured " +
+              preferred);
     return { id: preferred, meta: meta, entry: configs[preferred] };
   }
   const found = Object.keys(configs).filter(function (id) {
     return configs[id] && configs[id].format === FORMAT;
   });
-  log.debug("Leaving jwtVcJsonConfigurationId(). " + found.length + " jwt_vc_json configuration(s).");
-  return { id: found[0] || "", meta: meta, entry: found[0] ? configs[found[0]] : null };
+  log.debug("Leaving jwtVcJsonConfigurationId(). " + found.length +
+            " jwt_vc_json configuration(s).");
+  return { id: found[0] || "", meta: meta, entry: found[0] ?
+          configs[found[0]] : null };
 }
 
 // A real access token from an issuer that insists on one.
 //
-// Our mock accepts any bearer string, so the tests against it can send an opaque
-// placeholder. walt.id cannot: it refuses anything that is not a JWS
-// ("String does not look like JWS"), which is correct of it and is what made the
-// first version of these tests fail with a 401 that looked like a jwt_vc_json
-// problem and was not.
+// Our mock accepts any bearer string, so the tests against it can send an
+// opaque placeholder. walt.id cannot: it refuses anything that is not a JWS
+// ("String does not look like JWS"), which is correct of it and is what made
+// the first version of these tests fail with a 401 that looked like a
+// jwt_vc_json problem and was not.
 //
 // The token is obtained with the PRE-AUTHORIZED CODE grant rather than by
-// driving a browser through Keycloak. That grant exists precisely so a credential
-// can be collected without an interactive authorization leg, walt.id advertises
-// it, and it keeps this helper usable from a test with no browser. The
-// authorization-code leg through the pages is already covered end to end by
+// driving a browser through Keycloak. That grant exists precisely so a
+// credential can be collected without an interactive authorization leg, walt.id
+// advertises it, and it keeps this helper usable from a test with no browser.
+// The authorization-code leg through the pages is already covered end to end by
 // sd_jwt_vc_waltid.js; repeating it here would test the same thing twice and
 // double the slowest part of the suite.
 //
-// Returns "" when the issuer offers no such route, so the caller can fall back to
-// an opaque token — which is exactly right for the mock.
+// Returns "" when the issuer offers no such route, so the caller can fall back
+// to an opaque token — which is exactly right for the mock.
 async function preAuthorizedAccessToken(issuerBase, profileId) {
   log.debug("Entering preAuthorizedAccessToken(). profileId=" + profileId);
   var base = String(issuerBase || "").replace(/\/+$/, "");
@@ -167,44 +188,57 @@ async function preAuthorizedAccessToken(issuerBase, profileId) {
     origin = new URL(base).origin;
   } catch (e) {
     // Not absolute; the offer call below will fail and "" is returned.
-    log.debug("preAuthorizedAccessToken(): " + base + " is not an absolute URL.");
+    log.debug("preAuthorizedAccessToken(): " + base +
+              " is not an absolute URL.");
   }
   var created = await httpJson(origin + "/issuer2/credential-offers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ profileId: profileId, authMethod: "PRE_AUTHORIZED", valueMode: "BY_VALUE" })
+    body: JSON.stringify({ profileId: profileId, authMethod: "PRE_AUTHORIZED",
+                         valueMode: "BY_VALUE" })
   }).catch(function () { return { ok: false, status: 0, raw: "" }; });
   if (created.status !== 201 && created.status !== 200) {
-    log.debug("Leaving preAuthorizedAccessToken(). No offer endpoint (HTTP " + created.status + ").");
+    log.debug("Leaving preAuthorizedAccessToken(). No offer endpoint (HTTP " +
+              created.status + ").");
     return "";
   }
   var offerUri = String((created.body || {}).credentialOffer || "");
   var offerParam = "";
   try {
-    offerParam = new URL(offerUri.replace("openid-credential-offer://", "https://wallet.invalid/"))
+    offerParam = new URL(offerUri.replace("openid-credential-offer://",
+        "https://wallet.invalid/"))
       .searchParams.get("credential_offer") || "";
   } catch (e) {
     offerParam = "";
   }
   if (!offerParam) {
-    log.debug("Leaving preAuthorizedAccessToken(). The offer was not passed by value.");
+    log.debug("Leaving preAuthorizedAccessToken(). The offer was not passed " +
+              "by value.");
     return "";
   }
   var offer = JSON.parse(offerParam);
-  var grant = (offer.grants || {})["urn:ietf:params:oauth:grant-type:pre-authorized_code"] || {};
+  var grant = (offer.grants ||
+      {})["urn:ietf:params:oauth:grant-type:pre-authorized_code"] || {};
   var code = grant["pre-authorized_code"];
   if (!code) {
-    log.debug("Leaving preAuthorizedAccessToken(). The offer carries no pre-authorized code.");
+    log.debug("Leaving preAuthorizedAccessToken(). The offer carries no " +
+              "pre-authorized code.");
     return "";
   }
 
   var meta = await issuerMetadata(issuerBase);
   var asUrl = origin + "/.well-known/oauth-authorization-server" +
-              (function () { try { return new URL(base).pathname.replace(/\/+$/, ""); } catch (e) { return ""; } })();
+              (function () { try {
+                return new URL(base).pathname.replace(/\/+$/, "");
+              } catch (e) {
+                return "";
+              } })();
   var as = await httpJson(asUrl);
-  var tokenEndpoint = ((as.body || {}).token_endpoint) || ((meta || {}).token_endpoint) || "";
+  var tokenEndpoint = ((as.body || {}).token_endpoint) || ((meta ||
+      {}).token_endpoint) || "";
   if (!tokenEndpoint) {
-    log.debug("Leaving preAuthorizedAccessToken(). No token endpoint advertised.");
+    log.debug("Leaving preAuthorizedAccessToken(). No token endpoint " +
+              "advertised.");
     return "";
   }
   // A client_id, always. The pre-authorized code grant has no client
@@ -212,11 +246,13 @@ async function preAuthorizedAccessToken(issuerBase, profileId) {
   // refuses that outright with "Anonymous pre-authorized code access is not
   // supported". It says so in its metadata too, as
   // pre-authorized_grant_anonymous_access_supported: false, which is the
-  // machine-readable version of the same sentence and is logged below when it is
-  // present. Sending an identifier costs nothing where it is not required.
-  var anonymousOk = (as.body || {})["pre-authorized_grant_anonymous_access_supported"];
+  // machine-readable version of the same sentence and is logged below when it
+  // is present. Sending an identifier costs nothing where it is not required.
+  var anonymousOk = (as.body ||
+      {})["pre-authorized_grant_anonymous_access_supported"];
   if (anonymousOk === false) {
-    log.debug("preAuthorizedAccessToken(): this issuer requires a client_id for the pre-authorized grant.");
+    log.debug("preAuthorizedAccessToken(): this issuer requires a client_id " +
+              "for the pre-authorized grant.");
   }
   var body = new URLSearchParams({
     grant_type: "urn:ietf:params:oauth:grant-type:pre-authorized_code",
@@ -229,7 +265,8 @@ async function preAuthorizedAccessToken(issuerBase, profileId) {
     body: body
   });
   var accessToken = (token.body || {}).access_token || "";
-  log.debug("Leaving preAuthorizedAccessToken(). " + (accessToken ? "got a token" : "no token: " +
+  log.debug("Leaving preAuthorizedAccessToken(). " + (accessToken ?
+            "got a token" : "no token: " +
             String(token.raw).slice(0, 160)));
   return accessToken;
 }
@@ -237,35 +274,38 @@ async function preAuthorizedAccessToken(issuerBase, profileId) {
 // Ask the issuer for a jwt_vc_json credential, with a real proof of possession.
 //
 // The access token is deliberately whatever the caller was given (the mock
-// accepts an opaque one); this helper is about the CREDENTIAL, not about how the
-// authorization was obtained — the SD-JWT suites already cover that path in
-// full, through the pages.
-// `proofKeyMode` says how the proof of possession identifies the holder, and the
-// two issuers genuinely differ:
+// accepts an opaque one); this helper is about the CREDENTIAL, not about how
+// the authorization was obtained — the SD-JWT suites already cover that path in
+// full, through the pages. `proofKeyMode` says how the proof of possession
+// identifies the holder, and the two issuers genuinely differ:
 //
 //   "jwk"  the public key inline in the proof header. Our mock reads header.jwk
 //          and binds the credential with cnf.jwk.
 //   "did"  a did:jwk in the header's kid. walt.id's jwt_vc_json profile binds
-//          with credentialSubject.id = "<subjectDid>", and it resolves that from
-//          the proof — hand it a bare jwk and it refuses the request with
+//          with credentialSubject.id = "<subjectDid>", and it resolves that
+//          from the proof — hand it a bare jwk and it refuses the request with
 //          "Cannot find in context: subjectDid", because there is no DID to put
 //          in the credential.
 //
 // Neither is wrong and the specification permits both, which is why this is a
 // parameter rather than a fix. It is also the substance of the interoperability
-// finding: a wallet that only ever talked to one of these two would have no idea
-// the other existed.
+// finding: a wallet that only ever talked to one of these two would have no
+// idea the other existed.
 function didJwkFor(publicJwk) {
+  log.debug("Entering didJwkFor().");
   var ordered = { crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x };
   if (publicJwk.y) ordered.y = publicJwk.y;
+  log.debug("Leaving didJwkFor().");
   return "did:jwk:" + b64u(JSON.stringify(ordered));
 }
 
-async function mintJwtVcJson(issuerBase, configurationId, accessToken, proofKeyMode) {
+async function mintJwtVcJson(issuerBase, configurationId, accessToken,
+                             proofKeyMode) {
   log.debug("Entering mintJwtVcJson(). configurationId=" + configurationId +
             ", proofKeyMode=" + (proofKeyMode || "jwk"));
   const meta = await issuerMetadata(issuerBase);
-  assert.ok(meta && meta.credential_endpoint, "the issuer should publish a credential_endpoint.");
+  assert.ok(meta && meta.credential_endpoint,
+            "the issuer should publish a credential_endpoint.");
   const pair = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
   const publicJwk = pair.publicKey.export({ format: "jwk" });
   const privateJwk = pair.privateKey.export({ format: "jwk" });
@@ -275,14 +315,16 @@ async function mintJwtVcJson(issuerBase, configurationId, accessToken, proofKeyM
     const n = await httpJson(meta.nonce_endpoint, { method: "POST" });
     nonce = (n.body && n.body.c_nonce) || "";
   }
-  const compact = { kty: publicJwk.kty, crv: publicJwk.crv, x: publicJwk.x, y: publicJwk.y };
+  const compact = { kty: publicJwk.kty, crv: publicJwk.crv, x: publicJwk.x,
+      y: publicJwk.y };
   const did = didJwkFor(compact);
   const head = b64u(JSON.stringify(
     proofKeyMode === "did"
       ? { typ: "openid4vci-proof+jwt", alg: "ES256", kid: did + "#0" }
       : { typ: "openid4vci-proof+jwt", alg: "ES256", jwk: compact }));
   const claims = b64u(JSON.stringify({
-    // iss MUST be the client the access token was issued to — see WALLET_CLIENT_ID.
+    // iss MUST be the client the access token was issued to — see
+    // WALLET_CLIENT_ID.
     iss: WALLET_CLIENT_ID, aud: meta.credential_issuer,
     iat: Math.floor(Date.now() / 1000), nonce: nonce
   }));
@@ -301,10 +343,13 @@ async function mintJwtVcJson(issuerBase, configurationId, accessToken, proofKeyM
     })
   });
   assert.ok(response.ok,
-    "the issuer should mint a " + FORMAT + " credential for configuration \"" + configurationId +
-    "\", got HTTP " + response.status + " " + String(response.raw).slice(0, 300));
+    "the issuer should mint a " + FORMAT + " credential for configuration \"" +
+        configurationId +
+    "\", got HTTP " + response.status + " " + String(response.raw).slice(0,
+        300));
 
-  const credential = (((response.body || {}).credentials || [])[0] || {}).credential ||
+  const credential = (((response.body || {}).credentials || [])[0] ||
+      {}).credential ||
                      (response.body || {}).credential;
   assert.ok(credential, "the Credential Response should carry a credential: " +
     String(response.raw).slice(0, 300));
@@ -317,7 +362,8 @@ async function mintJwtVcJson(issuerBase, configurationId, accessToken, proofKeyM
     // assumption about the shape, which is the assumption most likely wrong.
     responseBody: response.body,
     did: did,
-    publicJwk: { kty: publicJwk.kty, crv: publicJwk.crv, x: publicJwk.x, y: publicJwk.y },
+    publicJwk: { kty: publicJwk.kty, crv: publicJwk.crv, x: publicJwk.x,
+                y: publicJwk.y },
     privateJwk: privateJwk,
     privateKey: pair.privateKey,
     metadata: meta
@@ -334,19 +380,24 @@ function assertIsJwtVcJson(credential, who) {
   log.debug("Entering assertIsJwtVcJson(). who=" + who);
   const label = who ? who + ": " : "";
   assert.strictEqual(String(credential).indexOf("~"), -1,
-    label + "a jwt_vc_json credential is a bare JWT — a tilde means an SD-JWT Combined Serialization " +
+    label + "a jwt_vc_json credential is a bare JWT — a tilde means an " +
+        "SD-JWT Combined Serialization " +
     "came back under a jwt_vc_json configuration.");
   const parts = String(credential).split(".");
-  assert.strictEqual(parts.length, 3, label + "and a three-part JWS. Got " + parts.length + " part(s).");
+  assert.strictEqual(parts.length, 3, label + "and a three-part JWS. Got " +
+                     parts.length + " part(s).");
   const payload = jsonFromB64u(parts[1]);
   assert.ok(payload.vc && typeof payload.vc === "object",
     label + "the VC-JWT encoding puts the credential in the vc claim.");
   assert.ok(!payload._sd,
-    label + "and carries no _sd digests: this format has no selective disclosure.");
+    label +
+        "and carries no _sd digests: this format has no selective disclosure.");
   const types = [].concat(payload.vc.type || []);
   assert.ok(types.indexOf("VerifiableCredential") >= 0,
-    label + "its type array should include VerifiableCredential. Got: " + JSON.stringify(types));
-  assert.ok(payload.vc.credentialSubject && typeof payload.vc.credentialSubject === "object",
+    label + "its type array should include VerifiableCredential. Got: " +
+        JSON.stringify(types));
+  assert.ok(payload.vc.credentialSubject &&
+            typeof payload.vc.credentialSubject === "object",
     label + "and a credentialSubject.");
   log.debug("Leaving assertIsJwtVcJson(). types=" + types.join("/"));
   return { payload: payload, vc: payload.vc, types: types,
@@ -355,16 +406,25 @@ function assertIsJwtVcJson(credential, who) {
 
 // How the credential says who may present it.
 //
-// Two answers are in the wild and the difference is the whole reason the walt.id
-// jobs exist: our mock binds with cnf.jwk (a key), while walt.id's own
+// Two answers are in the wild and the difference is the whole reason the
+// walt.id jobs exist: our mock binds with cnf.jwk (a key), while walt.id's own
 // jwt_vc_json profiles bind with credentialSubject.id (a subject DID). Reported
 // rather than asserted, so a test can say which it got instead of failing on an
 // implementation's legitimate choice.
 function holderBindingOf(payload) {
+  log.debug("Entering holderBindingOf().");
   const cnfJwk = ((payload || {}).cnf || {}).jwk;
-  const subjectId = (((payload || {}).vc || {}).credentialSubject || {}).id || "";
-  if (cnfJwk) return { kind: "cnf.jwk", jwk: cnfJwk, subjectId: subjectId };
-  if (subjectId) return { kind: "credentialSubject.id", jwk: null, subjectId: subjectId };
+  const subjectId = (((payload || {}).vc || {}).credentialSubject || {}).id ||
+      "";
+  if (cnfJwk) {
+    log.debug("Leaving holderBindingOf().");
+    return { kind: "cnf.jwk", jwk: cnfJwk, subjectId: subjectId };
+  }
+  if (subjectId) {
+    log.debug("Leaving holderBindingOf().");
+    return { kind: "credentialSubject.id", jwk: null, subjectId: subjectId };
+  }
+  log.debug("Leaving holderBindingOf().");
   return { kind: "none", jwk: null, subjectId: "" };
 }
 
@@ -379,7 +439,8 @@ async function plantIntoWallet(driver, opts) {
   await driver.executeScript(
     "window.localStorage.clear();" +
     "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
-    "localStorage.setItem('sdjwtvc_credentials', JSON.stringify([arguments[0]]));" +
+    "localStorage.setItem('sdjwtvc_credentials', " +
+        "JSON.stringify([arguments[0]]));" +
     "localStorage.setItem('sdjwtvc_holder_jwk', arguments[1]);" +
     "localStorage.setItem('sdjwtvc_holder_private_jwk', arguments[2]);" +
     // Set explicitly rather than inferred: step 0's Configuration Parameters
@@ -387,9 +448,11 @@ async function plantIntoWallet(driver, opts) {
     // (localhost:8081 locally, sts:8081 containerized, empty on the deployed
     // sites), so a test that did not say would point somewhere else.
     "localStorage.setItem('sdjwtvp_verifier_base_url', arguments[3]);" +
-    "localStorage.setItem('sdjwtvp_verifier_jwks_url', arguments[3] + '/oauth2/jwks');" +
+    "localStorage.setItem('sdjwtvp_verifier_jwks_url', arguments[3] + " +
+        "'/oauth2/jwks');" +
     "localStorage.setItem('vci_credential_issuer', arguments[4]);",
-    opts.credential, JSON.stringify(opts.publicJwk), JSON.stringify(opts.privateJwk),
+    opts.credential, JSON.stringify(opts.publicJwk),
+        JSON.stringify(opts.privateJwk),
     opts.verifierBase, opts.issuerBase);
   await driver.navigate().refresh();
   await driver.wait(until.elementLocated(By.id("vp_usecases")), opts.waitTime);
@@ -402,21 +465,28 @@ async function freshJwtVcJsonRequest(verifierBase, byReference) {
   log.debug("Entering freshJwtVcJsonRequest(). byReference=" + !!byReference);
   const query = ["format=" + encodeURIComponent(FORMAT)];
   if (byReference) query.push("by=reference");
-  const r = await fetch(verifierBase + "/oid4vp/start?" + query.join("&"), { redirect: "manual" });
+  const r = await fetch(verifierBase + "/oid4vp/start?" + query.join("&"),
+      { redirect: "manual" });
   const location = r.headers.get("location");
-  assert.ok(location, "the verifier should redirect the wallet with its request.");
+  assert.ok(location,
+            "the verifier should redirect the wallet with its request.");
   const params = {};
   location.slice(location.indexOf("?") + 1).split("&").forEach(function (pair) {
     const eq = pair.indexOf("=");
-    params[decodeURIComponent(pair.slice(0, eq))] = decodeURIComponent(pair.slice(eq + 1));
+    params[decodeURIComponent(pair.slice(0, eq))] =
+           decodeURIComponent(pair.slice(eq + 1));
   });
   log.debug("Leaving freshJwtVcJsonRequest(). state=" + params.state);
   return { params: params, location: location };
 }
 
 async function verdictFor(verifierBase, state) {
-  const r = await httpJson(verifierBase + "/oid4vp/result/" + encodeURIComponent(state));
-  assert.ok(r.ok, "the verifier should report what it decided, got HTTP " + r.status);
+  log.debug("Entering verdictFor().");
+  const r = await httpJson(verifierBase + "/oid4vp/result/" +
+      encodeURIComponent(state));
+  assert.ok(r.ok, "the verifier should report what it decided, got HTTP " +
+            r.status);
+  log.debug("Leaving verdictFor().");
   return r.body;
 }
 

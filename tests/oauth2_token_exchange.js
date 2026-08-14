@@ -18,16 +18,21 @@ var baseUrl = "http://localhost:3000"
 // EXPECTS that CORS/network error instead of an active introspection result.
 var STATIC_CONTENT_SITE_HOSTS = ["test.idptools.com", "idptools.com"];
 function isStaticContentSite(url) {
+  log.debug("Entering isStaticContentSite().");
   try {
+    log.debug("Leaving isStaticContentSite().");
     return STATIC_CONTENT_SITE_HOSTS.includes(new URL(url).hostname);
   } catch (e) {
+    log.debug("Leaving isStaticContentSite().");
     return false;
   }
 }
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata, getAccessTokenAuthCode } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+const { populateMetadata, getAccessTokenAuthCode } =
+       require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
+       assert });
 
 // Obtains an access token (the subject token for the exchange) via the OIDC
 // Authorization Code flow using the requesting (confidential) client.
@@ -35,14 +40,18 @@ const { populateMetadata, getAccessTokenAuthCode } = require("../common/tests.js
 // Extracts the JSON object embedded in a result textarea (after the
 // "Response Body:" preamble) and parses it.
 function parseEmbeddedJson(text) {
+  log.debug("Entering parseEmbeddedJson().");
   var start = text.indexOf("{");
   var end = text.lastIndexOf("}");
   if (start === -1 || end === -1 || end < start) {
+    log.debug("Leaving parseEmbeddedJson().");
     return null;
   }
   try {
+    log.debug("Leaving parseEmbeddedJson().");
     return JSON.parse(text.substring(start, end + 1));
   } catch (e) {
+    log.debug("Leaving parseEmbeddedJson().");
     return null;
   }
 }
@@ -50,35 +59,48 @@ function parseEmbeddedJson(text) {
 // Drives the Token Exchange (RFC 8693) pane: sets the requesting client
 // credentials and target audience, submits the exchange, and returns the parsed
 // token endpoint response (which contains the issued access_token).
-async function exchangeTokenViaUI(driver, audience_client_id, client_id, client_secret) {
-  log.info("Performing token exchange via the UI. audience=" + audience_client_id);
+async function exchangeTokenViaUI(driver, audience_client_id, client_id,
+                                  client_secret) {
+  log.debug("Entering exchangeTokenViaUI().");
+  log.info("Performing token exchange via the UI. audience=" +
+           audience_client_id);
 
   const subjectToken = By.id("tokenexchange_subject_token");
   await driver.wait(until.elementLocated(subjectToken), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", await driver.findElement(subjectToken));
-  await driver.wait(until.elementIsVisible(driver.findElement(subjectToken)), waitTime);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });",
+                             await driver.findElement(subjectToken));
+  await driver.wait(until.elementIsVisible(driver.findElement(subjectToken)),
+                    waitTime);
 
   // The subject token defaults to the most recent access token.
-  const subjectValue = await driver.findElement(subjectToken).getAttribute("value");
+  const subjectValue =
+      await driver.findElement(subjectToken).getAttribute("value");
   assert(subjectValue && subjectValue.length > 0,
-    "Token Exchange subject token was not pre-populated with the latest access token.");
+    "Token Exchange subject token was not pre-populated with the latest " +
+        "access token.");
 
   // Authenticate as the requesting client and target the audience client.
-  const clientIdField = await driver.findElement(By.id("tokenexchange_client_id"));
+  const clientIdField =
+      await driver.findElement(By.id("tokenexchange_client_id"));
   await clientIdField.clear();
   await clientIdField.sendKeys(client_id);
-  const clientSecretField = await driver.findElement(By.id("tokenexchange_client_secret"));
+  const clientSecretField =
+      await driver.findElement(By.id("tokenexchange_client_secret"));
   await clientSecretField.clear();
   if (!!client_secret) {
     await clientSecretField.sendKeys(client_secret);
   }
-  const audienceField = await driver.findElement(By.id("tokenexchange_audience"));
+  const audienceField =
+      await driver.findElement(By.id("tokenexchange_audience"));
   await audienceField.clear();
   await audienceField.sendKeys(audience_client_id);
 
-  // Submit (defaults: Impersonation, requested_token_type=access_token, backend).
+  // Submit (defaults: Impersonation, requested_token_type=access_token,
+  // backend).
   const exchangeBtn = await driver.findElement(By.id("tokenexchange_btn"));
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", exchangeBtn);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", exchangeBtn);
   await exchangeBtn.click();
 
   const resultArea = By.id("tokenexchange_result_textarea");
@@ -98,40 +120,56 @@ async function exchangeTokenViaUI(driver, audience_client_id, client_id, client_
     "Token exchange did not return HTTP 200. Result: " + resultText);
 
   const parsed = parseEmbeddedJson(resultText);
-  assert(parsed !== null, "Could not parse the token exchange response JSON. Result: " + resultText);
-  assert(parsed.access_token, "Token exchange response did not contain an access_token. Response: " + JSON.stringify(parsed));
-  log.info("issued_token_type=" + parsed.issued_token_type + ", token_type=" + parsed.token_type);
+  assert(parsed !== null,
+         "Could not parse the token exchange response JSON. Result: " +
+         resultText);
+  assert(parsed.access_token,
+         "Token exchange response did not contain an access_token. Response: " +
+         JSON.stringify(parsed));
+  log.info("issued_token_type=" + parsed.issued_token_type + ", token_type=" +
+           parsed.token_type);
+  log.debug("Leaving exchangeTokenViaUI().");
   return parsed;
 }
 
 // Introspects an arbitrary token value via the Introspection page, using the
 // confidential client that is permitted to call the Introspection Endpoint.
 async function introspectTokenValue(driver, token, client_id, client_secret) {
+  log.debug("Entering introspectTokenValue().");
   log.info("Introspecting the exchanged token via the Introspection page.");
   await driver.get(baseUrl + "/introspection.html?type=access");
 
   const tokenField = By.id("introspection_token");
   await driver.wait(until.elementLocated(tokenField), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(tokenField)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(tokenField)),
+                    waitTime);
 
-  const endpointValue = await driver.findElement(By.id("introspection_endpoint")).getAttribute("value");
+  const endpointValue =
+      await driver.findElement(By.id("introspection_endpoint"))
+      .getAttribute("value");
   assert(endpointValue && endpointValue.length > 0,
     "Introspection endpoint was not populated from the discovery document.");
 
   // Replace whatever token was auto-loaded with the exchanged token.
   await driver.findElement(tokenField).clear();
   await driver.findElement(tokenField).sendKeys(token);
-  await new Select(await driver.findElement(By.id("introspection_token_type_hint"))).selectByValue("access_token");
+  await new Select(await driver.findElement(By.id(
+                   "introspection_token_type_hint"))).selectByValue(
+                   "access_token");
 
   // Use the backend to avoid browser CORS restrictions on the IdP.
   await driver.findElement(By.id("introspection_initiateFromBackEnd")).click();
 
   // Authenticate the introspection call as the confidential client.
-  await new Select(await driver.findElement(By.id("introspection_authentication_type"))).selectByValue("basic_auth");
-  const clientIdField = await driver.findElement(By.id("introspection_client_id"));
+  await new Select(await driver.findElement(By.id(
+                   "introspection_authentication_type"))).selectByValue(
+                   "basic_auth");
+  const clientIdField =
+      await driver.findElement(By.id("introspection_client_id"));
   await clientIdField.clear();
   await clientIdField.sendKeys(client_id);
-  const clientSecretField = await driver.findElement(By.id("introspection_client_secret"));
+  const clientSecretField =
+      await driver.findElement(By.id("introspection_client_secret"));
   await clientSecretField.clear();
   if (!!client_secret) {
     await clientSecretField.sendKeys(client_secret);
@@ -142,19 +180,23 @@ async function introspectTokenValue(driver, token, client_id, client_secret) {
   const output = By.id("introspection_output");
   await driver.wait(async () => {
     try {
-      const v = (await driver.findElement(output).getAttribute("value") || "").trim();
+      const v = (await driver.findElement(output).getAttribute("value") ||
+          "").trim();
       return v.length > 0;
     } catch (e) {
       return false;
     }
   }, waitTime, "Introspection produced no output.");
 
-  const outputText = (await driver.findElement(output).getAttribute("value") || "").trim();
+  const outputText = (await driver.findElement(output).getAttribute("value") ||
+      "").trim();
   log.info("Introspection output: " + outputText.replace(/\n/g, " "));
+  log.debug("Leaving introspectTokenValue().");
   return outputText;
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
     options.addArguments("--headless");
@@ -164,10 +206,12 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
-  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
-  // browsers otherwise block (mixed content / Private Network Access).
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak,
+  // which browsers otherwise block (mixed content / Private Network Access).
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
@@ -190,15 +234,19 @@ async function test() {
     const introspection_client_id = process.env.INTROSPECTION_CLIENT_ID;
     const introspection_client_secret = process.env.INTROSPECTION_CLIENT_SECRET;
 
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
     assert(client_id, "CLIENT_ID environment variable is not set.");
     assert(client_secret, "CLIENT_SECRET environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
     assert(user, "USER environment variable is not set.");
     assert(pkce_enabled, "PKCE_ENABLED environment variable is not set.");
-    assert(audience_client_id, "AUDIENCE_CLIENT_ID environment variable is not set.");
-    assert(introspection_client_id, "INTROSPECTION_CLIENT_ID environment variable is not set.");
-    assert(introspection_client_secret, "INTROSPECTION_CLIENT_SECRET environment variable is not set.");
+    assert(audience_client_id,
+           "AUDIENCE_CLIENT_ID environment variable is not set.");
+    assert(introspection_client_id,
+           "INTROSPECTION_CLIENT_ID environment variable is not set.");
+    assert(introspection_client_secret,
+           "INTROSPECTION_CLIENT_SECRET environment variable is not set.");
 
     if (pkce_enabled === "true") {
       pkce_enabled = true;
@@ -214,39 +262,51 @@ async function test() {
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken() to obtain the subject token.");
-    const subject_token = await getAccessTokenAuthCode(driver, client_id, client_secret, scope, pkce_enabled, { baseUrl });
+    const subject_token = await getAccessTokenAuthCode(driver, client_id,
+        client_secret, scope, pkce_enabled, { baseUrl });
     assert(subject_token, "No subject access token was obtained.");
 
     // Exchange the subject token (RFC 8693) for a token aimed at the audience.
-    const exchange = await exchangeTokenViaUI(driver, audience_client_id, client_id, client_secret);
+    const exchange = await exchangeTokenViaUI(driver, audience_client_id,
+        client_id, client_secret);
     const exchanged_access_token = exchange.access_token;
-    assert.notStrictEqual(jwt.decode(exchanged_access_token, { complete: true }), null,
+    assert.notStrictEqual(jwt.decode(exchanged_access_token,
+                          { complete: true }), null,
       "The exchanged access token could not be decoded as a JWT.");
 
     // Confirm the exchanged token is valid by introspecting it.
     log.info("Validating the exchanged access token via introspection.");
-    const introspection = await introspectTokenValue(driver, exchanged_access_token, introspection_client_id, introspection_client_secret);
+    const introspection = await introspectTokenValue(driver,
+        exchanged_access_token, introspection_client_id,
+        introspection_client_secret);
     let parsed = null;
     try {
       parsed = JSON.parse(introspection);
     } catch (e) {
       parsed = null;
     }
-    assert(parsed !== null, "Introspection output was not valid JSON: " + introspection);
+    assert(parsed !== null, "Introspection output was not valid JSON: " +
+           introspection);
 
     if (isStaticContentSite(baseUrl)) {
-      // No backend + Keycloak introspection endpoint is not CORS-enabled, so the
-      // browser introspection call is blocked. Expect that CORS/network error
-      // (readyState 0 / status 0 / status "error"). The token exchange itself was
-      // already confirmed above (HTTP 200 with an issued access token).
-      assert(parsed.status === "error" && parsed.request && parsed.request.status === 0,
-        "Introspection on a static site was expected to be blocked by CORS (status 0 error), " +
+      // No backend + Keycloak introspection endpoint is not CORS-enabled, so
+      // the browser introspection call is blocked. Expect that CORS/network
+      // error (readyState 0 / status 0 / status "error"). The token exchange
+      // itself was already confirmed above (HTTP 200 with an issued access
+      // token).
+      assert(parsed.status === "error" && parsed.request &&
+             parsed.request.status === 0,
+        "Introspection on a static site was expected to be blocked by CORS " +
+            "(status 0 error), " +
         "but got: " + introspection);
-      log.info("Token exchange succeeded; introspection was blocked by CORS as expected on the static site.");
+      log.info("Token exchange succeeded; introspection was blocked by CORS " +
+               "as expected on the static site.");
     } else {
       assert.strictEqual(parsed.active, true,
-        "Introspection reported the exchanged token as not valid (expected active=true). Output: " + introspection);
-      log.info("Token exchange succeeded and the issued access token was confirmed valid via introspection.");
+        "Introspection reported the exchanged token as not valid (expected " +
+            "active=true). Output: " + introspection);
+      log.info("Token exchange succeeded and the issued access token was " +
+               "confirmed valid via introspection.");
     }
     log.info("Test completed successfully.");
   } catch (error) {
@@ -255,6 +315,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

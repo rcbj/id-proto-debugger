@@ -2,10 +2,10 @@
 //
 // Owns three things: the capture buffer, the ARM state, and the disarm ladder.
 //
-// The extension ships INERT. At install it holds no host permission for anything
-// but the debugger's own origins (which it needs in order to hand captures to
-// the debugger's pages), and it injects nothing anywhere. Observing an origin is
-// a deliberate act with a clock on it:
+// The extension ships INERT. At install it holds no host permission for
+// anything but the debugger's own origins (which it needs in order to hand
+// captures to the debugger's pages), and it injects nothing anywhere. Observing
+// an origin is a deliberate act with a clock on it:
 //
 //   TTL expiry / browser restart  -> disarmed, needs nobody
 //   the debugger says "done"      -> disarmed, needs nobody
@@ -15,44 +15,84 @@
 // permissions and no injected scripts.
 "use strict";
 
+// The Entering/Leaving logging convention (see the repo-root CLAUDE.md)
+// wants a `log` here, and bunyan is not reachable from this file:
+// the extension is loaded raw by the browser, with no module system.
+// So this is the same call shape backed by console. Debug output is off by
+// default, so an ordinary run stays quiet; flip DEBUG to follow a call
+// through. Note the methods below are the one place the convention cannot
+// apply — a log line inside log.debug() is infinite recursion.
+var DEBUG = false;
+var LOG_TAG = "[background]";
+var log = {
+  debug: function () {
+    if (!DEBUG) return;
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  info: function () {
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  warn: function () {
+    console.warn.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  error: function () {
+    console.error.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  }
+};
+
 const BUFFER_KEY = "captures";
 const ARMED_KEY = "armed";
 const MAX_CAPTURES = 50;
 const TTL_MS = 30 * 60 * 1000;
 
-function log(...args) {
-  console.log("[idptools-webauthn]", ...args);
-}
+// The service worker's own progress lines went through a `log(...args)`
+// function that wrote them under "[idptools-webauthn]". The console-backed
+// `log.info` above does the same thing under LOG_TAG, so the function is gone
+// rather than renamed — and it had to go: a function declaration and a `var` of
+// the same name are ONE binding, so the object assignment won and every call
+// became "log is not a function", inside a service worker whose console nobody
+// reads on a passing run.
 
 async function getArmed() {
+  log.debug("Entering getArmed().");
   const stored = await chrome.storage.local.get(ARMED_KEY);
   const armed = stored[ARMED_KEY] || null;
   if (armed && armed.expires < Date.now()) {
     await disarm("the observation window expired");
+    log.debug("Leaving getArmed().");
     return null;
   }
+  log.debug("Leaving getArmed().");
   return armed;
 }
 
 async function setBadge(armed) {
+  log.debug("Entering setBadge().");
   try {
     await chrome.action.setBadgeText({ text: armed ? "ARM" : "" });
     await chrome.action.setBadgeBackgroundColor({ color: "#b00020" });
     await chrome.action.setTitle({
       title: armed
-        ? "Observing WebAuthn on " + armed.origin + " until " + new Date(armed.expires).toLocaleTimeString()
+        ? "Observing WebAuthn on " + armed.origin + " until " +
+            new Date(armed.expires).toLocaleTimeString()
         : "WebAuthn observer — inactive",
     });
   } catch (e) {
     // Badge decoration is not worth failing an arm over.
   }
+  log.debug("Leaving setBadge().");
 }
 
 // The shim goes in the page's world; the relay beside it in the isolated one.
 // Registered dynamically rather than declared in the manifest, because a
-// declared content script would need its host permission at INSTALL time and the
-// whole posture here is that a fresh install can see nothing.
+// declared content script would need its host permission at INSTALL time and
+// the whole posture here is that a fresh install can see nothing.
 async function registerFor(origin) {
+  log.debug("Entering registerFor().");
   const pattern = origin.replace(/\/+$/, "") + "/*";
   await unregisterAll();
   await chrome.scripting.registerContentScripts([
@@ -65,33 +105,41 @@ async function registerFor(origin) {
       runAt: "document_start", world: "ISOLATED", allFrames: true,
     },
   ]);
+  log.debug("Leaving registerFor().");
 }
 
 async function unregisterAll() {
+  log.debug("Entering unregisterAll().");
   try {
     const existing = await chrome.scripting.getRegisteredContentScripts();
-    const ids = existing.filter((s) => s.id === "shim" || s.id === "relay").map((s) => s.id);
+    const ids = existing.filter((s) => s.id === "shim" ||
+        s.id === "relay").map((s) => s.id);
     if (ids.length) {
       await chrome.scripting.unregisterContentScripts({ ids });
     }
   } catch (e) {
     // Nothing registered, which is the state we wanted anyway.
   }
+  log.debug("Leaving unregisterAll().");
 }
 
 async function arm(origin) {
-  log("arming for", origin);
+  log.debug("Entering arm().");
+  log.info("arming for", origin);
   await registerFor(origin);
-  const armed = { origin: origin, since: Date.now(), expires: Date.now() + TTL_MS };
+  const armed = { origin: origin, since: Date.now(), expires: Date.now() +
+      TTL_MS };
   await chrome.storage.local.set({ [ARMED_KEY]: armed });
   await chrome.alarms.clear("disarm");
   await chrome.alarms.create("disarm", { when: armed.expires });
   await setBadge(armed);
+  log.debug("Leaving arm().");
   return armed;
 }
 
 async function disarm(reason) {
-  log("disarming:", reason);
+  log.debug("Entering disarm().");
+  log.info("disarming:", reason);
   await unregisterAll();
   await chrome.storage.local.remove(ARMED_KEY);
   // The buffer goes with it. A capture is somebody's authentication ceremony;
@@ -100,6 +148,7 @@ async function disarm(reason) {
   await chrome.storage.local.remove(BUFFER_KEY);
   await chrome.alarms.clear("disarm");
   await setBadge(null);
+  log.debug("Leaving disarm().");
 }
 
 chrome.alarms.onAlarm.addListener((alarm) => {
@@ -116,15 +165,15 @@ chrome.runtime.onStartup.addListener(() => disarm("the browser restarted"));
 chrome.runtime.onInstalled.addListener(async () => {
   await disarm("freshly installed");
   // A build that ships autoarm.json arms itself for the origins listed there.
-  // That file exists ONLY in the CI build: a permission prompt cannot be clicked
-  // by a WebDriver session, and the alternative — a test-only bypass inside the
-  // arm path — would mean testing something users never run.
+  // That file exists ONLY in the CI build: a permission prompt cannot be
+  // clicked by a WebDriver session, and the alternative — a test-only bypass
+  // inside the arm path — would mean testing something users never run.
   try {
     const res = await fetch(chrome.runtime.getURL("autoarm.json"));
     if (res.ok) {
       const cfg = await res.json();
       if (Array.isArray(cfg.origins) && cfg.origins.length) {
-        log("autoarm.json present (CI build); arming for", cfg.origins[0]);
+        log.info("autoarm.json present (CI build); arming for", cfg.origins[0]);
         await arm(cfg.origins[0]);
       }
     }
@@ -138,15 +187,18 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (msg && msg.type === "capture") {
       const armed = await getArmed();
       if (!armed) {
-        // Arrived after the window closed. Dropping it is the point of the window.
+        // Arrived after the window closed. Dropping it is the point of the
+        // window.
         reply({ stored: false, reason: "not armed" });
         return;
       }
       const stored = await chrome.storage.local.get(BUFFER_KEY);
       const buffer = stored[BUFFER_KEY] || [];
       buffer.unshift(msg.capture);
-      await chrome.storage.local.set({ [BUFFER_KEY]: buffer.slice(0, MAX_CAPTURES) });
-      log("captured a", msg.capture.ceremony, "ceremony on", msg.capture.origin);
+      await chrome.storage.local.set({ [BUFFER_KEY]: buffer.slice(0,
+                                     MAX_CAPTURES) });
+      log.info("captured a", msg.capture.ceremony, "ceremony on",
+          msg.capture.origin);
       reply({ stored: true });
       return;
     }
@@ -156,8 +208,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
       // integers under 65536, so build.js mangles the M.N.O stamp to fit it.
       // The debugger's pages compare against their own M.N.O build, and
       // reporting the mangled form here made that comparison always disagree —
-      // a drift warning on every page in a matched build, which is worse than no
-      // warning at all.
+      // a drift warning on every page in a matched build, which is worse than
+      // no warning at all.
       const manifest = chrome.runtime.getManifest();
       reply({ captures: stored[BUFFER_KEY] || [], armed: await getArmed(),
                version: manifest.version_name || manifest.version });

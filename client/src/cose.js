@@ -16,7 +16,8 @@
 // here pulls in `elliptic`. See the note at the top of that file: `jwk-to-pem`
 // builds its EC point through `elliptic`, which carries GHSA-848j-6mx2-7j84
 // with no patched version, and browserify would put it in any bundle that
-// required it. `tests/jwk_pem_encoding.js` enforces that rule across `client/src`.
+// required it. `tests/jwk_pem_encoding.js` enforces that rule across
+// `client/src`.
 //
 // Scope is public keys, because that is all WebAuthn ever hands out. A COSE_Key
 // carrying private material (`-4` for EC2) is refused rather than quietly
@@ -58,39 +59,68 @@ var CURVE = {
 // Algorithms (the COSE Algorithms registry), with the JOSE name and enough
 // detail to drive Web Crypto without a second table somewhere else.
 var ALG = {
-  "-7":   { name: "ES256", kty: "EC2", crv: "P-256", hash: "SHA-256", webCrypto: { name: "ECDSA", namedCurve: "P-256" }, verify: { name: "ECDSA", hash: "SHA-256" }, derSig: true },
-  "-35":  { name: "ES384", kty: "EC2", crv: "P-384", hash: "SHA-384", webCrypto: { name: "ECDSA", namedCurve: "P-384" }, verify: { name: "ECDSA", hash: "SHA-384" }, derSig: true },
-  "-36":  { name: "ES512", kty: "EC2", crv: "P-521", hash: "SHA-512", webCrypto: { name: "ECDSA", namedCurve: "P-521" }, verify: { name: "ECDSA", hash: "SHA-512" }, derSig: true },
-  "-8":   { name: "EdDSA", kty: "OKP", hash: null,   webCrypto: { name: "Ed25519" }, verify: { name: "Ed25519" }, derSig: false },
-  "-257": { name: "RS256", kty: "RSA", hash: "SHA-256", webCrypto: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, verify: { name: "RSASSA-PKCS1-v1_5" }, derSig: false },
-  "-258": { name: "RS384", kty: "RSA", hash: "SHA-384", webCrypto: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-384" }, verify: { name: "RSASSA-PKCS1-v1_5" }, derSig: false },
-  "-259": { name: "RS512", kty: "RSA", hash: "SHA-512", webCrypto: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" }, verify: { name: "RSASSA-PKCS1-v1_5" }, derSig: false },
-  "-37":  { name: "PS256", kty: "RSA", hash: "SHA-256", webCrypto: { name: "RSA-PSS", hash: "SHA-256" }, verify: { name: "RSA-PSS", saltLength: 32 }, derSig: false },
-  "-38":  { name: "PS384", kty: "RSA", hash: "SHA-384", webCrypto: { name: "RSA-PSS", hash: "SHA-384" }, verify: { name: "RSA-PSS", saltLength: 48 }, derSig: false },
-  "-39":  { name: "PS512", kty: "RSA", hash: "SHA-512", webCrypto: { name: "RSA-PSS", hash: "SHA-512" }, verify: { name: "RSA-PSS", saltLength: 64 }, derSig: false },
+  "-7":   { name: "ES256", kty: "EC2", crv: "P-256", hash: "SHA-256",
+           webCrypto: { name: "ECDSA", namedCurve: "P-256" },
+           verify: { name: "ECDSA", hash: "SHA-256" }, derSig: true },
+  "-35":  { name: "ES384", kty: "EC2", crv: "P-384", hash: "SHA-384",
+           webCrypto: { name: "ECDSA", namedCurve: "P-384" },
+           verify: { name: "ECDSA", hash: "SHA-384" }, derSig: true },
+  "-36":  { name: "ES512", kty: "EC2", crv: "P-521", hash: "SHA-512",
+           webCrypto: { name: "ECDSA", namedCurve: "P-521" },
+           verify: { name: "ECDSA", hash: "SHA-512" }, derSig: true },
+  "-8":   { name: "EdDSA", kty: "OKP", hash: null,
+           webCrypto: { name: "Ed25519" }, verify: { name: "Ed25519" },
+           derSig: false },
+  "-257": { name: "RS256", kty: "RSA", hash: "SHA-256",
+           webCrypto: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+           verify: { name: "RSASSA-PKCS1-v1_5" }, derSig: false },
+  "-258": { name: "RS384", kty: "RSA", hash: "SHA-384",
+           webCrypto: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-384" },
+           verify: { name: "RSASSA-PKCS1-v1_5" }, derSig: false },
+  "-259": { name: "RS512", kty: "RSA", hash: "SHA-512",
+           webCrypto: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-512" },
+           verify: { name: "RSASSA-PKCS1-v1_5" }, derSig: false },
+  "-37":  { name: "PS256", kty: "RSA", hash: "SHA-256",
+           webCrypto: { name: "RSA-PSS", hash: "SHA-256" },
+           verify: { name: "RSA-PSS", saltLength: 32 }, derSig: false },
+  "-38":  { name: "PS384", kty: "RSA", hash: "SHA-384",
+           webCrypto: { name: "RSA-PSS", hash: "SHA-384" },
+           verify: { name: "RSA-PSS", saltLength: 48 }, derSig: false },
+  "-39":  { name: "PS512", kty: "RSA", hash: "SHA-512",
+           webCrypto: { name: "RSA-PSS", hash: "SHA-512" },
+           verify: { name: "RSA-PSS", saltLength: 64 }, derSig: false },
 };
 
 function algorithm(coseAlg) {
+  log.debug("Entering algorithm().");
+  log.debug("Leaving algorithm().");
   return ALG[String(coseAlg)] || null;
 }
 
 function algorithmName(coseAlg) {
+  log.debug("Entering algorithmName().");
   var a = algorithm(coseAlg);
+  log.debug("Leaving algorithmName().");
   return a ? a.name : "unrecognised (" + coseAlg + ")";
 }
 
 function base64url(bytes) {
+  log.debug("Entering base64url().");
   var b64 = (typeof btoa === "function")
     ? btoa(String.fromCharCode.apply(null, bytes))
     : Buffer.from(bytes).toString("base64");
+  log.debug("Leaving base64url().");
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 function requireBytes(map, label, what) {
+  log.debug("Entering requireBytes().");
   var v = map.get(label);
   if (!(v instanceof Uint8Array)) {
-    throw new Error("the COSE key has no " + what + " (label " + label + "), or it is not a byte string");
+    throw new Error("the COSE key has no " + what + " (label " + label +
+                    "), or it is not a byte string");
   }
+  log.debug("Leaving requireBytes().");
   return v;
 }
 
@@ -98,7 +128,8 @@ function requireBytes(map, label, what) {
 function coseToJwk(coseKey) {
   log.debug("Entering coseToJwk().");
   if (!(coseKey instanceof Map)) {
-    throw new Error("expected a COSE_Key as a Map; got " + Object.prototype.toString.call(coseKey));
+    throw new Error("expected a COSE_Key as a Map; got " +
+                    Object.prototype.toString.call(coseKey));
   }
   var ktyLabel = coseKey.get(LABEL_KTY);
   var kty = KTY[ktyLabel];
@@ -113,11 +144,13 @@ function coseToJwk(coseKey) {
     // -4 is the private key `d`. Its presence means we were handed something we
     // should not have been; say so rather than silently publishing the rest.
     if (coseKey.has(-4)) {
-      throw new Error("this COSE key carries private key material (label -4); refusing it");
+      throw new Error("this COSE key carries private key material (label " +
+                      "-4); refusing it");
     }
     var crv = CURVE[coseKey.get(-1)];
     if (!crv) {
-      throw new Error("unsupported COSE curve " + JSON.stringify(coseKey.get(-1)));
+      throw new Error("unsupported COSE curve " +
+                      JSON.stringify(coseKey.get(-1)));
     }
     jwk = {
       kty: "EC", crv: crv,
@@ -126,7 +159,8 @@ function coseToJwk(coseKey) {
     };
   } else if (kty === "RSA") {
     if (coseKey.has(-3)) {
-      throw new Error("this COSE key carries private key material (label -3); refusing it");
+      throw new Error("this COSE key carries private key material (label " +
+                      "-3); refusing it");
     }
     jwk = {
       kty: "RSA",
@@ -136,13 +170,16 @@ function coseToJwk(coseKey) {
   } else {
     // OKP — Ed25519 and friends.
     if (coseKey.has(-4)) {
-      throw new Error("this COSE key carries private key material (label -4); refusing it");
+      throw new Error("this COSE key carries private key material (label " +
+                      "-4); refusing it");
     }
     var okpCrv = CURVE[coseKey.get(-1)];
     if (!okpCrv) {
-      throw new Error("unsupported COSE curve " + JSON.stringify(coseKey.get(-1)));
+      throw new Error("unsupported COSE curve " +
+                      JSON.stringify(coseKey.get(-1)));
     }
-    jwk = { kty: "OKP", crv: okpCrv, x: base64url(requireBytes(coseKey, -2, "public key")) };
+    jwk = { kty: "OKP", crv: okpCrv, x: base64url(requireBytes(coseKey, -2,
+        "public key")) };
   }
 
   if (alg) {
@@ -154,7 +191,8 @@ function coseToJwk(coseKey) {
                       ", which is a " + alg.kty + " algorithm");
     }
     if (alg.crv && jwk.crv && alg.crv !== jwk.crv) {
-      throw new Error("the COSE key says curve " + jwk.crv + " but alg " + alg.name +
+      throw new Error("the COSE key says curve " + jwk.crv + " but alg " +
+                      alg.name +
                       ", which is defined on " + alg.crv);
     }
   }
@@ -167,9 +205,9 @@ function coseToJwk(coseKey) {
 }
 
 // The whole chain the analyzer's COSE pane shows: COSE_Key -> JWK -> PEM.
-// jwk_pem covers RSA and the three NIST curves; an OKP key has no encoder there,
-// so the PEM is reported as unavailable rather than the whole call failing —
-// one unrenderable field must not cost the user the decoded key.
+// jwk_pem covers RSA and the three NIST curves; an OKP key has no encoder
+// there, so the PEM is reported as unavailable rather than the whole call
+// failing — one unrenderable field must not cost the user the decoded key.
 function describe(coseKey) {
   log.debug("Entering describe().");
   var jwk = coseToJwk(coseKey);

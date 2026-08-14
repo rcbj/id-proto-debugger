@@ -19,24 +19,36 @@ var headless = true;
 var waitTime = appconfig.waitTime;
 
 async function waitForValue(driver, locator, predicate, message, timeout) {
+  log.debug("Entering waitForValue().");
   await driver.wait(until.elementLocated(locator), waitTime);
   await driver.wait(async function () {
-    try { var v = await driver.findElement(locator).getAttribute("value"); return predicate(v || ""); }
-    catch (e) { return false; }
+    try {
+      var v = await driver.findElement(locator).getAttribute("value");
+      return predicate(v || "");
+    } catch (e) {
+      return false;
+    }
   }, timeout || waitTime, message);
+  log.debug("Leaving waitForValue().");
 }
 async function textOf(driver, id) {
+  log.debug("Entering textOf().");
+  log.debug("Leaving textOf().");
   return await driver.executeScript(
     "var e=document.getElementById(arguments[0]); if(!e) return '';" +
-    " return (e.value !== undefined && e.value !== null && e.value !== '') ? e.value : (e.textContent || '');", id);
+    " return (e.value !== undefined && e.value !== null && e.value !== '') ? " +
+        "e.value : (e.textContent || '');", id);
 }
 async function clickByValue(driver, value) {
+  log.debug("Entering clickByValue().");
   var locator = By.xpath("//input[@value='" + value + "']");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(e), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", e);
   await e.click();
+  log.debug("Leaving clickByValue().");
 }
 
 async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
@@ -55,11 +67,13 @@ async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
     await clickByValue(driver, "Load Metadata");
   }
   await waitForValue(driver, By.id("saml_metadata_status"),
-    function (v) { return v.indexOf("Loaded and parsed") >= 0; }, "Metadata was not loaded/parsed.");
+    function (v) { return v.indexOf("Loaded and parsed") >= 0; },
+              "Metadata was not loaded/parsed.");
   log.debug("Leaving loadIdpMetadata().");
 }
 
-async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, metadataFile) {
+async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user,
+                                      metadataFile) {
   log.debug("Entering encryptedSsoActivities().");
   var loginWait = Math.max(waitTime, 15000);
   log.info("Load the SAML Test Tools page (encrypted SP, POST binding).");
@@ -75,11 +89,13 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, met
   var spCert = spPair.certificate;
   await driver.executeScript(
     "document.getElementById('saml_sp_private_key').value = arguments[0];" +
-    "document.getElementById('saml_sp_public_key').value = arguments[1];", spKey, spCert);
+    "document.getElementById('saml_sp_public_key').value = arguments[1];",
+        spKey, spCert);
 
   // POST binding (encrypted assertion is returned to the ACS via POST).
   await driver.executeScript(
-    "var s=document.getElementById('saml_binding'); if(s){ s.value='post'; s.dispatchEvent(new Event('change')); }");
+    "var s=document.getElementById('saml_binding'); if(s){ s.value='post'; " +
+        "s.dispatchEvent(new Event('change')); }");
 
   // The ACS default is the deployment's own statement about where its landing
   // is, so it is READ rather than set. This test is the one that cannot fall
@@ -88,21 +104,29 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, met
   // whatever the AuthnRequest asks for — and the static response page cannot
   // receive a POST. Check it here rather than letting the wait below time out
   // saying only that the response page never loaded.
-  var acs = await driver.findElement(By.id("saml_acs_url")).getAttribute("value");
+  var acs =
+      await driver.findElement(By.id("saml_acs_url")).getAttribute("value");
   log.info("ACS (the page's default): " + acs);
-  assert(acs, "saml_acs_url is empty, so the IdP has nowhere to return the response.");
+  assert(acs,
+      "saml_acs_url is empty, so the IdP has nowhere to return the response.");
   assert(!/\/saml_response\.html(\?|$)/.test(acs),
-    "the ACS defaults to the static response page (" + acs + "), which cannot receive the IdP's POST. " +
-    "On a static deployment it should be the /samlacs landing answered by the Lambda@Edge — set " +
-    "samlEdgeLanding: true in the client env config for this target and redeploy the site bundle " +
+    "the ACS defaults to the static response page (" + acs +
+        "), which cannot receive the IdP's POST. " +
+    "On a static deployment it should be the /samlacs landing answered by " +
+        "the Lambda@Edge — set " +
+    "samlEdgeLanding: true in the client env config for this target and " +
+        "redeploy the site bundle " +
     "(see infra/edge/saml_landing.js).");
 
   // The response must actually come back over POST for this test to mean
   // anything; assert the AuthnRequest asked for it rather than assuming.
-  var requestXml = await driver.findElement(By.id("saml_authn_request")).getAttribute("value");
+  var requestXml = await driver.findElement(By.id("saml_authn_request"))
+      .getAttribute("value");
   assert(requestXml.indexOf("HTTP-POST") >= 0,
-    "the AuthnRequest should request the HTTP-POST response binding (ProtocolBinding), since an " +
-    "encrypted assertion is exactly the case saml-profiles-2.0-os section 4.1.2 forbids Redirect for. " +
+    "the AuthnRequest should request the HTTP-POST response binding " +
+        "(ProtocolBinding), since an " +
+    "encrypted assertion is exactly the case saml-profiles-2.0-os section " +
+        "4.1.2 forbids Redirect for. " +
     "Request was:\n" + requestXml.slice(0, 600));
 
   log.info("Call IdP (POST, encrypted client).");
@@ -110,7 +134,8 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, met
 
   log.info("Log in at Keycloak.");
   await driver.wait(until.elementLocated(By.id("username")), loginWait);
-  await driver.wait(until.elementIsVisible(driver.findElement(By.id("username"))), loginWait);
+  await driver.wait(until.elementIsVisible(driver.findElement(By.id(
+                    "username"))), loginWait);
   await driver.findElement(By.id("username")).clear();
   await driver.findElement(By.id("username")).sendKeys(user);
   await driver.findElement(By.id("password")).clear();
@@ -120,36 +145,45 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, met
   log.info("Wait for the SAML response page.");
   await driver.wait(until.urlContains("saml_response.html"), loginWait);
   await waitForValue(driver, By.id("saml_resp_xml"),
-    function (v) { return v.indexOf("Response") >= 0; }, "SAMLResponse XML was not displayed.", loginWait);
+    function (v) { return v.indexOf("Response") >= 0; },
+              "SAMLResponse XML was not displayed.", loginWait);
 
   // The response must carry an EncryptedAssertion (no plaintext Assertion).
   var respXml = await textOf(driver, "saml_resp_xml");
-  log.info("SAMLResponse (first 1200 chars):\n" + (respXml || "").substring(0, 1200));
-  assert(respXml.indexOf("EncryptedAssertion") >= 0 || respXml.indexOf("EncryptedData") >= 0,
-    "Response did not contain an EncryptedAssertion — is saml.encrypt=true on the client?");
+  log.info("SAMLResponse (first 1200 chars):\n" + (respXml || "").substring(0,
+           1200));
+  assert(respXml.indexOf("EncryptedAssertion") >= 0 ||
+         respXml.indexOf("EncryptedData") >= 0,
+    "Response did not contain an EncryptedAssertion — is saml.encrypt=true " +
+        "on the client?");
 
   // Guard against a stale client bundle that predates the decryption feature.
   var hasFn = await driver.executeScript(
-    "return typeof (window.saml_response && window.saml_response.decryptAssertion) === 'function';");
-  assert(hasFn, "saml_response.decryptAssertion is not defined — the client bundle is stale; rebuild the client image.");
+    "return typeof (window.saml_response && " +
+        "window.saml_response.decryptAssertion) === 'function';");
+  assert(hasFn, "saml_response.decryptAssertion is not defined — the client " +
+         "bundle is stale; rebuild the client image.");
 
   // Decrypt on the response page with the SP private key (what a user would do;
   // set it explicitly rather than relying on the localStorage prefill).
   log.info("Decrypt the EncryptedAssertion on the response page.");
   await driver.executeScript(
-    "var e=document.getElementById('saml_dec_key'); if(e){ e.value = arguments[0]; }", spKey);
+    "var e=document.getElementById('saml_dec_key'); if(e){ e.value = " +
+        "arguments[0]; }", spKey);
   var keyLen = await driver.executeScript(
-    "var e=document.getElementById('saml_dec_key'); return e ? (e.value || '').length : 0;");
+    "var e=document.getElementById('saml_dec_key'); return e ? (e.value || " +
+        "'').length : 0;");
   assert(keyLen > 0, "Failed to set the decryption key field (saml_dec_key).");
   // Fire the Decrypt button via a scripted element.click() rather than a native
   // Selenium click. The button sits low on a tall page; in the headless
-  // viewport the synthetic mouse click intermittently lands off-target and never
-  // triggers the onclick (no intercept error is raised), so decryptAssertion()
-  // silently never runs (~5/8 runs under load). A scripted click still dispatches
-  // to the real button's onclick="…decryptAssertion()" binding — it just isn't
-  // subject to coordinate/scroll geometry.
+  // viewport the synthetic mouse click intermittently lands off-target and
+  // never triggers the onclick (no intercept error is raised), so
+  // decryptAssertion() silently never runs (~5/8 runs under load). A scripted
+  // click still dispatches to the real button's onclick="…decryptAssertion()"
+  // binding — it just isn't subject to coordinate/scroll geometry.
   var clicked = await driver.executeScript(
-    "var b=document.querySelector(\"input[value='Decrypt']\"); if(!b) return false;" +
+    "var b=document.querySelector(\"input[value='Decrypt']\"); if(!b) " +
+        "return false;" +
     " b.scrollIntoView({block:'center'}); b.click(); return true;");
   assert(clicked, "Could not find the Decrypt button to click.");
 
@@ -170,21 +204,27 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user, met
       return /Decrypted|Decryption failed|No <xenc/i.test(s);
     }, loginWait, "decrypt-wait");
   } catch (e) {
-    throw new Error("Decrypt did not complete. dec_status=\"" + (await textOf(driver, "saml_dec_status")) + "\"");
+    throw new Error("Decrypt did not complete. dec_status=\"" +
+                    (await textOf(driver, "saml_dec_status")) + "\"");
   }
   var decStatus = await textOf(driver, "saml_dec_status");
-  assert(decStatus.indexOf("Decrypted") >= 0, "Decryption did not succeed: " + decStatus);
+  assert(decStatus.indexOf("Decrypted") >= 0, "Decryption did not succeed: " +
+         decStatus);
 
   // The decrypted plaintext assertion should now be shown, and its attributes
   // (incl. NameID) rendered.
   var assertionXml = await textOf(driver, "saml_assertion_xml");
-  assert(assertionXml.indexOf("Assertion") >= 0 && assertionXml.indexOf("EncryptedData") < 0,
-    "Decrypted assertion not shown. status=" + decStatus + " assertion=" + assertionXml.slice(0, 200));
+  assert(assertionXml.indexOf("Assertion") >= 0 &&
+         assertionXml.indexOf("EncryptedData") < 0,
+    "Decrypted assertion not shown. status=" + decStatus + " assertion=" +
+        assertionXml.slice(0, 200));
   await driver.wait(async function () {
     var t = await driver.executeScript(
-      "var e=document.getElementById('saml_attrs_table'); return e ? (e.textContent || '') : '';");
+      "var e=document.getElementById('saml_attrs_table'); return e ? " +
+          "(e.textContent || '') : '';");
     return t.indexOf("NameID") >= 0;
-  }, loginWait, "Attributes table (from the decrypted assertion) did not include a NameID row.");
+  }, loginWait, "Attributes table (from the decrypted assertion) did not " +
+      "include a NameID row.");
 
   log.info("SAML EncryptedAssertion decryption succeeded.");
   log.debug("Leaving encryptedSsoActivities().");
@@ -203,29 +243,38 @@ async function test() {
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
-  const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).setLoggingPrefs(loggingPrefs).build();
+  const driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).setLoggingPrefs(loggingPrefs).build();
   try {
     const metadataUrl = process.env.SAML_METADATA_URL;
     const metadataFile = process.env.SAML_METADATA_FILE;
     const spEntityId = process.env.SAML_ENC_SP_ENTITY_ID;
     const user = process.env.SAML_USER || "saml";
-    assert(metadataUrl || metadataFile, "Set SAML_METADATA_URL or SAML_METADATA_FILE.");
-    assert(spEntityId, "SAML_ENC_SP_ENTITY_ID environment variable is not set.");
+    assert(metadataUrl || metadataFile,
+           "Set SAML_METADATA_URL or SAML_METADATA_FILE.");
+    assert(spEntityId,
+           "SAML_ENC_SP_ENTITY_ID environment variable is not set.");
 
     // No browser needed, and it fails naming the cause — so it runs first.
     assertEdgeLandingContract(log);
 
-    await encryptedSsoActivities(driver, metadataUrl, spEntityId, user, metadataFile);
+    await encryptedSsoActivities(driver, metadataUrl, spEntityId, user,
+                                 metadataFile);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
     try {
       log.error("Current URL: " + (await driver.getCurrentUrl()));
       var src = await driver.getPageSource();
-      log.error("Page source (first 8000 chars):\n" + (src || "").substring(0, 8000));
+      log.error("Page source (first 8000 chars):\n" + (src || "").substring(0,
+                8000));
       var blogs = await driver.manage().logs().get("browser");
-      if (blogs && blogs.length) log.error("Browser console:\n" + blogs.map(function (e) { return e.level.name + ": " + e.message; }).join("\n"));
-    } catch (e2) { /* ignore */ }
+      if (blogs && blogs.length) log.error("Browser console:\n" +
+          blogs.map(function (e) { return e.level.name + ": " +
+          e.message; }).join("\n"));
+    } catch (e2) {
+      /* ignore */
+    }
     process.exit(1);
   } finally {
     await driver.quit();
@@ -237,11 +286,15 @@ const program = new Command();
 program
   .name('saml_encrypted_sso')
   .description("Run SAML EncryptedAssertion decryption test.")
-  .addOption(new Option("-u, --url <url>", "Set base URL.").makeOptionMandatory())
-  .addOption(new Option("-b, --browser", "Display browser (only works within device)."))
+  .addOption(new Option("-u, --url <url>",
+      "Set base URL.").makeOptionMandatory())
+  .addOption(new Option("-b, --browser",
+      "Display browser (only works within device)."))
   .action((options) => {
-    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl = options.url; }
-    if (!!options.browser) { log.info("Using browser. headless = false."); headless = false; }
+    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl =
+        options.url; }
+    if (!!options.browser) { log.info("Using browser. " +
+        "headless = false."); headless = false; }
   });
 program.parse(process.argv).opts();
 

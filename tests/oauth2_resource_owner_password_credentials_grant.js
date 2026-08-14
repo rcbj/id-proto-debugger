@@ -7,7 +7,8 @@ const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
-var log = bunyan.createLogger({ name: 'oauth2_resource_owner_password_credentials_grant',
+var log = bunyan.createLogger({
+    name: 'oauth2_resource_owner_password_credentials_grant',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000"
@@ -15,12 +16,16 @@ var logout_post_redirect_uri_value = baseUrl + "/logout.html";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata, getAccessTokenPassword, verifyAccessToken } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+const { populateMetadata, getAccessTokenPassword, verifyAccessToken } =
+       require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
+       assert });
 
 
 async function logout(driver) {
+  log.debug("Entering logout().");
   log.info("Entering logout().");
-  // Locate the logout controls, set the post-logout redirect URI and trigger logout
+  // Locate the logout controls, set the post-logout redirect URI and trigger
+  // logout
   log.info("Find logout Button");
   logout_button = By.id("logout_btn");
   log.info("Find logout_post_redirect_uri.");
@@ -29,9 +34,11 @@ async function logout(driver) {
   await driver.wait(until.elementLocated(logout_post_redirect_uri), waitTime);
   log.info("Wait for logout_post_redirect_uri to be visible.");
   await driver.findElement(logout_post_redirect_uri).clear();
-  await driver.wait(until.elementIsVisible(driver.findElement(logout_post_redirect_uri)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(
+                    logout_post_redirect_uri)), waitTime);
   log.info("Set post_redirect_uri for logout.");
-  await driver.findElement(logout_post_redirect_uri).sendKeys(logout_post_redirect_uri_value);
+  await driver.findElement(logout_post_redirect_uri)
+                           .sendKeys(logout_post_redirect_uri_value);
   log.info("Click logout_btn.");
   await driver.findElement(logout_button).click();
 
@@ -40,9 +47,11 @@ async function logout(driver) {
   returnToDebugLink = By.partialLinkText('Return to debugger');
   await driver.wait(until.elementLocated(returnToDebugLink), waitTime);
   await driver.findElement(returnToDebugLink).click();
+  log.debug("Leaving logout().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if(headless) {
     options.addArguments("--headless");
@@ -52,11 +61,14 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
-  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
-  // browsers otherwise block (mixed content / Private Network Access).
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak,
+  // which browsers otherwise block (mixed content / Private Network Access).
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
-  const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  const driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).build();
 
   try {
     log.info("Starting Test run.");
@@ -71,7 +83,8 @@ async function test() {
     log.info("Set environment variables.");
 
     // Verify all required environment variables are present
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
     assert(client_id, "CLIENT_ID environment variable is not set.");
     assert(client_secret, "CLIENT_SECRET environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
@@ -79,7 +92,8 @@ async function test() {
     assert(audience, "AUDIENCE environment variable is not set.");
     log.info("Assertions completed successfully.");
 
-    // Drive the full flow: load the app, populate IdP metadata, obtain and verify a token, then log out
+    // Drive the full flow: load the app, populate IdP metadata, obtain and
+    // verify a token, then log out
     log.info("Starting driver.get() run.");
     await driver.get(baseUrl + "/debugger.html");
     log.info("Completed driver.get() run.");
@@ -87,10 +101,13 @@ async function test() {
     await populateMetadata(driver, discovery_endpoint);
     log.info("Completed populateMetadata().");
     log.info("Retrieve access_token.");
-    const access_token = await getAccessTokenPassword(driver, client_id, client_secret, scope, username, password);
+    const access_token = await getAccessTokenPassword(driver, client_id,
+        client_secret, scope, username, password);
     log.info("Found access_token=" + access_token);
     log.info("Calling verifyAccessToken().");
-    await verifyAccessToken(access_token, client_id, scope, { user: username, audience: "account", issuer: audience, verifyTyp: true });
+    await verifyAccessToken(access_token, client_id, scope, { user: username,
+                            audience: "account", issuer: audience,
+                            verifyTyp: true });
     log.info("Logging out.");
     await logout(driver);
     log.info("Test completed successfully.")
@@ -100,6 +117,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

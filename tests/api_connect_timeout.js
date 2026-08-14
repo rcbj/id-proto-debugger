@@ -2,32 +2,32 @@
 //
 // The api's outbound LIMITS: api/connect_timeout.js, and the four settings in
 // api/env/*.js that bound every axios call the service makes — callTimeout,
-// connectionTimeout, maxContentLength and maxRedirects — plus the userAgent those
-// calls identify themselves with, and the keepAlive that pools their connections.
-// axios's own defaults are no timeout, no connect-phase timeout at all, an
-// unlimited response size, 21 redirects and a User-Agent of "axios/x.y.z", so each
-// has to be passed explicitly at every call site — which is the other half of what
-// this checks, by reading server.js.
+// connectionTimeout, maxContentLength and maxRedirects — plus the userAgent
+// those calls identify themselves with, and the keepAlive that pools their
+// connections. axios's own defaults are no timeout, no connect-phase timeout at
+// all, an unlimited response size, 21 redirects and a User-Agent of
+// "axios/x.y.z", so each has to be passed explicitly at every call site — which
+// is the other half of what this checks, by reading server.js.
 //
 // No browser and no services: node only, so it never skips.
 //
-// The property under test is the one that makes connectionTimeout worth having as
-// a setting separate from callTimeout, and it is easy to implement something that
-// merely LOOKS like it:
+// The property under test is the one that makes connectionTimeout worth having
+// as a setting separate from callTimeout, and it is easy to implement something
+// that merely LOOKS like it:
 //
 //   * a stalled CONNECT must be given up on at connectionTimeout;
 //   * a connection that succeeded must NOT be — the budget is spent, and from
 //     there on only callTimeout applies.
 //
 // The second half is what an AbortSignal.timeout (the obvious way to do this in
-// axios, and what this code did first) gets wrong: it starts counting when it is
-// created, so it kills a perfectly healthy slow response as readily as a dead
-// host, and whichever of the two settings was smaller became the only one that
-// ever fired. Case 2 below fails against that implementation and passes against
-// this one, which is the whole reason it exists.
+// axios, and what this code did first) gets wrong: it starts counting when it
+// is created, so it kills a perfectly healthy slow response as readily as a
+// dead host, and whichever of the two settings was smaller became the only one
+// that ever fired. Case 2 below fails against that implementation and passes
+// against this one, which is the whole reason it exists.
 //
-// TLS is checked separately because the disarm event differs: a TLSSocket that has
-// completed the TCP handshake and then stalls mid-negotiation has emitted
+// TLS is checked separately because the disarm event differs: a TLSSocket that
+// has completed the TCP handshake and then stalls mid-negotiation has emitted
 // 'connect' but not 'secureConnect', so disarming on the wrong one leaves the
 // stall unbounded.
 const assert = require("assert");
@@ -51,17 +51,35 @@ var connectTimeout = paths.requireSharedModule(
   [__dirname + "/../api/connect_timeout.js", __dirname + "/connect_timeout.js"],
   "connect_timeout.js");
 var guardModule = paths.requireSharedModule(
-  [__dirname + "/../api/ssrf_guard.js", __dirname + "/ssrf_guard.js"], "ssrf_guard.js");
+  [__dirname + "/../api/ssrf_guard.js", __dirname + "/ssrf_guard.js"],
+   "ssrf_guard.js");
 
-var quiet = { debug: function () {}, info: function () {}, warn: function () {}, error: function () {} };
+var quiet = { debug: function () {
+  log.debug("Entering debug().");
+  log.debug("Leaving debug().");
+}, info: function () {
+  log.debug("Entering info().");
+  log.debug("Leaving info().");
+}, warn: function () {
+  log.debug("Entering warn().");
+  log.debug("Leaving warn().");
+}, error: function () {
+  log.debug("Entering error().");
+  log.debug("Leaving error().");
+} };
 
 function listen(server) {
+  log.debug("Entering listen().");
+  log.debug("Leaving listen().");
   return new Promise(function (resolve) {
-    server.listen(0, "127.0.0.1", function () { resolve(server.address().port); });
+    server.listen(0, "127.0.0.1",
+                  function () { resolve(server.address().port); });
   });
 }
 
 function sleep(ms) {
+  log.debug("Entering sleep().");
+  log.debug("Leaving sleep().");
   return new Promise(function (resolve) { setTimeout(resolve, ms); });
 }
 
@@ -78,12 +96,19 @@ function attempt(options, agent, settle) {
     var started = Date.now();
     var done = false;
     function finish(outcome, error) {
-      if (done) return;
+      log.debug("Entering finish().");
+      if (done) {
+        log.debug("Leaving finish().");
+        return;
+      }
       done = true;
-      resolve({ outcome: outcome, error: error, elapsed: Date.now() - started });
+      resolve({ outcome: outcome, error: error, elapsed: Date.now() -
+              started });
+      log.debug("Leaving finish().");
     }
     var transport = options.protocol === "https:" ? https : http;
-    var req = transport.request(Object.assign({}, options, { agent: agent }), function (res) {
+    var req = transport.request(Object.assign({}, options, { agent: agent }),
+        function (res) {
       res.resume();
       finish("response");
     });
@@ -99,7 +124,10 @@ function attempt(options, agent, settle) {
 // A DNS lookup that never answers: the socket is created and its connect stays
 // pending forever. Deterministic, unlike aiming at an address one hopes is
 // blackholed.
-function hangingLookup() { /* deliberately never calls back */ }
+function hangingLookup() {
+  log.debug("Entering hangingLookup()."); /* deliberately never calls back */ 
+  log.debug("Leaving hangingLookup().");
+}
 
 // ---------------------------------------------------------------------------
 // 1. A stalled connect is given up on at connectionTimeout.
@@ -110,48 +138,58 @@ async function stalledConnectIsAborted() {
   var agent = connectTimeout.withConnectTimeout(
     new http.Agent({ lookup: hangingLookup }), 400);
 
-  var result = await attempt({ host: "stalled.example", port: 80, path: "/" }, agent, 3000);
+  var result = await attempt({ host: "stalled.example", port: 80, path: "/" },
+      agent, 3000);
 
   assert.strictEqual(result.outcome, "error",
-    "a connect that never completes must fail, not hang (outcome: " + result.outcome + ").");
+    "a connect that never completes must fail, not hang (outcome: " +
+        result.outcome + ").");
   assert.strictEqual(result.error.code, "ECONNECTTIMEOUT",
     "and fail as a connect timeout, not as something else: " +
     result.error.code + " / " + result.error.message);
   assert.ok(result.elapsed >= 350 && result.elapsed < 1500,
-    "it must fail at about the configured 400ms, not sooner or much later (took " +
+    "it must fail at about the configured 400ms, not sooner or much " +
+        "later (took " +
     result.elapsed + "ms).");
   assert.ok(/connectionTimeout/.test(result.error.message),
-    "the message should name the setting responsible, so the cause is findable: " +
+    "the message should name the setting responsible, so the cause is " +
+        "findable: " +
     result.error.message);
   // A socket that never connected has no remoteAddress, so naming the target
   // takes deliberate effort — and without it the error says only "the remote
   // host", which on a service that calls many is no help at all.
   assert.ok(/stalled\.example:80/.test(result.error.message),
     "and must name the host:port it failed to reach: " + result.error.message);
-  log.info("[stalled connect] OK — refused after " + result.elapsed + "ms with " +
+  log.info("[stalled connect] OK — refused after " + result.elapsed +
+           "ms with " +
            result.error.code + ".");
   log.debug("Leaving stalledConnectIsAborted().");
 }
 
 // ---------------------------------------------------------------------------
-// 2. A CONNECTED socket is not touched. This is the point of the whole exercise:
-//    a slow IdP must get the full callTimeout, not the connect budget.
+// 2. A CONNECTED socket is not touched. This is the point of the whole
+//    exercise: a slow IdP must get the full callTimeout, not the connect
+//    budget.
 // ---------------------------------------------------------------------------
 async function connectedSocketSurvives() {
   log.debug("Entering connectedSocketSurvives().");
   log.info("=== A host that connects and then answers slowly ===");
-  var silent = http.createServer(function (req, res) { /* accepts, never answers */ });
+  var silent = http.createServer(function (req,
+      res) { /* accepts, never answers */ });
   var port = await listen(silent);
 
   var agent = connectTimeout.withConnectTimeout(new http.Agent(), 300);
   // Well past the 300ms connect budget: if the timer were still armed, or armed
   // against the whole call, this would come back as an error at ~300ms.
-  var result = await attempt({ host: "127.0.0.1", port: port, path: "/" }, agent, 1500);
+  var result = await attempt({ host: "127.0.0.1", port: port, path: "/" },
+      agent, 1500);
 
   assert.strictEqual(result.outcome, "pending",
-    "a connected-but-silent host must NOT be cut off by connectionTimeout — that is what " +
+    "a connected-but-silent host must NOT be cut off by connectionTimeout — " +
+        "that is what " +
     "callTimeout is for. Outcome was " + result.outcome +
-    (result.error ? " (" + result.error.code + ": " + result.error.message + ")" : "") +
+    (result.error ? " (" + result.error.code + ": " + result.error.message +
+     ")" : "") +
     " after " + result.elapsed + "ms.");
   silent.close();
   log.info("[connected] OK — still waiting after " + result.elapsed +
@@ -166,25 +204,31 @@ async function connectedSocketSurvives() {
 async function stalledTlsHandshakeIsAborted() {
   log.debug("Entering stalledTlsHandshakeIsAborted().");
   log.info("=== A TLS handshake that never completes ===");
-  // Plain TCP: it accepts the connection, so the socket's 'connect' fires, but it
-  // speaks no TLS, so 'secureConnect' never does.
-  var deaf = net.createServer(function (socket) { /* accepts, never negotiates */ });
+  // Plain TCP: it accepts the connection, so the socket's 'connect' fires, but
+  // it speaks no TLS, so 'secureConnect' never does.
+  var deaf =
+      net.createServer(function (socket) { /* accepts, never negotiates */ });
   var port = await listen(deaf);
 
   var agent = connectTimeout.withConnectTimeout(
     new https.Agent({ rejectUnauthorized: false }), 400);
   var result = await attempt(
-    { protocol: "https:", host: "127.0.0.1", port: port, path: "/" }, agent, 3000);
+    { protocol: "https:", host: "127.0.0.1", port: port, path: "/" }, agent,
+     3000);
 
   assert.strictEqual(result.outcome, "error",
-    "a TLS handshake that never completes must fail (outcome: " + result.outcome + ").");
+    "a TLS handshake that never completes must fail (outcome: " +
+        result.outcome + ").");
   assert.strictEqual(result.error.code, "ECONNECTTIMEOUT",
-    "and fail as a connect timeout — if the timer disarmed on the TCP 'connect' this " +
-    "would hang instead. Got: " + result.error.code + " / " + result.error.message);
+    "and fail as a connect timeout — if the timer disarmed on the TCP " +
+        "'connect' this " +
+    "would hang instead. Got: " + result.error.code + " / " +
+        result.error.message);
   assert.ok(result.elapsed >= 350 && result.elapsed < 1500,
     "at about the configured 400ms (took " + result.elapsed + "ms).");
   deaf.close();
-  log.info("[tls] OK — the stalled handshake was refused after " + result.elapsed + "ms.");
+  log.info("[tls] OK — the stalled handshake was refused after " +
+           result.elapsed + "ms.");
   log.debug("Leaving stalledTlsHandshakeIsAborted().");
 }
 
@@ -195,23 +239,30 @@ async function composesWithTheSsrfGuard() {
   log.debug("Entering composesWithTheSsrfGuard().");
   log.info("=== Wrapping a guarded agent keeps the guard ===");
   var guard = guardModule.createGuard({}, quiet);
-  assert.ok(guard.enabled, "the guard must be ON when the configuration says nothing.");
+  assert.ok(guard.enabled,
+            "the guard must be ON when the configuration says nothing.");
   assert.strictEqual(typeof guard.createAgent, "function",
-    "ssrf_guard must expose createAgent, which is how a per-call agent keeps the hooks.");
+    "ssrf_guard must expose createAgent, which is how a per-call agent keeps " +
+        "the hooks.");
 
   var served = 0;
-  var victim = http.createServer(function (req, res) { served++; res.end("SECRET"); });
+  var victim = http.createServer(function (req,
+      res) { served++; res.end("SECRET"); });
   var port = await listen(victim);
 
-  var agent = connectTimeout.withConnectTimeout(guard.createAgent("http"), 5000);
-  var result = await attempt({ host: "127.0.0.1", port: port, path: "/" }, agent, 3000);
+  var agent = connectTimeout.withConnectTimeout(guard.createAgent("http"),
+      5000);
+  var result = await attempt({ host: "127.0.0.1", port: port, path: "/" },
+      agent, 3000);
 
   assert.strictEqual(result.outcome, "error",
-    "a loopback connection through a guarded+timed agent must still be refused.");
+    "a loopback connection through a guarded+timed agent must still " +
+        "be refused.");
   assert.strictEqual(result.error.code, "EBLOCKEDADDRESS",
     "and refused by the guard, not by the timeout: " + result.error.code);
   assert.ok(result.elapsed < 1000,
-    "immediately, rather than after the connect budget (took " + result.elapsed + "ms).");
+    "immediately, rather than after the connect budget (took " +
+        result.elapsed + "ms).");
   assert.strictEqual(served, 0,
     "the request must never reach the server (served " + served + " times).");
   victim.close();
@@ -223,15 +274,18 @@ async function composesWithTheSsrfGuard() {
   assert.ok(plain instanceof https.Agent,
     "createAgent must return an https.Agent when the guard is disabled too.");
   assert.strictEqual(plain.options.rejectUnauthorized, false,
-    "and must honour the options it was given — several endpoints deliberately allow " +
+    "and must honour the options it was given — several endpoints " +
+        "deliberately allow " +
     "a self-signed IdP certificate.");
   var onAgent = guard.createAgent("https", { rejectUnauthorized: false });
   assert.strictEqual(onAgent.options.rejectUnauthorized, false,
     "including when the guard is enabled.");
   assert.strictEqual(typeof onAgent.options.lookup, "function",
-    "a guarded agent must carry the guard's DNS lookup, which is the layer that " +
+    "a guarded agent must carry the guard's DNS lookup, which is the " +
+        "layer that " +
     "survives a redirect.");
-  log.info("[compose] OK — the guard refuses first, the timeout wraps it, and agent options survive.");
+  log.info("[compose] OK — the guard refuses first, the timeout wraps it, " +
+           "and agent options survive.");
   log.debug("Leaving composesWithTheSsrfGuard().");
 }
 
@@ -246,9 +300,11 @@ function refusesNonsensicalBudgets() {
     var agent = new http.Agent();
     var before = agent.createConnection;
     var after = connectTimeout.withConnectTimeout(agent, bad);
-    assert.strictEqual(after, agent, "the same agent must come back for " + JSON.stringify(bad) + ".");
+    assert.strictEqual(after, agent, "the same agent must come back for " +
+                       JSON.stringify(bad) + ".");
     assert.strictEqual(agent.createConnection, before,
-      "createConnection must be untouched for a budget of " + JSON.stringify(bad) +
+      "createConnection must be untouched for a budget of " +
+          JSON.stringify(bad) +
       " — arming a timer on it would abort every call.");
   });
   // A resolved, positive budget does wrap it.
@@ -262,8 +318,8 @@ function refusesNonsensicalBudgets() {
 }
 
 // ---------------------------------------------------------------------------
-// 6. What ships: every api/env config carries both settings, and every axios call
-//    in server.js is bounded by both.
+// 6. What ships: every api/env config carries both settings, and every axios
+//    call in server.js is bounded by both.
 // ---------------------------------------------------------------------------
 function shippedConfiguration() {
   log.debug("Entering shippedConfiguration().");
@@ -272,7 +328,8 @@ function shippedConfiguration() {
     ? path.join(__dirname, "..", "api")
     : null;
   if (!apiDir) {
-    log.info("[shipped] api/env is not in this image; skipping the config half.");
+    log.info("[shipped] api/env is not in this image; skipping the " +
+             "config half.");
   } else {
     var files = fs.readdirSync(path.join(apiDir, "env")).filter(function (f) {
       return f.endsWith(".js");
@@ -280,51 +337,66 @@ function shippedConfiguration() {
     assert.ok(files.length >= 3, "expected the api/env configs to be present.");
     files.forEach(function (file) {
       var config = require(path.join(apiDir, "env", file));
-      assert.ok(Number.isInteger(config.maxRedirects) && config.maxRedirects >= 0,
-        "api/env/" + file + " must set maxRedirects as a whole number >= 0 (0 is legal " +
-        "and means 'do not follow'), got: " + JSON.stringify(config.maxRedirects));
-      ["callTimeout", "connectionTimeout", "maxContentLength"].forEach(function (key) {
+      assert.ok(Number.isInteger(config.maxRedirects) &&
+                config.maxRedirects >= 0,
+        "api/env/" + file +
+            " must set maxRedirects as a whole number >= 0 (0 is legal " +
+        "and means 'do not follow'), got: " +
+            JSON.stringify(config.maxRedirects));
+      ["callTimeout", "connectionTimeout",
+       "maxContentLength"].forEach(function (key) {
         assert.strictEqual(typeof config[key], "number",
           "api/env/" + file + " must set " + key + " as a number, got: " +
           JSON.stringify(config[key]));
         assert.ok(config[key] > 0,
-          "api/env/" + file + "'s " + key + " must be positive — 0 means no timeout to " +
-          "axios, and for maxContentLength it means refusing every response with a body.");
+          "api/env/" + file + "'s " + key +
+              " must be positive — 0 means no timeout to " +
+          "axios, and for maxContentLength it means refusing every response " +
+              "with a body.");
       });
       assert.ok(config.connectionTimeout <= config.callTimeout,
         "api/env/" + file + ": connectionTimeout (" + config.connectionTimeout +
         ") should not exceed callTimeout (" + config.callTimeout +
         ") — the whole call cannot outlast its own connect budget.");
     });
-    log.info("[shipped] OK — " + files.length + " api/env configs carry both timeouts, the size cap and the redirect cap.");
+    log.info("[shipped] OK — " + files.length + " api/env configs carry both " +
+             "timeouts, the size cap and the redirect cap.");
 
     // Every axios call must be bounded. A new call site added without these is
     // exactly the regression this catches, and nothing else would.
     var source = fs.readFileSync(path.join(apiDir, "server.js"), "utf8");
     // Comment lines are dropped first: the file explains in prose why a bare
     // https.Agent is wrong, and that sentence must not read as the mistake it
-    // describes. Line numbers are preserved so a failure still points somewhere.
+    // describes. Line numbers are preserved so a failure still points
+    // somewhere.
     var lines = source.split("\n").map(function (line) {
       return /^\s*(\/\/|\*|\/\*)/.test(line) ? "" : line;
     });
     var code = lines.join("\n");
     var sites = 0;
     lines.forEach(function (line, i) {
-      if (!/\baxios(\.(get|post|put|patch|delete)\s*\(|\s*\(\s*\{)/.test(line)) return;
+      if (!/\baxios(\.(get|post|put|patch|delete)\s*\(|\s*\(\s*\{)/.test(
+          line)) return;
       sites++;
       var window_ = lines.slice(i, i + 20).join("\n");
       assert.ok(/timeout:\s*CALL_TIMEOUT/.test(window_),
-        "the axios call at server.js:" + (i + 1) + " has no `timeout: CALL_TIMEOUT`.");
+        "the axios call at server.js:" + (i + 1) +
+            " has no `timeout: CALL_TIMEOUT`.");
       assert.ok(/maxRedirects:\s*MAX_REDIRECTS/.test(window_),
         "the axios call at server.js:" + (i + 1) + " has no `maxRedirects: " +
         "MAX_REDIRECTS`, so it will follow axios's default of 21 hops.");
       assert.ok(/maxContentLength:\s*MAX_CONTENT_LENGTH/.test(window_),
-        "the axios call at server.js:" + (i + 1) + " has no `maxContentLength: " +
-        "MAX_CONTENT_LENGTH`, so it will buffer a response of any size axios's " +
+        "the axios call at server.js:" + (i + 1) +
+            " has no `maxContentLength: " +
+        "MAX_CONTENT_LENGTH`, so it will buffer a response of any " +
+            "size axios's " +
         "default (-1, unlimited) allows.");
-      assert.ok(/outboundHttpsAgent\(/.test(window_) && /outboundHttpAgent\(/.test(window_),
-        "the axios call at server.js:" + (i + 1) + " must take its agents from " +
-        "outboundHttpAgent()/outboundHttpsAgent(), or it has neither the connect timeout " +
+      assert.ok(/outboundHttpsAgent\(/.test(window_) &&
+                /outboundHttpAgent\(/.test(window_),
+        "the axios call at server.js:" + (i + 1) +
+            " must take its agents from " +
+        "outboundHttpAgent()/outboundHttpsAgent(), or it has neither the " +
+            "connect timeout " +
         "nor the SSRF guard's agent hooks.");
     });
     // A floor, not an exact count: adding an outbound call is fine, quietly
@@ -333,10 +405,13 @@ function shippedConfiguration() {
     // `fetch` with no timeout and no cap at all.
     assert.ok(sites >= 11,
       "expected to find the api's axios call sites; found " + sites + ".");
-    assert.ok(!/new\s+(\(require\('https'\)\.Agent\)|https\.Agent)\(/.test(code),
-      "server.js must not build a bare https.Agent: that replaces axios.defaults.httpsAgent " +
+    assert.ok(!/new\s+(\(require\('https'\)\.Agent\)|https\.Agent)\(/.test(
+              code),
+      "server.js must not build a bare https.Agent: that replaces " +
+          "axios.defaults.httpsAgent " +
       "and drops the SSRF guard's hooks along with the connect timeout.");
-    log.info("[shipped] OK — all " + sites + " axios call sites are bounded by both timeouts, the size cap and the redirect cap.");
+    log.info("[shipped] OK — all " + sites + " axios call sites are bounded " +
+             "by both timeouts, the size cap and the redirect cap.");
   }
   log.debug("Leaving shippedConfiguration().");
 }
@@ -344,10 +419,11 @@ function shippedConfiguration() {
 // ---------------------------------------------------------------------------
 // 7. maxContentLength: an oversized response is abandoned, a normal one is not.
 //
-// Driven through axios itself rather than through a re-implementation, because the
-// enforcement is axios's and what is being asserted is that the CAP IS PASSED TO
-// IT and that its default (-1, unlimited) is not what applies. Skipped where the
-// api's axios is not installed, since the tests package does not depend on it.
+// Driven through axios itself rather than through a re-implementation, because
+// the enforcement is axios's and what is being asserted is that the CAP IS
+// PASSED TO IT and that its default (-1, unlimited) is not what applies.
+// Skipped where the api's axios is not installed, since the tests package does
+// not depend on it.
 // ---------------------------------------------------------------------------
 async function maxContentLengthIsEnforced() {
   log.debug("Entering maxContentLengthIsEnforced().");
@@ -356,14 +432,17 @@ async function maxContentLengthIsEnforced() {
   try {
     axios = require(path.join(__dirname, "..", "api", "node_modules", "axios"));
   } catch (e) {
-    log.info("[size] the api's axios is not installed here; skipping this case. (" +
+    log.info("[size] the api's axios is not installed here; skipping " +
+             "this case. (" +
              e.code + ")");
+    log.debug("Leaving maxContentLengthIsEnforced().");
     return;
   }
 
   var CAP = 64 * 1024;
-  // Serves however many bytes the path asks for, in small chunks, so the cap has
-  // to be enforced as the body arrives rather than from a Content-Length header.
+  // Serves however many bytes the path asks for, in small chunks, so the cap
+  // has to be enforced as the body arrives rather than from a Content-Length
+  // header.
   var big = http.createServer(function (req, res) {
     var total = parseInt(req.url.slice(1), 10);
     res.writeHead(200, { "Content-Type": "text/plain" });
@@ -381,7 +460,8 @@ async function maxContentLengthIsEnforced() {
   var base = "http://127.0.0.1:" + port + "/";
 
   // Under the cap: unaffected.
-  var ok = await axios.get(base + (CAP / 2), { maxContentLength: CAP, timeout: 5000 });
+  var ok = await axios.get(base + (CAP / 2), { maxContentLength: CAP,
+      timeout: 5000 });
   assert.strictEqual(ok.status, 200, "a response under the cap must succeed.");
   assert.ok(ok.data.length >= CAP / 2,
     "and must arrive whole (" + ok.data.length + " bytes).");
@@ -393,7 +473,8 @@ async function maxContentLengthIsEnforced() {
   } catch (e) {
     failure = e;
   }
-  assert.ok(failure, "a response larger than maxContentLength must be refused.");
+  assert.ok(failure,
+            "a response larger than maxContentLength must be refused.");
   assert.ok(/maxContentLength/.test(failure.message),
     "and refused for that reason, not by the timeout: " + failure.message);
 
@@ -401,11 +482,13 @@ async function maxContentLengthIsEnforced() {
   // response is fine when no cap is set, so what was refused was the SIZE.
   var uncapped = await axios.get(base + (CAP * 4), { timeout: 5000 });
   assert.strictEqual(uncapped.status, 200,
-    "without a cap the same oversized response succeeds — which is axios's default " +
+    "without a cap the same oversized response succeeds — which is " +
+        "axios's default " +
     "(-1, unlimited) and the reason this setting has to be passed explicitly.");
 
   big.close();
-  log.info("[size] OK — " + (CAP / 1024) + "KiB cap: a half-size body arrives, a " +
+  log.info("[size] OK — " + (CAP / 1024) +
+           "KiB cap: a half-size body arrives, a " +
            "4x body is refused naming maxContentLength, and the same body is " +
            "accepted with no cap set.");
   log.debug("Leaving maxContentLengthIsEnforced().");
@@ -413,8 +496,8 @@ async function maxContentLengthIsEnforced() {
 
 // ---------------------------------------------------------------------------
 // 8. maxRedirects: a chain within the cap is followed, one past it is refused —
-//    and the SSRF guard is still enforced ON A REDIRECT HOP, which is the reason
-//    the cap and the guard are talked about together.
+//    and the SSRF guard is still enforced ON A REDIRECT HOP, which is the
+//    reason the cap and the guard are talked about together.
 // ---------------------------------------------------------------------------
 async function maxRedirectsIsEnforced() {
   log.debug("Entering maxRedirectsIsEnforced().");
@@ -423,7 +506,9 @@ async function maxRedirectsIsEnforced() {
   try {
     axios = require(path.join(__dirname, "..", "api", "node_modules", "axios"));
   } catch (e) {
-    log.info("[redirects] the api's axios is not installed here; skipping. (" + e.code + ")");
+    log.info("[redirects] the api's axios is not installed here; skipping. (" +
+             e.code + ")");
+    log.debug("Leaving maxRedirectsIsEnforced().");
     return;
   }
 
@@ -454,21 +539,25 @@ async function maxRedirectsIsEnforced() {
   }
   assert.ok(failure, "a chain longer than maxRedirects must be refused.");
   assert.ok(/redirect/i.test(failure.message),
-    "and refused for that reason rather than by the timeout: " + failure.message);
+    "and refused for that reason rather than by the timeout: " +
+        failure.message);
 
-  // 0 does not mean "unlimited" — it means do not follow, and hand back the 3xx.
+  // 0 does not mean "unlimited" — it means do not follow, and hand back the
+  // 3xx.
   var unfollowed = await axios.get(base + "/hop/3", {
     maxRedirects: 0, timeout: 5000,
     validateStatus: function () { return true; } });
   assert.strictEqual(unfollowed.status, 302,
-    "maxRedirects: 0 must return the 3xx unfollowed, not follow it and not error.");
+    "maxRedirects: 0 must return the 3xx unfollowed, not follow it and " +
+        "not error.");
   hops.close();
 
-  // The hop itself goes through the agent, so the SSRF guard applies to it. This
-  // is the claim that matters: layer 1 (the URL pre-flight) sees only the FIRST
-  // url, so without this a public host could redirect the service anywhere private.
-  // A custom range is used so the first hop, which has to be reachable, is not
-  // itself blocked — the default policy blocks the loopback this fixture runs on.
+  // The hop itself goes through the agent, so the SSRF guard applies to it.
+  // This is the claim that matters: layer 1 (the URL pre-flight) sees only the
+  // FIRST url, so without this a public host could redirect the service
+  // anywhere private. A custom range is used so the first hop, which has to be
+  // reachable, is not itself blocked — the default policy blocks the loopback
+  // this fixture runs on.
   var guard = guardModule.createGuard(
     { blockedAddressRanges: ["192.0.2.0/24"] }, quiet);
   var redirector = http.createServer(function (req, res) {
@@ -482,7 +571,8 @@ async function maxRedirectsIsEnforced() {
     await axios.get("http://127.0.0.1:" + rport + "/", {
       maxRedirects: 5,
       timeout: 5000,
-      httpAgent: connectTimeout.withConnectTimeout(guard.createAgent("http"), 4000),
+      httpAgent: connectTimeout.withConnectTimeout(guard.createAgent("http"),
+          4000),
       httpsAgent: guard.createAgent("https")
     });
   } catch (e) {
@@ -490,13 +580,15 @@ async function maxRedirectsIsEnforced() {
   }
   assert.ok(blocked, "a redirect to a blocked address must not be followed.");
   assert.strictEqual(blocked.code, "EBLOCKEDADDRESS",
-    "and must be refused by the guard on the redirect hop, not time out or connect: " +
+    "and must be refused by the guard on the redirect hop, not time out or " +
+        "connect: " +
     blocked.code + " / " + blocked.message);
   redirector.close();
 
   // A redirect to a NON-HTTP scheme. The api's scheme interceptor sees only the
-  // first URL, so this one is refused by follow-redirects itself — which is worth
-  // asserting precisely because it is somebody else's guarantee, not ours.
+  // first URL, so this one is refused by follow-redirects itself — which is
+  // worth asserting precisely because it is somebody else's guarantee, not
+  // ours.
   var schemeHop = http.createServer(function (req, res) {
     res.writeHead(302, { Location: "file:///etc/passwd" });
     res.end();
@@ -504,7 +596,8 @@ async function maxRedirectsIsEnforced() {
   var sport = await listen(schemeHop);
   var schemeFailure = null;
   try {
-    await axios.get("http://127.0.0.1:" + sport + "/", { maxRedirects: 5, timeout: 5000 });
+    await axios.get("http://127.0.0.1:" + sport + "/", { maxRedirects: 5,
+                    timeout: 5000 });
   } catch (e) {
     schemeFailure = e;
   }
@@ -513,16 +606,18 @@ async function maxRedirectsIsEnforced() {
     "and must be refused as a protocol problem: " + schemeFailure.message);
   schemeHop.close();
 
-  log.info("[redirects] OK — 4 hops followed, 9 refused, 0 returns the 3xx, a redirect " +
-           "to a blocked address is refused on the hop by the guard, and one to file:// " +
+  log.info("[redirects] OK — 4 hops followed, 9 refused, 0 returns the 3xx, " +
+           "a redirect " +
+           "to a blocked address is refused on the hop by the guard, and one " +
+               "to file:// " +
            "is refused as an unsupported protocol.");
   log.debug("Leaving maxRedirectsIsEnforced().");
 }
 
 // ---------------------------------------------------------------------------
-// 9. The outbound User-Agent: the template ships, the version placeholder is the
-//    one the rest of the repo uses, and the api image can actually resolve a
-//    build version to put in it.
+// 9. The outbound User-Agent: the template ships, the version placeholder is
+//    the one the rest of the repo uses, and the api image can actually resolve
+//    a build version to put in it.
 // ---------------------------------------------------------------------------
 function userAgentIsConfigured() {
   log.debug("Entering userAgentIsConfigured().");
@@ -530,6 +625,7 @@ function userAgentIsConfigured() {
   var repoRoot = path.join(__dirname, "..");
   if (!fs.existsSync(path.join(repoRoot, "api", "env"))) {
     log.info("[user-agent] api/env is not in this image; skipping.");
+    log.debug("Leaving userAgentIsConfigured().");
     return;
   }
 
@@ -541,18 +637,22 @@ function userAgentIsConfigured() {
         "api/env/" + file + " must set userAgent as a string, got: " +
         JSON.stringify(config.userAgent));
       assert.ok(config.userAgent.trim(),
-        "api/env/" + file + "'s userAgent must not be blank — axios would send a " +
+        "api/env/" + file +
+            "'s userAgent must not be blank — axios would send a " +
         "User-Agent header with nothing after the colon.");
       assert.ok(config.userAgent.indexOf("{{VERSION}}") >= 0,
-        "api/env/" + file + "'s userAgent should carry the {{VERSION}} placeholder, " +
-        "or the header will name no build: " + JSON.stringify(config.userAgent));
+        "api/env/" + file +
+            "'s userAgent should carry the {{VERSION}} placeholder, " +
+        "or the header will name no build: " +
+            JSON.stringify(config.userAgent));
     });
 
   // The placeholder has to be the one server.js substitutes. These are two
   // separate files and nothing else compares them.
   var source = fs.readFileSync(path.join(repoRoot, "api", "server.js"), "utf8");
   assert.ok(/\{\{VERSION\}\}/.test(source),
-    "server.js must substitute the same {{VERSION}} placeholder the configs use.");
+    "server.js must substitute the same {{VERSION}} placeholder the " +
+        "configs use.");
 
   // Every call site must carry the header, or that call is still `axios/x.y.z`.
   var lines = source.split("\n").map(function (line) {
@@ -560,14 +660,18 @@ function userAgentIsConfigured() {
   });
   var sites = 0;
   lines.forEach(function (line, i) {
-    if (!/\baxios(\.(get|post|put|patch|delete)\s*\(|\s*\(\s*\{)/.test(line)) return;
+    if (!/\baxios(\.(get|post|put|patch|delete)\s*\(|\s*\(\s*\{)/.test(
+        line)) return;
     sites++;
     var window_ = lines.slice(i, i + 20).join("\n");
     assert.ok(/headers:\s*withUserAgent\(/.test(window_),
-      "the axios call at server.js:" + (i + 1) + " does not take its headers from " +
-      "withUserAgent(), so it announces itself as axios rather than as this service.");
+      "the axios call at server.js:" + (i + 1) +
+          " does not take its headers from " +
+      "withUserAgent(), so it announces itself as axios rather than as " +
+          "this service.");
   });
-  assert.ok(sites >= 11, "expected the api's axios call sites; found " + sites + ".");
+  assert.ok(sites >= 11, "expected the api's axios call sites; found " + sites +
+            ".");
 
   // And the version itself must be resolvable the way server.js resolves it —
   // api/Dockerfile copies the repo VERSION and the client's version.js in for
@@ -579,22 +683,31 @@ function userAgentIsConfigured() {
     assert.ok(/^\d+\.\d+\.\S+$/.test(resolved.version),
       "the version must come out as M.N.O, got: " + resolved.version);
     assert.ok(!/^0\.0\./.test(resolved.version),
-      "a version of 0.0.x means the VERSION file was not found — which is what " +
+      "a version of 0.0.x means the VERSION file was not found — " +
+          "which is what " +
       "happens if api/Dockerfile stops COPYing it: " + resolved.version);
 
-    var dockerfile = fs.readFileSync(path.join(repoRoot, "api", "Dockerfile"), "utf8");
+    var dockerfile = fs.readFileSync(path.join(repoRoot, "api", "Dockerfile"),
+        "utf8");
     assert.ok(/COPY\s+VERSION\s/.test(dockerfile),
-      "api/Dockerfile must COPY the repo-root VERSION file, or the image reports 0.0.x.");
+      "api/Dockerfile must COPY the repo-root VERSION file, or the image " +
+          "reports 0.0.x.");
     assert.ok(/COPY\s+client\/version\.js\s/.test(dockerfile),
-      "api/Dockerfile must COPY client/version.js, which is what server.js loads.");
+      "api/Dockerfile must COPY client/version.js, which is what " +
+          "server.js loads.");
     assert.ok(/version\.js --stamp/.test(dockerfile),
-      "api/Dockerfile must stamp version.json, so the User-Agent names the BUILD " +
+      "api/Dockerfile must stamp version.json, so the User-Agent names " +
+          "the BUILD " +
       "rather than a number invented at each container start.");
-    log.info("[user-agent] OK — every call site sends it, all configs carry the " +
-             "{{VERSION}} template, and the version resolves to " + resolved.version + ".");
+    log.info("[user-agent] OK — every call site sends it, all configs " +
+             "carry the " +
+             "{{VERSION}} template, and the version resolves to " +
+                 resolved.version + ".");
+    log.debug("Leaving userAgentIsConfigured().");
     return;
   }
-  log.info("[user-agent] OK — every call site sends it and all configs carry the template.");
+  log.info("[user-agent] OK — every call site sends it and all configs carry " +
+           "the template.");
   log.debug("Leaving userAgentIsConfigured().");
 }
 
@@ -622,7 +735,8 @@ async function keepAliveIsConfigured() {
     log.debug("Entering get().");
     log.debug("Leaving get().");
     return new Promise(function (resolve, reject) {
-      var req = http.request({ host: "127.0.0.1", port: port, path: "/", agent: agent },
+      var req = http.request({ host: "127.0.0.1", port: port, path: "/",
+          agent: agent },
         function (res) {
           res.resume();
           res.on("end", resolve);
@@ -641,7 +755,8 @@ async function keepAliveIsConfigured() {
   }
   assert.strictEqual(served, 3, "all three requests should have been served.");
   assert.strictEqual(connections, 1,
-    "with keepAlive on, three requests through one agent must reuse a single TCP " +
+    "with keepAlive on, three requests through one agent must reuse a " +
+        "single TCP " +
     "connection; the server saw " + connections + ".");
 
   // Pooling off: a connection each.
@@ -654,7 +769,8 @@ async function keepAliveIsConfigured() {
     await get(unpooled);
   }
   assert.strictEqual(connections, 3,
-    "with keepAlive off each request must open its own connection; the server saw " +
+    "with keepAlive off each request must open its own connection; the " +
+        "server saw " +
     connections + ".");
 
   // The leak, demonstrated: a throwaway keep-alive agent is still holding its
@@ -666,8 +782,10 @@ async function keepAliveIsConfigured() {
     return n + throwaway.freeSockets[k].length;
   }, 0);
   assert.strictEqual(held, 1,
-    "a discarded keep-alive agent should still be holding its socket (this is the " +
-    "leak that makes per-call agents wrong once keepAlive is on); held " + held + ".");
+    "a discarded keep-alive agent should still be holding its socket " +
+        "(this is the " +
+    "leak that makes per-call agents wrong once keepAlive is on); held " +
+        held + ".");
   throwaway.destroy();
   idp.close();
 
@@ -676,26 +794,42 @@ async function keepAliveIsConfigured() {
   var serverPath = path.join(repoRoot, "api", "server.js");
   if (fs.existsSync(serverPath)) {
     var source = fs.readFileSync(serverPath, "utf8");
-    assert.ok(/function agentFor\(/.test(source) && /outboundAgentCache/.test(source),
-      "server.js must cache its outbound agents (agentFor + a cache), or keepAlive " +
+    assert.ok(/function agentFor\(/.test(source) &&
+              /outboundAgentCache/.test(source),
+      "server.js must cache its outbound agents (agentFor + a cache), or " +
+          "keepAlive " +
       "pools nothing and leaks the socket it parked.");
-    assert.ok(/function outboundHttpAgent\(\)\s*\{\s*return agentFor\(/.test(source),
-      "outboundHttpAgent() must return the cached agent rather than a new one.");
-    assert.ok(/function outboundHttpsAgent\([^)]*\)\s*\{\s*return agentFor\(/.test(source),
-      "outboundHttpsAgent() must return the cached agent rather than a new one.");
+    // `[^{}]*` rather than `\s*` between the brace and the return: every
+    // function in this tree opens with log.debug("Entering ...") and closes
+    // with a matching Leaving, so a check that demands the return be the very
+    // first token fails on the logging convention rather than on a per-call
+    // agent. Refusing any `{`/`}` in between still pins the return to this
+    // function.
+    assert.ok(/function outboundHttpAgent\(\)\s*\{[^{}]*return agentFor\(/.test(
+              source),
+      "outboundHttpAgent() must return the cached agent rather than " +
+          "a new one.");
+    assert.ok(
+        /function outboundHttpsAgent\([^)]*\)\s*\{[^{}]*return agentFor\(/.test(
+        source),
+      "outboundHttpsAgent() must return the cached agent rather than " +
+          "a new one.");
 
     fs.readdirSync(path.join(repoRoot, "api", "env"))
       .filter(function (f) { return f.endsWith(".js"); })
       .forEach(function (file) {
         var config = require(path.join(repoRoot, "api", "env", file));
         assert.strictEqual(typeof config.keepAlive, "boolean",
-          "api/env/" + file + " must set keepAlive as a boolean (a quoted \"false\" is " +
+          "api/env/" + file +
+              " must set keepAlive as a boolean (a quoted \"false\" is " +
           "truthy), got: " + JSON.stringify(config.keepAlive));
       });
   }
 
-  log.info("[keep-alive] OK — 3 requests over 1 connection when on, 3 when off, the " +
-           "discarded-agent socket leak reproduced, and server.js caches its agents.");
+  log.info("[keep-alive] OK — 3 requests over 1 connection when on, 3 when " +
+           "off, the " +
+           "discarded-agent socket leak reproduced, and server.js caches " +
+               "its agents.");
   log.debug("Leaving keepAliveIsConfigured().");
 }
 
@@ -720,7 +854,8 @@ program
   .name("api_connect_timeout")
   .description("Verify the api's outbound call and connection timeouts.")
   // Accepted and ignored: run-report.js passes --url to every job.
-  .addOption(new Option("-u, --url <url>", "base url (unused: this test needs no browser)"))
+  .addOption(new Option("-u, --url <url>",
+      "base url (unused: this test needs no browser)"))
   .parse(process.argv);
 
 test().catch(function (e) {

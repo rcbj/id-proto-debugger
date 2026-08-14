@@ -9,12 +9,13 @@
 //
 // Every field the spec defines is shown in the Configuration Parameters pane so
 // a discovery document can be inspected (and overridden) in full. The five that
-// the debugger already drove before this table existed — authorization_endpoint,
-// token_endpoint, userinfo_endpoint (#oidc_userinfo_endpoint), jwks_uri
-// (#jwks_endpoint) and registration_endpoint — keep their original element ids
-// and their own handling; they are NOT repeated here. Non-Discovery endpoints
-// the pane also carries (introspection, revocation, device authorization) are
-// likewise left alone.
+// the debugger already drove before this table existed —
+// authorization_endpoint, token_endpoint, userinfo_endpoint
+// (#oidc_userinfo_endpoint), jwks_uri (#jwks_endpoint) and
+// registration_endpoint — keep their original element ids and their own
+// handling; they are NOT repeated here. Non-Discovery endpoints the pane also
+// carries (introspection, revocation, device authorization) are likewise left
+// alone.
 //
 //   name  the metadata member name, which is also the input's element id
 //   type  'array'   -> comma-separated in the UI (values may contain spaces,
@@ -44,34 +45,58 @@ var metadataClient = require("./metadata_client");
 
 var OP_METADATA = [
   { name: "issuer", type: "string", dflt: "https://localhost/oidc" },
-  { name: "scopes_supported", type: "array", dflt: "openid, profile, email, address, phone, offline_access" },
-  { name: "response_types_supported", type: "array", dflt: "code, id_token, id_token token, code id_token, code token, code id_token token" },
-  { name: "response_modes_supported", type: "array", dflt: "query, fragment, form_post" },
-  { name: "grant_types_supported", type: "array", dflt: "authorization_code, implicit, refresh_token, client_credentials, password, urn:ietf:params:oauth:grant-type:device_code" },
+  { name: "scopes_supported", type: "array",
+   dflt: "openid, profile, email, address, phone, offline_access" },
+  { name: "response_types_supported", type: "array", dflt: "code, id_token, " +
+   "id_token token, code id_token, code token, code id_token token" },
+  { name: "response_modes_supported", type: "array",
+   dflt: "query, fragment, form_post" },
+  { name: "grant_types_supported", type: "array", dflt: "authorization_code, " +
+   "implicit, refresh_token, client_credentials, password, " +
+   "urn:ietf:params:oauth:grant-type:device_code" },
   { name: "acr_values_supported", type: "array", dflt: "0, 1" },
   { name: "subject_types_supported", type: "array", dflt: "public, pairwise" },
-  { name: "id_token_signing_alg_values_supported", type: "array", dflt: "RS256, RS384, RS512, ES256, PS256, HS256" },
-  { name: "id_token_encryption_alg_values_supported", type: "array", dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES, A128KW" },
-  { name: "id_token_encryption_enc_values_supported", type: "array", dflt: "A128GCM, A192GCM, A256GCM, A128CBC-HS256" },
-  { name: "userinfo_signing_alg_values_supported", type: "array", dflt: "RS256, ES256, HS256" },
-  { name: "userinfo_encryption_alg_values_supported", type: "array", dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES" },
-  { name: "userinfo_encryption_enc_values_supported", type: "array", dflt: "A128GCM, A256GCM, A128CBC-HS256" },
-  { name: "request_object_signing_alg_values_supported", type: "array", dflt: "none, RS256, ES256, PS256" },
-  { name: "request_object_encryption_alg_values_supported", type: "array", dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES" },
-  { name: "request_object_encryption_enc_values_supported", type: "array", dflt: "A128GCM, A256GCM, A128CBC-HS256" },
-  { name: "token_endpoint_auth_methods_supported", type: "array", dflt: "client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt, none" },
-  { name: "token_endpoint_auth_signing_alg_values_supported", type: "array", dflt: "RS256, ES256, PS256, HS256" },
-  { name: "display_values_supported", type: "array", dflt: "page, popup, touch, wap" },
-  { name: "claim_types_supported", type: "array", dflt: "normal, aggregated, distributed" },
-  { name: "claims_supported", type: "array", dflt: "sub, iss, aud, exp, iat, auth_time, nonce, acr, amr, azp, name, given_name, family_name, preferred_username, email, email_verified" },
-  { name: "service_documentation", type: "string", dflt: "https://localhost/oidc/docs" },
-  { name: "claims_locales_supported", type: "array", dflt: "en-US, en-GB, fr-CA" },
+  { name: "id_token_signing_alg_values_supported", type: "array",
+   dflt: "RS256, RS384, RS512, ES256, PS256, HS256" },
+  { name: "id_token_encryption_alg_values_supported", type: "array",
+   dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES, A128KW" },
+  { name: "id_token_encryption_enc_values_supported", type: "array",
+   dflt: "A128GCM, A192GCM, A256GCM, A128CBC-HS256" },
+  { name: "userinfo_signing_alg_values_supported", type: "array",
+   dflt: "RS256, ES256, HS256" },
+  { name: "userinfo_encryption_alg_values_supported", type: "array",
+   dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES" },
+  { name: "userinfo_encryption_enc_values_supported", type: "array",
+   dflt: "A128GCM, A256GCM, A128CBC-HS256" },
+  { name: "request_object_signing_alg_values_supported", type: "array",
+   dflt: "none, RS256, ES256, PS256" },
+  { name: "request_object_encryption_alg_values_supported", type: "array",
+   dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES" },
+  { name: "request_object_encryption_enc_values_supported", type: "array",
+   dflt: "A128GCM, A256GCM, A128CBC-HS256" },
+  { name: "token_endpoint_auth_methods_supported", type: "array",
+   dflt: "client_secret_basic, client_secret_post, client_secret_jwt, " +
+   "private_key_jwt, none" },
+  { name: "token_endpoint_auth_signing_alg_values_supported", type: "array",
+   dflt: "RS256, ES256, PS256, HS256" },
+  { name: "display_values_supported", type: "array",
+   dflt: "page, popup, touch, wap" },
+  { name: "claim_types_supported", type: "array",
+   dflt: "normal, aggregated, distributed" },
+  { name: "claims_supported", type: "array", dflt: "sub, iss, aud, exp, iat, " +
+   "auth_time, nonce, acr, amr, azp, name, given_name, family_name, " +
+   "preferred_username, email, email_verified" },
+  { name: "service_documentation", type: "string",
+   dflt: "https://localhost/oidc/docs" },
+  { name: "claims_locales_supported", type: "array",
+   dflt: "en-US, en-GB, fr-CA" },
   { name: "ui_locales_supported", type: "array", dflt: "en-US, en-GB, fr-CA" },
   { name: "claims_parameter_supported", type: "boolean", dflt: "false" },
   { name: "request_parameter_supported", type: "boolean", dflt: "false" },
   { name: "request_uri_parameter_supported", type: "boolean", dflt: "true" },
   { name: "require_request_uri_registration", type: "boolean", dflt: "false" },
-  { name: "op_policy_uri", type: "string", dflt: "https://localhost/oidc/policy" },
+  { name: "op_policy_uri", type: "string",
+   dflt: "https://localhost/oidc/policy" },
   { name: "op_tos_uri", type: "string", dflt: "https://localhost/oidc/tos" }
 ];
 
@@ -86,14 +111,19 @@ var OP_METADATA = [
 // lists (ALL_METADATA).
 // ---------------------------------------------------------------------------
 var AS_ONLY_METADATA = [
-  { name: "revocation_endpoint_auth_methods_supported", type: "array", dflt: "client_secret_basic, client_secret_post, private_key_jwt" },
-  { name: "revocation_endpoint_auth_signing_alg_values_supported", type: "array", dflt: "RS256, ES256, PS256" },
-  { name: "introspection_endpoint_auth_methods_supported", type: "array", dflt: "client_secret_basic, client_secret_post, private_key_jwt" },
-  { name: "introspection_endpoint_auth_signing_alg_values_supported", type: "array", dflt: "RS256, ES256, PS256" },
-  { name: "code_challenge_methods_supported", type: "array", dflt: "S256, plain" },
+  { name: "revocation_endpoint_auth_methods_supported", type: "array",
+   dflt: "client_secret_basic, client_secret_post, private_key_jwt" },
+  { name: "revocation_endpoint_auth_signing_alg_values_supported",
+   type: "array", dflt: "RS256, ES256, PS256" },
+  { name: "introspection_endpoint_auth_methods_supported", type: "array",
+   dflt: "client_secret_basic, client_secret_post, private_key_jwt" },
+  { name: "introspection_endpoint_auth_signing_alg_values_supported",
+   type: "array", dflt: "RS256, ES256, PS256" },
+  { name: "code_challenge_methods_supported", type: "array",
+   dflt: "S256, plain" },
   // RFC 9449 section 5.1, registered by that document rather than by RFC 8414.
-  // It belongs in this list because its presence is the ONLY signal a client has
-  // that DPoP is on offer: there is no other discovery mechanism, so an
+  // It belongs in this list because its presence is the ONLY signal a client
+  // has that DPoP is on offer: there is no other discovery mechanism, so an
   // authorization server that supports DPoP and omits this will never be asked
   // for it. Default empty, because absent means "has not said so" and inventing
   // a default would claim support nobody advertised.
@@ -109,35 +139,57 @@ var ALL_METADATA = OP_METADATA.concat(AS_ONLY_METADATA);
 // joined with ", " so members containing spaces survive the round trip; a JSON
 // structure is pretty-printed (metadata_client decides which is which).
 function opMetadataToField(value) {
+  log.debug("Entering opMetadataToField().");
+  log.debug("Leaving opMetadataToField().");
   return metadataClient.valueToDisplay(value);
 }
 
-function el(id) { return document.getElementById(id); }
-function fieldValue(id) { var e = el(id); return e ? e.value : ""; }
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
+}
+function fieldValue(id) {
+  log.debug("Entering fieldValue().");
+  var e = el(id);
+  log.debug("Leaving fieldValue().");
+  return e ? e.value : "";
+}
 // Writing through metadata_client, so a member whose value is a JSON structure
 // gets a <textarea> that can show it pretty-printed.
-function setFieldValue(id, v) { metadataClient.setMetadataField(id, v); }
+function setFieldValue(id, v) {
+  log.debug("Entering setFieldValue().");
+  metadataClient.setMetadataField(id, v);
+  log.debug("Leaving setFieldValue().");
+}
 
 function writeOpMetadataToLocalStorage() {
+  log.debug("Entering writeOpMetadataToLocalStorage().");
   ALL_METADATA.forEach(function (m) {
     localStorage.setItem(m.name, fieldValue(m.name));
   });
+  log.debug("Leaving writeOpMetadataToLocalStorage().");
 }
 
 function initOpMetadataDefaults() {
+  log.debug("Entering initOpMetadataDefaults().");
   ALL_METADATA.forEach(function (m) { localStorage.setItem(m.name, m.dflt); });
+  log.debug("Leaving initOpMetadataDefaults().");
 }
 
 function loadOpMetadataFromLocalStorage() {
+  log.debug("Entering loadOpMetadataFromLocalStorage().");
   ALL_METADATA.forEach(function (m) {
     var v = localStorage.getItem(m.name);
     setFieldValue(m.name, (v === null || v === undefined) ? m.dflt : v);
   });
+  log.debug("Leaving loadOpMetadataFromLocalStorage().");
 }
 
 // Fill the pane from a fetched discovery document. A member the OP omits is
 // blanked rather than left showing a stale value from a previous provider.
 function populateOpMetadataFromDiscovery(info) {
+  log.debug("Entering populateOpMetadataFromDiscovery().");
   info = info || {};
   ALL_METADATA.forEach(function (m) {
     var v = opMetadataToField(info[m.name]);
@@ -146,14 +198,17 @@ function populateOpMetadataFromDiscovery(info) {
   });
   // Anything the document left out gets the grayed-out note.
   applyNotDefinedNotes(info);
+  log.debug("Leaving populateOpMetadataFromDiscovery().");
 }
 
 
 // Blank every member ON SCREEN only. Safe to call during page load, where the
 // pane is reset to a known state before the stored values are read back.
 function clearOpMetadataFields() {
+  log.debug("Entering clearOpMetadataFields().");
   ALL_METADATA.forEach(function (m) { setFieldValue(m.name, ""); });
   clearNotDefinedNotes();
+  log.debug("Leaving clearOpMetadataFields().");
 }
 
 // Blank every member IN STORAGE. Only for the Clear button — never on load.
@@ -161,6 +216,7 @@ function clearOpMetadataFields() {
 // falls back to the dummy default when a key is ABSENT, so removing the keys
 // would resurrect the defaults on the next load and undo the clear.
 function clearOpMetadataStorage() {
+  log.debug("Entering clearOpMetadataStorage().");
   ALL_METADATA.forEach(function (m) {
     try {
       localStorage.setItem(m.name, "");
@@ -168,6 +224,7 @@ function clearOpMetadataStorage() {
       // No storage available in this context.
     }
   });
+  log.debug("Leaving clearOpMetadataStorage().");
 }
 
 // ---------------------------------------------------------------------------
@@ -200,7 +257,10 @@ var LEGACY_FIELDS = {
 function markNotDefined(id, on) {
   log.debug("Entering markNotDefined().");
   var e = el(id);
-  if (!e) return;
+  if (!e) {
+    log.debug("Leaving markNotDefined().");
+    return;
+  }
   // Only ever annotate an EMPTY field: an overridden value speaks for itself.
   if (on && e.value) on = false;
   if (e.tagName === "SELECT") {
@@ -219,6 +279,7 @@ function markNotDefined(id, on) {
       if (opt) opt.parentNode.removeChild(opt);
       e.classList.remove(NOT_DEFINED_CLASS);
     }
+    log.debug("Leaving markNotDefined().");
     return;
   }
   if (on) {
@@ -233,18 +294,24 @@ function markNotDefined(id, on) {
 
 // Annotate every member the document does not define; un-annotate the rest.
 function applyNotDefinedNotes(info) {
+  log.debug("Entering applyNotDefinedNotes().");
   info = info || {};
   ALL_METADATA.forEach(function (m) {
     markNotDefined(m.name, !Object.prototype.hasOwnProperty.call(info, m.name));
   });
   Object.keys(LEGACY_FIELDS).forEach(function (id) {
-    markNotDefined(id, !Object.prototype.hasOwnProperty.call(info, LEGACY_FIELDS[id]));
+    markNotDefined(id, !Object.prototype.hasOwnProperty.call(info,
+                   LEGACY_FIELDS[id]));
   });
+  log.debug("Leaving applyNotDefinedNotes().");
 }
 
 function clearNotDefinedNotes() {
+  log.debug("Entering clearNotDefinedNotes().");
   ALL_METADATA.forEach(function (m) { markNotDefined(m.name, false); });
-  Object.keys(LEGACY_FIELDS).forEach(function (id) { markNotDefined(id, false); });
+  Object.keys(LEGACY_FIELDS).forEach(function (id) { markNotDefined(id,
+              false); });
+  log.debug("Leaving clearNotDefinedNotes().");
 }
 
 // Apply the notes from the discovery document held in storage (if any). Called
@@ -255,9 +322,14 @@ function applyNotesFromStoredDiscovery() {
   try {
     saved = localStorage.getItem(DISCOVERY_INFO_KEY);
   } catch (e) {
+    log.debug("Leaving applyNotesFromStoredDiscovery().");
     return;
   }
-  if (!saved) { clearNotDefinedNotes(); return; }
+  if (!saved) {
+    clearNotDefinedNotes();
+    log.debug("Leaving applyNotesFromStoredDiscovery().");
+    return;
+  }
   try {
     applyNotDefinedNotes(JSON.parse(saved));
   } catch (e) {

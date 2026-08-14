@@ -15,8 +15,8 @@
 // ECDSA implementation to be vulnerable.
 //
 // The output is byte-identical to what `jwk-to-pem` produced, and
-// `tests/jwk_pem_encoding.js` is what holds it to that: the encoding is a wire format
-// other tools have to read, so "close enough" is not a thing it can be.
+// `tests/jwk_pem_encoding.js` is what holds it to that: the encoding is a wire
+// format other tools have to read, so "close enough" is not a thing it can be.
 //
 // Scope is deliberately the same as the call site's: PUBLIC keys, kty RSA and
 // EC on the three NIST curves, which is exactly what `jwk-to-pem` supported.
@@ -42,7 +42,6 @@ var log = bunyan.createLogger({
   })()
 });
 
-
 // --- the object identifiers, pre-encoded ------------------------------------
 //
 // Written as finished DER (tag 0x06, length, contents) because these five are
@@ -50,17 +49,21 @@ var log = bunyan.createLogger({
 // more code than the values it produces.
 
 // 1.2.840.113549.1.1.1  rsaEncryption
-var OID_RSA_ENCRYPTION = [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01];
+var OID_RSA_ENCRYPTION = [0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01,
+    0x01, 0x01];
 // 1.2.840.10045.2.1     id-ecPublicKey
 var OID_EC_PUBLIC_KEY = [0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01];
 
 var CURVES = {
   // 1.2.840.10045.3.1.7  prime256v1
-  "P-256": { oid: [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07], coordinateBytes: 32 },
+  "P-256": { oid: [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07],
+            coordinateBytes: 32 },
   // 1.3.132.0.34         secp384r1
-  "P-384": { oid: [0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22], coordinateBytes: 48 },
+  "P-384": { oid: [0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x22],
+            coordinateBytes: 48 },
   // 1.3.132.0.35         secp521r1
-  "P-521": { oid: [0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23], coordinateBytes: 66 }
+  "P-521": { oid: [0x06, 0x05, 0x2b, 0x81, 0x04, 0x00, 0x23],
+            coordinateBytes: 66 }
 };
 
 var DER_NULL = [0x05, 0x00];
@@ -86,7 +89,8 @@ function b64uToBytes(value, member) {
       ? atob(b64)
       : Buffer.from(b64, "base64").toString("binary");
   } catch (e) {
-    throw new TypeError('Invalid JWK: "' + member + '" is not base64url (' + e.message + ")");
+    throw new TypeError('Invalid JWK: "' + member + '" is not base64url (' +
+                        e.message + ")");
   }
   var bytes = new Array(raw.length);
   for (var i = 0; i < raw.length; i++) {
@@ -102,6 +106,7 @@ function b64uToBytes(value, member) {
 function derLength(count) {
   log.debug("Entering derLength().");
   if (count < 0x80) {
+    log.debug("Leaving derLength().");
     return [count];
   }
   var lengthBytes = [];
@@ -115,14 +120,18 @@ function derLength(count) {
 }
 
 function derTlv(tag, contents) {
+  log.debug("Entering derTlv().");
+  log.debug("Leaving derTlv().");
   return [tag].concat(derLength(contents.length), contents);
 }
 
 function derSequence(parts) {
+  log.debug("Entering derSequence().");
   var contents = [];
   for (var i = 0; i < parts.length; i++) {
     contents = contents.concat(parts[i]);
   }
+  log.debug("Leaving derSequence().");
   return derTlv(0x30, contents);
 }
 
@@ -146,6 +155,8 @@ function derInteger(bytes) {
 // The leading 0x00 is the count of unused bits in the final octet. Everything
 // encoded here is whole octets, so it is always zero.
 function derBitString(bytes) {
+  log.debug("Entering derBitString().");
+  log.debug("Leaving derBitString().");
   return derTlv(0x03, [0x00].concat(bytes));
 }
 
@@ -153,11 +164,13 @@ function derBitString(bytes) {
 // --- PEM --------------------------------------------------------------------
 
 function bytesToBase64(bytes) {
+  log.debug("Entering bytesToBase64().");
   var chunk = [];
   for (var i = 0; i < bytes.length; i++) {
     chunk.push(String.fromCharCode(bytes[i]));
   }
   var raw = chunk.join("");
+  log.debug("Leaving bytesToBase64().");
   return typeof btoa === "function"
     ? btoa(raw)
     : Buffer.from(raw, "binary").toString("base64");
@@ -171,7 +184,8 @@ function toPem(derBytes) {
     lines.push(body.slice(i, i + 64));
   }
   log.debug("Leaving toPem().");
-  return "-----BEGIN PUBLIC KEY-----\n" + lines.join("\n") + "\n-----END PUBLIC KEY-----\n";
+  return "-----BEGIN PUBLIC KEY-----\n" + lines.join("\n") +
+      "\n-----END PUBLIC KEY-----\n";
 }
 
 
@@ -221,7 +235,8 @@ function padCoordinate(bytes, size, member, crv) {
   log.debug("Entering padCoordinate().");
   if (bytes.length > size) {
     throw new TypeError(
-      'Invalid JWK: "' + member + '" is ' + bytes.length + " bytes, too long for " + crv
+      'Invalid JWK: "' + member + '" is ' + bytes.length +
+          " bytes, too long for " + crv
     );
   }
   var padded = bytes;

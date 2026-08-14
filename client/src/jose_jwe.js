@@ -5,8 +5,8 @@
 //
 // Extracted from jwt_tools.js so that more than one page can encrypt and
 // decrypt with the same code. OID4VCI section 10 has a Credential Issuer and a
-// Wallet encrypting to each other, and the last thing that should exist twice is
-// the Concat KDF: two independent readings of RFC 7518 section 4.6 can agree
+// Wallet encrypting to each other, and the last thing that should exist twice
+// is the Concat KDF: two independent readings of RFC 7518 section 4.6 can agree
 // with each other perfectly and still be wrong, and nothing would notice until
 // something else tried to decrypt the result.
 //
@@ -30,14 +30,14 @@
 //   * a JWK string                as a page's text field holds it
 //   * a PEM string                SPKI (public) or PKCS#8 (private)
 //
-// which is the difference between reusable and "reusable if you reformat first":
-// jwt_tools has PEM/JWK text in a textarea, the OID4VCI panes have a JWK object
-// from a metadata document.
+// which is the difference between reusable and "reusable if you reformat
+// first": jwt_tools has PEM/JWK text in a textarea, the OID4VCI panes have a
+// JWK object from a metadata document.
 // ---------------------------------------------------------------------------
 
 var bunyan = require("bunyan");
-// A node consumer (the tests load this module directly) may have no CONFIG_FILE,
-// so fall back to info rather than failing to load.
+// A node consumer (the tests load this module directly) may have no
+// CONFIG_FILE, so fall back to info rather than failing to load.
 var log = bunyan.createLogger({
   name: "jose_jwe",
   level: (function () {
@@ -53,43 +53,56 @@ var log = bunyan.createLogger({
 // Bytes and base64url
 // ---------------------------------------------------------------------------
 function bytesToB64u(input) {
+  log.debug("Entering bytesToB64u().");
   var bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   var bin = '';
   for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  log.debug("Leaving bytesToB64u().");
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function strToB64u(str) {
+  log.debug("Entering strToB64u().");
+  log.debug("Leaving strToB64u().");
   return bytesToB64u(new TextEncoder().encode(str));
 }
 
 function b64uToBytes(b64u) {
+  log.debug("Entering b64uToBytes().");
   var s = String(b64u).replace(/-/g, '+').replace(/_/g, '/');
   var pad = '==='.slice(0, (4 - s.length % 4) % 4);
   var bin = atob(s + pad);
   var bytes = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  log.debug("Leaving b64uToBytes().");
   return bytes;
 }
 
 function b64uToStr(b64u) {
+  log.debug("Entering b64uToStr().");
+  log.debug("Leaving b64uToStr().");
   return new TextDecoder().decode(b64uToBytes(b64u));
 }
 
 function derToPem(der, label) {
+  log.debug("Entering derToPem().");
   var bytes = new Uint8Array(der);
   var bin = '';
   for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
   var b64 = btoa(bin);
   var lines = b64.match(/.{1,64}/g).join('\n');
-  return '-----BEGIN ' + label + '-----\n' + lines + '\n-----END ' + label + '-----\n';
+  log.debug("Leaving derToPem().");
+  return '-----BEGIN ' + label + '-----\n' + lines + '\n-----END ' + label +
+      '-----\n';
 }
 
 function pemToDer(pem) {
+  log.debug("Entering pemToDer().");
   var b64 = String(pem).replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
   var bin = atob(b64);
   var bytes = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  log.debug("Leaving pemToDer().");
   return bytes.buffer;
 }
 
@@ -108,7 +121,10 @@ function concatBytes() {
 }
 
 function uint32be(n) {
-  return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff]);
+  log.debug("Entering uint32be().");
+  log.debug("Leaving uint32be().");
+  return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff,
+                        n & 0xff]);
 }
 
 // ---------------------------------------------------------------------------
@@ -120,19 +136,38 @@ var ENC_KEY_BYTES = { A128GCM: 16, A192GCM: 24, A256GCM: 32 };
 // The hash each RSA-OAEP variant uses.
 var JWE_RSA_HASH = { 'RSA-OAEP': 'SHA-1', 'RSA-OAEP-256': 'SHA-256' };
 
-// ECDH-ES key-agreement key-wrap variants (RFC 7518 section 4.6) -> AES key-wrap
-// size in bytes. Plain "ECDH-ES" (direct key agreement) is handled separately.
-var ECDH_KW_BYTES = { 'ECDH-ES+A128KW': 16, 'ECDH-ES+A192KW': 24, 'ECDH-ES+A256KW': 32 };
+// ECDH-ES key-agreement key-wrap variants (RFC 7518 section 4.6) -> AES
+// key-wrap size in bytes. Plain "ECDH-ES" (direct key agreement) is handled
+// separately.
+var ECDH_KW_BYTES = { 'ECDH-ES+A128KW': 16, 'ECDH-ES+A192KW': 24,
+    'ECDH-ES+A256KW': 32 };
 
 // The curve used when THIS side chooses: P-256. Decryption follows the epk.
 var ECDH_CURVE = 'P-256';
 var ECDH_CURVE_BITS = 256;
 var CURVE_BITS = { 'P-256': 256, 'P-384': 384, 'P-521': 521 };
 
-function isEcdh(alg) { return alg === 'ECDH-ES' || ECDH_KW_BYTES[alg] !== undefined; }
-function isRsa(alg) { return JWE_RSA_HASH[alg] !== undefined; }
-function supportedAlgs() { return ['RSA-OAEP', 'RSA-OAEP-256', 'ECDH-ES'].concat(Object.keys(ECDH_KW_BYTES)); }
-function supportedEncs() { return Object.keys(ENC_KEY_BYTES); }
+function isEcdh(alg) {
+  log.debug("Entering isEcdh().");
+  log.debug("Leaving isEcdh().");
+  return alg === 'ECDH-ES' || ECDH_KW_BYTES[alg] !== undefined;
+}
+function isRsa(alg) {
+  log.debug("Entering isRsa().");
+  log.debug("Leaving isRsa().");
+  return JWE_RSA_HASH[alg] !== undefined;
+}
+function supportedAlgs() {
+  log.debug("Entering supportedAlgs().");
+  log.debug("Leaving supportedAlgs().");
+  return ['RSA-OAEP', 'RSA-OAEP-256',
+          'ECDH-ES'].concat(Object.keys(ECDH_KW_BYTES));
+}
+function supportedEncs() {
+  log.debug("Entering supportedEncs().");
+  log.debug("Leaving supportedEncs().");
+  return Object.keys(ENC_KEY_BYTES);
+}
 
 // ---------------------------------------------------------------------------
 // What this browser's Web Crypto will actually do.
@@ -140,8 +175,8 @@ function supportedEncs() { return Object.keys(ENC_KEY_BYTES); }
 // RFC 7518 defines AES-128, AES-192 and AES-256 for both key wrapping and
 // content encryption. Chrome's Web Crypto implements 128 and 256 and REJECTS
 // 192 — so ECDH-ES+A192KW and A192GCM cannot be performed there however
-// correctly they are coded. Node's Web Crypto does support them, which is a good
-// way to be misled by a unit test.
+// correctly they are coded. Node's Web Crypto does support them, which is a
+// good way to be misled by a unit test.
 //
 // So the algorithms are probed rather than assumed, once, and a caller can say
 // "not supported by this browser" instead of surfacing an OperationError from
@@ -171,7 +206,8 @@ function probeAesSupport() {
         }
       }
     }
-    log.debug("probeAesSupport(): AES-GCM " + JSON.stringify(support['AES-GCM']) +
+    log.debug("probeAesSupport(): AES-GCM " +
+              JSON.stringify(support['AES-GCM']) +
               ", AES-KW " + JSON.stringify(support['AES-KW']));
     return support;
   })();
@@ -181,20 +217,36 @@ function probeAesSupport() {
 
 // "" when usable here, otherwise why not.
 function algUnsupportedReason(alg, support) {
+  log.debug("Entering algUnsupportedReason().");
   var kwBytes = ECDH_KW_BYTES[alg];
-  if (!kwBytes) return "";
-  if (support && support['AES-KW'] && support['AES-KW'][kwBytes * 8] === false) {
-    return "this browser's Web Crypto does not implement AES-" + (kwBytes * 8) + " key wrapping";
+  if (!kwBytes) {
+    log.debug("Leaving algUnsupportedReason().");
+    return "";
   }
+  if (support && support['AES-KW'] &&
+      support['AES-KW'][kwBytes * 8] === false) {
+    log.debug("Leaving algUnsupportedReason().");
+    return "this browser's Web Crypto does not implement AES-" + (kwBytes * 8) +
+        " key wrapping";
+  }
+  log.debug("Leaving algUnsupportedReason().");
   return "";
 }
 
 function encUnsupportedReason(enc, support) {
+  log.debug("Entering encUnsupportedReason().");
   var keyBytes = ENC_KEY_BYTES[enc];
-  if (!keyBytes) return "unknown content encryption algorithm";
-  if (support && support['AES-GCM'] && support['AES-GCM'][keyBytes * 8] === false) {
-    return "this browser's Web Crypto does not implement AES-" + (keyBytes * 8) + "-GCM";
+  if (!keyBytes) {
+    log.debug("Leaving encUnsupportedReason().");
+    return "unknown content encryption algorithm";
   }
+  if (support && support['AES-GCM'] &&
+      support['AES-GCM'][keyBytes * 8] === false) {
+    log.debug("Leaving encUnsupportedReason().");
+    return "this browser's Web Crypto does not implement AES-" +
+        (keyBytes * 8) + "-GCM";
+  }
+  log.debug("Leaving encUnsupportedReason().");
   return "";
 }
 
@@ -202,19 +254,31 @@ function encUnsupportedReason(enc, support) {
 // Key input
 // ---------------------------------------------------------------------------
 function isCryptoKey(key) {
-  return !!key && typeof key === "object" && typeof key.algorithm === "object" && "type" in key;
+  log.debug("Entering isCryptoKey().");
+  log.debug("Leaving isCryptoKey().");
+  return !!key && typeof key === "object" &&
+      typeof key.algorithm === "object" && "type" in key;
 }
 
 function asJwk(key) {
   log.debug("Entering asJwk().");
-  if (!key) return null;
-  if (typeof key === "object" && !isCryptoKey(key)) return key;
+  if (!key) {
+    log.debug("Leaving asJwk().");
+    return null;
+  }
+  if (typeof key === "object" && !isCryptoKey(key)) {
+    log.debug("Leaving asJwk().");
+    return key;
+  }
   if (typeof key === "string" && key.trim().charAt(0) === "{") {
     try {
+      log.debug("Leaving asJwk().");
       return JSON.parse(key);
     } catch (e) {
       // Not JSON after all: treat it as PEM and let the import say so.
-      log.debug("asJwk(): the text starts with { but is not JSON: " + e.message);
+      log.debug("asJwk(): the text starts with { but is not JSON: " +
+                e.message);
+      log.debug("Leaving asJwk().");
       return null;
     }
   }
@@ -225,12 +289,15 @@ function asJwk(key) {
 // alg/use/key_ops/ext are metadata about a key, not part of it, and Web Crypto
 // rejects a JWK whose key_ops disagree with the usages asked for.
 function stripJwkForImport(jwk) {
+  log.debug("Entering stripJwkForImport().");
   var out = {};
   Object.keys(jwk).forEach(function (k) {
-    if (['alg', 'use', 'key_ops', 'ext', 'kid', 'x5c', 'x5t', 'x5t#S256', 'x5u'].indexOf(k) === -1) {
+    if (['alg', 'use', 'key_ops', 'ext', 'kid', 'x5c', 'x5t', 'x5t#S256',
+        'x5u'].indexOf(k) === -1) {
       out[k] = jwk[k];
     }
   });
+  log.debug("Leaving stripJwkForImport().");
   return out;
 }
 
@@ -245,18 +312,25 @@ function importKey(key, format, params, usages) {
   var jwk = asJwk(key);
   if (jwk) {
     log.debug("Leaving importKey(). Importing a JWK.");
-    return crypto.subtle.importKey('jwk', stripJwkForImport(jwk), params, false, usages);
+    return crypto.subtle.importKey('jwk', stripJwkForImport(jwk), params, false,
+                                   usages);
   }
   log.debug("Leaving importKey(). Importing PEM as " + format + ".");
-  return crypto.subtle.importKey(format, pemToDer(String(key)), params, false, usages);
+  return crypto.subtle.importKey(format, pemToDer(String(key)), params, false,
+                                 usages);
 }
 
 // The curve a key names, so ECDH import parameters can be built for it. A JWK
 // says so directly; a PEM does not, so P-256 is assumed — which is what this
 // project's issuers and wallets use, and what encryption chooses anyway.
 function curveOf(key, fallback) {
+  log.debug("Entering curveOf().");
   var jwk = asJwk(key);
-  if (jwk && jwk.crv) return jwk.crv;
+  if (jwk && jwk.crv) {
+    log.debug("Leaving curveOf().");
+    return jwk.crv;
+  }
+  log.debug("Leaving curveOf().");
   return fallback || ECDH_CURVE;
 }
 
@@ -306,76 +380,93 @@ async function deriveCek(alg, enc, protectedHeader, recipientPublicKey) {
     var curve = curveOf(recipientPublicKey, ECDH_CURVE);
     var recipientPub = await importKey(recipientPublicKey, 'spki',
       { name: 'ECDH', namedCurve: curve }, []);
-    var ephemeral = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: curve },
+    var ephemeral = await crypto.subtle.generateKey({ name: 'ECDH',
+        namedCurve: curve },
       true, ['deriveBits']);
-    var z = await crypto.subtle.deriveBits({ name: 'ECDH', public: recipientPub },
+    var z = await crypto.subtle.deriveBits({ name: 'ECDH',
+        public: recipientPub },
       ephemeral.privateKey, CURVE_BITS[curve] || ECDH_CURVE_BITS);
     var epk = await crypto.subtle.exportKey('jwk', ephemeral.publicKey);
     protectedHeader.epk = { kty: epk.kty, crv: epk.crv, x: epk.x, y: epk.y };
 
     if (alg === 'ECDH-ES') {
-      // Direct: the agreed key IS the CEK and encrypted_key is empty. The Concat
-      // KDF AlgorithmID is the content-encryption "enc" value.
+      // Direct: the agreed key IS the CEK and encrypted_key is empty. The
+      // Concat KDF AlgorithmID is the content-encryption "enc" value.
       var cekBytes = await concatKdf(z, keyBytes, enc);
-      var cek = await crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+      var cek = await crypto.subtle.importKey('raw', cekBytes,
+          { name: 'AES-GCM' }, false, ['encrypt']);
       log.debug("Leaving deriveCek(). ECDH-ES direct.");
       return { cek: cek, encryptedKey: '' };
     }
     // ECDH-ES+A*KW: derive a key-wrapping key (AlgorithmID is the full "alg",
     // keydatalen is the AES-KW size), then wrap a fresh random CEK with it.
     var kekBytes = await concatKdf(z, ECDH_KW_BYTES[alg], alg);
-    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' }, false, ['wrapKey']);
-    var cekKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: keyBytes * 8 },
+    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' },
+        false, ['wrapKey']);
+    var cekKey = await crypto.subtle.generateKey({ name: 'AES-GCM',
+        length: keyBytes * 8 },
       true, ['encrypt']);
     var wrapped = await crypto.subtle.wrapKey('raw', cekKey, kek, 'AES-KW');
     log.debug("Leaving deriveCek(). " + alg + ".");
     return { cek: cekKey, encryptedKey: bytesToB64u(wrapped) };
   }
 
-  if (!isRsa(alg)) throw new Error('unsupported key management algorithm: ' + alg);
+  if (!isRsa(alg)) throw new Error('unsupported key management algorithm: ' +
+      alg);
   // RSA-OAEP / RSA-OAEP-256: a random CEK wrapped with the recipient's key.
   var randomCek = new Uint8Array(keyBytes);
   crypto.getRandomValues(randomCek);
   var rsaPub = await importKey(recipientPublicKey, 'spki',
     { name: 'RSA-OAEP', hash: JWE_RSA_HASH[alg] }, ['encrypt']);
-  var wrappedCek = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, rsaPub, randomCek);
-  var imported = await crypto.subtle.importKey('raw', randomCek, { name: 'AES-GCM' }, false, ['encrypt']);
+  var wrappedCek = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, rsaPub,
+      randomCek);
+  var imported = await crypto.subtle.importKey('raw', randomCek,
+      { name: 'AES-GCM' }, false, ['encrypt']);
   log.debug("Leaving deriveCek(). " + alg + ".");
   return { cek: imported, encryptedKey: bytesToB64u(wrappedCek) };
 }
 
-async function unwrapCek(alg, enc, protectedHeader, encryptedKey, recipientPrivateKey) {
+async function unwrapCek(alg, enc, protectedHeader, encryptedKey,
+                         recipientPrivateKey) {
   log.debug("Entering unwrapCek(). alg=" + alg + ", enc=" + enc);
   var keyBytes = ENC_KEY_BYTES[enc];
   if (!keyBytes) throw new Error('unsupported content encryption: ' + enc);
 
   if (isEcdh(alg)) {
-    if (!protectedHeader.epk) throw new Error('an ECDH-ES JWE must carry an "epk" header.');
+    if (!protectedHeader.epk) throw new Error('an ECDH-ES JWE must carry an ' +
+        '"epk" header.');
     var curve = protectedHeader.epk.crv || ECDH_CURVE;
     var recipientPriv = await importKey(recipientPrivateKey, 'pkcs8',
       { name: 'ECDH', namedCurve: curve }, ['deriveBits']);
     var epk = await crypto.subtle.importKey('jwk', protectedHeader.epk,
       { name: 'ECDH', namedCurve: curve }, false, []);
-    var z = await crypto.subtle.deriveBits({ name: 'ECDH', public: epk }, recipientPriv,
+    var z = await crypto.subtle.deriveBits({ name: 'ECDH', public: epk },
+        recipientPriv,
       CURVE_BITS[curve] || ECDH_CURVE_BITS);
     if (alg === 'ECDH-ES') {
       var cekBytes = await concatKdf(z, keyBytes, enc);
       log.debug("Leaving unwrapCek(). ECDH-ES direct.");
-      return crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+      return crypto.subtle.importKey('raw', cekBytes, { name: 'AES-GCM' },
+                                     false, ['decrypt']);
     }
     var kekBytes = await concatKdf(z, ECDH_KW_BYTES[alg], alg);
-    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' }, false, ['unwrapKey']);
+    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' },
+        false, ['unwrapKey']);
     log.debug("Leaving unwrapCek(). " + alg + ".");
-    return crypto.subtle.unwrapKey('raw', b64uToBytes(encryptedKey), kek, 'AES-KW',
+    return crypto.subtle.unwrapKey('raw', b64uToBytes(encryptedKey), kek,
+                                   'AES-KW',
       { name: 'AES-GCM' }, false, ['decrypt']);
   }
 
-  if (!isRsa(alg)) throw new Error('unsupported key management algorithm: ' + alg);
+  if (!isRsa(alg)) throw new Error('unsupported key management algorithm: ' +
+      alg);
   var rsaPriv = await importKey(recipientPrivateKey, 'pkcs8',
     { name: 'RSA-OAEP', hash: JWE_RSA_HASH[alg] }, ['decrypt']);
-  var cek = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, rsaPriv, b64uToBytes(encryptedKey));
+  var cek = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, rsaPriv,
+      b64uToBytes(encryptedKey));
   log.debug("Leaving unwrapCek(). " + alg + ".");
-  return crypto.subtle.importKey('raw', new Uint8Array(cek), { name: 'AES-GCM' }, false, ['decrypt']);
+  return crypto.subtle.importKey('raw', new Uint8Array(cek),
+                                 { name: 'AES-GCM' }, false, ['decrypt']);
 }
 
 // ---------------------------------------------------------------------------
@@ -387,10 +478,12 @@ async function unwrapCek(alg, enc, protectedHeader, encryptedKey, recipientPriva
 // alg and enc are set from the arguments and cannot be overridden by it, since
 // they describe what this function is actually doing.
 async function encryptCompact(options) {
-  log.debug("Entering encryptCompact(). alg=" + options.alg + ", enc=" + options.enc);
+  log.debug("Entering encryptCompact(). alg=" + options.alg + ", enc=" +
+            options.enc);
   var alg = options.alg;
   var enc = options.enc;
-  if (!ENC_KEY_BYTES[enc]) throw new Error('unsupported content encryption: ' + enc);
+  if (!ENC_KEY_BYTES[enc]) throw new Error('unsupported content encryption: ' +
+      enc);
 
   var protectedHeader = {};
   Object.keys(options.header || {}).forEach(function (k) {
@@ -424,37 +517,42 @@ async function encryptCompact(options) {
   return { jwe: compact, header: protectedHeader };
 }
 
-// The protected header of a compact JWE, without decrypting anything — enough to
-// decide whether this recipient can open it, and to find the kid it names.
+// The protected header of a compact JWE, without decrypting anything — enough
+// to decide whether this recipient can open it, and to find the kid it names.
 function parseCompact(jwe) {
   log.debug("Entering parseCompact().");
   var parts = String(jwe).trim().split('.');
   if (parts.length !== 5) {
     log.debug("Leaving parseCompact(). " + parts.length + " parts, not five.");
-    throw new Error('not a JWE in compact serialization: expected five segments, got ' + parts.length + '.');
+    throw new Error('not a JWE in compact serialization: expected five ' +
+                    'segments, got ' + parts.length + '.');
   }
   var header;
   try {
     header = JSON.parse(b64uToStr(parts[0]));
   } catch (e) {
     log.debug("Leaving parseCompact(). The header is not readable JSON.");
-    throw new Error('the JWE protected header is not readable JSON: ' + e.message);
+    throw new Error('the JWE protected header is not readable JSON: ' +
+                    e.message);
   }
-  log.debug("Leaving parseCompact(). alg=" + header.alg + ", enc=" + header.enc);
+  log.debug("Leaving parseCompact(). alg=" + header.alg + ", enc=" +
+            header.enc);
   return { header: header, parts: parts };
 }
 
 // { jwe, key } -> { plaintext, header }. The algorithms come from the JWE's own
-// protected header, which is authenticated as the AAD: an attacker cannot change
-// them without the tag failing.
+// protected header, which is authenticated as the AAD: an attacker cannot
+// change them without the tag failing.
 async function decryptCompact(options) {
   log.debug("Entering decryptCompact().");
   var parsed = parseCompact(options.jwe);
   var header = parsed.header;
   var parts = parsed.parts;
-  if (!ENC_KEY_BYTES[header.enc]) throw new Error('unsupported content encryption: ' + header.enc);
+  if (!ENC_KEY_BYTES[header.enc]) throw new Error('unsupported content ' +
+      'encryption: ' + header.enc);
 
-  var cek = await unwrapCek(header.alg, header.enc, header, parts[1], options.key);
+  var cek = await unwrapCek(header.alg, header.enc, header, parts[1],
+      options.key);
   var plaintext = await crypto.subtle.decrypt({
     name: 'AES-GCM',
     iv: b64uToBytes(parts[2]),

@@ -26,13 +26,14 @@
 //
 //   * a CBOR map becomes a **Map**, not a plain object. COSE_Key is keyed by
 //     integers — 1, 3, -1, -2, -3 — and negative ones at that; collapsing those
-//     to object keys turns 1 and "1" into the same thing and loses the order the
-//     authenticator chose. `toPlain()` is available for display code that would
-//     rather have an object.
+//     to object keys turns 1 and "1" into the same thing and loses the order
+//     the authenticator chose. `toPlain()` is available for display code that
+//     would rather have an object.
 //   * indefinite-length items are REFUSED rather than accepted. CTAP2's
 //     canonical CBOR forbids them, so encountering one in an attestation object
-//     is a finding about the authenticator, and silently accepting it would hide
-//     exactly the kind of defect somebody opened this debugger to look for.
+//     is a finding about the authenticator, and silently accepting it would
+//     hide exactly the kind of defect somebody opened this debugger to look
+//     for.
 //
 // `decodeFirst()` exists because the authenticator data does not end where its
 // CBOR does: with the AT flag set, the credential public key is a CBOR item
@@ -85,20 +86,24 @@ function Reader(bytes) {
 
 // Every read goes through this, so there is one place that can run off the end.
 Reader.prototype.take = function (n) {
+  log.debug("Entering take().");
   if (n < 0 || this.offset + n > this.bytes.length) {
     throw CborError("the item claims " + n + " byte(s) but only " +
                     (this.bytes.length - this.offset) + " remain", this.offset);
   }
   var slice = this.bytes.subarray(this.offset, this.offset + n);
   this.offset += n;
+  log.debug("Leaving take().");
   return slice;
 };
 
 Reader.prototype.uint = function (n) {
+  log.debug("Entering uint().");
   var b = this.take(n), v = 0;
   for (var i = 0; i < b.length; i++) {
     v = v * 256 + b[i];
   }
+  log.debug("Leaving uint().");
   return v;
 };
 
@@ -124,12 +129,14 @@ function readHead(reader) {
     var hi = reader.uint(4), lo = reader.uint(4);
     arg = hi * 4294967296 + lo;
     if (!Number.isSafeInteger(arg)) {
-      throw CborError("an 8-byte argument exceeds the exactly-representable range", reader.offset);
+      throw CborError("an 8-byte argument exceeds the " +
+                      "exactly-representable range", reader.offset);
     }
   } else if (info === 31) {
     arg = null;
   } else {
-    throw CborError("additional-information value " + info + " is reserved", reader.offset);
+    throw CborError("additional-information value " + info + " is reserved",
+                    reader.offset);
   }
   return { major: major, info: info, arg: arg };
 }
@@ -155,13 +162,16 @@ function halfToNumber(bits) {
 // points below carry the logging instead.
 function readValue(reader, depth) {
   if (depth > MAX_DEPTH) {
-    throw CborError("nesting deeper than " + MAX_DEPTH + " levels", reader.offset);
+    throw CborError("nesting deeper than " + MAX_DEPTH + " levels",
+                    reader.offset);
   }
   var head = readHead(reader);
 
   if (head.arg === null && head.major !== MT_SIMPLE) {
-    throw CborError("indefinite-length item (major type " + head.major + "). CTAP2's canonical " +
-                    "CBOR forbids these, so one here is a finding about the producer", reader.offset);
+    throw CborError("indefinite-length item (major type " + head.major +
+                    "). CTAP2's canonical " +
+                    "CBOR forbids these, so one here is a finding about " +
+                        "the producer", reader.offset);
   }
 
   var i, out, key;
@@ -175,7 +185,8 @@ function readValue(reader, depth) {
       // subarray pins the whole input buffer alive behind it.
       return new Uint8Array(reader.take(head.arg));
     case MT_TEXT:
-      return new TextDecoder("utf-8", { fatal: true }).decode(reader.take(head.arg));
+      return new TextDecoder("utf-8",
+                             { fatal: true }).decode(reader.take(head.arg));
     case MT_ARRAY:
       out = [];
       for (i = 0; i < head.arg; i++) {
@@ -186,11 +197,13 @@ function readValue(reader, depth) {
       out = new Map();
       for (i = 0; i < head.arg; i++) {
         key = readValue(reader, depth + 1);
-        if (key instanceof Uint8Array || Array.isArray(key) || key instanceof Map) {
+        if (key instanceof Uint8Array || Array.isArray(key) ||
+            key instanceof Map) {
           throw CborError("a map key of a non-scalar type", reader.offset);
         }
         if (out.has(key)) {
-          throw CborError("duplicate map key " + JSON.stringify(key), reader.offset);
+          throw CborError("duplicate map key " + JSON.stringify(key),
+                          reader.offset);
         }
         out.set(key, readValue(reader, depth + 1));
       }
@@ -207,28 +220,35 @@ function readValue(reader, depth) {
         (head.arg >>> 24) & 0xff, (head.arg >>> 16) & 0xff,
         (head.arg >>> 8) & 0xff, head.arg & 0xff]).buffer).getFloat32(0);
       if (head.info === 27) {
-        throw CborError("64-bit floats are not decoded here; nothing in WebAuthn uses one",
+        throw CborError("64-bit floats are not decoded here; nothing in " +
+                        "WebAuthn uses one",
                         reader.offset);
       }
       if (head.info === 31) {
-        throw CborError("a break stop code outside an indefinite-length item", reader.offset);
+        throw CborError("a break stop code outside an indefinite-length item",
+                        reader.offset);
       }
       return { simple: head.arg };
     default:
-      throw CborError("major type " + head.major + " is not a thing", reader.offset);
+      throw CborError("major type " + head.major + " is not a thing",
+                      reader.offset);
   }
 }
 
 function checkInput(bytes) {
+  log.debug("Entering checkInput().");
   if (!(bytes instanceof Uint8Array)) {
-    throw CborError("expected a Uint8Array, got " + Object.prototype.toString.call(bytes), 0);
+    throw CborError("expected a Uint8Array, got " +
+                    Object.prototype.toString.call(bytes), 0);
   }
   if (!bytes.length) {
     throw CborError("no input", 0);
   }
   if (bytes.length > MAX_INPUT_BYTES) {
-    throw CborError("input is " + bytes.length + " bytes; the cap is " + MAX_INPUT_BYTES, 0);
+    throw CborError("input is " + bytes.length + " bytes; the cap is " +
+                    MAX_INPUT_BYTES, 0);
   }
+  log.debug("Leaving checkInput().");
 }
 
 // Decode ONE item and report where it ended. For the credential public key,
@@ -245,7 +265,8 @@ function decodeFirst(bytes) {
 
 // Decode an item and require it to be the WHOLE input. Trailing bytes after an
 // attestation object mean the document is not what it claims to be, and a
-// decoder that ignored them would report a perfectly good-looking result for it.
+// decoder that ignored them would report a perfectly good-looking result for
+// it.
 function decode(bytes) {
   log.debug("Entering decode(). bytes=" + (bytes && bytes.length));
   var first = decodeFirst(bytes);

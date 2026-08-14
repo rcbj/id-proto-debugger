@@ -67,6 +67,7 @@ function getParameterByName(name, url)
     url = window.location.search;
   }
   var urlParams = new URLSearchParams(url);
+  log.debug("Leaving getParameterByName().");
   return urlParams.get(name);
 }
 
@@ -85,6 +86,7 @@ function b64uToUtf8(segment) {
   try {
     // Percent-decoding rather than atob alone: a claim value may hold non-ASCII
     // (a name, an address), and atob yields bytes, not characters.
+    log.debug("Leaving b64uToUtf8().");
     return decodeURIComponent(
       raw.split("").map(function (c) {
         return "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2);
@@ -93,19 +95,23 @@ function b64uToUtf8(segment) {
   } catch (e) {
     // Not valid UTF-8. Buffer.from(...).toString('utf8') — what jsonwebtoken
     // used — substitutes replacement characters rather than failing, so show
-    // the bytes instead of refusing to decode a token that is merely mis-encoded.
-    log.debug("Segment is not valid UTF-8; showing the raw bytes: " + e.message);
+    // the bytes instead of refusing to decode a token that is merely
+    // mis-encoded.
+    log.debug("Segment is not valid UTF-8; showing the raw bytes: " +
+              e.message);
+    log.debug("Leaving b64uToUtf8().");
     return raw;
   }
   log.debug("Leaving b64uToUtf8().");
 }
 
-// The contract callers depend on is jsonwebtoken's decode(token, {complete:true}):
-// { header, payload, signature } back, or NULL — never a throw — when the string
-// is not a JWT or its header is not JSON. validateClaims() below turns that null
-// into its own error message, so returning null matters as much as the object.
-// The payload is JSON.parse'd when it parses to an object and left as a string
-// otherwise, which is what makes a non-JSON payload display rather than vanish.
+// The contract callers depend on is jsonwebtoken's decode(token,
+// {complete:true}): { header, payload, signature } back, or NULL — never a
+// throw — when the string is not a JWT or its header is not JSON.
+// validateClaims() below turns that null into its own error message, so
+// returning null matters as much as the object. The payload is JSON.parse'd
+// when it parses to an object and left as a string otherwise, which is what
+// makes a non-JSON payload display rather than vanish.
 function decodeJWT(jwt_) {
   log.debug("Entering decodeJWT().");
   if (typeof jwt_ !== "string" || !JWS_REGEX.test(jwt_)) {
@@ -151,36 +157,55 @@ function resolveTokenFromParams() {
   log.debug("Entering resolveTokenFromParams().");
   var type = getParameterByName('type');
   if (type === 'access') {
+    log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('token_access_token');
   } else if (type === 'refresh') {
+    log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('token_refresh_token');
   } else if (type === 'id') {
+    log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('token_id_token');
   } else if (type === 'refresh_access') {
+    log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('refresh_access_token');
   } else if (type === 'refresh_refresh') {
+    log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('refresh_refresh_token');
   } else if (type === 'refresh_id') {
+    log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('refresh_id_token');
-  } else if (type === 'history_access' || type === 'history_refresh' || type === 'history_id_token') {
+  } else if (type === 'history_access' || type === 'history_refresh' ||
+             type === 'history_id_token') {
     var generation = parseInt(getParameterByName('generation'), 10);
     var history = [];
     try {
       history = JSON.parse(localStorage.getItem('token_history') || '[]');
     } catch (e) {
       log.error('Failed to parse token_history: ' + e);
+      log.debug("Leaving resolveTokenFromParams().");
       return null;
     }
     if (isNaN(generation) || generation < 0 || generation >= history.length) {
       log.error('Invalid generation index: ' + generation);
+      log.debug("Leaving resolveTokenFromParams().");
       return null;
     }
     var entry = history[generation];
-    if (type === 'history_access')    return entry.access_token || null;
-    if (type === 'history_refresh')   return entry.refresh_token || null;
-    if (type === 'history_id_token')  return entry.id_token || null;
+    if (type === 'history_access')    {
+      log.debug("Leaving resolveTokenFromParams().");
+      return entry.access_token || null;
+    }
+    if (type === 'history_refresh')   {
+      log.debug("Leaving resolveTokenFromParams().");
+      return entry.refresh_token || null;
+    }
+    if (type === 'history_id_token')  {
+      log.debug("Leaving resolveTokenFromParams().");
+      return entry.id_token || null;
+    }
   } else {
     log.error('Unknown token type: ' + type);
+    log.debug("Leaving resolveTokenFromParams().");
     return null;
   }
   log.debug("Leaving resolveTokenFromParams().");
@@ -188,13 +213,16 @@ function resolveTokenFromParams() {
 
 async function verifyJWT() {
   log.debug("Entering verifyJWT().");
-  var jwt_verification_type = document.getElementById("jwt_verification_type").value;
-  var jwt_verification_key = document.getElementById("jwt_verification_key").value;
+  var jwt_verification_type =
+      document.getElementById("jwt_verification_type").value;
+  var jwt_verification_key =
+      document.getElementById("jwt_verification_key").value;
   var jwt_ = resolveTokenFromParams();
 
   try {
     const [headerB64, payloadB64, signatureB64] = jwt_.split('.');
-    if (!headerB64 || !payloadB64 || !signatureB64) throw new Error('Invalid JWT format.');
+    if (!headerB64 || !payloadB64 ||
+        !signatureB64) throw new Error('Invalid JWT format.');
 
     const header = JSON.parse(atobUrl(headerB64));
     var isValid = false;
@@ -215,17 +243,21 @@ async function verifyJWT() {
     log.error("Error while verifying JWT: " + err.message);
   }
 
-  document.getElementById('jwt_verification_output').value = "Signature Verified: " + isValid;
+  document.getElementById('jwt_verification_output').value =
+                          "Signature Verified: " + isValid;
   log.debug("Leaving verifyJWT().");
 }
 
 function atobUrl(input) {
+  log.debug("Entering atobUrl().");
   input = input.replace(/-/g, '+').replace(/_/g, '/');
   const pad = '==='.slice(0, (4 - input.length % 4) % 4);
+  log.debug("Leaving atobUrl().");
   return atob(input + pad);
 }
 
 function base64UrlToUint8Array(base64UrlString) {
+  log.debug("Entering base64UrlToUint8Array().");
   const binary = atobUrl(base64UrlString);
   const bytes = new Uint8Array(binary.length);
 
@@ -233,10 +265,12 @@ function base64UrlToUint8Array(base64UrlString) {
     bytes[i] = binary.charCodeAt(i);
   }
 
+  log.debug("Leaving base64UrlToUint8Array().");
   return bytes;
 }
 
 function pemToArrayBuffer(pem) {
+  log.debug("Entering pemToArrayBuffer().");
   const binary = atob(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, ''));
   const buffer = new Uint8Array(binary.length);
 
@@ -244,6 +278,7 @@ function pemToArrayBuffer(pem) {
     buffer[i] = binary.charCodeAt(i);
   }
   
+  log.debug("Leaving pemToArrayBuffer().");
   return buffer.buffer;
 }
 
@@ -297,7 +332,8 @@ async function verifyJWKS(jwt_, jwks) {
   if (jwk.kty !== 'RSA') throw new Error('Only RSA keys are supported.');
 
   const encoder = new TextEncoder();
-  const algo = { RS256: 'SHA-256', RS384: 'SHA-384', RS512: 'SHA-512' }[header.alg];
+  const algo = { RS256: 'SHA-256', RS384: 'SHA-384',
+      RS512: 'SHA-512' }[header.alg];
   if (!algo) throw new Error('Unsupported algorithm: ' + header.alg);
 
   const key = await crypto.subtle.importKey(
@@ -322,9 +358,13 @@ async function computeAtHash(value, alg) {
     PS256: 'SHA-256', PS384: 'SHA-384', PS512: 'SHA-512'
   };
   const hashAlgo = hashAlgoMap[alg];
-  if (!hashAlgo) return null;
+  if (!hashAlgo) {
+    log.debug("Leaving computeAtHash().");
+    return null;
+  }
   const encoder = new TextEncoder();
-  const hashBuffer = await crypto.subtle.digest(hashAlgo, encoder.encode(value));
+  const hashBuffer = await crypto.subtle.digest(hashAlgo,
+      encoder.encode(value));
   const hashArray = new Uint8Array(hashBuffer);
   const leftHalf = hashArray.slice(0, hashArray.length / 2);
   let binary = '';
@@ -337,20 +377,36 @@ async function validateClaims() {
   log.debug("Entering validateClaims().");
   const results = [];
   const now = Math.floor(Date.now() / 1000);
-  const clockSkew = parseInt(document.getElementById('jwt_clock_skew').value) || 0;
+  const clockSkew = parseInt(document.getElementById('jwt_clock_skew').value) ||
+      0;
   const purpose = document.getElementById('jwt_purpose').value;
   const expectedIss = document.getElementById('jwt_expected_iss').value.trim();
   const expectedAud = document.getElementById('jwt_expected_aud').value.trim();
   const clientId = document.getElementById('jwt_claims_client_id').value.trim();
-  const expectedScope = document.getElementById('jwt_expected_scope').value.trim();
+  const expectedScope =
+      document.getElementById('jwt_expected_scope').value.trim();
 
-  function pass(claim, msg) { results.push('PASS  ' + claim + ': ' + msg); }
-  function fail(claim, msg) { results.push('FAIL  ' + claim + ': ' + msg); }
-  function skip(claim, msg) { results.push('SKIP  ' + claim + ': ' + msg); }
+  function pass(claim, msg) {
+    log.debug("Entering pass().");
+    results.push('PASS  ' + claim + ': ' + msg);
+    log.debug("Leaving pass().");
+  }
+  function fail(claim, msg) {
+    log.debug("Entering fail().");
+    results.push('FAIL  ' + claim + ': ' + msg);
+    log.debug("Leaving fail().");
+  }
+  function skip(claim, msg) {
+    log.debug("Entering skip().");
+    results.push('SKIP  ' + claim + ': ' + msg);
+    log.debug("Leaving skip().");
+  }
 
   var jwt_ = resolveTokenFromParams();
   if (!jwt_) {
-    document.getElementById('jwt_claims_validation_output').value = 'Error: Unknown or missing token type.';
+    document.getElementById('jwt_claims_validation_output').value =
+                            'Error: Unknown or missing token type.';
+    log.debug("Leaving validateClaims().");
     return false;
   }
 
@@ -359,7 +415,9 @@ async function validateClaims() {
     decoded = decodeJWT(jwt_);
     if (!decoded) throw new Error('Could not decode JWT.');
   } catch (e) {
-    document.getElementById('jwt_claims_validation_output').value = 'Error: ' + e.message;
+    document.getElementById('jwt_claims_validation_output').value = 'Error: ' +
+                            e.message;
+    log.debug("Leaving validateClaims().");
     return false;
   }
 
@@ -400,12 +458,15 @@ async function validateClaims() {
     if (typeof payload.exp !== 'number' || !Number.isInteger(payload.exp)) {
       fail('exp', 'Must be an integer NumericDate (RFC 7519 §4.1.4)');
     } else if (now > payload.exp + clockSkew) {
-      fail('exp', 'Token has expired (exp=' + new Date(payload.exp * 1000).toISOString() + ')');
+      fail('exp', 'Token has expired (exp=' +
+           new Date(payload.exp * 1000).toISOString() + ')');
     } else {
       const rem = payload.exp - now;
-      const remStr = rem >= 60 ? Math.floor(rem / 60) + 'm ' + (rem % 60) + 's remaining'
+      const remStr = rem >= 60 ? Math.floor(rem / 60) + 'm ' + (rem % 60) +
+          's remaining'
                                 : rem + 's remaining';
-      pass('exp', 'Not expired (' + new Date(payload.exp * 1000).toISOString() + ', ' + remStr + ')');
+      pass('exp', 'Not expired (' + new Date(payload.exp * 1000).toISOString() +
+           ', ' + remStr + ')');
     }
   } else if (isRequired) {
     fail('exp', 'Missing required claim');
@@ -418,9 +479,11 @@ async function validateClaims() {
     if (typeof payload.nbf !== 'number' || !Number.isInteger(payload.nbf)) {
       fail('nbf', 'Must be an integer NumericDate (RFC 7519 §4.1.5)');
     } else if (now < payload.nbf - clockSkew) {
-      fail('nbf', 'Token not yet valid (nbf=' + new Date(payload.nbf * 1000).toISOString() + ')');
+      fail('nbf', 'Token not yet valid (nbf=' +
+           new Date(payload.nbf * 1000).toISOString() + ')');
     } else {
-      pass('nbf', 'Valid (nbf=' + new Date(payload.nbf * 1000).toISOString() + ')');
+      pass('nbf', 'Valid (nbf=' + new Date(payload.nbf * 1000).toISOString() +
+           ')');
     }
   } else {
     skip('nbf', 'Not present');
@@ -431,9 +494,11 @@ async function validateClaims() {
     if (typeof payload.iat !== 'number' || !Number.isInteger(payload.iat)) {
       fail('iat', 'Must be an integer NumericDate (RFC 7519 §4.1.6)');
     } else if (payload.iat > now + clockSkew) {
-      fail('iat', 'Issued-at time is in the future (' + new Date(payload.iat * 1000).toISOString() + ')');
+      fail('iat', 'Issued-at time is in the future (' +
+           new Date(payload.iat * 1000).toISOString() + ')');
     } else {
-      pass('iat', 'Current time is after iat (' + new Date(payload.iat * 1000).toISOString() + ')');
+      pass('iat', 'Current time is after iat (' +
+           new Date(payload.iat * 1000).toISOString() + ')');
     }
   } else if (isRequired) {
     fail('iat', 'Missing required claim');
@@ -447,7 +512,8 @@ async function validateClaims() {
       typeof payload.exp === 'number' && 
       typeof payload.iat === 'number') {
     if (payload.exp <= payload.iat) {
-      fail('exp/iat', 'exp (' + payload.exp + ') must be after iat (' + payload.iat + ')');
+      fail('exp/iat', 'exp (' + payload.exp + ') must be after iat (' +
+           payload.iat + ')');
     } else {
       pass('exp/iat', 'exp is after iat');
     }
@@ -460,9 +526,11 @@ async function validateClaims() {
     } else if (purpose === 'oidc_id_token' && payload.iss.endsWith('#')) {
       fail('iss', 'Must not end with "#" (OIDC Core §2)');
     } else if (expectedIss && payload.iss !== expectedIss) {
-      fail('iss', 'Mismatch (expected="' + expectedIss + '", got="' + payload.iss + '")');
+      fail('iss', 'Mismatch (expected="' + expectedIss + '", got="' +
+           payload.iss + '")');
     } else {
-      pass('iss', '"' + payload.iss + '"' + (expectedIss ? ' (matches expected)' : ''));
+      pass('iss', '"' + payload.iss + '"' + (expectedIss ?
+           ' (matches expected)' : ''));
     }
   } else if (isRequired) {
     fail('iss', 'Missing required claim');
@@ -477,7 +545,9 @@ async function validateClaims() {
     if (typeof payload.sub !== 'string') {
       fail('sub', 'Must be a StringOrURI (RFC 7519 §4.1.2)');
     } else if (purpose === 'oidc_id_token' && payload.sub.length > 255) {
-      fail('sub', 'Must not exceed 255 ASCII characters (OIDC Core §2), length=' + payload.sub.length);
+      fail('sub',
+           'Must not exceed 255 ASCII characters (OIDC Core §2), length=' +
+           payload.sub.length);
     } else {
       pass('sub', '"' + payload.sub + '"');
     }
@@ -491,9 +561,11 @@ async function validateClaims() {
   if (!!payload.aud) {
     const audArray = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
     if (expectedAud && !audArray.includes(expectedAud)) {
-      fail('aud', 'Expected "' + expectedAud + '" not found in ' + JSON.stringify(payload.aud));
+      fail('aud', 'Expected "' + expectedAud + '" not found in ' +
+           JSON.stringify(payload.aud));
     } else if (expectedAud) {
-      pass('aud', '"' + expectedAud + '" found in ' + JSON.stringify(payload.aud));
+      pass('aud', '"' + expectedAud + '" found in ' +
+           JSON.stringify(payload.aud));
     } else {
       pass('aud', JSON.stringify(payload.aud));
     }
@@ -524,13 +596,15 @@ async function validateClaims() {
       if (!payload.azp) {
         fail('azp', 'Required when aud has multiple values (OIDC Core §2)');
       } else if (clientId && payload.azp !== clientId) {
-        fail('azp', 'Mismatch (expected="' + clientId + '", got="' + payload.azp + '")');
+        fail('azp', 'Mismatch (expected="' + clientId + '", got="' +
+             payload.azp + '")');
       } else {
         pass('azp', '"' + payload.azp + '"');
       }
     } else if (!!payload.azp) {
       if (clientId && payload.azp !== clientId) {
-        fail('azp', 'Mismatch (expected="' + clientId + '", got="' + payload.azp + '")');
+        fail('azp', 'Mismatch (expected="' + clientId + '", got="' +
+             payload.azp + '")');
       } else {
         pass('azp', '"' + payload.azp + '"');
       }
@@ -547,10 +621,12 @@ async function validateClaims() {
 
     // auth_time
     if (!!payload.auth_time) {
-      if (typeof payload.auth_time !== 'number' || !Number.isInteger(payload.auth_time)) {
+      if (typeof payload.auth_time !== 'number' ||
+          !Number.isInteger(payload.auth_time)) {
         fail('auth_time', 'Must be an integer NumericDate (OIDC Core §2)');
       } else if (payload.auth_time > now + clockSkew) {
-        fail('auth_time', 'Authentication time is in the future (' + new Date(payload.auth_time * 1000).toISOString() + ')');
+        fail('auth_time', 'Authentication time is in the future (' +
+             new Date(payload.auth_time * 1000).toISOString() + ')');
       } else {
         pass('auth_time', new Date(payload.auth_time * 1000).toISOString());
       }
@@ -579,9 +655,11 @@ async function validateClaims() {
         try {
           const computed = await computeAtHash(accessToken, header.alg);
           if (computed === null) {
-            fail('at_hash', 'Cannot validate — unsupported algorithm "' + header.alg + '"');
+            fail('at_hash', 'Cannot validate — unsupported algorithm "' +
+                 header.alg + '"');
           } else if (computed !== payload.at_hash) {
-            fail('at_hash', 'Hash mismatch — does not match stored access token');
+            fail('at_hash',
+                 'Hash mismatch — does not match stored access token');
           } else {
             pass('at_hash', 'Verified against stored access token');
           }
@@ -589,7 +667,8 @@ async function validateClaims() {
           fail('at_hash', 'Validation error — ' + e.message);
         }
       } else {
-        skip('at_hash', 'Present but no access token available to verify against');
+        skip('at_hash',
+             'Present but no access token available to verify against');
       }
     } else {
       skip('at_hash', 'Not present');
@@ -597,14 +676,16 @@ async function validateClaims() {
 
     // c_hash — cannot validate without the authorization code
     if (!!payload.c_hash) {
-      skip('c_hash', 'Present — cannot validate (authorization code no longer available)');
+      skip('c_hash',
+          'Present — cannot validate (authorization code no longer available)');
     } else {
       skip('c_hash', 'Not present');
     }
 
     // s_hash (FAPI) — cannot validate without the state value
     if (!!payload.s_hash) {
-      skip('s_hash', 'Present — cannot validate (state value no longer available)');
+      skip('s_hash',
+           'Present — cannot validate (state value no longer available)');
     } else {
       skip('s_hash', 'Not present');
     }
@@ -615,7 +696,8 @@ async function validateClaims() {
     // client_id
     if (!!payload.client_id) {
       if (clientId && payload.client_id !== clientId) {
-        fail('client_id', 'Mismatch (expected="' + clientId + '", got="' + payload.client_id + '")');
+        fail('client_id', 'Mismatch (expected="' + clientId + '", got="' +
+             payload.client_id + '")');
       } else {
         pass('client_id', '"' + payload.client_id + '"');
       }
@@ -627,12 +709,15 @@ async function validateClaims() {
     if (!!payload.scope) {
       if (expectedScope) {
         const tokenScopes = payload.scope.split(' ');
-        const requiredScopes = expectedScope.split(' ').filter(s => s.length > 0);
+        const requiredScopes = expectedScope.split(' ').filter(s =>
+            s.length > 0);
         const missing = requiredScopes.filter(s => !tokenScopes.includes(s));
         if (missing.length > 0) {
-          fail('scope', 'Missing required scope(s): ' + missing.join(', ') + ' (present: "' + payload.scope + '")');
+          fail('scope', 'Missing required scope(s): ' + missing.join(', ') +
+               ' (present: "' + payload.scope + '")');
         } else {
-          pass('scope', '"' + payload.scope + '" (all required scopes present)');
+          pass('scope', '"' + payload.scope +
+               '" (all required scopes present)');
         }
       } else {
         pass('scope', '"' + payload.scope + '"');
@@ -641,7 +726,8 @@ async function validateClaims() {
       pass('authorization_details', 'Present (used in place of scope)');
       skip('scope', 'Not present — authorization_details present instead');
     } else {
-      fail('scope/authorization_details', 'At least one is required (RFC 9068 §2.2)');
+      fail('scope/authorization_details',
+           'At least one is required (RFC 9068 §2.2)');
     }
   }
 
@@ -652,14 +738,16 @@ async function validateClaims() {
     const ageSeconds = now - payload.iat;
     const ageMins = Math.floor(ageSeconds / 60);
     const ageSecs = ageSeconds % 60;
-    ageLine = 'Token age: ' + (ageMins > 0 ? ageMins + 'm ' + ageSecs + 's' : ageSeconds + 's') +
+    ageLine = 'Token age: ' + (ageMins > 0 ? ageMins + 'm ' + ageSecs +
+        's' : ageSeconds + 's') +
               ' (iat=' + new Date(payload.iat * 1000).toISOString() + ')';
   }
 
   const failCount = results.filter(r => r.startsWith('FAIL')).length;
   var output = results.join('\n');
   if (ageLine) output += '\n\n' + ageLine;
-  output += '\n\n' + (failCount === 0 ? 'All checks passed.' : failCount + ' check(s) failed.');
+  output += '\n\n' + (failCount === 0 ? 'All checks passed.' : failCount +
+      ' check(s) failed.');
   document.getElementById('jwt_claims_validation_output').value = output;
   log.debug("Leaving validateClaims().");
   return false;
@@ -672,12 +760,18 @@ function writeValuesToLocalStorage() {
     const vkEl = document.getElementById('jwt_verification_key');
     if (vtEl) localStorage.setItem('jwt_verification_type', vtEl.value);
     if (vkEl) localStorage.setItem('jwt_verification_key', vkEl.value);
-    localStorage.setItem('jwt_purpose', document.getElementById('jwt_purpose').value);
-    localStorage.setItem('jwt_expected_iss', document.getElementById('jwt_expected_iss').value);
-    localStorage.setItem('jwt_expected_aud', document.getElementById('jwt_expected_aud').value);
-    localStorage.setItem('jwt_claims_client_id', document.getElementById('jwt_claims_client_id').value);
-    localStorage.setItem('jwt_expected_scope', document.getElementById('jwt_expected_scope').value);
-    localStorage.setItem('jwt_clock_skew', document.getElementById('jwt_clock_skew').value);
+    localStorage.setItem('jwt_purpose',
+                         document.getElementById('jwt_purpose').value);
+    localStorage.setItem('jwt_expected_iss',
+                         document.getElementById('jwt_expected_iss').value);
+    localStorage.setItem('jwt_expected_aud',
+                         document.getElementById('jwt_expected_aud').value);
+    localStorage.setItem('jwt_claims_client_id',
+                         document.getElementById('jwt_claims_client_id').value);
+    localStorage.setItem('jwt_expected_scope',
+                         document.getElementById('jwt_expected_scope').value);
+    localStorage.setItem('jwt_clock_skew',
+                         document.getElementById('jwt_clock_skew').value);
   } catch(e) {
     log.error("Error in writeValuesToLocalStorage: " + e.message);
   }
@@ -686,7 +780,8 @@ function writeValuesToLocalStorage() {
 
 $(document).on("change", "#jwt_verification_type", function() {
   if (this.value == "jwks_url") {
-    document.getElementById('jwt_verification_key').value = localStorage.getItem("jwks_endpoint");
+    document.getElementById('jwt_verification_key').value =
+                            localStorage.getItem("jwks_endpoint");
   }
 });
 
@@ -717,7 +812,10 @@ function setReturnLinks() {
   log.debug("Entering setReturnLinks().");
   var from = getParameterByName('from');
   var target = RETURN_TARGETS[from];
-  if (!target) return;                       // no (or unknown) origin: leave the default
+  if (!target) {
+    log.debug("Leaving setReturnLinks().");
+    return;
+  }                       // no (or unknown) origin: leave the default
   var label = RETURN_LABELS[from];
   var links = document.querySelectorAll('a.return_link');
   for (var i = 0; i < links.length; i++) {
@@ -729,26 +827,34 @@ function setReturnLinks() {
 }
 
 window.onload = function() {
+  log.debug("Entering onload().");
   log.debug("Entering onload function.");
   setReturnLinks();
 
   // Restore claims validation fields from localStorage
   const storedPurpose = localStorage.getItem('jwt_purpose');
-  if (storedPurpose) document.getElementById('jwt_purpose').value = storedPurpose;
-  const storedIss = localStorage.getItem('jwt_expected_iss') || localStorage.getItem('issuer');
+  if (storedPurpose) document.getElementById('jwt_purpose').value =
+      storedPurpose;
+  const storedIss = localStorage.getItem('jwt_expected_iss') ||
+      localStorage.getItem('issuer');
   if (storedIss) document.getElementById('jwt_expected_iss').value = storedIss;
   const storedAud = localStorage.getItem('jwt_expected_aud');
   if (storedAud) document.getElementById('jwt_expected_aud').value = storedAud;
   const storedClientId = localStorage.getItem('jwt_claims_client_id');
-  if (storedClientId) document.getElementById('jwt_claims_client_id').value = storedClientId;
+  if (storedClientId) document.getElementById('jwt_claims_client_id').value =
+      storedClientId;
   else {
     const globalClientId = localStorage.getItem('client_id');
-    if (globalClientId) document.getElementById('jwt_claims_client_id').value = globalClientId;
+    if (globalClientId) document.getElementById('jwt_claims_client_id').value =
+        globalClientId;
   }
-  const storedScope = localStorage.getItem('jwt_expected_scope') || localStorage.getItem('scope');
-  if (storedScope) document.getElementById('jwt_expected_scope').value = storedScope;
+  const storedScope = localStorage.getItem('jwt_expected_scope') ||
+      localStorage.getItem('scope');
+  if (storedScope) document.getElementById('jwt_expected_scope').value =
+      storedScope;
   const storedSkew = localStorage.getItem('jwt_clock_skew');
-  document.getElementById('jwt_clock_skew').value = (storedSkew !== null && storedSkew !== '') ? storedSkew : '30';
+  document.getElementById('jwt_clock_skew').value = (storedSkew !== null &&
+                          storedSkew !== '') ? storedSkew : '30';
 
   var jwt = resolveTokenFromParams() || "";
   // Retrieve IANA JWT claim assignments
@@ -762,7 +868,8 @@ window.onload = function() {
     for (i = 0; i < records.length; i++)
     {
       claim = records[i].getElementsByTagName("value")[0].textContent;
-      description = records[i].getElementsByTagName("description")[0].textContent;
+      description =
+          records[i].getElementsByTagName("description")[0].textContent;
       claimDescriptionDictionary[claim] = description;
     }
   }).then( () => {
@@ -773,7 +880,8 @@ window.onload = function() {
         if (claim.startsWith('_')) return; // skip metadata keys
         if (!claimDescriptionDictionary[claim]) {
           var entry = claims[claim];
-          claimDescriptionDictionary[claim] = (typeof entry === 'object') ? entry.description : entry;
+          claimDescriptionDictionary[claim] = (typeof entry === 'object') ?
+                                     entry.description : entry;
           if (typeof entry === 'object' && entry.url) {
             claimUrlDictionary[claim] = entry.url;
           }
@@ -782,17 +890,21 @@ window.onload = function() {
     });
     buildClaimSourcesFootnote();
     Object.keys(claimDescriptionDictionary).forEach( (key) => {
-      log.debug("Claims Description Map Entry: " + key + ":" + claimDescriptionDictionary[key]);
+      log.debug("Claims Description Map Entry: " + key + ":" +
+                claimDescriptionDictionary[key]);
       log.debug('jwt: ' + jwt);
       const decodedJWT = decodeJWT(jwt);
       log.debug('decoded jwt: ' + JSON.stringify(decodedJWT));
-      // Populate JSON tab.  
+      // Populate JSON tab.
       $('#jwt_header').val(JSON.stringify(decodedJWT.header, null, 2));
       $('#jwt_payload').val(JSON.stringify(decodedJWT.payload, null, 2));
       // Populate Key-Pair tab
       keyPairJWTHeader = '<table border="1">'
                        +   '<tr>'
-                       +     '<td><b>Claim</b></td><td><b>Value</b></td><td class="description-col"><b>Description</b> <sup><a href="#claim-sources" title="View claim description sources">†</a></sup></td>'
+                       +     '<td><b>Claim</b></td><td><b>Value</b></td><td ' +
+                           'class="description-col"><b>Description</b> ' +
+                           '<sup><a href="#claim-sources" title="View claim ' +
+                           'description sources">†</a></sup></td>'
                        +   '</tr>'
       Object.keys(decodedJWT.header).forEach(key => {
         var desc = claimDescriptionDictionary[key];
@@ -806,8 +918,9 @@ window.onload = function() {
         if ( typeof decodedJWT.header[key] === "object" )
         {
           keyPairJWTHeader += '<tr>'
-                            + '<td>' + escapeHtmlText(key) + '</td>'
-                            + '<td>' + escapeHtmlText(JSON.stringify(decodedJWT.header[key])) + '</td>'
+                            + '<td>' + key + '</td>'
+                            + '<td>' + escapeHtmlText(JSON.stringify(decodedJWT.header[key])) +
+                                '</td>'
                             + descCell
                             + '</tr>';
         } else {
@@ -823,7 +936,10 @@ window.onload = function() {
       var TIMESTAMP_CLAIMS = ['iat', 'exp', 'nbf', 'auth_time', 'updated_at'];
       keyPairJWTPayload = '<table border="1">'
                        +   '<tr>'
-                       +     '<td><b>Claim</b></td><td><b>Value</b></td><td class="description-col"><b>Description</b> <sup><a href="#claim-sources" title="View claim description sources">†</a></sup></td>'
+                       +     '<td><b>Claim</b></td><td><b>Value</b></td><td ' +
+                           'class="description-col"><b>Description</b> ' +
+                           '<sup><a href="#claim-sources" title="View claim ' +
+                           'description sources">†</a></sup></td>'
                        +   '</tr>'
       Object.keys(decodedJWT.payload).forEach(key => {
         var desc = claimDescriptionDictionary[key];
@@ -836,19 +952,21 @@ window.onload = function() {
         }
         var valueCell;
         if (typeof decodedJWT.payload[key] === "object") {
-          valueCell = '<td>' + escapeHtmlText(JSON.stringify(decodedJWT.payload[key])) + '</td>';
-        } else if (TIMESTAMP_CLAIMS.indexOf(key) !== -1 && typeof decodedJWT.payload[key] === 'number') {
-          // Escaped like the rest even though this branch is reached only for a
-          // value that is already a number: the guard, not the escaping, is what
-          // makes it safe, and a guard is a thing that gets relaxed later.
-          var humanDate = new Date(decodedJWT.payload[key] * 1000).toLocaleString(undefined, { timeZoneName: 'short' });
+          valueCell = '<td>' + escapeHtmlText(JSON.stringify(decodedJWT.payload[key])) +
+              '</td>';
+        } else if (TIMESTAMP_CLAIMS.indexOf(key) !== -1 &&
+                   typeof decodedJWT.payload[key] === 'number') {
+          var humanDate =
+              new Date(decodedJWT.payload[key] * 1000).toLocaleString(undefined,
+              { timeZoneName: 'short' });
           valueCell = '<td><span class="ts-tooltip">' + escapeHtmlText(decodedJWT.payload[key])
                     + '<span class="ts-tooltip-text">' + escapeHtmlText(humanDate) + '</span>'
                     + '</span></td>';
         } else {
           valueCell = '<td>' + escapeHtmlText(decodedJWT.payload[key]) + '</td>';
         }
-        keyPairJWTPayload += '<tr><td>' + escapeHtmlText(key) + '</td>' + valueCell + descCell + '</tr>';
+        keyPairJWTPayload += '<tr><td>' + escapeHtmlText(key) + '</td>' + valueCell + descCell +
+            '</tr>';
       });
       keyPairJWTPayload += '</table>';
       $('#key_pair_jwt_payload').html(keyPairJWTPayload);
@@ -881,6 +999,7 @@ function copyHtmlToClipboard(elementId) {
   const el = document.getElementById(elementId);
   if (!el) {
     log.error("copyHtmlToClipboard: element not found: " + elementId);
+    log.debug("Leaving copyHtmlToClipboard().");
     return false;
   }
   navigator.clipboard.writeText(el.innerHTML).catch(function(err) {
@@ -904,7 +1023,9 @@ function buildClaimSourcesFootnote() {
     // an escaped copy is the one that survives being copied.
     html += '<p><em>' + escapeHtmlText(vendorName) + ':</em></p><ul>';
     sources.forEach(function(source) {
-      html += '<li><a href="' + escapeHtmlText(source.url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtmlText(source.name) + '</a></li>';
+      html += '<li><a href="' + escapeHtmlText(source.url) +
+          '" target="_blank" rel="noopener noreferrer">' + source.name +
+          '</a></li>';
     });
     html += '</ul>';
   });
@@ -917,10 +1038,12 @@ function copyToClipboard(elementId) {
   const el = document.getElementById(elementId);
   if (!el) {
     log.error("copyToClipboard: element not found: " + elementId);
+    log.debug("Leaving copyToClipboard().");
     return false;
   }
   var text = el.value;
-  const toggleMap = { 'jwt_header': 'strip_newlines_header', 'jwt_payload': 'strip_newlines_payload' };
+  const toggleMap = { 'jwt_header': 'strip_newlines_header',
+      'jwt_payload': 'strip_newlines_payload' };
   const toggleEl = document.getElementById(toggleMap[elementId]);
   if (toggleEl && toggleEl.checked) {
     text = text.replace(/[\r\n]/g, '');

@@ -13,6 +13,36 @@
 // The version travels because an unpacked extension does not auto-update: a
 // stale copy speaking capture format v1 to a page expecting v2 would present as
 // a mysteriously empty inbox rather than as a mismatch.
+
+// The Entering/Leaving logging convention (see the repo-root CLAUDE.md)
+// wants a `log` here, and bunyan is not reachable from this file:
+// the extension is loaded raw by the browser, with no module system.
+// So this is the same call shape backed by console. Debug output is off by
+// default, so an ordinary run stays quiet; flip DEBUG to follow a call
+// through. Note the methods below are the one place the convention cannot
+// apply — a log line inside log.debug() is infinite recursion.
+var DEBUG = false;
+var LOG_TAG = "[bridge]";
+var log = {
+  debug: function () {
+    if (!DEBUG) return;
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  info: function () {
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  warn: function () {
+    console.warn.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  error: function () {
+    console.error.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  }
+};
+
 (function () {
   "use strict";
   var REQ = "idptools-webauthn-request";
@@ -27,15 +57,19 @@
       return;
     }
     var want = String(data.action || "");
-    var type = want === "clear" ? "clear" : (want === "disarm" ? "disarm" : "getCaptures");
+    var type = want === "clear" ? "clear" : (want === "disarm" ?
+        "disarm" : "getCaptures");
     try {
-      chrome.runtime.sendMessage({ type: type, reason: "the debugger finished a session" },
+      chrome.runtime.sendMessage({ type: type,
+                                 reason: "the debugger finished a session" },
         function (result) {
-          window.postMessage({ channel: RES, id: data.id, result: result || null },
+          window.postMessage({ channel: RES, id: data.id, result: result ||
+                             null },
                              window.location.origin);
         });
     } catch (e) {
-      window.postMessage({ channel: RES, id: data.id, error: String(e && e.message) },
+      window.postMessage({ channel: RES, id: data.id, error: String(e &&
+                         e.message) },
                          window.location.origin);
     }
   }, false);
@@ -44,15 +78,16 @@
   //
   // The attribute is the reliable one: it is set synchronously at
   // document_start, so a page can read it whenever it likes and tell "no
-  // extension" from "not asked yet" without a round trip. The postMessage is for
-  // a page already listening.
+  // extension" from "not asked yet" without a round trip. The postMessage is
+  // for a page already listening.
   try {
     document.documentElement.setAttribute(
-      "data-idptools-webauthn-observer", chrome.runtime.getManifest().version_name ||
+      "data-idptools-webauthn-observer",
+          chrome.runtime.getManifest().version_name ||
         chrome.runtime.getManifest().version);
   } catch (e) {
-    // No documentElement yet (document_start on an odd document), or no manifest
-    // access. The handshake below still works.
+    // No documentElement yet (document_start on an odd document), or no
+    // manifest access. The handshake below still works.
   }
   window.postMessage({ channel: RES, id: "hello", result: { present: true } },
                      window.location.origin);

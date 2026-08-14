@@ -68,17 +68,19 @@ const DEFAULT_MAX_REDIRECTS = 5;
 function resolvePositiveNumber(name, configured, fallback, unit) {
   log.debug("Entering resolvePositiveNumber().");
   if (configured === undefined || configured === null) {
+    log.debug("Leaving resolvePositiveNumber().");
     return fallback;
   }
   var value = Number(configured);
-  // A misconfigured value must not quietly become "no limit". That is exactly what
-  // axios makes of a missing timeout, and 0 is worse than useless for
+  // A misconfigured value must not quietly become "no limit". That is exactly
+  // what axios makes of a missing timeout, and 0 is worse than useless for
   // maxContentLength — axios enforces any value > -1, so 0 would refuse every
   // response with a body in it. Name the key in the log and fall back.
   if (!Number.isFinite(value) || value <= 0) {
     log.warn("Ignoring " + name + "=" + JSON.stringify(configured) +
              ": expected a positive number of " + unit + ". Using " +
              fallback + ".");
+    log.debug("Leaving resolvePositiveNumber().");
     return fallback;
   }
   log.debug("Leaving resolvePositiveNumber().");
@@ -91,42 +93,44 @@ const CALL_TIMEOUT = resolvePositiveNumber(
 // ---------------------------------------------------------------------------
 // Connection timeout, in milliseconds (appconfig.connectionTimeout): the budget
 // for reaching a USABLE connection — DNS, TCP connect and, on https, the TLS
-// handshake — enforced by connect_timeout.js on the agent that opens the socket.
+// handshake — enforced by connect_timeout.js on the agent that opens the
+// socket.
 //
 // It is a genuinely different deadline from callTimeout, not a smaller copy of
 // it. It stops counting the instant the connection is up, so the two are
-// additive: a dead or firewalled address fails inside connectionTimeout, while a
-// host that has answered gets the full callTimeout to produce a response. axios
-// cannot express this on its own — neither its `timeout` nor an AbortSignal can,
-// because both bound everything that follows.
+// additive: a dead or firewalled address fails inside connectionTimeout, while
+// a host that has answered gets the full callTimeout to produce a response.
+// axios cannot express this on its own — neither its `timeout` nor an
+// AbortSignal can, because both bound everything that follows.
 // ---------------------------------------------------------------------------
 const CONNECTION_TIMEOUT = resolvePositiveNumber(
   'connectionTimeout', appconfig.connectionTimeout, DEFAULT_CONNECTION_TIMEOUT,
   'milliseconds');
 
 // ---------------------------------------------------------------------------
-// Largest response body, in bytes, this service will accept from an outbound call
-// (appconfig.maxContentLength), passed to axios as `maxContentLength`.
+// Largest response body, in bytes, this service will accept from an outbound
+// call (appconfig.maxContentLength), passed to axios as `maxContentLength`.
 //
 // A timeout alone does not bound a call: a host that answers promptly and then
 // streams for as long as it likes is entirely within its deadline while the api
-// buffers the whole body IN MEMORY to hand back to the browser. axios's default is
-// -1, unlimited, so the only ceiling today is the heap. Ten concurrent callers
-// pointing this service at a large file is a denial of service that needs no
-// special effort.
+// buffers the whole body IN MEMORY to hand back to the browser. axios's default
+// is -1, unlimited, so the only ceiling today is the heap. Ten concurrent
+// callers pointing this service at a large file is a denial of service that
+// needs no special effort.
 //
-// axios enforces this incrementally, destroying the response stream as soon as the
-// running total passes the cap, so an oversized body is abandoned mid-download
-// rather than counted after the fact. It rejects with ERR_BAD_RESPONSE and the
-// message "maxContentLength size of N exceeded", which surfaces through the
-// existing error handling like any other call failure.
+// axios enforces this incrementally, destroying the response stream as soon as
+// the running total passes the cap, so an oversized body is abandoned
+// mid-download rather than counted after the fact. It rejects with
+// ERR_BAD_RESPONSE and the message "maxContentLength size of N exceeded", which
+// surfaces through the existing error handling like any other call failure.
 //
-// It applies to RESPONSES only. Request bodies are axios's `maxBodyLength`, which
-// is not set here: what this service sends is assembled from a request Express has
-// already accepted and size-limited.
+// It applies to RESPONSES only. Request bodies are axios's `maxBodyLength`,
+// which is not set here: what this service sends is assembled from a request
+// Express has already accepted and size-limited.
 // ---------------------------------------------------------------------------
 const MAX_CONTENT_LENGTH = resolvePositiveNumber(
-  'maxContentLength', appconfig.maxContentLength, DEFAULT_MAX_CONTENT_LENGTH, 'bytes');
+  'maxContentLength', appconfig.maxContentLength, DEFAULT_MAX_CONTENT_LENGTH,
+      'bytes');
 
 /**
  * Read one non-negative integer setting out of the environment config.
@@ -145,16 +149,18 @@ const MAX_CONTENT_LENGTH = resolvePositiveNumber(
 function resolveNonNegativeInteger(name, configured, fallback) {
   log.debug("Entering resolveNonNegativeInteger().");
   if (configured === undefined || configured === null) {
+    log.debug("Leaving resolveNonNegativeInteger().");
     return fallback;
   }
   var value = Number(configured);
   // A non-integer or negative value must not be passed through. axios gates on
-  // `if (maxRedirects)`, so anything that comes out falsy-but-not-zero — NaN from
-  // a non-numeric string — silently leaves follow-redirects' OWN default of 21 in
-  // place, which is the opposite of having configured a limit.
+  // `if (maxRedirects)`, so anything that comes out falsy-but-not-zero — NaN
+  // from a non-numeric string — silently leaves follow-redirects' OWN default
+  // of 21 in place, which is the opposite of having configured a limit.
   if (!Number.isInteger(value) || value < 0) {
     log.warn("Ignoring " + name + "=" + JSON.stringify(configured) +
              ": expected a non-negative whole number. Using " + fallback + ".");
+    log.debug("Leaving resolveNonNegativeInteger().");
     return fallback;
   }
   log.debug("Leaving resolveNonNegativeInteger().");
@@ -162,16 +168,17 @@ function resolveNonNegativeInteger(name, configured, fallback) {
 }
 
 // ---------------------------------------------------------------------------
-// How many redirects an outbound call may follow (appconfig.maxRedirects), passed
-// to axios as `maxRedirects`. axios's own default is 21.
+// How many redirects an outbound call may follow (appconfig.maxRedirects),
+// passed to axios as `maxRedirects`. axios's own default is 21.
 //
-// Two reasons to hold it down. A redirect chain is unbounded work behind a single
-// caller-supplied URL — each hop is a fresh DNS lookup and connection, and a loop
-// or a long chain burns the whole callTimeout doing nothing useful. And a redirect
-// is precisely how a *public* host sends this service somewhere private:
-// `302 Location: http://127.0.0.1:8080/`. That address is refused by the SSRF
-// guard's agent layer, which is on every hop because axios hands the agents to
-// follow-redirects — but a shorter chain is less to reason about either way.
+// Two reasons to hold it down. A redirect chain is unbounded work behind a
+// single caller-supplied URL — each hop is a fresh DNS lookup and connection,
+// and a loop or a long chain burns the whole callTimeout doing nothing useful.
+// And a redirect is precisely how a *public* host sends this service somewhere
+// private: `302 Location: http://127.0.0.1:8080/`. That address is refused by
+// the SSRF guard's agent layer, which is on every hop because axios hands the
+// agents to follow-redirects — but a shorter chain is less to reason about
+// either way.
 //
 // 0 is a valid setting and means "do not follow redirects at all"; the 3xx is
 // returned to the caller as the response.
@@ -183,15 +190,15 @@ const MAX_REDIRECTS = resolveNonNegativeInteger(
 // The User-Agent every outbound call sends (appconfig.userAgent).
 //
 // Without it axios announces itself as `axios/1.18.1`, which tells an identity
-// provider's operator nothing about who is calling. This service shows up in other
-// people's access logs by design — it is pointed at their token, introspection and
-// metadata endpoints — so it should say what it is and which build, which is what
-// makes a report like "your debugger sent us a malformed request on Tuesday"
-// actionable.
+// provider's operator nothing about who is calling. This service shows up in
+// other people's access logs by design — it is pointed at their token,
+// introspection and metadata endpoints — so it should say what it is and which
+// build, which is what makes a report like "your debugger sent us a malformed
+// request on Tuesday" actionable.
 //
 // The setting is the whole template; `{{VERSION}}` in it is replaced with the
-// build version, the same placeholder the client's footer and error pages use. A
-// value with no placeholder is sent verbatim, which is a legitimate choice.
+// build version, the same placeholder the client's footer and error pages use.
+// A value with no placeholder is sent verbatim, which is a legitimate choice.
 // ---------------------------------------------------------------------------
 const DEFAULT_USER_AGENT = 'Identity Protocol Debugger/{{VERSION}}';
 
@@ -218,18 +225,22 @@ function resolveAppVersion() {
       // still reports something usable.
       var record = appversion.load(__dirname);
       if (record && record.version) {
+        log.debug("Leaving resolveAppVersion().");
         return record.version;
       }
     } catch (e) {
       // Not present in this layout; try the next. Logged at debug because the
       // first miss is entirely normal in a checkout.
-      log.debug('resolveAppVersion: ' + candidates[i] + ' unavailable (' + e.code + ').');
+      log.debug('resolveAppVersion: ' + candidates[i] + ' unavailable (' +
+                e.code + ').');
     }
   }
   try {
+    log.debug("Leaving resolveAppVersion().");
     return require('./package.json').version;
   } catch (e) {
     log.warn('Could not determine the application version: ' + e.message);
+    log.debug("Leaving resolveAppVersion().");
     return '0.0.0';
   }
   log.debug("Leaving resolveAppVersion().");
@@ -247,13 +258,14 @@ function resolveUserAgent() {
   var configured = appconfig.userAgent;
   var template = DEFAULT_USER_AGENT;
   if (configured !== undefined && configured !== null) {
-    // An empty or whitespace-only setting is a misconfiguration, not a request to
-    // be anonymous: axios would send a User-Agent header with nothing after the
-    // colon, which is worse than the default it replaced. Say so and use the
-    // default, as the numeric settings do.
+    // An empty or whitespace-only setting is a misconfiguration, not a request
+    // to be anonymous: axios would send a User-Agent header with nothing after
+    // the colon, which is worse than the default it replaced. Say so and use
+    // the default, as the numeric settings do.
     if (typeof configured !== 'string' || !String(configured).trim()) {
       log.warn("Ignoring userAgent=" + JSON.stringify(configured) +
-               ": expected a non-empty string. Using \"" + DEFAULT_USER_AGENT + "\".");
+               ": expected a non-empty string. Using \"" + DEFAULT_USER_AGENT +
+                   "\".");
     } else {
       template = String(configured);
     }
@@ -306,7 +318,8 @@ function resolveAllowedOrigins(config) {
   [["uiUrl", config.uiUrl], ["apiUrl", config.apiUrl]].forEach(function (pair) {
     var name = pair[0];
     var configured = pair[1];
-    if (configured === undefined || configured === null || String(configured).trim() === "") {
+    if (configured === undefined || configured === null ||
+        String(configured).trim() === "") {
       return;
     }
     var parsed;
@@ -319,14 +332,17 @@ function resolveAllowedOrigins(config) {
     }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       log.warn("Ignoring " + name + "=" + JSON.stringify(configured) +
-               " for CORS: an origin must be http or https, not " + parsed.protocol + ".");
+               " for CORS: an origin must be http or https, not " +
+                   parsed.protocol + ".");
       return;
     }
     if (origins.indexOf(parsed.origin) === -1) origins.push(parsed.origin);
   });
   if (!origins.length) {
-    log.warn("Neither uiUrl nor apiUrl gives a usable origin, so CORS falls back to '*'. " +
+    log.warn("Neither uiUrl nor apiUrl gives a usable origin, so CORS falls " +
+             "back to '*'. " +
              "Set uiUrl to the browser origin that calls this api.");
+    log.debug("Leaving resolveAllowedOrigins().");
     return "*";
   }
   log.debug("Leaving resolveAllowedOrigins().");
@@ -336,6 +352,7 @@ function resolveAllowedOrigins(config) {
 function resolveBoolean(name, configured, fallback) {
   log.debug("Entering resolveBoolean().");
   if (configured === undefined || configured === null) {
+    log.debug("Leaving resolveBoolean().");
     return fallback;
   }
   if (typeof configured !== 'boolean') {
@@ -343,6 +360,7 @@ function resolveBoolean(name, configured, fallback) {
     // quoted value would turn an intended off into an on without a word.
     log.warn("Ignoring " + name + "=" + JSON.stringify(configured) +
              ": expected true or false. Using " + fallback + ".");
+    log.debug("Leaving resolveBoolean().");
     return fallback;
   }
   log.debug("Leaving resolveBoolean().");
@@ -352,16 +370,16 @@ function resolveBoolean(name, configured, fallback) {
 // ---------------------------------------------------------------------------
 // Whether outbound connections are pooled and reused (appconfig.keepAlive).
 //
-// On, this service stops paying for a TCP connection — and a TLS handshake, which
-// is the expensive half — on every call to an identity provider it has just
-// finished talking to. A debugger session is exactly that pattern: token, then
-// introspection, then userinfo, all to the same host within seconds.
+// On, this service stops paying for a TCP connection — and a TLS handshake,
+// which is the expensive half — on every call to an identity provider it has
+// just finished talking to. A debugger session is exactly that pattern: token,
+// then introspection, then userinfo, all to the same host within seconds.
 //
-// It is what makes the agents SHARED rather than built per call, and the two are
-// not separable. A keep-alive agent that is thrown away after one response still
-// holds that response's socket in its free pool, and nothing closes it — so a
-// per-call agent with keepAlive on leaks a file descriptor per outbound call,
-// which is strictly worse than not pooling. See agentFor() below.
+// It is what makes the agents SHARED rather than built per call, and the two
+// are not separable. A keep-alive agent that is thrown away after one response
+// still holds that response's socket in its free pool, and nothing closes it —
+// so a per-call agent with keepAlive on leaks a file descriptor per outbound
+// call, which is strictly worse than not pooling. See agentFor() below.
 // ---------------------------------------------------------------------------
 const KEEP_ALIVE = resolveBoolean('keepAlive', appconfig.keepAlive, true);
 // The browser origins allowed to call this api. See resolveAllowedOrigins() for
@@ -382,18 +400,26 @@ const ALLOWED_ORIGINS = resolveAllowedOrigins(appconfig);
  * @returns {object} a new object; the caller's is not modified.
  */
 function withUserAgent(headers) {
+  log.debug("Entering withUserAgent().");
+  log.debug("Leaving withUserAgent().");
   return Object.assign({}, headers || {}, {
     'User-Agent': USER_AGENT });
 }
 
-log.info("Outbound call timeout: " + CALL_TIMEOUT + "ms (whole call); connection " +
-         "timeout: " + CONNECTION_TIMEOUT + "ms (until connected); max response " +
-         "size: " + MAX_CONTENT_LENGTH + " bytes; max redirects: " + MAX_REDIRECTS +
+log.info("Outbound call timeout: " + CALL_TIMEOUT +
+         "ms (whole call); connection " +
+         "timeout: " + CONNECTION_TIMEOUT +
+             "ms (until connected); max response " +
+         "size: " + MAX_CONTENT_LENGTH + " bytes; max redirects: " +
+             MAX_REDIRECTS +
          (MAX_REDIRECTS === 0 ? " (redirects are not followed)." : "."));
 log.info("Outbound User-Agent: " + USER_AGENT);
-log.info("Outbound connection pooling (keepAlive): " + (KEEP_ALIVE ? "on" : "off") + ".");
+log.info("Outbound connection pooling (keepAlive): " + (KEEP_ALIVE ?
+         "on" : "off") + ".");
 log.info("CORS allowed origins: " +
-         (ALLOWED_ORIGINS === "*" ? "* (any site) — uiUrl is not configured" : ALLOWED_ORIGINS.join(", ")) + ".");
+         (ALLOWED_ORIGINS === "*" ?
+          "* (any site) — uiUrl is not configured" : ALLOWED_ORIGINS.join(
+          ", ")) + ".");
 
 // ---------------------------------------------------------------------------
 // Refuse outbound calls to loopback and private networks (see ssrf_guard.js).
@@ -401,10 +427,10 @@ log.info("CORS allowed origins: " +
 // Installed here, once, on the axios instance every endpoint uses: this service
 // fetches URLs its CALLER chooses — the token, introspection, revocation,
 // device-authorization and userinfo endpoints, the SAML ArtifactResolve
-// back-channel, the WS-Trust STS and the generic proxy — so without this it will
-// happily probe 127.0.0.1, the deployment's private neighbours, or the cloud
-// metadata service on request. One choke point rather than ten call sites, so
-// anything added later is covered too.
+// back-channel, the WS-Trust STS and the generic proxy — so without this it
+// will happily probe 127.0.0.1, the deployment's private neighbours, or the
+// cloud metadata service on request. One choke point rather than ten call
+// sites, so anything added later is covered too.
 //
 // On by default; a deployment whose identity providers really are on a private
 // network sets blockPrivateNetworkCalls to false in its api/env config.
@@ -418,28 +444,28 @@ guard.install(axios);
 const krb5 = krb5Relay.createRelay(appconfig, guard, log);
 
 // ---------------------------------------------------------------------------
-// The agents every outbound call uses: the SSRF guard's hooks, the connect-phase
-// timeout, and connection pooling.
+// The agents every outbound call uses: the SSRF guard's hooks, the
+// connect-phase timeout, and connection pooling.
 //
-// They must be built HERE rather than with a bare `new https.Agent(...)` at each
-// call site, because setting httpsAgent on an axios call replaces
+// They must be built HERE rather than with a bare `new https.Agent(...)` at
+// each call site, because setting httpsAgent on an axios call replaces
 // axios.defaults.httpsAgent — so a hand-rolled agent silently drops the guard's
-// DNS `lookup` and `createConnection` hooks, the layer that catches a redirect to
-// a private literal address. Going through the guard's own factory keeps both
-// concerns attached wherever an agent is needed.
+// DNS `lookup` and `createConnection` hooks, the layer that catches a redirect
+// to a private literal address. Going through the guard's own factory keeps
+// both concerns attached wherever an agent is needed.
 //
 // They are also CACHED rather than built per call, which keepAlive requires: an
-// agent's pool of idle sockets lives on the agent, so a fresh one per call reuses
-// nothing (pointless) while still parking that call's socket in a pool nobody will
-// ever read (a leaked file descriptor per call). Sharing is safe because
-// everything on these agents is stateless policy; the only thing a call chooses is
-// rejectUnauthorized, so there are three agents at most and the cache cannot grow
-// with traffic.
+// agent's pool of idle sockets lives on the agent, so a fresh one per call
+// reuses nothing (pointless) while still parking that call's socket in a pool
+// nobody will ever read (a leaked file descriptor per call). Sharing is safe
+// because everything on these agents is stateless policy; the only thing a call
+// chooses is rejectUnauthorized, so there are three agents at most and the
+// cache cannot grow with traffic.
 //
 // One interaction worth knowing: a REUSED socket does not go through
 // createConnection, so it carries no connect timeout. That is correct — it is
-// already connected — and it is also why the connect timeout must not be thought
-// of as a per-request guarantee once pooling is on.
+// already connected — and it is also why the connect timeout must not be
+// thought of as a per-request guarantee once pooling is on.
 // ---------------------------------------------------------------------------
 const outboundAgentCache = new Map();
 
@@ -455,6 +481,7 @@ function agentFor(protocol, rejectUnauthorized) {
   var key = protocol + (protocol === 'https' ? '|' + rejectUnauthorized : '');
   var cached = outboundAgentCache.get(key);
   if (cached) {
+    log.debug("Leaving agentFor().");
     return cached;
   }
   var options = {
@@ -465,12 +492,15 @@ function agentFor(protocol, rejectUnauthorized) {
   var agent = connectTimeout.withConnectTimeout(
     guard.createAgent(protocol, options), CONNECTION_TIMEOUT, log);
   outboundAgentCache.set(key, agent);
-  log.debug('Created the ' + key + ' outbound agent (keepAlive=' + KEEP_ALIVE + ').');
+  log.debug('Created the ' + key + ' outbound agent (keepAlive=' + KEEP_ALIVE +
+            ').');
   log.debug("Leaving agentFor().");
   return agent;
 }
 
 function outboundHttpAgent() {
+  log.debug("Entering outboundHttpAgent().");
+  log.debug("Leaving outboundHttpAgent().");
   return agentFor('http');
 }
 
@@ -482,6 +512,8 @@ function outboundHttpAgent() {
  * @returns {https.Agent}
  */
 function outboundHttpsAgent(rejectUnauthorized) {
+  log.debug("Entering outboundHttpsAgent().");
+  log.debug("Leaving outboundHttpsAgent().");
   return agentFor('https', rejectUnauthorized !== false);
 }
 
@@ -493,16 +525,20 @@ function outboundHttpsAgent(rejectUnauthorized) {
 var samlExchanges = new Map();
 const SAML_EXCHANGE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 function sweepSamlExchanges() {
+  log.debug("Entering sweepSamlExchanges().");
   var now = Date.now();
   samlExchanges.forEach(function (v, k) {
     if (now - v.createdAt > SAML_EXCHANGE_TTL_MS) samlExchanges.delete(k);
   });
+  log.debug("Leaving sweepSamlExchanges().");
 }
 function stashSamlResponse(xml, relayState) {
+  log.debug("Entering stashSamlResponse().");
   sweepSamlExchanges();
   var id = crypto.randomBytes(16).toString('hex');
   samlExchanges.set(id, {
     responseXml: xml, relayState: relayState || '', createdAt: Date.now() });
+  log.debug("Leaving stashSamlResponse().");
   return id;
 }
 
@@ -511,23 +547,28 @@ function stashSamlResponse(xml, relayState) {
 // referenced by the RelayState (art:<id>) the IdP echoes back to the ACS.
 var samlArtifactCtx = new Map();
 function stashArtifactCtx(ctx) {
+  log.debug("Entering stashArtifactCtx().");
   sweepSamlArtifactCtx();
   var id = crypto.randomBytes(16).toString('hex');
   samlArtifactCtx.set(id, Object.assign({
     createdAt: Date.now() }, ctx));
+  log.debug("Leaving stashArtifactCtx().");
   return id;
 }
 function sweepSamlArtifactCtx() {
+  log.debug("Entering sweepSamlArtifactCtx().");
   var now = Date.now();
   samlArtifactCtx.forEach(function (v, k) {
     if (now - v.createdAt > SAML_EXCHANGE_TTL_MS) samlArtifactCtx.delete(k);
   });
+  log.debug("Leaving sweepSamlArtifactCtx().");
 }
 
 // jwt.xml is a local copy of https://www.iana.org/assignments/jwt/jwt.xml.
 // A local copy is used to avoid latency and availability issues fetching the
 // online copy from IANA, which has been an ongoing reliability problem.
-var claimDescriptions = fs.readFileSync(path.join(__dirname, 'jwt.xml'), 'utf8');
+var claimDescriptions = fs.readFileSync(path.join(__dirname, 'jwt.xml'),
+    'utf8');
 var cachedClaimDescriptions = true;
 
 const app = express();
@@ -540,10 +581,10 @@ app.use(bodyParser.urlencoded({
   extended: true, limit: '5mb' }));
 var corsOptions = {
   // See resolveAllowedOrigins(): this is uiUrl (the browser origin that calls
-  // the api), not apiUrl. The cors package reflects the request's Origin when it
-  // is in the list and sends no Allow-Origin at all when it is not, and it adds
-  // Vary: Origin for us — which matters, because a cached response carrying one
-  // allowed origin must not be served to another.
+  // the api), not apiUrl. The cors package reflects the request's Origin when
+  // it is in the list and sends no Allow-Origin at all when it is not, and it
+  // adds Vary: Origin for us — which matters, because a cached response
+  // carrying one allowed origin must not be served to another.
   origin: ALLOWED_ORIGINS,
   optionsSuccessStatus: STATUS_204
 };
@@ -570,10 +611,11 @@ app.get('/healthcheck', function (req, res) {
     message: 'Success' });
 });
 
-// The IANA JWT claim registry: the one outbound call in this service whose URL is
-// NOT chosen by the caller. It gets the same treatment as the rest anyway — both
-// timeouts, the size cap and the guarded agents — because having picked the URL
-// ourselves is no reason to accept a hung or unbounded response from it.
+// The IANA JWT claim registry: the one outbound call in this service whose URL
+// is NOT chosen by the caller. It gets the same treatment as the rest anyway —
+// both timeouts, the size cap and the guarded agents — because having picked
+// the URL ourselves is no reason to accept a hung or unbounded response from
+// it.
 const IANA_JWT_CLAIMS_URL = 'https://www.iana.org/assignments/jwt/jwt.xml';
 
 /**
@@ -618,10 +660,10 @@ app.get('/claimdescription', function(req, res) {
         .append('Content-Type', 'application/xml')
         .status(STATUS_200)
         .send(xml);
-        // Cached only here, which means only on a 2xx: axios rejects every other
-        // status, so an IANA error page can no longer be memoised and served as
-        // the claim registry for the lifetime of the process. `fetch` resolved on
-        // a 404, which is exactly how that could happen before.
+        // Cached only here, which means only on a 2xx: axios rejects every
+        // other status, so an IANA error page can no longer be memoised and
+        // served as the claim registry for the lifetime of the process. `fetch`
+        // resolved on a 404, which is exactly how that could happen before.
         claimDescriptions = xml;
         cachedClaimDescriptions = true;
       })
@@ -633,28 +675,32 @@ app.get('/claimdescription', function(req, res) {
             log.error("Error Status: " + error.response.status);
           }
           if(!!error.response.data) {
-            log.error("Error Response body: " + JSON.stringify(error.response.data));
+            log.error("Error Response body: " +
+                      JSON.stringify(error.response.data));
           }
           if(!!error.response.headers) {
             log.error("Error Response headers: " + error.response.headers);
           }
-          res.status(error.response.status || STATUS_500).json(error.response.data);
+          res.status(error.response.status ||
+                     STATUS_500).json(error.response.data);
           return;
         }
-        // No response at all: the call timed out, the connection never opened, or
-        // the body passed maxContentLength. This branch MUST answer. The previous
-        // implementation replied only when error.response was set — which a
-        // network-level failure never sets, and `fetch` never set at all — so
-        // every failure of this endpoint left the browser waiting for a reply that
-        // was never sent, on the path of every token inspection the debugger does.
-        // With the limits above in place this is the common branch, not the rare one.
+        // No response at all: the call timed out, the connection never opened,
+        // or the body passed maxContentLength. This branch MUST answer. The
+        // previous implementation replied only when error.response was set —
+        // which a network-level failure never sets, and `fetch` never set at
+        // all — so every failure of this endpoint left the browser waiting for
+        // a reply that was never sent, on the path of every token inspection
+        // the debugger does. With the limits above in place this is the common
+        // branch, not the rare one.
         res.status(STATUS_500).json({
           error: 'claim description fetch failed: ' +
                  (error && error.message ? error.message : String(error)) });
       });
    }
   } catch(e) {
-    log.error("An error occurred while retrieving the claim description XML: " + e.stack);
+    log.error("An error occurred while retrieving the claim description XML: " +
+              e.stack);
     res.status(STATUS_500)
        .render('error', {
          error: 'An unexpected error occurred.' });
@@ -681,7 +727,8 @@ app.get('/samlmetadata', function (req, res) {
   log.debug('Entering GET /samlmetadata.');
   var target;
   try {
-    target = Buffer.from(String(req.query.url || ''), 'base64').toString('utf8').trim();
+    target = Buffer.from(String(req.query.url || ''),
+        'base64').toString('utf8').trim();
   } catch (e) {
     return res.status(STATUS_400).json({
       error: 'Invalid url parameter (expected base64).' });
@@ -699,18 +746,24 @@ app.get('/samlmetadata', function (req, res) {
     // Allow self-signed IdP TLS in test/dev environments.
     httpsAgent: outboundHttpsAgent(false),
     headers: withUserAgent({
-      'Accept': 'application/samlmetadata+xml, application/xml, text/xml, */*' })
+      'Accept': 'application/samlmetadata+xml, application/xml, ' +
+          'text/xml, */*' })
   })
   .then(function (response) {
-    res.append('Content-Type', 'application/xml').status(STATUS_200).send(response.data);
+    res.append('Content-Type',
+               'application/xml').status(STATUS_200).send(response.data);
   })
   .catch(function (error) {
-    log.error('Error fetching SAML metadata from ' + target + ': ' + (error && error.stack ? error.stack : error));
+    log.error('Error fetching SAML metadata from ' + target + ': ' + (error &&
+              error.stack ? error.stack : error));
     if (error && error.response) {
-      res.status(error.response.status || STATUS_500).send(String(error.response.data || 'metadata fetch failed'));
+      res.status(error.response.status ||
+                 STATUS_500).send(String(error.response.data ||
+                 'metadata fetch failed'));
     } else {
       res.status(STATUS_500).json({
-        error: 'metadata fetch failed: ' + (error && error.message ? error.message : String(error)) });
+        error: 'metadata fetch failed: ' + (error && error.message ?
+            error.message : String(error)) });
     }
   });
 });
@@ -719,18 +772,21 @@ app.get('/samlmetadata', function (req, res) {
 // SAML request signing.
 //
 // Signing is done server-side because the HTTP-POST binding needs an enveloped
-// XML digital signature (XML-DSIG / exclusive C14N), which is impractical in the
-// browser. The browser posts the unsigned AuthnRequest XML plus the SP private
-// key; this returns what the browser needs to reach the IdP:
+// XML digital signature (XML-DSIG / exclusive C14N), which is impractical in
+// the browser. The browser posts the unsigned AuthnRequest XML plus the SP
+// private key; this returns what the browser needs to reach the IdP:
 //   * redirect (and artifact response) binding: a full GET Location URL whose
 //     query string (SAMLRequest DEFLATE+base64, SigAlg, Signature) is signed
 //     per the SAML HTTP-Redirect binding (signature over the octet string, NOT
 //     an XML signature).
 //   * post binding: { location, params:{ SAMLRequest, RelayState } } for the
-//     browser to auto-submit; SAMLRequest is base64 of the enveloped-signed XML.
+//     browser to auto-submit; SAMLRequest is base64 of the enveloped-signed
+//     XML.
 // The SP private key is transmitted to this local API; keep this dev-only.
 // ---------------------------------------------------------------------------
 function xmlTextEscape(s) {
+  log.debug("Entering xmlTextEscape().");
+  log.debug("Leaving xmlTextEscape().");
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -761,7 +817,8 @@ function signXmlEnveloped(xml, privateKeyPem, certPem, rootLocalName) {
   // Per the SAML schema the <Signature> must follow <Issuer>.
   sig.computeSignature(xml, {
     location: {
-      reference: "/*[local-name(.)='" + root + "']/*[local-name(.)='Issuer']", action: 'after' }
+      reference: "/*[local-name(.)='" + root + "']/*[local-name(.)='Issuer']",
+          action: 'after' }
   });
   log.debug("Leaving signXmlEnveloped().");
   return sig.getSignedXml();
@@ -782,23 +839,27 @@ app.post('/samlsign', function (req, res) {
     var dest = b.destination;
     var privateKeyPem = b.privateKeyPem;
     var certPem = b.certPem || '';
-    var sigAlg = b.sigAlg || 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
+    var sigAlg = b.sigAlg ||
+        'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
     var relayState = b.relayState || '';
-    var rootElement = b.rootElement || 'AuthnRequest'; // AuthnRequest | LogoutRequest
+    var rootElement = b.rootElement ||
+        'AuthnRequest'; // AuthnRequest | LogoutRequest
     if (!xml || !privateKeyPem) {
       return res.status(STATUS_400).json({
         error: 'xml and privateKeyPem are required.' });
     }
 
     if (binding === 'post') {
-      var signedXml = signXmlEnveloped(xml, privateKeyPem, certPem, rootElement);
+      var signedXml = signXmlEnveloped(xml, privateKeyPem, certPem,
+          rootElement);
       var params = {
         SAMLRequest: Buffer.from(signedXml, 'utf8').toString('base64') };
       if (relayState) params.RelayState = relayState;
       // signedXml is also returned so the UI can display the enveloped-signed
       // document (e.g. the "Build Request" button).
       return res.json({
-        mode: 'post', location: dest || '', params: params, signedXml: signedXml });
+        mode: 'post', location: dest || '', params: params,
+            signedXml: signedXml });
     }
 
     // redirect binding (also used to send the request when the response is
@@ -815,9 +876,9 @@ app.post('/samlsign', function (req, res) {
       relayState = 'art:' + ctxId;
     }
     // HTTP-Redirect binding signature (saml-bindings-2.0-os §3.4.4.1): sign the
-    // octet string SAMLRequest[&RelayState]&SigAlg (URL-encoded, in that order),
-    // then append &Signature. It is a detached signature over the query string,
-    // NOT an XML signature in the document.
+    // octet string SAMLRequest[&RelayState]&SigAlg (URL-encoded, in that
+    // order), then append &Signature. It is a detached signature over the query
+    // string, NOT an XML signature in the document.
     var deflated = zlib.deflateRawSync(Buffer.from(xml, 'utf8'));
     var samlRequest = deflated.toString('base64');
     var qs = 'SAMLRequest=' + encodeURIComponent(samlRequest);
@@ -829,7 +890,8 @@ app.post('/samlsign', function (req, res) {
     qs += '&Signature=' + encodeURIComponent(signature);
     // Full GET URL when a destination is known; otherwise just the signed query
     // string (e.g. "Build Request" before metadata is loaded).
-    var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') + qs) : qs;
+    var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
+        qs) : qs;
     return res.json({
       mode: 'redirect', location: location, queryString: qs });
   } catch (e) {
@@ -875,12 +937,17 @@ app.post('/samlartifactctx', function (req, res) {
 function decodeSamlMessage(b64) {
   log.debug("Entering decodeSamlMessage().");
   var buf = Buffer.from(String(b64 || ''), 'base64');
-  if (buf.length && buf[0] === 0x3c /* '<' */) return buf.toString('utf8');
+  if (buf.length && buf[0] === 0x3c /* '<' */) {
+    log.debug("Leaving decodeSamlMessage().");
+    return buf.toString('utf8');
+  }
   try {
+    log.debug("Leaving decodeSamlMessage().");
     return zlib.inflateRawSync(buf).toString('utf8');
   } catch (e) {
     // Not DEFLATEd after all (a POST-binding message that did not start with
     // '<', e.g. leading whitespace): read it as plain XML.
+    log.debug("Leaving decodeSamlMessage().");
     return buf.toString('utf8');
   }
   log.debug("Leaving decodeSamlMessage().");
@@ -893,29 +960,37 @@ function extractResponseFromArtifactResponse(soapXml) {
   var xpath = require('xpath');
   var doc = new xmldom.DOMParser().parseFromString(soapXml, 'text/xml');
   var nodes = xpath.select(
-    "//*[local-name(.)='Response' and namespace-uri(.)='urn:oasis:names:tc:SAML:2.0:protocol']",
+    "//*[local-name(.)='Response' and " +
+        "namespace-uri(.)='urn:oasis:names:tc:SAML:2.0:protocol']",
     doc
   );
-  if (!nodes || !nodes.length) return '';
+  if (!nodes || !nodes.length) {
+    log.debug("Leaving extractResponseFromArtifactResponse().");
+    return '';
+  }
   log.debug("Leaving extractResponseFromArtifactResponse().");
   return new xmldom.XMLSerializer().serializeToString(nodes[0]);
 }
 
-// Resolve an artifact via the SOAP back-channel: build + sign an ArtifactResolve
-// with the SP context stashed at request time (looked up via RelayState), POST
-// it to the IdP's Artifact Resolution Service, and return the embedded Response.
+// Resolve an artifact via the SOAP back-channel: build + sign an
+// ArtifactResolve with the SP context stashed at request time (looked up via
+// RelayState), POST it to the IdP's Artifact Resolution Service, and return the
+// embedded Response.
 function resolveArtifact(artifact, relayState) {
   log.debug("Entering resolveArtifact().");
   log.debug("Leaving resolveArtifact().");
   return new Promise(function (resolve, reject) {
-    var ctxId = (relayState && relayState.indexOf('art:') === 0) ? relayState.slice(4) : '';
+    var ctxId = (relayState && relayState.indexOf('art:') === 0) ?
+        relayState.slice(4) : '';
     var ctx = ctxId ? samlArtifactCtx.get(ctxId) : null;
     if (!ctx || !ctx.arsUrl) {
-      return reject(new Error('no artifact context / ARS URL (RelayState missing or expired)'));
+      return reject(new Error('no artifact context / ARS URL (RelayState ' +
+                    'missing or expired)'));
     }
     var id = '_' + crypto.randomBytes(16).toString('hex');
     var instant = new Date().toISOString();
-    var ar = '<samlp:ArtifactResolve xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
+    var ar = '<samlp:ArtifactResolve ' +
+        'xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
              ' xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"' +
              ' ID="' + id + '" Version="2.0" IssueInstant="' + instant + '">' +
              '<saml:Issuer>' + (ctx.spEntityId || '') + '</saml:Issuer>' +
@@ -923,7 +998,8 @@ function resolveArtifact(artifact, relayState) {
              '</samlp:ArtifactResolve>';
     var signed;
     try {
-      signed = signXmlEnveloped(ar, ctx.privateKeyPem, ctx.certPem, 'ArtifactResolve');
+      signed = signXmlEnveloped(ar, ctx.privateKeyPem, ctx.certPem,
+          'ArtifactResolve');
     } catch (e) {
       return reject(new Error('signing ArtifactResolve failed: ' + e.message));
     }
@@ -940,13 +1016,18 @@ function resolveArtifact(artifact, relayState) {
       var msgId = wsa.messageId || ('urn:uuid:' + crypto.randomUUID());
       var hdr = '<wsa:MessageID>' + xmlTextEscape(msgId) + '</wsa:MessageID>' +
                 '<wsa:To>' + xmlTextEscape(to) + '</wsa:To>';
-      if (wsa.action) hdr += '<wsa:Action>' + xmlTextEscape(wsa.action) + '</wsa:Action>';
-      if (wsa.replyTo) hdr += '<wsa:ReplyTo><wsa:Address>' + xmlTextEscape(wsa.replyTo) + '</wsa:Address></wsa:ReplyTo>';
-      if (wsa.from) hdr += '<wsa:From><wsa:Address>' + xmlTextEscape(wsa.from) + '</wsa:Address></wsa:From>';
+      if (wsa.action) hdr += '<wsa:Action>' + xmlTextEscape(wsa.action) +
+          '</wsa:Action>';
+      if (wsa.replyTo) hdr += '<wsa:ReplyTo><wsa:Address>' +
+          xmlTextEscape(wsa.replyTo) + '</wsa:Address></wsa:ReplyTo>';
+      if (wsa.from) hdr += '<wsa:From><wsa:Address>' + xmlTextEscape(wsa.from) +
+          '</wsa:Address></wsa:From>';
       soapHeader = '<soap:Header>' + hdr + '</soap:Header>';
     }
-    var soap = '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"' + wsaNs + '>' +
-               soapHeader + '<soap:Body>' + signed + '</soap:Body></soap:Envelope>';
+    var soap = '<soap:Envelope ' +
+        'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"' + wsaNs + '>' +
+               soapHeader + '<soap:Body>' + signed +
+                   '</soap:Body></soap:Envelope>';
     axios.post(ctx.arsUrl, soap, {
       timeout: CALL_TIMEOUT,
       maxContentLength: MAX_CONTENT_LENGTH,
@@ -960,10 +1041,12 @@ function resolveArtifact(artifact, relayState) {
       responseType: 'text'
     }).then(function (resp) {
       var respXml = extractResponseFromArtifactResponse(resp.data);
-      if (!respXml) return reject(new Error('no <Response> found in ArtifactResponse'));
+      if (!respXml) return reject(new Error('no <Response> found in ' +
+          'ArtifactResponse'));
       resolve(respXml);
     }).catch(function (e) {
-      reject(new Error('ARS SOAP call failed: ' + (e && e.message ? e.message : String(e))));
+      reject(new Error('ARS SOAP call failed: ' + (e && e.message ?
+             e.message : String(e))));
     });
   });
 }
@@ -977,11 +1060,15 @@ function resolveArtifact(artifact, relayState) {
  * @group SAML - SAML support operations
  */
 function handleSamlAcs(req, res) {
+  log.debug("Entering handleSamlAcs().");
   log.debug('Entering ' + req.method + ' /samlacs.');
   try {
-    var samlResponse = (req.body && req.body.SAMLResponse) || req.query.SAMLResponse;
-    var relayState = (req.body && req.body.RelayState) || req.query.RelayState || '';
+    var samlResponse = (req.body && req.body.SAMLResponse) ||
+        req.query.SAMLResponse;
+    var relayState = (req.body && req.body.RelayState) ||
+        req.query.RelayState || '';
     if (typeof relayState !== 'string') {
+      log.debug("Leaving handleSamlAcs().");
       return res.status(STATUS_400).send('ACS: invalid RelayState.');
     }
     var artifact = (req.body && req.body.SAMLart) || req.query.SAMLart;
@@ -990,26 +1077,32 @@ function handleSamlAcs(req, res) {
       var xml = decodeSamlMessage(samlResponse);
       var id = stashSamlResponse(xml, relayState);
       res.writeHead(302, {
-        'Location': uiUrl + '/saml_response.html?id=' + encodeURIComponent(id) });
+        'Location': uiUrl + '/saml_response.html?id=' +
+            encodeURIComponent(id) });
+      log.debug("Leaving handleSamlAcs().");
       return res.end();
     }
     if (artifact) {
+      log.debug("Leaving handleSamlAcs().");
       return resolveArtifact(artifact, relayState)
         .then(function (respXml) {
           var artId = stashSamlResponse(respXml, relayState);
           res.writeHead(302, {
-            'Location': uiUrl + '/saml_response.html?id=' + encodeURIComponent(artId) });
+            'Location': uiUrl + '/saml_response.html?id=' +
+                encodeURIComponent(artId) });
           res.end();
         })
         .catch(function (e) {
           log.error('artifact resolve: ' + (e && e.stack ? e.stack : e));
-          res.status(STATUS_500).send('Artifact resolution failed: ' + (e && e.message ? e.message : String(e)));
+          res.status(STATUS_500).send('Artifact resolution failed: ' + (e &&
+                     e.message ? e.message : String(e)));
         });
     }
     res.status(STATUS_400).send('ACS: no SAMLResponse or SAMLart present.');
   } catch (e) {
     log.error('samlacs: ' + (e && e.stack ? e.stack : e));
-    res.status(STATUS_500).send('ACS error: ' + (e && e.message ? e.message : String(e)));
+    res.status(STATUS_500).send('ACS error: ' + (e && e.message ?
+               e.message : String(e)));
   }
   log.debug("Leaving handleSamlAcs().");
 }
@@ -1017,8 +1110,8 @@ app.post('/samlacs', handleSamlAcs);
 app.get('/samlacs', handleSamlAcs);
 
 // Single Logout service. Receives the IdP's LogoutResponse (or an IdP-initiated
-// LogoutRequest) and shows it on the results page. Reuses the ACS handler, which
-// decodes/stashes any SAMLResponse and redirects to the viewer.
+// LogoutRequest) and shows it on the results page. Reuses the ACS handler,
+// which decodes/stashes any SAMLResponse and redirects to the viewer.
 app.post('/samlslo', handleSamlAcs);
 app.get('/samlslo', handleSamlAcs);
 
@@ -1047,9 +1140,9 @@ app.get('/samlresponse', function (req, res) {
 // wresult is RAW XML (a WS-Trust RequestSecurityTokenResponse[Collection]
 // carrying the issued SAML assertion). Unlike SAMLResponse it is NOT base64 /
 // DEFLATE encoded, so it is stashed verbatim (no decode). Sign-out
-// (wa=wsignout1.0 / wsignoutcleanup1.0) arrives with no wresult; redirect to the
-// viewer with a signout flag. GET is registered too because wsignoutcleanup1.0
-// is delivered as a GET. Reuses the SAML exchange stash.
+// (wa=wsignout1.0 / wsignoutcleanup1.0) arrives with no wresult; redirect to
+// the viewer with a signout flag. GET is registered too because
+// wsignoutcleanup1.0 is delivered as a GET. Reuses the SAML exchange stash.
 // ---------------------------------------------------------------------------
 /**
  * WS-Federation passive sign-in landing (captures wresult).
@@ -1058,6 +1151,7 @@ app.get('/samlresponse', function (req, res) {
  * @group WS-Federation - WS-Federation support operations
  */
 function handleWsFedLanding(req, res) {
+  log.debug("Entering handleWsFedLanding().");
   log.debug('Entering ' + req.method + ' /wsfed.');
   try {
     var wa = (req.body && req.body.wa) || req.query.wa || '';
@@ -1068,16 +1162,20 @@ function handleWsFedLanding(req, res) {
       // wresult is raw XML (an RSTR envelope) — stash verbatim, do NOT decode.
       var id = stashSamlResponse(wresult, wctx);
       res.writeHead(302, {
-        'Location': uiUrl + '/wsfed_response.html?id=' + encodeURIComponent(id) });
+        'Location': uiUrl + '/wsfed_response.html?id=' +
+            encodeURIComponent(id) });
+      log.debug("Leaving handleWsFedLanding().");
       return res.end();
     }
     // Sign-out (wsignout1.0 / wsignoutcleanup1.0) carries no token.
     res.writeHead(302, {
-      'Location': uiUrl + '/wsfed_response.html?signout=' + encodeURIComponent(wa || '1') });
+      'Location': uiUrl + '/wsfed_response.html?signout=' +
+          encodeURIComponent(wa || '1') });
     res.end();
   } catch (e) {
     log.error('wsfed: ' + (e && e.stack ? e.stack : e));
-    res.status(STATUS_500).send('WS-Fed landing error: ' + (e && e.message ? e.message : String(e)));
+    res.status(STATUS_500).send('WS-Fed landing error: ' + (e && e.message ?
+               e.message : String(e)));
   }
   log.debug("Leaving handleWsFedLanding().");
 }
@@ -1106,13 +1204,15 @@ app.get('/wsfedresponse', function (req, res) {
 // call): directly from the browser, or through this backend proxy. The proxy
 // path exists because a SOAP STS endpoint almost never sends the CORS headers a
 // cross-origin browser fetch requires — the same reason the token call is
-// proxied. It also allows disabling TLS validation for a self-signed STS in dev.
+// proxied. It also allows disabling TLS validation for a self-signed STS in
+// dev.
 //
 // The browser posts { url, soap, soapVersion, action, sslValidate }; the proxy
 // forwards the SOAP body with the correct content-type/SOAPAction for the SOAP
-// version and returns { status, body } (the raw RSTR envelope) for the client to
-// render. Like the token / metadata proxies, it POSTs to a caller-supplied URL,
-// so it is a dev/debugger-only tool (SSRF by design) — do not expose publicly.
+// version and returns { status, body } (the raw RSTR envelope) for the client
+// to render. Like the token / metadata proxies, it POSTs to a caller-supplied
+// URL, so it is a dev/debugger-only tool (SSRF by design) — do not expose
+// publicly.
 // ---------------------------------------------------------------------------
 /**
  * Proxy a WS-Trust RequestSecurityToken to an STS (dodges CORS).
@@ -1130,8 +1230,10 @@ app.post('/wstrust', function (req, res) {
   var soap = b.soap;
   var soapVersion = String(b.soapVersion || '1.2');
   var action = b.action || '';
-  // Default to validating TLS; only skip it when the caller explicitly opts out.
-  var sslValidate = (b.sslValidate === false || b.sslValidate === 'false') ? false : true;
+  // Default to validating TLS; only skip it when the caller explicitly opts
+  // out.
+  var sslValidate = (b.sslValidate === false || b.sslValidate === 'false') ?
+      false : true;
   if (!url || !soap) {
     return res.status(STATUS_400).json({
       error: 'url and soap are required.' });
@@ -1140,15 +1242,17 @@ app.post('/wstrust', function (req, res) {
     return res.status(STATUS_400).json({
       error: 'url must be an absolute http(s) URL.' });
   }
-  // SOAP 1.2 carries the action inside the content-type; SOAP 1.1 uses a separate
-  // SOAPAction header with a text/xml body.
+  // SOAP 1.2 carries the action inside the content-type; SOAP 1.1 uses a
+  // separate SOAPAction header with a text/xml body.
   var headers;
   if (soapVersion === '1.1') {
     headers = {
-      'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '"' + action + '"' };
+      'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': '"' + action +
+          '"' };
   } else {
     headers = {
-      'Content-Type': 'application/soap+xml; charset=utf-8' + (action ? ('; action="' + action + '"') : '') };
+      'Content-Type': 'application/soap+xml; charset=utf-8' + (action ?
+          ('; action="' + action + '"') : '') };
   }
   axios.post(url, soap, {
     responseType: 'text',
@@ -1167,12 +1271,15 @@ app.post('/wstrust', function (req, res) {
   })
   .then(function (response) {
     res.status(STATUS_200).json({
-      status: response.status, body: String(response.data == null ? '' : response.data) });
+      status: response.status, body: String(response.data == null ?
+          '' : response.data) });
   })
   .catch(function (error) {
-    log.error('wstrust proxy error to ' + url + ': ' + (error && error.stack ? error.stack : error));
+    log.error('wstrust proxy error to ' + url + ': ' + (error && error.stack ?
+              error.stack : error));
     res.status(STATUS_500).json({
-      error: 'STS call failed: ' + (error && error.message ? error.message : String(error)) });
+      error: 'STS call failed: ' + (error && error.message ?
+          error.message : String(error)) });
   });
 });
 
@@ -1239,7 +1346,8 @@ app.post('/token', (req, res) => {
     var clientId = body.client_id;
     if (!auth_style) {
       // Put client_id + client_secret in Authorization header
-      headers.authorization = 'Basic ' + Buffer.from(clientId + ":" + clientSecret).toString('base64');
+      headers.authorization = 'Basic ' + Buffer.from(clientId + ":" +
+          clientSecret).toString('base64');
     }
     var tokenEndpoint = body.token_endpoint;
     var sslValidate = body.sslValidate; 
@@ -1259,7 +1367,8 @@ app.post('/token', (req, res) => {
       httpsAgent: outboundHttpsAgent(sslValidate)
     })
     .then(function (response) {
-      log.debug('Response from OAuth2 Token Endpoint: ' + JSON.stringify(response.data));
+      log.debug('Response from OAuth2 Token Endpoint: ' +
+                JSON.stringify(response.data));
       log.debug('Headers: ' + response.headers);
       res.status(response.status);
       res.json(response.data);
@@ -1271,7 +1380,8 @@ app.post('/token', (req, res) => {
           log.error("Error Status: " + error.response.status);
         }
         if(!!error.response.data) {
-          log.error("Error Response body: " + JSON.stringify(error.response.data));
+          log.error("Error Response body: " +
+                    JSON.stringify(error.response.data));
         }
         if(!!error.response.headers) {
           log.error("Error Response headers: " + error.response.headers);
@@ -1281,12 +1391,13 @@ app.post('/token', (req, res) => {
         return;
       }
       // No response: the call timed out, the connection never opened, the body
-      // passed maxContentLength, the redirect chain was too long, or the URL was
-      // refused (a non-http(s) scheme, a blocked address). This branch MUST answer
-      // — the 500 used to sit INSIDE the `if (error.response)` above, so it could
-      // never run, and every network-level failure left the browser waiting on a
-      // reply that was never sent. Those failures are exactly what the outbound
-      // limits produce, so this is now the common path, not a rare one.
+      // passed maxContentLength, the redirect chain was too long, or the URL
+      // was refused (a non-http(s) scheme, a blocked address). This branch MUST
+      // answer — the 500 used to sit INSIDE the `if (error.response)` above, so
+      // it could never run, and every network-level failure left the browser
+      // waiting on a reply that was never sent. Those failures are exactly what
+      // the outbound limits produce, so this is now the common path, not a rare
+      // one.
       res.status(STATUS_500).json({
         error: 'The outbound call failed: ' +
                (error && error.message ? error.message : String(error)) });
@@ -1350,7 +1461,8 @@ try {
       httpsAgent: outboundHttpsAgent(true)
     })
     .then(function (response) {
-      log.debug('Response from OAuth2 Introspection Endpoint: ' + JSON.stringify(response.data));
+      log.debug('Response from OAuth2 Introspection Endpoint: ' +
+                JSON.stringify(response.data));
       log.debug('Headers: ' + response.headers);
       res.status(response.status);
       res.json(response.data);
@@ -1362,7 +1474,8 @@ try {
           log.error("Error Status: " + error.response.status);
         }
         if(!!error.response.data) {
-          log.error("Error Response body: " + JSON.stringify(error.response.data));
+          log.error("Error Response body: " +
+                    JSON.stringify(error.response.data));
         }
         if(!!error.response.headers) {
           log.error("Error Response headers: " + error.response.headers);
@@ -1372,23 +1485,27 @@ try {
         return;
       }
       // No response: the call timed out, the connection never opened, the body
-      // passed maxContentLength, the redirect chain was too long, or the URL was
-      // refused (a non-http(s) scheme, a blocked address). This branch MUST answer
-      // — the 500 used to sit INSIDE the `if (error.response)` above, so it could
-      // never run, and every network-level failure left the browser waiting on a
-      // reply that was never sent. Those failures are exactly what the outbound
-      // limits produce, so this is now the common path, not a rare one.
+      // passed maxContentLength, the redirect chain was too long, or the URL
+      // was refused (a non-http(s) scheme, a blocked address). This branch MUST
+      // answer — the 500 used to sit INSIDE the `if (error.response)` above, so
+      // it could never run, and every network-level failure left the browser
+      // waiting on a reply that was never sent. Those failures are exactly what
+      // the outbound limits produce, so this is now the common path, not a rare
+      // one.
       res.status(STATUS_500).json({
         error: 'The outbound call failed: ' +
                (error && error.message ? error.message : String(error)) });
     });
   } catch(e) {
     // `e`, not `error`: this referenced an undefined variable, so an exception
-    // here raised a ReferenceError instead of being logged, and answered nothing.
-    log.error("Error from OAuth2 Introspection Endpoint: " + (e && e.stack ? e.stack : e));
+    // here raised a ReferenceError instead of being logged, and answered
+    // nothing.
+    log.error("Error from OAuth2 Introspection Endpoint: " + (e && e.stack ?
+              e.stack : e));
     if (!res.headersSent) {
       res.status(STATUS_500).json({
-        error: 'The outbound call could not be made: ' + (e && e.message ? e.message : String(e)) });
+        error: 'The outbound call could not be made: ' + (e && e.message ?
+            e.message : String(e)) });
     }
   }
 });
@@ -1429,7 +1546,8 @@ app.post('/revoke', (req, res) => {
     // token_type_hint is optional per RFC 7009 Section 2.1.
     var parameters = ['token=' + encodeURIComponent(body.token)];
     if (!!body.token_type_hint) {
-      parameters.push('token_type_hint=' + encodeURIComponent(body.token_type_hint));
+      parameters.push('token_type_hint=' +
+                      encodeURIComponent(body.token_type_hint));
     }
     if (auth_style) {
       // POST body authentication.
@@ -1442,7 +1560,8 @@ app.post('/revoke', (req, res) => {
     } else if (!!clientSecret) {
       // Confidential client: authenticate via HTTP Basic.
       headers.authorization = 'Basic ' +
-        Buffer.from(encodeURIComponent(clientId) + ':' + encodeURIComponent(clientSecret)).toString('base64');
+        Buffer.from(encodeURIComponent(clientId) + ':' +
+                    encodeURIComponent(clientSecret)).toString('base64');
     } else if (!!clientId) {
       // Public client with no secret: include client_id in the request body.
       parameters.push('client_id=' + encodeURIComponent(clientId));
@@ -1467,7 +1586,8 @@ app.post('/revoke', (req, res) => {
     })
     .then(function (response) {
       // RFC 7009: a successful revocation returns HTTP 200 with an empty body.
-      log.debug('Response from OAuth2 Revocation Endpoint: ' + JSON.stringify(response.data));
+      log.debug('Response from OAuth2 Revocation Endpoint: ' +
+                JSON.stringify(response.data));
       res.status(response.status);
       res.json({
         message: 'Token revocation request accepted (RFC 7009).',
@@ -1483,7 +1603,8 @@ app.post('/revoke', (req, res) => {
           log.error("Error Status: " + error.response.status);
         }
         if(!!error.response.data) {
-          log.error("Error Response body: " + JSON.stringify(error.response.data));
+          log.error("Error Response body: " +
+                    JSON.stringify(error.response.data));
         }
         res.status(error.response.status);
         res.json(error.response.data);
@@ -1543,9 +1664,11 @@ app.post('/tokenexchange', (req, res) => {
     // Build the application/x-www-form-urlencoded body (RFC 8693 Section 2.1).
     var parameters = ['grant_type=' + encodeURIComponent(body.grant_type)];
     var addParam = function (key, value) {
+      log.debug("Entering addParam().");
       if (!!value) {
         parameters.push(key + '=' + encodeURIComponent(value));
       }
+      log.debug("Leaving addParam().");
     };
     addParam('subject_token', body.subject_token);
     addParam('subject_token_type', body.subject_token_type);
@@ -1562,7 +1685,8 @@ app.post('/tokenexchange', (req, res) => {
     } else if (!!clientSecret) {
       // Confidential client: authenticate via HTTP Basic.
       headers.authorization = 'Basic ' +
-        Buffer.from(encodeURIComponent(clientId) + ':' + encodeURIComponent(clientSecret)).toString('base64');
+        Buffer.from(encodeURIComponent(clientId) + ':' +
+                    encodeURIComponent(clientSecret)).toString('base64');
     } else if (!!clientId) {
       // Public client with no secret: include client_id in the request body.
       addParam('client_id', clientId);
@@ -1586,7 +1710,8 @@ app.post('/tokenexchange', (req, res) => {
       httpsAgent: outboundHttpsAgent(sslValidate)
     })
     .then(function (response) {
-      log.debug('Response from OAuth2 Token Endpoint (token exchange): ' + JSON.stringify(response.data));
+      log.debug('Response from OAuth2 Token Endpoint (token exchange): ' +
+                JSON.stringify(response.data));
       res.status(response.status);
       res.json(response.data);
     })
@@ -1597,7 +1722,8 @@ app.post('/tokenexchange', (req, res) => {
           log.error("Error Status: " + error.response.status);
         }
         if(!!error.response.data) {
-          log.error("Error Response body: " + JSON.stringify(error.response.data));
+          log.error("Error Response body: " +
+                    JSON.stringify(error.response.data));
         }
         res.status(error.response.status);
         res.json(error.response.data);
@@ -1660,7 +1786,8 @@ app.post('/deviceauthorization', (req, res) => {
     } else if (!!clientSecret) {
       // Confidential client: authenticate via HTTP Basic.
       headers.authorization = 'Basic ' +
-        Buffer.from(encodeURIComponent(clientId) + ':' + encodeURIComponent(clientSecret)).toString('base64');
+        Buffer.from(encodeURIComponent(clientId) + ':' +
+                    encodeURIComponent(clientSecret)).toString('base64');
     } else if (!!clientId) {
       // Public client: include client_id in the request body.
       parameters.push('client_id=' + encodeURIComponent(clientId));
@@ -1684,7 +1811,8 @@ app.post('/deviceauthorization', (req, res) => {
       httpsAgent: outboundHttpsAgent(sslValidate)
     })
     .then(function (response) {
-      log.debug('Response from OAuth2 Device Authorization Endpoint: ' + JSON.stringify(response.data));
+      log.debug('Response from OAuth2 Device Authorization Endpoint: ' +
+                JSON.stringify(response.data));
       res.status(response.status);
       res.json(response.data);
     })
@@ -1695,7 +1823,8 @@ app.post('/deviceauthorization', (req, res) => {
           log.error("Error Status: " + error.response.status);
         }
         if(!!error.response.data) {
-          log.error("Error Response body: " + JSON.stringify(error.response.data));
+          log.error("Error Response body: " +
+                    JSON.stringify(error.response.data));
         }
         res.status(error.response.status);
         res.json(error.response.data);
@@ -1741,13 +1870,15 @@ app.post('/register', (req, res) => {
     log.info('Entering app.post for /register.');
     const body = req.body;
     log.debug('body: ' + JSON.stringify(body));
-    // Normalize the HTTP method; create=POST, read=GET, update=PUT, delete=DELETE.
+    // Normalize the HTTP method; create=POST, read=GET, update=PUT,
+    // delete=DELETE.
     var method = (body.method || 'POST').toLowerCase();
     var url = body.url;
     var bearerToken = body.bearer_token;
     var sslValidate = body.sslValidate;
     // Client metadata is only sent on create (POST) and update (PUT).
-    var payload = (method === 'post' || method === 'put') ? body.metadata : undefined;
+    var payload = (method === 'post' || method === 'put') ?
+        body.metadata : undefined;
     var headers = {
       'Accept': 'application/json'
     };
@@ -1755,7 +1886,8 @@ app.post('/register', (req, res) => {
       headers['Content-Type'] = 'application/json';
     }
     // The registration access token (or an initial access token for create) is
-    // presented as a Bearer token per OIDC Registration 1.0 Section 4 / RFC 7592.
+    // presented as a Bearer token per OIDC Registration 1.0 Section 4 / RFC
+    // 7592.
     if (!!bearerToken) {
       headers.authorization = 'Bearer ' + bearerToken;
     }
@@ -1775,9 +1907,10 @@ app.post('/register', (req, res) => {
       httpsAgent: outboundHttpsAgent(sslValidate)
     })
     .then(function (response) {
-      log.debug('Response from Dynamic Client Registration endpoint: ' + JSON.stringify(response.data));
-      // A successful DELETE (RFC 7592 Section 2.3) returns HTTP 204 with no body.
-      // Normalize that to 200 with a JSON summary so the browser reliably
+      log.debug('Response from Dynamic Client Registration endpoint: ' +
+                JSON.stringify(response.data));
+      // A successful DELETE (RFC 7592 Section 2.3) returns HTTP 204 with no
+      // body. Normalize that to 200 with a JSON summary so the browser reliably
       // receives a body (a body sent with 204 is dropped by HTTP clients).
       if (response.status === STATUS_204 || !response.data) {
         res.status(STATUS_200).json({
@@ -1796,7 +1929,8 @@ app.post('/register', (req, res) => {
           log.error("Error Status: " + error.response.status);
         }
         if(!!error.response.data) {
-          log.error("Error Response body: " + JSON.stringify(error.response.data));
+          log.error("Error Response body: " +
+                    JSON.stringify(error.response.data));
         }
         res.status(error.response.status);
         res.json(error.response.data);
@@ -1845,7 +1979,8 @@ try {
   };
   // All types of requests are converted to GET.
   log.debug("Method: GET");
-  log.debug("URL: " + Buffer.from(req.query.userinfo_endpoint, 'base64').toString('utf-8'));
+  log.debug("URL: " + Buffer.from(req.query.userinfo_endpoint,
+            'base64').toString('utf-8'));
   log.debug("headers: " + JSON.stringify(headers));
   axios({
       method: 'get',
@@ -1858,7 +1993,8 @@ try {
       httpsAgent: outboundHttpsAgent(true)
     })
     .then(function (response) {
-      log.debug('Response from OIDC UserInfo Endpoint: ' + JSON.stringify(response.data));
+      log.debug('Response from OIDC UserInfo Endpoint: ' +
+                JSON.stringify(response.data));
       log.debug('Headers: ' + response.headers);
       res.status(response.status);
       res.json(response.data);
@@ -1870,7 +2006,8 @@ try {
           log.error("Error Status: " + error.response.status);
         }
         if(!!error.response.data) {
-          log.error("Error Response body: " + JSON.stringify(error.response.data));
+          log.error("Error Response body: " +
+                    JSON.stringify(error.response.data));
         }
         if(!!error.response.headers) {
           log.error("Error Response headers: " + error.response.headers);
@@ -1880,23 +2017,27 @@ try {
         return;
       }
       // No response: the call timed out, the connection never opened, the body
-      // passed maxContentLength, the redirect chain was too long, or the URL was
-      // refused (a non-http(s) scheme, a blocked address). This branch MUST answer
-      // — the 500 used to sit INSIDE the `if (error.response)` above, so it could
-      // never run, and every network-level failure left the browser waiting on a
-      // reply that was never sent. Those failures are exactly what the outbound
-      // limits produce, so this is now the common path, not a rare one.
+      // passed maxContentLength, the redirect chain was too long, or the URL
+      // was refused (a non-http(s) scheme, a blocked address). This branch MUST
+      // answer — the 500 used to sit INSIDE the `if (error.response)` above, so
+      // it could never run, and every network-level failure left the browser
+      // waiting on a reply that was never sent. Those failures are exactly what
+      // the outbound limits produce, so this is now the common path, not a rare
+      // one.
       res.status(STATUS_500).json({
         error: 'The outbound call failed: ' +
                (error && error.message ? error.message : String(error)) });
     });
   } catch(e) {
     // `e`, not `error`: this referenced an undefined variable, so an exception
-    // here raised a ReferenceError instead of being logged, and answered nothing.
-    log.error("Error from OIDC UserInfo Endpoint: " + (e && e.stack ? e.stack : e));
+    // here raised a ReferenceError instead of being logged, and answered
+    // nothing.
+    log.error("Error from OIDC UserInfo Endpoint: " + (e && e.stack ?
+              e.stack : e));
     if (!res.headersSent) {
       res.status(STATUS_500).json({
-        error: 'The outbound call could not be made: ' + (e && e.message ? e.message : String(e)) });
+        error: 'The outbound call could not be made: ' + (e && e.message ?
+            e.message : String(e)) });
     }
   }
   log.debug("Leaving userinfo_common().");

@@ -28,6 +28,7 @@ function getParameterByName(name, url)
 
 window.onload = function() 
 {
+  log.debug("Entering onload().");
   log.debug("Entering window.onload() function.");
   initLocalStorage();
   loadValuesFromLocalStorage();
@@ -35,7 +36,8 @@ window.onload = function()
   // force the frontend and disable (gray out) the backend initiation option.
   if (appconfig.backendAvailable === false) {
     $("#userinfo_initiateFromFrontEnd").prop("checked", true);
-    $("#userinfo_initiateFromBackEnd").prop("checked", false).prop("disabled", true);
+    $("#userinfo_initiateFromBackEnd").prop("checked", false).prop("disabled",
+      true);
   }
   resetErrorDisplays();
   var frontEndInitiated = $("#userinfo_initiateFromFrontEnd").is(":checked");
@@ -44,9 +46,11 @@ window.onload = function()
   } else {
     useFrontEnd = false;
   }
-  log.debug("useFrontEnd=" + useFrontEnd + ", typeof(useFrontEnd)=" + typeof(useFrontEnd));
+  log.debug("useFrontEnd=" + useFrontEnd + ", typeof(useFrontEnd)=" +
+            typeof(useFrontEnd));
   recalculateUserInfoURL();
   log.debug("Leaving window.onload() function.");
+  log.debug("Leaving onload().");
 }
 
 function recalculateUserInfoURL()
@@ -103,8 +107,10 @@ function ajaxSuccessFunction(data, textStatus, jqXHR) {
   log.debug('UserInfo textStatus: ' + JSON.stringify(textStatus));
   log.debug('UserInfo Endpoint Response: ' + JSON.stringify(data));
   log.debug('UserInfo request: ' + JSON.stringify(jqXHR));
-  log.debug('UserInfo Response Content-Type: ' + jqXHR.getResponseHeader("Content-Type"));
-  log.debug('UserInfo Headers: ' + JSON.stringify(jqXHR.getAllResponseHeaders()));
+  log.debug('UserInfo Response Content-Type: ' +
+            jqXHR.getResponseHeader("Content-Type"));
+  log.debug('UserInfo Headers: ' +
+            JSON.stringify(jqXHR.getAllResponseHeaders()));
   var responseContentType = jqXHR.getResponseHeader("Content-Type");
   if (responseContentType.includes('application/json')) {
     log.debug('plaintext response detected, no signature, no encryption');
@@ -160,6 +166,7 @@ $(".token_access_token").keypress(function() {
 function resetUI(value)
 {
   log.debug("Entering resetUI().");
+  log.debug("Leaving resetUI().");
 }
 
 function resetErrorDisplays()
@@ -203,7 +210,8 @@ function initLocalStorage()
        "acr": {"values": ["urn:mace:incommon:iap:silver"] }
       }
     };
-    localStorage.setItem("userinfo_claims", JSON.stringify(default_claims, null, 2));
+    localStorage.setItem("userinfo_claims", JSON.stringify(default_claims, null,
+                         2));
     initialized = true;
   }
   log.debug("Leaving initLocalStorage().");
@@ -226,7 +234,8 @@ function loadValuesFromLocalStorage()
       } catch (e) {
         log.error('Failed to parse token_history: ' + e);
       }
-      if (!isNaN(generation) && generation >= 0 && generation < history.length) {
+      if (!isNaN(generation) && generation >= 0 &&
+          generation < history.length) {
         token_access_token = history[generation].access_token || '';
       } else {
         log.error('Invalid generation index: ' + generation);
@@ -281,6 +290,8 @@ function setInitiateFromEnd(which_end) {
 
 function getLSBooleanItem(key)
 {
+  log.debug("Entering getLSBooleanItem().");
+  log.debug("Leaving getLSBooleanItem().");
   return localStorage.getItem(key) === 'true';
 }
 

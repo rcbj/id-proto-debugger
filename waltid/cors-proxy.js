@@ -4,21 +4,22 @@
 // CORS in front of a walt.id service — issuer-api2 or verifier-api2.
 //
 // One copy runs per service (see the compose files): the issuer's proxy serves
-// 7005 in front of 7006, the verifier's serves 7003 in front of 7004. Nothing here
-// is specific to either; it forwards every method, path and body untouched.
+// 7005 in front of 7006, the verifier's serves 7003 in front of 7004. Nothing
+// here is specific to either; it forwards every method, path and body
+// untouched.
 //
 // walt.id's services send no CORS headers — they install no CORS plugin at all,
 // and walt.id's own compose stack puts a reverse proxy in front of every one of
 // them for that reason. That is fine for a server-side wallet and fatal for a
-// browser-based one: without `Access-Control-Allow-Origin` the browser refuses to
-// hand the response to the page, so the debugger could not read the issuer's
+// browser-based one: without `Access-Control-Allow-Origin` the browser refuses
+// to hand the response to the page, so the debugger could not read the issuer's
 // metadata, let alone POST a Credential Request.
 //
 // So the wallet talks to this, and the service's own address setting names it —
-// the issuer's `baseUrl`, the verifier's `urlPrefix`: every URL walt.id publishes
-// or hands a wallet is built from that base, and they have to be URLs a browser
-// can actually use. Nothing is rewritten here — the service already believes it
-// lives at this address.
+// the issuer's `baseUrl`, the verifier's `urlPrefix`: every URL walt.id
+// publishes or hands a wallet is built from that base, and they have to be URLs
+// a browser can actually use. Nothing is rewritten here — the service already
+// believes it lives at this address.
 //
 // Permissive on purpose: this fronts a throwaway test issuer on a private
 // network. A real deployment would name its wallet origins.
@@ -29,6 +30,35 @@
 // No dependencies, so it runs on a stock node image with nothing installed.
 // ---------------------------------------------------------------------------
 var http = require("http");
+
+// The Entering/Leaving logging convention (see the repo-root CLAUDE.md)
+// wants a `log` here, and bunyan is not reachable from this file:
+// it runs on a bare node image with no install step.
+// So this is the same call shape backed by console. Debug output is off by
+// default, so an ordinary run stays quiet; flip DEBUG to follow a call
+// through. Note the methods below are the one place the convention cannot
+// apply — a log line inside log.debug() is infinite recursion.
+var DEBUG = false;
+var LOG_TAG = "[cors-proxy]";
+var log = {
+  debug: function () {
+    if (!DEBUG) return;
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  info: function () {
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  warn: function () {
+    console.warn.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  error: function () {
+    console.error.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  }
+};
 
 var UPSTREAM = process.env.WALTID_UPSTREAM || "localhost:7006";
 var PORT = parseInt(process.env.WALTID_PROXY_PORT, 10) || 7005;
@@ -47,15 +77,28 @@ var CORS = {
 };
 
 function applyCors(res) {
+  log.debug("Entering applyCors().");
   Object.keys(CORS).forEach(function (name) {
     res.setHeader(name, CORS[name]);
   });
+  log.debug("Leaving applyCors().");
 }
 
-function log(message) {
+// `logLine`, not `log`: this file already had a request logger of its own when
+// the console-backed `log` above was added, and both were called `log`. A
+// function declaration and a `var` of the same name are ONE binding, so the
+// object assignment above won and every call here became "log is not a
+// function" — thrown from server.listen()'s callback, which killed the proxy
+// at startup. The only symptom was a connection refused on 7005/7003, so all
+// four walt.id interoperability tests failed at their first fetch, naming
+// walt.id rather than this file.
+function logLine(message) {
+  log.debug("Entering logLine().");
   // One line per call, so a failing browser request can be traced to what the
-  // issuer actually answered.
-  console.log(new Date().toISOString() + "  " + message);
+  // issuer actually answered. Timestamped: this is a container log read after
+  // the fact, and `docker logs` adds none of its own by default.
+  console.log(new Date().toISOString() + "  " + LOG_TAG + " " + message);
+  log.debug("Leaving logLine().");
 }
 
 var server = http.createServer(function (req, res) {
@@ -67,7 +110,7 @@ var server = http.createServer(function (req, res) {
   if (req.method === "OPTIONS") {
     res.writeHead(204);
     res.end();
-    log("204 OPTIONS " + req.url + " (preflight answered here)");
+    logLine("204 OPTIONS " + req.url + " (preflight answered here)");
     return;
   }
 
@@ -91,7 +134,7 @@ var server = http.createServer(function (req, res) {
     });
     res.writeHead(answer.statusCode);
     answer.pipe(res);
-    log(answer.statusCode + " " + req.method + " " + req.url);
+    logLine(answer.statusCode + " " + req.method + " " + req.url);
   });
 
   upstream.on("error", function (e) {
@@ -101,13 +144,15 @@ var server = http.createServer(function (req, res) {
     // "service" rather than "issuer": one copy of this proxy fronts the issuer
     // and another fronts the verifier, and a 502 naming the wrong one sends
     // whoever reads it looking at the wrong container.
-    log("502 " + req.method + " " + req.url + " — upstream " + UPSTREAM + ": " + e.message);
+    logLine("502 " + req.method + " " + req.url + " — upstream " + UPSTREAM +
+        ": " + e.message);
     if (!res.headersSent) {
       res.writeHead(502, { "Content-Type": "application/json" });
     }
     res.end(JSON.stringify({
       error: "upstream_unavailable",
-      error_description: "The walt.id service at " + UPSTREAM + " did not answer: " + e.message
+      error_description: "The walt.id service at " + UPSTREAM +
+          " did not answer: " + e.message
     }));
   });
 
@@ -115,5 +160,6 @@ var server = http.createServer(function (req, res) {
 });
 
 server.listen(PORT, "0.0.0.0", function () {
-  log("CORS proxy listening on 0.0.0.0:" + PORT + ", forwarding to " + UPSTREAM + ".");
+  logLine("CORS proxy listening on 0.0.0.0:" + PORT + ", forwarding to " +
+      UPSTREAM + ".");
 });

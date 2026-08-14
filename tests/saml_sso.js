@@ -18,33 +18,41 @@ var waitTime = appconfig.waitTime;
 
 // Poll a field's value until the predicate passes (or timeout).
 async function waitForValue(driver, locator, predicate, message, timeout) {
+  log.debug("Entering waitForValue().");
   await driver.wait(until.elementLocated(locator), waitTime);
   await driver.wait(async function () {
     try {
       var v = await driver.findElement(locator).getAttribute("value");
       return predicate(v || "");
-    } catch (e) { return false; }
+    } catch (e) {
+      return false;
+    }
   }, timeout || waitTime, message);
+  log.debug("Leaving waitForValue().");
 }
 
 async function clickByValue(driver, value) {
+  log.debug("Entering clickByValue().");
   var locator = By.xpath("//input[@value='" + value + "']");
   await driver.wait(until.elementLocated(locator), waitTime);
   var elArtifact = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(elArtifact), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", elArtifact);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", elArtifact);
   await elArtifact.click();
+  log.debug("Leaving clickByValue().");
 }
 
 // Load the IdP metadata into the IdP Metadata pane, then wait for it to parse.
 // Two modes:
-//   - URL load (default): type the metadata URL and click "Load Metadata", which
-//     fetches + parses the descriptor (directly, or via the API metadata proxy).
+//   - URL load (default): type the metadata URL and click "Load Metadata",
+//     which fetches + parses the descriptor (directly, or via the API metadata
+//     proxy).
 //   - File upload (metadataFile set, i.e. SAML_METADATA_FILE): push a local
 //     metadata file straight into the hidden file <input>, so the document is
-//     parsed entirely in the browser with no cross-origin fetch. remote-run-tests.sh
-//     uses this against the deployed HTTPS site, which can't fetch the local
-//     http Keycloak descriptor (mixed content / CORS).
+//     parsed entirely in the browser with no cross-origin fetch.
+//     remote-run-tests.sh uses this against the deployed HTTPS site, which
+//     can't fetch the local http Keycloak descriptor (mixed content / CORS).
 async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
   log.debug("Entering loadIdpMetadata().");
   if (metadataFile) {
@@ -64,27 +72,30 @@ async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
     await clickByValue(driver, "Load Metadata");
   }
 
-  // Wait for the metadata to actually load + parse. The Configuration Parameters
-  // fields carry sample/dummy defaults, so "endpoint is non-empty" no longer
-  // proves the real IdP values were loaded — wait for the parsed status instead.
+  // Wait for the metadata to actually load + parse. The Configuration
+  // Parameters fields carry sample/dummy defaults, so "endpoint is non-empty"
+  // no longer proves the real IdP values were loaded — wait for the parsed
+  // status instead.
   await waitForValue(driver, By.id("saml_metadata_status"),
     function (v) { return v.indexOf("Loaded and parsed") >= 0; },
     "Metadata was not loaded/parsed.");
   log.debug("Leaving loadIdpMetadata().");
 }
 
-async function samlActivities(driver, metadataUrl, spEntityId, user, binding, metadataFile) {
+async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
+                              metadataFile) {
   log.debug("Entering samlActivities().");
-  // The Keycloak v2 login page (PatternFly + JS modules) can take several seconds
-  // to render #username on a cold browser, and POST-binding processing + request
-  // signature validation add latency — so give the login/response round-trip a
-  // generous timeout regardless of the small generic waitTime.
+  // The Keycloak v2 login page (PatternFly + JS modules) can take several
+  // seconds to render #username on a cold browser, and POST-binding processing
+  // + request signature validation add latency — so give the login/response
+  // round-trip a generous timeout regardless of the small generic waitTime.
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Load the SAML Test Tools page (binding=" + binding + ").");
   await driver.get(baseUrl + "/saml_request.html");
 
-  // Load + parse the IdP metadata (URL fetch, or file upload when metadataFile set).
+  // Load + parse the IdP metadata (URL fetch, or file upload when metadataFile
+  // set).
   await loadIdpMetadata(driver, metadataUrl, metadataFile);
 
   // Ensure SP entityID matches the provisioned client.
@@ -101,7 +112,8 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding, me
   // registered on the Keycloak client, which validates the AuthnRequest
   // signature — so the request must be signed with THIS key, not one the page
   // generates for itself.
-  log.info("Load this run's SP signing key pair (matches the cert registered on Keycloak).");
+  log.info("Load this run's SP signing key pair (matches the cert registered " +
+           "on Keycloak).");
   var spPair = readSpKeyPair();
   var spKey = spPair.privateKey;
   var spCert = spPair.certificate;
@@ -114,11 +126,14 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding, me
   // Select the binding under test (redirect / post / artifact).
   log.info("Select binding: " + binding);
   await driver.executeScript(
-    "var s=document.getElementById('saml_binding'); if(s){ s.value = arguments[0]; s.dispatchEvent(new Event('change')); }",
+    "var s=document.getElementById('saml_binding'); if(s){ s.value = " +
+        "arguments[0]; s.dispatchEvent(new Event('change')); }",
     binding
   );
-  var selected = await driver.findElement(By.id("saml_binding")).getAttribute("value");
-  assert.strictEqual(selected, binding, "Binding '" + binding + "' is not available in the selector.");
+  var selected =
+      await driver.findElement(By.id("saml_binding")).getAttribute("value");
+  assert.strictEqual(selected, binding, "Binding '" + binding +
+                     "' is not available in the selector.");
 
   // Send the (signed) AuthnRequest via the selected binding.
   log.info("Call IdP (" + binding + ").");
@@ -130,7 +145,8 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding, me
   var password = By.id("password");
   var kcLogin = By.id("kc-login");
   await driver.wait(until.elementLocated(username), loginWait);
-  await driver.wait(until.elementIsVisible(driver.findElement(username)), loginWait);
+  await driver.wait(until.elementIsVisible(driver.findElement(username)),
+                    loginWait);
   await driver.findElement(username).clear();
   await driver.findElement(username).sendKeys(user);
   await driver.findElement(password).clear();
@@ -146,38 +162,51 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding, me
 
   // Log the response for diagnosis (truncated). Invaluable when the IdP returns
   // a SAML error status instead of an assertion.
-  var respXml = await driver.findElement(By.id("saml_resp_xml")).getAttribute("value");
-  log.info("SAMLResponse (first 1500 chars):\n" + (respXml || "").substring(0, 1500));
+  var respXml =
+      await driver.findElement(By.id("saml_resp_xml")).getAttribute("value");
+  log.info("SAMLResponse (first 1500 chars):\n" + (respXml || "").substring(0,
+           1500));
 
   // Assertion present. Reject the "(no <Assertion> …)" placeholder the page
   // shows for an error/encrypted response (the bare substring "Assertion" would
   // otherwise false-positive on that placeholder).
   await waitForValue(driver, By.id("saml_assertion_xml"),
-    function (v) { return v.indexOf("Assertion") >= 0 && v.indexOf("no <Assertion") < 0; },
-    "No <Assertion> in the SAMLResponse (likely a SAML error status) — see the logged response above.", loginWait);
+    function (v) { return v.indexOf("Assertion") >= 0 &&
+              v.indexOf("no <Assertion") < 0; },
+    "No <Assertion> in the SAMLResponse (likely a SAML error status) — see " +
+        "the logged response above.", loginWait);
 
   // Attributes tab includes a NameID row. Assert on the table's textContent
-  // (readable even while the tab is the hidden one) rather than getText(), which
-  // returns "" for a display:none element — otherwise this races the tab-switch
-  // click taking effect / the bundle wiring its onclick handler (that race made
-  // POST flake even though the row was rendered). The click still exercises the
-  // tab UI, but the pass/fail no longer hinges on visibility timing.
+  // (readable even while the tab is the hidden one) rather than getText(),
+  // which returns "" for a display:none element — otherwise this races the
+  // tab-switch click taking effect / the bundle wiring its onclick handler
+  // (that race made POST flake even though the row was rendered). The click
+  // still exercises the tab UI, but the pass/fail no longer hinges on
+  // visibility timing.
   log.info("Check the Attributes table for a NameID row.");
   try {
     await driver.wait(async function () {
       var txt = await driver.executeScript(
-        "var e=document.getElementById('saml_attrs_table'); return e ? (e.textContent || '') : '';");
+        "var e=document.getElementById('saml_attrs_table'); return e ? " +
+            "(e.textContent || '') : '';");
       return txt.indexOf("NameID") >= 0;
     }, loginWait, "Attributes table did not include a NameID row.");
-    try { await driver.findElement(By.id("tab_attrs_btn")).click(); } catch (e) { /* best-effort UI exercise */ }
+    try {
+      await driver.findElement(By.id("tab_attrs_btn")).click();
+    } catch (e) {
+      /* best-effort UI exercise */
+    }
   } catch (e) {
     // Dump what the page actually rendered so we can see why the NameID row is
     // missing (empty table => a render error; a table without NameID => the
     // assertion lacked one).
-    var axml = await driver.findElement(By.id("saml_assertion_xml")).getAttribute("value");
+    var axml = await driver.findElement(By.id("saml_assertion_xml"))
+        .getAttribute("value");
     var atbl = await driver.executeScript(
-      "var e=document.getElementById('saml_attrs_table'); return e ? (e.textContent || '') : '(missing)';");
-    log.error("Assertion XML (first 3000 chars):\n" + (axml || "").substring(0, 3000));
+      "var e=document.getElementById('saml_attrs_table'); return e ? " +
+          "(e.textContent || '') : '(missing)';");
+    log.error("Assertion XML (first 3000 chars):\n" + (axml || "").substring(0,
+              3000));
     log.error("Attributes table text:\n" + (atbl || "(empty)"));
     throw e;
   }
@@ -195,7 +224,9 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
 
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
@@ -214,25 +245,34 @@ async function test() {
     const spEntityId = process.env.SAML_SP_ENTITY_ID;
     const user = process.env.SAML_USER || "saml";
     const binding = (process.env.SAML_BINDING || "redirect").toLowerCase();
-    assert(metadataUrl || metadataFile, "Set SAML_METADATA_URL (URL load) or SAML_METADATA_FILE (file upload).");
+    assert(metadataUrl || metadataFile, "Set SAML_METADATA_URL (URL load) or " +
+           "SAML_METADATA_FILE (file upload).");
     assert(spEntityId, "SAML_SP_ENTITY_ID environment variable is not set.");
-    assert(["redirect", "post", "artifact"].indexOf(binding) >= 0, "SAML_BINDING must be redirect, post, or artifact.");
+    assert(["redirect", "post", "artifact"].indexOf(binding) >= 0,
+           "SAML_BINDING must be redirect, post, or artifact.");
 
-    await samlActivities(driver, metadataUrl, spEntityId, user, binding, metadataFile);
+    await samlActivities(driver, metadataUrl, spEntityId, user, binding,
+                         metadataFile);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
-    // Dump the current URL, page source, and browser console to diagnose failures
-    // (an IdP error page vs the login form; a JS exception during page render).
+    // Dump the current URL, page source, and browser console to diagnose
+    // failures (an IdP error page vs the login form; a JS exception during page
+    // render).
     try {
       log.error("Current URL: " + (await driver.getCurrentUrl()));
       var src = await driver.getPageSource();
-      log.error("Page source (first 8000 chars):\n" + (src || "").substring(0, 8000));
+      log.error("Page source (first 8000 chars):\n" + (src || "").substring(0,
+                8000));
       var blogs = await driver.manage().logs().get("browser");
       if (blogs && blogs.length) {
-        log.error("Browser console:\n" + blogs.map(function (e) { return e.level.name + ": " + e.message; }).join("\n"));
+        log.error("Browser console:\n" +
+                  blogs.map(function (e) { return e.level.name + ": " +
+                  e.message; }).join("\n"));
       }
-    } catch (e2) { /* ignore */ }
+    } catch (e2) {
+      /* ignore */
+    }
     process.exit(1);
   } finally {
     await driver.quit();
@@ -244,11 +284,15 @@ const program = new Command();
 program
   .name('saml_sso')
   .description("Run SAML SSO test.")
-  .addOption(new Option("-u, --url <url>", "Set base URL.").makeOptionMandatory())
-  .addOption(new Option("-b, --browser", "Display browser (only works within device)."))
+  .addOption(new Option("-u, --url <url>",
+      "Set base URL.").makeOptionMandatory())
+  .addOption(new Option("-b, --browser",
+      "Display browser (only works within device)."))
   .action((options) => {
-    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl = options.url; }
-    if (!!options.browser) { log.info("Using browser. headless = false."); headless = false; }
+    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl =
+        options.url; }
+    if (!!options.browser) { log.info("Using browser. " +
+        "headless = false."); headless = false; }
   });
 
 program.parse(process.argv).opts();

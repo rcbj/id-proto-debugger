@@ -29,7 +29,8 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
-var log = bunyan.createLogger({ name: 'saml_tools', level: appconfig.logLevel });
+var log = bunyan.createLogger({ name: 'saml_tools',
+    level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
 var forge = xd.forge;
@@ -50,7 +51,9 @@ var ACTION_NS_RWEDC = "urn:oasis:names:tc:SAML:1.0:action:rwedc";
 
 // Subject confirmation methods differ only in their version segment, so the
 // <select> carries the bare token and the URI is built per version.
-var CM_PREFIX = { '2.0': 'urn:oasis:names:tc:SAML:2.0:cm:', '1.1': 'urn:oasis:names:tc:SAML:1.0:cm:', '1.0': 'urn:oasis:names:tc:SAML:1.0:cm:' };
+var CM_PREFIX = { '2.0': 'urn:oasis:names:tc:SAML:2.0:cm:',
+    '1.1': 'urn:oasis:names:tc:SAML:1.0:cm:',
+    '1.0': 'urn:oasis:names:tc:SAML:1.0:cm:' };
 
 // NameID formats introduced by SAML 2.0 — flagged by the compliance check when
 // the selected version is 1.x.
@@ -58,31 +61,81 @@ var V2_ONLY_NAMEID = /^urn:oasis:names:tc:SAML:2\.0:nameid-format:/;
 
 // ---------------------------------------------------------------------------
 // Small DOM helpers (mirror saml_request.js).
+//
+// THE REBUILD PATH IS A HOT PATH, and these helpers are on it. Note the
+// deliberate absence of the Entering/Leaving logging this codebase uses
+// elsewhere, here and in the five blocks below that say the same thing:
+// every edit to any field rebuilds the whole assertion and re-runs the
+// compliance check, and one rebuild calls these accessors several hundred
+// times (`val()` alone reads ~40 fields, and each `val()` is also an `el()`).
+// A pair of log lines in a one-line getter is not a trace, it is the entire
+// log — at logLevel=debug (which `client/src/env/local.js` and
+// `client/src/env/docker-tests.js` both set, so BOTH test stacks emit these)
+// it buries every line that says something, and each record costs a JSON
+// serialization plus a console write: ~15us in headless Chrome 121, measured.
+// That is invisible until something drives the page in a loop, and something
+// does: `tests/saml_tools.js` walks the 2^10 power set of the optional-element
+// checkboxes for each version, rebuilding and re-checking per state. With
+// these lines in place that one `executeScript` call went from 1.9s to 34s
+// locally and overran the WebDriver script timeout on a GitHub Actions runner
+// — reported as a bare "script timeout" naming nothing. The functions that
+// call these — the ones an actual trace wants — keep their logging.
 // ---------------------------------------------------------------------------
-function el(id) { return document.getElementById(id); }
-function val(id) { var e = el(id); return e ? e.value : ''; }
-function setVal(id, v) { var e = el(id); if (e) e.value = (v == null ? '' : v); }
-function setStatus(id, msg) { setVal(id, msg); }
-function isOn(id) { var e = el(id); return !!(e && e.checked); }
-function show(id, on) { var e = el(id); if (e) { if (on) e.classList.remove('saml-hidden'); else e.classList.add('saml-hidden'); } }
-function esc(s) { return xd.xmlEscape(s); }
+function el(id) {
+  return document.getElementById(id);
+}
+function val(id) {
+  var e = el(id);
+  return e ? e.value : '';
+}
+function setVal(id, v) {
+  var e = el(id);
+  if (e) e.value = (v == null ? '' : v);
+}
+function setStatus(id, msg) {
+  setVal(id, msg);
+}
+function isOn(id) {
+  var e = el(id);
+  return !!(e && e.checked);
+}
+function show(id, on) {
+  var e = el(id);
+  if (e) { if (on) e.classList.remove('saml-hidden'); else e.classList.add(
+      'saml-hidden'); }
+}
+function esc(s) {
+  return xd.xmlEscape(s);
+}
 
-function version() { return val('sa_version') || '2.0'; }
-function isV2() { return version() === '2.0'; }
+function version() {
+  return val('sa_version') || '2.0';
+}
+function isV2() {
+  return version() === '2.0';
+}
 
 // ---------------------------------------------------------------------------
 // localStorage persistence — every .stored element is saved by its id. The
 // timestamp fields are deliberately NOT .stored: a stale IssueInstant would
 // produce an expired assertion on the next visit, so they are regenerated.
 // ---------------------------------------------------------------------------
-function persistedEls() { return document.querySelectorAll('.stored'); }
+// On the rebuild path (saveState runs on every change) — see the note above
+// el(): no Entering/Leaving logging in these one-line helpers.
+function persistedEls() {
+  return document.querySelectorAll('.stored');
+}
 function saveState() {
   log.debug("Entering saveState().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving saveState().");
+    return;
+  }
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
     if (!els[i].id) continue;
-    var v = els[i].type === 'checkbox' ? (els[i].checked ? '1' : '0') : els[i].value;
+    var v = els[i].type === 'checkbox' ? (els[i].checked ?
+        '1' : '0') : els[i].value;
     localStorage.setItem(STORE_PREFIX + els[i].id, v);
   }
   try {
@@ -94,20 +147,25 @@ function saveState() {
 }
 function restoreState() {
   log.debug("Entering restoreState().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving restoreState().");
+    return;
+  }
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
     if (!els[i].id) continue;
     var v = localStorage.getItem(STORE_PREFIX + els[i].id);
     if (v === null) continue;
-    if (els[i].type === 'checkbox') els[i].checked = (v === '1' || v === 'true' || v === 'on');
+    if (els[i].type === 'checkbox') els[i].checked = (v === '1' ||
+        v === 'true' || v === 'on');
     else els[i].value = v;
   }
   var saved = localStorage.getItem(ATTRS_KEY);
   if (saved) {
     try {
       var parsed = JSON.parse(saved);
-      if (Object.prototype.toString.call(parsed) === '[object Array]') attributes = parsed;
+      if (Object.prototype.toString.call(
+          parsed) === '[object Array]') attributes = parsed;
     } catch (e) {
       // A stored value from an older build, or hand-edited: start from the
       // built-in attributes rather than failing to load the page.
@@ -121,8 +179,15 @@ function restoreState() {
 // a trailing offset other than Z, so everything is emitted as ...Z with second
 // precision.
 // ---------------------------------------------------------------------------
-function toInstant(d) { return d.toISOString().replace(/\.\d{3}Z$/, 'Z'); }
-function num(id, dflt) { var n = parseInt(val(id), 10); return isNaN(n) ? dflt : n; }
+// Both are called several times per rebuild — see the note above el(): no
+// Entering/Leaving logging in these one-line helpers.
+function toInstant(d) {
+  return d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+function num(id, dflt) {
+  var n = parseInt(val(id), 10);
+  return isNaN(n) ? dflt : n;
+}
 
 // (Re)populate IssueInstant, the Conditions window, AuthnInstant, and the
 // SubjectConfirmationData / session expiries from "now". Called on load and by
@@ -136,18 +201,26 @@ function refreshTimestamps() {
   setVal('sa_authn_instant', toInstant(now));
   setVal('sa_not_before', toInstant(new Date(now.getTime() - skewMs)));
   setVal('sa_not_on_or_after', toInstant(new Date(now.getTime() + lifeMs)));
-  setVal('sa_confirm_notonorafter', toInstant(new Date(now.getTime() + lifeMs)));
-  setVal('sa_session_notonorafter', toInstant(new Date(now.getTime() + (lifeMs * 12))));
+  setVal('sa_confirm_notonorafter', toInstant(new Date(now.getTime() +
+         lifeMs)));
+  setVal('sa_session_notonorafter', toInstant(new Date(now.getTime() +
+         (lifeMs * 12))));
   autoBuild();
   log.debug("Leaving refreshTimestamps().");
   return false;
 }
 
-function newId() { return xd.genId(); }
+function newId() {
+  log.debug("Entering newId().");
+  log.debug("Leaving newId().");
+  return xd.genId();
+}
 function refreshId() {
+  log.debug("Entering refreshId().");
   setVal('sa_id', newId());
   saveState();
   autoBuild();
+  log.debug("Leaving refreshId().");
   return false;
 }
 
@@ -161,12 +234,17 @@ function refreshId() {
 // ---------------------------------------------------------------------------
 var attributes = [];
 var ATTR_NAMEFORMAT_URI = 'urn:oasis:names:tc:SAML:2.0:attrname-format:uri';
-var ATTR_NAMEFORMAT_UNSPEC = 'urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified';
+var ATTR_NAMEFORMAT_UNSPEC =
+    'urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified';
 
 function addAttribute() {
   log.debug("Entering addAttribute().");
   var name = val('sa_attr_name').trim();
-  if (!name) { setStatus('sa_compose_status', 'Enter an attribute name.'); return false; }
+  if (!name) {
+    setStatus('sa_compose_status', 'Enter an attribute name.');
+    log.debug("Leaving addAttribute().");
+    return false;
+  }
   attributes.push({
     type: val('sa_attr_type') || 'string',
     prefix: val('sa_attr_prefix').trim(),
@@ -178,24 +256,29 @@ function addAttribute() {
   renderAttributes();
   saveState();
   autoBuild();
-  setStatus('sa_compose_status', 'Attribute added (' + attributes.length + ' total).');
+  setStatus('sa_compose_status', 'Attribute added (' + attributes.length +
+            ' total).');
   log.debug("Leaving addAttribute().");
   return false;
 }
 
 function removeAttribute(idx) {
+  log.debug("Entering removeAttribute().");
   if (idx >= 0 && idx < attributes.length) attributes.splice(idx, 1);
   renderAttributes();
   saveState();
   autoBuild();
+  log.debug("Leaving removeAttribute().");
   return false;
 }
 
 function clearAttributes() {
+  log.debug("Entering clearAttributes().");
   attributes = [];
   renderAttributes();
   saveState();
   autoBuild();
+  log.debug("Leaving clearAttributes().");
   return false;
 }
 
@@ -204,9 +287,14 @@ function clearAttributes() {
 function renderAttributes() {
   log.debug("Entering renderAttributes().");
   var body = el('sa_attr_rows');
-  if (!body) return;
+  if (!body) {
+    log.debug("Leaving renderAttributes().");
+    return;
+  }
   if (!attributes.length) {
-    body.innerHTML = '<tr><td colspan="5" class="sa-empty">No custom attributes.</td></tr>';
+    body.innerHTML =
+        '<tr><td colspan="5" class="sa-empty">No custom attributes.</td></tr>';
+    log.debug("Leaving renderAttributes().");
     return;
   }
   var html = '';
@@ -217,30 +305,45 @@ function renderAttributes() {
       '<td class="sa-wrap">' + esc(a.prefix) + '</td>' +
       '<td>' + esc(a.type) + '</td>' +
       '<td class="sa-wrap">' + esc(a.value) + '</td>' +
-      '<td><button type="button" class="saml-copy" onclick="return saml_tools.removeAttribute(' + i + ');">Remove</button></td>' +
+      '<td><button type="button" class="saml-copy" onclick="return ' +
+          'saml_tools.removeAttribute(' + i + ');">Remove</button></td>' +
       '</tr>';
   }
   body.innerHTML = html;
   log.debug("Leaving renderAttributes().");
 }
 
-function attrFullName(a) { return (a.prefix || '') + a.name; }
+// Called once per attribute per rebuild — see the note above el(): no
+// Entering/Leaving logging in these one-line helpers.
+function attrFullName(a) {
+  return (a.prefix || '') + a.name;
+}
 function attrsUseXsiType() {
   for (var i = 0; i < attributes.length; i++) {
-    if (attributes[i].type && attributes[i].type !== 'unspecified') return true;
+    if (attributes[i].type && attributes[i].type !== 'unspecified') {
+      return true;
+    }
   }
   return false;
 }
 function xsiTypeAttr(a) {
-  return (a.type && a.type !== 'unspecified') ? ' xsi:type="xs:' + a.type + '"' : '';
+  return (a.type && a.type !== 'unspecified') ? ' xsi:type="xs:' + a.type +
+          '"' : '';
 }
 
 // ---------------------------------------------------------------------------
 // Assertion construction
+//
+// attrOpt() is called for every optional XML attribute of every element the
+// assertion carries — the densest part of the rebuild path. See the note
+// above el(): no Entering/Leaving logging in these one-line helpers.
 // ---------------------------------------------------------------------------
-function attrOpt(name, value) { return value ? ' ' + name + '="' + esc(value) + '"' : ''; }
+function attrOpt(name, value) {
+  return value ? ' ' + name + '="' + esc(value) + '"' : '';
+}
 function confirmationMethod() {
-  return (CM_PREFIX[version()] || CM_PREFIX['2.0']) + (val('sa_confirm_method') || 'bearer');
+  return (CM_PREFIX[version()] || CM_PREFIX['2.0']) +
+          (val('sa_confirm_method') || 'bearer');
 }
 
 // <saml:Subject> for SAML 2.0 — NameID plus an optional SubjectConfirmation.
@@ -248,12 +351,14 @@ function subject20(pad) {
   log.debug("Entering subject20().");
   var lines = [];
   lines.push(pad + '<saml:Subject>');
-  lines.push(pad + '  <saml:NameID' + attrOpt('Format', val('sa_nameid_format')) +
+  lines.push(pad + '  <saml:NameID' + attrOpt('Format',
+             val('sa_nameid_format')) +
     attrOpt('NameQualifier', val('sa_nameid_qualifier')) +
     attrOpt('SPNameQualifier', val('sa_nameid_spqualifier')) + '>' +
     esc(val('sa_nameid_value')) + '</saml:NameID>');
   if (isOn('sa_opt_subjconf')) {
-    lines.push(pad + '  <saml:SubjectConfirmation Method="' + esc(confirmationMethod()) + '">');
+    lines.push(pad + '  <saml:SubjectConfirmation Method="' +
+               esc(confirmationMethod()) + '">');
     lines.push(pad + '    <saml:SubjectConfirmationData' +
       attrOpt('NotOnOrAfter', val('sa_confirm_notonorafter')) +
       attrOpt('Recipient', val('sa_confirm_recipient')) +
@@ -273,12 +378,14 @@ function subject1x(pad) {
   log.debug("Entering subject1x().");
   var lines = [];
   lines.push(pad + '<saml:Subject>');
-  lines.push(pad + '  <saml:NameIdentifier' + attrOpt('Format', val('sa_nameid_format')) +
+  lines.push(pad + '  <saml:NameIdentifier' + attrOpt('Format',
+             val('sa_nameid_format')) +
     attrOpt('NameQualifier', val('sa_nameid_qualifier')) + '>' +
     esc(val('sa_nameid_value')) + '</saml:NameIdentifier>');
   if (isOn('sa_opt_subjconf')) {
     lines.push(pad + '  <saml:SubjectConfirmation>');
-    lines.push(pad + '    <saml:ConfirmationMethod>' + esc(confirmationMethod()) + '</saml:ConfirmationMethod>');
+    lines.push(pad + '    <saml:ConfirmationMethod>' +
+               esc(confirmationMethod()) + '</saml:ConfirmationMethod>');
     lines.push(pad + '  </saml:SubjectConfirmation>');
   }
   lines.push(pad + '</saml:Subject>');
@@ -292,9 +399,11 @@ function attributeElements20(pad) {
   for (var i = 0; i < attributes.length; i++) {
     var a = attributes[i];
     var fmt = a.prefix ? ATTR_NAMEFORMAT_URI : ATTR_NAMEFORMAT_UNSPEC;
-    out += pad + '<saml:Attribute Name="' + esc(attrFullName(a)) + '" NameFormat="' + fmt + '"' +
+    out += pad + '<saml:Attribute Name="' + esc(attrFullName(a)) +
+        '" NameFormat="' + fmt + '"' +
       attrOpt('FriendlyName', a.prefix ? a.name : '') + '>\n';
-    out += pad + '  <saml:AttributeValue' + xsiTypeAttr(a) + '>' + esc(a.value) + '</saml:AttributeValue>\n';
+    out += pad + '  <saml:AttributeValue' + xsiTypeAttr(a) + '>' +
+        esc(a.value) + '</saml:AttributeValue>\n';
     out += pad + '</saml:Attribute>\n';
   }
   log.debug("Leaving attributeElements20().");
@@ -306,10 +415,13 @@ function attributeElements1x(pad) {
   var out = '';
   for (var i = 0; i < attributes.length; i++) {
     var a = attributes[i];
-    // AttributeNamespace is required in 1.x; fall back to the assertion namespace.
-    out += pad + '<saml:Attribute AttributeName="' + esc(a.name) + '" AttributeNamespace="' +
+    // AttributeNamespace is required in 1.x; fall back to the assertion
+    // namespace.
+    out += pad + '<saml:Attribute AttributeName="' + esc(a.name) +
+        '" AttributeNamespace="' +
       esc(a.prefix || SAML1_NS) + '">\n';
-    out += pad + '  <saml:AttributeValue' + xsiTypeAttr(a) + '>' + esc(a.value) + '</saml:AttributeValue>\n';
+    out += pad + '  <saml:AttributeValue' + xsiTypeAttr(a) + '>' +
+        esc(a.value) + '</saml:AttributeValue>\n';
     out += pad + '</saml:Attribute>\n';
   }
   log.debug("Leaving attributeElements1x().");
@@ -321,7 +433,8 @@ function attributeElements1x(pad) {
 function buildAssertion20() {
   log.debug("Entering buildAssertion20().");
   var ns = ' xmlns:saml="' + SAML2_NS + '"';
-  if (attrsUseXsiType() && isOn('sa_opt_attrs')) ns += ' xmlns:xs="' + XS_NS + '" xmlns:xsi="' + XSI_NS + '"';
+  if (attrsUseXsiType() && isOn('sa_opt_attrs')) ns += ' xmlns:xs="' + XS_NS +
+      '" xmlns:xsi="' + XSI_NS + '"';
 
   var out = '<saml:Assertion' + ns +
     ' ID="' + esc(val('sa_id')) + '"' +
@@ -336,32 +449,38 @@ function buildAssertion20() {
       attrOpt('NotOnOrAfter', val('sa_not_on_or_after')) + '>\n';
     if (isOn('sa_opt_audience')) {
       out += '    <saml:AudienceRestriction>\n';
-      out += '      <saml:Audience>' + esc(val('sa_audience')) + '</saml:Audience>\n';
+      out += '      <saml:Audience>' + esc(val('sa_audience')) +
+          '</saml:Audience>\n';
       out += '    </saml:AudienceRestriction>\n';
     }
     if (isOn('sa_opt_onetimeuse')) out += '    <saml:OneTimeUse/>\n';
     if (isOn('sa_opt_proxy')) {
-      out += '    <saml:ProxyRestriction Count="' + esc(String(num('sa_proxy_count', 0))) + '"/>\n';
+      out += '    <saml:ProxyRestriction Count="' +
+          esc(String(num('sa_proxy_count', 0))) + '"/>\n';
     }
     out += '  </saml:Conditions>\n';
   }
 
   if (isOn('sa_opt_advice')) {
     out += '  <saml:Advice>\n';
-    out += '    <saml:AssertionIDRef>' + esc(val('sa_advice_ref') || newId()) + '</saml:AssertionIDRef>\n';
+    out += '    <saml:AssertionIDRef>' + esc(val('sa_advice_ref') || newId()) +
+        '</saml:AssertionIDRef>\n';
     out += '  </saml:Advice>\n';
   }
 
   if (isOn('sa_opt_authn')) {
-    out += '  <saml:AuthnStatement AuthnInstant="' + esc(val('sa_authn_instant')) + '"' +
+    out += '  <saml:AuthnStatement AuthnInstant="' +
+        esc(val('sa_authn_instant')) + '"' +
       attrOpt('SessionIndex', val('sa_session_index')) +
       attrOpt('SessionNotOnOrAfter', val('sa_session_notonorafter')) + '>\n';
     if (isOn('sa_opt_locality')) {
-      out += '    <saml:SubjectLocality' + attrOpt('Address', val('sa_locality_address')) +
+      out += '    <saml:SubjectLocality' + attrOpt('Address',
+          val('sa_locality_address')) +
         attrOpt('DNSName', val('sa_locality_dns')) + '/>\n';
     }
     out += '    <saml:AuthnContext>\n';
-    out += '      <saml:AuthnContextClassRef>' + esc(val('sa_authn_context')) + '</saml:AuthnContextClassRef>\n';
+    out += '      <saml:AuthnContextClassRef>' + esc(val('sa_authn_context')) +
+        '</saml:AuthnContextClassRef>\n';
     out += '    </saml:AuthnContext>\n';
     out += '  </saml:AuthnStatement>\n';
   }
@@ -373,9 +492,11 @@ function buildAssertion20() {
   }
 
   if (isOn('sa_opt_authz')) {
-    out += '  <saml:AuthzDecisionStatement Resource="' + esc(val('sa_authz_resource')) +
+    out += '  <saml:AuthzDecisionStatement Resource="' +
+        esc(val('sa_authz_resource')) +
       '" Decision="' + esc(val('sa_authz_decision') || 'Permit') + '">\n';
-    out += '    <saml:Action Namespace="' + esc(val('sa_authz_action_ns') || ACTION_NS_RWEDC) + '">' +
+    out += '    <saml:Action Namespace="' + esc(val('sa_authz_action_ns') ||
+        ACTION_NS_RWEDC) + '">' +
       esc(val('sa_authz_action') || 'Read') + '</saml:Action>\n';
     out += '  </saml:AuthzDecisionStatement>\n';
   }
@@ -393,7 +514,8 @@ function buildAssertion1x() {
   log.debug("Entering buildAssertion1x().");
   var minor = version() === '1.1' ? '1' : '0';
   var ns = ' xmlns:saml="' + SAML1_NS + '"';
-  if (attrsUseXsiType() && isOn('sa_opt_attrs')) ns += ' xmlns:xs="' + XS_NS + '" xmlns:xsi="' + XSI_NS + '"';
+  if (attrsUseXsiType() && isOn('sa_opt_attrs')) ns += ' xmlns:xs="' + XS_NS +
+      '" xmlns:xsi="' + XSI_NS + '"';
 
   var out = '<saml:Assertion' + ns +
     ' MajorVersion="1" MinorVersion="' + minor + '"' +
@@ -406,26 +528,31 @@ function buildAssertion1x() {
       attrOpt('NotOnOrAfter', val('sa_not_on_or_after')) + '>\n';
     if (isOn('sa_opt_audience')) {
       out += '    <saml:AudienceRestrictionCondition>\n';
-      out += '      <saml:Audience>' + esc(val('sa_audience')) + '</saml:Audience>\n';
+      out += '      <saml:Audience>' + esc(val('sa_audience')) +
+          '</saml:Audience>\n';
       out += '    </saml:AudienceRestrictionCondition>\n';
     }
     // DoNotCacheCondition is the 1.1 counterpart of 2.0's OneTimeUse.
-    if (isOn('sa_opt_onetimeuse') && minor === '1') out += '    <saml:DoNotCacheCondition/>\n';
+    if (isOn('sa_opt_onetimeuse') &&
+        minor === '1') out += '    <saml:DoNotCacheCondition/>\n';
     out += '  </saml:Conditions>\n';
   }
 
   if (isOn('sa_opt_advice')) {
     out += '  <saml:Advice>\n';
-    out += '    <saml:AssertionIDReference>' + esc(val('sa_advice_ref') || newId()) + '</saml:AssertionIDReference>\n';
+    out += '    <saml:AssertionIDReference>' + esc(val('sa_advice_ref') ||
+        newId()) + '</saml:AssertionIDReference>\n';
     out += '  </saml:Advice>\n';
   }
 
   if (isOn('sa_opt_authn')) {
-    out += '  <saml:AuthenticationStatement AuthenticationMethod="' + esc(val('sa_authn_method')) +
+    out += '  <saml:AuthenticationStatement AuthenticationMethod="' +
+        esc(val('sa_authn_method')) +
       '" AuthenticationInstant="' + esc(val('sa_authn_instant')) + '">\n';
     out += subject1x('    ');
     if (isOn('sa_opt_locality')) {
-      out += '    <saml:SubjectLocality' + attrOpt('IPAddress', val('sa_locality_address')) +
+      out += '    <saml:SubjectLocality' + attrOpt('IPAddress',
+          val('sa_locality_address')) +
         attrOpt('DNSAddress', val('sa_locality_dns')) + '/>\n';
     }
     out += '  </saml:AuthenticationStatement>\n';
@@ -439,10 +566,12 @@ function buildAssertion1x() {
   }
 
   if (isOn('sa_opt_authz')) {
-    out += '  <saml:AuthorizationDecisionStatement Resource="' + esc(val('sa_authz_resource')) +
+    out += '  <saml:AuthorizationDecisionStatement Resource="' +
+        esc(val('sa_authz_resource')) +
       '" Decision="' + esc(val('sa_authz_decision') || 'Permit') + '">\n';
     out += subject1x('    ');
-    out += '    <saml:Action Namespace="' + esc(val('sa_authz_action_ns') || ACTION_NS_RWEDC) + '">' +
+    out += '    <saml:Action Namespace="' + esc(val('sa_authz_action_ns') ||
+        ACTION_NS_RWEDC) + '">' +
       esc(val('sa_authz_action') || 'Read') + '</saml:Action>\n';
     out += '  </saml:AuthorizationDecisionStatement>\n';
   }
@@ -452,18 +581,22 @@ function buildAssertion1x() {
   return out;
 }
 
-function buildAssertion() { return isV2() ? buildAssertion20() : buildAssertion1x(); }
+function buildAssertion() {
+  log.debug("Entering buildAssertion().");
+  log.debug("Leaving buildAssertion().");
+  return isV2() ? buildAssertion20() : buildAssertion1x();
+}
 
 // ---------------------------------------------------------------------------
 // The compose → sign → encrypt pipeline.
 //
-// `baseAssertion` is the unsigned assertion built from the form (pane 1 may show
-// something further along). Once Sign Assertion has been clicked, signing stays
-// ON: every later edit — in any pane, including a different signature algorithm
-// or a new key — rebuilds the assertion and re-signs it, and pane 1's Generated
-// Assertion box shows the signed result, so what is displayed is always exactly
-// what the tool would hand over. Encryption behaves the same way once Encrypt
-// Assertion has been clicked (sign-then-encrypt).
+// `baseAssertion` is the unsigned assertion built from the form (pane 1 may
+// show something further along). Once Sign Assertion has been clicked, signing
+// stays ON: every later edit — in any pane, including a different signature
+// algorithm or a new key — rebuilds the assertion and re-signs it, and pane 1's
+// Generated Assertion box shows the signed result, so what is displayed is
+// always exactly what the tool would hand over. Encryption behaves the same way
+// once Encrypt Assertion has been clicked (sign-then-encrypt).
 // ---------------------------------------------------------------------------
 var baseAssertion = '';
 var signActive = false;
@@ -474,11 +607,13 @@ var lastPushedPlaintext = '';
 // Point pane 3 at the current artifact (the signed assertion if there is one,
 // otherwise the plain one) — but never overwrite text the user typed there.
 function syncEncryptInput(xml) {
+  log.debug("Entering syncEncryptInput().");
   var current = val('sa_enc_plaintext');
   if (current === '' || current === lastPushedPlaintext) {
     setVal('sa_enc_plaintext', xml);
     lastPushedPlaintext = xml;
   }
+  log.debug("Leaving syncEncryptInput().");
 }
 
 // Re-apply every step the user has already applied, in order, and show the
@@ -491,7 +626,8 @@ function refreshPipeline() {
     if (!val('sa_private_key')) {
       signActive = false;
       setVal('sa_signed_assertion', '');
-      setStatus('sa_sign_status', 'Signing stopped — there is no private key. Generate one and sign again.');
+      setStatus('sa_sign_status', 'Signing stopped — there is no private ' +
+                'key. Generate one and sign again.');
     } else {
       try {
         var signed = xd.signEnveloped(baseAssertion, {
@@ -505,7 +641,8 @@ function refreshPipeline() {
         setVal('sa_signed_assertion', signed);
         // The verification box follows the newest signature unless the user has
         // pasted something else into it.
-        if (val('sa_verify_input') === '' || val('sa_verify_input') === lastSigned) {
+        if (val('sa_verify_input') === '' ||
+            val('sa_verify_input') === lastSigned) {
           setVal('sa_verify_input', signed);
           setVal('sa_verify_output', '');
         }
@@ -513,7 +650,8 @@ function refreshPipeline() {
         displayed = signed;
         setStatus('sa_sign_status', 'Assertion signed (' +
           (isV2() ? 'Signature after <Issuer>' : 'Signature as last child') +
-          ', Reference URI="' + signatureRefUri() + '"). Re-signed automatically on every change.');
+          ', Reference URI="' + signatureRefUri() +
+              '"). Re-signed automatically on every change.');
       } catch (e) {
         signActive = false;
         log.error('refreshPipeline/sign: ' + e.message);
@@ -532,11 +670,13 @@ function refreshPipeline() {
 // Regenerate the Assertion field from the current settings. Called on every
 // change; guarded so a transient build error can never break the handler.
 function autoBuild() {
+  log.debug("Entering autoBuild().");
   try {
     buildAssertionUi();
   } catch (e) {
     log.error('autoBuild: ' + e.message);
   }
+  log.debug("Leaving autoBuild().");
   return false;
 }
 
@@ -550,7 +690,8 @@ function formatXmlElement(node, indent) {
   log.debug("Entering formatXmlElement().");
   var attrs = '';
   for (var i = 0; i < node.attributes.length; i++) {
-    attrs += ' ' + node.attributes[i].name + '="' + esc(node.attributes[i].value) + '"';
+    attrs += ' ' + node.attributes[i].name + '="' +
+        esc(node.attributes[i].value) + '"';
   }
   var kids = [], text = '', c = node.firstChild;
   while (c) {
@@ -561,13 +702,16 @@ function formatXmlElement(node, indent) {
   var open = indent + '<' + node.nodeName + attrs;
   if (!kids.length) {
     var t = text.trim();
-    return t ? (open + '>' + esc(t) + '</' + node.nodeName + '>') : (open + '/>');
+    log.debug("Leaving formatXmlElement().");
+    return t ? (open + '>' + esc(t) + '</' + node.nodeName + '>') : (open +
+        '/>');
   }
   var lines = [open + '>'];
   // Mixed content does not occur in a SAML assertion, but keep any text rather
   // than silently dropping it.
   if (text.trim()) lines.push(indent + '  ' + esc(text.trim()));
-  for (var k = 0; k < kids.length; k++) lines.push(formatXmlElement(kids[k], indent + '  '));
+  for (var k = 0; k < kids.length; k++) lines.push(formatXmlElement(kids[k],
+       indent + '  '));
   lines.push(indent + '</' + node.nodeName + '>');
   log.debug("Leaving formatXmlElement().");
   return lines.join('\n');
@@ -575,10 +719,16 @@ function formatXmlElement(node, indent) {
 
 function prettyPrintAssertion() {
   log.debug("Entering prettyPrintAssertion().");
-  if (!baseAssertion.trim()) { setStatus('sa_compose_status', 'Nothing to format yet.'); return false; }
+  if (!baseAssertion.trim()) {
+    setStatus('sa_compose_status', 'Nothing to format yet.');
+    log.debug("Leaving prettyPrintAssertion().");
+    return false;
+  }
   var doc = new DOMParser().parseFromString(baseAssertion, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) {
-    setStatus('sa_compose_status', 'Cannot pretty print: the assertion is not well-formed XML.');
+    setStatus('sa_compose_status',
+              'Cannot pretty print: the assertion is not well-formed XML.');
+    log.debug("Leaving prettyPrintAssertion().");
     return false;
   }
   // Format the *unsigned* assertion and run it back through the pipeline, so a
@@ -586,17 +736,21 @@ function prettyPrintAssertion() {
   // rather than being invalidated by it.
   baseAssertion = formatXmlElement(doc.documentElement, '');
   refreshPipeline();
-  setStatus('sa_compose_status', 'Assertion pretty printed' + (signActive ? ' and re-signed' : '') + '.');
+  setStatus('sa_compose_status', 'Assertion pretty printed' + (signActive ?
+            ' and re-signed' : '') + '.');
   log.debug("Leaving prettyPrintAssertion().");
   return false;
 }
 
 function buildAssertionUi() {
+  log.debug("Entering buildAssertionUi().");
   baseAssertion = buildAssertion();
   var displayed = refreshPipeline();
   saveState();
-  setStatus('sa_compose_status', 'SAML ' + version() + ' assertion built (' + displayed.length + ' bytes)' +
+  setStatus('sa_compose_status', 'SAML ' + version() + ' assertion built (' +
+            displayed.length + ' bytes)' +
     (signActive ? ', signed' : '') + (encActive ? ', encrypted' : '') + '.');
+  log.debug("Leaving buildAssertionUi().");
   return false;
 }
 
@@ -604,15 +758,24 @@ function buildAssertionUi() {
 // Spec compliance check. Parses the generated assertion and applies the
 // structural rules of the selected version's schema/spec.
 // ---------------------------------------------------------------------------
+// The five predicates and lookups below, and pass/fail/warn inside
+// checkCompliance(), each run tens of times per check — and the check runs on
+// every rebuild. See the note above el(): no Entering/Leaving logging in
+// these one-line helpers. checkCompliance() itself keeps its logging.
 function isAbsoluteUri(v) {
-try {
-  new URL(v);
-  return true;
-} catch (e) {
-  return false;
-} }
-function isInstant(v) { return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(v || ''); }
-function isNCName(v) { return /^[A-Za-z_][A-Za-z0-9._\-]*$/.test(v || ''); }
+  try {
+    new URL(v);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+function isInstant(v) {
+  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/.test(v || '');
+}
+function isNCName(v) {
+  return /^[A-Za-z_][A-Za-z0-9._\-]*$/.test(v || '');
+}
 function firstLocal(root, name) {
   var e = root.getElementsByTagNameNS('*', name);
   return e && e.length ? e[0] : null;
@@ -625,14 +788,22 @@ function countLocal(root, name) {
 function checkCompliance() {
   log.debug("Entering checkCompliance().");
   var results = [];
-  function pass(c, m) { results.push('PASS  ' + c + ': ' + m); }
-  function fail(c, m) { results.push('FAIL  ' + c + ': ' + m); }
-  function warn(c, m) { results.push('WARN  ' + c + ': ' + m); }
+  function pass(c, m) {
+    results.push('PASS  ' + c + ': ' + m);
+  }
+  function fail(c, m) {
+    results.push('FAIL  ' + c + ': ' + m);
+  }
+  function warn(c, m) {
+    results.push('WARN  ' + c + ': ' + m);
+  }
 
   var xml = val('sa_assertion');
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) {
-    setVal('sa_compliance_output', 'FAIL  xml: the assertion is not well-formed XML.');
+    setVal('sa_compliance_output',
+           'FAIL  xml: the assertion is not well-formed XML.');
+    log.debug("Leaving checkCompliance().");
     return false;
   }
   var root = doc.documentElement;
@@ -647,12 +818,15 @@ function checkCompliance() {
   var idAttr = isV2() ? 'ID' : 'AssertionID';
   var id = root.getAttribute(idAttr) || '';
   if (!id) fail(idAttr, 'Required attribute is missing.');
-  else if (!isNCName(id)) fail(idAttr, 'Must be an xs:ID (NCName — start with a letter or "_"): "' + id + '"');
+  else if (!isNCName(id)) fail(idAttr,
+           'Must be an xs:ID (NCName — start with a letter or "_"): "' + id +
+           '"');
   else pass(idAttr, id);
 
   var instant = root.getAttribute('IssueInstant') || '';
   if (!instant) fail('IssueInstant', 'Required attribute is missing.');
-  else if (!isInstant(instant)) fail('IssueInstant', 'Must be an xs:dateTime in UTC ending in "Z": "' + instant + '"');
+  else if (!isInstant(instant)) fail('IssueInstant',
+           'Must be an xs:dateTime in UTC ending in "Z": "' + instant + '"');
   else pass('IssueInstant', instant);
 
   if (isV2()) {
@@ -660,34 +834,45 @@ function checkCompliance() {
     else fail('Version', 'Must be exactly "2.0".');
     var issuerEl = firstLocal(root, 'Issuer');
     var issuerText = issuerEl ? (issuerEl.textContent || '').trim() : '';
-    if (!issuerText) fail('Issuer', 'A <saml:Issuer> element with a value is required.');
+    if (!issuerText) fail('Issuer',
+        'A <saml:Issuer> element with a value is required.');
     else pass('Issuer', issuerText);
   } else {
-    var major = root.getAttribute('MajorVersion'), minor = root.getAttribute('MinorVersion');
+    var major = root.getAttribute('MajorVersion'), minor =
+        root.getAttribute('MinorVersion');
     var wantMinor = v === '1.1' ? '1' : '0';
-    if (major === '1' && minor === wantMinor) pass('Version', 'MajorVersion=1 MinorVersion=' + wantMinor);
-    else fail('Version', 'Expected MajorVersion="1" MinorVersion="' + wantMinor + '".');
+    if (major === '1' && minor === wantMinor) pass('Version',
+        'MajorVersion=1 MinorVersion=' + wantMinor);
+    else fail('Version', 'Expected MajorVersion="1" MinorVersion="' +
+              wantMinor + '".');
     var issuerAttr = root.getAttribute('Issuer') || '';
-    if (!issuerAttr) fail('Issuer', 'The Issuer attribute is required on a SAML 1.x assertion.');
+    if (!issuerAttr) fail('Issuer',
+        'The Issuer attribute is required on a SAML 1.x assertion.');
     else pass('Issuer', issuerAttr);
   }
 
   // --- Statements / Subject ---
-  var stmtCount = countLocal(root, 'AuthnStatement') + countLocal(root, 'AuthenticationStatement') +
-    countLocal(root, 'AttributeStatement') + countLocal(root, 'AuthzDecisionStatement') +
+  var stmtCount = countLocal(root, 'AuthnStatement') + countLocal(root,
+      'AuthenticationStatement') +
+    countLocal(root, 'AttributeStatement') + countLocal(root,
+               'AuthzDecisionStatement') +
     countLocal(root, 'AuthorizationDecisionStatement');
   if (isV2()) {
     var hasSubject = !!firstLocal(root, 'Subject');
     if (!stmtCount && !hasSubject) {
-      fail('content', 'An assertion with no statements must carry a <saml:Subject> (saml-core §2.3.3).');
+      fail('content', 'An assertion with no statements must carry a ' +
+           '<saml:Subject> (saml-core §2.3.3).');
     } else {
-      pass('content', stmtCount + ' statement(s)' + (hasSubject ? ' + Subject' : ''));
+      pass('content', stmtCount + ' statement(s)' + (hasSubject ?
+           ' + Subject' : ''));
     }
   } else {
-    if (!stmtCount) fail('content', 'A SAML 1.x assertion requires at least one statement.');
+    if (!stmtCount) fail('content',
+        'A SAML 1.x assertion requires at least one statement.');
     else pass('content', stmtCount + ' statement(s)');
     // Every 1.x statement is a SubjectStatement and needs its own <Subject>.
-    var stmtNames = ['AuthenticationStatement', 'AttributeStatement', 'AuthorizationDecisionStatement'];
+    var stmtNames = ['AuthenticationStatement', 'AttributeStatement',
+        'AuthorizationDecisionStatement'];
     var missing = [];
     for (var s = 0; s < stmtNames.length; s++) {
       var list = root.getElementsByTagNameNS('*', stmtNames[s]);
@@ -695,7 +880,8 @@ function checkCompliance() {
         if (!firstLocal(list[k], 'Subject')) missing.push(stmtNames[s]);
       }
     }
-    if (missing.length) fail('Subject', 'Missing <saml:Subject> in: ' + missing.join(', '));
+    if (missing.length) fail('Subject', 'Missing <saml:Subject> in: ' +
+        missing.join(', '));
     else if (stmtCount) pass('Subject', 'Present in every statement.');
   }
 
@@ -706,18 +892,23 @@ function checkCompliance() {
     if (!nameVal) fail('NameID', 'The identifier has no value.');
     else pass('NameID', nameVal);
     var fmt = nameEl.getAttribute('Format') || '';
-    if (fmt && !isAbsoluteUri(fmt)) fail('NameID/Format', 'Must be an absolute URI: "' + fmt + '"');
+    if (fmt && !isAbsoluteUri(fmt)) fail('NameID/Format',
+        'Must be an absolute URI: "' + fmt + '"');
     else if (fmt && !isV2() && V2_ONLY_NAMEID.test(fmt)) {
-      warn('NameID/Format', fmt + ' was introduced in SAML 2.0 and is not defined for 1.x.');
+      warn('NameID/Format', fmt +
+           ' was introduced in SAML 2.0 and is not defined for 1.x.');
     } else if (fmt) pass('NameID/Format', fmt);
   }
 
   // --- Conditions ---
   var cond = firstLocal(root, 'Conditions');
   if (cond) {
-    var nb = cond.getAttribute('NotBefore') || '', noa = cond.getAttribute('NotOnOrAfter') || '';
-    if (nb && !isInstant(nb)) fail('Conditions/NotBefore', 'Must be a UTC xs:dateTime: "' + nb + '"');
-    if (noa && !isInstant(noa)) fail('Conditions/NotOnOrAfter', 'Must be a UTC xs:dateTime: "' + noa + '"');
+    var nb = cond.getAttribute('NotBefore') || '', noa =
+        cond.getAttribute('NotOnOrAfter') || '';
+    if (nb && !isInstant(nb)) fail('Conditions/NotBefore',
+        'Must be a UTC xs:dateTime: "' + nb + '"');
+    if (noa && !isInstant(noa)) fail('Conditions/NotOnOrAfter',
+        'Must be a UTC xs:dateTime: "' + noa + '"');
     if (nb && noa && isInstant(nb) && isInstant(noa)) {
       if (new Date(nb).getTime() >= new Date(noa).getTime()) {
         fail('Conditions', 'NotBefore must be earlier than NotOnOrAfter.');
@@ -728,11 +919,13 @@ function checkCompliance() {
     var aud = firstLocal(cond, 'Audience');
     if (aud) {
       var audText = (aud.textContent || '').trim();
-      if (!isAbsoluteUri(audText)) fail('Audience', 'Must be an absolute URI: "' + audText + '"');
+      if (!isAbsoluteUri(audText)) fail('Audience',
+          'Must be an absolute URI: "' + audText + '"');
       else pass('Audience', audText);
     }
     if (!isV2() && countLocal(cond, 'DoNotCacheCondition') && v === '1.0') {
-      fail('DoNotCacheCondition', 'Introduced in SAML 1.1 — not valid in a 1.0 assertion.');
+      fail('DoNotCacheCondition',
+           'Introduced in SAML 1.1 — not valid in a 1.0 assertion.');
     }
     if (!isV2() && countLocal(cond, 'ProxyRestriction')) {
       fail('ProxyRestriction', 'A SAML 2.0-only condition.');
@@ -742,15 +935,21 @@ function checkCompliance() {
   // --- Statements detail ---
   var authn = firstLocal(root, 'AuthnStatement');
   if (authn) {
-    if (!isInstant(authn.getAttribute('AuthnInstant') || '')) fail('AuthnStatement', 'AuthnInstant is required and must be a UTC xs:dateTime.');
-    else if (!firstLocal(authn, 'AuthnContext')) fail('AuthnStatement', '<saml:AuthnContext> is required.');
+    if (!isInstant(authn.getAttribute('AuthnInstant') ||
+        '')) fail('AuthnStatement',
+        'AuthnInstant is required and must be a UTC xs:dateTime.');
+    else if (!firstLocal(authn, 'AuthnContext')) fail('AuthnStatement',
+             '<saml:AuthnContext> is required.');
     else pass('AuthnStatement', authn.getAttribute('AuthnInstant'));
   }
   var authn1x = firstLocal(root, 'AuthenticationStatement');
   if (authn1x) {
     var am = authn1x.getAttribute('AuthenticationMethod') || '';
-    if (!isAbsoluteUri(am)) fail('AuthenticationStatement', 'AuthenticationMethod must be an absolute URI.');
-    else if (!isInstant(authn1x.getAttribute('AuthenticationInstant') || '')) fail('AuthenticationStatement', 'AuthenticationInstant must be a UTC xs:dateTime.');
+    if (!isAbsoluteUri(am)) fail('AuthenticationStatement',
+        'AuthenticationMethod must be an absolute URI.');
+    else if (!isInstant(authn1x.getAttribute('AuthenticationInstant') ||
+             '')) fail('AuthenticationStatement',
+             'AuthenticationInstant must be a UTC xs:dateTime.');
     else pass('AuthenticationStatement', am);
   }
 
@@ -761,25 +960,36 @@ function checkCompliance() {
       var a = attrEls[i];
       if (isV2()) {
         if (!a.getAttribute('Name')) badAttrs.push('(missing Name)');
-      } else if (!a.getAttribute('AttributeName') || !a.getAttribute('AttributeNamespace')) {
-        badAttrs.push(a.getAttribute('AttributeName') || '(missing AttributeName)');
+      } else if (!a.getAttribute('AttributeName') ||
+                 !a.getAttribute('AttributeNamespace')) {
+        badAttrs.push(a.getAttribute('AttributeName') ||
+                      '(missing AttributeName)');
       }
-      if (!firstLocal(a, 'AttributeValue')) badAttrs.push((a.getAttribute('Name') || a.getAttribute('AttributeName') || '?') + ' (no AttributeValue)');
+      if (!firstLocal(a,
+          'AttributeValue')) badAttrs.push((a.getAttribute('Name') ||
+          a.getAttribute('AttributeName') || '?') + ' (no AttributeValue)');
     }
     if (badAttrs.length) fail('Attribute', 'Invalid: ' + badAttrs.join(', '));
     else pass('Attribute', attrEls.length + ' attribute(s) well-formed.');
   } else if (isOn('sa_opt_attrs')) {
-    warn('AttributeStatement', 'Enabled, but no attributes were added — the statement is omitted (it requires at least one <Attribute>).');
+    warn('AttributeStatement', 'Enabled, but no attributes were added — the ' +
+         'statement is omitted (it requires at least one <Attribute>).');
   }
 
-  var authz = firstLocal(root, 'AuthzDecisionStatement') || firstLocal(root, 'AuthorizationDecisionStatement');
+  var authz = firstLocal(root, 'AuthzDecisionStatement') || firstLocal(root,
+      'AuthorizationDecisionStatement');
   if (authz) {
     var res = authz.getAttribute('Resource') || '';
     var dec = authz.getAttribute('Decision') || '';
-    if (!res) fail('AuthzDecisionStatement', 'Resource is required (an absolute URI, or "" for all resources in 2.0).');
-    else if (!isAbsoluteUri(res)) fail('AuthzDecisionStatement', 'Resource must be an absolute URI: "' + res + '"');
-    else if (['Permit', 'Deny', 'Indeterminate'].indexOf(dec) < 0) fail('AuthzDecisionStatement', 'Decision must be Permit, Deny, or Indeterminate.');
-    else if (!firstLocal(authz, 'Action')) fail('AuthzDecisionStatement', 'At least one <saml:Action> is required.');
+    if (!res) fail('AuthzDecisionStatement', 'Resource is required (an ' +
+        'absolute URI, or "" for all resources in 2.0).');
+    else if (!isAbsoluteUri(res)) fail('AuthzDecisionStatement',
+             'Resource must be an absolute URI: "' + res + '"');
+    else if (['Permit', 'Deny',
+             'Indeterminate'].indexOf(dec) < 0) fail('AuthzDecisionStatement',
+             'Decision must be Permit, Deny, or Indeterminate.');
+    else if (!firstLocal(authz, 'Action')) fail('AuthzDecisionStatement',
+             'At least one <saml:Action> is required.');
     else pass('AuthzDecisionStatement', dec + ' on ' + res);
   }
 
@@ -787,21 +997,28 @@ function checkCompliance() {
   var sig = firstLocal(root, 'Signature');
   if (sig) {
     var kids = root.childNodes, elems = [];
-    for (var c = 0; c < kids.length; c++) { if (kids[c].nodeType === 1) elems.push(kids[c].localName); }
+    for (var c = 0; c < kids.length; c++) { if (kids[c]
+         .nodeType === 1) elems.push(kids[c].localName); }
     var pos = elems.indexOf('Signature');
     if (isV2()) {
-      if (pos === 1 && elems[0] === 'Issuer') pass('Signature', 'Correctly placed immediately after <saml:Issuer>.');
-      else fail('Signature', 'In SAML 2.0 the <ds:Signature> must directly follow <saml:Issuer>.');
+      if (pos === 1 && elems[0] === 'Issuer') pass('Signature',
+          'Correctly placed immediately after <saml:Issuer>.');
+      else fail('Signature',
+          'In SAML 2.0 the <ds:Signature> must directly follow <saml:Issuer>.');
     } else if (pos === elems.length - 1) {
       pass('Signature', 'Correctly placed as the last child of the assertion.');
     } else {
-      fail('Signature', 'In SAML 1.x the <ds:Signature> must be the last child of <saml:Assertion>.');
+      fail('Signature', 'In SAML 1.x the <ds:Signature> must be the last ' +
+           'child of <saml:Assertion>.');
     }
   }
 
-  var failures = results.filter(function (r) { return r.indexOf('FAIL') === 0; }).length;
-  var warnings = results.filter(function (r) { return r.indexOf('WARN') === 0; }).length;
-  results.unshift('SAML ' + v + ' compliance: ' + (failures ? failures + ' failure(s)' : 'no failures') +
+  var failures =
+      results.filter(function (r) { return r.indexOf('FAIL') === 0; }).length;
+  var warnings =
+      results.filter(function (r) { return r.indexOf('WARN') === 0; }).length;
+  results.unshift('SAML ' + v + ' compliance: ' + (failures ? failures +
+                  ' failure(s)' : 'no failures') +
     (warnings ? ', ' + warnings + ' warning(s)' : '') + '.');
   setVal('sa_compliance_output', results.join('\n'));
   log.debug("Leaving checkCompliance().");
@@ -818,7 +1035,8 @@ function generateKeys() {
   // Defer so the status paints before the (synchronous, slow) keygen runs.
   setTimeout(function () {
     try {
-      var kp = xd.generateKeyPair(bits, val('sa_issuer') || 'saml-assertion-issuer');
+      var kp = xd.generateKeyPair(bits, val('sa_issuer') ||
+          'saml-assertion-issuer');
       setVal('sa_private_key', kp.privateKeyPem);
       setVal('sa_public_key', kp.certPem);
       setStatus('sa_sign_status', 'Key pair generated.');
@@ -853,41 +1071,75 @@ function generateEncryptionKeys() {
 }
 
 function triggerDownload(filename, data, mime) {
+  log.debug("Entering triggerDownload().");
   var blob = new Blob([data], { type: mime || 'application/octet-stream' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  log.debug("Leaving triggerDownload().");
 }
 
 function downloadKeys() {
-  if (!val('sa_private_key')) { setStatus('sa_sign_status', 'Generate a key pair first.'); return false; }
-  triggerDownload('assertion-signing-key.pem', val('sa_private_key'), 'application/x-pem-file');
-  triggerDownload('assertion-signing-cert.pem', val('sa_public_key'), 'application/x-pem-file');
+  log.debug("Entering downloadKeys().");
+  if (!val('sa_private_key')) {
+    setStatus('sa_sign_status', 'Generate a key pair first.');
+    log.debug("Leaving downloadKeys().");
+    return false;
+  }
+  triggerDownload('assertion-signing-key.pem', val('sa_private_key'),
+                  'application/x-pem-file');
+  triggerDownload('assertion-signing-cert.pem', val('sa_public_key'),
+                  'application/x-pem-file');
+  log.debug("Leaving downloadKeys().");
   return false;
 }
 
 function downloadEncryptionKeys() {
-  if (!val('sa_enc_private_key')) { setStatus('sa_enc_status', 'Generate a recipient key pair first.'); return false; }
-  triggerDownload('assertion-recipient-key.pem', val('sa_enc_private_key'), 'application/x-pem-file');
-  triggerDownload('assertion-recipient-cert.pem', val('sa_enc_cert'), 'application/x-pem-file');
+  log.debug("Entering downloadEncryptionKeys().");
+  if (!val('sa_enc_private_key')) {
+    setStatus('sa_enc_status', 'Generate a recipient key pair first.');
+    log.debug("Leaving downloadEncryptionKeys().");
+    return false;
+  }
+  triggerDownload('assertion-recipient-key.pem', val('sa_enc_private_key'),
+                  'application/x-pem-file');
+  triggerDownload('assertion-recipient-cert.pem', val('sa_enc_cert'),
+                  'application/x-pem-file');
+  log.debug("Leaving downloadEncryptionKeys().");
   return false;
 }
 
 function downloadAssertion() {
-  var xml = val('sa_encrypted') || val('sa_signed_assertion') || val('sa_assertion');
-  if (!xml) { setStatus('sa_compose_status', 'Nothing to download yet.'); return false; }
+  log.debug("Entering downloadAssertion().");
+  var xml = val('sa_encrypted') || val('sa_signed_assertion') ||
+      val('sa_assertion');
+  if (!xml) {
+    setStatus('sa_compose_status', 'Nothing to download yet.');
+    log.debug("Leaving downloadAssertion().");
+    return false;
+  }
   triggerDownload('assertion.xml', xml, 'application/samlassertion+xml');
+  log.debug("Leaving downloadAssertion().");
   return false;
 }
 
 // Where the <ds:Signature> goes, and what the Reference points at. SAML 1.0's
 // AssertionID is not an xs:ID, so the whole-document reference (URI="") is the
 // interoperable form there; 1.1 made it an xs:ID and 2.0 uses ID.
-function signaturePlacement() { return isV2() ? 'after-issuer' : 'last'; }
+function signaturePlacement() {
+  log.debug("Entering signaturePlacement().");
+  log.debug("Leaving signaturePlacement().");
+  return isV2() ? 'after-issuer' : 'last';
+}
 function signatureRefUri() {
-  if (version() === '1.0') return '';
+  log.debug("Entering signatureRefUri().");
+  if (version() === '1.0') {
+    log.debug("Leaving signatureRefUri().");
+    return '';
+  }
+  log.debug("Leaving signatureRefUri().");
   return '#' + val('sa_id');
 }
 
@@ -895,9 +1147,15 @@ function signatureRefUri() {
 // Reset (or until the private key goes away), and pane 1 shows the signed form.
 function signAssertion() {
   log.debug("Entering signAssertion().");
-  if (!baseAssertion) { setStatus('sa_sign_status', 'Compose an assertion first.'); return false; }
+  if (!baseAssertion) {
+    setStatus('sa_sign_status', 'Compose an assertion first.');
+    log.debug("Leaving signAssertion().");
+    return false;
+  }
   if (!val('sa_private_key')) {
-    setStatus('sa_sign_status', 'No signing key — click Generate Keys (or paste a PKCS#8 private key).');
+    setStatus('sa_sign_status', 'No signing key — click Generate Keys (or ' +
+              'paste a PKCS#8 private key).');
+    log.debug("Leaving signAssertion().");
     return false;
   }
   signActive = true;
@@ -912,17 +1170,31 @@ function signAssertion() {
 function verifySignature() {
   log.debug("Entering verifySignature().");
   var xml = val('sa_verify_input') || val('sa_signed_assertion');
-  if (!xml) { setVal('sa_verify_output', 'Nothing to verify — sign an assertion or paste one above.'); return false; }
+  if (!xml) {
+    setVal('sa_verify_output',
+           'Nothing to verify — sign an assertion or paste one above.');
+    log.debug("Leaving verifySignature().");
+    return false;
+  }
   try {
-    var r = xd.verifyXmlSignature(xml, { certPem: val('sa_verify_cert') || undefined });
-    if (r.error) { setVal('sa_verify_output', 'INVALID: ' + r.error); return false; }
+    var r = xd.verifyXmlSignature(xml, { certPem: val('sa_verify_cert') ||
+        undefined });
+    if (r.error) {
+      setVal('sa_verify_output', 'INVALID: ' + r.error);
+      log.debug("Leaving verifySignature().");
+      return false;
+    }
     var lines = [];
-    lines.push(r.valid ? 'VALID — signature and all reference digests check out.' : 'INVALID');
-    lines.push('SignatureValue over SignedInfo: ' + (r.signatureValid ? 'valid' : 'INVALID'));
-    lines.push('Reference digests: ' + (r.referencesValid ? 'valid' : 'INVALID'));
+    lines.push(r.valid ?
+        'VALID — signature and all reference digests check out.' : 'INVALID');
+    lines.push('SignatureValue over SignedInfo: ' + (r.signatureValid ?
+               'valid' : 'INVALID'));
+    lines.push('Reference digests: ' + (r.referencesValid ?
+               'valid' : 'INVALID'));
     (r.references || []).forEach(function (ref) {
       lines.push('  URI="' + ref.uri + '" → ' + (ref.ok ? 'ok' : 'MISMATCH' +
-        (ref.reason ? ' (' + ref.reason + ')' : ' computed=' + ref.computed + ' declared=' + ref.declared)));
+        (ref.reason ? ' (' + ref.reason + ')' : ' computed=' + ref.computed +
+         ' declared=' + ref.declared)));
     });
     lines.push('SignatureMethod: ' + r.signatureMethod);
     lines.push('Canonicalization: ' + r.canonicalization);
@@ -942,16 +1214,23 @@ function verifySignature() {
 // Turn encryption on. Like signing, it then tracks every change: the assertion
 // is rebuilt, re-signed if signing is on, and re-encrypted.
 function encryptAssertion() {
+  log.debug("Entering encryptAssertion().");
   encActive = true;
   runEncrypt();
   saveState();
+  log.debug("Leaving encryptAssertion().");
   return false;
 }
 
 function runEncrypt() {
   log.debug("Entering runEncrypt().");
-  var xml = val('sa_enc_plaintext') || val('sa_signed_assertion') || val('sa_assertion');
-  if (!xml) { setStatus('sa_enc_status', 'Nothing to encrypt.'); return false; }
+  var xml = val('sa_enc_plaintext') || val('sa_signed_assertion') ||
+      val('sa_assertion');
+  if (!xml) {
+    setStatus('sa_enc_status', 'Nothing to encrypt.');
+    log.debug("Leaving runEncrypt().");
+    return false;
+  }
   try {
     var encryptedData = xd.encryptXml(xml, {
       certPem: val('sa_enc_cert'),
@@ -963,19 +1242,23 @@ function runEncrypt() {
       mgf: val('sa_enc_mgf')
     });
     // SAML 2.0 carries an encrypted assertion in <saml:EncryptedAssertion>.
-    // SAML 1.x has no such element, so the bare <xenc:EncryptedData> is emitted.
+    // SAML 1.x has no such element, so the bare <xenc:EncryptedData> is
+    // emitted.
     var out = (isV2() && isOn('sa_enc_wrap'))
-      ? '<saml:EncryptedAssertion xmlns:saml="' + SAML2_NS + '">' + encryptedData + '</saml:EncryptedAssertion>'
+      ? '<saml:EncryptedAssertion xmlns:saml="' + SAML2_NS + '">' +
+          encryptedData + '</saml:EncryptedAssertion>'
       : encryptedData;
     // The decrypt box follows the newest ciphertext unless the user pasted
     // something else into it.
-    if (val('sa_dec_input') === '' || val('sa_dec_input') === val('sa_encrypted')) {
+    if (val('sa_dec_input') === '' ||
+        val('sa_dec_input') === val('sa_encrypted')) {
       setVal('sa_dec_input', out);
       setVal('sa_dec_output', '');
     }
     setVal('sa_encrypted', out);
     setStatus('sa_enc_status', 'Assertion encrypted' +
-      (val('sa_signed_assertion') && xml === val('sa_signed_assertion') ? ' (sign-then-encrypt)' : '') +
+      (val('sa_signed_assertion') && xml === val('sa_signed_assertion') ?
+       ' (sign-then-encrypt)' : '') +
       '. Re-encrypted automatically on every change.');
   } catch (e) {
     encActive = false;
@@ -989,9 +1272,18 @@ function runEncrypt() {
 function decryptAssertion() {
   log.debug("Entering decryptAssertion().");
   var xml = val('sa_dec_input') || val('sa_encrypted');
-  if (!xml) { setVal('sa_dec_output', 'Nothing to decrypt.'); return false; }
+  if (!xml) {
+    setVal('sa_dec_output', 'Nothing to decrypt.');
+    log.debug("Leaving decryptAssertion().");
+    return false;
+  }
   var priv = val('sa_enc_private_key');
-  if (!priv) { setVal('sa_dec_output', 'No recipient private key — generate a key pair or paste the PKCS#8 key that matches the encryption certificate.'); return false; }
+  if (!priv) {
+    setVal('sa_dec_output', 'No recipient private key — generate a key pair ' +
+           'or paste the PKCS#8 key that matches the encryption certificate.');
+    log.debug("Leaving decryptAssertion().");
+    return false;
+  }
   try {
     setVal('sa_dec_output', xd.decryptXml(xml, { privateKeyPem: priv }));
     setStatus('sa_enc_status', 'Decrypted.');
@@ -1009,10 +1301,14 @@ function decryptAssertion() {
 function copyField(id) {
   log.debug("Entering copyField().");
   var e = el(id);
-  if (!e) return false;
+  if (!e) {
+    log.debug("Leaving copyField().");
+    return false;
+  }
   var text = e.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
+    navigator.clipboard.writeText(text).catch(function (err) { log.error(
+                                  'copyField: ' + err); });
   } else {
     try {
       e.focus();
@@ -1027,15 +1323,22 @@ function copyField(id) {
 }
 
 function togglePane(bodyId) {
+  log.debug("Entering togglePane().");
   var b = el(bodyId);
   if (b) b.style.display = (b.style.display === 'none') ? 'block' : 'none';
+  log.debug("Leaving togglePane().");
   return false;
 }
 
 function viewCertificate(fieldId) {
   log.debug("Entering viewCertificate().");
   var pem = val(fieldId);
-  if (!pem) { setStatus('sa_sign_status', 'No certificate to view yet — generate a key pair first.'); return false; }
+  if (!pem) {
+    setStatus('sa_sign_status',
+              'No certificate to view yet — generate a key pair first.');
+    log.debug("Leaving viewCertificate().");
+    return false;
+  }
   try {
     if (window.localStorage) localStorage.setItem('saml_cert_view', pem);
   } catch (e) {
@@ -1049,22 +1352,27 @@ function viewCertificate(fieldId) {
 // Hide a <select> option that the selected version does not define, and fall
 // back to a supported value if it was the current selection.
 function setOptionAvailable(selectId, optValue, available, fallback) {
+  log.debug("Entering setOptionAvailable().");
   var sel = el(selectId);
-  if (!sel) return;
+  if (!sel) {
+    log.debug("Leaving setOptionAvailable().");
+    return;
+  }
   for (var i = 0; i < sel.options.length; i++) {
     if (sel.options[i].value !== optValue) continue;
     sel.options[i].hidden = !available;
     sel.options[i].disabled = !available;
     if (!available && sel.value === optValue && fallback) sel.value = fallback;
   }
+  log.debug("Leaving setOptionAvailable().");
 }
 
 // Single source of truth for what is on screen. Two rules combine:
 //   * version — controls for elements the selected SAML version does not define
 //     are hidden (in every pane, down to individual <select> options);
 //   * dependency — an unchecked box collapses the fields it governs, including
-//     the conditions nested inside <Conditions> and the fields nested inside the
-//     authentication statement.
+//     the conditions nested inside <Conditions> and the fields nested inside
+//     the authentication statement.
 // Called on load, on every version change, and on every checkbox change.
 function applyVisibility() {
   log.debug("Entering applyVisibility().");
@@ -1077,52 +1385,67 @@ function applyVisibility() {
   show('sa_opt_subject_row', v2);
   var subjectOn = !v2 || isOn('sa_opt_subject');
   show('sa_subject_group', subjectOn);
-  show('sa_row_spqualifier', v2);                       // SPNameQualifier: 2.0 only
+  show('sa_row_spqualifier',
+       v2);                       // SPNameQualifier: 2.0 only
   show('sa_subjconf_group', subjectOn && isOn('sa_opt_subjconf'));
-  show('sa_row_confirm_data', v2);                      // SubjectConfirmationData: 2.0 only
+  show('sa_row_confirm_data',
+       v2);                      // SubjectConfirmationData: 2.0 only
   setOptionAvailable('sa_confirm_method', 'artifact', !v2, 'bearer');
   // The 2.0 name-identifier formats are not defined for a 1.x assertion.
   ['persistent', 'transient', 'entity', 'kerberos'].forEach(function (f) {
-    setOptionAvailable('sa_nameid_format', 'urn:oasis:names:tc:SAML:2.0:nameid-format:' + f, v2,
+    setOptionAvailable('sa_nameid_format',
+                       'urn:oasis:names:tc:SAML:2.0:nameid-format:' + f, v2,
       'urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified');
   });
 
   // --- Pane 1: Conditions ----------------------------------------------------
   var condOn = isOn('sa_opt_conditions');
-  show('sa_row_conditions_times', condOn);              // NotBefore / NotOnOrAfter
+  show('sa_row_conditions_times',
+       condOn);              // NotBefore / NotOnOrAfter
   show('sa_conditions_group', condOn);
   show('sa_row_audience', isOn('sa_opt_audience'));
-  show('sa_row_onetimeuse', v !== '1.0');               // DoNotCacheCondition arrived in 1.1
-  show('sa_row_proxy', v2);                             // ProxyRestriction: 2.0 only
+  show('sa_row_onetimeuse',
+       v !== '1.0');               // DoNotCacheCondition arrived in 1.1
+  show('sa_row_proxy',
+       v2);                             // ProxyRestriction: 2.0 only
   show('sa_row_proxy_count', isOn('sa_opt_proxy'));
 
   // --- Pane 1: Advice / statements ------------------------------------------
   show('sa_row_advice_ref', isOn('sa_opt_advice'));
   show('sa_authn_group', isOn('sa_opt_authn'));
-  show('sa_row_authn_context', v2);                     // AuthnContextClassRef: 2.0
-  show('sa_row_authn_method', !v2);                     // AuthenticationMethod: 1.x
-  show('sa_row_session', v2);                           // SessionIndex / SessionNotOnOrAfter: 2.0
+  show('sa_row_authn_context',
+       v2);                     // AuthnContextClassRef: 2.0
+  show('sa_row_authn_method',
+       !v2);                     // AuthenticationMethod: 1.x
+  show('sa_row_session',
+       v2);                           // SessionIndex / SessionNotOnOrAfter: 2.0
   show('sa_row_locality_fields', isOn('sa_opt_locality'));
   show('sa_authz_group', isOn('sa_opt_authz'));
   show('sa_attr_group', isOn('sa_opt_attrs'));
 
   // --- Pane 3: encryption ----------------------------------------------------
-  show('sa_row_enc_wrap', v2);                          // EncryptedAssertion: 2.0 only
-  // RSA-1_5 uses neither a digest nor an MGF; rsa-oaep-mgf1p fixes MGF1 to SHA-1.
+  show('sa_row_enc_wrap',
+       v2);                          // EncryptedAssertion: 2.0 only
+  // RSA-1_5 uses neither a digest nor an MGF; rsa-oaep-mgf1p fixes MGF1 to
+  // SHA-1.
   var keyAlg = val('sa_enc_key_alg');
   show('sa_row_enc_digest', keyAlg.indexOf('rsa-1_5') < 0);
   show('sa_row_enc_mgf', keyAlg.indexOf('xmlenc11#rsa-oaep') >= 0);
 
   // --- Labels / notes that differ by version ---------------------------------
   var otu = el('sa_label_onetimeuse');
-  if (otu) otu.textContent = v2 ? 'OneTimeUse condition' : 'DoNotCacheCondition (SAML 1.1)';
+  if (otu) otu.textContent = v2 ?
+      'OneTimeUse condition' : 'DoNotCacheCondition (SAML 1.1)';
   var note = el('sa_version_note');
   if (note) {
     note.textContent = v2
       ? 'SAML 2.0: the Subject sits at the assertion level, conditions use <AudienceRestriction> / <OneTimeUse> / <ProxyRestriction>, and attributes carry a NameFormat.'
       : (v === '1.1'
         ? 'SAML 1.1: the Subject belongs to each statement, conditions use <AudienceRestrictionCondition> / <DoNotCacheCondition>, and attributes use AttributeName + AttributeNamespace.'
-        : 'SAML 1.0: the Subject belongs to each statement, conditions use <AudienceRestrictionCondition> (there is no DoNotCacheCondition), and attributes use AttributeName + AttributeNamespace.');
+        : 'SAML 1.0: the Subject belongs to each statement, conditions use ' +
+            '<AudienceRestrictionCondition> (there is no ' +
+            'DoNotCacheCondition), and attributes use AttributeName + ' +
+            'AttributeNamespace.');
   }
   var placement = el('sa_sign_placement_note');
   if (placement) {
@@ -1130,21 +1453,27 @@ function applyVisibility() {
       ? 'SAML 2.0: the <ds:Signature> is placed immediately after <saml:Issuer>, and the Reference points at the assertion ID.'
       : (v === '1.1'
         ? 'SAML 1.1: the <ds:Signature> is the assertion’s last child, and the Reference points at AssertionID (an xs:ID as of 1.1).'
-        : 'SAML 1.0: the <ds:Signature> is the assertion’s last child, and the Reference uses URI="" (the whole document) because 1.0’s AssertionID is not an xs:ID.');
+        : 'SAML 1.0: the <ds:Signature> is the assertion’s last child, and ' +
+            'the Reference uses URI="" (the whole document) because 1.0’s ' +
+            'AssertionID is not an xs:ID.');
   }
   log.debug("Leaving applyVisibility().");
 }
 
 // Show only the controls that exist in the selected version, then rebuild.
 function onVersionChange() {
+  log.debug("Entering onVersionChange().");
   applyVisibility();
   autoBuild();
+  log.debug("Leaving onVersionChange().");
   return false;
 }
 
 function setReturnLink() {
+  log.debug("Entering setReturnLink().");
   var link = el('return_link');
   if (link) link.setAttribute('href', '/saml_request.html');
+  log.debug("Leaving setReturnLink().");
 }
 
 // Values that are computed rather than declared in the markup: the Issuer (and
@@ -1152,12 +1481,18 @@ function setReturnLink() {
 // Applied on load and by Reset, and only to fields the user has left empty.
 function seedDefaults() {
   log.debug("Entering seedDefaults().");
-  var origin = (window.location && window.location.origin) || appconfig.uiUrl || '';
-  if (!val('sa_issuer')) setVal('sa_issuer', origin ? origin.replace(/\/+$/, '') + '/issuer' : '');
-  if (!val('sa_audience')) setVal('sa_audience', appconfig.spEntityId || (origin + '/saml/sp'));
-  if (!val('sa_confirm_recipient')) setVal('sa_confirm_recipient', appconfig.acsUrl || (origin + '/saml_response.html'));
-  if (!val('sa_authz_resource')) setVal('sa_authz_resource', origin + '/protected');
-  if (!val('sa_nameid_value')) setVal('sa_nameid_value', 'testuser@example.com');
+  var origin = (window.location && window.location.origin) || appconfig.uiUrl ||
+      '';
+  if (!val('sa_issuer')) setVal('sa_issuer', origin ? origin.replace(/\/+$/,
+      '') + '/issuer' : '');
+  if (!val('sa_audience')) setVal('sa_audience', appconfig.spEntityId ||
+      (origin + '/saml/sp'));
+  if (!val('sa_confirm_recipient')) setVal('sa_confirm_recipient',
+      appconfig.acsUrl || (origin + '/saml_response.html'));
+  if (!val('sa_authz_resource')) setVal('sa_authz_resource', origin +
+      '/protected');
+  if (!val('sa_nameid_value')) setVal('sa_nameid_value',
+      'testuser@example.com');
   // The encryption pane defaults to the signing certificate so an encrypt →
   // decrypt round-trip works out of the box once keys are generated.
   if (!val('sa_enc_cert') && val('sa_public_key')) {
@@ -1169,7 +1504,10 @@ function seedDefaults() {
 
 // Every control in all three panes, excluding the buttons.
 function paneFields() {
-  return document.querySelectorAll('.saml-pane input, .saml-pane select, .saml-pane textarea');
+  log.debug("Entering paneFields().");
+  log.debug("Leaving paneFields().");
+  return document.querySelectorAll('.saml-pane input, .saml-pane select, ' +
+                                   '.saml-pane textarea');
 }
 
 // Restore every field in all three panes to the value the markup declares, drop
@@ -1214,7 +1552,8 @@ function resetToDefaults() {
   renderAttributes();
   applyVisibility();
   refreshTimestamps();   // rebuilds the assertion
-  setStatus('sa_compose_status', 'All three panes reset to their default values.');
+  setStatus('sa_compose_status',
+            'All three panes reset to their default values.');
   saveState();
   log.debug("Leaving resetToDefaults().");
   return false;
@@ -1224,9 +1563,11 @@ function resetToDefaults() {
 // regenerates the assertion. Bound to 'input' as well as 'change' so the
 // Generated Assertion box tracks typing rather than waiting for a blur.
 function onFieldChanged() {
+  log.debug("Entering onFieldChanged().");
   saveState();
   applyVisibility();
   autoBuild();
+  log.debug("Leaving onFieldChanged().");
 }
 
 window.onload = function () {

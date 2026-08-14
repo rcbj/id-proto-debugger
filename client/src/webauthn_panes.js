@@ -12,11 +12,11 @@
 // node against real ceremonies, with no browser and no chance of flaking. Put
 // one document.createElement in there and that test needs a browser.
 //
-// **Nothing here uses innerHTML.** Everything these panes render arrived from an
-// authenticator, from a third-party relying party, or from a paste box. The
+// **Nothing here uses innerHTML.** Everything these panes render arrived from
+// an authenticator, from a third-party relying party, or from a paste box. The
 // whole file builds nodes with createElement and sets text with textContent, so
-// there is no path from those bytes to markup at all — a stronger guarantee than
-// sanitising, and free, because none of these panes need rich content.
+// there is no path from those bytes to markup at all — a stronger guarantee
+// than sanitising, and free, because none of these panes need rich content.
 // ---------------------------------------------------------------------------
 
 var bunyan = require("bunyan");
@@ -40,16 +40,21 @@ var log = bunyan.createLogger({
 });
 
 function byId(id) {
+  log.debug("Entering byId().");
+  log.debug("Leaving byId().");
   return document.getElementById(id);
 }
 
 function clear(node) {
+  log.debug("Entering clear().");
   while (node && node.firstChild) {
     node.removeChild(node.firstChild);
   }
+  log.debug("Leaving clear().");
 }
 
 function el(tag, className, text) {
+  log.debug("Entering el().");
   var node = document.createElement(tag);
   if (className) {
     node.className = className;
@@ -57,39 +62,49 @@ function el(tag, className, text) {
   if (text !== undefined && text !== null) {
     node.textContent = String(text);
   }
+  log.debug("Leaving el().");
   return node;
 }
 
 function table(parent) {
+  log.debug("Entering table().");
   var t = el("table", "wa-table");
   var tbody = el("tbody");
   t.appendChild(tbody);
   parent.appendChild(t);
+  log.debug("Leaving table().");
   return tbody;
 }
 
 function row(parent, name, value, extraClass) {
+  log.debug("Entering row().");
   var tr = el("tr", extraClass || null);
   tr.appendChild(el("td", "wa-name", name));
   tr.appendChild(el("td", "wa-value", value));
   parent.appendChild(tr);
+  log.debug("Leaving row().");
   return tr;
 }
 
 function status(id, text, kind) {
+  log.debug("Entering status().");
   var node = byId(id);
   if (!node) {
+    log.debug("Leaving status().");
     return;
   }
   node.textContent = text;
   node.className = "wa-status" + (kind ? " wa-" + kind : "");
+  log.debug("Leaving status().");
 }
 
 function setValue(id, text) {
+  log.debug("Entering setValue().");
   var node = byId(id);
   if (node) {
     node.value = text === undefined || text === null ? "" : String(text);
   }
+  log.debug("Leaving setValue().");
 }
 
 // --- the panes ---------------------------------------------------------------
@@ -98,6 +113,7 @@ function renderClientData(paneId, rawId, cd) {
   log.debug("Entering renderClientData().");
   var pane = byId(paneId);
   if (!pane) {
+    log.debug("Leaving renderClientData().");
     return;
   }
   clear(pane);
@@ -110,15 +126,17 @@ function renderClientData(paneId, rawId, cd) {
     row(t, "topOrigin", cd.topOrigin);
   }
   if (cd.extraMembers.length) {
-    // Chrome inserts `other_keys_can_be_added_here` into some ceremonies and not
-    // others, at random, precisely so that implementations cannot compare this
-    // against a template. Somebody staring at an unexplained member deserves to
-    // be told what it is rather than left to wonder.
+    // Chrome inserts `other_keys_can_be_added_here` into some ceremonies and
+    // not others, at random, precisely so that implementations cannot compare
+    // this against a template. Somebody staring at an unexplained member
+    // deserves to be told what it is rather than left to wonder.
     row(t, "additional members", cd.extraMembers.join(", "), "wa-note-row");
     pane.appendChild(el("p", "wa-note",
       "Additional members are legal and expected. Chrome inserts " +
-      "\"other_keys_can_be_added_here\" into some ceremonies and not others, deliberately, so that " +
-      "implementations cannot compare clientDataJSON against a fixed template. Parse it; never " +
+      "\"other_keys_can_be_added_here\" into some ceremonies and not others, " +
+          "deliberately, so that " +
+      "implementations cannot compare clientDataJSON against a fixed " +
+          "template. Parse it; never " +
       "compare its bytes."));
   }
   setValue(rawId, cd.text);
@@ -129,6 +147,7 @@ function renderAuthenticatorData(paneId, ad) {
   log.debug("Entering renderAuthenticatorData().");
   var pane = byId(paneId);
   if (!pane) {
+    log.debug("Leaving renderAuthenticatorData().");
     return;
   }
   clear(pane);
@@ -152,7 +171,8 @@ function renderAuthenticatorData(paneId, ad) {
   flagRow.appendChild(el("td", "wa-name", "flags"));
   var flagCell = el("td", "wa-value");
   flagCell.appendChild(flags);
-  flagCell.appendChild(el("div", "wa-subtle", "0x" + ad.flagsByte.toString(16)));
+  flagCell.appendChild(el("div", "wa-subtle", "0x" +
+                       ad.flagsByte.toString(16)));
   flagRow.appendChild(flagCell);
   t.appendChild(flagRow);
 
@@ -163,7 +183,8 @@ function renderAuthenticatorData(paneId, ad) {
   }
   if (ad.trailingBytes) {
     row(t, "trailing bytes", ad.trailingBytes +
-        " byte(s) follow the fields the flags describe — the buffer is not what it claims",
+        " byte(s) follow the fields the flags describe — the buffer is not " +
+            "what it claims",
         "wa-bad-row");
   }
   log.debug("Leaving renderAuthenticatorData(). AT=" + ad.flags.AT);
@@ -174,12 +195,14 @@ function renderCoseKey(paneId, pemId, ad) {
   log.debug("Entering renderCoseKey().");
   var pane = byId(paneId);
   if (!pane) {
+    log.debug("Leaving renderCoseKey().");
     return null;
   }
   clear(pane);
   if (!ad.flags.AT || !ad.credentialPublicKey) {
     pane.appendChild(el("p", "wa-note",
-      "No credential public key here. Only a REGISTRATION carries one; an assertion is signed by " +
+      "No credential public key here. Only a REGISTRATION carries one; an " +
+          "assertion is signed by " +
       "a key the relying party is expected to already hold."));
     setValue(pemId, "");
     log.debug("Leaving renderCoseKey(). none present");
@@ -189,7 +212,8 @@ function renderCoseKey(paneId, pemId, ad) {
   try {
     described = cose.describe(ad.credentialPublicKey);
   } catch (e) {
-    pane.appendChild(el("p", "wa-bad", "The credential public key did not decode: " + e.message));
+    pane.appendChild(el("p", "wa-bad",
+                     "The credential public key did not decode: " + e.message));
     log.debug("Leaving renderCoseKey(). decode failed");
     return null;
   }
@@ -207,6 +231,7 @@ function renderAttestation(paneId, rawId, att) {
   log.debug("Entering renderAttestation().");
   var pane = byId(paneId);
   if (!pane) {
+    log.debug("Leaving renderAttestation().");
     return;
   }
   clear(pane);
@@ -223,8 +248,10 @@ function renderAttestation(paneId, rawId, att) {
     row(t, "x5c", s.x5c.length + " certificate(s): " +
         s.x5c.map(function (c) { return c.bytes + "B"; }).join(", "));
     pane.appendChild(el("p", "wa-note",
-      "The certificate chain is reported, not validated. Identifying an authenticator from a chain " +
-      "this tool has not checked against a metadata service would be a confident guess, and a " +
+      "The certificate chain is reported, not validated. Identifying an " +
+          "authenticator from a chain " +
+      "this tool has not checked against a metadata service would be a " +
+          "confident guess, and a " +
       "confident guess is the one thing a debugger must not offer."));
   }
   if (s.note) {
@@ -241,6 +268,7 @@ function renderChecks(paneId, statusId, result) {
   log.debug("Entering renderChecks(). valid=" + result.valid);
   var pane = byId(paneId);
   if (!pane) {
+    log.debug("Leaving renderChecks().");
     return;
   }
   clear(pane);
@@ -257,7 +285,8 @@ function renderChecks(paneId, statusId, result) {
   status(statusId,
     result.valid
       ? "VALID — all " + result.checks.length + " checks passed."
-      : "NOT VALID — " + failed + " of " + result.checks.length + " checks failed.",
+      : "NOT VALID — " + failed + " of " + result.checks.length +
+          " checks failed.",
     result.valid ? "good" : "bad");
   log.debug("Leaving renderChecks().");
 }

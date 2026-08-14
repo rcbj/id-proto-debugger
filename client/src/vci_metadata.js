@@ -38,46 +38,82 @@ var log = bunyan.createLogger({
 
 var VCI_METADATA = [
   { name: "credential_issuer", type: "string", dflt: "http://localhost:8081",
-    desc: "REQUIRED. The Credential Issuer identifier — the URL the issuer metadata was published under, and the value a wallet's proof of possession must name as its audience." },
-  { name: "credential_endpoint", type: "string", dflt: "http://localhost:8081/oid4vci/credential",
-    desc: "REQUIRED. Where the Credential Request is sent, with the access token as a Bearer credential." },
-  { name: "authorization_servers", type: "array", dflt: "http://localhost:8080/realms/debugger-testing",
-    desc: "OPTIONAL. The authorization servers that can authorize issuance of these credentials. The RFC 8414 pane above retrieves this server's metadata." },
-  { name: "nonce_endpoint", type: "string", dflt: "http://localhost:8081/oid4vci/nonce",
-    desc: "OPTIONAL. Returns the c_nonce that the wallet's proof of possession must carry, so the issuer knows the proof is fresh." },
-  { name: "notification_endpoint", type: "string", dflt: "http://localhost:8081/oid4vci/notification",
-    desc: "OPTIONAL. Where a wallet reports what it did with an issued credential." },
+    desc: "REQUIRED. The Credential Issuer identifier — the URL the issuer " +
+        "metadata was published under, and the value a wallet's proof of " +
+        "possession must name as its audience." },
+  { name: "credential_endpoint", type: "string",
+   dflt: "http://localhost:8081/oid4vci/credential",
+    desc: "REQUIRED. Where the Credential Request is sent, with the access " +
+        "token as a Bearer credential." },
+  { name: "authorization_servers", type: "array",
+   dflt: "http://localhost:8080/realms/debugger-testing",
+    desc: "OPTIONAL. The authorization servers that can authorize issuance " +
+        "of these credentials. The RFC 8414 pane above retrieves this " +
+        "server's metadata." },
+  { name: "nonce_endpoint", type: "string",
+   dflt: "http://localhost:8081/oid4vci/nonce",
+    desc: "OPTIONAL. Returns the c_nonce that the wallet's proof of " +
+        "possession must carry, so the issuer knows the proof is fresh." },
+  { name: "notification_endpoint", type: "string",
+   dflt: "http://localhost:8081/oid4vci/notification",
+    desc: "OPTIONAL. Where a wallet reports what it did with an issued " +
+        "credential." },
   { name: "deferred_credential_endpoint", type: "string", dflt: "",
-    desc: "OPTIONAL. Where a wallet collects a credential the issuer could not mint immediately (it answered with a transaction_id)." },
+    desc: "OPTIONAL. Where a wallet collects a credential the issuer could " +
+        "not mint immediately (it answered with a transaction_id)." },
   { name: "batch_credential_issuance", type: "json", dflt: "",
-    desc: "OPTIONAL. Present when the issuer can mint several credentials in one request; batch_size is the most proofs it will accept." },
+    desc: "OPTIONAL. Present when the issuer can mint several credentials in " +
+        "one request; batch_size is the most proofs it will accept." },
   { name: "credential_response_encryption", type: "json", dflt: "",
-    desc: "OPTIONAL. The JWE algorithms the issuer supports for encrypting the Credential Response, and whether encryption is required." },
+    desc: "OPTIONAL. The JWE algorithms the issuer supports for encrypting " +
+        "the Credential Response, and whether encryption is required." },
   { name: "credential_request_encryption", type: "json", dflt: "",
-    desc: "OPTIONAL. The issuer's own public keys (jwks, each with a kid) for encrypting the Credential Request to it, the enc values its endpoint can decode, and whether encryption is required. Note there is no alg_values_supported here, unlike the response side: section 10 takes the JWE alg from the alg of the chosen JWK." },
+    desc: "OPTIONAL. The issuer's own public keys (jwks, each with a kid) " +
+        "for encrypting the Credential Request to it, the enc values its " +
+        "endpoint can decode, and whether encryption is required. Note there " +
+        "is no alg_values_supported here, unlike the response side: section " +
+        "10 takes the JWE alg from the alg of the chosen JWK." },
   { name: "display", type: "json", dflt: "",
-    desc: "OPTIONAL. How to display the Credential Issuer itself (name, locale, logo)." },
+    desc: "OPTIONAL. How to display the Credential Issuer itself (name, " +
+        "locale, logo)." },
   { name: "signed_metadata", type: "string", dflt: "",
-    desc: "OPTIONAL. A JWT of this metadata document signed by the issuer. Use Validate Signature in the pane above to verify it." }
+    desc: "OPTIONAL. A JWT of this metadata document signed by the issuer. " +
+        "Use Validate Signature in the pane above to verify it." }
 ];
 
 var VCI_CONFIG_METADATA = [
-  { name: "credential_configuration_id", type: "string", dflt: "IdentityCredential",
-    desc: "The key of the chosen entry in credential_configurations_supported. This is what the Credential Request asks for." },
+  { name: "credential_configuration_id", type: "string",
+   dflt: "IdentityCredential",
+    desc: "The key of the chosen entry in " +
+        "credential_configurations_supported. This is what the Credential " +
+        "Request asks for." },
   { name: "format", type: "string", dflt: "dc+sd-jwt",
-    desc: "REQUIRED. The credential format. dc+sd-jwt is the SD-JWT VC format identifier (vc+sd-jwt in earlier drafts); jwt_vc_json is a W3C Verifiable Credential secured as a JWT, which has no selective disclosure." },
+    desc: "REQUIRED. The credential format. dc+sd-jwt is the SD-JWT VC " +
+        "format identifier (vc+sd-jwt in earlier drafts); jwt_vc_json is a " +
+        "W3C Verifiable Credential secured as a JWT, which has no selective " +
+        "disclosure." },
   { name: "credential_definition", type: "json", dflt: "",
-    desc: "REQUIRED for jwt_vc_json. The W3C credential definition — its `type` array is what identifies the credential in that format, in place of the vct an SD-JWT VC uses." },
+    desc: "REQUIRED for jwt_vc_json. The W3C credential definition — its " +
+        "`type` array is what identifies the credential in that format, in " +
+        "place of the vct an SD-JWT VC uses." },
   { name: "vct", type: "string", dflt: "urn:idptools:sd-jwt-vc:identity",
-    desc: "REQUIRED for dc+sd-jwt. The Verifiable Credential Type — what kind of credential this is, and the vct claim the issued SD-JWT VC will carry." },
+    desc: "REQUIRED for dc+sd-jwt. The Verifiable Credential Type — what " +
+        "kind of credential this is, and the vct claim the issued SD-JWT VC " +
+        "will carry." },
   { name: "scope", type: "string", dflt: "identity_credential",
-    desc: "OPTIONAL. The OAuth 2.0 scope that asks the authorization server for authorization to issue this credential." },
+    desc: "OPTIONAL. The OAuth 2.0 scope that asks the authorization server " +
+        "for authorization to issue this credential." },
   { name: "cryptographic_binding_methods_supported", type: "array", dflt: "jwk",
-    desc: "OPTIONAL. How the credential can be bound to the holder's key. jwk means the holder's public key goes in the credential's cnf claim." },
-  { name: "credential_signing_alg_values_supported", type: "array", dflt: "RS256",
+    desc: "OPTIONAL. How the credential can be bound to the holder's key. " +
+        "jwk means the holder's public key goes in the credential's " +
+        "cnf claim." },
+  { name: "credential_signing_alg_values_supported", type: "array",
+   dflt: "RS256",
     desc: "The algorithms the issuer will sign the credential with." },
-  { name: "proof_signing_alg_values_supported", type: "array", dflt: "ES256, RS256",
-    desc: "From proof_types_supported.jwt: the algorithms the issuer accepts on the wallet's JWT proof of possession." }
+  { name: "proof_signing_alg_values_supported", type: "array",
+   dflt: "ES256, RS256",
+    desc: "From proof_types_supported.jwt: the algorithms the issuer accepts " +
+        "on the wallet's JWT proof of possession." }
 ];
 
 var metadataClient = require("./metadata_client");
@@ -87,22 +123,43 @@ var metadataClient = require("./metadata_client");
 var opMetadata = require("./op_metadata");
 
 var PREFIX = "vci_";
-function idFor(name) { return PREFIX + name; }
+function idFor(name) {
+  log.debug("Entering idFor().");
+  log.debug("Leaving idFor().");
+  return PREFIX + name;
+}
 
-function el(id) { return document.getElementById(id); }
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
+}
 // Writing through metadata_client, so a member whose value is a JSON structure
 // gets a <textarea> that can show it pretty-printed.
-function setFieldValue(id, v) { metadataClient.setMetadataField(id, v); }
-function fieldValue(id) { var e = el(id); return e ? e.value : ""; }
+function setFieldValue(id, v) {
+  log.debug("Entering setFieldValue().");
+  metadataClient.setMetadataField(id, v);
+  log.debug("Leaving setFieldValue().");
+}
+function fieldValue(id) {
+  log.debug("Entering fieldValue().");
+  var e = el(id);
+  log.debug("Leaving fieldValue().");
+  return e ? e.value : "";
+}
 
 // A metadata value -> the string shown in its field. An array of scalars reads
-// better comma-separated; a structure (display, claims, batch_credential_issuance,
-// credential_response_encryption) is pretty-printed JSON.
+// better comma-separated; a structure (display, claims,
+// batch_credential_issuance, credential_response_encryption) is pretty-printed
+// JSON.
 function toField(value) {
+  log.debug("Entering toField().");
+  log.debug("Leaving toField().");
   return metadataClient.valueToDisplay(value);
 }
 
 function writeToLocalStorage() {
+  log.debug("Entering writeToLocalStorage().");
   VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
     try {
       localStorage.setItem(idFor(m.name), fieldValue(idFor(m.name)));
@@ -110,6 +167,7 @@ function writeToLocalStorage() {
       // No storage available in this context.
     }
   });
+  log.debug("Leaving writeToLocalStorage().");
 }
 
 function loadFromLocalStorage() {
@@ -127,12 +185,14 @@ function loadFromLocalStorage() {
 }
 
 function clearFields() {
+  log.debug("Entering clearFields().");
   VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
     setFieldValue(idFor(m.name), "");
     // The note described a particular document; with that gone it would be a
     // claim about nothing.
     opMetadata.markNotDefined(idFor(m.name), false);
   });
+  log.debug("Leaving clearFields().");
 }
 
 function clearStorage() {
@@ -158,11 +218,11 @@ function populateFromMetadata(info, configId) {
   VCI_METADATA.forEach(function (m) {
     var v = toField(info[m.name]);
     setFieldValue(idFor(m.name), v);
-    // A member this issuer does not publish is marked, not left blank: empty and
-    // "not offered" are different things, and a wallet that cannot tell them
-    // apart is exactly what this pane exists to prevent. walt.id publishes no
-    // deferred_credential_endpoint, for instance — it cannot defer an issuance,
-    // and the field being empty is the fact, not an oversight.
+    // A member this issuer does not publish is marked, not left blank: empty
+    // and "not offered" are different things, and a wallet that cannot tell
+    // them apart is exactly what this pane exists to prevent. walt.id publishes
+    // no deferred_credential_endpoint, for instance — it cannot defer an
+    // issuance, and the field being empty is the fact, not an oversight.
     opMetadata.markNotDefined(idFor(m.name),
       !Object.prototype.hasOwnProperty.call(info, m.name));
     try {

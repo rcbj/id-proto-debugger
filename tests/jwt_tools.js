@@ -17,7 +17,9 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata, getAccessTokenAuthCode } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+const { populateMetadata, getAccessTokenAuthCode } =
+       require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
+       assert });
 
 
 // Client-side crypto (key generation, signing, JWE, format conversion) is fast
@@ -26,6 +28,8 @@ const { populateMetadata, getAccessTokenAuthCode } = require("../common/tests.js
 var cryptoWait = Math.max(waitTime, 15000);
 
 function decodeJWT(jwt_) {
+  log.debug("Entering decodeJWT().");
+  log.debug("Leaving decodeJWT().");
   return jwt.decode(jwt_, { complete: true });
 }
 
@@ -35,9 +39,11 @@ function decodeJWT(jwt_) {
 // ===========================================================================
 
 async function getIDToken(driver) {
+  log.debug("Entering getIDToken().");
   log.info("Entering getIDToken().");
   var token_id_token = By.id("token_id_token");
   await driver.wait(until.elementLocated(token_id_token), waitTime);
+  log.debug("Leaving getIDToken().");
   return await driver.findElement(token_id_token).getAttribute("value");
 }
 
@@ -45,22 +51,29 @@ async function getIDToken(driver) {
 // JWT Tools UI helpers
 // ===========================================================================
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var el = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(el), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", el);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", el);
   await el.click();
+  log.debug("Leaving click().");
 }
 
 async function setInput(driver, locator, text) {
+  log.debug("Entering setInput().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var el = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(el), waitTime);
   await el.clear();
   await el.sendKeys(text);
+  log.debug("Leaving setInput().");
 }
 
 async function getValue(driver, locator) {
+  log.debug("Entering getValue().");
+  log.debug("Leaving getValue().");
   return await driver.findElement(locator).getAttribute("value");
 }
 
@@ -82,24 +95,31 @@ async function waitForValue(driver, locator, pred, msg, timeout) {
 // Click a toggle-switch by its wrapping <label> (the checkbox itself is
 // display:none, so it is not directly clickable).
 async function clickToggle(driver, checkboxId) {
+  log.debug("Entering clickToggle().");
   await click(driver, By.xpath("//label[.//input[@id='" + checkboxId + "']]"));
+  log.debug("Leaving clickToggle().");
 }
 
 function onclickBtn(fn) {
+  log.debug("Entering onclickBtn().");
   // Match on a substring rather than the exact attribute: the deployed static
   // site is HTML-minified, which strips the trailing ";" from inline handlers
   // ("...addClaim();" -> "...addClaim()"). The "jwt_tools.<fn>(" fragment is
   // present and unique in both the minified and unminified builds.
+  log.debug("Leaving onclickBtn().");
   return By.xpath("//input[contains(@onclick, \"jwt_tools." + fn + "(\")]");
 }
 
 async function addCustomClaim(driver, name, value, type) {
   log.debug("Entering addCustomClaim().");
-  log.info("Adding custom claim: name=" + name + ", value=" + value + ", type=" + type);
+  log.info("Adding custom claim: name=" + name + ", value=" + value +
+           ", type=" + type);
   await setInput(driver, By.id("custom_claim_name"), name);
   await setInput(driver, By.id("custom_claim_value"), value);
-  await new Select(driver.findElement(By.id("custom_claim_type"))).selectByValue(type);
-  await new Select(driver.findElement(By.id("custom_claim_target"))).selectByValue("jwt_tools_payload");
+  await new Select(driver.findElement(By.id("custom_claim_type")))
+                   .selectByValue(type);
+  await new Select(driver.findElement(By.id("custom_claim_target")))
+                   .selectByValue("jwt_tools_payload");
   await click(driver, onclickBtn("addClaim"));
   await waitForValue(driver, By.id("jwt_tools_payload"),
     function (v) { return v.indexOf('"' + name + '"') !== -1; },
@@ -120,7 +140,8 @@ async function jwtToolsActivities(driver) {
   log.info("Click the JWT Tools link.");
   var jwtToolsLink = By.css('a[href="/jwt_tools.html?from=debugger.html"]');
   await driver.wait(until.elementLocated(jwtToolsLink), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(jwtToolsLink)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(jwtToolsLink)),
+                    waitTime);
   await click(driver, jwtToolsLink);
 
   log.info("Wait for JWT Tools page to load.");
@@ -139,8 +160,10 @@ async function jwtToolsActivities(driver) {
     function (v) { return v.indexOf("PASS") !== -1; },
     "Compliance output was not produced.");
   log.info("Compliance output:\n" + compliance);
-  assert.ok(compliance.indexOf("PASS") !== -1, "Expected at least one PASS in compliance output.");
-  assert.ok(compliance.indexOf("FAIL") === -1, "Compliance output contained a FAIL:\n" + compliance);
+  assert.ok(compliance.indexOf("PASS") !== -1,
+            "Expected at least one PASS in compliance output.");
+  assert.ok(compliance.indexOf("FAIL") === -1,
+            "Compliance output contained a FAIL:\n" + compliance);
   log.info("Compliance check passed with no FAIL entries.");
 
   // ---- Pane 1: generate an RFC 9068 access token, then validate it --------
@@ -160,8 +183,10 @@ async function jwtToolsActivities(driver) {
     function (v) { return v.indexOf("RFC 9068") !== -1; },
     "RFC 9068 compliance output was not produced.");
   log.info("RFC 9068 compliance output:\n" + rfc9068);
-  assert.ok(rfc9068.indexOf("PASS") !== -1, "Expected at least one PASS in RFC 9068 output.");
-  assert.ok(rfc9068.indexOf("FAIL") === -1, "RFC 9068 compliance reported a FAIL:\n" + rfc9068);
+  assert.ok(rfc9068.indexOf("PASS") !== -1,
+            "Expected at least one PASS in RFC 9068 output.");
+  assert.ok(rfc9068.indexOf("FAIL") === -1,
+            "RFC 9068 compliance reported a FAIL:\n" + rfc9068);
   log.info("RFC 9068 compliance passed with no FAIL entries.");
 
   // ---- Pane 2: signing (JWS) ----------------------------------------------
@@ -176,17 +201,22 @@ async function jwtToolsActivities(driver) {
     "  isSecureContext: window.isSecureContext," +
     "  cryptoType: (typeof window.crypto)," +
     "  subtleType: (typeof (window.crypto && window.crypto.subtle))," +
-    "  signStatus: ((document.getElementById('sign_status') || {}).value || '')" +
+    "  signStatus: ((document.getElementById('sign_status') || " +
+        "{}).value || '')" +
     "});");
   log.info("CRYPTO DIAG: " + cryptoDiag);
   var diag = JSON.parse(cryptoDiag);
   if (diag.subtleType === "undefined") {
-    throw new Error("crypto.subtle is unavailable (isSecureContext=" + diag.isSecureContext +
-      ", origin=" + diag.href + "). Web Crypto requires a secure context. signStatus=" + diag.signStatus);
+    throw new Error("crypto.subtle is unavailable (isSecureContext=" +
+                    diag.isSecureContext +
+      ", origin=" + diag.href +
+          "). Web Crypto requires a secure context. signStatus=" +
+          diag.signStatus);
   }
   await waitForValue(driver, By.id("sign_public_key"),
     function (v) { return v.indexOf("BEGIN PUBLIC KEY") !== -1; },
-    "Signing public key (PEM) was not generated. sign_status=" + diag.signStatus);
+    "Signing public key (PEM) was not generated. sign_status=" +
+        diag.signStatus);
 
   log.info("Toggle keys to JWK.");
   await clickToggle(driver, "sign_key_jwk");
@@ -201,7 +231,8 @@ async function jwtToolsActivities(driver) {
     "Signing private key did not convert back to PEM.");
 
   log.info("Download signing keys in PEM format.");
-  await new Select(driver.findElement(By.id("sign_ks_format"))).selectByValue("pem");
+  await new Select(driver.findElement(By.id("sign_ks_format")))
+                   .selectByValue("pem");
   await click(driver, onclickBtn("downloadSigningKeys"));
   await waitForValue(driver, By.id("sign_status"),
     function (v) { return v.indexOf("Downloaded PEM") !== -1; },
@@ -215,7 +246,8 @@ async function jwtToolsActivities(driver) {
   log.info("Signed JWT produced (" + signedJwt.length + " chars).");
 
   log.info("Select X.509 verification type.");
-  await new Select(driver.findElement(By.id("jwt_verification_type"))).selectByValue("x509");
+  await new Select(driver.findElement(By.id("jwt_verification_type")))
+                   .selectByValue("x509");
   await waitForValue(driver, By.id("jwt_verification_key"),
     function (v) { return v.indexOf("BEGIN PUBLIC KEY") !== -1; },
     "X.509 verification key was not auto-populated with the public key.");
@@ -275,20 +307,23 @@ async function jwtToolsActivities(driver) {
   log.info("Decryption output matches the Payload to Encrypt value.");
 
   // ---- every key-management algorithm the pane offers ---------------------
-  // The steps above exercise whichever alg the page defaults to. That leaves the
-  // key-agreement algorithms untested through the page — and they are the ones
-  // with the interesting failure mode: ECDH-ES derives its key through the
+  // The steps above exercise whichever alg the page defaults to. That leaves
+  // the key-agreement algorithms untested through the page — and they are the
+  // ones with the interesting failure mode: ECDH-ES derives its key through the
   // Concat KDF (RFC 7518 section 4.6), where a mistake produces a key that is
   // wrong in a way nothing notices until decryption fails. The JWE code is
-  // shared with the OID4VCI issuance panes (client/src/jose_jwe.js), so a wiring
-  // mistake here would be a wiring mistake there too.
+  // shared with the OID4VCI issuance panes (client/src/jose_jwe.js), so a
+  // wiring mistake here would be a wiring mistake there too.
   var offered = await driver.executeScript(
     "return Array.prototype.slice.call(document.getElementById('jwe_alg').options)" +
-    "  .map(function (o) { return { value: o.value, disabled: o.disabled, label: o.textContent }; });");
-  var algs = offered.filter(function (o) { return !o.disabled; }).map(function (o) { return o.value; });
+    "  .map(function (o) { return { value: o.value, disabled: o.disabled, " +
+        "label: o.textContent }; });");
+  var algs = offered.filter(function (o) { return !o.disabled; })
+      .map(function (o) { return o.value; });
   var unusable = offered.filter(function (o) { return o.disabled; });
   assert.ok(algs.length >= 3,
-    "the encryption pane should offer several usable key-management algorithms. Got: " +
+    "the encryption pane should offer several usable key-management " +
+        "algorithms. Got: " +
     JSON.stringify(offered));
 
   // RFC 7518 defines AES-192; Chrome's Web Crypto does not implement it. An
@@ -297,33 +332,41 @@ async function jwtToolsActivities(driver) {
   // and nothing else that are marked.
   unusable.forEach(function (o) {
     assert.ok(/A192/.test(o.value),
-      "only the AES-192 algorithms should be unusable in this browser. Got: " + JSON.stringify(o));
+      "only the AES-192 algorithms should be unusable in this browser. Got: " +
+          JSON.stringify(o));
     assert.ok(/unsupported here/.test(o.label),
       "an unusable option should say why. Got: " + o.label);
   });
   var encOptions = await driver.executeScript(
     "return Array.prototype.slice.call(document.getElementById('jwe_enc').options)" +
-    "  .map(function (o) { return { value: o.value, disabled: o.disabled, label: o.textContent }; });");
-  var a192 = encOptions.filter(function (o) { return o.value === "A192GCM"; })[0];
+    "  .map(function (o) { return { value: o.value, disabled: o.disabled, " +
+        "label: o.textContent }; });");
+  var a192 =
+      encOptions.filter(function (o) { return o.value === "A192GCM"; })[0];
   assert.ok(a192 && a192.disabled && /unsupported here/.test(a192.label),
-    "A192GCM cannot be performed by this browser either, so it should be marked too. Got: " +
+    "A192GCM cannot be performed by this browser either, so it should be " +
+        "marked too. Got: " +
     JSON.stringify(a192));
   assert.ok(encOptions.filter(function (o) { return !o.disabled; }).length >= 2,
-    "and the content encryption algorithms that DO work should remain available.");
+    "and the content encryption algorithms that DO work should remain " +
+        "available.");
   log.info("Unusable in this browser, and marked: " +
-           (unusable.map(function (o) { return o.value; }).concat(["A192GCM"]).join(", ") || "none"));
-  log.info("Round-tripping every usable key-management algorithm: " + algs.join(", "));
+           (unusable.map(function (o) { return o.value; }).concat(["A192GCM"])
+            .join(", ") || "none"));
+  log.info("Round-tripping every usable key-management algorithm: " +
+           algs.join(", "));
 
   for (var i = 0; i < algs.length; i++) {
     var alg = algs[i];
-    // Fresh key material per algorithm: RSA-OAEP needs an RSA key and ECDH-ES an
-    // EC one, so reusing the previous pair would fail for reasons that have
+    // Fresh key material per algorithm: RSA-OAEP needs an RSA key and ECDH-ES
+    // an EC one, so reusing the previous pair would fail for reasons that have
     // nothing to do with the encryption.
     await driver.executeScript(
       "document.getElementById('jwe_alg').value = arguments[0];", alg);
     await click(driver, onclickBtn("generateEncryptionKeys"));
     await waitForValue(driver, By.id("jwe_status"),
-      function (v) { return v.indexOf("Generated") !== -1 || v.indexOf("Error") !== -1; },
+      function (v) { return v.indexOf("Generated") !== -1 ||
+                v.indexOf("Error") !== -1; },
       "Key generation for " + alg + " produced no status.");
     var keyStatus = await getValue(driver, By.id("jwe_status"));
     assert.ok(keyStatus.indexOf("Error") === -1,
@@ -342,18 +385,23 @@ async function jwtToolsActivities(driver) {
     var segments = produced.split(".");
     if (alg === "ECDH-ES") {
       assert.strictEqual(segments[1], "",
-        "ECDH-ES is direct key agreement, so the encrypted_key segment must be empty. Got: " +
+        "ECDH-ES is direct key agreement, so the encrypted_key segment must " +
+            "be empty. Got: " +
         segments[1].slice(0, 40));
     } else {
       assert.ok(segments[1].length > 0,
-        alg + " wraps a content encryption key, so encrypted_key must not be empty.");
+        alg + " wraps a content encryption key, so encrypted_key must not " +
+            "be empty.");
     }
-    var header = JSON.parse(Buffer.from(segments[0], "base64url").toString("utf8"));
+    var header = JSON.parse(Buffer.from(segments[0],
+        "base64url").toString("utf8"));
     assert.strictEqual(header.alg, alg,
-      "the protected header should name the algorithm used. Got: " + JSON.stringify(header));
+      "the protected header should name the algorithm used. Got: " +
+          JSON.stringify(header));
     if (alg.indexOf("ECDH-ES") === 0) {
       assert.ok(header.epk && header.epk.crv,
-        alg + " must publish the ephemeral public key it agreed with (epk). Got: " +
+        alg + " must publish the ephemeral public key it agreed with " +
+            "(epk). Got: " +
         JSON.stringify(header));
     }
 
@@ -362,8 +410,10 @@ async function jwtToolsActivities(driver) {
       function (v) { return v.trim().length > 0; },
       "No decryption output for " + alg + ".");
     assert.strictEqual(back.trim(), plaintext,
-      alg + " did not round-trip: the decrypted text differs from what was encrypted.");
-    log.info("  " + alg + ": round-tripped" + (header.epk ? " (epk " + header.epk.crv + ")" : "") + ".");
+      alg + " did not round-trip: the decrypted text differs from what was " +
+          "encrypted.");
+    log.info("  " + alg + ": round-tripped" + (header.epk ? " (epk " +
+             header.epk.crv + ")" : "") + ".");
   }
   log.info("Every key-management algorithm the pane offers round-trips.");
   log.debug("Leaving jwtToolsActivities().");
@@ -401,20 +451,24 @@ async function idTokenDecodeActivities(driver, id_token) {
 
   // The signed ID Token should also have populated the Sign pane fields.
   var signed = await getValue(driver, By.id("jwt_tools_signed"));
-  assert.strictEqual(signed, id_token, "Signed JWT field was not populated with the ID Token.");
+  assert.strictEqual(signed, id_token,
+                     "Signed JWT field was not populated with the ID Token.");
   var verifyInput = await getValue(driver, By.id("verify_input"));
-  assert.strictEqual(verifyInput, id_token, "JWT to Verify field was not populated with the ID Token.");
+  assert.strictEqual(verifyInput, id_token,
+      "JWT to Verify field was not populated with the ID Token.");
   log.info("Sign pane fields populated from the pasted ID Token.");
   log.debug("Leaving idTokenDecodeActivities().");
 }
 
 async function test() {
   log.debug("Entering test().");
-  // JWT Tools clicks key-download buttons. On host runs the browser is the user's
-  // real Chrome (default download dir ~/Downloads); redirect downloads to a
-  // throwaway temp dir (removed below) so nothing lands in the home directory.
-  // The test asserts only on the in-page status, never the downloaded file.
-  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(), "idptools-selenium-dl-"));
+  // JWT Tools clicks key-download buttons. On host runs the browser is the
+  // user's real Chrome (default download dir ~/Downloads); redirect downloads
+  // to a throwaway temp dir (removed below) so nothing lands in the home
+  // directory. The test asserts only on the in-page status, never the
+  // downloaded file.
+  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(),
+      "idptools-selenium-dl-"));
   const options = new chrome.Options();
   options.setUserPreferences({
     "download.default_directory": downloadDir,
@@ -425,7 +479,8 @@ async function test() {
   if (headless) {
     // Use "new" headless: unlike the legacy --headless mode, it honors the
     // --unsafely-treat-insecure-origin-as-secure override below, which is what
-    // makes crypto.subtle (Web Crypto) available on the http://client:3000 origin.
+    // makes crypto.subtle (Web Crypto) available on the http://client:3000
+    // origin.
     options.addArguments("--headless=new");
   }
   options.addArguments("--no-sandbox");
@@ -433,7 +488,9 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   // JWT Tools uses the Web Crypto API (crypto.subtle), which browsers expose
   // only in a "secure context". http://localhost is treated as secure, but the
   // containerized runs serve the client at http://client:3000 (a non-secure
@@ -441,17 +498,21 @@ async function test() {
   // Treat the debugger origin as trustworthy so crypto.subtle is available.
   // (This flag only takes effect when a --user-data-dir is also set.)
   var secureOrigin = baseUrl.replace(/\/+$/, "");
-  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" + secureOrigin);
+  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
+                       secureOrigin);
   options.addArguments("--user-data-dir=/tmp/jwt-tools-chrome-" + Date.now());
-  const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+  const driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).build();
 
   // Belt-and-suspenders: also pin the download dir via CDP (independent of the
-  // profile prefs, which a custom --user-data-dir can bypass), so downloads never
-  // fall back to ~/Downloads.
+  // profile prefs, which a custom --user-data-dir can bypass), so downloads
+  // never fall back to ~/Downloads.
   try {
     await driver.sendDevToolsCommand("Browser.setDownloadBehavior",
       { behavior: "allow", downloadPath: downloadDir, eventsEnabled: false });
-  } catch (e) { /* older Chrome/driver — the user-preferences download dir applies */ }
+  } catch (e) {
+    /* older Chrome/driver — the user-preferences download dir applies */
+  }
 
   try {
     log.info("Starting Test run.");
@@ -464,7 +525,8 @@ async function test() {
     const user = process.env.USER;
     let pkce_enabled = process.env.PKCE_ENABLED;
 
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
     assert(client_id, "CLIENT_ID environment variable is not set.");
     assert(client_secret, "CLIENT_SECRET environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
@@ -478,11 +540,14 @@ async function test() {
     log.info("Load the debugger and run the OIDC Authorization Code flow.");
     await driver.get(baseUrl + "/debugger.html");
     await populateMetadata(driver, discovery_endpoint);
-    let access_token = await getAccessTokenAuthCode(driver, client_id, client_secret, scope, pkce_enabled, { baseUrl });
+    let access_token = await getAccessTokenAuthCode(driver, client_id,
+        client_secret, scope, pkce_enabled, { baseUrl });
     let decoded_access = decodeJWT(access_token);
-    assert.notStrictEqual(decoded_access, null, "Could not obtain/decode an access token from the OIDC flow.");
+    assert.notStrictEqual(decoded_access, null,
+        "Could not obtain/decode an access token from the OIDC flow.");
     let id_token = await getIDToken(driver);
-    assert.notStrictEqual(decodeJWT(id_token), null, "Could not obtain/decode an ID token from the OIDC flow.");
+    assert.notStrictEqual(decodeJWT(id_token), null,
+        "Could not obtain/decode an ID token from the OIDC flow.");
     log.info("Obtained ID Token (" + id_token.length + " chars).");
 
     // ---- Paste the ID Token into JWT Tools and verify the decoded payload -
@@ -497,7 +562,11 @@ async function test() {
     process.exit(1);
   } finally {
     await driver.quit();
-    try { fs.rmSync(downloadDir, { recursive: true, force: true }); } catch (e) { /* ignore */ }
+    try {
+      fs.rmSync(downloadDir, { recursive: true, force: true });
+    } catch (e) {
+      /* ignore */
+    }
   }
   log.debug("Leaving test().");
 }

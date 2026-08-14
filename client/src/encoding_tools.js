@@ -21,35 +21,47 @@ log.info("Log initialized. logLevel=" + log.level());
 // Small DOM helpers
 // ---------------------------------------------------------------------------
 function val(id) {
+  log.debug("Entering val().");
   var el = document.getElementById(id);
+  log.debug("Leaving val().");
   return el ? el.value : '';
 }
 
 function setVal(id, v) {
+  log.debug("Entering setVal().");
   var el = document.getElementById(id);
   if (el) el.value = v;
+  log.debug("Leaving setVal().");
 }
 
 function setStatus(id, msg) {
+  log.debug("Entering setStatus().");
   setVal(id, msg || '');
+  log.debug("Leaving setStatus().");
 }
 
 // ---------------------------------------------------------------------------
 // Byte helpers (UTF-8 aware)
 // ---------------------------------------------------------------------------
 function strToBytes(str) {
+  log.debug("Entering strToBytes().");
+  log.debug("Leaving strToBytes().");
   return new TextEncoder().encode(str);
 }
 
 function bytesToStr(bytes) {
+  log.debug("Entering bytesToStr().");
+  log.debug("Leaving bytesToStr().");
   return new TextDecoder().decode(bytes);
 }
 
 function bytesToHex(bytes) {
+  log.debug("Entering bytesToHex().");
   var hex = '';
   for (var i = 0; i < bytes.length; i++) {
     hex += ('0' + bytes[i].toString(16)).slice(-2);
   }
+  log.debug("Leaving bytesToHex().");
   return hex;
 }
 
@@ -92,6 +104,7 @@ function base64Decode() {
 // 2. URI (percent) encoding
 // ---------------------------------------------------------------------------
 function uriEncode() {
+  log.debug("Entering uriEncode().");
   try {
     setVal('uri_encoded', encodeURIComponent(val('uri_unencoded')));
     setStatus('uri_status', 'Encoded.');
@@ -99,10 +112,12 @@ function uriEncode() {
     log.error('uriEncode: ' + e.message);
     setStatus('uri_status', 'Encode error: ' + e.message);
   }
+  log.debug("Leaving uriEncode().");
   return false;
 }
 
 function uriDecode() {
+  log.debug("Entering uriDecode().");
   try {
     setVal('uri_unencoded', decodeURIComponent(val('uri_encoded')));
     setStatus('uri_status', 'Decoded.');
@@ -110,6 +125,7 @@ function uriDecode() {
     log.error('uriDecode: ' + e.message);
     setStatus('uri_status', 'Decode error: malformed percent-encoding.');
   }
+  log.debug("Leaving uriDecode().");
   return false;
 }
 
@@ -129,10 +145,12 @@ var CRC32_TABLE = (function () {
 })();
 
 function crc32(bytes) {
+  log.debug("Entering crc32().");
   var crc = 0xFFFFFFFF;
   for (var i = 0; i < bytes.length; i++) {
     crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ bytes[i]) & 0xFF];
   }
+  log.debug("Leaving crc32().");
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
@@ -185,10 +203,15 @@ function shaHash() {
 function copyField(elementId) {
   log.debug("Entering copyField().");
   var el = document.getElementById(elementId);
-  if (!el) { log.error('copyField: element not found: ' + elementId); return false; }
+  if (!el) {
+    log.error('copyField: element not found: ' + elementId);
+    log.debug("Leaving copyField().");
+    return false;
+  }
   var text = el.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
+    navigator.clipboard.writeText(text).catch(function (err) { log.error(
+                                  'copyField: ' + err); });
   } else {
     try {
       el.focus();
@@ -207,21 +230,26 @@ function copyField(elementId) {
 // Only known debugger pages are honoured to avoid an open redirect.
 // ---------------------------------------------------------------------------
 function setReturnLink() {
-  var allowed = { 'debugger.html': '/debugger.html', 'debugger2.html': '/debugger2.html' };
+  log.debug("Entering setReturnLink().");
+  var allowed = { 'debugger.html': '/debugger.html',
+      'debugger2.html': '/debugger2.html' };
   var from = new URLSearchParams(window.location.search).get('from');
   var target = allowed[from] || '/debugger.html';
   var link = document.getElementById('return_link');
   if (link) link.setAttribute('href', target);
+  log.debug("Leaving setReturnLink().");
 }
 
 window.onload = function () {
+  log.debug("Entering onload().");
   log.debug('Entering onload function.');
   setReturnLink();
 
   // Seed each Unencoded field with a sample value, then run the corresponding
   // Encode / hash so the Encoded fields are populated on first load.
   setVal('b64_unencoded', 'Hello, OAuth2!');
-  setVal('uri_unencoded', 'https://idptools.com/callback?state=a b&scope=openid profile');
+  setVal('uri_unencoded',
+         'https://idptools.com/callback?state=a b&scope=openid profile');
   setVal('checksum_unencoded', 'The quick brown fox jumps over the lazy dog');
   setVal('sha_unencoded', 'Hello, OAuth2!');
 

@@ -6,19 +6,20 @@
 //
 // WHY THIS EXISTS AS A SECOND STATE HOLDER, when dpop.js is already shared.
 // debugger.html and debugger2.html are used by two workflows. DPoP arrived with
-// the VC one, and both pages read `sdJwtVc.dpopEnabled()` directly — but neither
-// read was gated on the VC workflow being ACTIVE, and the two workflows share one
-// localStorage. So switching DPoP on once in VC issuance step 2 silently put a
-// `dpop_jkt` on every subsequent OAuth2/OIDC authorization request and a proof on
-// every browser-direct Token Request, with no control anywhere on those pages to
-// stop it. DPoP was, from the OAuth2/OIDC workflow's point of view, mandatory.
+// the VC one, and both pages read `sdJwtVc.dpopEnabled()` directly — but
+// neither read was gated on the VC workflow being ACTIVE, and the two workflows
+// share one localStorage. So switching DPoP on once in VC issuance step 2
+// silently put a `dpop_jkt` on every subsequent OAuth2/OIDC authorization
+// request and a proof on every browser-direct Token Request, with no control
+// anywhere on those pages to stop it. DPoP was, from the OAuth2/OIDC workflow's
+// point of view, mandatory.
 //
-// Rather than gate those reads on the VC flow (which would leave the OAuth2/OIDC
-// workflow unable to use DPoP at all), the OAuth2/OIDC workflow gets its own
-// switch, defaulting OFF, and its own key. The two workflows now share the
-// mechanism (dpop.js) and nothing else: turning DPoP off here cannot destroy the
-// key a credential was bound to, and turning it on there cannot bind a token the
-// user of this page never asked to have bound.
+// Rather than gate those reads on the VC flow (which would leave the
+// OAuth2/OIDC workflow unable to use DPoP at all), the OAuth2/OIDC workflow
+// gets its own switch, defaulting OFF, and its own key. The two workflows now
+// share the mechanism (dpop.js) and nothing else: turning DPoP off here cannot
+// destroy the key a credential was bound to, and turning it on there cannot
+// bind a token the user of this page never asked to have bound.
 //
 // No DOM and no jQuery in here, for the same reason dpop.js has none: it is the
 // state, and the pages are what render it.
@@ -58,47 +59,61 @@ var KEYS = {
   // the token came back bound instead of assuming that asking made it so.
   TOKEN_TYPE: "oauth_dpop_token_type",
   TOKEN_JKT: "oauth_dpop_token_jkt",
-  // The jkt that was actually sent on the authorization request, so the pane can
-  // say whether the CODE was bound as well as the token.
+  // The jkt that was actually sent on the authorization request, so the pane
+  // can say whether the CODE was bound as well as the token.
   JKT_SENT: "oauth_dpop_jkt_sent"
 };
 
 function get(key) {
+  log.debug("Entering get().");
   try {
+    log.debug("Leaving get().");
     return localStorage.getItem(key);
   } catch (e) {
     // Storage disabled or a private window. DPoP is then simply unavailable,
     // which is the same answer as "switched off" and needs no special case.
     log.debug("oauth_dpop.get(): storage is unreadable: " + e.message);
+    log.debug("Leaving get().");
     return null;
   }
 }
 
 function set(key, value) {
+  log.debug("Entering set().");
   try {
     localStorage.setItem(key, value);
   } catch (e) {
     log.debug("oauth_dpop.set(): storage is unwritable: " + e.message);
   }
+  log.debug("Leaving set().");
 }
 
 function remove(key) {
+  log.debug("Entering remove().");
   try {
     localStorage.removeItem(key);
   } catch (e) {
     log.debug("oauth_dpop.remove(): storage is unwritable: " + e.message);
   }
+  log.debug("Leaving remove().");
 }
 
 function getJson(key) {
+  log.debug("Entering getJson().");
   var raw = get(key);
-  if (!raw) return null;
+  if (!raw) {
+    log.debug("Leaving getJson().");
+    return null;
+  }
   try {
+    log.debug("Leaving getJson().");
     return JSON.parse(raw);
   } catch (e) {
-    // A half-written or hand-edited value. Treated as absent rather than thrown,
-    // so a corrupt key degrades to "no DPoP" instead of breaking the page.
+    // A half-written or hand-edited value. Treated as absent rather than
+    // thrown, so a corrupt key degrades to "no DPoP" instead of breaking the
+    // page.
     log.debug("oauth_dpop.getJson(): " + key + " is not JSON: " + e.message);
+    log.debug("Leaving getJson().");
     return null;
   }
 }
@@ -107,6 +122,8 @@ function getJson(key) {
 // half-written preference leaves the workflow exactly as it was before DPoP
 // existed — an ordinary Bearer exchange.
 function enabled() {
+  log.debug("Entering enabled().");
+  log.debug("Leaving enabled().");
   return get(KEYS.ENABLED) === "1";
 }
 
@@ -114,25 +131,31 @@ function setEnabled(on) {
   log.debug("Entering setEnabled(). on=" + !!on);
   set(KEYS.ENABLED, on ? "1" : "0");
   if (!on) {
-    // The key goes with the switch, as it does in the VC workflow: a key nothing
-    // will use again is one a later session could pick up and bind a token to by
-    // accident, and leaving it would also leave the pane showing a thumbprint
-    // for a mechanism that is off.
+    // The key goes with the switch, as it does in the VC workflow: a key
+    // nothing will use again is one a later session could pick up and bind a
+    // token to by accident, and leaving it would also leave the pane showing a
+    // thumbprint for a mechanism that is off.
     remove(KEYS.PRIVATE_JWK);
     remove(KEYS.PUBLIC_JWK);
     remove(KEYS.JKT);
     remove(KEYS.NONCE);
     remove(KEYS.ALG);
     forgetBinding();
-    log.debug("setEnabled(): DPoP turned off, so its key pair, nonce and binding record went with it.");
+    log.debug("setEnabled(): DPoP turned off, so its key pair, nonce and " +
+              "binding record went with it.");
   }
   log.debug("Leaving setEnabled().");
 }
 
 function keyPair() {
+  log.debug("Entering keyPair().");
   var privateJwk = getJson(KEYS.PRIVATE_JWK);
   var publicJwk = getJson(KEYS.PUBLIC_JWK);
-  if (!privateJwk || !publicJwk) return null;
+  if (!privateJwk || !publicJwk) {
+    log.debug("Leaving keyPair().");
+    return null;
+  }
+  log.debug("Leaving keyPair().");
   return {
     alg: get(KEYS.ALG) || dpopLib.DEFAULT_ALG,
     publicJwk: publicJwk,
@@ -141,6 +164,8 @@ function keyPair() {
 }
 
 function jkt() {
+  log.debug("Entering jkt().");
+  log.debug("Leaving jkt().");
   return get(KEYS.JKT) || "";
 }
 
@@ -158,6 +183,7 @@ function storeKeyPair(pair, thumb) {
 // request needs before anything else can happen.
 function generateKeyPair(alg) {
   log.debug("Entering generateKeyPair(). alg=" + (alg || dpopLib.DEFAULT_ALG));
+  log.debug("Leaving generateKeyPair().");
   return dpopLib.generateKeyPair(alg || dpopLib.DEFAULT_ALG)
     .then(function (pair) {
       return dpopLib.thumbprint(pair.publicJwk).then(function (thumb) {
@@ -170,8 +196,8 @@ function generateKeyPair(alg) {
 
 // The key this workflow will actually sign with, generating one on first use.
 // Callers get a promise for {pair, jkt} or null when DPoP is off — "off" is not
-// an error and must not reject, or every call site would need a catch that means
-// "carry on as a Bearer request".
+// an error and must not reject, or every call site would need a catch that
+// means "carry on as a Bearer request".
 function ensureKeyPair(alg) {
   log.debug("Entering ensureKeyPair().");
   if (!enabled()) {
@@ -183,15 +209,21 @@ function ensureKeyPair(alg) {
     log.debug("Leaving ensureKeyPair(). Reusing the stored key pair.");
     return Promise.resolve({ pair: existing, jkt: jkt() });
   }
+  log.debug("Leaving ensureKeyPair().");
   return generateKeyPair(alg);
 }
 
 function nonce() {
+  log.debug("Entering nonce().");
+  log.debug("Leaving nonce().");
   return get(KEYS.NONCE) || "";
 }
 
 function rememberNonce(value) {
-  if (!value) return;
+  if (!value) {
+    log.debug("Leaving rememberNonce().");
+    return;
+  }
   log.debug("Entering rememberNonce().");
   set(KEYS.NONCE, String(value));
   log.debug("Leaving rememberNonce().");
@@ -201,23 +233,40 @@ function rememberNonce(value) {
 // takes — so the OAuth2/OIDC workflow and the VC workflow reach the network
 // through one implementation rather than two that could disagree.
 function context() {
-  if (!enabled()) return null;
+  log.debug("Entering context().");
+  if (!enabled()) {
+    log.debug("Leaving context().");
+    return null;
+  }
   var pair = keyPair();
-  if (!pair) return null;
+  if (!pair) {
+    log.debug("Leaving context().");
+    return null;
+  }
+  log.debug("Leaving context().");
   return { key: pair, nonce: nonce(), remember: rememberNonce };
 }
 
 // Whether a proof can be made right now, and if not, why. The distinction that
-// matters is the same one the VC workflow draws: DPoP switched on with no key is
-// not a configuration, it is a request that is about to go out unbound.
+// matters is the same one the VC workflow draws: DPoP switched on with no key
+// is not a configuration, it is a request that is about to go out unbound.
 function readiness() {
+  log.debug("Entering readiness().");
   var on = enabled();
-  if (!on) return { on: false, ready: false, problem: null, jkt: "" };
+  if (!on) {
+    log.debug("Leaving readiness().");
+    return { on: false, ready: false, problem: null, jkt: "" };
+  }
   var pair = keyPair();
-  if (pair) return { on: true, ready: true, problem: null, jkt: jkt() };
+  if (pair) {
+    log.debug("Leaving readiness().");
+    return { on: true, ready: true, problem: null, jkt: jkt() };
+  }
+  log.debug("Leaving readiness().");
   return {
     on: true, ready: false, jkt: "",
-    problem: "DPoP is on but no key pair has been generated yet, so the request would go out unbound."
+    problem: "DPoP is on but no key pair has been generated yet, so the " +
+        "request would go out unbound."
   };
 }
 
@@ -228,32 +277,44 @@ function readiness() {
 // not make it so, and a server that ignores DPoP answers with a perfectly
 // ordinary Bearer token.
 function rememberBinding(tokenType, boundJkt) {
-  log.debug("Entering rememberBinding(). token_type=" + tokenType + ", jkt=" + (boundJkt || "(none)"));
+  log.debug("Entering rememberBinding(). token_type=" + tokenType + ", jkt=" +
+            (boundJkt || "(none)"));
   set(KEYS.TOKEN_TYPE, String(tokenType || ""));
   set(KEYS.TOKEN_JKT, String(boundJkt || ""));
   log.debug("Leaving rememberBinding().");
 }
 
 function forgetBinding() {
+  log.debug("Entering forgetBinding().");
   remove(KEYS.TOKEN_TYPE);
   remove(KEYS.TOKEN_JKT);
   remove(KEYS.JKT_SENT);
+  log.debug("Leaving forgetBinding().");
 }
 
 // The cnf.jkt an access token carries, read WITHOUT verifying the signature —
 // this is a display of what the token says about itself, and the page says so.
 // A non-JWT (an opaque token, which is legal) simply has nothing to report.
 function jktOfToken(accessToken) {
+  log.debug("Entering jktOfToken().");
   var parts = String(accessToken || "").split(".");
-  if (parts.length !== 3) return "";
+  if (parts.length !== 3) {
+    log.debug("Leaving jktOfToken().");
+    return "";
+  }
   try {
     var padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
     while (padded.length % 4) padded += "=";
     var claims = JSON.parse(decodeURIComponent(escape(atob(padded))));
-    return (claims && claims.cnf && claims.cnf.jkt) ? String(claims.cnf.jkt) : "";
+    log.debug("Leaving jktOfToken().");
+    return (claims && claims.cnf && claims.cnf.jkt) ?
+            String(claims.cnf.jkt) : "";
   } catch (e) {
-    // Opaque, encrypted, or simply not ours. Nothing to show, and nothing wrong.
-    log.debug("jktOfToken(): the access token carries no readable claims: " + e.message);
+    // Opaque, encrypted, or simply not ours. Nothing to show, and nothing
+    // wrong.
+    log.debug("jktOfToken(): the access token carries no readable claims: " +
+              e.message);
+    log.debug("Leaving jktOfToken().");
     return "";
   }
 }
@@ -267,10 +328,12 @@ function bindingVerdict(accessToken) {
   var asked = enabled();
   var mine = jkt();
   var tokenType = get(KEYS.TOKEN_TYPE) || "";
-  var boundTo = accessToken !== undefined ? jktOfToken(accessToken) : (get(KEYS.TOKEN_JKT) || "");
+  var boundTo = accessToken !== undefined ?
+      jktOfToken(accessToken) : (get(KEYS.TOKEN_JKT) || "");
   if (!asked) {
     log.debug("Leaving bindingVerdict(). DPoP was not asked for.");
-    return { state: "off", text: "DPoP is off — this is an ordinary Bearer token." };
+    return { state: "off",
+            text: "DPoP is off — this is an ordinary Bearer token." };
   }
   if (!boundTo) {
     log.debug("Leaving bindingVerdict(). Nothing bound.");
@@ -285,7 +348,8 @@ function bindingVerdict(accessToken) {
     log.debug("Leaving bindingVerdict(). Bound to another key.");
     return {
       state: "mismatch",
-      text: "The token is bound to " + boundTo + ", which is NOT this page's key (" + mine + "). " +
+      text: "The token is bound to " + boundTo +
+          ", which is NOT this page's key (" + mine + "). " +
             "Nothing here can present it."
     };
   }
@@ -299,14 +363,18 @@ function bindingVerdict(accessToken) {
 }
 
 // The jkt that actually travelled on the authorization request, recorded there
-// and read back here. A jkt sent for a key that has since been regenerated makes
-// the code unredeemable, and that deserves naming rather than surfacing as an
-// unexplained invalid_grant.
+// and read back here. A jkt sent for a key that has since been regenerated
+// makes the code unredeemable, and that deserves naming rather than surfacing
+// as an unexplained invalid_grant.
 function rememberJktSent(value) {
+  log.debug("Entering rememberJktSent().");
   set(KEYS.JKT_SENT, String(value || ""));
+  log.debug("Leaving rememberJktSent().");
 }
 
 function jktSent() {
+  log.debug("Entering jktSent().");
+  log.debug("Leaving jktSent().");
   return get(KEYS.JKT_SENT) || "";
 }
 

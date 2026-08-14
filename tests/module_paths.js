@@ -8,25 +8,50 @@
 // logic: xmlsec_interop.js loads client/src/xmldsig.js, and
 // wstrust_schema_validate.js loads client/src/wstrust_msg.js. Node resolves a
 // module's own requires relative to WHERE THAT MODULE LIVES, so those modules
-// look for node-forge / bunyan under client/node_modules — which a checkout that
-// has installed only the tests' dependencies does not have.
+// look for node-forge / bunyan under client/node_modules — which a checkout
+// that has installed only the tests' dependencies does not have.
 //
-// Those packages are dependencies of THIS package, so tests/node_modules is added
-// as a global resolution fallback and the shared modules load either way. In the
-// tests container the shared files are copied next to the test scripts, so their
-// requires already resolve from tests/node_modules and this is a no-op.
+// Those packages are dependencies of THIS package, so tests/node_modules is
+// added as a global resolution fallback and the shared modules load either way.
+// In the tests container the shared files are copied next to the test scripts,
+// so their requires already resolve from tests/node_modules and this is a
+// no-op.
 // ---------------------------------------------------------------------------
 
 const path = require("path");
 const fs = require("fs");
 
+// The log level comes from the same configuration everything else here
+// reads. A caller without one still has to be able to load this module,
+// so an unresolvable CONFIG_FILE falls back to info rather than throwing.
+var bunyan = require("bunyan");
+var log = bunyan.createLogger({
+  name: "module_paths",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).LOG_LEVEL || "info";
+    } catch (e) {
+      return "info";
+    }
+  })()
+});
+
 function addTestsModulesToResolutionPath() {
+  log.debug("Entering addTestsModulesToResolutionPath().");
   const testsModules = path.join(__dirname, "node_modules");
-  if (!fs.existsSync(testsModules)) return false;
-  const existing = process.env.NODE_PATH ? process.env.NODE_PATH.split(path.delimiter) : [];
-  if (existing.indexOf(testsModules) >= 0) return true;
+  if (!fs.existsSync(testsModules)) {
+    log.debug("Leaving addTestsModulesToResolutionPath().");
+    return false;
+  }
+  const existing = process.env.NODE_PATH ?
+      process.env.NODE_PATH.split(path.delimiter) : [];
+  if (existing.indexOf(testsModules) >= 0) {
+    log.debug("Leaving addTestsModulesToResolutionPath().");
+    return true;
+  }
   process.env.NODE_PATH = existing.concat([testsModules]).join(path.delimiter);
   require("module").Module._initPaths();
+  log.debug("Leaving addTestsModulesToResolutionPath().");
   return true;
 }
 
@@ -34,19 +59,23 @@ function addTestsModulesToResolutionPath() {
 // checkout), with the resolution fallback applied and a pointed error when a
 // dependency of that module is what is actually missing.
 function requireSharedModule(candidates, what) {
+  log.debug("Entering requireSharedModule().");
   for (const candidate of candidates) {
     if (!fs.existsSync(candidate)) continue;
     addTestsModulesToResolutionPath();
     try {
+      log.debug("Leaving requireSharedModule().");
       return require(candidate);
     } catch (e) {
-      throw new Error("found " + candidate + " but could not load it: " + e.message +
+      throw new Error("found " + candidate + " but could not load it: " +
+                      e.message +
         (/Cannot find module/.test(e.message)
           ? " — run `npm install` in tests/ so the shared module's dependencies resolve."
           : ""));
     }
   }
-  throw new Error("could not locate " + what + " (looked in: " + candidates.join(", ") + ")");
+  throw new Error("could not locate " + what + " (looked in: " +
+                  candidates.join(", ") + ")");
 }
 
 // ---------------------------------------------------------------------------

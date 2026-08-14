@@ -7,19 +7,20 @@
 // ArtifactResolve back-channel, the WS-Trust STS and the generic proxy — so
 // without a guard anyone who can reach it can use it to probe 127.0.0.1, the
 // deployment's private neighbours, or 169.254.169.254, where a cloud instance
-// hands out credentials. This test is what says the guard actually refuses them.
+// hands out credentials. This test is what says the guard actually refuses
+// them.
 //
 // No browser and no services: node only, so it never skips.
 //
 // It exercises BOTH layers, because either alone is insufficient:
 //   * the URL pre-flight (assertUrlAllowed), which is what produces the error a
 //     caller sees;
-//   * the DNS lookup on the agents, which is the layer that holds when a call is
-//     REDIRECTED — axios follows redirects itself, so a public host answering
-//     "302 Location: http://127.0.0.1:8080/" never passes through the pre-flight a
-//     second time. Rather than pull axios in (the tests package does not have it),
-//     the agent is driven directly with http.request: that is precisely the code
-//     path a redirect hop takes.
+//   * the DNS lookup on the agents, which is the layer that holds when a call
+//     is REDIRECTED — axios follows redirects itself, so a public host
+//     answering "302 Location: http://127.0.0.1:8080/" never passes through the
+//     pre-flight a second time. Rather than pull axios in (the tests package
+//     does not have it), the agent is driven directly with http.request: that
+//     is precisely the code path a redirect hop takes.
 //
 // Sources of truth this test deliberately does NOT duplicate: the default range
 // list and the parsing live in the module, and are asserted through its API.
@@ -36,17 +37,33 @@ var log = bunyan.createLogger({ name: "api_ssrf_guard",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-// In a checkout the module is at api/ssrf_guard.js; the tests image copies it flat
-// next to the test scripts (see tests/Dockerfile).
+// In a checkout the module is at api/ssrf_guard.js; the tests image copies it
+// flat next to the test scripts (see tests/Dockerfile).
 var guardModule = paths.requireSharedModule(
-  [__dirname + "/../api/ssrf_guard.js", __dirname + "/ssrf_guard.js"], "ssrf_guard.js");
+  [__dirname + "/../api/ssrf_guard.js", __dirname + "/ssrf_guard.js"],
+   "ssrf_guard.js");
 
 // A logger the guard can call without the output drowning the test.
-var quiet = { debug: function () {}, info: function () {}, warn: function () {}, error: function () {} };
+var quiet = { debug: function () {
+  log.debug("Entering debug().");
+  log.debug("Leaving debug().");
+}, info: function () {
+  log.debug("Entering info().");
+  log.debug("Leaving info().");
+}, warn: function () {
+  log.debug("Entering warn().");
+  log.debug("Leaving warn().");
+}, error: function () {
+  log.debug("Entering error().");
+  log.debug("Leaving error().");
+} };
 
 function listen(server) {
+  log.debug("Entering listen().");
+  log.debug("Leaving listen().");
   return new Promise(function (resolve) {
-    server.listen(0, "127.0.0.1", function () { resolve(server.address().port); });
+    server.listen(0, "127.0.0.1",
+                  function () { resolve(server.address().port); });
   });
 }
 
@@ -57,9 +74,11 @@ function addressMatrix() {
   log.debug("Entering addressMatrix().");
   log.info("=== The default policy, address by address ===");
   var guard = guardModule.createGuard({}, quiet);
-  assert.ok(guard.enabled, "the guard must be ON when the configuration says nothing.");
+  assert.ok(guard.enabled,
+            "the guard must be ON when the configuration says nothing.");
   assert.ok(guard.ranges.length >= 10,
-    "the default policy should cover loopback, the private ranges and their IPv6 equivalents, got " +
+    "the default policy should cover loopback, the private ranges and their " +
+        "IPv6 equivalents, got " +
     guard.ranges.length + ".");
 
   var blocked = [
@@ -75,7 +94,8 @@ function addressMatrix() {
     ["::1", "IPv6 loopback"],
     ["fe80::1", "IPv6 link-local"],
     ["fd12:3456::1", "IPv6 unique local"],
-    ["::ffff:127.0.0.1", "IPv4-mapped loopback — the classic way past a naive check"],
+    ["::ffff:127.0.0.1",
+     "IPv4-mapped loopback — the classic way past a naive check"],
     ["::ffff:10.0.0.1", "IPv4-mapped RFC 1918"],
     ["0:0:0:0:0:ffff:7f00:1", "IPv4-mapped loopback, written out"],
     ["fe80::1%eth0", "a zone index must not defeat the match"]
@@ -96,28 +116,33 @@ function addressMatrix() {
   ];
   allowed.forEach(function (pair) {
     assert.strictEqual(guard.blockedRangeFor(pair[0]), null,
-      pair[0] + " (" + pair[1] + ") must NOT be blocked — a guard that blocks the internet is useless.");
+      pair[0] + " (" + pair[1] + ") must NOT be blocked — a guard that " +
+           "blocks the internet is useless.");
   });
-  log.info("[policy] OK — " + blocked.length + " private/loopback forms refused, " +
-           allowed.length + " public ones allowed, across " + guard.ranges.length + " ranges.");
+  log.info("[policy] OK — " + blocked.length +
+           " private/loopback forms refused, " +
+           allowed.length + " public ones allowed, across " +
+               guard.ranges.length + " ranges.");
   log.debug("Leaving addressMatrix().");
 }
 
 // ---------------------------------------------------------------------------
-// 2. The configuration takes RANGES, in either notation, and says why it refuses
-//    anything else.
+// 2. The configuration takes RANGES, in either notation, and says why it
+//    refuses anything else.
 // ---------------------------------------------------------------------------
 function rangeConfiguration() {
   log.debug("Entering rangeConfiguration().");
   log.info("=== The range configuration ===");
-  var good = ["10.0.0.0/8", "10.0.0.0-10.255.255.255", "fc00::/7", "2001:db8::1-2001:db8::ff", "0.0.0.0/0"];
+  var good = ["10.0.0.0/8", "10.0.0.0-10.255.255.255", "fc00::/7",
+      "2001:db8::1-2001:db8::ff", "0.0.0.0/0"];
   good.forEach(function (entry) {
     var parsed = guardModule.parseRange(entry);
-    assert.ok(!parsed.error, "\"" + entry + "\" is a valid range and should parse, got: " + parsed.error);
+    assert.ok(!parsed.error, "\"" + entry +
+              "\" is a valid range and should parse, got: " + parsed.error);
   });
 
-  // A single address is refused ON PURPOSE: this list is a network policy, and a
-  // one-host entry nearly always means the block that host sits in.
+  // A single address is refused ON PURPOSE: this list is a network policy, and
+  // a one-host entry nearly always means the block that host sits in.
   var refused = [
     ["10.1.2.3", /single address/],
     ["10.0.0.0/33", /prefix length/],
@@ -130,24 +155,30 @@ function rangeConfiguration() {
     var parsed = guardModule.parseRange(pair[0]);
     assert.ok(parsed.error, "\"" + pair[0] + "\" must be refused as a range.");
     assert.ok(pair[1].test(parsed.error),
-      "the refusal of \"" + pair[0] + "\" should say why (expected " + pair[1] + "), got: " + parsed.error);
+      "the refusal of \"" + pair[0] + "\" should say why (expected " + pair[1] +
+          "), got: " + parsed.error);
   });
 
-  // A configured policy replaces the defaults, and a first-last range works as a
-  // range: inside blocked, outside allowed.
+  // A configured policy replaces the defaults, and a first-last range works as
+  // a range: inside blocked, outside allowed.
   var custom = guardModule.createGuard(
     { blockedAddressRanges: ["172.20.0.0-172.20.255.255"] }, quiet);
   assert.deepStrictEqual(custom.ranges, ["172.20.0.0-172.20.255.255"],
-    "a configured list should replace the defaults wholesale, got: " + JSON.stringify(custom.ranges));
-  assert.ok(custom.blockedRangeFor("172.20.13.9"), "an address inside the configured range must be blocked.");
+    "a configured list should replace the defaults wholesale, got: " +
+        JSON.stringify(custom.ranges));
+  assert.ok(custom.blockedRangeFor("172.20.13.9"),
+            "an address inside the configured range must be blocked.");
   assert.ok(custom.blockedRangeFor("::ffff:172.20.0.9"),
     "and so must its IPv4-mapped form.");
   assert.strictEqual(custom.blockedRangeFor("172.21.0.1"), null,
     "an address outside the configured range must be allowed.");
   assert.strictEqual(custom.blockedRangeFor("127.0.0.1"), null,
-    "loopback is NOT blocked by a policy that does not name it — the list is the policy.");
-  log.info("[config] OK — " + good.length + " range forms accepted, " + refused.length +
-           " malformed entries refused with a reason, and a configured list replaces the defaults.");
+    "loopback is NOT blocked by a policy that does not name it — the list is " +
+        "the policy.");
+  log.info("[config] OK — " + good.length + " range forms accepted, " +
+           refused.length +
+           " malformed entries refused with a reason, and a configured list " +
+               "replaces the defaults.");
   log.debug("Leaving rangeConfiguration().");
 }
 
@@ -176,17 +207,20 @@ async function urlPreflight() {
   }
 
   await refuses("http://127.0.0.1:8080/token", "literal loopback");
-  await refuses("http://localhost:8080/token", "a NAME that resolves to loopback");
+  await refuses("http://localhost:8080/token",
+                "a NAME that resolves to loopback");
   await refuses("http://[::1]:8080/token", "bracketed IPv6 loopback");
-  await refuses("http://169.254.169.254/latest/meta-data/", "cloud instance metadata");
+  await refuses("http://169.254.169.254/latest/meta-data/",
+                "cloud instance metadata");
   await refuses("http://10.0.0.1/", "RFC 1918");
   await refuses("https://127.0.0.1/", "https makes no difference");
 
-  // Allowed: a public literal, checked without touching the network so this test
-  // needs no internet.
+  // Allowed: a public literal, checked without touching the network so this
+  // test needs no internet.
   await guard.assertUrlAllowed("http://8.8.8.8/");
   await guard.assertUrlAllowed("https://[2606:4700:4700::1111]/");
-  log.info("[preflight] OK — loopback by literal, by name and by IPv6, metadata and RFC 1918 all refused; " +
+  log.info("[preflight] OK — loopback by literal, by name and by IPv6, " +
+           "metadata and RFC 1918 all refused; " +
            "public literals allowed.");
   log.debug("Leaving urlPreflight().");
 }
@@ -200,14 +234,16 @@ async function agentLayer() {
   var guard = guardModule.createGuard({}, quiet);
 
   var served = 0;
-  var victim = http.createServer(function (req, res) { served++; res.end("SECRET-FROM-LOOPBACK"); });
+  var victim = http.createServer(function (req,
+      res) { served++; res.end("SECRET-FROM-LOOPBACK"); });
   var port = await listen(victim);
 
   function fetchWith(agent) {
     log.debug("Entering fetchWith().");
     log.debug("Leaving fetchWith().");
     return new Promise(function (resolve, reject) {
-      var req = http.request({ host: "127.0.0.1", port: port, path: "/", agent: agent },
+      var req = http.request({ host: "127.0.0.1", port: port, path: "/",
+          agent: agent },
         function (res) {
           var body = "";
           res.on("data", function (d) { body += d; });
@@ -232,23 +268,27 @@ async function agentLayer() {
   }
   assert.ok(blocked, "a connection through the guarded agent must be refused.");
   assert.strictEqual(blocked.code, "EBLOCKEDADDRESS",
-    "and refused by the guard, not by something else: " + (blocked && blocked.message));
+    "and refused by the guard, not by something else: " + (blocked &&
+        blocked.message));
   assert.strictEqual(served, 1,
-    "the guarded request must never reach the server (it was served " + served + " times, expected 1 — " +
+    "the guarded request must never reach the server (it was served " + served +
+        " times, expected 1 — " +
     "the control request only).");
   victim.close();
-  log.info("[agent] OK — the guarded agent refuses the connection before the socket is opened, " +
-           "which is the same path a redirect hop takes; an ordinary agent reaches the same server.");
+  log.info("[agent] OK — the guarded agent refuses the connection before the " +
+           "socket is opened, " +
+           "which is the same path a redirect hop takes; an ordinary agent " +
+               "reaches the same server.");
   log.debug("Leaving agentLayer().");
 }
 
 // ---------------------------------------------------------------------------
 // 4b. The scheme policy: http and https, nothing else.
 //
-// axios's Node adapter supports file: and data: as well (platform.protocols), and
-// every URL this service fetches is the caller's. A data: URL is the sharper of the
-// two: axios decodes it itself and hands the bytes back, so it never touches the
-// network and NO address policy applies to it.
+// axios's Node adapter supports file: and data: as well (platform.protocols),
+// and every URL this service fetches is the caller's. A data: URL is the
+// sharper of the two: axios decodes it itself and hands the bytes back, so it
+// never touches the network and NO address policy applies to it.
 // ---------------------------------------------------------------------------
 function schemePolicy() {
   log.debug("Entering schemePolicy().");
@@ -291,11 +331,13 @@ function schemePolicy() {
 
   // The check must survive the address policy's off switch, which the local and
   // docker stacks use.
-  var disabled = guardModule.createGuard({ blockPrivateNetworkCalls: false }, quiet);
+  var disabled = guardModule.createGuard({ blockPrivateNetworkCalls: false },
+      quiet);
   assert.ok(disabled.assertProtocolAllowed("file:///etc/passwd"),
     "turning the address policy off must NOT permit file: URLs.");
 
-  log.info("[scheme] OK — http/https allowed; data, file, ftp, javascript and ws refused, " +
+  log.info("[scheme] OK — http/https allowed; data, file, ftp, javascript " +
+           "and ws refused, " +
            "with the off switch making no difference.");
   log.debug("Leaving schemePolicy().");
 }
@@ -307,9 +349,15 @@ function installation() {
   log.debug("Entering installation().");
   log.info("=== Installing on the http client ===");
   function stubAxios() {
+    log.debug("Entering stubAxios().");
+    log.debug("Leaving stubAxios().");
     return {
       defaults: {},
-      interceptors: { request: { handlers: [], use: function (fn) { this.handlers.push(fn); } } }
+      interceptors: { request: { handlers: [], use: function (fn) {
+        log.debug("Entering use().");
+        this.handlers.push(fn);
+        log.debug("Leaving use().");
+      } } }
     };
   }
 
@@ -318,85 +366,106 @@ function installation() {
   var report = enabledGuard.install(on);
   assert.ok(report.enabled, "install() should report the guard as enabled.");
   assert.ok(on.defaults.httpAgent && on.defaults.httpsAgent,
-    "both agents must be set, or a redirect over the other scheme would go unchecked.");
+    "both agents must be set, or a redirect over the other scheme would go " +
+        "unchecked.");
   // Two: the unconditional scheme check, plus the address pre-flight.
   assert.strictEqual(on.interceptors.request.handlers.length, 2,
-    "the scheme check and the address pre-flight should each be registered once.");
+    "the scheme check and the address pre-flight should each be " +
+        "registered once.");
 
   // The off switch: a deployment whose identity providers really are private
   // (this suite's own local and docker stacks) must be able to turn it off.
   var off = stubAxios();
-  var disabled = guardModule.createGuard({ blockPrivateNetworkCalls: false }, quiet);
-  assert.strictEqual(disabled.enabled, false, "an explicit false must disable the guard.");
+  var disabled = guardModule.createGuard({ blockPrivateNetworkCalls: false },
+      quiet);
+  assert.strictEqual(disabled.enabled, false,
+                     "an explicit false must disable the guard.");
   var offReport = disabled.install(off);
-  assert.strictEqual(offReport.enabled, false, "install() should report it as disabled.");
+  assert.strictEqual(offReport.enabled, false,
+                     "install() should report it as disabled.");
   assert.ok(!off.defaults.httpAgent && !off.defaults.httpsAgent,
     "a disabled guard must not install its agents.");
   // The ADDRESS pre-flight goes away with the off switch; the scheme check does
-  // not. blockPrivateNetworkCalls is about which addresses are reachable, and the
-  // local and docker stacks that turn it off have no more business fetching
+  // not. blockPrivateNetworkCalls is about which addresses are reachable, and
+  // the local and docker stacks that turn it off have no more business fetching
   // file: or data: than a deployed one does.
   assert.strictEqual(off.interceptors.request.handlers.length, 1,
     "a disabled guard must still install the scheme check, and nothing else.");
 
-  // And only an explicit false: a missing key, or anything truthy-ish, stays safe.
+  // And only an explicit false: a missing key, or anything truthy-ish, stays
+  // safe.
   [undefined, null, "false", 0, "no"].forEach(function (value) {
     var g = guardModule.createGuard({ blockPrivateNetworkCalls: value }, quiet);
     assert.strictEqual(g.enabled, true,
-      "blockPrivateNetworkCalls=" + JSON.stringify(value) + " must NOT disable the guard — " +
+      "blockPrivateNetworkCalls=" + JSON.stringify(value) +
+          " must NOT disable the guard — " +
       "only a real false may, so a typo cannot open it.");
   });
-  log.info("[install] OK — enabled: both agents plus the scheme and address interceptors; " +
-           "disabled: the scheme check only; and only a real `false` disables the address policy.");
+  log.info("[install] OK — enabled: both agents plus the scheme and address " +
+           "interceptors; " +
+           "disabled: the scheme check only; and only a real `false` " +
+               "disables the address policy.");
   log.debug("Leaving installation().");
 }
 
 // ---------------------------------------------------------------------------
-// 6. The wiring and the shipped policy — only checkable in a checkout, where the
-//    api directory is next door. The tests image copies the module flat, so these
-//    are reported as skipped there rather than silently passing.
+// 6. The wiring and the shipped policy — only checkable in a checkout, where
+//    the api directory is next door. The tests image copies the module flat, so
+//    these are reported as skipped there rather than silently passing.
 // ---------------------------------------------------------------------------
 function shippedConfiguration() {
   log.debug("Entering shippedConfiguration().");
   log.info("=== The wiring and the shipped configuration ===");
   var apiDir = path.join(__dirname, "..", "api");
   if (!fs.existsSync(path.join(apiDir, "server.js"))) {
-    log.info("[shipped] the api directory is not next to the tests (the container's flat layout); " +
+    log.info("[shipped] the api directory is not next to the tests (the " +
+             "container's flat layout); " +
              "skipping the wiring and env-file checks.");
+    log.debug("Leaving shippedConfiguration().");
     return;
   }
 
   // The guard is worthless if nothing installs it.
   var server = fs.readFileSync(path.join(apiDir, "server.js"), "utf8");
-  assert.ok(/ssrf_guard/.test(server) && /\.install\(\s*axios\s*\)/.test(server),
-    "api/server.js must install the guard on the axios instance every endpoint uses.");
+  assert.ok(/ssrf_guard/.test(server) &&
+            /\.install\(\s*axios\s*\)/.test(server),
+    "api/server.js must install the guard on the axios instance every " +
+        "endpoint uses.");
 
   // The policy each deployment ships with. local and docker-tests are the
-  // deliberate exceptions: on those stacks the identity provider and the mock STS
-  // ARE private addresses, so the guard would refuse every call the service exists
-  // to make.
-  var expected = { "local.js": false, "docker-tests.js": false, "test.js": true };
+  // deliberate exceptions: on those stacks the identity provider and the mock
+  // STS ARE private addresses, so the guard would refuse every call the service
+  // exists to make.
+  var expected = { "local.js": false, "docker-tests.js": false,
+      "test.js": true };
   Object.keys(expected).forEach(function (file) {
     var full = path.join(apiDir, "env", file);
     if (!fs.existsSync(full)) return;
     var config = require(full);
     assert.strictEqual(config.blockPrivateNetworkCalls, expected[file],
-      "api/env/" + file + " should set blockPrivateNetworkCalls=" + expected[file] + ", got: " +
+      "api/env/" + file + " should set blockPrivateNetworkCalls=" +
+          expected[file] + ", got: " +
       JSON.stringify(config.blockPrivateNetworkCalls));
-    assert.ok(Array.isArray(config.blockedAddressRanges) && config.blockedAddressRanges.length,
-      "api/env/" + file + " should carry the blocked ranges, so the policy is visible where it is deployed.");
+    assert.ok(Array.isArray(config.blockedAddressRanges) &&
+              config.blockedAddressRanges.length,
+      "api/env/" + file + " should carry the blocked ranges, so the policy " +
+          "is visible where it is deployed.");
     config.blockedAddressRanges.forEach(function (entry) {
       var parsed = guardModule.parseRange(entry);
       assert.ok(!parsed.error,
-        "api/env/" + file + " has an unusable range \"" + entry + "\": it " + parsed.error + ".");
+        "api/env/" + file + " has an unusable range \"" + entry + "\": it " +
+            parsed.error + ".");
     });
   });
-  log.info("[shipped] OK — server.js installs the guard, and every api/env config carries a usable " +
-           "range list (local and docker-tests disable it deliberately; test.js keeps it on).");
+  log.info("[shipped] OK — server.js installs the guard, and every api/env " +
+           "config carries a usable " +
+           "range list (local and docker-tests disable it deliberately; " +
+               "test.js keeps it on).");
   log.debug("Leaving shippedConfiguration().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   addressMatrix();
   rangeConfiguration();
   await urlPreflight();
@@ -405,6 +474,7 @@ async function test() {
   installation();
   shippedConfiguration();
   log.info("Test completed successfully.");
+  log.debug("Leaving test().");
 }
 
 const program = new Command();
@@ -412,7 +482,8 @@ program
   .name("api_ssrf_guard")
   .description("Verify the api's outbound address policy (api/ssrf_guard.js).")
   // Accepted and ignored: run-report.js passes --url to every job.
-  .addOption(new Option("-u, --url <url>", "base url (unused: this test needs no browser)"))
+  .addOption(new Option("-u, --url <url>",
+      "base url (unused: this test needs no browser)"))
   .parse(process.argv);
 
 test().catch(function (e) {

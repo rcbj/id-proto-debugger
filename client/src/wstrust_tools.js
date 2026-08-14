@@ -20,7 +20,8 @@ var bunyan = require("bunyan");
 var xd = require("./xmldsig");
 var wm = require("./wstrust_msg");
 var history = require("./wstrust_history");
-var log = bunyan.createLogger({ name: 'wstrust_tools', level: appconfig.logLevel });
+var log = bunyan.createLogger({ name: 'wstrust_tools',
+    level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
 var forge = xd.forge;
@@ -36,67 +37,136 @@ var WSSE_NS = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurit
 var WSU_NS = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd";
 var SOAP12_NS = "http://www.w3.org/2003/05/soap-envelope";
 var SOAP11_NS = "http://schemas.xmlsoap.org/soap/envelope/";
-var CLAIMS_DIALECT = "http://docs.oasis-open.org/wsfed/authorization/200706/authclaims";
+var CLAIMS_DIALECT =
+    "http://docs.oasis-open.org/wsfed/authorization/200706/authclaims";
 var WSA_ANON = "http://www.w3.org/2005/08/addressing/anonymous";
 var PW_TEXT = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordText";
 var PW_DIGEST = "http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-username-token-profile-1.0#PasswordDigest";
 
 // WS-Trust protocol version model + RST construction live in the shared,
-// DOM-free ./wstrust_msg module (so they can be schema-validated in Node). These
-// thin wrappers read the selected version from the form and delegate, keeping
-// every call site below unchanged.
-function trustVersion() { return wm.versionCfg(val("wst_trust_version")); }
-function trustNs() { return wm.versionNs(val("wst_trust_version")); }
-function requestTypeUri(op) { return wm.requestTypeUri(val("wst_trust_version"), op); }
-function wsaActionUri(op) { return wm.wsaActionUri(val("wst_trust_version"), op); }
-function keyTypeUri(kt) { return wm.keyTypeUri(val("wst_trust_version"), kt); }
-function statusTokenTypeUri() { return wm.statusTokenTypeUri(val("wst_trust_version")); }
+// DOM-free ./wstrust_msg module (so they can be schema-validated in Node).
+// These thin wrappers read the selected version from the form and delegate,
+// keeping every call site below unchanged.
+function trustVersion() {
+  log.debug("Entering trustVersion().");
+  log.debug("Leaving trustVersion().");
+  return wm.versionCfg(val("wst_trust_version"));
+}
+function trustNs() {
+  log.debug("Entering trustNs().");
+  log.debug("Leaving trustNs().");
+  return wm.versionNs(val("wst_trust_version"));
+}
+function requestTypeUri(op) {
+  log.debug("Entering requestTypeUri().");
+  log.debug("Leaving requestTypeUri().");
+  return wm.requestTypeUri(val("wst_trust_version"), op);
+}
+function wsaActionUri(op) {
+  log.debug("Entering wsaActionUri().");
+  log.debug("Leaving wsaActionUri().");
+  return wm.wsaActionUri(val("wst_trust_version"), op);
+}
+function keyTypeUri(kt) {
+  log.debug("Entering keyTypeUri().");
+  log.debug("Leaving keyTypeUri().");
+  return wm.keyTypeUri(val("wst_trust_version"), kt);
+}
+function statusTokenTypeUri() {
+  log.debug("Entering statusTokenTypeUri().");
+  log.debug("Leaving statusTokenTypeUri().");
+  return wm.statusTokenTypeUri(val("wst_trust_version"));
+}
 
 var EXCHANGE_KEY = "wstrust_last_exchange";
 
 // ---------------------------------------------------------------------------
 // Small DOM helpers (mirror saml_request.js).
 // ---------------------------------------------------------------------------
-function el(id) { return document.getElementById(id); }
-function val(id) { var e = el(id); return e ? e.value : ''; }
-function setVal(id, v) { var e = el(id); if (e) e.value = (v == null ? '' : v); }
-function setStatus(id, msg) { setVal(id, msg); }
-function show(id, on) { var e = el(id); if (e) { if (on) e.classList.remove('saml-hidden'); else e.classList.add('saml-hidden'); } }
-function checked(id) { var e = el(id); return !!(e && e.checked); }
-function xmlEscape(s) { return xd.xmlEscape(s); }
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
+}
+function val(id) {
+  log.debug("Entering val().");
+  var e = el(id);
+  log.debug("Leaving val().");
+  return e ? e.value : '';
+}
+function setVal(id, v) {
+  log.debug("Entering setVal().");
+  var e = el(id);
+  if (e) e.value = (v == null ? '' : v);
+  log.debug("Leaving setVal().");
+}
+function setStatus(id, msg) {
+  log.debug("Entering setStatus().");
+  setVal(id, msg);
+  log.debug("Leaving setStatus().");
+}
+function show(id, on) {
+  log.debug("Entering show().");
+  var e = el(id);
+  if (e) { if (on) e.classList.remove('saml-hidden'); else e.classList.add(
+      'saml-hidden'); }
+  log.debug("Leaving show().");
+}
+function checked(id) {
+  log.debug("Entering checked().");
+  var e = el(id);
+  log.debug("Leaving checked().");
+  return !!(e && e.checked);
+}
+function xmlEscape(s) {
+  log.debug("Entering xmlEscape().");
+  log.debug("Leaving xmlEscape().");
+  return xd.xmlEscape(s);
+}
 
 // ---------------------------------------------------------------------------
 // localStorage persistence — every .stored element is saved by its id.
 // ---------------------------------------------------------------------------
-function persistedEls() { return document.querySelectorAll('.stored'); }
+function persistedEls() {
+  log.debug("Entering persistedEls().");
+  log.debug("Leaving persistedEls().");
+  return document.querySelectorAll('.stored');
+}
 
-// The requestor signing key pair, and whether it may be written to localStorage.
+// The requestor signing key pair, and whether it may be written to
+// localStorage.
 //
 // The same exception, and the same opt-out, as the SP key pair on
 // saml_request.html — see the note there. Everything else this page persists is
 // configuration; this is key material, and the debugger's standing rule is that
-// credentials stay out of localStorage. It is kept anyway by default because the
-// workflow spans screens: wstrust_response.html needs this private key to
+// credentials stay out of localStorage. It is kept anyway by default because
+// the workflow spans screens: wstrust_response.html needs this private key to
 // decrypt an encrypted token, and re-pasting a PEM at every hop is the sort of
 // friction people work around by keeping the key somewhere worse.
 //
 // Clearing the box stops the two fields being written AND removes what was
 // written before — an opt-out that leaves yesterday's private key in storage is
-// not an opt-out. wst_enc_cert is deliberately NOT in this list: it is the STS's
-// certificate, someone else's public credential, not part of this key pair.
+// not an opt-out. wst_enc_cert is deliberately NOT in this list: it is the
+// STS's certificate, someone else's public credential, not part of this key
+// pair.
 var KEYPAIR_FIELDS = ['wst_sp_private_key', 'wst_sp_cert'];
 
 function keyPairMayBeStored() {
+  log.debug("Entering keyPairMayBeStored().");
   var e = el('wst_save_keypair');
   // Absent checkbox (an older cached copy of the page) keeps the previous
   // behaviour rather than silently dropping a key pair the user expects to
   // still be there after a reload.
+  log.debug("Leaving keyPairMayBeStored().");
   return !e || e.checked;
 }
 
 function forgetStoredKeyPair() {
   log.debug("Entering forgetStoredKeyPair().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving forgetStoredKeyPair().");
+    return;
+  }
   for (var i = 0; i < KEYPAIR_FIELDS.length; i++) {
     localStorage.removeItem(STORE_PREFIX + KEYPAIR_FIELDS[i]);
   }
@@ -109,14 +179,20 @@ function forgetStoredKeyPair() {
 function renderKeyPairStorageNote() {
   log.debug("Entering renderKeyPairStorageNote().");
   var note = el('wst_keypair_storage_note');
-  if (!note) return;
+  if (!note) {
+    log.debug("Leaving renderKeyPairStorageNote().");
+    return;
+  }
   if (keyPairMayBeStored()) {
     note.textContent = '';
+    log.debug("Leaving renderKeyPairStorageNote().");
     return;
   }
   // textContent, not innerHTML: this is a message, not markup.
-  note.textContent = 'Not saved. Use Download to keep this key pair. After a reload you will need ' +
-    'to paste it back into these two fields, and paste the private key into the Decryption Key ' +
+  note.textContent = 'Not saved. Use Download to keep this key pair. After a ' +
+      'reload you will need ' +
+    'to paste it back into these two fields, and paste the private key into ' +
+        'the Decryption Key ' +
     'field on the WS-Trust Response page before an encrypted token can be decrypted.';
   log.debug("Leaving renderKeyPairStorageNote().");
 }
@@ -133,13 +209,17 @@ function onSaveKeyPairChange() {
 
 function saveState() {
   log.debug("Entering saveState().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving saveState().");
+    return;
+  }
   var storeKeyPair = keyPairMayBeStored();
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
     if (!els[i].id) continue;
     if (!storeKeyPair && KEYPAIR_FIELDS.indexOf(els[i].id) >= 0) continue;
-    var v = els[i].type === 'checkbox' ? (els[i].checked ? '1' : '0') : els[i].value;
+    var v = els[i].type === 'checkbox' ? (els[i].checked ?
+        '1' : '0') : els[i].value;
     localStorage.setItem(STORE_PREFIX + els[i].id, v);
   }
   // Not merely "skip writing": remove what an earlier save (or an earlier
@@ -150,13 +230,17 @@ function saveState() {
 }
 function restoreState() {
   log.debug("Entering restoreState().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving restoreState().");
+    return;
+  }
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
     if (!els[i].id) continue;
     var v = localStorage.getItem(STORE_PREFIX + els[i].id);
     if (v === null) continue;
-    if (els[i].type === 'checkbox') els[i].checked = (v === '1' || v === 'true' || v === 'on');
+    if (els[i].type === 'checkbox') els[i].checked = (v === '1' ||
+        v === 'true' || v === 'on');
     else els[i].value = v;
   }
   log.debug("Leaving restoreState().");
@@ -166,18 +250,55 @@ function restoreState() {
 // Section-visibility toggles.
 // ---------------------------------------------------------------------------
 function onCredModeChange() {
+  log.debug("Entering onCredModeChange().");
   var mode = val('wst_cred_mode');
   show('wst_ut_section', mode === 'usernametoken');
   show('wst_samltoken_section', mode === 'saml');
   saveState();
   autoBuildRequest();
+  log.debug("Leaving onCredModeChange().");
   return false;
 }
-function onSignChange() { show('wst_signing_section', checked('wst_sign_request')); saveState(); autoBuildRequest(); return false; }
-function onEncryptChange() { show('wst_encryption_section', checked('wst_encrypt_request')); saveState(); autoBuildRequest(); return false; }
-function onWsaChange() { show('wst_wsa_section', checked('wst_wsa_support')); saveState(); autoBuildRequest(); return false; }
-function onOnBehalfOfChange() { show('wst_onbehalfof_row', checked('wst_use_onbehalfof')); saveState(); autoBuildRequest(); return false; }
-function onActAsChange() { show('wst_actas_row', checked('wst_use_actas')); saveState(); autoBuildRequest(); return false; }
+function onSignChange() {
+  log.debug("Entering onSignChange().");
+  show('wst_signing_section', checked('wst_sign_request'));
+  saveState();
+  autoBuildRequest();
+  log.debug("Leaving onSignChange().");
+  return false;
+}
+function onEncryptChange() {
+  log.debug("Entering onEncryptChange().");
+  show('wst_encryption_section', checked('wst_encrypt_request'));
+  saveState();
+  autoBuildRequest();
+  log.debug("Leaving onEncryptChange().");
+  return false;
+}
+function onWsaChange() {
+  log.debug("Entering onWsaChange().");
+  show('wst_wsa_section', checked('wst_wsa_support'));
+  saveState();
+  autoBuildRequest();
+  log.debug("Leaving onWsaChange().");
+  return false;
+}
+function onOnBehalfOfChange() {
+  log.debug("Entering onOnBehalfOfChange().");
+  show('wst_onbehalfof_row', checked('wst_use_onbehalfof'));
+  saveState();
+  autoBuildRequest();
+  log.debug("Leaving onOnBehalfOfChange().");
+  return false;
+}
+function onActAsChange() {
+  log.debug("Entering onActAsChange().");
+  show('wst_actas_row', checked('wst_use_actas'));
+  saveState();
+  autoBuildRequest();
+  log.debug("Leaving onActAsChange().");
+  return false;
+}
 
 // Apply the selected WS-Trust version: gate the version-specific options
 // (Bearer key type is 1.3+, ActAs is 1.4) and refresh the namespace-derived
@@ -188,12 +309,14 @@ function onVersionChange() {
   var kt = el('wst_key_type');
   if (kt) {
     var bearerOpt = kt.querySelector('option[value="bearer"]');
-    if (bearerOpt) { bearerOpt.hidden = !v.bearer; bearerOpt.disabled = !v.bearer; }
+    if (bearerOpt) { bearerOpt.hidden = !v.bearer; bearerOpt.disabled =
+        !v.bearer; }
     if (!v.bearer && kt.value === 'bearer') kt.value = 'symmetric';
   }
   show('wst_actas_check_row', v.actas);
   if (!v.actas) { var a = el('wst_use_actas'); if (a) a.checked = false; }
-  onActAsChange();      // adjust the ActAs textarea row to the (possibly reset) checkbox
+  onActAsChange(
+      );      // adjust the ActAs textarea row to the (possibly reset) checkbox
   onOperationChange();  // refresh wsa:Action for the new namespace + rebuild
   saveState();
   log.debug("Leaving onVersionChange().");
@@ -207,9 +330,11 @@ function onOperationChange() {
   var op = val('wst_operation');
   show('wst_target_section', op !== 'issue');
   // Auto-fill wsa:Action to match the operation + version, unless the user has
-  // customized it (any /RST/<Op> value, in any trust namespace, is auto-managed).
+  // customized it (any /RST/<Op> value, in any trust namespace, is
+  // auto-managed).
   var wsaAction = el('wst_wsa_action');
-  if (wsaAction && (!wsaAction.value || /\/RST\/(Issue|Renew|Validate|Cancel)$/.test(wsaAction.value))) {
+  if (wsaAction && (!wsaAction.value ||
+      /\/RST\/(Issue|Renew|Validate|Cancel)$/.test(wsaAction.value))) {
     wsaAction.value = wsaActionUri(op);
   }
   saveState();
@@ -243,18 +368,27 @@ function generateKeys() {
 }
 
 function triggerDownload(filename, data, mime) {
+  log.debug("Entering triggerDownload().");
   var blob = new Blob([data], { type: mime || 'application/octet-stream' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  log.debug("Leaving triggerDownload().");
 }
 function downloadKeys() {
+  log.debug("Entering downloadKeys().");
   var priv = val('wst_sp_private_key');
-  if (!priv) { setStatus('wst_call_status', 'Generate a key pair first.'); return false; }
+  if (!priv) {
+    setStatus('wst_call_status', 'Generate a key pair first.');
+    log.debug("Leaving downloadKeys().");
+    return false;
+  }
   triggerDownload('wstrust-client-key.pem', priv, 'application/x-pem-file');
-  triggerDownload('wstrust-client-cert.pem', val('wst_sp_cert'), 'application/x-pem-file');
+  triggerDownload('wstrust-client-cert.pem', val('wst_sp_cert'),
+                  'application/x-pem-file');
+  log.debug("Leaving downloadKeys().");
   return false;
 }
 
@@ -264,22 +398,31 @@ function importSamlAssertion() {
   log.debug("Entering importSamlAssertion().");
   var saved = '';
   try {
-    saved = (window.localStorage && localStorage.getItem('saml_last_response')) || '';
+    saved = (window.localStorage &&
+        localStorage.getItem('saml_last_response')) || '';
   } catch (e) {
     saved = '';
   }
   if (!saved) {
-    setStatus('wst_config_status', 'No SAML response found — run a SAML SSO first (SAML Debugger), or paste an assertion manually.');
+    setStatus('wst_config_status', 'No SAML response found — run a SAML SSO ' +
+              'first (SAML Debugger), or paste an assertion manually.');
+    log.debug("Leaving importSamlAssertion().");
     return false;
   }
   try {
     var doc = new DOMParser().parseFromString(saved, 'application/xml');
     var assertion = doc.getElementsByTagNameNS('*', 'Assertion')[0];
-    if (!assertion) { setStatus('wst_config_status', 'No <Assertion> in the last SAML response.'); return false; }
+    if (!assertion) {
+      setStatus('wst_config_status',
+                'No <Assertion> in the last SAML response.');
+      log.debug("Leaving importSamlAssertion().");
+      return false;
+    }
     setVal('wst_saml_token', new XMLSerializer().serializeToString(assertion));
     el('wst_cred_mode').value = 'saml';
     onCredModeChange();
-    setStatus('wst_config_status', 'Imported SAML assertion from the SAML workflow.');
+    setStatus('wst_config_status',
+              'Imported SAML assertion from the SAML workflow.');
   } catch (e) {
     log.error('importSamlAssertion: ' + e.message);
     setStatus('wst_config_status', 'Import failed: ' + e.message);
@@ -292,11 +435,17 @@ function importSamlAssertion() {
 // SOAP RequestSecurityToken construction.
 // ---------------------------------------------------------------------------
 function nowPlusMinutes(mins) {
+  log.debug("Entering nowPlusMinutes().");
   var d = new Date(Date.now() + (mins || 0) * 60000);
+  log.debug("Leaving nowPlusMinutes().");
   return d.toISOString();
 }
 
-function tokenTypeUri() { return wm.tokenTypeUri(val('wst_token_type'), val('wst_trust_version')); }
+function tokenTypeUri() {
+  log.debug("Entering tokenTypeUri().");
+  log.debug("Leaving tokenTypeUri().");
+  return wm.tokenTypeUri(val('wst_token_type'), val('wst_trust_version'));
+}
 
 // The credential element that goes inside <wsse:Security> (UsernameToken, an
 // embedded SAML assertion, or nothing).
@@ -313,20 +462,25 @@ function buildSecurityCredential() {
       var md = forge.md.sha1.create();
       md.update(nonce + created + forge.util.encodeUtf8(pass));
       var digest = forge.util.encode64(md.digest().getBytes());
+      log.debug("Leaving buildSecurityCredential().");
       return '<wsse:UsernameToken wsu:Id="_ut">' +
         '<wsse:Username>' + xmlEscape(user) + '</wsse:Username>' +
-        '<wsse:Password Type="' + PW_DIGEST + '">' + digest + '</wsse:Password>' +
+        '<wsse:Password Type="' + PW_DIGEST + '">' + digest +
+            '</wsse:Password>' +
         '<wsse:Nonce EncodingType="http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary">' + forge.util.encode64(nonce) + '</wsse:Nonce>' +
         '<wsu:Created>' + created + '</wsu:Created>' +
         '</wsse:UsernameToken>';
     }
+    log.debug("Leaving buildSecurityCredential().");
     return '<wsse:UsernameToken wsu:Id="_ut">' +
       '<wsse:Username>' + xmlEscape(user) + '</wsse:Username>' +
-      '<wsse:Password Type="' + PW_TEXT + '">' + xmlEscape(pass) + '</wsse:Password>' +
+      '<wsse:Password Type="' + PW_TEXT + '">' + xmlEscape(pass) +
+          '</wsse:Password>' +
       '</wsse:UsernameToken>';
   }
   if (mode === 'saml') {
     // Embed the assertion XML as-is (already an element).
+    log.debug("Leaving buildSecurityCredential().");
     return val('wst_saml_token').trim();
   }
   log.debug("Leaving buildSecurityCredential().");
@@ -354,6 +508,8 @@ function buildRstBody() {
 }
 
 function soapEnvelopeNs() {
+  log.debug("Entering soapEnvelopeNs().");
+  log.debug("Leaving soapEnvelopeNs().");
   return val('wst_soap_version') === '1.1' ? SOAP11_NS : SOAP12_NS;
 }
 
@@ -372,20 +528,27 @@ function buildSoapEnvelope() {
     var replyTo = val('wst_wsa_replyto') || WSA_ANON;
     headerParts.push('<wsa:Action>' + xmlEscape(action) + '</wsa:Action>');
     headerParts.push('<wsa:MessageID>' + xmlEscape(msgId) + '</wsa:MessageID>');
-    if (to) headerParts.push('<wsa:To wsu:Id="_to">' + xmlEscape(to) + '</wsa:To>');
-    headerParts.push('<wsa:ReplyTo><wsa:Address>' + xmlEscape(replyTo) + '</wsa:Address></wsa:ReplyTo>');
+    if (to) headerParts.push('<wsa:To wsu:Id="_to">' + xmlEscape(to) +
+        '</wsa:To>');
+    headerParts.push('<wsa:ReplyTo><wsa:Address>' + xmlEscape(replyTo) +
+                     '</wsa:Address></wsa:ReplyTo>');
     var from = val('wst_wsa_from').trim();
-    if (from) headerParts.push('<wsa:From><wsa:Address>' + xmlEscape(from) + '</wsa:Address></wsa:From>');
+    if (from) headerParts.push('<wsa:From><wsa:Address>' + xmlEscape(from) +
+        '</wsa:Address></wsa:From>');
   }
 
   var secParts = [];
   if (checked('wst_add_timestamp')) {
-    secParts.push('<wsu:Timestamp wsu:Id="_timestamp"><wsu:Created>' + nowPlusMinutes(0) + '</wsu:Created><wsu:Expires>' + nowPlusMinutes(5) + '</wsu:Expires></wsu:Timestamp>');
+    secParts.push('<wsu:Timestamp wsu:Id="_timestamp"><wsu:Created>' +
+                  nowPlusMinutes(0) + '</wsu:Created><wsu:Expires>' +
+                  nowPlusMinutes(5) + '</wsu:Expires></wsu:Timestamp>');
   }
   var cred = buildSecurityCredential();
   if (cred) secParts.push(cred);
   var securityHeader = secParts.length
-    ? '<wsse:Security xmlns:wsse="' + WSSE_NS + '" xmlns:wsu="' + WSU_NS + '" soap:mustUnderstand="' + (soapNs === SOAP11_NS ? '1' : 'true') + '">' + secParts.join('') + '</wsse:Security>'
+    ? '<wsse:Security xmlns:wsse="' + WSSE_NS + '" xmlns:wsu="' + WSU_NS +
+        '" soap:mustUnderstand="' + (soapNs === SOAP11_NS ? '1' : 'true') +
+        '">' + secParts.join('') + '</wsse:Security>'
     : '';
 
   var header = (headerParts.length || securityHeader)
@@ -393,7 +556,8 @@ function buildSoapEnvelope() {
     : '';
 
   log.debug("Leaving buildSoapEnvelope().");
-  return '<soap:Envelope xmlns:soap="' + soapNs + '" xmlns:wsa="' + WSA_NS + '" xmlns:wsu="' + WSU_NS + '">' +
+  return '<soap:Envelope xmlns:soap="' + soapNs + '" xmlns:wsa="' + WSA_NS +
+      '" xmlns:wsu="' + WSU_NS + '">' +
     header +
     '<soap:Body wsu:Id="_body">' + buildRstBody() + '</soap:Body>' +
     '</soap:Envelope>';
@@ -405,13 +569,18 @@ function buildSoapEnvelope() {
 // Uses the shared exclusive-C14N + RSA-SHA* primitives in xmldsig.js.
 // ---------------------------------------------------------------------------
 function firstByLocal(root, name) {
+  log.debug("Entering firstByLocal().");
   var els = root.getElementsByTagNameNS('*', name);
+  log.debug("Leaving firstByLocal().");
   return els.length ? els[0] : null;
 }
 
 function signWsSecurity(soapXml) {
+  log.debug("Entering signWsSecurity().");
   var priv = val('wst_sp_private_key');
-  if (!priv) throw new Error('Signing is enabled but there is no client private key — generate a key pair.');
+  if (!priv) throw new Error('Signing is enabled but there is no client ' +
+      'private key — generate a key pair.');
+  log.debug("Leaving signWsSecurity().");
   return xd.signWsSecurity(soapXml, {
     privateKeyPem: priv,
     certPem: val('wst_sp_cert'),
@@ -441,7 +610,8 @@ function encryptSoapBody(soapXml) {
     digest: val('wst_enc_digest'),
     mgf: val('wst_enc_mgf')
   });
-  var encNode = doc.importNode(new DOMParser().parseFromString(encXml, 'application/xml').documentElement, true);
+  var encNode = doc.importNode(new DOMParser().parseFromString(encXml,
+      'application/xml').documentElement, true);
   body.replaceChild(encNode, rst);
   log.debug("Leaving encryptSoapBody().");
   return new XMLSerializer().serializeToString(doc);
@@ -449,9 +619,11 @@ function encryptSoapBody(soapXml) {
 
 // Apply the selected signing/encryption to a freshly-built envelope.
 function buildFinalRequest() {
+  log.debug("Entering buildFinalRequest().");
   var xml = buildSoapEnvelope();
   if (checked('wst_sign_request')) xml = signWsSecurity(xml);
   if (checked('wst_encrypt_request')) xml = encryptSoapBody(xml);
+  log.debug("Leaving buildFinalRequest().");
   return xml;
 }
 
@@ -459,11 +631,13 @@ function buildFinalRequest() {
 // Auto-rebuild the Generated Request field on any change.
 // ---------------------------------------------------------------------------
 function autoBuildRequest() {
+  log.debug("Entering autoBuildRequest().");
   try {
     buildRequestUi();
   } catch (e) {
     log.error('autoBuildRequest: ' + e.message);
   }
+  log.debug("Leaving autoBuildRequest().");
   return false;
 }
 function buildRequestUi() {
@@ -472,7 +646,8 @@ function buildRequestUi() {
     var xml = buildFinalRequest();
     setVal('wst_generated_request', formatXml(xml));
     var op = val('wst_operation');
-    var bits = (checked('wst_sign_request') ? 'signed' : 'unsigned') + (checked('wst_encrypt_request') ? ' + encrypted body' : '');
+    var bits = (checked('wst_sign_request') ? 'signed' : 'unsigned') +
+        (checked('wst_encrypt_request') ? ' + encrypted body' : '');
     var msg = 'Built ' + op + ' RequestSecurityToken (' + bits + ').';
     if (checked('wst_encrypt_request')) msg += ' Note: most STSes will not accept an encrypted request body.';
     setStatus('wst_call_status', msg);
@@ -484,16 +659,21 @@ function buildRequestUi() {
   return false;
 }
 
-// Minimal, dependency-free XML pretty-printer (shared shape with saml_response.js).
+// Minimal, dependency-free XML pretty-printer (shared shape with
+// saml_response.js).
 function formatXml(xml) {
   log.debug("Entering formatXml().");
-  if (!xml) return '';
+  if (!xml) {
+    log.debug("Leaving formatXml().");
+    return '';
+  }
   xml = xml.replace(/(>)(<)(\/*)/g, '$1\n$2$3');
   var pad = 0, out = '';
   xml.split('\n').forEach(function (node) {
     var indent = 0;
     if (/^<\/\w/.test(node)) { pad = Math.max(pad - 1, 0); }
-    else if (/^<\w[^>]*[^\/]>.*$/.test(node) && !/<\/\w/.test(node)) { indent = 1; }
+    else if (/^<\w[^>]*[^\/]>.*$/.test(node) && !/<\/\w/.test(node)) { indent =
+             1; }
     out += new Array(pad + 1).join('  ') + node + '\n';
     pad += indent;
   });
@@ -506,12 +686,21 @@ function formatXml(xml) {
 // exchange, and navigate to the response page.
 // ---------------------------------------------------------------------------
 function useBackend() {
-  return appconfig.backendAvailable !== false && checked('wst_initiateFromBackEnd');
+  log.debug("Entering useBackend().");
+  log.debug("Leaving useBackend().");
+  return appconfig.backendAvailable !== false &&
+      checked('wst_initiateFromBackEnd');
 }
 
 function contentTypeFor(soapVersion, action) {
-  if (soapVersion === '1.1') return 'text/xml; charset=utf-8';
-  return 'application/soap+xml; charset=utf-8' + (action ? ('; action="' + action + '"') : '');
+  log.debug("Entering contentTypeFor().");
+  if (soapVersion === '1.1') {
+    log.debug("Leaving contentTypeFor().");
+    return 'text/xml; charset=utf-8';
+  }
+  log.debug("Leaving contentTypeFor().");
+  return 'application/soap+xml; charset=utf-8' + (action ? ('; action="' +
+      action + '"') : '');
 }
 
 function stashAndGo(requestXml, responseXml, httpStatus, historyId) {
@@ -533,7 +722,9 @@ function stashAndGo(requestXml, responseXml, httpStatus, historyId) {
   };
   try {
     if (window.localStorage) {
-      localStorage.setItem(EXCHANGE_KEY, JSON.stringify({ requestXml: requestXml, responseXml: responseXml, meta: meta }));
+      localStorage.setItem(EXCHANGE_KEY,
+                           JSON.stringify({ requestXml: requestXml,
+                           responseXml: responseXml, meta: meta }));
     }
   } catch (e) {
     log.error('stash: ' + e.message);
@@ -550,14 +741,23 @@ function stashAndGo(requestXml, responseXml, httpStatus, historyId) {
 // only known once the response is rendered. Anything that fails before the
 // request leaves the browser is a Failure here, with its reason.
 // ---------------------------------------------------------------------------
-var OPERATION_LABEL = { issue: 'Issue', renew: 'Renew', validate: 'Validate', cancel: 'Cancel' };
+var OPERATION_LABEL = { issue: 'Issue', renew: 'Renew', validate: 'Validate',
+    cancel: 'Cancel' };
 
 // Who the request is made as: the UsernameToken user, or the credential kind
 // when there is no username to show.
 function currentUser() {
+  log.debug("Entering currentUser().");
   var mode = val('wst_cred_mode');
-  if (mode === 'usernametoken') return val('wst_username') || '(no username)';
-  if (mode === 'saml') return '(SAML token)';
+  if (mode === 'usernametoken') {
+    log.debug("Leaving currentUser().");
+    return val('wst_username') || '(no username)';
+  }
+  if (mode === 'saml') {
+    log.debug("Leaving currentUser().");
+    return '(SAML token)';
+  }
+  log.debug("Leaving currentUser().");
   return '(anonymous)';
 }
 
@@ -576,26 +776,38 @@ function historyEntry(result, detail) {
 }
 
 function opFailure(reason) {
+  log.debug("Entering opFailure().");
   history.record(historyEntry(history.FAILURE, reason));
   renderOperationHistory();
+  log.debug("Leaving opFailure().");
   return false;
 }
 function opSent(detail) {
+  log.debug("Entering opSent().");
   var id = history.record(historyEntry(history.SENT, detail));
   renderOperationHistory();
+  log.debug("Leaving opSent().");
   return id;
 }
 function opFailed(id, reason) {
+  log.debug("Entering opFailed().");
   if (id) history.update(id, history.FAILURE, reason);
   renderOperationHistory();
+  log.debug("Leaving opFailed().");
   return false;
 }
 
-function renderOperationHistory() { history.render(el('wst_operation_history')); }
+function renderOperationHistory() {
+  log.debug("Entering renderOperationHistory().");
+  history.render(el('wst_operation_history'));
+  log.debug("Leaving renderOperationHistory().");
+}
 
 function clearOperationHistory() {
+  log.debug("Entering clearOperationHistory().");
   history.clear();
   renderOperationHistory();
+  log.debug("Leaving clearOperationHistory().");
   return false;
 }
 
@@ -604,11 +816,14 @@ function callSts() {
   var url = val('wst_sts_url').trim();
   if (!url) {
     setStatus('wst_call_status', 'Enter the STS endpoint URL first.');
+    log.debug("Leaving callSts().");
     return opFailure('no STS endpoint URL.');
   }
   var op = val('wst_operation');
   if (op !== 'issue' && !val('wst_target_token').trim()) {
-    setStatus('wst_call_status', 'The ' + op + ' operation needs a Target Token — paste the token from a prior Issue.');
+    setStatus('wst_call_status', 'The ' + op + ' operation needs a Target ' +
+              'Token — paste the token from a prior Issue.');
+    log.debug("Leaving callSts().");
     return opFailure('the ' + op + ' operation needs a Target Token.');
   }
   var soapVersion = val('wst_soap_version') || '1.2';
@@ -619,6 +834,7 @@ function callSts() {
     soap = buildFinalRequest();
   } catch (e) {
     setStatus('wst_call_status', 'Build failed: ' + e.message);
+    log.debug("Leaving callSts().");
     return opFailure('build failed: ' + e.message);
   }
 
@@ -633,13 +849,17 @@ function callSts() {
         sslValidate: checked('wst_ssl_validate')
       })
     })
-      .then(function (r) { return r.json().then(function (j) { if (!r.ok) { throw new Error(j && j.error ? j.error : ('HTTP ' + r.status)); } return j; }); })
-      .then(function (j) { stashAndGo(soap, j.body || '', j.status, opSent('sent to ' + url + ' (backend)')); })
+      .then(function (r) { return r.json()
+          .then(function (j) { if (!r.ok) { throw new Error(j && j.error ?
+          j.error : ('HTTP ' + r.status)); } return j; }); })
+      .then(function (j) { stashAndGo(soap, j.body || '', j.status,
+          opSent('sent to ' + url + ' (backend)')); })
       .catch(function (e) {
         log.error('callSts backend: ' + e.message);
         setStatus('wst_call_status', 'STS call failed: ' + e.message);
         opFailure(e.message);
       });
+    log.debug("Leaving callSts().");
     return false;
   }
 
@@ -647,11 +867,15 @@ function callSts() {
   var headers = { 'Content-Type': contentTypeFor(soapVersion, action) };
   if (soapVersion === '1.1') headers['SOAPAction'] = '"' + action + '"';
   fetch(url, { method: 'POST', headers: headers, body: soap })
-    .then(function (r) { return r.text().then(function (t) { return { status: r.status, body: t }; }); })
-    .then(function (res) { stashAndGo(soap, res.body || '', res.status, opSent('sent to ' + url + ' (frontend)')); })
+    .then(function (r) { return r.text()
+        .then(function (t) { return { status: r.status, body: t }; }); })
+    .then(function (res) { stashAndGo(soap, res.body || '', res.status,
+        opSent('sent to ' + url + ' (frontend)')); })
     .catch(function (e) {
       log.error('callSts frontend: ' + e.message);
-      setStatus('wst_call_status', 'STS call failed: ' + e.message + ' — a cross-origin SOAP endpoint often blocks direct browser calls (CORS); switch to backend routing.');
+      setStatus('wst_call_status', 'STS call failed: ' + e.message +
+                ' — a cross-origin SOAP endpoint often blocks direct browser ' +
+                'calls (CORS); switch to backend routing.');
       opFailure(e.message + ' (CORS, if routed through the browser)');
     });
   log.debug("Leaving callSts().");
@@ -664,10 +888,14 @@ function callSts() {
 function copyField(id) {
   log.debug("Entering copyField().");
   var e = el(id);
-  if (!e) return false;
+  if (!e) {
+    log.debug("Leaving copyField().");
+    return false;
+  }
   var text = e.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
+    navigator.clipboard.writeText(text).catch(function (err) { log.error(
+                                  'copyField: ' + err); });
   } else {
     try {
       e.focus();
@@ -681,18 +909,23 @@ function copyField(id) {
   return false;
 }
 function togglePane(bodyId) {
+  log.debug("Entering togglePane().");
   var b = el(bodyId);
   if (b) b.style.display = (b.style.display === 'none') ? 'block' : 'none';
+  log.debug("Leaving togglePane().");
   return false;
 }
 function showTab(evt, tabId) {
   log.debug("Entering showTab().");
   var target = el(tabId);
-  var scope = (target && target.closest && target.closest('.saml-pane')) || document;
+  var scope = (target && target.closest && target.closest('.saml-pane')) ||
+      document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
-  for (var i = 0; i < contents.length; i++) { contents[i].style.display = 'none'; }
+  for (var i = 0; i < contents.length; i++) { contents[i].style.display =
+       'none'; }
   var links = scope.getElementsByClassName('tablinks');
-  for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
+  for (var k = 0; k < links.length; k++) { links[k].className =
+       links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
   log.debug("Leaving showTab().");
@@ -701,7 +934,11 @@ function showTab(evt, tabId) {
 function viewCertificate(fieldId) {
   log.debug("Entering viewCertificate().");
   var pem = val(fieldId);
-  if (!pem) { setStatus('wst_call_status', 'No certificate to view yet.'); return false; }
+  if (!pem) {
+    setStatus('wst_call_status', 'No certificate to view yet.');
+    log.debug("Leaving viewCertificate().");
+    return false;
+  }
   try {
     if (window.localStorage) localStorage.setItem('saml_cert_view', pem);
   } catch (e) {
@@ -716,17 +953,21 @@ function viewCertificate(fieldId) {
 // the browser. Force the Front radio on and disable the Back radio, mirroring
 // the OAuth2 debugger's enforceBackendAvailability().
 function enforceBackendAvailability() {
+  log.debug("Entering enforceBackendAvailability().");
   if (appconfig.backendAvailable === false) {
     var front = el('wst_initiateFromFrontEnd');
     var back = el('wst_initiateFromBackEnd');
     if (front) front.checked = true;
     if (back) { back.checked = false; back.disabled = true; }
   }
+  log.debug("Leaving enforceBackendAvailability().");
 }
 
 function setReturnLink() {
+  log.debug("Entering setReturnLink().");
   var link = el('return_link');
   if (link) link.setAttribute('href', '/index.html');
+  log.debug("Leaving setReturnLink().");
 }
 
 window.onload = function () {
@@ -741,7 +982,9 @@ window.onload = function () {
   renderKeyPairStorageNote();
 
   // Seed the STS URL default if nothing stored yet.
-  if (!val('wst_sts_url') && appconfig.wstrustStsUrlDefault) setVal('wst_sts_url', appconfig.wstrustStsUrlDefault);
+  if (!val('wst_sts_url') &&
+      appconfig.wstrustStsUrlDefault) setVal('wst_sts_url',
+      appconfig.wstrustStsUrlDefault);
   // Fall back to HTML defaults for blank fields (fresh page).
   ['wst_applies_to', 'wst_username', 'wst_password'].forEach(function (id) {
     var e = el(id);

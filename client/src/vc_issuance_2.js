@@ -37,8 +37,8 @@ var log = bunyan.createLogger({ name: 'vc_issuance_2',
 // page generates.
 var request = {
   config: null,
-  // The first holder key, kept under the same names as before: it is the one the
-  // page displays and the one a single-credential request binds to.
+  // The first holder key, kept under the same names as before: it is the one
+  // the page displays and the one a single-credential request binds to.
   holderPublicJwk: null,
   holderPrivateJwk: null,
   // Every key this request binds to, in order — one per proof, one credential
@@ -55,18 +55,40 @@ var request = {
   body: null
 };
 
-function el(id) { return document.getElementById(id); }
-function setText(id, text) { var e = el(id); if (e) e.textContent = (text == null ? "" : String(text)); }
-function setJson(id, value) {
-  var e = el(id);
-  if (e) e.textContent = (value === null || value === undefined) ? "—" : JSON.stringify(value, null, 2);
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
 }
-function setValue(id, v) { var e = el(id); if (e) e.value = (v == null ? "" : v); }
-function status(id, text, cls) {
+function setText(id, text) {
+  log.debug("Entering setText().");
   var e = el(id);
-  if (!e) return;
+  if (e) e.textContent = (text == null ? "" : String(text));
+  log.debug("Leaving setText().");
+}
+function setJson(id, value) {
+  log.debug("Entering setJson().");
+  var e = el(id);
+  if (e) e.textContent = (value === null || value === undefined) ?
+      "—" : JSON.stringify(value, null, 2);
+  log.debug("Leaving setJson().");
+}
+function setValue(id, v) {
+  log.debug("Entering setValue().");
+  var e = el(id);
+  if (e) e.value = (v == null ? "" : v);
+  log.debug("Leaving setValue().");
+}
+function status(id, text, cls) {
+  log.debug("Entering status().");
+  var e = el(id);
+  if (!e) {
+    log.debug("Leaving status().");
+    return;
+  }
   e.textContent = text;
   e.className = "vc-status" + (cls ? " " + cls : "");
+  log.debug("Leaving status().");
 }
 
 // --- the holder key ---------------------------------------------------------
@@ -86,50 +108,58 @@ function generateHolderKey() {
 }
 
 function loadOrGenerateHolderKey() {
+  log.debug("Entering loadOrGenerateHolderKey().");
   var pub = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_JWK);
   var priv = sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK);
   if (pub && priv) {
     request.holderPublicJwk = pub;
     request.holderPrivateJwk = priv;
+    log.debug("Leaving loadOrGenerateHolderKey().");
     return Promise.resolve(pub);
   }
+  log.debug("Leaving loadOrGenerateHolderKey().");
   return generateHolderKey();
 }
 
 // ---------------------------------------------------------------------------
 // Keeping — or not keeping — the holder key pair.
 //
-// The private half has to outlive this page for the workflow to continue: step 4
-// needs it to refresh the credential, and the PRESENTATION pages need it to sign
-// the Key Binding JWT. That is why it is stored by default, and why turning
-// storage off is a real decision rather than a tidy-up. sd_jwt_vc.js enforces the
-// choice for every writer (see holderPrivateKeyMayBeStored there); this page is
-// where the choice is made and explained.
+// The private half has to outlive this page for the workflow to continue: step
+// 4 needs it to refresh the credential, and the PRESENTATION pages need it to
+// sign the Key Binding JWT. That is why it is stored by default, and why
+// turning storage off is a real decision rather than a tidy-up. sd_jwt_vc.js
+// enforces the choice for every writer (see holderPrivateKeyMayBeStored there);
+// this page is where the choice is made and explained.
 // ---------------------------------------------------------------------------
 function triggerDownload(filename, data, mime) {
+  log.debug("Entering triggerDownload().");
   var blob = new Blob([data], { type: mime || 'application/octet-stream' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  log.debug("Leaving triggerDownload().");
 }
 
-// Both halves, because the point of the file is to be able to put the pair back.
-// It is offered whether or not storage is on: with storage off it is the only
-// copy there will be, and with storage on it is still the only way to move the
-// key to another browser.
+// Both halves, because the point of the file is to be able to put the pair
+// back. It is offered whether or not storage is on: with storage off it is the
+// only copy there will be, and with storage on it is still the only way to move
+// the key to another browser.
 function downloadHolderKey() {
   log.debug("Entering downloadHolderKey().");
   var pub = request.holderPublicJwk || sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_JWK);
-  var priv = request.holderPrivateJwk || sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK);
+  var priv = request.holderPrivateJwk ||
+      sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK);
   if (!pub && !priv) {
-    status("vc_approval_status", "There is no holder key pair to download yet.", "vc-bad");
+    status("vc_approval_status", "There is no holder key pair to download yet.",
+           "vc-bad");
     log.debug("Leaving downloadHolderKey(). Nothing to download.");
     return false;
   }
   triggerDownload("holder-key-pair.json",
-    JSON.stringify({ publicJwk: pub || null, privateJwk: priv || null }, null, 2),
+    JSON.stringify({ publicJwk: pub || null, privateJwk: priv || null }, null,
+                   2),
     "application/json");
   log.debug("Leaving downloadHolderKey().");
   return false;
@@ -141,14 +171,21 @@ function downloadHolderKey() {
 function renderHolderKeyStorageNote() {
   log.debug("Entering renderHolderKeyStorageNote().");
   var note = document.getElementById("vc_holder_key_storage_note");
-  if (!note) return;
+  if (!note) {
+    log.debug("Leaving renderHolderKeyStorageNote().");
+    return;
+  }
   if (sdJwtVc.holderPrivateKeyMayBeStored()) {
-    note.textContent = "Kept in this browser so step 4 and the presentation pages can use it.";
+    note.textContent =
+        "Kept in this browser so step 4 and the presentation pages can use it.";
+    log.debug("Leaving renderHolderKeyStorageNote().");
     return;
   }
   // textContent, not innerHTML: a message, not markup.
-  note.textContent = "Not saved. Download the key pair now — without the private half in storage, " +
-    "step 4 cannot refresh this credential and the presentation pages cannot sign a Key Binding " +
+  note.textContent = "Not saved. Download the key pair now — without the " +
+      "private half in storage, " +
+    "step 4 cannot refresh this credential and the presentation pages cannot " +
+        "sign a Key Binding " +
     "JWT, and any earlier generation in Credential History has lost its key too.";
   log.debug("Leaving renderHolderKeyStorageNote().");
 }
@@ -166,16 +203,22 @@ function onSaveHolderKeyChange() {
   if (!on) {
     status("vc_approval_status",
       "Holder key saving is off. The stored private key was removed" +
-      (stripped ? ", along with the key on " + stripped + " credential history generation(s)" : "") +
+      (stripped ? ", along with the key on " + stripped +
+       " credential history generation(s)" : "") +
       ". Use Download Key Pair to keep a copy.", "vc-bad");
   } else {
     // Re-enabling stores the pair the page is holding right now, if it has one;
     // it cannot bring back what the purge removed.
-    if (request.holderPublicJwk) sdJwtVc.setJson(sdJwtVc.KEYS.HOLDER_JWK, request.holderPublicJwk);
-    if (request.holderPrivateJwk) sdJwtVc.setJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK, request.holderPrivateJwk);
-    status("vc_approval_status", "Holder key saving is back on for the key pair on this page.", "vc-ok");
+    if (request.holderPublicJwk) sdJwtVc.setJson(sdJwtVc.KEYS.HOLDER_JWK,
+        request.holderPublicJwk);
+    if (request.holderPrivateJwk) sdJwtVc.setJson(
+        sdJwtVc.KEYS.HOLDER_PRIVATE_JWK, request.holderPrivateJwk);
+    status("vc_approval_status",
+           "Holder key saving is back on for the key pair on this page.",
+           "vc-ok");
   }
-  log.debug("Leaving onSaveHolderKeyChange(). on=" + on + ", stripped=" + stripped);
+  log.debug("Leaving onSaveHolderKeyChange(). on=" + on + ", stripped=" +
+            stripped);
   return false;
 }
 
@@ -194,13 +237,14 @@ function onSaveHolderKeyChange() {
 //                          Possession, which is what this workflow has always
 //                          done and what SD-JWT VC assumes.
 //
-// The second depends on the first — Holder of Key has nothing to reuse without a
-// DPoP key — so the pane says so rather than silently ignoring a checked box.
+// The second depends on the first — Holder of Key has nothing to reuse without
+// a DPoP key — so the pane says so rather than silently ignoring a checked box.
 // ---------------------------------------------------------------------------
 function renderDpopPane() {
   log.debug("Entering renderDpopPane().");
   var on = sdJwtVc.dpopEnabled();
-  var wantsHok = sdJwtVc.credentialBindingPreference() === sdJwtVc.BINDING_MODES.HOK;
+  var wantsHok =
+      sdJwtVc.credentialBindingPreference() === sdJwtVc.BINDING_MODES.HOK;
   var effective = sdJwtVc.credentialBindingMode();
   var enabledBox = el("vc_dpop_enabled");
   var hokBox = el("vc_dpop_holder_of_key");
@@ -210,29 +254,38 @@ function renderDpopPane() {
   var readiness = sdJwtVc.dpopReadiness();
   setText("vc_dpop_enabled_note", on
     ? (readiness.ready
-        ? "On. The Token Request carries a proof, and every call to a protected endpoint carries " +
+        ? "On. The Token Request carries a proof, and every call to a " +
+            "protected endpoint carries " +
           "another one bound to the token."
         : (readiness.problem || "On, but not ready."))
-    : "Off. The access token comes back as a Bearer token (RFC 6750) and is presented as one.");
+    : "Off. The access token comes back as a Bearer token (RFC 6750) and is " +
+        "presented as one.");
 
   // The note is where the dependency between the two boxes is made honest. A
   // checked box whose mode is not in force is the one state a user cannot see
   // from the checkbox alone.
   if (wantsHok && !on) {
     setText("vc_dpop_binding_note",
-      "Holder of Key needs a DPoP key to bind the credential to, and DPoP is off — so Proof of " +
+      "Holder of Key needs a DPoP key to bind the credential to, and DPoP is " +
+          "off — so Proof of " +
       "Possession is what will actually happen. Turn DPoP on above to use it.");
   } else if (effective === sdJwtVc.BINDING_MODES.HOK) {
     setText("vc_dpop_binding_note",
-      "Holder of Key: one key. The access token's cnf.jkt and the credential's cnf.jwk will name " +
-      "it, and the Credential Request's proof of possession is signed by it. The holder has one " +
-      "key to protect instead of two, and the issuer can see that whoever presents the token is " +
+      "Holder of Key: one key. The access token's cnf.jkt and the " +
+          "credential's cnf.jwk will name " +
+      "it, and the Credential Request's proof of possession is signed by it. " +
+          "The holder has one " +
+      "key to protect instead of two, and the issuer can see that whoever " +
+          "presents the token is " +
       "who the credential is bound to.");
   } else {
     setText("vc_dpop_binding_note",
-      "Proof of Possession: two keys. The credential is bound to its own holder key, so its " +
-      "lifetime is independent of the token's \u2014 which matters because the credential outlives " +
-      "the access token by months and rotating a key for OAuth reasons should not invalidate it.");
+      "Proof of Possession: two keys. The credential is bound to its own " +
+          "holder key, so its " +
+      "lifetime is independent of the token's \u2014 which matters because " +
+          "the credential outlives " +
+      "the access token by months and rotating a key for OAuth reasons " +
+          "should not invalidate it.");
   }
 
   var pair = sdJwtVc.dpopKeyPair();
@@ -240,17 +293,20 @@ function renderDpopPane() {
   setText("vc_dpop_jkt", sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "\u2014");
   setText("vc_dpop_nonce", sdJwtVc.dpopNonce() || "(none asked for)");
   var alg = el("vc_dpop_alg");
-  if (alg) alg.value = (pair && pair.alg) || sdJwtVc.get(sdJwtVc.KEYS.DPOP_ALG) || "ES256";
+  if (alg) alg.value = (pair && pair.alg) ||
+      sdJwtVc.get(sdJwtVc.KEYS.DPOP_ALG) || "ES256";
 
   // What the authorization server said it accepts. Absent is meaningful: it is
-  // the only signal that DPoP is on offer, so a server that has not advertised it
-  // may well refuse the proof.
+  // the only signal that DPoP is on offer, so a server that has not advertised
+  // it may well refuse the proof.
   var serverAlgs = sdJwtVc.get("dpop_signing_alg_values_supported") || "";
   setText("vc_dpop_server_algs", serverAlgs ||
-    "(not advertised \u2014 retrieve the authorization server metadata in step 1)");
+    "(not advertised \u2014 retrieve the authorization server metadata " +
+        "in step 1)");
   if (serverAlgs && alg && alg.value && serverAlgs.indexOf(alg.value) === -1) {
     setText("vc_dpop_alg_note", "The server did not advertise " + alg.value +
-      ". It may still accept it, but dpop_signing_alg_values_supported says otherwise.");
+      ". It may still accept it, but dpop_signing_alg_values_supported says " +
+          "otherwise.");
   } else {
     setText("vc_dpop_alg_note", "");
   }
@@ -262,9 +318,11 @@ function renderDpopPane() {
   setText("vc_dpop_jkt_sent", sentJkt
     ? (sentJkt === (sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) || "")
         ? "yes \u2014 dpop_jkt=" + sentJkt
-        : "sent for a DIFFERENT key (" + sentJkt + "); this code cannot be redeemed by the key " +
+        : "sent for a DIFFERENT key (" + sentJkt +
+            "); this code cannot be redeemed by the key " +
           "shown above")
-    : "no \u2014 the authorization request carried no dpop_jkt, so only the token is bound, not " +
+    : "no \u2014 the authorization request carried no dpop_jkt, so only the " +
+        "token is bound, not " +
       "the code that bought it");
 
   renderTokenBinding();
@@ -273,10 +331,10 @@ function renderDpopPane() {
 
 // What the token endpoint ACTUALLY answered, which is not the same as what was
 // asked for: a server that ignored the proof would answer Bearer, and this is
-// where that shows.
-// What the token endpoint answered about the binding, recorded for the pane. Kept
-// separate from renderTokenBinding() because one writes and the other reads: the
-// pane is re-rendered on load, when nothing has just been sent.
+// where that shows. What the token endpoint answered about the binding,
+// recorded for the pane. Kept separate from renderTokenBinding() because one
+// writes and the other reads: the pane is re-rendered on load, when nothing has
+// just been sent.
 function recordTokenBinding(result) {
   log.debug("Entering recordTokenBinding().");
   if (result.sent) {
@@ -305,11 +363,12 @@ function renderTokenBinding() {
   try {
     claims = metadataClient.b64uToJson(accessToken.split(".")[1]);
   } catch (e) {
-    // An opaque access token is legal and carries no readable cnf; say so rather
-    // than reporting "not bound", which would be a claim about a token nobody
-    // here can read.
+    // An opaque access token is legal and carries no readable cnf; say so
+    // rather than reporting "not bound", which would be a claim about a token
+    // nobody here can read.
     status("vc_dpop_token_status",
-      "The access token is not a readable JWT, so whether it carries cnf.jkt cannot be seen from " +
+      "The access token is not a readable JWT, so whether it carries cnf.jkt " +
+          "cannot be seen from " +
       "here. token_type was " + (tokenType || "not recorded") + ".", "");
     log.debug("Leaving renderTokenBinding(). Opaque token.");
     return;
@@ -319,25 +378,30 @@ function renderTokenBinding() {
   if (!boundTo) {
     status("vc_dpop_token_status",
       "This access token is NOT bound: it carries no cnf.jkt" +
-      (tokenType ? ", and token_type was " + tokenType : "") + ". It is a Bearer token — anything " +
+      (tokenType ? ", and token_type was " + tokenType : "") +
+       ". It is a Bearer token — anything " +
       "that can read the bytes can spend them.",
       sdJwtVc.dpopEnabled() ? "vc-bad" : "");
   } else if (ourJkt && boundTo === ourJkt) {
     status("vc_dpop_token_status",
       "Bound to this wallet's key: cnf.jkt = " + boundTo + ", token_type = " +
-      (tokenType || "DPoP") + ". Every call presenting it must carry a proof from that key.",
+      (tokenType || "DPoP") +
+       ". Every call presenting it must carry a proof from that key.",
       "vc-ok");
   } else {
     status("vc_dpop_token_status",
-      "This token is bound to " + boundTo + ", which is NOT the key this page holds (" +
-      (ourJkt || "none") + "). It cannot be used from here — generate no new key, or run step 1 " +
+      "This token is bound to " + boundTo +
+          ", which is NOT the key this page holds (" +
+      (ourJkt || "none") +
+       "). It cannot be used from here — generate no new key, or run step 1 " +
       "again with the key you mean to use.", "vc-bad");
   }
-  log.debug("Leaving renderTokenBinding(). boundTo=" + (boundTo || "(nothing)"));
+  log.debug("Leaving renderTokenBinding(). boundTo=" + (boundTo ||
+            "(nothing)"));
 }
 
-// Show the most recent proof, decoded. The point of the pane: htm and htu tie it
-// to one method and one endpoint, ath to one token, jti to one use.
+// Show the most recent proof, decoded. The point of the pane: htm and htu tie
+// it to one method and one endpoint, ath to one token, jti to one use.
 function showLastProof(sent, label) {
   log.debug("Entering showLastProof().");
   if (!sent || !sent.decoded) {
@@ -348,14 +412,15 @@ function showLastProof(sent, label) {
   var e = el("vc_dpop_last_proof");
   if (e) {
     e.textContent = "// " + (label || "the last DPoP proof sent") + "\n" +
-      JSON.stringify({ header: sent.decoded.header, payload: sent.decoded.payload }, null, 2);
+      JSON.stringify({ header: sent.decoded.header,
+                     payload: sent.decoded.payload }, null, 2);
   }
   log.debug("Leaving showLastProof().");
 }
 
-// Make sure there is a key to sign with, generating one if needed. Called before
-// any request that may carry a proof, so the pane never has to ask the user to
-// press a button first.
+// Make sure there is a key to sign with, generating one if needed. Called
+// before any request that may carry a proof, so the pane never has to ask the
+// user to press a button first.
 function ensureDpopKey() {
   log.debug("Entering ensureDpopKey().");
   if (!sdJwtVc.dpopEnabled()) {
@@ -368,12 +433,15 @@ function ensureDpopKey() {
     return Promise.resolve(existing);
   }
   var algBox = el("vc_dpop_alg");
-  var wanted = (algBox && algBox.value) || sdJwtVc.get(sdJwtVc.KEYS.DPOP_ALG) || "ES256";
+  var wanted = (algBox && algBox.value) || sdJwtVc.get(sdJwtVc.KEYS.DPOP_ALG) ||
+      "ES256";
+  log.debug("Leaving ensureDpopKey().");
   return dpopLib.generateKeyPair(wanted).then(function (pair) {
     return dpopLib.thumbprint(pair.publicJwk).then(function (jkt) {
       sdJwtVc.storeDpopKeyPair(pair, jkt);
       renderDpopPane();
-      log.debug("Leaving ensureDpopKey(). Generated a " + wanted + " key pair, jkt=" + jkt);
+      log.debug("Leaving ensureDpopKey(). Generated a " + wanted +
+                " key pair, jkt=" + jkt);
       // Returned rather than re-read from storage, because with key saving off
       // the private half was refused and dpopKeyPair() would answer null — the
       // key still works for THIS page load, which is what makes the workflow
@@ -389,10 +457,21 @@ function ensureDpopKey() {
 var pageDpopKey = null;
 
 function dpopContext() {
-  if (!sdJwtVc.dpopEnabled()) return null;
+  log.debug("Entering dpopContext().");
+  if (!sdJwtVc.dpopEnabled()) {
+    log.debug("Leaving dpopContext().");
+    return null;
+  }
   var stored = sdJwtVc.dpopContext();
-  if (stored) return stored;
-  if (!pageDpopKey) return null;
+  if (stored) {
+    log.debug("Leaving dpopContext().");
+    return stored;
+  }
+  if (!pageDpopKey) {
+    log.debug("Leaving dpopContext().");
+    return null;
+  }
+  log.debug("Leaving dpopContext().");
   return { key: pageDpopKey, nonce: sdJwtVc.dpopNonce(),
            remember: sdJwtVc.rememberDpopNonce };
 }
@@ -406,7 +485,8 @@ function onDpopEnabledChange() {
     pageDpopKey = null;
     renderDpopPane();
     status("vc_approval_status",
-      "DPoP is off. The access token will be an ordinary Bearer token, and its key pair has been " +
+      "DPoP is off. The access token will be an ordinary Bearer token, and " +
+          "its key pair has been " +
       "discarded.", "");
     log.debug("Leaving onDpopEnabledChange(). off");
     return false;
@@ -415,21 +495,25 @@ function onDpopEnabledChange() {
     .then(function (pair) {
       pageDpopKey = pair;
       renderDpopPane();
-      // The token in hand was minted before DPoP was turned on, so it is a Bearer
-      // token and turning the switch on does not change it. Saying so here is the
-      // difference between a confusing pane and a clear one.
+      // The token in hand was minted before DPoP was turned on, so it is a
+      // Bearer token and turning the switch on does not change it. Saying so
+      // here is the difference between a confusing pane and a clear one.
       status("vc_approval_status", sdJwtVc.get("token_access_token")
-        ? "DPoP is on, but the access token you already have was issued as a Bearer token — it " +
-          "cannot become bound after the fact. Get a new one (step 1, or the Token Request pane) " +
+        ? "DPoP is on, but the access token you already have was issued as a " +
+            "Bearer token — it " +
+          "cannot become bound after the fact. Get a new one (step 1, or the " +
+              "Token Request pane) " +
           "to see the binding."
-        : "DPoP is on. The Token Request will carry a proof and the token will come back bound.",
+        : "DPoP is on. The Token Request will carry a proof and the token " +
+            "will come back bound.",
         "vc-ok");
       // Rebuild the credential request: under Holder of Key the proof of
       // possession is signed by this key, so it is a different request now.
       return prepareRequest();
     })
     .catch(function (e) {
-      status("vc_approval_status", "Could not set up DPoP: " + e.message, "vc-bad");
+      status("vc_approval_status", "Could not set up DPoP: " + e.message,
+             "vc-bad");
     });
   log.debug("Leaving onDpopEnabledChange(). on");
   return false;
@@ -439,10 +523,11 @@ function onBindingModeChange() {
   log.debug("Entering onBindingModeChange().");
   var box = el("vc_dpop_holder_of_key");
   var hok = !!(box && box.checked);
-  sdJwtVc.setCredentialBindingMode(hok ? sdJwtVc.BINDING_MODES.HOK : sdJwtVc.BINDING_MODES.POP);
+  sdJwtVc.setCredentialBindingMode(hok ?
+      sdJwtVc.BINDING_MODES.HOK : sdJwtVc.BINDING_MODES.POP);
   // The credential's proof of possession is over a different key now, so the
-  // request the pane shows is stale. Rebuild it rather than leaving a request on
-  // screen that is not the one Approve would send.
+  // request the pane shows is stale. Rebuild it rather than leaving a request
+  // on screen that is not the one Approve would send.
   request.proof = "";
   request.proofs = [];
   request.holderKeys = [];
@@ -456,14 +541,17 @@ function onBindingModeChange() {
       var effective = sdJwtVc.credentialBindingMode();
       status("vc_approval_status",
         effective === sdJwtVc.BINDING_MODES.HOK
-          ? "Holder of Key: the credential request below is now signed by the DPoP key, and the " +
+          ? "Holder of Key: the credential request below is now signed by " +
+              "the DPoP key, and the " +
             "credential will be bound to it."
-          : "Proof of Possession: the credential request below is signed by the holder key, which " +
+          : "Proof of Possession: the credential request below is signed by " +
+              "the holder key, which " +
             "is what the credential will be bound to.",
         "vc-ok");
     })
     .catch(function (e) {
-      status("vc_approval_status", "Could not switch the binding mode: " + e.message, "vc-bad");
+      status("vc_approval_status", "Could not switch the binding mode: " +
+             e.message, "vc-bad");
     });
   log.debug("Leaving onBindingModeChange(). hok=" + hok);
   return false;
@@ -474,6 +562,7 @@ function onDpopAlgChange() {
   // A key is tied to its algorithm, so changing the algorithm means a new key.
   // Doing that silently would leave the pane showing a jkt the proofs no longer
   // use, so it is the same action as pressing New Key Pair.
+  log.debug("Leaving onDpopAlgChange().");
   return regenerateDpopKey();
 }
 
@@ -481,7 +570,8 @@ function regenerateDpopKey() {
   log.debug("Entering regenerateDpopKey().");
   if (!sdJwtVc.dpopEnabled()) {
     status("vc_approval_status",
-      "DPoP is off, so there is no key to generate. Turn it on first.", "vc-pending");
+      "DPoP is off, so there is no key to generate. Turn it on first.",
+          "vc-pending");
     log.debug("Leaving regenerateDpopKey(). DPoP is off.");
     return false;
   }
@@ -500,13 +590,15 @@ function regenerateDpopKey() {
         renderDpopPane();
         return prepareRequest().then(function () {
           status("vc_approval_status",
-            "A new " + wanted + " DPoP key pair was generated (jkt " + jkt + "). An access token " +
+            "A new " + wanted + " DPoP key pair was generated (jkt " + jkt +
+                "). An access token " +
             "bound to the previous key can no longer be used.", "vc-ok");
         });
       });
     })
     .catch(function (e) {
-      status("vc_approval_status", "Could not generate a DPoP key pair: " + e.message, "vc-bad");
+      status("vc_approval_status", "Could not generate a DPoP key pair: " +
+             e.message, "vc-bad");
     });
   log.debug("Leaving regenerateDpopKey().");
   return false;
@@ -527,20 +619,22 @@ function regenerateHolderKey() {
     return prepareRequest().then(function (ok) {
       if (ok) {
         status("vc_approval_status",
-          "A new holder key pair was generated, and the proof of possession rebuilt for it.", "vc-ok");
+          "A new holder key pair was generated, and the proof of possession " +
+              "rebuilt for it.", "vc-ok");
       }
     });
   }).catch(function (e) {
-    status("vc_approval_status", "Could not generate a holder key pair: " + e.message, "vc-bad");
+    status("vc_approval_status", "Could not generate a holder key pair: " +
+           e.message, "vc-bad");
   });
   log.debug("Leaving regenerateHolderKey().");
   return false;
 }
 
-// The key the credential will be bound to, which under Holder of Key is the DPoP
-// key rather than the holder key. This is the ONE place that decision turns into
-// a key, so the proof of possession, the assembled call and the credential's cnf
-// cannot disagree about which key it was.
+// The key the credential will be bound to, which under Holder of Key is the
+// DPoP key rather than the holder key. This is the ONE place that decision
+// turns into a key, so the proof of possession, the assembled call and the
+// credential's cnf cannot disagree about which key it was.
 //
 // Note what it does NOT do: it does not overwrite the stored holder key. Under
 // Holder of Key the credential is bound to the DPoP key, and the presentation
@@ -548,31 +642,40 @@ function regenerateHolderKey() {
 // is left where it is rather than being clobbered by a key that is only in play
 // while this mode is on.
 function bindingKey() {
+  log.debug("Entering bindingKey().");
   if (sdJwtVc.usingHolderOfKey()) {
     var pair = sdJwtVc.dpopKeyPair() || pageDpopKey;
     if (pair) {
-      log.debug("bindingKey(): Holder of Key — the credential is bound to the DPoP key.");
+      log.debug("bindingKey(): Holder of Key — the credential is bound to " +
+                "the DPoP key.");
+      log.debug("Leaving bindingKey().");
       return pair;
     }
     // Asked for, but there is no DPoP key. Falling back silently would bind the
     // credential to the holder key while the pane says Holder of Key, so the
     // caller is told and the pane reports it.
-    log.debug("bindingKey(): Holder of Key was asked for but there is no DPoP key; " +
+    log.debug("bindingKey(): Holder of Key was asked for but there is no " +
+              "DPoP key; " +
               "falling back to the holder key.");
   }
-  return { publicJwk: request.holderPublicJwk, privateJwk: request.holderPrivateJwk };
+  log.debug("Leaving bindingKey().");
+  return { publicJwk: request.holderPublicJwk,
+          privateJwk: request.holderPrivateJwk };
 }
 
 // Extra holder keys for a batch request. The first is the binding key above, so
 // what the page shows stays the key the first credential is bound to; the rest
-// live for this request only, which is the honest lifetime — a wallet asking for
-// several bindings has several keys.
+// live for this request only, which is the honest lifetime — a wallet asking
+// for several bindings has several keys.
 //
 // Batch issuance and Holder of Key pull in opposite directions and the honest
 // answer is a partial one: there is only one DPoP key, so only the first
-// credential of a batch can be bound to it. The rest get keys of their own, which
-// is Proof of Possession for those credentials, and renderDpopPane() says so.
+// credential of a batch can be bound to it. The rest get keys of their own,
+// which is Proof of Possession for those credentials, and renderDpopPane() says
+// so.
 function holderKeysFor(count) {
+  log.debug("Entering holderKeysFor().");
+  log.debug("Leaving holderKeysFor().");
   return vciWallet.holderKeysFor(bindingKey(), count);
 }
 
@@ -609,10 +712,12 @@ function fetchNonce() {
     .then(function (result) {
       request.nonce = result.nonce;
       if (!result.published) {
-        // The Nonce Endpoint is optional. Without one there is no c_nonce to carry.
+        // The Nonce Endpoint is optional. Without one there is no c_nonce to
+        // carry.
         setText("vc_nonce", "— (this issuer publishes no nonce_endpoint)");
       } else {
-        setText("vc_nonce", request.nonce || "— (the nonce endpoint returned no c_nonce)");
+        setText("vc_nonce", request.nonce ||
+                "— (the nonce endpoint returned no c_nonce)");
       }
       return request.nonce;
     })
@@ -641,25 +746,29 @@ function prepareRequest() {
     setJson("vc_request_body", null);
     setValue("vc_approval_request", "");
     status("vc_approval_status",
-      "No credential_endpoint is configured, so there is no request to build. Retrieve the credential " +
+      "No credential_endpoint is configured, so there is no request to " +
+          "build. Retrieve the credential " +
       "issuer metadata in step 1.", "vc-bad");
+    log.debug("Leaving prepareRequest().");
     return Promise.resolve(false);
   }
   log.debug("Leaving prepareRequest().");
-  var wantsEncryption = !!(el("vc_encrypt_response") && el("vc_encrypt_response").checked) ||
+  var wantsEncryption = !!(el("vc_encrypt_response") &&
+      el("vc_encrypt_response").checked) ||
                         !!((issuerEncryption() || {}).encryption_required);
   var encryptionReady = wantsEncryption
     ? vciWallet.generateResponseEncryptionKey(chosenEnc())
         .then(function (material) { request.encryption = material; })
     : Promise.resolve().then(function () { request.encryption = null; });
+  log.debug("Leaving prepareRequest().");
   return encryptionReady
     .then(fetchNonce)
     .then(function (nonce) { return signProof(nonce); })
     .then(function () {
-      // Cleared BEFORE the body is built, because buildRequestBody() renders the
-      // assembled call itself: leaving the previous run's JWE in place would
-      // make unticking the box redisplay a ciphertext that is no longer going to
-      // be sent.
+      // Cleared BEFORE the body is built, because buildRequestBody() renders
+      // the assembled call itself: leaving the previous run's JWE in place
+      // would make unticking the box redisplay a ciphertext that is no longer
+      // going to be sent.
       request.encryptedRequest = "";
       buildRequestBody();
       // Encrypting last, because the JWE has to cover the FINISHED body — doing
@@ -668,7 +777,8 @@ function prepareRequest() {
       // very bytes that go out, not a second encryption of the same body with a
       // different CEK and IV.
       if (!wantsRequestEncryption()) return true;
-      return vciWallet.encryptRequestBody(request.body, requestEncryptionOffer())
+      return vciWallet.encryptRequestBody(request.body,
+                                          requestEncryptionOffer())
         .then(function (jwe) {
           request.encryptedRequest = jwe;
           // Re-render: the call built a moment ago described the plaintext.
@@ -694,7 +804,8 @@ function grantedIdentifiers() {
   var out = [];
   if (Object.prototype.toString.call(details) === "[object Array]") {
     details.forEach(function (d) {
-      (((d || {}).credential_identifiers) || []).forEach(function (id) { out.push(id); });
+      (((d || {}).credential_identifiers) ||
+       []).forEach(function (id) { out.push(id); });
     });
   }
   log.debug("Leaving grantedIdentifiers(). " + out.length + " granted.");
@@ -703,10 +814,10 @@ function grantedIdentifiers() {
 
 function buildRequestBody() {
   log.debug("Entering buildRequestBody().");
-  // Section 8.2: exactly one of credential_identifier / credential_configuration_id
-  // names the credential, and which one is not a choice — a token response that
-  // granted credential_identifiers requires one of them and forbids the
-  // configuration id.
+  // Section 8.2: exactly one of credential_identifier /
+  // credential_configuration_id names the credential, and which one is not a
+  // choice — a token response that granted credential_identifiers requires one
+  // of them and forbids the configuration id.
   var granted = grantedIdentifiers();
   var body = vciWallet.buildRequestBody({
     credentialIdentifier: granted.length ? granted[0] : "",
@@ -728,26 +839,38 @@ function buildRequestBody() {
 // against THIS issuer's metadata.
 // ---------------------------------------------------------------------------
 function issuerBatchSize() {
+  log.debug("Entering issuerBatchSize().");
   var advertised = sdJwtVc.getJson("vci_batch_credential_issuance");
   var size = advertised && Number(advertised.batch_size);
+  log.debug("Leaving issuerBatchSize().");
   return size && size > 0 ? size : 1;
 }
 
 function issuerEncryption() {
+  log.debug("Entering issuerEncryption().");
+  log.debug("Leaving issuerEncryption().");
   return sdJwtVc.getJson("vci_credential_response_encryption") || null;
 }
 
 // Which content encryption algorithm to ask for. The strongest of what this
 // issuer offers, rather than whichever it happens to list first.
 function chosenEnc() {
+  log.debug("Entering chosenEnc().");
   var offered = (issuerEncryption() || {}).enc_values_supported || [];
-  if (offered.indexOf("A256GCM") !== -1) return "A256GCM";
+  if (offered.indexOf("A256GCM") !== -1) {
+    log.debug("Leaving chosenEnc().");
+    return "A256GCM";
+  }
+  log.debug("Leaving chosenEnc().");
   return offered[0] || "A256GCM";
 }
 
 function requestedBatchSize() {
-  var wanted = parseInt((el("vc_batch_size") && el("vc_batch_size").value) || "1", 10);
+  log.debug("Entering requestedBatchSize().");
+  var wanted = parseInt((el("vc_batch_size") && el("vc_batch_size").value) ||
+      "1", 10);
   if (!wanted || wanted < 1) wanted = 1;
+  log.debug("Leaving requestedBatchSize().");
   return wanted;
 }
 
@@ -757,8 +880,10 @@ function renderRequestOptions() {
   setText("vc_identifier_mode", granted.length
     ? "credential_identifier = " + granted[0] +
       " (the token response granted it, so credential_configuration_id must not be sent)"
-    : "credential_configuration_id = " + (request.config.credentialConfigurationId || "—") +
-      " (the authorization used a scope, so no credential_identifiers were granted)");
+    : "credential_configuration_id = " +
+        (request.config.credentialConfigurationId || "—") +
+      " (the authorization used a scope, so no credential_identifiers " +
+          "were granted)");
 
   var batchSize = issuerBatchSize();
   var input = el("vc_batch_size");
@@ -768,8 +893,10 @@ function renderRequestOptions() {
     input.disabled = batchSize <= 1;
   }
   setText("vc_batch_note", batchSize > 1
-    ? "This issuer accepts up to " + batchSize + " proofs in one request, and returns one credential per proof."
-    : "This issuer does not advertise batch_credential_issuance, so one credential per request.");
+    ? "This issuer accepts up to " + batchSize +
+        " proofs in one request, and returns one credential per proof."
+    : "This issuer does not advertise batch_credential_issuance, so one " +
+        "credential per request.");
 
   var encryption = issuerEncryption();
   var box = el("vc_encrypt_response");
@@ -777,13 +904,16 @@ function renderRequestOptions() {
   if (!encryption) {
     if (box) box.checked = false;
     setText("vc_encrypt_note",
-      "This issuer does not advertise credential_response_encryption, so the response comes back as JSON.");
+      "This issuer does not advertise credential_response_encryption, so the " +
+          "response comes back as JSON.");
   } else {
     var algs = (encryption.alg_values_supported || []).join(", ");
     var encs = (encryption.enc_values_supported || []).join(", ");
     setText("vc_encrypt_note",
-      "This issuer supports alg " + (algs || "—") + " and enc " + (encs || "—") +
-      (encryption.encryption_required ? " and REQUIRES encryption." : ". Encryption is optional.") +
+      "This issuer supports alg " + (algs || "—") + " and enc " + (encs ||
+          "—") +
+      (encryption.encryption_required ?
+       " and REQUIRES encryption." : ". Encryption is optional.") +
       " This wallet implements RSA-OAEP-256.");
   }
 
@@ -802,7 +932,8 @@ function renderRequestOptions() {
   // used at all, and saying only "unavailable" would leave the user retrying.
   if (reqOffer.required && !reqOffer.usable) {
     setText("vc_encrypt_request_note",
-      "This issuer REQUIRES request encryption and this wallet cannot provide it — " + reqOffer.reason +
+      "This issuer REQUIRES request encryption and this wallet cannot " +
+          "provide it — " + reqOffer.reason +
       " The Credential Endpoint cannot be used until that is resolved.");
   } else if (reqOffer.usable) {
     // Section 10 makes it the wallet's choice unless required, so the box is
@@ -811,7 +942,8 @@ function renderRequestOptions() {
     setText("vc_encrypt_request_note", reqOffer.reason +
       (reqOffer.required
         ? " This issuer REQUIRES it, so it cannot be turned off."
-        : " Encryption is optional here; the request goes as application/jwt when ticked.") +
+        : " Encryption is optional here; the request goes as application/jwt " +
+            "when ticked.") +
       (reqOffer.skipped && reqOffer.skipped.length
         ? " Other keys were skipped: " + reqOffer.skipped.join(", ") + "."
         : ""));
@@ -826,6 +958,8 @@ function renderRequestOptions() {
 // member separately under a vci_-prefixed key, so this is the counterpart of
 // issuerEncryption() above and not a second way of reading the same thing.
 function issuerRequestEncryption() {
+  log.debug("Entering issuerRequestEncryption().");
+  log.debug("Leaving issuerRequestEncryption().");
   return sdJwtVc.getJson("vci_credential_request_encryption") || null;
 }
 
@@ -833,7 +967,9 @@ function issuerRequestEncryption() {
 // so the stored member is put back under its own name rather than the module
 // growing a second entry point for this page's storage layout.
 function requestEncryptionOffer() {
+  log.debug("Entering requestEncryptionOffer().");
   var published = issuerRequestEncryption();
+  log.debug("Leaving requestEncryptionOffer().");
   return vciWallet.requestEncryptionOffer(
     published ? { credential_request_encryption: published } : {});
 }
@@ -841,9 +977,15 @@ function requestEncryptionOffer() {
 // Whether the assembled request will actually be encrypted: the box, or the
 // issuer insisting. Mirrors how wantsEncryption is decided for the response.
 function wantsRequestEncryption() {
+  log.debug("Entering wantsRequestEncryption().");
   var offer = requestEncryptionOffer();
-  if (!offer.usable) return false;
-  return offer.required || !!(el("vc_encrypt_request") && el("vc_encrypt_request").checked);
+  if (!offer.usable) {
+    log.debug("Leaving wantsRequestEncryption().");
+    return false;
+  }
+  log.debug("Leaving wantsRequestEncryption().");
+  return offer.required || !!(el("vc_encrypt_request") &&
+      el("vc_encrypt_request").checked);
 }
 
 // A change to any of them invalidates the assembled request, so it is rebuilt —
@@ -872,12 +1014,15 @@ function renderProofJwt(body) {
   if (!jwt) {
     setValue("jwt_header", "");
     setValue("jwt_payload", "");
+    log.debug("Leaving renderProofJwt().");
     return;
   }
   var parts = String(jwt).split(".");
   try {
-    setValue("jwt_header", JSON.stringify(metadataClient.b64uToJson(parts[0]), null, 2));
-    setValue("jwt_payload", JSON.stringify(metadataClient.b64uToJson(parts[1]), null, 2));
+    setValue("jwt_header", JSON.stringify(metadataClient.b64uToJson(parts[0]),
+             null, 2));
+    setValue("jwt_payload", JSON.stringify(metadataClient.b64uToJson(parts[1]),
+             null, 2));
   } catch (e) {
     log.error("could not decode the proof JWT: " + e.message);
     setValue("jwt_header", "Could not decode the proof JWT: " + e.message);
@@ -893,13 +1038,15 @@ function renderProofJwt(body) {
 // Bearer credential IS how the request is authorized — so leaving it out would
 // not be the whole call.
 // ---------------------------------------------------------------------------
-// The Authorization header line for the DISPLAYED call. It has to agree with what
-// fetchProtected() actually sends, or the pane is showing a request the page does
-// not make — which on this page is the whole product. The scheme is the visible
-// difference between a bound token and a bearer one, and getting it wrong here
-// would teach exactly the mistake RFC 9449 section 7.1 warns about.
+// The Authorization header line for the DISPLAYED call. It has to agree with
+// what fetchProtected() actually sends, or the pane is showing a request the
+// page does not make — which on this page is the whole product. The scheme is
+// the visible difference between a bound token and a bearer one, and getting it
+// wrong here would teach exactly the mistake RFC 9449 section 7.1 warns about.
 function authorizationLineFor(accessToken, absentNote) {
+  log.debug("Entering authorizationLineFor().");
   var scheme = (sdJwtVc.dpopEnabled() && dpopContext()) ? "DPoP" : "Bearer";
+  log.debug("Leaving authorizationLineFor().");
   return scheme + " " + (accessToken || absentNote);
 }
 
@@ -908,6 +1055,7 @@ function renderAssembledCall() {
   var endpoint = request.config ? request.config.credentialEndpoint : "";
   if (!endpoint || !request.body) {
     setValue("vc_approval_request", "");
+    log.debug("Leaving renderAssembledCall().");
     return "";
   }
   var accessToken = sdJwtVc.get("token_access_token") || "";
@@ -923,10 +1071,10 @@ function renderAssembledCall() {
     contentType: encryptedBody ? "application/jwt" : "application/json",
     authorization: authorizationLineFor(accessToken,
       "(no access token yet — authenticate in step 1)"),
-    // A placeholder rather than a proof, and deliberately: a DPoP proof is single
-    // use and covers its own jti and iat, so any proof shown here would NOT be
-    // the one sent when Approve is pressed. The decoded proof that really went is
-    // in the DPoP pane above, after the fact.
+    // A placeholder rather than a proof, and deliberately: a DPoP proof is
+    // single use and covers its own jti and iat, so any proof shown here would
+    // NOT be the one sent when Approve is pressed. The decoded proof that
+    // really went is in the DPoP pane above, after the fact.
     dpop: (sdJwtVc.dpopEnabled() && dpopContext())
       ? "<a fresh dpop+jwt proof, signed at send time: htm=POST, htu=" +
         (endpoint || "(no endpoint)") + ", ath=SHA-256 of the access token>"
@@ -934,7 +1082,8 @@ function renderAssembledCall() {
     body: encryptedBody || JSON.stringify(request.body, null, 2)
   });
   if (encryptedBody) {
-    text += "\n\n--- the plaintext inside that JWE (not sent in the clear) ---\n" +
+    text += "\n\n--- the plaintext inside that JWE (not sent in the " +
+        "clear) ---\n" +
             JSON.stringify(request.body, null, 2);
   }
   setValue("vc_approval_request", text);
@@ -954,8 +1103,13 @@ function renderAssembledCall() {
 // code from being enough on its own.
 // ---------------------------------------------------------------------------
 function preAuthorizedOffer() {
+  log.debug("Entering preAuthorizedOffer().");
   var code = sdJwtVc.offerPreAuthorizedCode();
-  if (!code) return null;
+  if (!code) {
+    log.debug("Leaving preAuthorizedOffer().");
+    return null;
+  }
+  log.debug("Leaving preAuthorizedOffer().");
   return { code: code, txCode: sdJwtVc.offerTxCode() };
 }
 
@@ -989,7 +1143,8 @@ function renderTokenRequest() {
   }
   var text = vciWallet.describeCall({
     method: "POST",
-    url: endpoint || "(no token_endpoint is configured — retrieve the metadata in step 1)",
+    url: endpoint ||
+        "(no token_endpoint is configured — retrieve the metadata in step 1)",
     contentType: "application/x-www-form-urlencoded",
     body: vciWallet.encodeForm(params)
   });
@@ -999,7 +1154,9 @@ function renderTokenRequest() {
 }
 
 function onTxCodeChange() {
+  log.debug("Entering onTxCodeChange().");
   renderTokenRequest();
+  log.debug("Leaving onTxCodeChange().");
   return true;
 }
 
@@ -1008,10 +1165,14 @@ function showPreAuthorizedPane() {
   log.debug("Entering showPreAuthorizedPane().");
   var offer = preAuthorizedOffer();
   var pane = el("pane_pre_authorized");
-  if (!pane) return false;
+  if (!pane) {
+    log.debug("Leaving showPreAuthorizedPane().");
+    return false;
+  }
   if (!offer) {
     pane.style.display = "none";
-    log.debug("Leaving showPreAuthorizedPane(). Not a pre-authorized issuance.");
+    log.debug("Leaving showPreAuthorizedPane(). Not a pre-authorized " +
+              "issuance.");
     return false;
   }
   pane.style.display = "";
@@ -1024,14 +1185,16 @@ function showPreAuthorizedPane() {
       (offer.txCode.input_mode === "numeric" ? "digits" : "characters") + ". " +
       (offer.txCode.description || "");
     setText("vc_tx_code_hint", hint.trim());
-    if (el("vc_tx_code") && offer.txCode.length) el("vc_tx_code").maxLength = offer.txCode.length;
+    if (el("vc_tx_code") && offer.txCode.length) el("vc_tx_code").maxLength =
+        offer.txCode.length;
   } else if (row) {
     row.style.display = "none";
   }
   renderTokenRequest();
   status("vc_token_status", offer.txCode
     ? "Type the Transaction Code the issuer showed you, then send the Token Request."
-    : "Send the Token Request to redeem the pre-authorized code.", "vc-pending");
+    : "Send the Token Request to redeem the pre-authorized code.",
+        "vc-pending");
   log.debug("Leaving showPreAuthorizedPane().");
   return true;
 }
@@ -1041,24 +1204,30 @@ function sendTokenRequest() {
   var params = tokenRequestBody();
   var endpoint = sdJwtVc.get("token_endpoint") || "";
   if (!params) {
-    status("vc_token_status", "There is no pre-authorized offer to redeem.", "vc-bad");
+    status("vc_token_status", "There is no pre-authorized offer to redeem.",
+           "vc-bad");
+    log.debug("Leaving sendTokenRequest().");
     return false;
   }
   if (!endpoint) {
     status("vc_token_status",
-      "No token_endpoint is configured. Retrieve the authorization server metadata in step 1.", "vc-bad");
+      "No token_endpoint is configured. Retrieve the authorization server " +
+          "metadata in step 1.", "vc-bad");
+    log.debug("Leaving sendTokenRequest().");
     return false;
   }
   var offer = preAuthorizedOffer();
   if (offer.txCode && !params.tx_code) {
     status("vc_token_status",
-      "This offer requires the Transaction Code the issuer displayed. Type it in first.", "vc-bad");
+      "This offer requires the Transaction Code the issuer displayed. Type " +
+          "it in first.", "vc-bad");
     log.debug("Leaving sendTokenRequest(). No tx_code was typed.");
     return false;
   }
 
   el("vc_token_request_button").disabled = true;
-  status("vc_token_status", "Redeeming the pre-authorized code …", "vc-pending");
+  status("vc_token_status", "Redeeming the pre-authorized code …",
+         "vc-pending");
   // Through fetchProtected() rather than fetch(), so the DPoP proof and the
   // nonce retry are the same code every other call in this workflow uses. With
   // DPoP off, dpopContext() is null and this is byte-for-byte the request it
@@ -1085,12 +1254,15 @@ function sendTokenRequest() {
       var box = el("vc_token_response");
       if (box) {
         box.style.display = "block";
-        box.textContent = response.body ? JSON.stringify(response.body, null, 2) : response.raw;
+        box.textContent = response.body ? JSON.stringify(response.body, null,
+            2) : response.raw;
       }
       if (!response.ok || !response.body || !response.body.access_token) {
-        var err = (response.body && (response.body.error_description || response.body.error)) ||
+        var err = (response.body && (response.body.error_description ||
+            response.body.error)) ||
                   ("HTTP " + response.statusCode);
-        status("vc_token_status", "The token endpoint refused the request: " + err, "vc-bad");
+        status("vc_token_status", "The token endpoint refused the request: " +
+               err, "vc-bad");
         el("vc_token_request_button").disabled = false;
         log.debug("Leaving sendTokenRequest(). Refused: " + err);
         return;
@@ -1099,19 +1271,24 @@ function sendTokenRequest() {
       // — this page, token_detail.html — reads it without knowing which flow
       // produced it.
       sdJwtVc.set("token_access_token", response.body.access_token);
-      if (response.body.id_token) sdJwtVc.set("token_id_token", response.body.id_token);
-      if (response.body.refresh_token) sdJwtVc.set("token_refresh_token", response.body.refresh_token);
+      if (response.body.id_token) sdJwtVc.set("token_id_token",
+          response.body.id_token);
+      if (response.body.refresh_token) sdJwtVc.set("token_refresh_token",
+          response.body.refresh_token);
       renderDpopPane();
       status("vc_token_status",
-        "An access token was issued. The credential request below can now be authorized with it.", "vc-ok");
+        "An access token was issued. The credential request below can now be " +
+            "authorized with it.", "vc-ok");
       showTokens();
       renderAssembledCall();
       status("vc_approval_status",
-        "Ready: the proof of possession is signed and the request below is what Approve will send.", "vc-ok");
+        "Ready: the proof of possession is signed and the request below is " +
+            "what Approve will send.", "vc-ok");
     })
     .catch(function (e) {
       log.error("the token request failed: " + e.message);
-      status("vc_token_status", "The token request failed: " + e.message, "vc-bad");
+      status("vc_token_status", "The token request failed: " + e.message,
+             "vc-bad");
       el("vc_token_request_button").disabled = false;
     });
   log.debug("Leaving sendTokenRequest().");
@@ -1124,12 +1301,16 @@ function approveIssuance() {
   var accessToken = sdJwtVc.get("token_access_token") || "";
   if (!accessToken) {
     status("vc_approval_status",
-      "There is no access token to present. Run step 1 and authenticate first.", "vc-bad");
+      "There is no access token to present. Run step 1 and authenticate first.",
+          "vc-bad");
+    log.debug("Leaving approveIssuance().");
     return false;
   }
   if (!request.config.credentialEndpoint) {
     status("vc_approval_status",
-      "No credential_endpoint is configured. Retrieve the credential issuer metadata in step 1.", "vc-bad");
+      "No credential_endpoint is configured. Retrieve the credential issuer " +
+          "metadata in step 1.", "vc-bad");
+    log.debug("Leaving approveIssuance().");
     return false;
   }
   el("vc_approve_button").disabled = true;
@@ -1138,17 +1319,19 @@ function approveIssuance() {
     log.debug("Entering send().");
     status("vc_approval_status",
       request.encryptedRequest ? "Sending the encrypted Credential Request …"
-                               : "Sending the Credential Request …", "vc-pending");
+                               : "Sending the Credential Request …",
+                                   "vc-pending");
     // Section 10: an encrypted request IS a JWT and says so in its media type,
     // which is what tells the issuer to decrypt rather than parse. The JWE was
-    // built in prepareRequest() over the finished body; it is reused here rather
-    // than rebuilt so the bytes sent are the bytes the pane displayed.
+    // built in prepareRequest() over the finished body; it is reused here
+    // rather than rebuilt so the bytes sent are the bytes the pane displayed.
     var encrypted = request.encryptedRequest || "";
     log.debug("Leaving send().");
     return vciWallet.fetchProtected({
       url: request.config.credentialEndpoint,
       method: "POST",
-      headers: { "Content-Type": encrypted ? "application/jwt" : "application/json" },
+      headers: { "Content-Type": encrypted ?
+                "application/jwt" : "application/json" },
       body: encrypted || JSON.stringify(request.body || buildRequestBody()),
       accessToken: accessToken,
       context: dpopContext()
@@ -1173,44 +1356,54 @@ function approveIssuance() {
   ready
     .then(send)
     .then(function (response) {
-      if (response.ok || !response.body || response.body.error !== "invalid_proof") return response;
-      log.debug("the issuer rejected the proof; rebuilding it with a fresh nonce and retrying once.");
+      if (response.ok || !response.body ||
+          response.body.error !== "invalid_proof") return response;
+      log.debug("the issuer rejected the proof; rebuilding it with a fresh " +
+                "nonce and retrying once.");
       status("vc_approval_status",
-        "The proof had gone stale (a c_nonce is single use) — rebuilding it and trying again …", "vc-pending");
+        "The proof had gone stale (a c_nonce is single use) — rebuilding it " +
+            "and trying again …", "vc-pending");
       return prepareRequest().then(send);
     })
     .then(function (response) {
       var box = el("vc_response_body");
       box.style.display = "block";
-      box.textContent = response.body ? JSON.stringify(response.body, null, 2) : response.raw;
+      box.textContent = response.body ? JSON.stringify(response.body, null,
+          2) : response.raw;
       if (!response.ok) {
-        var err = (response.body && (response.body.error_description || response.body.error)) ||
+        var err = (response.body && (response.body.error_description ||
+            response.body.error)) ||
                   ("HTTP " + response.statusCode);
-        status("vc_approval_status", "The issuer refused the request: " + err, "vc-bad");
+        status("vc_approval_status", "The issuer refused the request: " + err,
+               "vc-bad");
         el("vc_approve_button").disabled = false;
         return;
       }
       // The issuer may not be able to issue immediately (OID4VCI section 8.3):
       // then the response is a transaction_id, and the credential is collected
       // from the Deferred Credential Endpoint instead.
-      if (response.body && response.body.transaction_id && !extractCredential(response.body)) {
+      if (response.body && response.body.transaction_id &&
+          !extractCredential(response.body)) {
         beginDeferred(response.body, response.statusCode);
         return;
       }
       var credential = extractCredential(response.body);
       if (!credential) {
         status("vc_approval_status",
-          "The issuer answered, but the response carries no credential.", "vc-bad");
+          "The issuer answered, but the response carries no credential.",
+              "vc-bad");
         el("vc_approve_button").disabled = false;
         return;
       }
       keepCredential(credential, response.body, {});
-      status("vc_approval_status", "Credential issued. Opening step 3 …", "vc-ok");
+      status("vc_approval_status", "Credential issued. Opening step 3 …",
+             "vc-ok");
       window.location.href = sdJwtVc.STEP3_URL;
     })
     .catch(function (e) {
       log.error("credential request failed: " + e.message);
-      status("vc_approval_status", "The credential request failed: " + e.message, "vc-bad");
+      status("vc_approval_status", "The credential request failed: " +
+             e.message, "vc-bad");
       el("vc_approve_button").disabled = false;
     });
   log.debug("Leaving approveIssuance().");
@@ -1236,9 +1429,10 @@ function keepCredential(credential, responseBody, extra) {
     notificationId: (responseBody && responseBody.notification_id) || "",
     request: request.body,
     holderJwk: request.holderPublicJwk,
-    // One entry per credential, in the order the proofs were sent, so step 3 can
-    // say which key each credential is bound to.
-    holderJwks: (request.holderKeys || []).map(function (k) { return k.publicJwk; }),
+    // One entry per credential, in the order the proofs were sent, so step 3
+    // can say which key each credential is bound to.
+    holderJwks: (request.holderKeys ||
+                 []).map(function (k) { return k.publicJwk; }),
     credentialCount: all.length,
     encrypted: !!request.encryption,
     notificationEndpoint: request.config.notificationEndpoint || ""
@@ -1247,15 +1441,18 @@ function keepCredential(credential, responseBody, extra) {
   sdJwtVc.setJson(sdJwtVc.KEYS.CREDENTIAL_META, meta);
   // The first generation of this credential. Step 4 records every refresh that
   // replaces it, so the history it navigates starts here — with the holder key,
-  // because going back to a generation whose key is gone would give the wallet a
-  // credential it cannot present.
+  // because going back to a generation whose key is gone would give the wallet
+  // a credential it cannot present.
   sdJwtVc.recordCredentialGeneration({
     source: meta.deferred ? "issued (deferred)" : "issued",
     // The history pane says what happened for every row; the issuance is a row
     // too, so it needs its sentence as much as a refresh does.
-    detail: "issued by " + (request.config.credentialIssuer || "the credential issuer") +
-            (all.length > 1 ? " — " + all.length + " credentials in one response" : "") +
-            (meta.deferred ? ", collected from the Deferred Credential Endpoint" : "") +
+    detail: "issued by " + (request.config.credentialIssuer ||
+        "the credential issuer") +
+            (all.length > 1 ? " — " + all.length +
+             " credentials in one response" : "") +
+            (meta.deferred ?
+             ", collected from the Deferred Credential Endpoint" : "") +
             (request.encryption ? ", in an encrypted Credential Response" : ""),
     credential: credential,
     credentials: all,
@@ -1284,6 +1481,8 @@ var deferred = {
 };
 
 function deferredEndpoint() {
+  log.debug("Entering deferredEndpoint().");
+  log.debug("Leaving deferredEndpoint().");
   return (request.config && request.config.deferredCredentialEndpoint) ||
          sdJwtVc.get("vci_deferred_credential_endpoint") || "";
 }
@@ -1303,13 +1502,18 @@ function renderDeferredRequest() {
 }
 
 function renderDeferredAttempts() {
+  log.debug("Entering renderDeferredAttempts().");
   var e = el("vc_deferred_attempts");
-  if (!e) return;
+  if (!e) {
+    log.debug("Leaving renderDeferredAttempts().");
+    return;
+  }
   e.textContent = deferred.attempts.length
     ? deferred.attempts.map(function (a, i) {
         return (i + 1) + ". " + a.at + "  HTTP " + a.status + "  " + a.summary;
       }).join("\n")
     : "—";
+  log.debug("Leaving renderDeferredAttempts().");
 }
 
 function beginDeferred(body, statusCode) {
@@ -1324,13 +1528,16 @@ function beginDeferred(body, statusCode) {
   renderDeferredRequest();
   renderDeferredAttempts();
   status("vc_approval_status",
-    "The issuer answered " + statusCode + ": it cannot issue this credential yet. Collecting it from the " +
+    "The issuer answered " + statusCode +
+        ": it cannot issue this credential yet. Collecting it from the " +
     "Deferred Credential Endpoint …", "vc-pending");
 
   if (!deferredEndpoint()) {
     status("vc_deferred_status",
-      "The issuer deferred the issuance but publishes no deferred_credential_endpoint, so there is nowhere " +
-      "to collect the credential from. That is the issuer's bug, not the wallet's.", "vc-bad");
+      "The issuer deferred the issuance but publishes no " +
+          "deferred_credential_endpoint, so there is nowhere " +
+      "to collect the credential from. That is the issuer's bug, not the " +
+          "wallet's.", "vc-bad");
     log.debug("Leaving beginDeferred(). No endpoint to poll.");
     return;
   }
@@ -1342,16 +1549,20 @@ function beginDeferred(body, statusCode) {
 }
 
 function scheduleDeferredPoll(delaySeconds) {
+  log.debug("Entering scheduleDeferredPoll().");
   if (deferred.timer) window.clearTimeout(deferred.timer);
   deferred.timer = window.setTimeout(function () {
     pollDeferred();
   }, Math.max(0, delaySeconds) * 1000);
+  log.debug("Leaving scheduleDeferredPoll().");
 }
 
 function pollDeferred() {
   log.debug("Entering pollDeferred().");
   if (!deferred.transactionId) {
-    status("vc_deferred_status", "There is no deferred issuance in progress.", "vc-bad");
+    status("vc_deferred_status", "There is no deferred issuance in progress.",
+           "vc-bad");
+    log.debug("Leaving pollDeferred().");
     return false;
   }
   if (deferred.polling) {
@@ -1360,14 +1571,17 @@ function pollDeferred() {
   }
   var endpoint = deferredEndpoint();
   if (!endpoint) {
-    status("vc_deferred_status", "This issuer publishes no deferred_credential_endpoint.", "vc-bad");
+    status("vc_deferred_status",
+           "This issuer publishes no deferred_credential_endpoint.", "vc-bad");
+    log.debug("Leaving pollDeferred().");
     return false;
   }
   deferred.polling = true;
   renderDeferredRequest();
-  // The Deferred Credential Endpoint is a protected endpoint like the others, so
-  // it carries a proof too. A DPoP deployment where deferred issuance quietly
-  // fell back to Bearer would be one where the long poll is the weak point.
+  // The Deferred Credential Endpoint is a protected endpoint like the others,
+  // so it carries a proof too. A DPoP deployment where deferred issuance
+  // quietly fell back to Bearer would be one where the long poll is the weak
+  // point.
   vciWallet.fetchProtected({
     url: endpoint,
     method: "POST",
@@ -1377,7 +1591,8 @@ function pollDeferred() {
     context: dpopContext()
   })
     .then(function (result) {
-      showLastProof(result.sent, "the DPoP proof for the Deferred Credential Request");
+      showLastProof(result.sent,
+                    "the DPoP proof for the Deferred Credential Request");
       return readCredentialResponse(result.response, result.text);
     })
     .then(function (response) {
@@ -1387,9 +1602,11 @@ function pollDeferred() {
       if (credential) {
         summary = "the credential was issued";
       } else if (response.body && response.body.transaction_id) {
-        summary = "still pending (interval " + (response.body.interval || deferred.intervalSeconds) + "s)";
+        summary = "still pending (interval " + (response.body.interval ||
+            deferred.intervalSeconds) + "s)";
       } else {
-        summary = (response.body && (response.body.error_description || response.body.error)) || response.raw;
+        summary = (response.body && (response.body.error_description ||
+            response.body.error)) || response.raw;
       }
       deferred.attempts.push({
         at: new Date().toISOString(),
@@ -1409,31 +1626,38 @@ function pollDeferred() {
         deferred.transactionId = "";
         status("vc_deferred_status",
           "The credential was issued after " + deferred.attempts.length +
-          (deferred.attempts.length === 1 ? " attempt." : " attempts."), "vc-ok");
-        status("vc_approval_status", "Credential issued. Opening step 3 …", "vc-ok");
+          (deferred.attempts.length === 1 ? " attempt." : " attempts."),
+           "vc-ok");
+        status("vc_approval_status", "Credential issued. Opening step 3 …",
+               "vc-ok");
         window.location.href = sdJwtVc.STEP3_URL;
         return;
       }
 
-      if (response.statusCode === 202 && response.body && response.body.transaction_id) {
+      if (response.statusCode === 202 && response.body &&
+          response.body.transaction_id) {
         var wait = Number(response.body.interval) || deferred.intervalSeconds;
         deferred.intervalSeconds = wait;
         status("vc_deferred_status",
-          "Attempt " + deferred.attempts.length + ": the issuer is still working on it. Checking again in " +
+          "Attempt " + deferred.attempts.length +
+              ": the issuer is still working on it. Checking again in " +
           wait + "s.", "vc-pending");
         scheduleDeferredPoll(wait);
         return;
       }
 
-      var err = (response.body && (response.body.error_description || response.body.error)) ||
+      var err = (response.body && (response.body.error_description ||
+          response.body.error)) ||
                 ("HTTP " + response.statusCode);
-      status("vc_deferred_status", "The deferred request was refused: " + err, "vc-bad");
+      status("vc_deferred_status", "The deferred request was refused: " + err,
+             "vc-bad");
       log.debug("Leaving pollDeferred(). Refused: " + err);
     })
     .catch(function (e) {
       deferred.polling = false;
       log.error("the deferred credential request failed: " + e.message);
-      deferred.attempts.push({ at: new Date().toISOString(), status: 0, summary: e.message });
+      deferred.attempts.push({ at: new Date().toISOString(), status: 0,
+                             summary: e.message });
       renderDeferredAttempts();
       status("vc_deferred_status", "The deferred request failed: " + e.message +
              " Use “Check again now” to retry.", "vc-bad");
@@ -1448,18 +1672,32 @@ function pollDeferred() {
 // reads exactly the same response when it refreshes the credential.
 // ---------------------------------------------------------------------------
 function readCredentialResponse(r, text) {
+  log.debug("Entering readCredentialResponse().");
+  log.debug("Leaving readCredentialResponse().");
   return vciWallet.readCredentialResponse(r, text, request.encryption);
 }
 
-function allCredentials(body) { return vciWallet.allCredentials(body); }
+function allCredentials(body) {
+  log.debug("Entering allCredentials().");
+  log.debug("Leaving allCredentials().");
+  return vciWallet.allCredentials(body);
+}
 
-function extractCredential(body) { return vciWallet.extractCredential(body); }
+function extractCredential(body) {
+  log.debug("Entering extractCredential().");
+  log.debug("Leaving extractCredential().");
+  return vciWallet.extractCredential(body);
+}
 
 function denyIssuance() {
+  log.debug("Entering denyIssuance().");
   sdJwtVc.endFlow();
   status("vc_approval_status",
-    "Issuance denied. Nothing was sent to the issuer. Returning to step 1 …", "vc-pending");
-  window.setTimeout(function () { window.location.href = "/vc-issuance-1.html"; }, 1200);
+    "Issuance denied. Nothing was sent to the issuer. Returning to step 1 …",
+        "vc-pending");
+  window.setTimeout(function () { window.location.href =
+                    "/vc-issuance-1.html"; }, 1200);
+  log.debug("Leaving denyIssuance().");
   return false;
 }
 
@@ -1475,7 +1713,8 @@ function showTokens() {
 
   var claims = null;
   try {
-    if (id && id.split(".").length === 3) claims = metadataClient.b64uToJson(id.split(".")[1]);
+    if (id && id.split(".").length === 3) claims =
+        metadataClient.b64uToJson(id.split(".")[1]);
   } catch (e) {
     // not a JWT
   }
@@ -1483,10 +1722,12 @@ function showTokens() {
 
   if (!access) {
     status("tokens_status",
-      "No access token found. Step 2 runs on the tokens the OIDC flow leaves behind — " +
+      "No access token found. Step 2 runs on the tokens the OIDC flow leaves " +
+          "behind — " +
       "start from step 1 and authenticate.", "vc-bad");
   } else {
-    status("tokens_status", "Access token present" + (id ? " with an ID token." : "."), "vc-ok");
+    status("tokens_status", "Access token present" + (id ?
+           " with an ID token." : "."), "vc-ok");
   }
   log.debug("Leaving showTokens().");
   return claims;
@@ -1499,11 +1740,15 @@ function showRequestConfig(idTokenClaims) {
   setText("vc_credential_endpoint", cfg.credentialEndpoint || "—");
   setText("vc_credential_issuer", cfg.credentialIssuer || "—");
   setText("vc_credential_config",
-    (cfg.credentialConfigurationId || "—") + " (" + (cfg.format || "?") + ", vct " + (cfg.vct || "?") + ")");
+    (cfg.credentialConfigurationId || "—") + " (" + (cfg.format || "?") +
+     ", vct " + (cfg.vct || "?") + ")");
   setText("vc_approval_issuer", cfg.credentialIssuer || "—");
-  setText("vc_approval_credential", (cfg.credentialConfigurationId || "—") + " / " + (cfg.vct || "?"));
-  var subject = (idTokenClaims && (idTokenClaims.preferred_username || idTokenClaims.email ||
-                                   idTokenClaims.sub)) || "the authenticated user";
+  setText("vc_approval_credential", (cfg.credentialConfigurationId || "—") +
+          " / " + (cfg.vct || "?"));
+  var subject = (idTokenClaims && (idTokenClaims.preferred_username ||
+      idTokenClaims.email ||
+                                   idTokenClaims.sub)) ||
+                                       "the authenticated user";
   setText("vc_approval_subject", subject);
 
   // What the issuer said this credential can carry, straight from the metadata
@@ -1512,18 +1757,23 @@ function showRequestConfig(idTokenClaims) {
   var doc = sdJwtVc.getJson("vci_info");
   var cfgs = (doc && doc.credential_configurations_supported) || {};
   var chosen = cfgs[cfg.credentialConfigurationId];
-  if (chosen && Object.prototype.toString.call(chosen.claims) === "[object Array]") {
+  if (chosen &&
+      Object.prototype.toString.call(chosen.claims) === "[object Array]") {
     claimNames = chosen.claims.map(function (c) {
-      return Object.prototype.toString.call(c.path) === "[object Array]" ? c.path.join(".") : String(c.path);
+      return Object.prototype.toString.call(c.path) === "[object Array]" ?
+                                            c.path.join(".") : String(c.path);
     });
   }
-  setText("vc_approval_claims", claimNames.length ? claimNames.join(", ") : "not stated in the metadata");
+  setText("vc_approval_claims", claimNames.length ?
+          claimNames.join(", ") : "not stated in the metadata");
   log.debug("Leaving showRequestConfig().");
 }
 
 function togglePane(id) {
+  log.debug("Entering togglePane().");
   var fs = el(id);
   if (fs) fs.style.display = (fs.style.display === "none") ? "block" : "none";
+  log.debug("Leaving togglePane().");
   return false;
 }
 
@@ -1544,7 +1794,8 @@ function onload() {
   // build, or by a page that ran before this one) has to go.
   var saveBox = document.getElementById("vc_save_holder_key");
   if (saveBox) saveBox.checked = sdJwtVc.holderPrivateKeyMayBeStored();
-  if (!sdJwtVc.holderPrivateKeyMayBeStored()) sdJwtVc.forgetStoredHolderPrivateKeys();
+  if (!sdJwtVc.holderPrivateKeyMayBeStored(
+      )) sdJwtVc.forgetStoredHolderPrivateKeys();
   renderHolderKeyStorageNote();
 
   var claims = showTokens();
@@ -1567,12 +1818,15 @@ function onload() {
       if (!ready) return;
       status("vc_approval_status", sdJwtVc.get("token_access_token")
         ? "Ready: the proof of possession is signed and the request below is what Approve will send."
-        : "The request below is ready, but there is no access token to authorize it with — " +
+        : "The request below is ready, but there is no access token to " +
+            "authorize it with — " +
           "start from step 1 and authenticate.",
         sdJwtVc.get("token_access_token") ? "vc-ok" : "vc-pending");
     })
     .catch(function (e) {
-      status("vc_approval_status", "Could not prepare the credential request: " + e.message, "vc-bad");
+      status("vc_approval_status",
+             "Could not prepare the credential request: " + e.message,
+             "vc-bad");
     });
   log.debug("SD-JWT VC issuance step 2 ready.");
   log.debug("Leaving onload().");

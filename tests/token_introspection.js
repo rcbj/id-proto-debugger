@@ -18,16 +18,21 @@ var baseUrl = "http://localhost:3000"
 // EXPECTS that CORS/network error instead of an active introspection result.
 var STATIC_CONTENT_SITE_HOSTS = ["test.idptools.com", "idptools.com"];
 function isStaticContentSite(url) {
+  log.debug("Entering isStaticContentSite().");
   try {
+    log.debug("Leaving isStaticContentSite().");
     return STATIC_CONTENT_SITE_HOSTS.includes(new URL(url).hostname);
   } catch (e) {
+    log.debug("Leaving isStaticContentSite().");
     return false;
   }
 }
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata, getAccessTokenAuthCode } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+const { populateMetadata, getAccessTokenAuthCode } =
+       require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
+       assert });
 
 // Sign in via the OIDC Authorization Code Flow (with PKCE for the public
 // client) and return the access + refresh tokens. This leaves the debugger2
@@ -39,7 +44,9 @@ const { populateMetadata, getAccessTokenAuthCode } = require("../common/tests.js
 // for Refresh Token Call" pane, whose latest-access/latest-refresh rows each
 // carry an "Introspect Token" link (type=refresh_access / refresh_refresh).
 async function refreshTokenCall(driver, client_secret) {
-  log.info("Making a refresh token call to populate the refresh-call token panes.");
+  log.debug("Entering refreshTokenCall().");
+  log.info("Making a refresh token call to populate the refresh-call " +
+           "token panes.");
 
   // The refresh grant authenticates as the (confidential) client, so it needs
   // the client secret. The refresh pane pre-fills #refresh_client_secret from
@@ -47,14 +54,17 @@ async function refreshTokenCall(driver, client_secret) {
   // page and is therefore empty here — set it explicitly so Keycloak does not
   // reject the refresh with "unauthorized_client".
   if (!!client_secret) {
-    const secretField = await driver.findElement(By.id("refresh_client_secret"));
-    await driver.executeScript("arguments[0].value = arguments[1];", secretField, client_secret);
+    const secretField =
+        await driver.findElement(By.id("refresh_client_secret"));
+    await driver.executeScript("arguments[0].value = arguments[1];",
+                               secretField, client_secret);
   }
 
   const refresh_btn = By.id("refresh_btn");
   await driver.wait(until.elementLocated(refresh_btn), waitTime);
   const btnEl = await driver.findElement(refresh_btn);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", btnEl);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", btnEl);
   await driver.wait(until.elementIsVisible(btnEl), waitTime);
   await btnEl.click();
 
@@ -66,13 +76,16 @@ async function refreshTokenCall(driver, client_secret) {
   await driver.wait(until.elementLocated(refresh_access_token), refreshTimeout);
   await driver.wait(async () => {
     try {
-      const v = await driver.findElement(refresh_access_token).getAttribute("value");
+      const v =
+          await driver.findElement(refresh_access_token).getAttribute("value");
       return !!v && jwt.decode(v, { complete: true }) !== null;
     } catch (e) {
       return false;
     }
   }, refreshTimeout, "Refresh token call did not produce a new access token.");
-  log.info("Refresh token call completed; latest access/refresh tokens are available.");
+  log.info("Refresh token call completed; latest access/refresh tokens are " +
+           "available.");
+  log.debug("Leaving refreshTokenCall().");
 }
 
 // Activate a Token History entry so the "Currently Viewing" pane renders. That
@@ -80,11 +93,13 @@ async function refreshTokenCall(driver, client_secret) {
 // (type=history_access / history_refresh, with a generation index). Returns
 // the activated index.
 async function activateTokenHistoryEntry(driver, index) {
+  log.debug("Entering activateTokenHistoryEntry().");
   log.info("Activating Token History entry index=" + index + ".");
   const activateBtn = By.css(`#token-history-panel input[type='button'][value='Activate'][onclick*='selectTokenSet(${index})']`);
   await driver.wait(until.elementLocated(activateBtn), waitTime);
   const btnEl = await driver.findElement(activateBtn);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", btnEl);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", btnEl);
   await driver.wait(until.elementIsVisible(btnEl), waitTime);
   await btnEl.click();
 
@@ -92,6 +107,7 @@ async function activateTokenHistoryEntry(driver, index) {
   await driver.wait(until.elementLocated(
     By.css(`a[href="/introspection.html?type=history_access&generation=${index}"]`)), waitTime);
   log.info("Token History entry activated; Currently Viewing pane rendered.");
+  log.debug("Leaving activateTokenHistoryEntry().");
   return index;
 }
 
@@ -101,33 +117,43 @@ async function activateTokenHistoryEntry(driver, index) {
 // client (via HTTP Basic, through the backend to avoid browser CORS
 // restrictions), and returns the raw introspection output JSON string.
 async function introspectTokenViaUI(driver, type, client_id, client_secret) {
+  log.debug("Entering introspectTokenViaUI().");
   log.info("Introspecting token via UI. type=" + type);
 
   // Click the "Introspect Token" link rendered next to the token field.
   const link = By.css(`a[href="/introspection.html?type=${type}"]`);
   await driver.wait(until.elementLocated(link), waitTime);
   const linkEl = await driver.findElement(link);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", linkEl);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", linkEl);
   await linkEl.click();
 
   // We are now on introspection.html. Configure client authentication.
   const clientIdField = By.id("introspection_client_id");
   await driver.wait(until.elementLocated(clientIdField), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(clientIdField)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(clientIdField)),
+                    waitTime);
 
   // The link should have pre-populated the correct token to be introspected.
   // Every token the six links reference (access, refresh/offline, and their
   // refresh-call and history variants) is a Keycloak JWT, so a successful
   // decode confirms the link carried a real token rather than an empty value.
-  const introspectionToken = await driver.findElement(By.id("introspection_token")).getAttribute("value");
+  const introspectionToken =
+      await driver.findElement(By.id("introspection_token"))
+      .getAttribute("value");
   assert(introspectionToken && introspectionToken.length > 0,
-    "The Introspect Token link for type=" + type + " did not populate a token.");
-  assert.notStrictEqual(jwt.decode(introspectionToken, { complete: true }), null,
-    "The Introspect Token link for type=" + type + " populated a value that is not a decodable token.");
+    "The Introspect Token link for type=" + type +
+        " did not populate a token.");
+  assert.notStrictEqual(jwt.decode(introspectionToken, { complete: true }),
+                        null,
+    "The Introspect Token link for type=" + type +
+        " populated a value that is not a decodable token.");
 
   // The introspection endpoint should have been populated from the discovery
   // document when the metadata was loaded.
-  const endpointValue = await driver.findElement(By.id("introspection_endpoint")).getAttribute("value");
+  const endpointValue =
+      await driver.findElement(By.id("introspection_endpoint"))
+      .getAttribute("value");
   assert(endpointValue && endpointValue.length > 0,
     "Introspection endpoint was not populated from the discovery document.");
 
@@ -135,10 +161,13 @@ async function introspectTokenViaUI(driver, type, client_id, client_secret) {
   await driver.findElement(By.id("introspection_initiateFromBackEnd")).click();
 
   // Authenticate the client via HTTP Basic with its credentials.
-  await new Select(await driver.findElement(By.id("introspection_authentication_type"))).selectByValue("basic_auth");
+  await new Select(await driver.findElement(By.id(
+                   "introspection_authentication_type"))).selectByValue(
+                   "basic_auth");
   await driver.findElement(clientIdField).clear();
   await driver.findElement(clientIdField).sendKeys(client_id);
-  const clientSecretField = await driver.findElement(By.id("introspection_client_secret"));
+  const clientSecretField =
+      await driver.findElement(By.id("introspection_client_secret"));
   await clientSecretField.clear();
   if (!!client_secret) {
     await clientSecretField.sendKeys(client_secret);
@@ -151,15 +180,19 @@ async function introspectTokenViaUI(driver, type, client_id, client_secret) {
   const output = By.id("introspection_output");
   await driver.wait(async () => {
     try {
-      const v = (await driver.findElement(output).getAttribute("value") || "").trim();
+      const v = (await driver.findElement(output).getAttribute("value") ||
+          "").trim();
       return v.length > 0;
     } catch (e) {
       return false;
     }
   }, waitTime, "Introspection produced no output for type=" + type);
 
-  const outputText = (await driver.findElement(output).getAttribute("value") || "").trim();
-  log.info("Introspection output (" + type + "): " + outputText.replace(/\n/g, " "));
+  const outputText = (await driver.findElement(output).getAttribute("value") ||
+      "").trim();
+  log.info("Introspection output (" + type + "): " + outputText.replace(/\n/g,
+           " "));
+  log.debug("Leaving introspectTokenViaUI().");
   return outputText;
 }
 
@@ -169,6 +202,7 @@ async function introspectTokenViaUI(driver, type, client_id, client_secret) {
 // output, a missing "active" field, or active=false — means something is wrong
 // and the test fails.
 function assertIntrospectionActive(outputText, type) {
+  log.debug("Entering assertIntrospectionActive().");
   let parsed = null;
   try {
     parsed = JSON.parse(outputText);
@@ -176,23 +210,31 @@ function assertIntrospectionActive(outputText, type) {
     parsed = null;
   }
   assert(parsed !== null,
-    "Introspection output for the " + type + " link was not valid JSON: " + outputText);
+    "Introspection output for the " + type + " link was not valid JSON: " +
+        outputText);
 
   // On the static-content deployments there is no backend and Keycloak's
   // introspection endpoint is not CORS-enabled, so the browser call is blocked.
   // Expect that CORS/network error (readyState 0 / status 0 / status "error")
   // rather than an active introspection result.
   if (isStaticContentSite(baseUrl)) {
-    assert(parsed.status === "error" && parsed.request && parsed.request.status === 0,
-      "Introspection for the " + type + " link on a static site was expected to be blocked " +
+    assert(parsed.status === "error" && parsed.request &&
+           parsed.request.status === 0,
+      "Introspection for the " + type +
+          " link on a static site was expected to be blocked " +
       "by CORS (status 0 error), but got: " + outputText);
-    log.info("Introspection was blocked by CORS as expected on the static site. type=" + type);
+    log.info("Introspection was blocked by CORS as expected on the static " +
+             "site. type=" + type);
+    log.debug("Leaving assertIntrospectionActive().");
     return;
   }
 
   assert.strictEqual(parsed.active, true,
-    "Introspection for the " + type + " link did not report the token as active (expected \"active\": true). Output: " + outputText);
-  log.info("Introspect Token link produced a valid active introspection. type=" + type);
+    "Introspection for the " + type + " link did not report the token as " +
+        "active (expected \"active\": true). Output: " + outputText);
+  log.info("Introspect Token link produced a valid active " +
+           "introspection. type=" + type);
+  log.debug("Leaving assertIntrospectionActive().");
 }
 
 // Returns from introspection.html to debugger2.html via the "Return to
@@ -200,6 +242,7 @@ function assertIntrospectionActive(outputText, type) {
 // token is visible in the Token Endpoint Results pane (re-rendered from local
 // storage).
 async function returnToDebugger(driver) {
+  log.debug("Entering returnToDebugger().");
   log.info("Clicking the 'Return to debugger' link.");
   const link = By.css('a[href="/debugger2.html?redirectFromTokenDetail=true"]');
   await driver.wait(until.elementLocated(link), waitTime);
@@ -208,14 +251,19 @@ async function returnToDebugger(driver) {
   // Confirm debugger2 loaded and the access token is visible.
   const token_access_token = By.id("token_access_token");
   await driver.wait(until.elementLocated(token_access_token), waitTime);
-  await driver.wait(until.elementIsVisible(driver.findElement(token_access_token)), waitTime);
-  const accessTokenValue = await driver.findElement(token_access_token).getAttribute("value");
+  await driver.wait(until.elementIsVisible(driver.findElement(
+                    token_access_token)), waitTime);
+  const accessTokenValue =
+      await driver.findElement(token_access_token).getAttribute("value");
   assert(accessTokenValue && accessTokenValue.length > 0,
-    "After returning to the debugger, the access token was not visible on the debugger2 page.");
+    "After returning to the debugger, the access token was not visible on " +
+        "the debugger2 page.");
   log.info("Debugger2 page loaded and the access token is visible.");
+  log.debug("Leaving returnToDebugger().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
     options.addArguments("--headless");
@@ -225,10 +273,12 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
-  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
-  // browsers otherwise block (mixed content / Private Network Access).
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak,
+  // which browsers otherwise block (mixed content / Private Network Access).
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
@@ -252,13 +302,16 @@ async function test() {
     const introspection_client_id = process.env.INTROSPECTION_CLIENT_ID;
     const introspection_client_secret = process.env.INTROSPECTION_CLIENT_SECRET;
 
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
     assert(client_id, "CLIENT_ID environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
     assert(user, "USER environment variable is not set.");
     assert(pkce_enabled, "PKCE_ENABLED environment variable is not set.");
-    assert(introspection_client_id, "INTROSPECTION_CLIENT_ID environment variable is not set.");
-    assert(introspection_client_secret, "INTROSPECTION_CLIENT_SECRET environment variable is not set.");
+    assert(introspection_client_id,
+           "INTROSPECTION_CLIENT_ID environment variable is not set.");
+    assert(introspection_client_secret,
+           "INTROSPECTION_CLIENT_SECRET environment variable is not set.");
 
     if (pkce_enabled === "true") {
       pkce_enabled = true;
@@ -276,7 +329,9 @@ async function test() {
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");
-    const { access_token, refresh_token } = await getAccessTokenAuthCode(driver, client_id, client_secret, scope, pkce_enabled, { baseUrl, returnRefreshToken: true });
+    const { access_token, refresh_token } = await getAccessTokenAuthCode(driver,
+           client_id, client_secret, scope, pkce_enabled, { baseUrl,
+           returnRefreshToken: true });
     assert(access_token, "No access token was retrieved.");
     assert(refresh_token, "No refresh token was retrieved.");
 
@@ -291,11 +346,15 @@ async function test() {
 
     // 1 & 2 — Token Endpoint Results pane (initial access + refresh tokens).
     log.info("[1/6] Introspecting the Token Endpoint access token link.");
-    assertIntrospectionActive(await introspectTokenViaUI(driver, "access", introspection_client_id, introspection_client_secret), "access");
+    assertIntrospectionActive(await introspectTokenViaUI(driver, "access",
+                              introspection_client_id,
+                              introspection_client_secret), "access");
     await returnToDebugger(driver);
 
     log.info("[2/6] Introspecting the Token Endpoint refresh token link.");
-    assertIntrospectionActive(await introspectTokenViaUI(driver, "refresh", introspection_client_id, introspection_client_secret), "refresh");
+    assertIntrospectionActive(await introspectTokenViaUI(driver, "refresh",
+                              introspection_client_id,
+                              introspection_client_secret), "refresh");
     await returnToDebugger(driver);
 
     // Exchange the refresh token for a fresh token set to populate the
@@ -304,11 +363,15 @@ async function test() {
 
     // 3 & 4 — Refresh call results pane (latest access + refresh tokens).
     log.info("[3/6] Introspecting the refresh-call latest access token link.");
-    assertIntrospectionActive(await introspectTokenViaUI(driver, "refresh_access", introspection_client_id, introspection_client_secret), "refresh_access");
+    assertIntrospectionActive(await introspectTokenViaUI(driver,
+                              "refresh_access", introspection_client_id,
+                              introspection_client_secret), "refresh_access");
     await returnToDebugger(driver);
 
     log.info("[4/6] Introspecting the refresh-call latest refresh token link.");
-    assertIntrospectionActive(await introspectTokenViaUI(driver, "refresh_refresh", introspection_client_id, introspection_client_secret), "refresh_refresh");
+    assertIntrospectionActive(await introspectTokenViaUI(driver,
+                              "refresh_refresh", introspection_client_id,
+                              introspection_client_secret), "refresh_refresh");
     await returnToDebugger(driver);
 
     // 5 & 6 — Currently Viewing pane, reached by activating a Token History
@@ -317,17 +380,24 @@ async function test() {
     const generation = await activateTokenHistoryEntry(driver, 1);
 
     log.info("[5/6] Introspecting the Token History access token link.");
-    assertIntrospectionActive(await introspectTokenViaUI(driver, "history_access&generation=" + generation, introspection_client_id, introspection_client_secret), "history_access");
+    assertIntrospectionActive(await introspectTokenViaUI(driver,
+                              "history_access&generation=" + generation,
+                              introspection_client_id,
+                              introspection_client_secret), "history_access");
     // Returning to the debugger re-renders the Currently Viewing pane from the
     // persisted active index, so the history refresh link is present again
     // without needing to re-activate the entry.
     await returnToDebugger(driver);
 
     log.info("[6/6] Introspecting the Token History refresh token link.");
-    assertIntrospectionActive(await introspectTokenViaUI(driver, "history_refresh&generation=" + generation, introspection_client_id, introspection_client_secret), "history_refresh");
+    assertIntrospectionActive(await introspectTokenViaUI(driver,
+                              "history_refresh&generation=" + generation,
+                              introspection_client_id,
+                              introspection_client_secret), "history_refresh");
     await returnToDebugger(driver);
 
-    log.info("All six Introspect Token links produced a valid active introspection and returned to the debugger.");
+    log.info("All six Introspect Token links produced a valid active " +
+             "introspection and returned to the debugger.");
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
@@ -335,6 +405,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

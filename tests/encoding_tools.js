@@ -23,10 +23,14 @@ var cryptoWait = Math.max(waitTime, 15000);
 // output itself (never trusts the page to grade its own answer).
 // ===========================================================================
 function expectedBase64(str) {
+  log.debug("Entering expectedBase64().");
+  log.debug("Leaving expectedBase64().");
   return Buffer.from(str, "utf8").toString("base64");
 }
 
 function expectedUri(str) {
+  log.debug("Entering expectedUri().");
+  log.debug("Leaving expectedUri().");
   return encodeURIComponent(str);
 }
 
@@ -45,12 +49,14 @@ var CRC32_TABLE = (function () {
 })();
 
 function expectedCrc32(str) {
+  log.debug("Entering expectedCrc32().");
   var bytes = Buffer.from(str, "utf8");
   var crc = 0xFFFFFFFF;
   for (var i = 0; i < bytes.length; i++) {
     crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ bytes[i]) & 0xFF];
   }
   crc = (crc ^ 0xFFFFFFFF) >>> 0;
+  log.debug("Leaving expectedCrc32().");
   return ("0000000" + crc.toString(16)).slice(-8);
 }
 
@@ -63,6 +69,8 @@ var SHA_ALGS = {
 };
 
 function expectedSha(alg, str) {
+  log.debug("Entering expectedSha().");
+  log.debug("Leaving expectedSha().");
   return crypto.createHash(SHA_ALGS[alg]).update(str, "utf8").digest("hex");
 }
 
@@ -70,27 +78,35 @@ function expectedSha(alg, str) {
 // UI helpers
 // ===========================================================================
 async function click(driver, locator) {
+  log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var el = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(el), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", el);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", el);
   await el.click();
+  log.debug("Leaving click().");
 }
 
 async function setInput(driver, locator, text) {
+  log.debug("Entering setInput().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var el = driver.findElement(locator);
   await driver.wait(until.elementIsVisible(el), waitTime);
   await el.clear();
   await el.sendKeys(text);
+  log.debug("Leaving setInput().");
 }
 
 async function getValue(driver, locator) {
+  log.debug("Entering getValue().");
+  log.debug("Leaving getValue().");
   return await driver.findElement(locator).getAttribute("value");
 }
 
 // Wait until a field's value satisfies pred(value), then return the value.
 async function waitForValue(driver, locator, pred, msg, timeout) {
+  log.debug("Entering waitForValue().");
   await driver.wait(async function () {
     try {
       var v = await driver.findElement(locator).getAttribute("value");
@@ -99,6 +115,7 @@ async function waitForValue(driver, locator, pred, msg, timeout) {
       return false;
     }
   }, timeout || cryptoWait, msg);
+  log.debug("Leaving waitForValue().");
   return await getValue(driver, locator);
 }
 
@@ -106,7 +123,10 @@ async function waitForValue(driver, locator, pred, msg, timeout) {
 // substring (not the exact attribute) so this keeps working against the
 // HTML-minified static build, which strips the trailing ";" from handlers.
 function onclickBtn(fn) {
-  return By.xpath("//input[contains(@onclick, \"encoding_tools." + fn + "(\")]");
+  log.debug("Entering onclickBtn().");
+  log.debug("Leaving onclickBtn().");
+  return By.xpath("//input[contains(@onclick, \"encoding_tools." + fn +
+                  "(\")]");
 }
 
 // ===========================================================================
@@ -116,6 +136,7 @@ function onclickBtn(fn) {
 // Base64 — set a new value, Encode, confirm the encoding, then Decode and
 // confirm the decoded value equals the ORIGINAL unencoded input (round-trip).
 async function base64Activities(driver) {
+  log.debug("Entering base64Activities().");
   var input = "Encode me → café 100% ✓ (Base64 test)";
   var expected = expectedBase64(input);
   log.info("Base64: set a new Unencoded value and click Encode.");
@@ -137,11 +158,13 @@ async function base64Activities(driver) {
   assert.strictEqual(decoded, input,
     "Base64 decoded value does not equal the original unencoded value.");
   log.info("Base64 round-trip verified: decoded value equals the original.");
+  log.debug("Leaving base64Activities().");
 }
 
 // URI encoding — set a new value, Encode, confirm the encoding, then Decode
 // and confirm the round-trip back to the original.
 async function uriActivities(driver) {
+  log.debug("Entering uriActivities().");
   var input = "state=a b&scope=openid profile/email?x=1#frag";
   var expected = expectedUri(input);
   log.info("URI: set a new Unencoded value and click Encode.");
@@ -162,11 +185,13 @@ async function uriActivities(driver) {
   assert.strictEqual(decoded, input,
     "URI decoded value does not equal the original unencoded value.");
   log.info("URI round-trip verified: decoded value equals the original.");
+  log.debug("Leaving uriActivities().");
 }
 
 // Checksum — set a new value and Encode. A checksum is one-way (no Decode), so
 // correctness is verified against an independently computed CRC-32.
 async function checksumActivities(driver) {
+  log.debug("Entering checksumActivities().");
   var input = "checksum test — CRC-32 of this exact string";
   var expected = expectedCrc32(input);
   log.info("Checksum: set a new Unencoded value and click Encode.");
@@ -177,12 +202,15 @@ async function checksumActivities(driver) {
     "Checksum Encode did not produce the expected CRC-32 value.");
   assert.strictEqual(encoded, expected,
     "CRC-32 checksum does not match the independently computed value.");
-  log.info("Checksum verified against independently computed CRC-32: " + expected);
+  log.info("Checksum verified against independently computed CRC-32: " +
+           expected);
+  log.debug("Leaving checksumActivities().");
 }
 
 // SHA hashing — set a new value, then exercise the Encode button for every
 // digest size offered in the dropdown, validating each against Node's crypto.
 async function shaActivities(driver) {
+  log.debug("Entering shaActivities().");
   var input = "hash me please — SHA test string";
   log.info("SHA: set a new Unencoded value.");
   await setInput(driver, By.id("sha_unencoded"), input);
@@ -201,6 +229,7 @@ async function shaActivities(driver) {
       alg + " digest does not match the independently computed value.");
     log.info(alg + " digest verified (" + digest.length + " hex chars).");
   }
+  log.debug("Leaving shaActivities().");
 }
 
 // Exercise every Copy button on the page. Clipboard access is unreliable in
@@ -208,9 +237,11 @@ async function shaActivities(driver) {
 // only confirms the buttons are present and clickable (no assertion on the
 // clipboard contents).
 async function copyButtonActivities(driver) {
+  log.debug("Entering copyButtonActivities().");
   var copyButtons = await driver.findElements(By.css(".et-copy"));
   assert.ok(copyButtons.length >= 8,
-    "Expected at least 8 Copy buttons (2 per pane), found " + copyButtons.length + ".");
+    "Expected at least 8 Copy buttons (2 per pane), found " +
+        copyButtons.length + ".");
   log.info("Clicking all " + copyButtons.length + " Copy buttons.");
   for (var i = 0; i < copyButtons.length; i++) {
     try {
@@ -220,11 +251,13 @@ async function copyButtonActivities(driver) {
     }
   }
   log.info("All Copy buttons exercised.");
+  log.debug("Leaving copyButtonActivities().");
 }
 
 // Confirm the page's onload seeded every Unencoded field and auto-ran each
 // Encode/hash so the Encoded fields are populated on first load.
 async function defaultsOnLoad(driver) {
+  log.debug("Entering defaultsOnLoad().");
   log.info("Verify default values are populated on load.");
   await waitForValue(driver, By.id("b64_encoded"),
     function (v) { return v.length > 0; },
@@ -239,10 +272,13 @@ async function defaultsOnLoad(driver) {
     function (v) { return v.length > 0; },
     "SHA Encoded field was not auto-populated on load.");
   log.info("All Encoded fields populated on load.");
+  log.debug("Leaving defaultsOnLoad().");
 }
 
 async function encodingToolsActivities(driver) {
-  log.info("Open the Encoding / Hashing Tools page via the debugger Tools pane.");
+  log.debug("Entering encodingToolsActivities().");
+  log.info("Open the Encoding / Hashing Tools page via the debugger " +
+           "Tools pane.");
   await driver.get(baseUrl + "/debugger.html");
   await click(driver, By.id("tools_expand_button"));
   var link = By.css('a[href="/encoding_tools.html?from=debugger.html"]');
@@ -261,9 +297,11 @@ async function encodingToolsActivities(driver) {
   await checksumActivities(driver);
   await shaActivities(driver);
   await copyButtonActivities(driver);
+  log.debug("Leaving encodingToolsActivities().");
 }
 
 async function test() {
+  log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
     // "new" headless honors the --unsafely-treat-insecure-origin-as-secure
@@ -276,7 +314,9 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   // SHA hashing uses the Web Crypto API (crypto.subtle), exposed by browsers
   // only in a "secure context". http://localhost is treated as secure, but the
   // containerized runs serve the client at http://client:3000 (non-secure),
@@ -284,9 +324,12 @@ async function test() {
   // trustworthy so crypto.subtle is available. (Only takes effect with a
   // --user-data-dir also set.)
   var secureOrigin = baseUrl.replace(/\/+$/, "");
-  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" + secureOrigin);
-  options.addArguments("--user-data-dir=/tmp/encoding-tools-chrome-" + Date.now());
-  const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+  options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
+                       secureOrigin);
+  options.addArguments("--user-data-dir=/tmp/encoding-tools-chrome-" +
+                       Date.now());
+  const driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).build();
 
   try {
     log.info("Starting Test run.");
@@ -299,6 +342,7 @@ async function test() {
   } finally {
     await driver.quit();
   }
+  log.debug("Leaving test().");
 }
 
 const program = new Command();

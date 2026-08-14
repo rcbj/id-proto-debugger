@@ -16,34 +16,47 @@ var headless = true;
 var audience = "http://localhost:8080/realms/debugger-testing";
 var waitTime = appconfig.waitTime;
 
-const { populateMetadata, getAccessTokenAuthCode, verifyAccessToken } = require("../common/tests.js")({ By, until, Select, waitTime, log, jwt, assert });
+const { populateMetadata, getAccessTokenAuthCode, verifyAccessToken } =
+       require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
+       assert });
 
 function decodeJWT(jwt_) {
+  log.debug("Entering decodeJWT().");
+  log.debug("Leaving decodeJWT().");
   return jwt.decode(jwt_, {complete: true});
 }
 
-const wait = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds));
+const wait = (milliseconds) => {
+  log.debug("Entering wait().");
+  log.debug("Leaving wait().");
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+};
 
 
 
 
 async function getIDToken(driver)
 {
+  log.debug("Entering getIDToken().");
   log.info("Entering getIDToken().");
   // Read the ID token value from the token_id_token field on debugger2.html
   log.info("Find token_id_token.");
   token_id_token = By.id("token_id_token");
   log.info("Find token_id_token element.");
+  log.debug("Leaving getIDToken().");
   return await driver.findElement(token_id_token).getAttribute("value");
 }
 
 async function getRefreshToken(driver)
 {
+  log.debug("Entering getRefreshToken().");
   log.info("Entering getRefreshToken().");
-  // Read the refresh token value from the token_refresh_token field on debugger2.html
+  // Read the refresh token value from the token_refresh_token field on
+  // debugger2.html
   log.info("Find token_refresh_token.");
   let token_refresh_token = By.id("token_refresh_token");
   log.info("Find token_refresh_token element.");
+  log.debug("Leaving getRefreshToken().");
   return await driver.findElement(token_refresh_token).getAttribute("value");
 }
 
@@ -54,29 +67,48 @@ async function verifyIDToken(id_token, client_id, user, audience, issuer) {
   let decoded_id_token = jwt.decode(id_token, { complete: true });
   let response_text = id_token.match(/responseText: (.*)/);
 
-  assert.notStrictEqual(decoded_id_token, null, "Cannot decode ID token. Request result: " + (response_text ? response_text[1] : "no response text"));
-  assert.strictEqual(decoded_id_token.payload.azp, client_id, "ID token AZP does not match client ID.");
-  assert.strictEqual(decoded_id_token.payload.aud, audience, "ID token aud does not match " + audience);
-  assert.strictEqual(decoded_id_token.payload.iss, issuer, "ID token iss does not match " + issuer);
-  assert.strictEqual(decoded_id_token.payload.sub, user, "ID token SUB does not match user ID.");
-  assert.strictEqual(decoded_id_token.payload.given_name, client_id, "ID token given_name does not match.");
-  assert.strictEqual(decoded_id_token.payload.family_name, client_id, "ID token family_name does not match.");
-  assert.strictEqual(decoded_id_token.payload.email, `${client_id}@iyasec.io`, "ID token email does not match.");
-  assert.strictEqual(decoded_id_token.payload.typ, "ID", "ID Token typ does not match.");
+  assert.notStrictEqual(decoded_id_token, null,
+                        "Cannot decode ID token. Request result: " +
+                        (response_text ?
+                        response_text[1] : "no response text"));
+  assert.strictEqual(decoded_id_token.payload.azp, client_id,
+                     "ID token AZP does not match client ID.");
+  assert.strictEqual(decoded_id_token.payload.aud, audience,
+                     "ID token aud does not match " + audience);
+  assert.strictEqual(decoded_id_token.payload.iss, issuer,
+                     "ID token iss does not match " + issuer);
+  assert.strictEqual(decoded_id_token.payload.sub, user,
+                     "ID token SUB does not match user ID.");
+  assert.strictEqual(decoded_id_token.payload.given_name, client_id,
+                     "ID token given_name does not match.");
+  assert.strictEqual(decoded_id_token.payload.family_name, client_id,
+                     "ID token family_name does not match.");
+  assert.strictEqual(decoded_id_token.payload.email, `${client_id}@iyasec.io`,
+                     "ID token email does not match.");
+  assert.strictEqual(decoded_id_token.payload.typ, "ID",
+                     "ID Token typ does not match.");
   log.debug("Leaving verifyIDToken().");
 }
 
-async function verifyRefreshToken(refresh_token, client_id, user, audience, issuer) {
+async function verifyRefreshToken(refresh_token, client_id, user, audience,
+                                  issuer) {
   log.debug("Entering verifyRefreshToken().");
   log.info("Entering verifyRefreshToken().");
   let decoded_refresh_token = jwt.decode(refresh_token, { complete: true });
   let response_text = refresh_token.match(/responseText: (.*)/);
 
-  assert.notStrictEqual(decoded_refresh_token, null, "Cannot decode Refresh token. Request result: " + (response_text ? response_text[1] : "no response text"));
-  assert.strictEqual(decoded_refresh_token.payload.aud, audience, "Refresh token aud does not match " + audience);
-  assert.strictEqual(decoded_refresh_token.payload.iss, issuer, "Refresh token iss does not match " + issuer);
-  assert.strictEqual(decoded_refresh_token.payload.azp, client_id, "Refresh token AZP does not match client ID.");
-  assert.strictEqual(decoded_refresh_token.payload.typ, "Offline", "Refresh Token typ does not match.");
+  assert.notStrictEqual(decoded_refresh_token, null,
+                        "Cannot decode Refresh token. Request result: " +
+                        (response_text ?
+                        response_text[1] : "no response text"));
+  assert.strictEqual(decoded_refresh_token.payload.aud, audience,
+                     "Refresh token aud does not match " + audience);
+  assert.strictEqual(decoded_refresh_token.payload.iss, issuer,
+                     "Refresh token iss does not match " + issuer);
+  assert.strictEqual(decoded_refresh_token.payload.azp, client_id,
+                     "Refresh token AZP does not match client ID.");
+  assert.strictEqual(decoded_refresh_token.payload.typ, "Offline",
+                     "Refresh Token typ does not match.");
   log.debug("Leaving verifyRefreshToken().");
 }
 
@@ -111,19 +143,24 @@ async function tokenDetailPage(driver, type)
     tokenDetailLink = By.partialLinkText(link_text);
     log.info("Locate token detail link.");
     await driver.wait(until.elementLocated(tokenDetailLink), waitTime);
-    log.info("Click link to go to the token detail page for " + type + " token.");
+    log.info("Click link to go to the token detail page for " + type +
+             " token.");
     await driver.findElement(tokenDetailLink).click();
 
-    // Find the jwt_payload field to confirm you are on the token_detail.html page.
+    // Find the jwt_payload field to confirm you are on the token_detail.html
+    // page.
     var jwt_payload = By.id("jwt_payload");
     log.info("Waiting for jwt_payload");
-    var jwt_payload_element = await driver.wait(until.elementLocated(jwt_payload), waitTime);
+    var jwt_payload_element =
+        await driver.wait(until.elementLocated(jwt_payload), waitTime);
     log.info("jwt_payload_element: " + JSON.stringify(jwt_payload_element));
     log.info("Waiting for jwt_payload to be visible.");
     await driver.wait(until.elementIsVisible(jwt_payload_element), waitTime);
 
-    // Confirm that the value in the jwt_payload text field matches the expected payload value.
-    token = await driver.executeScript("return window.localStorage.getItem(\"" + token_field + "\");")
+    // Confirm that the value in the jwt_payload text field matches the expected
+    // payload value.
+    token = await driver.executeScript("return window.localStorage.getItem(\"" +
+        token_field + "\");")
     log.info("token (from local storage): " + token);
     log.info("Decode JWT.");
     const decodedJWT = decodeJWT(token);
@@ -138,7 +175,8 @@ async function tokenDetailPage(driver, type)
       log.info("jwt_payload_element has expected value.");
     } else {
       log.info("jwt_payload_element does not have expected value.");
-      throw new Error("jwt_payload_element does not have expected value. jwt_payload.text=" +
+      throw new Error("jwt_payload_element does not have expected value. " +
+                      "jwt_payload.text=" +
                       fromJWTPayloadJWT +
                       ", localStorage('" +
                       token_field +
@@ -148,14 +186,18 @@ async function tokenDetailPage(driver, type)
 
     // Click Copy button for JWT Header on JSON tab.
     log.info("Click JWT Header Copy button on JSON tab.");
-    const jsonHeaderCopyBtn = By.xpath("//div[@id='json']//td[.//label[contains(text(),'JWT Header:')]]//button[text()='Copy']");
+    const jsonHeaderCopyBtn =
+        By.xpath("//div[@id='json']//td[.//label[contains(text(),'JWT " +
+        "Header:')]]//button[text()='Copy']");
     await driver.wait(until.elementLocated(jsonHeaderCopyBtn), waitTime);
     await driver.findElement(jsonHeaderCopyBtn).click();
     log.info("JWT Header Copy button clicked.");
 
     // Click Copy button for JWT Payload on JSON tab.
     log.info("Click JWT Payload Copy button on JSON tab.");
-    const jsonPayloadCopyBtn = By.xpath("//div[@id='json']//td[.//label[contains(text(),'JWT Payload:')]]//button[text()='Copy']");
+    const jsonPayloadCopyBtn =
+        By.xpath("//div[@id='json']//td[.//label[contains(text(),'JWT " +
+        "Payload:')]]//button[text()='Copy']");
     await driver.wait(until.elementLocated(jsonPayloadCopyBtn), waitTime);
     await driver.findElement(jsonPayloadCopyBtn).click();
     log.info("JWT Payload Copy button clicked.");
@@ -173,37 +215,48 @@ async function tokenDetailPage(driver, type)
     log.info("Locate keyPairJWTPayload.");
     await driver.wait(until.elementLocated(keyPairJWTPayload), waitTime);
     log.info("Wait for keyPairJWTPayload to be visible.");
-    await driver.wait(until.elementIsVisible(driver.findElement(keyPairJWTPayload)), waitTime);
+    await driver.wait(until.elementIsVisible(driver.findElement(
+                      keyPairJWTPayload)), waitTime);
 
     // Click Copy button for JWT Header on Key Pairs tab.
     log.info("Click JWT Header Copy button on Key Pairs tab.");
-    const keyPairHeaderCopyBtn = By.xpath("//div[@id='key-pair']//td[.//label[contains(text(),'JWT Header:')]]//button[text()='Copy']");
+    const keyPairHeaderCopyBtn =
+        By.xpath("//div[@id='key-pair']//td[.//label[contains(text(),'JWT " +
+        "Header:')]]//button[text()='Copy']");
     await driver.wait(until.elementLocated(keyPairHeaderCopyBtn), waitTime);
     await driver.findElement(keyPairHeaderCopyBtn).click();
     log.info("Key Pairs JWT Header Copy button clicked.");
 
     // Click Copy button for JWT Payload on Key Pairs tab.
     log.info("Click JWT Payload Copy button on Key Pairs tab.");
-    const keyPairPayloadCopyBtn = By.xpath("//div[@id='key-pair']//td[.//label[contains(text(),'JWT Payload:')]]//button[text()='Copy']");
+    const keyPairPayloadCopyBtn =
+        By.xpath("//div[@id='key-pair']//td[.//label[contains(text(),'JWT " +
+        "Payload:')]]//button[text()='Copy']");
     await driver.wait(until.elementLocated(keyPairPayloadCopyBtn), waitTime);
     await driver.findElement(keyPairPayloadCopyBtn).click();
     log.info("Key Pairs JWT Payload Copy button clicked.");
 
     // Scroll to the Claims Validation section and run validation.
     log.info("Scroll to Claims Validation section.");
-    const validateClaimsBtn = await driver.findElement(By.css("input[value='Validate Claims']"));
-    await driver.executeScript("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", validateClaimsBtn);
+    const validateClaimsBtn =
+        await driver.findElement(By.css("input[value='Validate Claims']"));
+    await driver.executeScript("arguments[0].scrollIntoView({ behavior: " +
+                               "'smooth', block: 'center' });",
+                               validateClaimsBtn);
 
     // Set JWT purpose to OIDC ID Token to exercise the full set of validations.
     log.info("Set JWT purpose to OIDC ID Token.");
-    await new Select(await driver.findElement(By.id("jwt_purpose"))).selectByValue("oidc_id_token");
+    await new Select(await driver.findElement(By.id("jwt_purpose")))
+                     .selectByValue("oidc_id_token");
 
     log.info("Click Validate Claims button.");
     await validateClaimsBtn.click();
     await wait(2000);
 
     // Read and report the validation output.
-    const validationOutput = await driver.findElement(By.id("jwt_claims_validation_output")).getAttribute("value");
+    const validationOutput =
+        await driver.findElement(By.id("jwt_claims_validation_output"))
+        .getAttribute("value");
     log.info("Claims validation output:\n" + validationOutput);
 
     // Claims validation output is logged above for inspection; no assertion is
@@ -227,7 +280,8 @@ async function tokenDetailPage(driver, type)
     log.info("Wait for " + token_field);
     await driver.wait(until.elementLocated(token), waitTime);
     log.info("Wait for " + token_field + " to be visible.");
-    await driver.wait(until.elementIsVisible(await driver.findElement(token)), waitTime);
+    await driver.wait(until.elementIsVisible(await driver.findElement(token)),
+                      waitTime);
     log.info("Leaving tokenDetailPage().");
   } catch(e) {
     log.error("An error occurred: " + e.stack);
@@ -236,16 +290,19 @@ async function tokenDetailPage(driver, type)
   log.debug("Leaving tokenDetailPage().");
 }
 
-async function refresh_token_call(driver, client_id, scope, user, access, audience) {
+async function refresh_token_call(driver, client_id, scope, user, access,
+                                  audience) {
   log.debug("Entering refresh_token_call().");
   log.info("Entering refresh_token_call().");
-  // Locate and click the refresh button to exchange the refresh token for new tokens
+  // Locate and click the refresh button to exchange the refresh token for new
+  // tokens
   log.info("Find Refresh Button");
   refresh_btn = By.id("refresh_btn");
   log.info("Locate refresh_btn.");
   await driver.wait(until.elementLocated(refresh_btn), waitTime);
   log.info("Wait for refresh_btn to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(refresh_btn)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(refresh_btn)),
+                    waitTime);
   log.info("Click refresh_btn. Making refresh token call.");
   await driver.findElement(refresh_btn).click();
   log.info("Waiting for call to complete.");
@@ -254,35 +311,46 @@ async function refresh_token_call(driver, client_id, scope, user, access, audien
   log.info("Finding refresh_access_token.");
   var refresh_access_token = By.id("refresh_access_token");
   log.info("Locate refresh_access_token.");
-  var refresh_access_token_element = await driver.wait(until.elementLocated(refresh_access_token), waitTime);
+  var refresh_access_token_element =
+      await driver.wait(until.elementLocated(refresh_access_token), waitTime);
   log.info("Waiting for refresh_access_token to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(refresh_btn)), waitTime);
-  var refresh_access_token_value = await driver.findElement(refresh_access_token).getAttribute("value");
+  await driver.wait(until.elementIsVisible(driver.findElement(refresh_btn)),
+                    waitTime);
+  var refresh_access_token_value =
+      await driver.findElement(refresh_access_token).getAttribute("value");
 
   log.info("Calling verifyAccessToken().");
-  await verifyAccessToken(refresh_access_token_value, client_id, scope, { user, audience: access, issuer: audience, verifyTyp: true });
+  await verifyAccessToken(refresh_access_token_value, client_id, scope, { user,
+                          audience: access, issuer: audience,
+                          verifyTyp: true });
 
   // Read and verify the newly issued refresh token
   var refresh_refresh_token = By.id("refresh_refresh_token");
   log.info("Locate refresh_refresh_token.");
   await driver.wait(until.elementLocated(refresh_refresh_token), waitTime);
   log.info("Waiting for refresh_refresh_token to be visible.");
-  await driver.wait(until.elementIsVisible( driver.findElement(refresh_refresh_token)), waitTime);
-  var refresh_refresh_token_value = await driver.findElement(refresh_refresh_token).getAttribute("value");
+  await driver.wait(until.elementIsVisible( driver.findElement(
+                    refresh_refresh_token)), waitTime);
+  var refresh_refresh_token_value =
+      await driver.findElement(refresh_refresh_token).getAttribute("value");
 
   log.info("Calling verifyRefreshToken().");
-  await verifyRefreshToken(refresh_refresh_token_value, client_id, user, audience, audience);
+  await verifyRefreshToken(refresh_refresh_token_value, client_id, user,
+                           audience, audience);
 
   // Read and verify the newly issued ID token
   var refresh_id_token = By.id("refresh_id_token");
   log.info("Locate refresh_id_token.");
   await driver.wait(until.elementLocated(refresh_id_token), waitTime);
   log.info("Waiting for refresh_id_token to be visible.");
-  await driver.wait(until.elementIsVisible( driver.findElement(refresh_id_token)), waitTime);
-  var refresh_id_token_value = await driver.findElement(refresh_id_token).getAttribute("value");
+  await driver.wait(until.elementIsVisible( driver.findElement(
+                    refresh_id_token)), waitTime);
+  var refresh_id_token_value =
+      await driver.findElement(refresh_id_token).getAttribute("value");
 
   log.info("Calling verifyIDToken().");
-  await verifyIDToken(refresh_id_token_value, client_id, user, client_id, audience)
+  await verifyIDToken(refresh_id_token_value, client_id, user, client_id,
+                      audience)
 
   log.info("Leaving refresh_token_call().");
   log.debug("Leaving refresh_token_call().");
@@ -298,15 +366,18 @@ async function logout(driver) {
   await driver.wait(until.elementLocated(logout_post_redirect_uri), waitTime);
   log.info("Wait for logout_post_redirect_uri to be visible.");
   await driver.findElement(logout_post_redirect_uri).clear();
-  await driver.wait(until.elementIsVisible(driver.findElement(logout_post_redirect_uri)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(
+                    logout_post_redirect_uri)), waitTime);
   log.info("Set post_redirect_uri for logout.");
-  await driver.findElement(logout_post_redirect_uri).sendKeys(logout_post_redirect_uri_value);
+  await driver.findElement(logout_post_redirect_uri)
+                           .sendKeys(logout_post_redirect_uri_value);
   // Locate and click the logout button to trigger the OIDC logout
   logout_button = By.id("logout_btn");
   log.info("Locate logout_button.");
   await driver.wait(until.elementLocated(logout_button), waitTime);
   log.info("Waiting for logout_button to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(logout_button)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(logout_button)),
+                    waitTime);
   log.info("Click logout_btn.");
   await driver.findElement(logout_button).click();
 
@@ -317,19 +388,22 @@ async function logout(driver) {
   log.info("Click link to return to the front page of the debugger.");
   await driver.findElement(returnToDebugLink).click();
 
-  // Confirm the debugger form is back by waiting for the expand button and client_id
+  // Confirm the debugger form is back by waiting for the expand button and
+  // client_id
   log.info("Find authz_expand_button.");
   authz_expand_button = By.id("authz_expand_button");
   await driver.wait(until.elementLocated(authz_expand_button), waitTime);
   log.info("Waiting for authz_expand_button to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(authz_expand_button)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(
+                    authz_expand_button)), waitTime);
 
   log.info("Find client_id.");
   client_id = By.id("client_id");
   log.info("Locate client_id");
   await driver.wait(until.elementLocated(client_id), waitTime);
   log.info("Wait for client_id to be visible.");
-  await driver.wait(until.elementIsVisible(driver.findElement(client_id)), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(client_id)),
+                    waitTime);
   log.debug("Leaving logout().");
 }
 
@@ -344,10 +418,12 @@ async function test() {
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
   // Test-only: allow a deployed HTTPS debugger (e.g. https://test.idptools.com)
-  // to make discovery/token XHRs to a plaintext http://localhost Keycloak, which
-  // browsers otherwise block (mixed content / Private Network Access).
+  // to make discovery/token XHRs to a plaintext http://localhost Keycloak,
+  // which browsers otherwise block (mixed content / Private Network Access).
   options.addArguments("--allow-running-insecure-content");
-  options.addArguments("--disable-features=BlockInsecurePrivateNetworkRequests,PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   const driver = await new Builder()
     .forBrowser("chrome")
     .setChromeOptions(options)
@@ -362,7 +438,8 @@ async function test() {
     const audience = process.env.AUDIENCE;
     let pkce_enabled = process.env.PKCE_ENABLED
 
-    assert(discovery_endpoint, "DISCOVERY_ENDPOINT environment variable is not set.");
+    assert(discovery_endpoint,
+           "DISCOVERY_ENDPOINT environment variable is not set.");
     assert(client_id, "CLIENT_ID environment variable is not set.");
     assert(client_secret, "CLIENT_SECRET environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
@@ -386,10 +463,13 @@ async function test() {
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");
-    let access_token = await getAccessTokenAuthCode(driver, client_id, client_secret, scope, pkce_enabled, { baseUrl });
+    let access_token = await getAccessTokenAuthCode(driver, client_id,
+        client_secret, scope, pkce_enabled, { baseUrl });
     log.info("Access token: " + access_token);
     log.info("Calling verifyAccessToken().");
-    await verifyAccessToken(access_token, client_id, scope, { user, audience: "account", issuer: audience, verifyTyp: true });
+    await verifyAccessToken(access_token, client_id, scope, { user,
+                            audience: "account", issuer: audience,
+                            verifyTyp: true });
     log.info("Calling getIDToken().");
     let id_token = await getIDToken(driver);
     log.info("ID Token: " + id_token);
@@ -398,7 +478,8 @@ async function test() {
     let refresh_token = await getRefreshToken(driver);
     log.info("Refresh Token: " + refresh_token);
     log.info("Calling verifyRefreshToken()");
-    await verifyRefreshToken(refresh_token, client_id, user, audience, audience);
+    await verifyRefreshToken(refresh_token, client_id, user, audience,
+                             audience);
     log.info("Go to access_token detail page.");
     await tokenDetailPage(driver, "access_token");
     log.info("Go to refresh_token detail page.");
@@ -406,7 +487,8 @@ async function test() {
     log.info("Go to id_token detail page.");
     await tokenDetailPage(driver, "id_token");
     log.info("Making refresh_token_call().");
-    await refresh_token_call(driver, client_id, scope, user, "account", audience);
+    await refresh_token_call(driver, client_id, scope, user, "account",
+                             audience);
     log.info("Go to refresh_access_token detail page.");
     await tokenDetailPage(driver, "refresh_access_token");
     log.info("Go to refresh_refresh_token detail page.");
@@ -414,7 +496,8 @@ async function test() {
     log.info("Go to refresh_id_token detail page.");
     await tokenDetailPage(driver, "refresh_id_token");
     log.info("Making refresh_token_call().");
-    await refresh_token_call(driver, client_id, scope, user, "account", audience);
+    await refresh_token_call(driver, client_id, scope, user, "account",
+                             audience);
     log.info("Go to refresh_access_token detail page.");
     await tokenDetailPage(driver, "refresh_access_token");
     log.info("Go to refresh_refresh_token detail page.");

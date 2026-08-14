@@ -57,7 +57,7 @@
 function dbgSetAllPanes(expand) {
   var fieldsets = ['config_fieldset', 'tools_fieldset', 'token_fieldset', 'refresh_fieldset', 'logout_fieldset', 'revocation_fieldset', 'tokenexchange_fieldset',
     // Dynamically-rendered result/history panes (skipped when not yet present).
-    'token_result_fieldset', 'refresh_result_fieldset', 'currently_viewing_fieldset', 'token_history_fieldset', 'operation_history_fieldset'];
+    'authz_result_fieldset', 'token_result_fieldset', 'refresh_result_fieldset', 'currently_viewing_fieldset', 'token_history_fieldset', 'operation_history_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -824,9 +824,10 @@ function dbgSetAllPanes(expand) {
 <div class="display_authz_error_class" id="display_authz_error_class">&nbsp;
 </div>
 
+<!-- Every token the Authorization Endpoint itself returned, in one pane. The
+     id_token used to have a second container of its own below this one, which
+     is why an OIDC Implicit Flow showed two panes with the same title. -->
 <div class="authorization_endpoint_result" id="authorization_endpoint_result">&nbsp;
-</div>
-<div class="authorization_endpoint_id_token_result" id="authorization_endpoint_id_token_result">&nbsp;
 </div>
 
 <!-- Token Endpoint Results, Refresh Token Results, and Currently Viewing side by side -->

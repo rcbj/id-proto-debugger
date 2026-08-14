@@ -7,8 +7,38 @@
 //
 // It validates the channel and the source before forwarding. A page can post
 // anything it likes to itself, so a capture arriving here is untrusted input —
-// it is stored and displayed, never executed, and the debugger's pages render it
-// with textContent only.
+// it is stored and displayed, never executed, and the debugger's pages render
+// it with textContent only.
+
+// The Entering/Leaving logging convention (see the repo-root CLAUDE.md)
+// wants a `log` here, and bunyan is not reachable from this file:
+// the extension is loaded raw by the browser, with no module system.
+// So this is the same call shape backed by console. Debug output is off by
+// default, so an ordinary run stays quiet; flip DEBUG to follow a call
+// through. Note the methods below are the one place the convention cannot
+// apply — a log line inside log.debug() is infinite recursion.
+var DEBUG = false;
+var LOG_TAG = "[relay]";
+var log = {
+  debug: function () {
+    if (!DEBUG) return;
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  info: function () {
+    console.log.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  warn: function () {
+    console.warn.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  },
+  error: function () {
+    console.error.apply(console,
+      [LOG_TAG].concat(Array.prototype.slice.call(arguments)));
+  }
+};
+
 (function () {
   "use strict";
   var CHANNEL = "idptools-webauthn-capture";

@@ -34,7 +34,8 @@ var history = require("./saml_history");
 // The scheme allowlist applied before navigating anywhere, or POSTing a form
 // anywhere. See url_safety.js for why this is not DOMPurify.
 var urlSafety = require("./url_safety");
-var log = bunyan.createLogger({ name: 'saml_request', level: appconfig.logLevel });
+var log = bunyan.createLogger({ name: 'saml_request',
+    level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
 // SAML 2.0 binding URIs.
@@ -54,25 +55,57 @@ var NAMEID_OPTIONS_KEY = STORE_PREFIX + "nameid_options";
 // ---------------------------------------------------------------------------
 // Small DOM helpers
 // ---------------------------------------------------------------------------
-function el(id) { return document.getElementById(id); }
-function val(id) { var e = el(id); return e ? e.value : ''; }
-function setVal(id, v) { var e = el(id); if (e) e.value = (v == null ? '' : v); }
-function setStatus(id, msg) { setVal(id, msg); }
-function show(id, on) { var e = el(id); if (e) { if (on) e.classList.remove('saml-hidden'); else e.classList.add('saml-hidden'); } }
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
+}
+function val(id) {
+  log.debug("Entering val().");
+  var e = el(id);
+  log.debug("Leaving val().");
+  return e ? e.value : '';
+}
+function setVal(id, v) {
+  log.debug("Entering setVal().");
+  var e = el(id);
+  if (e) e.value = (v == null ? '' : v);
+  log.debug("Leaving setVal().");
+}
+function setStatus(id, msg) {
+  log.debug("Entering setStatus().");
+  setVal(id, msg);
+  log.debug("Leaving setStatus().");
+}
+function show(id, on) {
+  log.debug("Entering show().");
+  var e = el(id);
+  if (e) { if (on) e.classList.remove('saml-hidden'); else e.classList.add(
+      'saml-hidden'); }
+  log.debug("Leaving show().");
+}
 
-// RFC 4122-ish id suitable for an XML ID (must be an NCName: start with letter/_)
+// RFC 4122-ish id suitable for an XML ID (must be an NCName: start with
+// letter/_)
 function genId() {
+  log.debug("Entering genId().");
   var b = new Uint8Array(16);
   (window.crypto || window.msCrypto).getRandomValues(b);
   var hex = '';
-  for (var i = 0; i < b.length; i++) { hex += ('0' + b[i].toString(16)).slice(-2); }
+  for (var i = 0; i < b.length; i++) { hex += ('0' +
+       b[i].toString(16)).slice(-2); }
+  log.debug("Leaving genId().");
   return '_' + hex;
 }
 
 // ---------------------------------------------------------------------------
 // localStorage persistence — every .stored element is saved by its id.
 // ---------------------------------------------------------------------------
-function persistedEls() { return document.querySelectorAll('.stored'); }
+function persistedEls() {
+  log.debug("Entering persistedEls().");
+  log.debug("Leaving persistedEls().");
+  return document.querySelectorAll('.stored');
+}
 
 // The SP signing key pair, and whether it may be written to localStorage.
 //
@@ -95,16 +128,21 @@ function persistedEls() { return document.querySelectorAll('.stored'); }
 var KEYPAIR_FIELDS = ['saml_sp_private_key', 'saml_sp_public_key'];
 
 function keyPairMayBeStored() {
+  log.debug("Entering keyPairMayBeStored().");
   var e = el('saml_save_keypair');
   // Absent checkbox (an older cached copy of the page) keeps the previous
   // behaviour rather than silently dropping a key pair the user expects to
   // still be there after a reload.
+  log.debug("Leaving keyPairMayBeStored().");
   return !e || e.checked;
 }
 
 function forgetStoredKeyPair() {
   log.debug("Entering forgetStoredKeyPair().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving forgetStoredKeyPair().");
+    return;
+  }
   for (var i = 0; i < KEYPAIR_FIELDS.length; i++) {
     localStorage.removeItem(STORE_PREFIX + KEYPAIR_FIELDS[i]);
   }
@@ -113,13 +151,17 @@ function forgetStoredKeyPair() {
 
 function saveState() {
   log.debug("Entering saveState().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving saveState().");
+    return;
+  }
   var storeKeyPair = keyPairMayBeStored();
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
     if (!els[i].id) continue;
     if (!storeKeyPair && KEYPAIR_FIELDS.indexOf(els[i].id) >= 0) continue;
-    var v = els[i].type === 'checkbox' ? (els[i].checked ? '1' : '0') : els[i].value;
+    var v = els[i].type === 'checkbox' ? (els[i].checked ?
+        '1' : '0') : els[i].value;
     localStorage.setItem(STORE_PREFIX + els[i].id, v);
   }
   // Not merely "skip writing": remove what an earlier save (or an earlier
@@ -131,7 +173,10 @@ function saveState() {
 }
 function restoreState() {
   log.debug("Entering restoreState().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving restoreState().");
+    return;
+  }
   // NameIDFormat <select> options come from metadata; rebuild them first so the
   // saved selection has a matching <option>.
   var savedOpts = localStorage.getItem(NAMEID_OPTIONS_KEY);
@@ -147,7 +192,8 @@ function restoreState() {
     if (!els[i].id) continue;
     var v = localStorage.getItem(STORE_PREFIX + els[i].id);
     if (v === null) continue;
-    if (els[i].type === 'checkbox') els[i].checked = (v === '1' || v === 'true' || v === 'on');
+    if (els[i].type === 'checkbox') els[i].checked = (v === '1' ||
+        v === 'true' || v === 'on');
     else els[i].value = v;
   }
   log.debug("Leaving restoreState().");
@@ -161,13 +207,15 @@ function loadMetadata() {
   var url = val('saml_metadata_url').trim();
   if (!url) {
     setStatus('saml_metadata_status', 'Enter a metadata URL first.');
-    return opFailure('Load IdP Metadata', 'no metadata URL was entered.', { binding: '—' });
+    log.debug("Leaving loadMetadata().");
+    return opFailure('Load IdP Metadata', 'no metadata URL was entered.',
+                     { binding: '—' });
   }
   setStatus('saml_metadata_status', 'Loading…');
   // With a backend, go through the API metadata proxy (it dodges cross-origin
   // CORS restrictions on the IdP's metadata endpoint). On the static
-  // (backend-less) deployment, fetch the metadata URL directly from the browser —
-  // works whenever the IdP serves permissive CORS on its descriptor (a CORS/
+  // (backend-less) deployment, fetch the metadata URL directly from the browser
+  // — works whenever the IdP serves permissive CORS on its descriptor (a CORS/
   // network failure is surfaced in the status line below).
   var fetchUrl = appconfig.backendAvailable
     ? (appconfig.apiUrl + '/samlmetadata?url=' + encodeURIComponent(btoa(url)))
@@ -180,9 +228,12 @@ function loadMetadata() {
     .then(function (xmlText) { applyMetadata(xmlText, url); })
     .catch(function (e) {
       log.error('loadMetadata: ' + e.message);
-      opFailure('Load IdP Metadata', e.message, { binding: '—', idpEntityId: '' });
+      opFailure('Load IdP Metadata', e.message, { binding: '—',
+                idpEntityId: '' });
       setStatus('saml_metadata_status', 'Load failed: ' + e.message +
-        (appconfig.backendAvailable ? '' : ' — the browser fetched the metadata URL directly; the IdP endpoint may not permit cross-origin (CORS) requests.'));
+        (appconfig.backendAvailable ? '' : ' — the browser fetched the ' +
+         'metadata URL directly; the IdP endpoint may not permit ' +
+         'cross-origin (CORS) requests.'));
     });
   log.debug("Leaving loadMetadata().");
   return false;
@@ -198,36 +249,49 @@ function applyMetadata(xmlText, url) {
     parseMetadata(xmlText);
     setStatus('saml_metadata_status', 'Loaded and parsed.');
     // Recorded after the parse so the IdP entityID it just populated is shown.
-    opSuccess('Load IdP Metadata', url ? ('loaded from ' + url) : 'loaded from a local file', { binding: '—' });
+    opSuccess('Load IdP Metadata', url ? ('loaded from ' +
+              url) : 'loaded from a local file', { binding: '—' });
     saveState();
     autoBuildRequest(); // metadata populated the destination/NameIDFormat, etc.
     validateConfigUrls();
   } catch (e) {
     log.error('parseMetadata: ' + e.message);
     setStatus('saml_metadata_status', 'Parse error: ' + e.message);
-    opFailure('Load IdP Metadata', 'parse error: ' + e.message, { binding: '—' });
+    opFailure('Load IdP Metadata', 'parse error: ' + e.message,
+              { binding: '—' });
   }
   log.debug("Leaving applyMetadata().");
 }
 
 // Upload a metadata document from a local file (no URL fetch / backend needed).
 function uploadMetadata() {
+  log.debug("Entering uploadMetadata().");
   var f = el('saml_metadata_file');
   if (f) f.click();
+  log.debug("Leaving uploadMetadata().");
   return false;
 }
 function onMetadataFileChange(evt) {
   log.debug("Entering onMetadataFileChange().");
   var input = evt && evt.target;
   var file = input && input.files && input.files[0];
-  if (!file) return false;
+  if (!file) {
+    log.debug("Leaving onMetadataFileChange().");
+    return false;
+  }
   setStatus('saml_metadata_status', 'Reading ' + file.name + '…');
   var reader = new FileReader();
   reader.onload = function () {
+    log.debug("Entering onload().");
     applyMetadata(String(reader.result || ''));
     if (input) input.value = ''; // allow re-selecting the same file
+    log.debug("Leaving onload().");
   };
-  reader.onerror = function () { setStatus('saml_metadata_status', 'Could not read file: ' + file.name); };
+  reader.onerror = function () {
+    log.debug("Entering onerror().");
+    setStatus('saml_metadata_status', 'Could not read file: ' + file.name);
+    log.debug("Leaving onerror().");
+  };
   reader.readAsText(file);
   log.debug("Leaving onMetadataFileChange().");
   return false;
@@ -235,6 +299,8 @@ function onMetadataFileChange(evt) {
 
 // Namespace-agnostic element lookup (metadata uses md:/ds: prefixes).
 function tags(root, localName) {
+  log.debug("Entering tags().");
+  log.debug("Leaving tags().");
   return root.getElementsByTagNameNS('*', localName);
 }
 
@@ -254,7 +320,8 @@ function parseMetadata(xmlText) {
   var ssoPost = '', ssoRedirect = '', ssoArtifact = '';
   var ssos = tags(idp, 'SingleSignOnService');
   for (var i = 0; i < ssos.length; i++) {
-    var b = ssos[i].getAttribute('Binding'), loc = ssos[i].getAttribute('Location');
+    var b = ssos[i].getAttribute('Binding'), loc =
+        ssos[i].getAttribute('Location');
     if (b === BINDING.post) ssoPost = loc;
     else if (b === BINDING.redirect) ssoRedirect = loc;
     else if (b === BINDING.artifact) ssoArtifact = loc;
@@ -267,7 +334,8 @@ function parseMetadata(xmlText) {
   var sloPost = '', sloRedirect = '', sloArtifact = '';
   var slos = tags(idp, 'SingleLogoutService');
   for (var j = 0; j < slos.length; j++) {
-    var sb = slos[j].getAttribute('Binding'), sloc = slos[j].getAttribute('Location');
+    var sb = slos[j].getAttribute('Binding'), sloc =
+        slos[j].getAttribute('Location');
     if (sb === BINDING.post) sloPost = sloc;
     else if (sb === BINDING.redirect) sloRedirect = sloc;
     else if (sb === BINDING.artifact) sloArtifact = sloc;
@@ -288,10 +356,11 @@ function parseMetadata(xmlText) {
     if (t) formats.push(t);
   }
   populateNameIdOptions(formats);
-  if (window.localStorage) localStorage.setItem(NAMEID_OPTIONS_KEY, JSON.stringify(formats));
+  if (window.localStorage) localStorage.setItem(NAMEID_OPTIONS_KEY,
+      JSON.stringify(formats));
 
-  // Signer certificate: KeyDescriptor[use=signing] X509Certificate. Fall back to
-  // any KeyDescriptor if none is explicitly marked "signing".
+  // Signer certificate: KeyDescriptor[use=signing] X509Certificate. Fall back
+  // to any KeyDescriptor if none is explicitly marked "signing".
   var signerCert = '';
   var kds = tags(idp, 'KeyDescriptor');
   for (var m = 0; m < kds.length; m++) {
@@ -316,12 +385,15 @@ function parseMetadata(xmlText) {
 function populateNameIdOptions(formats) {
   log.debug("Entering populateNameIdOptions().");
   var sel = el('saml_nameid_format');
-  if (!sel) return;
+  if (!sel) {
+    log.debug("Leaving populateNameIdOptions().");
+    return;
+  }
   sel.innerHTML = '';
-  // Default "nothing chosen": the AuthnRequest still sends a <NameIDPolicy> (with
-  // AllowCreate) but WITHOUT a Format, so the IdP picks its default and cannot
-  // reject the request with InvalidNameIDPolicy. Selecting a specific format
-  // below sends that Format explicitly.
+  // Default "nothing chosen": the AuthnRequest still sends a <NameIDPolicy>
+  // (with AllowCreate) but WITHOUT a Format, so the IdP picks its default and
+  // cannot reject the request with InvalidNameIDPolicy. Selecting a specific
+  // format below sends that Format explicitly.
   var def = document.createElement('option');
   def.value = '';
   def.text = '(none — send NameIDPolicy without a Format; let the IdP choose)';
@@ -340,7 +412,9 @@ function populateNameIdOptions(formats) {
 
 // Trim the long urn:...:nameid-format:xxx to its last segment for display.
 function shortNameId(fmt) {
+  log.debug("Entering shortNameId().");
   var idx = fmt.lastIndexOf(':');
+  log.debug("Leaving shortNameId().");
   return idx >= 0 ? fmt.substring(idx + 1) + '  (' + fmt + ')' : fmt;
 }
 
@@ -351,25 +425,55 @@ function hintRuleFor(fmt) {
   log.debug("Entering hintRuleFor().");
   var f = (fmt || '').toLowerCase();
   if (f.indexOf('emailaddress') >= 0) {
-    return { placeholder: 'user@example.com', help: 'emailAddress format: enter an email address.',
-             test: function (v) { return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v); }, allowed: true };
+    log.debug("Leaving hintRuleFor().");
+    return { placeholder: 'user@example.com',
+            help: 'emailAddress format: enter an email address.',
+             test: function (v) {
+               log.debug("Entering test().");
+               log.debug("Leaving test().");
+               return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v);
+             }, allowed: true };
   }
   if (f.indexOf('x509subjectname') >= 0) {
-    return { placeholder: 'CN=User,O=Org,C=US', help: 'X509SubjectName format: enter an X.500 distinguished name.',
-             test: function (v) { return /=/.test(v); }, allowed: true };
+    log.debug("Leaving hintRuleFor().");
+    return { placeholder: 'CN=User,O=Org,C=US',
+            help: 'X509SubjectName format: enter an X.500 distinguished name.',
+             test: function (v) {
+               log.debug("Entering test().");
+               log.debug("Leaving test().");
+               return /=/.test(v);
+             }, allowed: true };
   }
   if (f.indexOf('windowsdomainqualifiedname') >= 0) {
-    return { placeholder: 'DOMAIN\\user', help: 'WindowsDomainQualifiedName: enter DOMAIN\\username.',
-             test: function (v) { return /\\/.test(v); }, allowed: true };
+    log.debug("Leaving hintRuleFor().");
+    return { placeholder: 'DOMAIN\\user',
+            help: 'WindowsDomainQualifiedName: enter DOMAIN\\username.',
+             test: function (v) {
+               log.debug("Entering test().");
+               log.debug("Leaving test().");
+               return /\\/.test(v);
+             }, allowed: true };
   }
   if (f.indexOf('persistent') >= 0 || f.indexOf('transient') >= 0) {
-    return { placeholder: '(hint not applicable)', help: 'persistent/transient identifiers are IdP-assigned — a username hint does not apply and will be ignored.',
-             test: function () { return true; }, allowed: false };
+    log.debug("Leaving hintRuleFor().");
+    return { placeholder: '(hint not applicable)',
+            help: 'persistent/transient identifiers are IdP-assigned — a ' +
+            'username hint does not apply and will be ignored.',
+             test: function () {
+               log.debug("Entering test().");
+               log.debug("Leaving test().");
+               return true;
+             }, allowed: false };
   }
   // unspecified, kerberos, entity, or unknown -> free text
   log.debug("Leaving hintRuleFor().");
-  return { placeholder: 'username', help: 'unspecified format: any value is allowed.',
-           test: function () { return true; }, allowed: true };
+  return { placeholder: 'username',
+          help: 'unspecified format: any value is allowed.',
+           test: function () {
+             log.debug("Entering test().");
+             log.debug("Leaving test().");
+             return true;
+           }, allowed: true };
 }
 
 function onNameIdFormatChange() {
@@ -392,29 +496,41 @@ function validateHint() {
   var rule = hintRuleFor(val('saml_nameid_format'));
   var v = val('saml_username_hint').trim();
   var hint = el('saml_username_hint');
-  if (!hint) return true;
-  if (!v || !rule.allowed) { hint.style.borderColor = ''; return true; }
+  if (!hint) {
+    log.debug("Leaving validateHint().");
+    return true;
+  }
+  if (!v || !rule.allowed) {
+    hint.style.borderColor = '';
+    log.debug("Leaving validateHint().");
+    return true;
+  }
   var ok = rule.test(v);
   hint.style.borderColor = ok ? '' : '#e0a800';
-  setVal('saml_hint_help', rule.help + (ok ? '' : '  ⚠ value does not match the selected format.'));
+  setVal('saml_hint_help', rule.help + (ok ?
+         '' : '  ⚠ value does not match the selected format.'));
   saveState();
   log.debug("Leaving validateHint().");
   return ok;
 }
 
 function onVersionChange() {
+  log.debug("Entering onVersionChange().");
   var v = val('saml_version');
   show('saml_version_warning', v !== '2.0');
   saveState();
+  log.debug("Leaving onVersionChange().");
   return false;
 }
 
 // Toggle the SP Signing Key Pair section with the "Digitally sign the
 // AuthnRequest" checkbox (checked => visible).
 function onSignChange() {
+  log.debug("Entering onSignChange().");
   var e = el('saml_sign_request');
   show('saml_signing_section', !e || e.checked);
   saveState();
+  log.debug("Leaving onSignChange().");
   return false;
 }
 
@@ -424,14 +540,20 @@ function onSignChange() {
 function renderKeyPairStorageNote() {
   log.debug("Entering renderKeyPairStorageNote().");
   var note = el('saml_keypair_storage_note');
-  if (!note) return;
+  if (!note) {
+    log.debug("Leaving renderKeyPairStorageNote().");
+    return;
+  }
   if (keyPairMayBeStored()) {
     note.textContent = '';
+    log.debug("Leaving renderKeyPairStorageNote().");
     return;
   }
   // textContent, not innerHTML: this is a message, not markup.
-  note.textContent = 'Not saved. Use Download to keep this key pair. After a reload you will need ' +
-    'to paste it back into these two fields, and paste the private key into the Decryption Key ' +
+  note.textContent = 'Not saved. Use Download to keep this key pair. After a ' +
+      'reload you will need ' +
+    'to paste it back into these two fields, and paste the private key into ' +
+        'the Decryption Key ' +
     'field on the SAML Response page before an EncryptedAssertion can be decrypted.';
   log.debug("Leaving renderKeyPairStorageNote().");
 }
@@ -446,22 +568,26 @@ function onSaveKeyPairChange() {
   return false;
 }
 
-// Toggle the AuthnRequest Encryption section with the "Encrypt the AuthnRequest"
-// checkbox (checked => visible; default unchecked/hidden).
+// Toggle the AuthnRequest Encryption section with the "Encrypt the
+// AuthnRequest" checkbox (checked => visible; default unchecked/hidden).
 function onEncryptChange() {
+  log.debug("Entering onEncryptChange().");
   var e = el('saml_encrypt_request');
   show('saml_encryption_section', !!(e && e.checked));
   saveState();
+  log.debug("Leaving onEncryptChange().");
   return false;
 }
 
-// Toggle the WS-Addressing section with the "Add WS-Addressing headers" checkbox
-// (checked => visible; default unchecked/hidden). The checkbox is also the enable
-// flag read when building the ArtifactResolve SOAP envelope.
+// Toggle the WS-Addressing section with the "Add WS-Addressing headers"
+// checkbox (checked => visible; default unchecked/hidden). The checkbox is also
+// the enable flag read when building the ArtifactResolve SOAP envelope.
 function onWsaChange() {
+  log.debug("Entering onWsaChange().");
   var e = el('saml_wsa_support');
   show('saml_wsa_section', !!(e && e.checked));
   saveState();
+  log.debug("Leaving onWsaChange().");
   return false;
 }
 
@@ -476,7 +602,8 @@ function generateKeys() {
   setTimeout(function () {
     try {
       var kp = forge.pki.rsa.generateKeyPair({ bits: bits, e: 0x10001 });
-      setVal('saml_sp_private_key', forge.pki.privateKeyToPem(kp.privateKey).trim() + '\n');
+      setVal('saml_sp_private_key',
+             forge.pki.privateKeyToPem(kp.privateKey).trim() + '\n');
       // The SP's public credential is presented as its self-signed certificate.
       // The field id keeps the legacy "saml_sp_public_key" name (localStorage /
       // stored-state compatibility), but it holds the certificate PEM.
@@ -501,7 +628,8 @@ function spSelfSignedCertPem(kp) {
   cert.validity.notBefore = new Date();
   cert.validity.notAfter = new Date();
   cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 5);
-  var attrs = [{ name: 'commonName', value: val('saml_sp_entity_id') || 'saml-debugger-sp' }];
+  var attrs = [{ name: 'commonName', value: val('saml_sp_entity_id') ||
+      'saml-debugger-sp' }];
   cert.setSubject(attrs);
   cert.setIssuer(attrs);
   cert.sign(kp.privateKey, forge.md.sha256.create());
@@ -510,20 +638,29 @@ function spSelfSignedCertPem(kp) {
 }
 
 function downloadKeys() {
+  log.debug("Entering downloadKeys().");
   var priv = val('saml_sp_private_key');
-  if (!priv) { setStatus('saml_call_status', 'Generate a key pair first.'); return false; }
+  if (!priv) {
+    setStatus('saml_call_status', 'Generate a key pair first.');
+    log.debug("Leaving downloadKeys().");
+    return false;
+  }
   triggerDownload('sp-private-key.pem', priv, 'application/x-pem-file');
-  triggerDownload('sp-certificate.pem', val('saml_sp_public_key'), 'application/x-pem-file');
+  triggerDownload('sp-certificate.pem', val('saml_sp_public_key'),
+                  'application/x-pem-file');
+  log.debug("Leaving downloadKeys().");
   return false;
 }
 
 function triggerDownload(filename, data, mime) {
+  log.debug("Entering triggerDownload().");
   var blob = new Blob([data], { type: mime || 'application/octet-stream' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  log.debug("Leaving triggerDownload().");
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +668,8 @@ function triggerDownload(filename, data, mime) {
 // Provider so it can be registered on the IdP.
 // ---------------------------------------------------------------------------
 function certPemToB64(pem) {
+  log.debug("Entering certPemToB64().");
+  log.debug("Leaving certPemToB64().");
   return String(pem || '')
     .replace(/-----BEGIN CERTIFICATE-----/g, '')
     .replace(/-----END CERTIFICATE-----/g, '')
@@ -548,24 +687,33 @@ function buildSpMetadata() {
   var keyDescriptor = certB64
     ? '\n    <md:KeyDescriptor use="signing">' +
       '\n      <ds:KeyInfo xmlns:ds="http://www.w3.org/2000/09/xmldsig#">' +
-      '\n        <ds:X509Data><ds:X509Certificate>' + certB64 + '</ds:X509Certificate></ds:X509Data>' +
+      '\n        <ds:X509Data><ds:X509Certificate>' + certB64 +
+          '</ds:X509Certificate></ds:X509Data>' +
       '\n      </ds:KeyInfo>' +
       '\n    </md:KeyDescriptor>'
     : '';
   var sloSvc = slo
-    ? '\n    <md:SingleLogoutService Binding="' + BINDING.post + '" Location="' + xmlEscape(slo) + '"/>' +
-      '\n    <md:SingleLogoutService Binding="' + BINDING.redirect + '" Location="' + xmlEscape(slo) + '"/>'
+    ? '\n    <md:SingleLogoutService Binding="' + BINDING.post +
+        '" Location="' + xmlEscape(slo) + '"/>' +
+      '\n    <md:SingleLogoutService Binding="' + BINDING.redirect +
+          '" Location="' + xmlEscape(slo) + '"/>'
     : '';
-  var nameIdFmt = fmt ? '\n    <md:NameIDFormat>' + xmlEscape(fmt) + '</md:NameIDFormat>' : '';
+  var nameIdFmt = fmt ? '\n    <md:NameIDFormat>' + xmlEscape(fmt) +
+      '</md:NameIDFormat>' : '';
   var acsSvc = acs
-    ? '\n    <md:AssertionConsumerService Binding="' + BINDING.post + '" Location="' + xmlEscape(acs) + '" index="0" isDefault="true"/>' +
-      '\n    <md:AssertionConsumerService Binding="' + BINDING.artifact + '" Location="' + xmlEscape(acs) + '" index="1"/>'
+    ? '\n    <md:AssertionConsumerService Binding="' + BINDING.post +
+        '" Location="' + xmlEscape(acs) + '" index="0" isDefault="true"/>' +
+      '\n    <md:AssertionConsumerService Binding="' + BINDING.artifact +
+          '" Location="' + xmlEscape(acs) + '" index="1"/>'
     : '';
 
   log.debug("Leaving buildSpMetadata().");
   return '<?xml version="1.0" encoding="UTF-8"?>' +
-         '\n<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="' + xmlEscape(entityId) + '">' +
-         '\n  <md:SPSSODescriptor AuthnRequestsSigned="true" WantAssertionsSigned="true"' +
+         '\n<md:EntityDescriptor ' +
+             'xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="' +
+             xmlEscape(entityId) + '">' +
+         '\n  <md:SPSSODescriptor AuthnRequestsSigned="true" ' +
+             'WantAssertionsSigned="true"' +
          ' protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">' +
          keyDescriptor + sloSvc + nameIdFmt + acsSvc +
          '\n  </md:SPSSODescriptor>' +
@@ -573,9 +721,16 @@ function buildSpMetadata() {
 }
 
 function downloadSpMetadata() {
-  if (!val('saml_sp_entity_id')) { setStatus('saml_call_status', 'Set the SP entityID first.'); return false; }
-  triggerDownload('sp-metadata.xml', buildSpMetadata(), 'application/samlmetadata+xml');
+  log.debug("Entering downloadSpMetadata().");
+  if (!val('saml_sp_entity_id')) {
+    setStatus('saml_call_status', 'Set the SP entityID first.');
+    log.debug("Leaving downloadSpMetadata().");
+    return false;
+  }
+  triggerDownload('sp-metadata.xml', buildSpMetadata(),
+                  'application/samlmetadata+xml');
   setStatus('saml_call_status', 'SP metadata downloaded.');
+  log.debug("Leaving downloadSpMetadata().");
   return false;
 }
 
@@ -583,16 +738,24 @@ function downloadSpMetadata() {
 // AuthnRequest construction
 // ---------------------------------------------------------------------------
 function xmlEscape(s) {
+  log.debug("Entering xmlEscape().");
+  log.debug("Leaving xmlEscape().");
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
 function ssoDestination(binding) {
+  log.debug("Entering ssoDestination().");
   // The AuthnRequest itself is delivered via HTTP-POST or HTTP-Redirect. The
-  // "artifact" choice affects only how the *response* comes back (ProtocolBinding
-  // = HTTP-Artifact), so the request is still sent to the Redirect SSO endpoint.
-  if (binding === 'post') return val('saml_sso_post');
+  // "artifact" choice affects only how the *response* comes back
+  // (ProtocolBinding = HTTP-Artifact), so the request is still sent to the
+  // Redirect SSO endpoint.
+  if (binding === 'post') {
+    log.debug("Leaving ssoDestination().");
+    return val('saml_sso_post');
+  }
+  log.debug("Leaving ssoDestination().");
   return val('saml_sso_redirect');
 }
 
@@ -613,11 +776,16 @@ function ssoDestination(binding) {
 // With the api backend, yes — its /samlacs route. Without it, only if the
 // deployment put a Lambda@Edge on that path (infra/edge/saml_landing.js), which
 // the env config declares with samlEdgeLanding. It is a separate flag rather
-// than being inferred from backendAvailable because Terraform and the site build
-// ship independently: a checkout can be redeployed before the infrastructure has
-// been applied.
+// than being inferred from backendAvailable because Terraform and the site
+// build ship independently: a checkout can be redeployed before the
+// infrastructure has been applied.
 function hasSamlLanding() {
-  if (appconfig.backendAvailable !== false) return true;
+  log.debug("Entering hasSamlLanding().");
+  if (appconfig.backendAvailable !== false) {
+    log.debug("Leaving hasSamlLanding().");
+    return true;
+  }
+  log.debug("Leaving hasSamlLanding().");
   return appconfig.samlEdgeLanding === true && !!appconfig.acsUrl;
 }
 
@@ -626,18 +794,23 @@ function hasSamlLanding() {
 // HTTP-POST whenever something can receive a POST, because that is what the
 // profile requires: saml-profiles-2.0-os section 4.1.2 step 5 says the Response
 // goes over HTTP POST or HTTP Artifact and that "the HTTP Redirect binding MUST
-// NOT be used, as the response will typically exceed the URL length permitted by
-// most user agents".
+// NOT be used, as the response will typically exceed the URL length permitted
+// by most user agents".
 //
-// HTTP-Redirect is the fallback for a deployment with no landing — a static site
-// with no edge function. It is out of profile, and the spec's stated reason is
-// exactly what bites: an encrypted assertion is ciphertext, which does not
-// DEFLATE, so the redirect URL roughly doubles and runs at CloudFront's
-// 8,192-byte cap. It is kept because it is the only thing that works there, and
-// because real deployments do use the Redirect binding; it is not the default
-// anywhere a POST can land.
+// HTTP-Redirect is the fallback for a deployment with no landing — a static
+// site with no edge function. It is out of profile, and the spec's stated
+// reason is exactly what bites: an encrypted assertion is ciphertext, which
+// does not DEFLATE, so the redirect URL roughly doubles and runs at
+// CloudFront's 8,192-byte cap. It is kept because it is the only thing that
+// works there, and because real deployments do use the Redirect binding; it is
+// not the default anywhere a POST can land.
 function responseProtocolBinding(binding) {
-  if (binding === 'artifact') return BINDING.artifact;
+  log.debug("Entering responseProtocolBinding().");
+  if (binding === 'artifact') {
+    log.debug("Leaving responseProtocolBinding().");
+    return BINDING.artifact;
+  }
+  log.debug("Leaving responseProtocolBinding().");
   return hasSamlLanding() ? BINDING.post : BINDING.redirect;
 }
 
@@ -653,9 +826,13 @@ function buildAuthnRequest() {
   var rule = hintRuleFor(fmt);
 
   if (version !== '2.0') {
-    return '<!-- SAML ' + version + ' has no SP-initiated AuthnRequest. SAML 1.x Web SSO\n' +
-           '     is IdP-initiated (Browser/Artifact or Browser/POST) with no signed SP\n' +
-           '     request, and SAML 2.0 IdPs (e.g. Keycloak) will not accept a 1.x request.\n' +
+    log.debug("Leaving buildAuthnRequest().");
+    return '<!-- SAML ' + version +
+        ' has no SP-initiated AuthnRequest. SAML 1.x Web SSO\n' +
+           '     is IdP-initiated (Browser/Artifact or Browser/POST) with no ' +
+               'signed SP\n' +
+           '     request, and SAML 2.0 IdPs (e.g. Keycloak) will not accept ' +
+               'a 1.x request.\n' +
            '     Switch to SAML 2.0 to build and send a real request. -->';
   }
 
@@ -663,18 +840,22 @@ function buildAuthnRequest() {
   var instant = new Date().toISOString();
   var subject = '';
   if (hint && rule.allowed) {
-    subject = '\n  <saml:Subject><saml:NameID' + (fmt ? ' Format="' + xmlEscape(fmt) + '"' : '') +
+    subject = '\n  <saml:Subject><saml:NameID' + (fmt ? ' Format="' +
+        xmlEscape(fmt) + '"' : '') +
               '>' + xmlEscape(hint) + '</saml:NameID></saml:Subject>';
   }
-  var nameIdPolicy = '\n  <samlp:NameIDPolicy' + (fmt ? ' Format="' + xmlEscape(fmt) + '"' : '') + ' AllowCreate="true"/>';
+  var nameIdPolicy = '\n  <samlp:NameIDPolicy' + (fmt ? ' Format="' +
+      xmlEscape(fmt) + '"' : '') + ' AllowCreate="true"/>';
 
   log.debug("Leaving buildAuthnRequest().");
-  return '<samlp:AuthnRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
+  return '<samlp:AuthnRequest ' +
+      'xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
          ' xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"' +
          ' ID="' + id + '" Version="2.0" IssueInstant="' + instant + '"' +
          (dest ? ' Destination="' + xmlEscape(dest) + '"' : '') +
          ' ProtocolBinding="' + responseProtocolBinding(binding) + '"' +
-         (acs ? ' AssertionConsumerServiceURL="' + xmlEscape(acs) + '"' : '') + '>' +
+         (acs ? ' AssertionConsumerServiceURL="' + xmlEscape(acs) + '"' : '') +
+          '>' +
          '\n  <saml:Issuer>' + xmlEscape(issuer) + '</saml:Issuer>' +
          subject + nameIdPolicy +
          '\n</samlp:AuthnRequest>';
@@ -699,56 +880,83 @@ function buildAuthnRequest() {
 // ---------------------------------------------------------------------------
 var DIGEST_SHA256 = 'http://www.w3.org/2001/04/xmlenc#sha256';
 var C14N_EXCLUSIVE = 'http://www.w3.org/2001/10/xml-exc-c14n#';
-var TRANSFORM_ENVELOPED = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
+var TRANSFORM_ENVELOPED =
+    'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
 var DS_NS = 'http://www.w3.org/2000/09/xmldsig#';
 var XENC_NS = 'http://www.w3.org/2001/04/xmlenc#';
 var XENC11_NS = 'http://www.w3.org/2009/xmlenc11#';
 
 function bytesToBase64(bytes) {
+  log.debug("Entering bytesToBase64().");
   var bin = '';
   for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  log.debug("Leaving bytesToBase64().");
   return btoa(bin);
 }
-function utf8ToBase64(str) { return btoa(unescape(encodeURIComponent(str))); }
+function utf8ToBase64(str) {
+  log.debug("Entering utf8ToBase64().");
+  log.debug("Leaving utf8ToBase64().");
+  return btoa(unescape(encodeURIComponent(str)));
+}
 
 // DEFLATE (raw, no zlib header) via the native CompressionStream (async).
 function deflateRaw(str) {
+  log.debug("Entering deflateRaw().");
   if (typeof CompressionStream === 'undefined') {
-    return Promise.reject(new Error('This browser lacks CompressionStream; cannot DEFLATE for the redirect binding.'));
+    log.debug("Leaving deflateRaw().");
+    return Promise.reject(new Error('This browser lacks CompressionStream; ' +
+                          'cannot DEFLATE for the redirect binding.'));
   }
   var cs = new CompressionStream('deflate-raw');
   var writer = cs.writable.getWriter();
   writer.write(new TextEncoder().encode(str));
   writer.close();
-  return new Response(cs.readable).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
+  log.debug("Leaving deflateRaw().");
+  return new Response(cs.readable).arrayBuffer()
+                      .then(function (buf) { return new Uint8Array(buf); });
 }
 
 function digestBase64(str, mdFactory) {
+  log.debug("Entering digestBase64().");
   var md = mdFactory();
   md.update(str, 'utf8');
+  log.debug("Leaving digestBase64().");
   return forge.util.encode64(md.digest().getBytes());
 }
 
 // XML Signature SignatureMethod URI -> forge digest factory + the matching
 // Reference DigestMethod URI. The selected algorithm drives both the redirect
-// SigAlg and the POST enveloped SignatureMethod/DigestMethod. The SP key is RSA,
-// so these are the RSA-family methods from xmldsig / xmldsig-more (RFC 6931).
+// SigAlg and the POST enveloped SignatureMethod/DigestMethod. The SP key is
+// RSA, so these are the RSA-family methods from xmldsig / xmldsig-more (RFC
+// 6931).
 function sigAlgSpec(uri) {
   log.debug("Entering sigAlgSpec().");
   switch (uri) {
     case 'http://www.w3.org/2000/09/xmldsig#rsa-sha1':
-      return { md: forge.md.sha1.create, digestUri: 'http://www.w3.org/2000/09/xmldsig#sha1' };
+      log.debug("Leaving sigAlgSpec().");
+      return { md: forge.md.sha1.create,
+              digestUri: 'http://www.w3.org/2000/09/xmldsig#sha1' };
     case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha384':
-      return { md: forge.md.sha384.create, digestUri: 'http://www.w3.org/2001/04/xmldsig-more#sha384' };
+      log.debug("Leaving sigAlgSpec().");
+      return { md: forge.md.sha384.create,
+              digestUri: 'http://www.w3.org/2001/04/xmldsig-more#sha384' };
     case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha512':
-      return { md: forge.md.sha512.create, digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512' };
+      log.debug("Leaving sigAlgSpec().");
+      return { md: forge.md.sha512.create,
+              digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512' };
     case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256':
     default:
-      return { md: forge.md.sha256.create, digestUri: 'http://www.w3.org/2001/04/xmlenc#sha256' };
+      log.debug("Leaving sigAlgSpec().");
+      return { md: forge.md.sha256.create,
+              digestUri: 'http://www.w3.org/2001/04/xmlenc#sha256' };
   }
   log.debug("Leaving sigAlgSpec().");
 }
-function selectedSigAlg() { return val('saml_sig_alg') || SIG_ALG_RSA_SHA256; }
+function selectedSigAlg() {
+  log.debug("Entering selectedSigAlg().");
+  log.debug("Leaving selectedSigAlg().");
+  return val('saml_sig_alg') || SIG_ALG_RSA_SHA256;
+}
 
 // HTTP-Redirect binding: build the query string, optionally with a detached
 // signature (doSign, default true). Returns { location, queryString }. `xml` is
@@ -768,9 +976,11 @@ function signRedirect(xml, dest, relayState, doSign) {
       var pk = forge.pki.privateKeyFromPem(val('saml_sp_private_key'));
       var md = sigAlgSpec(alg).md();
       md.update(qs, 'utf8'); // the query string is ASCII
-      qs += '&Signature=' + encodeURIComponent(forge.util.encode64(pk.sign(md)));
+      qs += '&Signature=' +
+          encodeURIComponent(forge.util.encode64(pk.sign(md)));
     }
-    var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') + qs) : qs;
+    var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
+        qs) : qs;
     return { location: location, queryString: qs };
   });
 }
@@ -781,10 +991,10 @@ function signRedirect(xml, dest, relayState, doSign) {
 //
 // The counterpart of xmldsig.js's parseXmlStrict(), kept local because this
 // page carries its own copy of the signing code and does not load that module.
-// It deliberately alters no bytes: XML-DSIG signs exactly what is canonicalized,
-// so anything that rewrote the input here would invalidate the signature being
-// produced. What it catches is a malformed document being signed or encrypted
-// as though it had parsed.
+// It deliberately alters no bytes: XML-DSIG signs exactly what is
+// canonicalized, so anything that rewrote the input here would invalidate the
+// signature being produced. What it catches is a malformed document being
+// signed or encrypted as though it had parsed.
 function parseXmlStrict(xml, what) {
   log.debug("Entering parseXmlStrict().");
   var label = what || 'XML';
@@ -792,7 +1002,8 @@ function parseXmlStrict(xml, what) {
     throw new Error(label + ' is empty.');
   }
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
-  if (!doc || doc.getElementsByTagName('parsererror').length || !doc.documentElement) {
+  if (!doc || doc.getElementsByTagName('parsererror').length ||
+      !doc.documentElement) {
     throw new Error('malformed ' + label + ' — it is not well-formed XML.');
   }
   log.debug("Leaving parseXmlStrict().");
@@ -825,7 +1036,8 @@ function signPostEnveloped(xml) {
     '</ds:Reference></ds:SignedInfo>';
 
   // Sign c14n(SignedInfo) with the selected algorithm's digest.
-  var siCanon = canonicalize(new DOMParser().parseFromString(signedInfo, 'application/xml').documentElement);
+  var siCanon = canonicalize(new DOMParser().parseFromString(signedInfo,
+      'application/xml').documentElement);
   var pk = forge.pki.privateKeyFromPem(val('saml_sp_private_key'));
   var md = spec.md();
   md.update(siCanon, 'utf8');
@@ -833,13 +1045,16 @@ function signPostEnveloped(xml) {
 
   var signature = '<ds:Signature xmlns:ds="' + DS_NS + '">' + signedInfo +
     '<ds:SignatureValue>' + sigVal + '</ds:SignatureValue>' +
-    '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 + '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
+    '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 +
+        '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
     '</ds:Signature>';
 
-  var sigNode = doc.importNode(new DOMParser().parseFromString(signature, 'application/xml').documentElement, true);
+  var sigNode = doc.importNode(new DOMParser().parseFromString(signature,
+      'application/xml').documentElement, true);
   var issuer = null, kids = root.childNodes;
   for (var i = 0; i < kids.length; i++) {
-    if (kids[i].nodeType === 1 && kids[i].localName === 'Issuer') { issuer = kids[i]; break; }
+    if (kids[i].nodeType === 1 && kids[i].localName === 'Issuer') { issuer =
+        kids[i]; break; }
   }
   if (issuer) root.insertBefore(sigNode, issuer.nextSibling);
   else root.insertBefore(sigNode, root.firstChild);
@@ -850,12 +1065,17 @@ function signPostEnveloped(xml) {
 // --- Exclusive Canonical XML 1.0 (omit-comments) over a DOM element ----------
 // Exclusive C14N (xml-exc-c14n#) renders on each element only the namespace
 // declarations that element *visibly utilizes* — the prefix of its own name and
-// the prefixes of its namespace-qualified attributes — and only when not already
-// output (same prefix→uri) by an ancestor. This makes a subtree canonicalize
-// identically whether processed standalone or nested (the property SAML relies
-// on for the detached SignedInfo signature). No InclusiveNamespaces PrefixList
-// is emitted (we never set one). The documents here use no default namespace.
-function canonicalize(apex) { return c14nSerialize(apex, {}); }
+// the prefixes of its namespace-qualified attributes — and only when not
+// already output (same prefix→uri) by an ancestor. This makes a subtree
+// canonicalize identically whether processed standalone or nested (the property
+// SAML relies on for the detached SignedInfo signature). No InclusiveNamespaces
+// PrefixList is emitted (we never set one). The documents here use no default
+// namespace.
+function canonicalize(apex) {
+  log.debug("Entering canonicalize().");
+  log.debug("Leaving canonicalize().");
+  return c14nSerialize(apex, {});
+}
 
 // All in-scope namespace declarations for `el` (walking ancestors), prefix→uri.
 function c14nInScopeNs(el) {
@@ -874,10 +1094,16 @@ function c14nInScopeNs(el) {
   return map;
 }
 function c14nTextEscape(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r/g, '&#xD;');
+  log.debug("Entering c14nTextEscape().");
+  log.debug("Leaving c14nTextEscape().");
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g,
+                '&gt;').replace(/\r/g, '&#xD;');
 }
 function c14nAttrEscape(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+  log.debug("Entering c14nAttrEscape().");
+  log.debug("Leaving c14nAttrEscape().");
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g,
+                '&quot;')
     .replace(/\t/g, '&#x9;').replace(/\n/g, '&#xA;').replace(/\r/g, '&#xD;');
 }
 // `rendered` maps prefix→uri already output by an ancestor and still in scope.
@@ -898,12 +1124,15 @@ function c14nSerialize(el, rendered) {
   }
 
   var childRendered = {};
-  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] = rendered[k]; }
+  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] =
+       rendered[k]; }
   var nsOut = [];
   Object.keys(utilized).forEach(function (prefix) {
-    var uri = inscope.hasOwnProperty(prefix) ? inscope[prefix] : (prefix === '' ? '' : undefined);
+    var uri = inscope.hasOwnProperty(prefix) ?
+        inscope[prefix] : (prefix === '' ? '' : undefined);
     if (uri === undefined) return;                                  // prefix not bound
-    if (prefix === '' && uri === '' && !rendered.hasOwnProperty('')) return; // no default ns in scope
+    if (prefix === '' && uri === '' &&
+        !rendered.hasOwnProperty('')) return; // no default ns in scope
     if (childRendered[prefix] !== uri) {
       nsOut.push({ prefix: prefix, uri: uri });
       childRendered[prefix] = uri;
@@ -918,7 +1147,8 @@ function c14nSerialize(el, rendered) {
 
   var out = '<' + el.nodeName;
   nsOut.forEach(function (n) {
-    out += ' ' + (n.prefix ? ('xmlns:' + n.prefix) : 'xmlns') + '="' + c14nAttrEscape(n.uri) + '"';
+    out += ' ' + (n.prefix ? ('xmlns:' + n.prefix) : 'xmlns') + '="' +
+        c14nAttrEscape(n.uri) + '"';
   });
   attrs.sort(function (a, b) {
     var au = a.namespaceURI || '', bu = b.namespaceURI || '';
@@ -926,12 +1156,14 @@ function c14nSerialize(el, rendered) {
     var al = a.localName || a.name, bl = b.localName || b.name;
     return al < bl ? -1 : (al > bl ? 1 : 0);
   });
-  attrs.forEach(function (a) { out += ' ' + a.name + '="' + c14nAttrEscape(a.value) + '"'; });
+  attrs.forEach(function (a) { out += ' ' + a.name + '="' +
+                c14nAttrEscape(a.value) + '"'; });
   out += '>';
   var child = el.firstChild;
   while (child) {
     if (child.nodeType === 1) out += c14nSerialize(child, childRendered);
-    else if (child.nodeType === 3 || child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
+    else if (child.nodeType === 3 ||
+             child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
     child = child.nextSibling;
   }
   log.debug("Leaving c14nSerialize().");
@@ -942,7 +1174,11 @@ function c14nSerialize(el, rendered) {
 // serialization option. Signing always uses the exclusive canonicalize() above;
 // this stays separate so the two can't interfere. Apex renders every in-scope
 // namespace; descendants render only their own declarations.
-function canonicalizeInclusive(apex) { return c14nIncl(apex, {}, true); }
+function canonicalizeInclusive(apex) {
+  log.debug("Entering canonicalizeInclusive().");
+  log.debug("Leaving canonicalizeInclusive().");
+  return c14nIncl(apex, {}, true);
+}
 function c14nIncl(el, rendered, isApex) {
   log.debug("Entering c14nIncl().");
   var nsSource = {};
@@ -951,14 +1187,17 @@ function c14nIncl(el, rendered, isApex) {
     for (var a = 0; a < el.attributes.length; a++) {
       var at = el.attributes[a];
       if (at.name === 'xmlns') nsSource[''] = at.value;
-      else if (at.name.indexOf('xmlns:') === 0) nsSource[at.name.slice(6)] = at.value;
+      else if (at.name.indexOf('xmlns:') === 0) nsSource[at.name.slice(6)] =
+               at.value;
     }
   }
   var childRendered = {};
-  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] = rendered[k]; }
+  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] =
+       rendered[k]; }
   var nsOut = [];
   Object.keys(nsSource).forEach(function (p) {
-    if (childRendered[p] !== nsSource[p]) { nsOut.push({ prefix: p, uri: nsSource[p] }); childRendered[p] = nsSource[p]; }
+    if (childRendered[p] !== nsSource[p]) { nsOut.push({ prefix: p,
+        uri: nsSource[p] }); childRendered[p] = nsSource[p]; }
   });
   nsOut.sort(function (a, b) {
     if (a.prefix === b.prefix) return 0;
@@ -967,7 +1206,8 @@ function c14nIncl(el, rendered, isApex) {
     return a.prefix < b.prefix ? -1 : 1;
   });
   var out = '<' + el.nodeName;
-  nsOut.forEach(function (n) { out += ' ' + (n.prefix ? ('xmlns:' + n.prefix) : 'xmlns') + '="' + c14nAttrEscape(n.uri) + '"'; });
+  nsOut.forEach(function (n) { out += ' ' + (n.prefix ? ('xmlns:' +
+                n.prefix) : 'xmlns') + '="' + c14nAttrEscape(n.uri) + '"'; });
   var attrs = [];
   for (var i = 0; i < el.attributes.length; i++) {
     var aa = el.attributes[i];
@@ -980,12 +1220,14 @@ function c14nIncl(el, rendered, isApex) {
     var al = a.localName || a.name, bl = b.localName || b.name;
     return al < bl ? -1 : (al > bl ? 1 : 0);
   });
-  attrs.forEach(function (a) { out += ' ' + a.name + '="' + c14nAttrEscape(a.value) + '"'; });
+  attrs.forEach(function (a) { out += ' ' + a.name + '="' +
+                c14nAttrEscape(a.value) + '"'; });
   out += '>';
   var child = el.firstChild;
   while (child) {
     if (child.nodeType === 1) out += c14nIncl(child, childRendered, false);
-    else if (child.nodeType === 3 || child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
+    else if (child.nodeType === 3 ||
+             child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
     child = child.nextSibling;
   }
   log.debug("Leaving c14nIncl().");
@@ -995,52 +1237,96 @@ function c14nIncl(el, rendered, isApex) {
 // ---------------------------------------------------------------------------
 // AuthnRequest encryption (XML Encryption, W3C xmlenc) — fully in-browser via
 // node-forge. Applied AFTER signing (sign-then-encrypt). A random session key
-// encrypts the target with the chosen block cipher; that key is RSA-wrapped with
-// the recipient (IdP) certificate's public key, and the target is replaced by an
-// <xenc:EncryptedData>. NOTE: no standard SAML element carries an encrypted
-// AuthnRequest, so IdPs (Keycloak) reject it — this is for inspection/education.
+// encrypts the target with the chosen block cipher; that key is RSA-wrapped
+// with the recipient (IdP) certificate's public key, and the target is replaced
+// by an <xenc:EncryptedData>. NOTE: no standard SAML element carries an
+// encrypted AuthnRequest, so IdPs (Keycloak) reject it — this is for
+// inspection/education.
 // ---------------------------------------------------------------------------
 
-// Wrap bare base64 DER in PEM so forge can parse it (pass-through if already PEM).
+// Wrap bare base64 DER in PEM so forge can parse it (pass-through if already
+// PEM).
 function pemWrapCert(certPemOrB64) {
+  log.debug("Entering pemWrapCert().");
   var s = String(certPemOrB64 || '');
-  if (/-----BEGIN CERTIFICATE-----/.test(s)) return s;
+  if (/-----BEGIN CERTIFICATE-----/.test(s)) {
+    log.debug("Leaving pemWrapCert().");
+    return s;
+  }
   var b64 = s.replace(/\s+/g, '');
   var lines = b64.match(/.{1,64}/g) || [];
-  return '-----BEGIN CERTIFICATE-----\n' + lines.join('\n') + '\n-----END CERTIFICATE-----\n';
+  log.debug("Leaving pemWrapCert().");
+  return '-----BEGIN CERTIFICATE-----\n' + lines.join('\n') +
+      '\n-----END CERTIFICATE-----\n';
 }
 
 // Data-encryption algorithm URI -> forge cipher spec.
 function dataAlgSpec(uri) {
   log.debug("Entering dataAlgSpec().");
   switch (uri) {
-    case XENC11_NS + 'aes128-gcm': return { cipher: 'AES-GCM', keyBytes: 16, ivBytes: 12, gcm: true };
-    case XENC11_NS + 'aes192-gcm': return { cipher: 'AES-GCM', keyBytes: 24, ivBytes: 12, gcm: true };
-    case XENC11_NS + 'aes256-gcm': return { cipher: 'AES-GCM', keyBytes: 32, ivBytes: 12, gcm: true };
-    case XENC_NS + 'aes128-cbc': return { cipher: 'AES-CBC', keyBytes: 16, ivBytes: 16, gcm: false };
-    case XENC_NS + 'aes192-cbc': return { cipher: 'AES-CBC', keyBytes: 24, ivBytes: 16, gcm: false };
-    case XENC_NS + 'aes256-cbc': return { cipher: 'AES-CBC', keyBytes: 32, ivBytes: 16, gcm: false };
-    case XENC_NS + 'tripledes-cbc': return { cipher: '3DES-CBC', keyBytes: 24, ivBytes: 8, gcm: false };
+    case XENC11_NS + 'aes128-gcm':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-GCM', keyBytes: 16, ivBytes: 12, gcm: true };
+    case XENC11_NS + 'aes192-gcm':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-GCM', keyBytes: 24, ivBytes: 12, gcm: true };
+    case XENC11_NS + 'aes256-gcm':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-GCM', keyBytes: 32, ivBytes: 12, gcm: true };
+    case XENC_NS + 'aes128-cbc':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-CBC', keyBytes: 16, ivBytes: 16, gcm: false };
+    case XENC_NS + 'aes192-cbc':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-CBC', keyBytes: 24, ivBytes: 16, gcm: false };
+    case XENC_NS + 'aes256-cbc':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-CBC', keyBytes: 32, ivBytes: 16, gcm: false };
+    case XENC_NS + 'tripledes-cbc':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: '3DES-CBC', keyBytes: 24, ivBytes: 8, gcm: false };
     default: throw new Error('Unsupported data encryption algorithm: ' + uri);
   }
   log.debug("Leaving dataAlgSpec().");
 }
 function forgeMdFor(uri) {
+  log.debug("Entering forgeMdFor().");
   switch (uri) {
-    case 'http://www.w3.org/2000/09/xmldsig#sha1': return forge.md.sha1.create();
-    case XENC_NS + 'sha256': return forge.md.sha256.create();
-    case 'http://www.w3.org/2001/04/xmldsig-more#sha384': return forge.md.sha384.create();
-    case XENC_NS + 'sha512': return forge.md.sha512.create();
-    default: return forge.md.sha256.create();
+    case 'http://www.w3.org/2000/09/xmldsig#sha1':
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha1.create();
+    case XENC_NS + 'sha256':
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha256.create();
+    case 'http://www.w3.org/2001/04/xmldsig-more#sha384':
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha384.create();
+    case XENC_NS + 'sha512':
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha512.create();
+    default:
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha256.create();
   }
 }
 function mgfMdFor(uri) {
+  log.debug("Entering mgfMdFor().");
   switch (uri) {
-    case XENC11_NS + 'mgf1sha1': return forge.md.sha1.create();
-    case XENC11_NS + 'mgf1sha256': return forge.md.sha256.create();
-    case XENC11_NS + 'mgf1sha384': return forge.md.sha384.create();
-    case XENC11_NS + 'mgf1sha512': return forge.md.sha512.create();
-    default: return forge.md.sha1.create();
+    case XENC11_NS + 'mgf1sha1':
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha1.create();
+    case XENC11_NS + 'mgf1sha256':
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha256.create();
+    case XENC11_NS + 'mgf1sha384':
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha384.create();
+    case XENC11_NS + 'mgf1sha512':
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha512.create();
+    default:
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha1.create();
   }
 }
 
@@ -1053,16 +1339,24 @@ function encPlaintext(xml, c14nMode, type) {
     var fn = (c14nMode === 'c14n') ? canonicalizeInclusive : canonicalize;
     var doc = parseXmlStrict(xml, 'the XML to encrypt');
     var root = doc.documentElement;
-    if (!isContent) return fn(root);
+    if (!isContent) {
+      log.debug("Leaving encPlaintext().");
+      return fn(root);
+    }
     var inner = '', ch = root.firstChild;
     while (ch) { if (ch.nodeType === 1) inner += fn(ch); ch = ch.nextSibling; }
+    log.debug("Leaving encPlaintext().");
     return inner;
   }
   // none: serialize as-is.
-  if (!isContent) return xml;
+  if (!isContent) {
+    log.debug("Leaving encPlaintext().");
+    return xml;
+  }
   var d2 = parseXmlStrict(xml, 'the XML to encrypt');
   var r2 = d2.documentElement, s = '', c = r2.firstChild;
-  while (c) { s += new XMLSerializer().serializeToString(c); c = c.nextSibling; }
+  while (c) { s += new XMLSerializer().serializeToString(c); c =
+         c.nextSibling; }
   log.debug("Leaving encPlaintext().");
   return s;
 }
@@ -1070,7 +1364,8 @@ function encPlaintext(xml, c14nMode, type) {
 function encryptAuthnRequest(xml) {
   log.debug("Entering encryptAuthnRequest().");
   var certField = val('saml_enc_cert');
-  if (!certField.trim()) throw new Error('No encryption certificate — load metadata or paste a recipient certificate.');
+  if (!certField.trim()) throw new Error('No encryption certificate — load ' +
+      'metadata or paste a recipient certificate.');
   var certB64 = certPemToB64(certField);
   var cert = forge.pki.certificateFromPem(pemWrapCert(certField));
   var pub = cert.publicKey;
@@ -1091,7 +1386,8 @@ function encryptAuthnRequest(xml) {
   cipher.update(forge.util.createBuffer(ptBytes));
   if (!cipher.finish()) throw new Error('Data encryption failed.');
   // Per XML-Enc, CipherValue = IV || ciphertext (|| GCM tag).
-  var cipherValue = iv + cipher.output.getBytes() + (spec.gcm ? cipher.mode.tag.getBytes() : '');
+  var cipherValue = iv + cipher.output.getBytes() + (spec.gcm ?
+      cipher.mode.tag.getBytes() : '');
   var cipherB64 = forge.util.encode64(cipherValue);
 
   // 2. RSA-wrap the session key with the recipient public key.
@@ -1101,11 +1397,13 @@ function encryptAuthnRequest(xml) {
   } else {
     var digestUri = val('saml_enc_digest');
     var oaepOpts = { md: forgeMdFor(digestUri) };
-    keyMethodInner = '<ds:DigestMethod xmlns:ds="' + DS_NS + '" Algorithm="' + digestUri + '"/>';
+    keyMethodInner = '<ds:DigestMethod xmlns:ds="' + DS_NS + '" Algorithm="' +
+        digestUri + '"/>';
     if (keyAlg === XENC11_NS + 'rsa-oaep') {
       var mgfUri = val('saml_enc_mgf');
       oaepOpts.mgf1 = { md: mgfMdFor(mgfUri) };
-      keyMethodInner += '<xenc11:MGF xmlns:xenc11="' + XENC11_NS + '" Algorithm="' + mgfUri + '"/>';
+      keyMethodInner += '<xenc11:MGF xmlns:xenc11="' + XENC11_NS +
+          '" Algorithm="' + mgfUri + '"/>';
     } else {
       // rsa-oaep-mgf1p: MGF1 is fixed to SHA-1.
       oaepOpts.mgf1 = { md: forge.md.sha1.create() };
@@ -1116,46 +1414,69 @@ function encryptAuthnRequest(xml) {
 
   // 3. Assemble <xenc:EncryptedData> with the nested <xenc:EncryptedKey>.
   log.debug("Leaving encryptAuthnRequest().");
-  return '<xenc:EncryptedData xmlns:xenc="' + XENC_NS + '" Type="' + type + '">' +
+  return '<xenc:EncryptedData xmlns:xenc="' + XENC_NS + '" Type="' + type +
+      '">' +
       '<xenc:EncryptionMethod Algorithm="' + dataAlg + '"/>' +
       '<ds:KeyInfo xmlns:ds="' + DS_NS + '">' +
         '<xenc:EncryptedKey>' +
-          '<xenc:EncryptionMethod Algorithm="' + keyAlg + '">' + keyMethodInner + '</xenc:EncryptionMethod>' +
-          '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 + '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
-          '<xenc:CipherData><xenc:CipherValue>' + wrappedB64 + '</xenc:CipherValue></xenc:CipherData>' +
+          '<xenc:EncryptionMethod Algorithm="' + keyAlg + '">' +
+              keyMethodInner + '</xenc:EncryptionMethod>' +
+          '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 +
+              '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
+          '<xenc:CipherData><xenc:CipherValue>' + wrappedB64 +
+              '</xenc:CipherValue></xenc:CipherData>' +
         '</xenc:EncryptedKey>' +
       '</ds:KeyInfo>' +
-      '<xenc:CipherData><xenc:CipherValue>' + cipherB64 + '</xenc:CipherValue></xenc:CipherData>' +
+      '<xenc:CipherData><xenc:CipherValue>' + cipherB64 +
+          '</xenc:CipherValue></xenc:CipherData>' +
     '</xenc:EncryptedData>';
 }
 
-// Whether signing / encryption are enabled (checkbox state). Signing defaults to
-// on when the checkbox is somehow absent; encryption defaults to off.
-function signEnabled() { var e = el('saml_sign_request'); return !e || e.checked; }
-function encEnabled() { var e = el('saml_encrypt_request'); return !!(e && e.checked); }
+// Whether signing / encryption are enabled (checkbox state). Signing defaults
+// to on when the checkbox is somehow absent; encryption defaults to off.
+function signEnabled() {
+  log.debug("Entering signEnabled().");
+  var e = el('saml_sign_request');
+  log.debug("Leaving signEnabled().");
+  return !e || e.checked;
+}
+function encEnabled() {
+  log.debug("Entering encEnabled().");
+  var e = el('saml_encrypt_request');
+  log.debug("Leaving encEnabled().");
+  return !!(e && e.checked);
+}
 function opStatus(signOn, encOn, what) {
-  var msg = 'Built ' + (signOn ? 'signed' : 'unsigned') + (encOn ? ' + encrypted' : '') + ' AuthnRequest (' + what + ').';
+  log.debug("Entering opStatus().");
+  var msg = 'Built ' + (signOn ? 'signed' : 'unsigned') + (encOn ?
+      ' + encrypted' : '') + ' AuthnRequest (' + what + ').';
   if (encOn) msg += ' Note: IdPs such as Keycloak reject encrypted AuthnRequests.';
+  log.debug("Leaving opStatus().");
   return msg;
 }
 
 // Regenerate the Generated AuthnRequest field from the current settings. Called
 // automatically on any config change (replaces the old "Build Request" button)
-// and after programmatic updates (metadata load, key generation) that don't fire
-// change events. Guarded so a transient build error can never break the handler.
+// and after programmatic updates (metadata load, key generation) that don't
+// fire change events. Guarded so a transient build error can never break the
+// handler.
 function autoBuildRequest() {
+  log.debug("Entering autoBuildRequest().");
   try {
     buildRequestUi();
   } catch (e) {
     log.error('autoBuildRequest: ' + e.message);
   }
+  log.debug("Leaving autoBuildRequest().");
   return false;
 }
 
 function buildRequestUi() {
   log.debug("Entering buildRequestUi().");
   if (!validateHint()) {
-    setStatus('saml_call_status', 'Username hint does not match the selected NameIDFormat.');
+    setStatus('saml_call_status',
+              'Username hint does not match the selected NameIDFormat.');
+    log.debug("Leaving buildRequestUi().");
     return false;
   }
   var xml = buildAuthnRequest();
@@ -1163,7 +1484,9 @@ function buildRequestUi() {
   saveState();
 
   if (val('saml_version') !== '2.0') {
-    setStatus('saml_call_status', 'SAML 1.x is reference-only — see the request box.');
+    setStatus('saml_call_status',
+              'SAML 1.x is reference-only — see the request box.');
+    log.debug("Leaving buildRequestUi().");
     return false;
   }
 
@@ -1173,7 +1496,10 @@ function buildRequestUi() {
   var binding = val('saml_binding');
 
   if (signOn && !priv) {
-    setStatus('saml_call_status', 'Signing is enabled but there is no SP private key — generate a key pair or uncheck "Digitally sign the AuthnRequest".');
+    setStatus('saml_call_status', 'Signing is enabled but there is no SP ' +
+              'private key — generate a key pair or uncheck "Digitally sign ' +
+              'the AuthnRequest".');
+    log.debug("Leaving buildRequestUi().");
     return false;
   }
 
@@ -1184,7 +1510,9 @@ function buildRequestUi() {
       var payload = signOn ? signPostEnveloped(xml) : xml;
       if (encOn) payload = encryptAuthnRequest(payload);
       setVal('saml_authn_request', payload);
-      setStatus('saml_call_status', opStatus(signOn, encOn, 'POST enveloped XML'));
+      setStatus('saml_call_status', opStatus(signOn, encOn,
+                'POST enveloped XML'));
+      log.debug("Leaving buildRequestUi().");
       return false;
     }
 
@@ -1196,16 +1524,20 @@ function buildRequestUi() {
     signRedirect(reqXml, ssoDestination(binding), 'saml_request', signOn)
       .then(function (res) {
         setVal('saml_authn_request', res.location);
-        setStatus('saml_call_status', opStatus(signOn, encOn, ssoDestination(binding) ? 'redirect URL' : 'redirect query string — load metadata for the destination'));
+        setStatus('saml_call_status', opStatus(signOn, encOn,
+                  ssoDestination(binding) ? 'redirect URL' : 'redirect query ' +
+                  'string — load metadata for the destination'));
       })
       .catch(function (e) {
         log.error('buildRequestUi redirect: ' + e.message);
         setStatus('saml_call_status', 'Build failed: ' + e.message);
       });
+    log.debug("Leaving buildRequestUi().");
     return false;
   } catch (e) {
     log.error('buildRequestUi: ' + e.message);
     setStatus('saml_call_status', 'Build failed: ' + e.message);
+    log.debug("Leaving buildRequestUi().");
     return false;
   }
   log.debug("Leaving buildRequestUi().");
@@ -1220,25 +1552,38 @@ function buildRequestUi() {
 function callIdp() {
   log.debug("Entering callIdp().");
   if (val('saml_version') !== '2.0') {
-    setStatus('saml_call_status', 'Only SAML 2.0 can be sent. SAML 1.x is IdP-initiated (reference only).');
-    return opFailure('Send AuthnRequest', 'SAML 1.x is IdP-initiated — nothing to send.');
+    setStatus('saml_call_status', 'Only SAML 2.0 can be sent. SAML 1.x is ' +
+              'IdP-initiated (reference only).');
+    log.debug("Leaving callIdp().");
+    return opFailure('Send AuthnRequest',
+                     'SAML 1.x is IdP-initiated — nothing to send.');
   }
   var signOn = signEnabled();
   var encOn = encEnabled();
   var priv = val('saml_sp_private_key');
   if (signOn && !priv) {
-    setStatus('saml_call_status', 'Signing is enabled but there is no SP private key — generate a key pair or uncheck "Digitally sign the AuthnRequest".');
-    return opFailure('Send AuthnRequest', 'signing is enabled but there is no SP private key.');
+    setStatus('saml_call_status', 'Signing is enabled but there is no SP ' +
+              'private key — generate a key pair or uncheck "Digitally sign ' +
+              'the AuthnRequest".');
+    log.debug("Leaving callIdp().");
+    return opFailure('Send AuthnRequest',
+                     'signing is enabled but there is no SP private key.');
   }
   var binding = val('saml_binding');
   var dest = ssoDestination(binding);
   if (!dest) {
-    setStatus('saml_call_status', 'No IdP endpoint for the selected binding — load metadata first.');
-    return opFailure('Send AuthnRequest', 'no IdP endpoint for the selected binding.');
+    setStatus('saml_call_status',
+        'No IdP endpoint for the selected binding — load metadata first.');
+    log.debug("Leaving callIdp().");
+    return opFailure('Send AuthnRequest',
+                     'no IdP endpoint for the selected binding.');
   }
   if (!validateHint()) {
-    setStatus('saml_call_status', 'Username hint does not match the selected NameIDFormat.');
-    return opFailure('Send AuthnRequest', 'the username hint does not match the selected NameIDFormat.');
+    setStatus('saml_call_status',
+              'Username hint does not match the selected NameIDFormat.');
+    log.debug("Leaving callIdp().");
+    return opFailure('Send AuthnRequest',
+        'the username hint does not match the selected NameIDFormat.');
   }
 
   var xml = buildAuthnRequest();
@@ -1254,11 +1599,14 @@ function callIdp() {
       // Recorded before the form submit navigates away from this page.
       var postId = opSent('Send AuthnRequest', 'sent to ' + dest);
       try {
-        submitPostForm(dest, { SAMLRequest: utf8ToBase64(payload), RelayState: 'saml_request' });
+        submitPostForm(dest, { SAMLRequest: utf8ToBase64(payload),
+                       RelayState: 'saml_request' });
       } catch (e) {
         setStatus('saml_call_status', 'Send failed: ' + e.message);
+        log.debug("Leaving callIdp().");
         return opFailed(postId, e.message);
       }
+      log.debug("Leaving callIdp().");
       return false;
     }
 
@@ -1267,8 +1615,11 @@ function callIdp() {
       // artifact via SOAP; then send the (optionally encrypted, optionally
       // query-string-signed) redirect request in-browser.
       if (!appconfig.backendAvailable) {
-        setStatus('saml_call_status', 'Artifact binding needs the API backend (for artifact resolution).');
-        return opFailure('Send AuthnRequest', 'the Artifact binding needs the API backend.');
+        setStatus('saml_call_status', 'Artifact binding needs the API ' +
+                  'backend (for artifact resolution).');
+        log.debug("Leaving callIdp().");
+        return opFailure('Send AuthnRequest',
+                         'the Artifact binding needs the API backend.');
       }
       var reqXmlA = encOn ? encryptAuthnRequest(xml) : xml;
       var artifactSent = false;
@@ -1277,11 +1628,13 @@ function callIdp() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          arsUrl: val('saml_ars'), privateKeyPem: priv, certPem: val('saml_sp_public_key'),
+          arsUrl: val('saml_ars'), privateKeyPem: priv,
+                      certPem: val('saml_sp_public_key'),
           spEntityId: val('saml_sp_entity_id'), sigAlg: SIG_ALG_RSA_SHA256,
           // WS-Addressing headers for the SOAP ArtifactResolve envelope.
           wsa: {
-            enabled: (function () { var w = el('saml_wsa_support'); return !!(w && w.checked); })(),
+            enabled: (function () { var w =
+                      el('saml_wsa_support'); return !!(w && w.checked); })(),
             to: val('saml_wsa_to'),
             action: val('saml_wsa_action'),
             replyTo: val('saml_wsa_replyto'),
@@ -1290,15 +1643,19 @@ function callIdp() {
           }
         })
       })
-        .then(function (r) { return r.json().then(function (j) { if (!r.ok) { throw new Error(j && j.error ? j.error : ('HTTP ' + r.status)); } return j; }); })
-        .then(function (ctx) { return signRedirect(reqXmlA, dest, ctx.relayState, signOn); })
+        .then(function (r) { return r.json()
+            .then(function (j) { if (!r.ok) { throw new Error(j && j.error ?
+            j.error : ('HTTP ' + r.status)); } return j; }); })
+        .then(function (ctx) { return signRedirect(reqXmlA, dest,
+            ctx.relayState, signOn); })
         .then(function (res) {
           artifactSent = true;
           var id = opSent('Send AuthnRequest', 'sent to ' + dest);
           try {
             // A refusal throws, and the existing handler below records it as a
             // failed operation and reports it — which is what should happen.
-            window.location.assign(urlSafety.safeExternalUrl(res.location, 'The IdP destination'));
+            window.location.assign(urlSafety.safeExternalUrl(res.location,
+                                   'The IdP destination'));
           } catch (e) {
             opFailed(id, e.message);
             throw e;
@@ -1306,9 +1663,11 @@ function callIdp() {
         })
         .catch(function (e) {
           log.error('callIdp artifact: ' + e.message);
-          setStatus('saml_call_status', 'Artifact request failed: ' + e.message);
+          setStatus('saml_call_status', 'Artifact request failed: ' +
+                    e.message);
           if (!artifactSent) opFailure('Send AuthnRequest', e.message);
         });
+      log.debug("Leaving callIdp().");
       return false;
     }
 
@@ -1319,7 +1678,8 @@ function callIdp() {
     signRedirect(reqXmlR, dest, 'saml_request', signOn)
       .then(function (res) {
         redirectSentId = opSent('Send AuthnRequest', 'sent to ' + dest);
-        window.location.assign(urlSafety.safeExternalUrl(res.location, 'The IdP destination'));
+        window.location.assign(urlSafety.safeExternalUrl(res.location,
+                               'The IdP destination'));
       })
       .catch(function (e) {
         log.error('callIdp: ' + e.message);
@@ -1327,10 +1687,12 @@ function callIdp() {
         if (redirectSentId) opFailed(redirectSentId, e.message);
         else opFailure('Send AuthnRequest', e.message);
       });
+    log.debug("Leaving callIdp().");
     return false;
   } catch (e) {
     log.error('callIdp: ' + e.message);
     setStatus('saml_call_status', 'Send failed: ' + e.message);
+    log.debug("Leaving callIdp().");
     return opFailure('Send AuthnRequest', e.message);
   }
   log.debug("Leaving callIdp().");
@@ -1361,7 +1723,11 @@ function submitPostForm(action, params) {
 // Single Logout — build + sign a LogoutRequest for the last-authenticated
 // subject (NameID / SessionIndex saved by the response page) and send it.
 // ---------------------------------------------------------------------------
-function lastLogin(key) { return (window.localStorage && localStorage.getItem(key)) || ''; }
+function lastLogin(key) {
+  log.debug("Entering lastLogin().");
+  log.debug("Leaving lastLogin().");
+  return (window.localStorage && localStorage.getItem(key)) || '';
+}
 
 function buildLogoutRequest() {
   log.debug("Entering buildLogoutRequest().");
@@ -1371,37 +1737,55 @@ function buildLogoutRequest() {
   var fmt = lastLogin('saml_last_nameid_format');
   var sidx = lastLogin('saml_last_session_index');
   log.debug("Leaving buildLogoutRequest().");
-  return '<samlp:LogoutRequest xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
+  return '<samlp:LogoutRequest ' +
+      'xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
          ' xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"' +
-         ' ID="' + genId() + '" Version="2.0" IssueInstant="' + new Date().toISOString() + '"' +
+         ' ID="' + genId() + '" Version="2.0" IssueInstant="' +
+             new Date().toISOString() + '"' +
          (slo ? ' Destination="' + xmlEscape(slo) + '"' : '') + '>' +
          '\n  <saml:Issuer>' + xmlEscape(issuer) + '</saml:Issuer>' +
-         '\n  <saml:NameID' + (fmt ? ' Format="' + xmlEscape(fmt) + '"' : '') + '>' + xmlEscape(nameid) + '</saml:NameID>' +
-         (sidx ? '\n  <samlp:SessionIndex>' + xmlEscape(sidx) + '</samlp:SessionIndex>' : '') +
+         '\n  <saml:NameID' + (fmt ? ' Format="' + xmlEscape(fmt) + '"' : '') +
+             '>' + xmlEscape(nameid) + '</saml:NameID>' +
+         (sidx ? '\n  <samlp:SessionIndex>' + xmlEscape(sidx) +
+          '</samlp:SessionIndex>' : '') +
          '\n</samlp:LogoutRequest>';
 }
 
 function singleLogout() {
   log.debug("Entering singleLogout().");
-  var sloBinding = bindingLabel(val('saml_binding') === 'post' ? 'post' : 'redirect');
+  var sloBinding = bindingLabel(val('saml_binding') === 'post' ?
+      'post' : 'redirect');
   if (val('saml_version') !== '2.0') {
     setStatus('saml_call_status', 'Single Logout requires SAML 2.0.');
-    return opFailure('Single Logout', 'Single Logout requires SAML 2.0.', { binding: sloBinding });
+    log.debug("Leaving singleLogout().");
+    return opFailure('Single Logout', 'Single Logout requires SAML 2.0.',
+                     { binding: sloBinding });
   }
   var priv = val('saml_sp_private_key');
   if (!priv) {
     setStatus('saml_call_status', 'Generate an SP key pair first.');
-    return opFailure('Single Logout', 'there is no SP private key to sign the LogoutRequest.', { binding: sloBinding });
+    log.debug("Leaving singleLogout().");
+    return opFailure('Single Logout',
+                     'there is no SP private key to sign the LogoutRequest.',
+                     { binding: sloBinding });
   }
   if (!lastLogin('saml_last_nameid')) {
-    setStatus('saml_call_status', 'No NameID from a prior login — complete an SSO first.');
-    return opFailure('Single Logout', 'no NameID from a prior login.', { binding: sloBinding });
+    setStatus('saml_call_status',
+              'No NameID from a prior login — complete an SSO first.');
+    log.debug("Leaving singleLogout().");
+    return opFailure('Single Logout', 'no NameID from a prior login.',
+                     { binding: sloBinding });
   }
   var binding = val('saml_binding') === 'post' ? 'post' : 'redirect';
-  var dest = binding === 'post' ? val('saml_slo_post') : val('saml_slo_redirect');
+  var dest = binding === 'post' ?
+      val('saml_slo_post') : val('saml_slo_redirect');
   if (!dest) {
-    setStatus('saml_call_status', 'No SLO endpoint for the selected binding — load metadata first.');
-    return opFailure('Single Logout', 'no SLO endpoint for the selected binding.', { binding: sloBinding });
+    setStatus('saml_call_status',
+        'No SLO endpoint for the selected binding — load metadata first.');
+    log.debug("Leaving singleLogout().");
+    return opFailure('Single Logout',
+                     'no SLO endpoint for the selected binding.',
+                     { binding: sloBinding });
   }
 
   var sloSentId = null;
@@ -1413,20 +1797,25 @@ function singleLogout() {
     try {
       var signed = signPostEnveloped(xml);
       setVal('saml_authn_request', signed);
-      sloSentId = opSent('Single Logout', 'sent to ' + dest, { binding: sloBinding });
-      submitPostForm(dest, { SAMLRequest: utf8ToBase64(signed), RelayState: 'slo' });
+      sloSentId = opSent('Single Logout', 'sent to ' + dest,
+          { binding: sloBinding });
+      submitPostForm(dest, { SAMLRequest: utf8ToBase64(signed),
+                     RelayState: 'slo' });
     } catch (e) {
       log.error('singleLogout post: ' + e.message);
       setStatus('saml_call_status', 'SLO failed: ' + e.message);
       if (sloSentId) opFailed(sloSentId, e.message);
       else opFailure('Single Logout', e.message, { binding: sloBinding });
     }
+    log.debug("Leaving singleLogout().");
     return false;
   }
   signRedirect(xml, dest, 'slo')
     .then(function (res) {
-      sloSentId = opSent('Single Logout', 'sent to ' + dest, { binding: sloBinding });
-      window.location.assign(urlSafety.safeExternalUrl(res.location, 'The IdP SLO destination'));
+      sloSentId = opSent('Single Logout', 'sent to ' + dest,
+          { binding: sloBinding });
+      window.location.assign(urlSafety.safeExternalUrl(res.location,
+                             'The IdP SLO destination'));
     })
     .catch(function (e) {
       log.error('singleLogout: ' + e.message);
@@ -1453,9 +1842,20 @@ function singleLogout() {
 // before dispatch is a Failure here and now, with its reason.
 // ---------------------------------------------------------------------------
 function bindingLabel(b) {
-  if (b === 'post') return 'HTTP-POST';
-  if (b === 'redirect') return 'HTTP-Redirect';
-  if (b === 'artifact') return 'HTTP-Artifact';
+  log.debug("Entering bindingLabel().");
+  if (b === 'post') {
+    log.debug("Leaving bindingLabel().");
+    return 'HTTP-POST';
+  }
+  if (b === 'redirect') {
+    log.debug("Leaving bindingLabel().");
+    return 'HTTP-Redirect';
+  }
+  if (b === 'artifact') {
+    log.debug("Leaving bindingLabel().");
+    return 'HTTP-Artifact';
+  }
+  log.debug("Leaving bindingLabel().");
   return b || '\u2014';
 }
 
@@ -1467,55 +1867,76 @@ function historyEntry(operation, result, detail, opts) {
     operation: operation,
     result: result,
     detail: detail || '',
-    binding: (opts.binding !== undefined) ? opts.binding : bindingLabel(val('saml_binding')),
+    binding: (opts.binding !== undefined) ?
+              opts.binding : bindingLabel(val('saml_binding')),
     version: opts.version || val('saml_version'),
-    spEntityId: (opts.spEntityId !== undefined) ? opts.spEntityId : val('saml_sp_entity_id'),
-    idpEntityId: (opts.idpEntityId !== undefined) ? opts.idpEntityId : val('saml_idp_entity_id')
+    spEntityId: (opts.spEntityId !== undefined) ?
+                 opts.spEntityId : val('saml_sp_entity_id'),
+    idpEntityId: (opts.idpEntityId !== undefined) ?
+                  opts.idpEntityId : val('saml_idp_entity_id')
   };
 }
 
 // Failed before the request could leave the browser.
 function opFailure(operation, reason, opts) {
+  log.debug("Entering opFailure().");
   history.record(historyEntry(operation, history.FAILURE, reason, opts));
   renderOperationHistory();
+  log.debug("Leaving opFailure().");
   return false;
 }
 // Dispatched — awaiting the IdP. Returns the entry id so the caller can flip it
 // to a failure if the hand-over itself then throws.
 function opSent(operation, detail, opts) {
+  log.debug("Entering opSent().");
   var id = history.record(historyEntry(operation, history.SENT, detail, opts));
   renderOperationHistory();
+  log.debug("Leaving opSent().");
   return id;
 }
 // Something went wrong after the entry was written: correct it in place rather
 // than leaving a "Sent" row next to a "Failure" row for the same attempt.
 function opFailed(id, reason) {
+  log.debug("Entering opFailed().");
   if (id) history.update(id, history.FAILURE, reason);
   renderOperationHistory();
+  log.debug("Leaving opFailed().");
   return false;
 }
 // Completed here and now (no IdP hand-over involved, e.g. a metadata load).
 function opSuccess(operation, detail, opts) {
+  log.debug("Entering opSuccess().");
   history.record(historyEntry(operation, history.SUCCESS, detail, opts));
   renderOperationHistory();
+  log.debug("Leaving opSuccess().");
   return false;
 }
 
-function renderOperationHistory() { history.render(el('saml_operation_history')); }
+function renderOperationHistory() {
+  log.debug("Entering renderOperationHistory().");
+  history.render(el('saml_operation_history'));
+  log.debug("Leaving renderOperationHistory().");
+}
 
 function clearOperationHistory() {
+  log.debug("Entering clearOperationHistory().");
   history.clear();
   renderOperationHistory();
+  log.debug("Leaving clearOperationHistory().");
   return false;
 }
 
 function copyField(id) {
   log.debug("Entering copyField().");
   var e = el(id);
-  if (!e) return false;
+  if (!e) {
+    log.debug("Leaving copyField().");
+    return false;
+  }
   var text = e.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
+    navigator.clipboard.writeText(text).catch(function (err) { log.error(
+                                  'copyField: ' + err); });
   } else {
     try {
       e.focus();
@@ -1533,8 +1954,10 @@ function copyField(id) {
 // triangle indicator follows the state via a CSS :has() rule (mirrors the
 // debugger pages' pane behavior).
 function togglePane(bodyId) {
+  log.debug("Entering togglePane().");
   var b = el(bodyId);
   if (b) b.style.display = (b.style.display === 'none') ? 'block' : 'none';
+  log.debug("Leaving togglePane().");
   return false;
 }
 
@@ -1543,11 +1966,14 @@ function togglePane(bodyId) {
 function showTab(evt, tabId) {
   log.debug("Entering showTab().");
   var target = el(tabId);
-  var scope = (target && target.closest && target.closest('.saml-pane')) || document;
+  var scope = (target && target.closest && target.closest('.saml-pane')) ||
+      document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
-  for (var i = 0; i < contents.length; i++) { contents[i].style.display = 'none'; }
+  for (var i = 0; i < contents.length; i++) { contents[i].style.display =
+       'none'; }
   var links = scope.getElementsByClassName('tablinks');
-  for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
+  for (var k = 0; k < links.length; k++) { links[k].className =
+       links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
   log.debug("Leaving showTab().");
@@ -1560,7 +1986,11 @@ function showTab(evt, tabId) {
 function viewCertificate(fieldId) {
   log.debug("Entering viewCertificate().");
   var pem = val(fieldId);
-  if (!pem) { setStatus('saml_metadata_status', 'No certificate to view yet.'); return false; }
+  if (!pem) {
+    setStatus('saml_metadata_status', 'No certificate to view yet.');
+    log.debug("Leaving viewCertificate().");
+    return false;
+  }
   try {
     if (window.localStorage) localStorage.setItem('saml_cert_view', pem);
   } catch (e) {
@@ -1572,17 +2002,19 @@ function viewCertificate(fieldId) {
 }
 
 function setReturnLink() {
+  log.debug("Entering setReturnLink().");
   // The top-of-page link returns to the landing page (the OAuth2/OIDC vs SAML
   // protocol chooser), not a specific debugger.
   var link = el('return_link');
   if (link) link.setAttribute('href', '/index.html');
+  log.debug("Leaving setReturnLink().");
 }
 
 // ---------------------------------------------------------------------------
 // Configuration Parameters URL validation. Endpoint fields must hold a valid
-// http(s) URL; the entityID must be a valid absolute URI (URL or URN). Non-empty
-// values that don't parse are reported in the config status field; empty fields
-// are left alone (many endpoints are optional / IdP-specific).
+// http(s) URL; the entityID must be a valid absolute URI (URL or URN).
+// Non-empty values that don't parse are reported in the config status field;
+// empty fields are left alone (many endpoints are optional / IdP-specific).
 // ---------------------------------------------------------------------------
 var CONFIG_URL_FIELDS = {
   saml_sso_post: 'SSO HTTP-POST',
@@ -1596,18 +2028,24 @@ var CONFIG_URL_FIELDS = {
 var CONFIG_URI_FIELDS = { saml_idp_entity_id: 'IdP entityID' };
 
 function isHttpUrl(v) {
+  log.debug("Entering isHttpUrl().");
   try {
     var u = new URL(v);
+    log.debug("Leaving isHttpUrl().");
     return u.protocol === 'http:' || u.protocol === 'https:';
   } catch (e) {
+    log.debug("Leaving isHttpUrl().");
     return false;
   }
 }
 function isAbsoluteUri(v) {
+  log.debug("Entering isAbsoluteUri().");
   try {
     new URL(v);
+    log.debug("Leaving isAbsoluteUri().");
     return true;
   } catch (e) {
+    log.debug("Leaving isAbsoluteUri().");
     return false;
   }
 }
@@ -1624,7 +2062,8 @@ function validateConfigUrls() {
     if (v && !isAbsoluteUri(v)) bad.push(CONFIG_URI_FIELDS[id]);
   });
   if (bad.length) {
-    setStatus('saml_config_status', 'Invalid URL in: ' + bad.join(', ') + '. Enter a full URL (e.g. https://host/path).');
+    setStatus('saml_config_status', 'Invalid URL in: ' + bad.join(', ') +
+              '. Enter a full URL (e.g. https://host/path).');
   } else {
     setStatus('saml_config_status', 'Configuration URLs valid.');
   }
@@ -1636,43 +2075,51 @@ window.onload = function () {
   log.debug('Entering onload().');
   restoreState();
   setReturnLink();
-  // Reflect the restored preference: if the user turned saving off in an earlier
-  // session, the note has to be back on the page, and any key pair written
-  // before that has to be gone (restoreState leaves the fields empty, but the
-  // storage entries would otherwise survive an upgrade to this build).
+  // Reflect the restored preference: if the user turned saving off in an
+  // earlier session, the note has to be back on the page, and any key pair
+  // written before that has to be gone (restoreState leaves the fields empty,
+  // but the storage entries would otherwise survive an upgrade to this build).
   if (!keyPairMayBeStored()) forgetStoredKeyPair();
   renderKeyPairStorageNote();
 
   // Seed defaults where the user hasn't stored anything yet.
-  if (!val('saml_metadata_url') && appconfig.samlMetadataUrlDefault) setVal('saml_metadata_url', appconfig.samlMetadataUrlDefault);
-  if (!val('saml_sp_entity_id') && appconfig.spEntityId) setVal('saml_sp_entity_id', appconfig.spEntityId);
+  if (!val('saml_metadata_url') &&
+      appconfig.samlMetadataUrlDefault) setVal('saml_metadata_url',
+      appconfig.samlMetadataUrlDefault);
+  if (!val('saml_sp_entity_id') &&
+      appconfig.spEntityId) setVal('saml_sp_entity_id', appconfig.spEntityId);
   // ACS (where the IdP returns its response). With a backend it's the api's
   // /samlacs endpoint (from config); on a static deployment with the edge ACS
   // deployed it is the SAME path, answered by the Lambda@Edge instead of by
-  // Express. With neither there is nothing that can receive a POST, so the "ACS"
-  // is this static SAML Response page on the same origin, which the
-  // Redirect-binding response (see responseProtocolBinding) delivers to as a GET.
+  // Express. With neither there is nothing that can receive a POST, so the
+  // "ACS" is this static SAML Response page on the same origin, which the
+  // Redirect-binding response (see responseProtocolBinding) delivers to as a
+  // GET.
   var acsDefault = hasSamlLanding()
     ? appconfig.acsUrl
     : (window.location.origin + '/saml_response.html');
   if (!val('saml_acs_url') && acsDefault) setVal('saml_acs_url', acsDefault);
-  // Configuration Parameters: fall back to the dummy defaults declared in the HTML
-  // (input value / textarea content) when restore left a field blank — so the
-  // sample endpoints/cert show on a fresh page even if an earlier visit stored
-  // empty values. A real "Load Metadata" or a user edit overrides them.
-  ['saml_idp_entity_id', 'saml_sso_post', 'saml_sso_redirect', 'saml_sso_artifact', 'saml_ars',
-   'saml_slo_post', 'saml_slo_redirect', 'saml_slo_artifact', 'saml_signer_cert'].forEach(function (id) {
+  // Configuration Parameters: fall back to the dummy defaults declared in the
+  // HTML (input value / textarea content) when restore left a field blank — so
+  // the sample endpoints/cert show on a fresh page even if an earlier visit
+  // stored empty values. A real "Load Metadata" or a user edit overrides them.
+  ['saml_idp_entity_id', 'saml_sso_post', 'saml_sso_redirect',
+   'saml_sso_artifact', 'saml_ars',
+   'saml_slo_post', 'saml_slo_redirect', 'saml_slo_artifact',
+       'saml_signer_cert'].forEach(function (id) {
     var e = el(id);
     if (e && !e.value && e.defaultValue) e.value = e.defaultValue;
   });
-  // Encryption cert: localStorage (restored above) wins; otherwise default to the
-  // signer cert from previously-loaded metadata (also restored above).
-  if (!val('saml_enc_cert') && val('saml_signer_cert')) setVal('saml_enc_cert', val('saml_signer_cert'));
+  // Encryption cert: localStorage (restored above) wins; otherwise default to
+  // the signer cert from previously-loaded metadata (also restored above).
+  if (!val('saml_enc_cert') && val('saml_signer_cert')) setVal('saml_enc_cert',
+      val('saml_signer_cert'));
 
-  // The static notice always shows without a backend, but WHICH binding sentence
-  // applies depends on whether the edge ACS is deployed.
+  // The static notice always shows without a backend, but WHICH binding
+  // sentence applies depends on whether the edge ACS is deployed.
   show('saml_backend_notice', !appconfig.backendAvailable);
-  show('saml_edge_acs_notice', appconfig.backendAvailable === false && hasSamlLanding());
+  show('saml_edge_acs_notice', appconfig.backendAvailable === false &&
+       hasSamlLanding());
   show('saml_redirect_fallback_notice', !hasSamlLanding());
   onVersionChange();
   onNameIdFormatChange();
@@ -1681,8 +2128,9 @@ window.onload = function () {
   onWsaChange();
 
   // Persist on any change, and auto-regenerate the AuthnRequest. 'change' (not
-  // per-keystroke 'input') drives the rebuild so signing/encryption don't run on
-  // every keystroke — text fields rebuild on blur; selects/checkboxes immediately.
+  // per-keystroke 'input') drives the rebuild so signing/encryption don't run
+  // on every keystroke — text fields rebuild on blur; selects/checkboxes
+  // immediately.
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
     els[i].addEventListener('change', saveState);
@@ -1691,7 +2139,8 @@ window.onload = function () {
   }
 
   // Live URL validation for the Configuration Parameters fields.
-  var urlIds = Object.keys(CONFIG_URL_FIELDS).concat(Object.keys(CONFIG_URI_FIELDS));
+  var urlIds =
+      Object.keys(CONFIG_URL_FIELDS).concat(Object.keys(CONFIG_URI_FIELDS));
   for (var u = 0; u < urlIds.length; u++) {
     var ue = el(urlIds[u]);
     if (ue) {

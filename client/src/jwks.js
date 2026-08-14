@@ -1,7 +1,7 @@
 // File: jwks.js
 // Author: Robert C. Broeckelmann Jr.
 // Date: 05/28/2020
-//Notes:
+// Notes:
 //
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -16,13 +16,15 @@ log.info("Log initialized. logLevel=" + log.level());
 const jwkToPem = require('./jwk_pem');
 // pem-file, @fidm/x509 and @peculiar/asn1-pkcs8 were required here and never
 // called — the only references were the two commented-out lines below. They are
-// not free imports: @fidm/x509 requires 'crypto', which browserify fills in with
-// the whole crypto-browserify shim, and so this page shipped `elliptic` (and
-// tweetnacl) to display a table of public keys.
+// not free imports: @fidm/x509 requires 'crypto', which browserify fills in
+// with the whole crypto-browserify shim, and so this page shipped `elliptic`
+// (and tweetnacl) to display a table of public keys.
 
 // This page builds its tables by string concatenation, so anything quoted out
 // of a fetched JWKS has to be escaped on the way in.
 function escapeHtmlText(value) {
+  log.debug("Entering escapeHtmlText().");
+  log.debug("Leaving escapeHtmlText().");
   return String(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -32,19 +34,23 @@ function escapeHtmlText(value) {
 }
 
 window.onload = function() {
+  log.debug("Entering onload().");
   log.debug("Entering onload function.");
   loadValuesFromLocalStorage();
+  log.debug("Leaving onload().");
 }
 
 function loadValuesFromLocalStorage()
 {
   log.debug("Entering loadValuesFromLocalStorage().");
-  document.getElementById("jwks_endpoint").value = localStorage.getItem("jwks_endpoint");
+  document.getElementById("jwks_endpoint").value =
+                          localStorage.getItem("jwks_endpoint");
+  log.debug("Leaving loadValuesFromLocalStorage().");
 }
 
 //function OnSubmitJWKSEndpointForm() {
 //  log.debug("Entering OnSubmitJWKSEndpointForm().");
-//}
+// }
 
 function OnSubmitJWKSEndpointForm()
 {
@@ -80,15 +86,18 @@ function OnSubmitJWKSEndpointForm()
 function isUrl(url) {
   log.debug('Entering isUrl().');
   try {
+    log.debug("Leaving isUrl().");
     return Boolean(new URL(url));
   } catch(e) {
     log.debug('An error occurred: ' + e.stack);
+    log.debug("Leaving isUrl().");
     return false;
   }
 }
 
 function parseJWKSInfo(discoveryInfo) {
   log.debug("Entering parseJWKSInfo().");
+  log.debug("Leaving parseJWKSInfo().");
 }
 
 function buildJWKSInfoTable(discoveryInfo) {
@@ -98,13 +107,15 @@ function buildJWKSInfoTable(discoveryInfo) {
    for( i = 0; i < discoveryInfo.keys.length; i++) {
      log.debug('iteration: ' + i);
      discovery_info_table_html = discovery_info_table_html +
-                                 "<fieldset><legend>Signer Certificate #" + i + "</legend>";
+                                 "<fieldset><legend>Signer Certificate #" + i +
+                                     "</legend>";
      discovery_info_table_html = discovery_info_table_html +
                                     "<fieldset><legend>JWKS Format</legend>" +
                                     "<table border='2' style='border:2px;'>" +
                                     "<tr>" +
                                       "<th>Attribute</th>" +
-                                      '<th style="max-width: 50px; word-wrap: break-word;">Value</th>' +
+                                      '<th style="max-width: 50px; ' +
+                                          'word-wrap: break-word;">Value</th>' +
                                     "</tr>";
      // Both halves are escaped, and the NAME as well as the value: a JWKS is a
      // JSON object whose member names this page did not choose, so `key` is as
@@ -117,13 +128,18 @@ function buildJWKSInfoTable(discoveryInfo) {
          discovery_info_table_html = discovery_info_table_html +
                                  "<tr>" +
                                    "<td>" + escapeHtmlText(key) + "</td>" +
-                                   '<td><textarea id="jwks-' + i + '" name="jwks-' + i + '" rows="10" cols="70" readonly="true">' + escapeHtmlText(discoveryInfo.keys[i][key]) + "</textarea></td>" +
+                                   '<td><textarea id="jwks-' + i +
+                                       '" name="jwks-' + i + '" rows="10" ' +
+                                       'cols="70" readonly="true">' +
+                                       escapeHtmlText(discoveryInfo.keys[i][key]) +
+                                       "</textarea></td>" +
                                  "</tr>";
        } else {
         discovery_info_table_html = discovery_info_table_html +
                                  "<tr>" +
                                    "<td>" + escapeHtmlText(key) + "</td>" +
-                                   "<td>" + escapeHtmlText(discoveryInfo.keys[i][key]) + "</td>" +
+                                   "<td>" + escapeHtmlText(discoveryInfo.keys[i][key]) +
+                                       "</td>" +
                                  "</tr>";
        }
      });
@@ -149,7 +165,10 @@ function buildJWKSInfoTable(discoveryInfo) {
      log.debug('cert: ' + pem);
      discovery_info_table_html = discovery_info_table_html +
                                  "<fieldset><legend>PEM Format</legend>" +
-                                 '<textarea id="x509-' + i + '" name="x509-' + i + '" rows="10" cols="70" readonly="true">' + escapeHtmlText(pem) + '</textarea>' +
+                                 '<textarea id="x509-' + i + '" name="x509-' +
+                                     i +
+                                     '" rows="10" cols="70" readonly="true">' +
+                                     escapeHtmlText(pem) + '</textarea>' +
                                  "</fieldset>";
 
     discovery_info_table_html = discovery_info_table_html +
@@ -166,17 +185,21 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   log.debug("Entering onSubmitPopulateFormsWithDiscoveryInformation().");
   log.debug('Entering onSubmitPopulateFormsWithDiscoveryInformation().');
   var authorizationEndpoint = discoveryInfo["authorization_endpoint"];
-  var idTokenSigningAlgValuesSupported = discoveryInfo["id_token_signing_alg_values_supported"];
+  var idTokenSigningAlgValuesSupported =
+      discoveryInfo["id_token_signing_alg_values_supported"];
   var issuer = discoveryInfo["issuer"];
   var jwksUri = discoveryInfo["jwks_uri"];
   var responseTypesSupported = discoveryInfo["response_types_supported"];
-  var scopesSupported = discoveryInfo["scopes_supported"].toString().replace(/,/g, " ");
+  var scopesSupported =
+      discoveryInfo["scopes_supported"].toString().replace(/,/g, " ");
   var subjectTypesSupported = discoveryInfo["subject_types_supported"];
   var tokenEndpoint = discoveryInfo["token_endpoint"];
-  var tokenEndpointAuthMethodsSupported = discoveryInfo["token_endpoint_auth_methods_supported"];
+  var tokenEndpointAuthMethodsSupported =
+      discoveryInfo["token_endpoint_auth_methods_supported"];
   var userInfoEndpoint = discoveryInfo["userinfo_endpoint"];
 
-  document.getElementById("authorization_endpoint").value = authorizationEndpoint;
+  document.getElementById("authorization_endpoint").value =
+                          authorizationEndpoint;
   document.getElementById("token_endpoint").value = tokenEndpoint;
   document.getElementById("token_scope").value = scopesSupported;
   document.getElementById("scope").value = scopesSupported;
@@ -198,9 +221,11 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
 
 // Reset all forms and clear local storage
 function onSubmitClearAllForms() {
+  log.debug("Entering onSubmitClearAllForms().");
   if (localStorage) {
   }
   $("#jwks_info_table").html("");
+  log.debug("Leaving onSubmitClearAllForms().");
 }
 
 function clickLink() {

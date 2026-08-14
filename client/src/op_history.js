@@ -47,26 +47,42 @@ var RESULT_FAILURE = 'Failure';
 var LIMIT = 1000;
 
 function hasStorage() {
+  log.debug("Entering hasStorage().");
   try {
+    log.debug("Leaving hasStorage().");
     return !!window.localStorage;
   } catch (e) {
+    log.debug("Leaving hasStorage().");
     return false;
   }
 }
 
 function escapeHtml(s) {
+  log.debug("Entering escapeHtml().");
+  log.debug("Leaving escapeHtml().");
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function newEntryId() {
-  return 'op' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+  log.debug("Entering newEntryId().");
+  log.debug("Leaving newEntryId().");
+  return 'op' + Date.now().toString(36) +
+      Math.floor(Math.random() * 1e6).toString(36);
 }
 
 function resultClass(result) {
-  if (result === RESULT_SUCCESS) return 'saml-ok';
-  if (result === RESULT_FAILURE) return 'saml-bad';
+  log.debug("Entering resultClass().");
+  if (result === RESULT_SUCCESS) {
+    log.debug("Leaving resultClass().");
+    return 'saml-ok';
+  }
+  if (result === RESULT_FAILURE) {
+    log.debug("Leaving resultClass().");
+    return 'saml-bad';
+  }
+  log.debug("Leaving resultClass().");
   return 'saml-pending';
 }
 
@@ -77,17 +93,27 @@ function createHistory(config) {
   var EMPTY_TEXT = config.emptyText || 'No calls recorded yet.';
 
   function read() {
-    if (!hasStorage()) return [];
+    log.debug("Entering read().");
+    if (!hasStorage()) {
+      log.debug("Leaving read().");
+      return [];
+    }
     try {
       var h = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
+      log.debug("Leaving read().");
       return Object.prototype.toString.call(h) === '[object Array]' ? h : [];
     } catch (e) {
+      log.debug("Leaving read().");
       return [];
     }
   }
 
   function write(history) {
-    if (!hasStorage()) return;
+    log.debug("Entering write().");
+    if (!hasStorage()) {
+      log.debug("Leaving write().");
+      return;
+    }
     // Keep the most recent entries once the cap is reached.
     if (history.length > LIMIT) history = history.slice(history.length - LIMIT);
     try {
@@ -95,6 +121,7 @@ function createHistory(config) {
     } catch (e) {
       // No storage available in this context.
     }
+    log.debug("Leaving write().");
   }
 
   // Append an entry. Its recognized fields are the configured columns plus
@@ -108,7 +135,8 @@ function createHistory(config) {
       result: entry.result || RESULT_SENT,
       detail: entry.detail || ''
     };
-    COLUMNS.forEach(function (c) { saved[c.key] = entry[c.key] == null ? '' : entry[c.key]; });
+    COLUMNS.forEach(function (c) { saved[c.key] = entry[c.key] == null ?
+                    '' : entry[c.key]; });
     var history = read();
     history.push(saved);
     write(history);
@@ -118,7 +146,10 @@ function createHistory(config) {
 
   function update(id, result, detail) {
     log.debug("Entering update().");
-    if (!id) return false;
+    if (!id) {
+      log.debug("Leaving update().");
+      return false;
+    }
     var history = read();
     for (var i = history.length - 1; i >= 0; i--) {
       if (history[i].id !== id) continue;
@@ -126,6 +157,7 @@ function createHistory(config) {
       if (detail) history[i].detail = detail;
       history[i].resolvedAt = new Date().toISOString();
       write(history);
+      log.debug("Leaving update().");
       return true;
     }
     log.debug("Leaving update().");
@@ -148,13 +180,15 @@ function createHistory(config) {
       if (history[i].result !== RESULT_SENT) continue;
       if (want) {
         var mismatch = false;
-        for (var k in want) { if (want.hasOwnProperty(k) && history[i][k] !== want[k]) mismatch = true; }
+        for (var k in want) { if (want.hasOwnProperty(k) &&
+             history[i][k] !== want[k]) mismatch = true; }
         if (mismatch) continue;
       }
       history[i].result = result;
       history[i].detail = detail || history[i].detail;
       history[i].resolvedAt = new Date().toISOString();
       write(history);
+      log.debug("Leaving resolvePending().");
       return history[i];
     }
     log.debug("Leaving resolvePending().");
@@ -162,34 +196,46 @@ function createHistory(config) {
   }
 
   function clear() {
+    log.debug("Entering clear().");
     if (hasStorage()) localStorage.removeItem(STORE_KEY);
+    log.debug("Leaving clear().");
   }
 
   // Render the log newest-first into `box` (a DOM element).
   function render(box) {
     log.debug("Entering render().");
-    if (!box) return;
-    var history = read();
-    if (!history.length) {
-      box.innerHTML = '<p class="saml-history-empty">' + escapeHtml(EMPTY_TEXT) + '</p>';
+    if (!box) {
+      log.debug("Leaving render().");
       return;
     }
-    var html = '<div class="saml-history-scroll"><table class="saml-table saml-history">' +
+    var history = read();
+    if (!history.length) {
+      box.innerHTML = '<p class="saml-history-empty">' +
+          escapeHtml(EMPTY_TEXT) + '</p>';
+      log.debug("Leaving render().");
+      return;
+    }
+    var html = '<div class="saml-history-scroll"><table class="saml-table ' +
+        'saml-history">' +
       '<thead><tr><th>#</th><th>Time (UTC)</th>';
-    COLUMNS.forEach(function (c) { html += '<th>' + escapeHtml(c.label) + '</th>'; });
+    COLUMNS.forEach(function (c) { html += '<th>' + escapeHtml(c.label) +
+                    '</th>'; });
     html += '<th>Result</th></tr></thead><tbody>';
     for (var i = history.length - 1; i >= 0; i--) {
       var item = history[i] || {};
       var ts = String(item.timestamp || '');
       html += '<tr>' +
         '<td>' + (i + 1) + '</td>' +
-        '<td class="saml-history-time">' + escapeHtml(ts.substring(0, 10)) + '<br>' +
+        '<td class="saml-history-time">' + escapeHtml(ts.substring(0, 10)) +
+            '<br>' +
           escapeHtml(ts.substring(11, 19)) + 'Z</td>';
       COLUMNS.forEach(function (c) {
-        html += '<td' + (c.className ? ' class="' + c.className + '"' : '') + '>' +
+        html += '<td' + (c.className ? ' class="' + c.className + '"' : '') +
+            '>' +
           escapeHtml(item[c.key]) + '</td>';
       });
-      html += '<td class="' + resultClass(item.result) + '">' + escapeHtml(item.result) +
+      html += '<td class="' + resultClass(item.result) + '">' +
+          escapeHtml(item.result) +
         (item.detail ? ' — ' + escapeHtml(item.detail) : '') + '</td>' +
         '</tr>';
     }
@@ -213,4 +259,5 @@ function createHistory(config) {
   };
 }
 
-module.exports = { createHistory: createHistory, SENT: RESULT_SENT, SUCCESS: RESULT_SUCCESS, FAILURE: RESULT_FAILURE };
+module.exports = { createHistory: createHistory, SENT: RESULT_SENT,
+    SUCCESS: RESULT_SUCCESS, FAILURE: RESULT_FAILURE };

@@ -23,6 +23,21 @@
 
 var createHistory = require('./op_history').createHistory;
 
+// The log level comes from the same configuration everything else here
+// reads. A caller without one still has to be able to load this module,
+// so an unresolvable CONFIG_FILE falls back to info rather than throwing.
+var bunyan = require("bunyan");
+var log = bunyan.createLogger({
+  name: "wsfed_history",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).logLevel || "info";
+    } catch (e) {
+      return "info";
+    }
+  })()
+});
+
 // The `wa` values of the WS-Federation Passive Requestor Profile, spelled the
 // way the profile spells them, because that is what the user sees on the wire.
 var OP_SIGN_IN = 'Sign In (wsignin1.0)';

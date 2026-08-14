@@ -22,7 +22,8 @@ log.info("Log initialized. logLevel=" + log.level());
 (function initPkiEngine() {
   try {
     if (typeof crypto !== 'undefined' && crypto.subtle) {
-      pkijs.setEngine('webcrypto', new pkijs.CryptoEngine({ name: 'webcrypto', crypto: crypto }));
+      pkijs.setEngine('webcrypto', new pkijs.CryptoEngine({ name: 'webcrypto',
+                      crypto: crypto }));
     }
   } catch (e) {
     log.error('Failed to init PKI.js engine: ' + e.message);
@@ -33,20 +34,24 @@ log.info("Log initialized. logLevel=" + log.level());
 // Small DOM helpers
 // ---------------------------------------------------------------------------
 function val(id) {
+  log.debug("Entering val().");
   var el = document.getElementById(id);
+  log.debug("Leaving val().");
   return el ? el.value : '';
 }
 
 function setVal(id, v) {
+  log.debug("Entering setVal().");
   var el = document.getElementById(id);
   if (el) el.value = v;
+  log.debug("Leaving setVal().");
 }
 
 // ---------------------------------------------------------------------------
 // Base64url / PEM / byte helpers, and everything JWE.
 //
-// These live in client/src/jose_jwe.js, which this page and the OID4VCI issuance
-// panes share: OID4VCI section 10 has a Credential Issuer and a Wallet
+// These live in client/src/jose_jwe.js, which this page and the OID4VCI
+// issuance panes share: OID4VCI section 10 has a Credential Issuer and a Wallet
 // encrypting to each other, and the Concat KDF in particular must exist exactly
 // once — two independent readings of RFC 7518 section 4.6 can agree with each
 // other and still be wrong.
@@ -92,11 +97,13 @@ var isEcdh = jose.isEcdh;
 // Composition: keep header / payload / encoded in sync
 // ---------------------------------------------------------------------------
 function parseJson(id, label) {
+  log.debug("Entering parseJson().");
   var raw = val(id);
   var obj = JSON.parse(raw);
   if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) {
     throw new Error(label + ' must be a JSON object.');
   }
+  log.debug("Leaving parseJson().");
   return obj;
 }
 
@@ -107,9 +114,11 @@ function updateEncoded() {
   try {
     var header = parseJson('jwt_tools_header', 'JWT Header');
     var payload = parseJson('jwt_tools_payload', 'JWT Payload');
-    var encoded = strToB64u(JSON.stringify(header)) + '.' + strToB64u(JSON.stringify(payload)) + '.';
+    var encoded = strToB64u(JSON.stringify(header)) + '.' +
+        strToB64u(JSON.stringify(payload)) + '.';
     setVal('jwt_tools_encoded', encoded);
-    setVal('jwt_tools_sync_status', 'In sync (unsigned). Sign or encrypt to produce a complete token.');
+    setVal('jwt_tools_sync_status',
+           'In sync (unsigned). Sign or encrypt to produce a complete token.');
   } catch (e) {
     setVal('jwt_tools_sync_status', 'Cannot encode: ' + e.message);
   }
@@ -127,11 +136,14 @@ function onEncodedInput() {
   var encoded = val('jwt_tools_encoded').trim();
   if (!encoded) {
     setVal('jwt_tools_sync_status', 'Encoded JWT is empty.');
+    log.debug("Leaving onEncodedInput().");
     return false;
   }
   var parts = encoded.split('.');
   if (parts.length < 2 || !parts[0] || !parts[1]) {
-    setVal('jwt_tools_sync_status', 'Not a JWT — expected header.payload[.signature].');
+    setVal('jwt_tools_sync_status',
+           'Not a JWT — expected header.payload[.signature].');
+    log.debug("Leaving onEncodedInput().");
     return false;
   }
   try {
@@ -145,9 +157,12 @@ function onEncodedInput() {
       // Signed token: hand the whole thing to the Sign pane.
       setVal('jwt_tools_signed', encoded);
       setVal('verify_input', encoded);
-      setVal('jwt_tools_sync_status', 'Decoded header & payload; signature captured (populated Signed JWT and JWT to Verify in the Sign pane).');
+      setVal('jwt_tools_sync_status', 'Decoded header & payload; signature ' +
+             'captured (populated Signed JWT and JWT to Verify in the ' +
+             'Sign pane).');
     } else {
-      setVal('jwt_tools_sync_status', 'Decoded header & payload (no signature present).');
+      setVal('jwt_tools_sync_status',
+             'Decoded header & payload (no signature present).');
     }
   } catch (e) {
     setVal('jwt_tools_sync_status', 'Cannot decode JWT: ' + e.message);
@@ -162,10 +177,12 @@ function addClaim() {
   var name = val('custom_claim_name').trim();
   var rawValue = val('custom_claim_value');
   var type = val('custom_claim_type');
-  var target = val('custom_claim_target'); // 'jwt_tools_header' | 'jwt_tools_payload'
+  var target =
+      val('custom_claim_target'); // 'jwt_tools_header' | 'jwt_tools_payload'
 
   if (!name) {
     setVal('jwt_tools_sync_status', 'Custom claim requires a name.');
+    log.debug("Leaving addClaim().");
     return false;
   }
 
@@ -177,7 +194,8 @@ function addClaim() {
       value = Number(trimmed);
       // Number('') is 0 and Number('1e400') is Infinity — reject both so only
       // genuine, JSON-representable numbers are added.
-      if (!isFinite(value)) throw new Error('"' + trimmed + '" is not a valid number.');
+      if (!isFinite(value)) throw new Error('"' + trimmed +
+          '" is not a valid number.');
     } else if (type === 'boolean') {
       value = (rawValue.trim().toLowerCase() === 'true');
     } else if (type === 'json') {
@@ -187,11 +205,13 @@ function addClaim() {
     }
   } catch (e) {
     setVal('jwt_tools_sync_status', 'Cannot add claim: ' + e.message);
+    log.debug("Leaving addClaim().");
     return false;
   }
 
   try {
-    var obj = parseJson(target, target === 'jwt_tools_header' ? 'JWT Header' : 'JWT Payload');
+    var obj = parseJson(target, target === 'jwt_tools_header' ?
+        'JWT Header' : 'JWT Payload');
     obj[name] = value;
     setVal(target, JSON.stringify(obj, null, 2));
     setVal('custom_claim_name', '');
@@ -209,21 +229,35 @@ function addClaim() {
 function checkCompliance() {
   log.debug("Entering checkCompliance().");
   var results = [];
-  function pass(c, m) { results.push('PASS  ' + c + ': ' + m); }
-  function fail(c, m) { results.push('FAIL  ' + c + ': ' + m); }
-  function skip(c, m) { results.push('SKIP  ' + c + ': ' + m); }
+  function pass(c, m) {
+    log.debug("Entering pass().");
+    results.push('PASS  ' + c + ': ' + m);
+    log.debug("Leaving pass().");
+  }
+  function fail(c, m) {
+    log.debug("Entering fail().");
+    results.push('FAIL  ' + c + ': ' + m);
+    log.debug("Leaving fail().");
+  }
+  function skip(c, m) {
+    log.debug("Entering skip().");
+    results.push('SKIP  ' + c + ': ' + m);
+    log.debug("Leaving skip().");
+  }
 
   var header, payload;
   try {
     header = parseJson('jwt_tools_header', 'JWT Header');
   } catch (e) {
     setVal('compliance_output', 'FAIL  header: ' + e.message);
+    log.debug("Leaving checkCompliance().");
     return false;
   }
   try {
     payload = parseJson('jwt_tools_payload', 'JWT Payload');
   } catch (e) {
     setVal('compliance_output', 'FAIL  payload: ' + e.message);
+    log.debug("Leaving checkCompliance().");
     return false;
   }
 
@@ -250,17 +284,30 @@ function checkCompliance() {
 
   // ---- Registered claims (RFC 7519 §4.1) ----
   function checkString(name) {
-    if (payload[name] === undefined) { skip(name, 'Not present (optional)'); return; }
-    if (typeof payload[name] !== 'string') fail(name, 'Must be a StringOrURI (string)');
+    log.debug("Entering checkString().");
+    if (payload[name] === undefined) {
+      skip(name, 'Not present (optional)');
+      log.debug("Leaving checkString().");
+      return;
+    }
+    if (typeof payload[name] !== 'string') fail(name,
+        'Must be a StringOrURI (string)');
     else pass(name, '"' + payload[name] + '"');
+    log.debug("Leaving checkString().");
   }
   function checkNumericDate(name) {
-    if (payload[name] === undefined) { skip(name, 'Not present (optional)'); return; }
+    log.debug("Entering checkNumericDate().");
+    if (payload[name] === undefined) {
+      skip(name, 'Not present (optional)');
+      log.debug("Leaving checkNumericDate().");
+      return;
+    }
     if (typeof payload[name] !== 'number' || !Number.isInteger(payload[name])) {
       fail(name, 'Must be an integer NumericDate (RFC 7519 §2)');
     } else {
       pass(name, new Date(payload[name] * 1000).toISOString());
     }
+    log.debug("Leaving checkNumericDate().");
   }
 
   checkString('iss');
@@ -271,7 +318,8 @@ function checkCompliance() {
     skip('aud', 'Not present (optional)');
   } else if (typeof payload.aud === 'string') {
     pass('aud', '"' + payload.aud + '"');
-  } else if (Array.isArray(payload.aud) && payload.aud.every(function (a) { return typeof a === 'string'; })) {
+  } else if (Array.isArray(payload.aud) &&
+      payload.aud.every(function (a) { return typeof a === 'string'; })) {
     pass('aud', payload.aud.length + ' value(s)');
   } else {
     fail('aud', 'Must be a string or array of strings');
@@ -296,28 +344,42 @@ function checkCompliance() {
 function checkRfc9068Compliance() {
   log.debug("Entering checkRfc9068Compliance().");
   var results = [];
-  function pass(c, m) { results.push('PASS  ' + c + ': ' + m); }
-  function fail(c, m) { results.push('FAIL  ' + c + ': ' + m); }
-  function skip(c, m) { results.push('SKIP  ' + c + ': ' + m); }
+  function pass(c, m) {
+    log.debug("Entering pass().");
+    results.push('PASS  ' + c + ': ' + m);
+    log.debug("Leaving pass().");
+  }
+  function fail(c, m) {
+    log.debug("Entering fail().");
+    results.push('FAIL  ' + c + ': ' + m);
+    log.debug("Leaving fail().");
+  }
+  function skip(c, m) {
+    log.debug("Entering skip().");
+    results.push('SKIP  ' + c + ': ' + m);
+    log.debug("Leaving skip().");
+  }
 
   var header, payload;
   try {
     header = parseJson('jwt_tools_header', 'JWT Header');
   } catch (e) {
     setVal('compliance_output', 'FAIL  header: ' + e.message);
+    log.debug("Leaving checkRfc9068Compliance().");
     return false;
   }
   try {
     payload = parseJson('jwt_tools_payload', 'JWT Payload');
   } catch (e) {
     setVal('compliance_output', 'FAIL  payload: ' + e.message);
+    log.debug("Leaving checkRfc9068Compliance().");
     return false;
   }
 
   results.push('RFC 9068 — OAuth 2.0 JWT Access Token');
 
-  // ---- Header (RFC 9068 §2.1) ----
-  // typ is REQUIRED and MUST be "at+jwt" (the "application/" prefix is allowed).
+  // ---- Header (RFC 9068 §2.1) ---- typ is REQUIRED and MUST be "at+jwt" (the
+  // "application/" prefix is allowed).
   if (header.typ === undefined) {
     fail('typ', 'Missing — MUST be "at+jwt" (RFC 9068 §2.1)');
   } else if (typeof header.typ !== 'string') {
@@ -334,21 +396,30 @@ function checkRfc9068Compliance() {
   } else if (typeof header.alg !== 'string') {
     fail('alg', '"alg" must be a string');
   } else if (header.alg === 'none') {
-    fail('alg', '"none" is not permitted — access tokens MUST be signed (RFC 9068 §2.1)');
+    fail('alg', '"none" is not permitted — access tokens MUST be signed (RFC ' +
+         '9068 §2.1)');
   } else {
     pass('alg', header.alg);
   }
 
   // ---- Required claims (RFC 9068 §2.2) ----
   function requireString(name) {
-    if (payload[name] === undefined) fail(name, 'Missing required claim (RFC 9068 §2.2)');
+    log.debug("Entering requireString().");
+    if (payload[name] === undefined) fail(name,
+        'Missing required claim (RFC 9068 §2.2)');
     else if (typeof payload[name] !== 'string') fail(name, 'Must be a string');
     else pass(name, '"' + payload[name] + '"');
+    log.debug("Leaving requireString().");
   }
   function requireNumericDate(name) {
-    if (payload[name] === undefined) fail(name, 'Missing required claim (RFC 9068 §2.2)');
-    else if (typeof payload[name] !== 'number' || !Number.isInteger(payload[name])) fail(name, 'Must be an integer NumericDate');
+    log.debug("Entering requireNumericDate().");
+    if (payload[name] === undefined) fail(name,
+        'Missing required claim (RFC 9068 §2.2)');
+    else if (typeof payload[name] !== 'number' ||
+             !Number.isInteger(payload[name])) fail(name,
+             'Must be an integer NumericDate');
     else pass(name, new Date(payload[name] * 1000).toISOString());
+    log.debug("Leaving requireNumericDate().");
   }
 
   requireString('iss');
@@ -359,7 +430,8 @@ function checkRfc9068Compliance() {
     fail('aud', 'Missing required claim (RFC 9068 §2.2)');
   } else if (typeof payload.aud === 'string') {
     pass('aud', '"' + payload.aud + '"');
-  } else if (Array.isArray(payload.aud) && payload.aud.length > 0 && payload.aud.every(function (a) { return typeof a === 'string'; })) {
+  } else if (Array.isArray(payload.aud) && payload.aud.length > 0 &&
+      payload.aud.every(function (a) { return typeof a === 'string'; })) {
     pass('aud', payload.aud.length + ' value(s)');
   } else {
     fail('aud', 'Must be a string or non-empty array of strings');
@@ -373,7 +445,8 @@ function checkRfc9068Compliance() {
   // ---- Conditional / optional claims ----
   // scope SHOULD be present when a scope was requested (RFC 9068 §2.2.3).
   if (payload.scope === undefined) {
-    skip('scope', 'Not present (SHOULD be present if a scope was requested — RFC 9068 §2.2.3)');
+    skip('scope', 'Not present (SHOULD be present if a scope was requested — ' +
+         'RFC 9068 §2.2.3)');
   } else if (typeof payload.scope !== 'string') {
     fail('scope', 'Must be a space-delimited string (RFC 9068 §2.2.3)');
   } else {
@@ -382,7 +455,9 @@ function checkRfc9068Compliance() {
 
   // Authentication information claims are optional (RFC 9068 §2.2.1).
   if (payload.auth_time !== undefined) {
-    if (typeof payload.auth_time !== 'number' || !Number.isInteger(payload.auth_time)) fail('auth_time', 'Must be an integer NumericDate');
+    if (typeof payload.auth_time !== 'number' ||
+        !Number.isInteger(payload.auth_time)) fail('auth_time',
+        'Must be an integer NumericDate');
     else pass('auth_time', new Date(payload.auth_time * 1000).toISOString());
   }
   if (payload.acr !== undefined) {
@@ -390,7 +465,9 @@ function checkRfc9068Compliance() {
     else pass('acr', '"' + payload.acr + '"');
   }
   if (payload.amr !== undefined) {
-    if (Array.isArray(payload.amr) && payload.amr.every(function (a) { return typeof a === 'string'; })) pass('amr', payload.amr.length + ' value(s)');
+    if (Array.isArray(payload.amr) && payload.amr.every(function (a) {
+        return typeof a === 'string'; })) pass('amr', payload.amr.length +
+        ' value(s)');
     else fail('amr', 'Must be an array of strings');
   }
 
@@ -419,8 +496,10 @@ function generateRfc9068Token() {
   };
   setVal('jwt_tools_header', JSON.stringify(header, null, 2));
   setVal('jwt_tools_payload', JSON.stringify(payload, null, 2));
-  updateEncoded(); // fills the Encoded JWT field (header.payload.) from the above
-  setVal('jwt_tools_sync_status', 'Generated a sample RFC 9068 access token (unsigned). Sign it in the Sign (JWS) pane to complete it.');
+  updateEncoded(
+      ); // fills the Encoded JWT field (header.payload.) from the above
+  setVal('jwt_tools_sync_status', 'Generated a sample RFC 9068 access token ' +
+         '(unsigned). Sign it in the Sign (JWS) pane to complete it.');
   log.debug("Leaving generateRfc9068Token().");
   return false;
 }
@@ -438,23 +517,33 @@ async function generateSigningKeys() {
       var secret = new Uint8Array(32);
       crypto.getRandomValues(secret);
       setVal('sign_private_key', bytesToB64u(secret));
-      setVal('sign_public_key', '(HMAC is symmetric — the secret above is used for both signing and verification.)');
+      setVal('sign_public_key', '(HMAC is symmetric — the secret above is ' +
+             'used for both signing and verification.)');
     } else if (meta.kind === 'rsa') {
       var signBits = parseInt(val('sign_rsa_bits'), 10) || 2048;
       var rsaPair = await crypto.subtle.generateKey(
-        { name: meta.name, modulusLength: signBits, publicExponent: new Uint8Array([1, 0, 1]), hash: meta.hash },
+        { name: meta.name, modulusLength: signBits,
+         publicExponent: new Uint8Array([1, 0, 1]), hash: meta.hash },
         true, ['sign', 'verify']);
-      setVal('sign_private_key', derToPem(await crypto.subtle.exportKey('pkcs8', rsaPair.privateKey), 'PRIVATE KEY'));
-      setVal('sign_public_key', derToPem(await crypto.subtle.exportKey('spki', rsaPair.publicKey), 'PUBLIC KEY'));
+      setVal('sign_private_key', derToPem(await crypto.subtle.exportKey('pkcs8',
+             rsaPair.privateKey), 'PRIVATE KEY'));
+      setVal('sign_public_key', derToPem(await crypto.subtle.exportKey('spki',
+             rsaPair.publicKey), 'PUBLIC KEY'));
     } else if (meta.kind === 'okp') {
-      var edPair = await crypto.subtle.generateKey({ name: meta.name }, true, ['sign', 'verify']);
-      setVal('sign_private_key', derToPem(await crypto.subtle.exportKey('pkcs8', edPair.privateKey), 'PRIVATE KEY'));
-      setVal('sign_public_key', derToPem(await crypto.subtle.exportKey('spki', edPair.publicKey), 'PUBLIC KEY'));
+      var edPair = await crypto.subtle.generateKey({ name: meta.name }, true,
+          ['sign', 'verify']);
+      setVal('sign_private_key', derToPem(await crypto.subtle.exportKey('pkcs8',
+             edPair.privateKey), 'PRIVATE KEY'));
+      setVal('sign_public_key', derToPem(await crypto.subtle.exportKey('spki',
+             edPair.publicKey), 'PUBLIC KEY'));
     } else {
       var ecPair = await crypto.subtle.generateKey(
-        { name: 'ECDSA', namedCurve: meta.namedCurve }, true, ['sign', 'verify']);
-      setVal('sign_private_key', derToPem(await crypto.subtle.exportKey('pkcs8', ecPair.privateKey), 'PRIVATE KEY'));
-      setVal('sign_public_key', derToPem(await crypto.subtle.exportKey('spki', ecPair.publicKey), 'PUBLIC KEY'));
+        { name: 'ECDSA', namedCurve: meta.namedCurve }, true, ['sign',
+         'verify']);
+      setVal('sign_private_key', derToPem(await crypto.subtle.exportKey('pkcs8',
+             ecPair.privateKey), 'PRIVATE KEY'));
+      setVal('sign_public_key', derToPem(await crypto.subtle.exportKey('spki',
+             ecPair.publicKey), 'PUBLIC KEY'));
     }
     await applyKeyFormat('sign'); // honor the PEM/JWK toggle
     await syncVerificationKey();  // keep X.509 verification key in sync
@@ -470,7 +559,9 @@ async function generateSigningKeys() {
 async function importSigningKey(meta, keyText) {
   log.debug("Entering importSigningKey().");
   if (meta.kind === 'hmac') {
-    var secret = isJwk(keyText) ? (JSON.parse(keyText).k || '') : keyText.trim();
+    var secret = isJwk(keyText) ? (JSON.parse(keyText).k ||
+        '') : keyText.trim();
+    log.debug("Leaving importSigningKey().");
     return crypto.subtle.importKey('raw', b64uToBytes(secret),
       { name: 'HMAC', hash: meta.hash }, false, ['sign']);
   }
@@ -495,17 +586,20 @@ async function signJWT() {
     setVal('jwt_tools_header', JSON.stringify(header, null, 2));
     var payload = parseJson('jwt_tools_payload', 'JWT Payload');
 
-    var signingInput = strToB64u(JSON.stringify(header)) + '.' + strToB64u(JSON.stringify(payload));
+    var signingInput = strToB64u(JSON.stringify(header)) + '.' +
+        strToB64u(JSON.stringify(payload));
     var key = await importSigningKey(meta, val('sign_private_key'));
 
     var signParams;
     if (meta.kind === 'hmac') signParams = { name: 'HMAC' };
-    else if (meta.kind === 'rsa' && meta.name === 'RSA-PSS') signParams = { name: 'RSA-PSS', saltLength: meta.saltLength };
+    else if (meta.kind === 'rsa' && meta.name === 'RSA-PSS') signParams =
+             { name: 'RSA-PSS', saltLength: meta.saltLength };
     else if (meta.kind === 'rsa') signParams = { name: 'RSASSA-PKCS1-v1_5' };
     else if (meta.kind === 'okp') signParams = { name: meta.name };
     else signParams = { name: 'ECDSA', hash: meta.hash };
 
-    var sig = await crypto.subtle.sign(signParams, key, new TextEncoder().encode(signingInput));
+    var sig = await crypto.subtle.sign(signParams, key,
+        new TextEncoder().encode(signingInput));
     var jws = signingInput + '.' + bytesToB64u(sig);
 
     setVal('jwt_tools_signed', jws);
@@ -525,18 +619,24 @@ async function signJWT() {
 
 // ---- Signature verification (mirrors token_detail.js) ----
 async function verifyHMAC(jwt_, secret, alg) {
+  log.debug("Entering verifyHMAC().");
   var meta = SIGN_ALGS[alg];
-  if (!meta || meta.kind !== 'hmac') throw new Error('Unsupported HMAC algorithm: ' + alg);
+  if (!meta ||
+      meta.kind !== 'hmac') throw new Error('Unsupported HMAC algorithm: ' +
+      alg);
   var key = await crypto.subtle.importKey('raw', b64uToBytes(secret.trim()),
     { name: 'HMAC', hash: meta.hash }, false, ['verify']);
   var data = new TextEncoder().encode(jwt_.split('.').slice(0, 2).join('.'));
-  return crypto.subtle.verify('HMAC', key, b64uToBytes(jwt_.split('.')[2]), data);
+  log.debug("Leaving verifyHMAC().");
+  return crypto.subtle.verify('HMAC', key, b64uToBytes(jwt_.split('.')[2]),
+                              data);
 }
 
 async function verifyX509(jwt_, pem, alg) {
   log.debug("Entering verifyX509().");
   var meta = SIGN_ALGS[alg];
-  if (!meta || (meta.kind !== 'rsa' && meta.kind !== 'ec' && meta.kind !== 'okp')) {
+  if (!meta || (meta.kind !== 'rsa' && meta.kind !== 'ec' &&
+      meta.kind !== 'okp')) {
     throw new Error('Unsupported asymmetric algorithm: ' + alg);
   }
   var importParams, verifyParams;
@@ -548,12 +648,15 @@ async function verifyX509(jwt_, pem, alg) {
     verifyParams = { name: meta.name };
   } else {
     importParams = { name: meta.name, hash: meta.hash };
-    verifyParams = meta.name === 'RSA-PSS' ? { name: 'RSA-PSS', saltLength: meta.saltLength } : { name: 'RSASSA-PKCS1-v1_5' };
+    verifyParams = meta.name === 'RSA-PSS' ? { name: 'RSA-PSS',
+        saltLength: meta.saltLength } : { name: 'RSASSA-PKCS1-v1_5' };
   }
-  var key = await crypto.subtle.importKey('spki', pemToDer(pem), importParams, false, ['verify']);
+  var key = await crypto.subtle.importKey('spki', pemToDer(pem), importParams,
+      false, ['verify']);
   var data = new TextEncoder().encode(jwt_.split('.').slice(0, 2).join('.'));
   log.debug("Leaving verifyX509().");
-  return crypto.subtle.verify(verifyParams, key, b64uToBytes(jwt_.split('.')[2]), data);
+  return crypto.subtle.verify(verifyParams, key,
+                              b64uToBytes(jwt_.split('.')[2]), data);
 }
 
 async function verifyJWKS(jwt_, jwks) {
@@ -562,15 +665,20 @@ async function verifyJWKS(jwt_, jwks) {
   if (!header.kid) throw new Error('No "kid" found in JWT header.');
   var jwk = jwks.keys.find(function (k) { return k.kid === header.kid; });
   if (!jwk) throw new Error('Matching "kid" not found in JWKS.');
-  if (jwk.kty !== 'RSA') throw new Error('Only RSA keys are supported for JWKS verification.');
+  if (jwk.kty !== 'RSA') throw new Error('Only RSA keys are supported for ' +
+      'JWKS verification.');
   var meta = SIGN_ALGS[header.alg];
-  if (!meta || meta.kind !== 'rsa') throw new Error('Unsupported algorithm: ' + header.alg);
-  var key = await crypto.subtle.importKey('jwk', { kty: jwk.kty, n: jwk.n, e: jwk.e },
+  if (!meta || meta.kind !== 'rsa') throw new Error('Unsupported algorithm: ' +
+      header.alg);
+  var key = await crypto.subtle.importKey('jwk', { kty: jwk.kty, n: jwk.n,
+      e: jwk.e },
     { name: meta.name, hash: meta.hash }, false, ['verify']);
   var data = new TextEncoder().encode(jwt_.split('.').slice(0, 2).join('.'));
-  var verifyParams = meta.name === 'RSA-PSS' ? { name: 'RSA-PSS', saltLength: meta.saltLength } : { name: 'RSASSA-PKCS1-v1_5' };
+  var verifyParams = meta.name === 'RSA-PSS' ? { name: 'RSA-PSS',
+      saltLength: meta.saltLength } : { name: 'RSASSA-PKCS1-v1_5' };
   log.debug("Leaving verifyJWKS().");
-  return crypto.subtle.verify(verifyParams, key, b64uToBytes(jwt_.split('.')[2]), data);
+  return crypto.subtle.verify(verifyParams, key,
+                              b64uToBytes(jwt_.split('.')[2]), data);
 }
 
 async function verifyJWT() {
@@ -581,7 +689,8 @@ async function verifyJWT() {
   var isValid = false;
   try {
     var parts = jwt_.split('.');
-    if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) throw new Error('Invalid JWS compact format.');
+    if (parts.length !== 3 || !parts[0] || !parts[1] ||
+        !parts[2]) throw new Error('Invalid JWS compact format.');
     var header = JSON.parse(b64uToStr(parts[0]));
     if (type === 'hmac') isValid = await verifyHMAC(jwt_, key, header.alg);
     else if (type === 'x509') isValid = await verifyX509(jwt_, key, header.alg);
@@ -613,17 +722,22 @@ async function generateEncryptionKeys() {
   try {
     var pair;
     if (isEcdh(alg)) {
-      pair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: ECDH_CURVE }, true, ['deriveBits']);
+      pair = await crypto.subtle.generateKey({ name: 'ECDH',
+          namedCurve: ECDH_CURVE }, true, ['deriveBits']);
     } else {
       var jweBits = parseInt(val('jwe_rsa_bits'), 10) || 2048;
       pair = await crypto.subtle.generateKey(
-        { name: 'RSA-OAEP', modulusLength: jweBits, publicExponent: new Uint8Array([1, 0, 1]), hash: JWE_RSA_HASH[alg] },
+        { name: 'RSA-OAEP', modulusLength: jweBits,
+         publicExponent: new Uint8Array([1, 0, 1]), hash: JWE_RSA_HASH[alg] },
         true, ['encrypt', 'decrypt']);
     }
-    setVal('jwe_public_key', derToPem(await crypto.subtle.exportKey('spki', pair.publicKey), 'PUBLIC KEY'));
-    setVal('jwe_private_key', derToPem(await crypto.subtle.exportKey('pkcs8', pair.privateKey), 'PRIVATE KEY'));
+    setVal('jwe_public_key', derToPem(await crypto.subtle.exportKey('spki',
+           pair.publicKey), 'PUBLIC KEY'));
+    setVal('jwe_private_key', derToPem(await crypto.subtle.exportKey('pkcs8',
+           pair.privateKey), 'PRIVATE KEY'));
     await applyKeyFormat('enc'); // honor the PEM/JWK toggle
-    setVal('jwe_status', 'Generated ' + alg + ' key material' + (isEcdh(alg) ? ' (P-256).' : '.'));
+    setVal('jwe_status', 'Generated ' + alg + ' key material' + (isEcdh(alg) ?
+           ' (P-256).' : '.'));
   } catch (e) {
     log.error('generateEncryptionKeys: ' + e.message);
     setVal('jwe_status', 'Error: ' + e.message);
@@ -639,16 +753,21 @@ async function encryptJWT() {
   var plaintext = val('jwe_plaintext').trim();
   setVal('jwe_status', 'Encrypting with ' + alg + ' / ' + enc + '...');
   try {
-    if (!plaintext) throw new Error('Nothing to encrypt. Sign a JWT or enter a payload above.');
-    if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content encryption: ' + enc);
+    if (!plaintext) throw new Error('Nothing to encrypt. Sign a JWT or enter ' +
+        'a payload above.');
+    if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content ' +
+        'encryption: ' + enc);
 
     var protectedHeader = { alg: alg, enc: enc };
-    // A nested JWT (a JWS as the plaintext) is signalled with cty:"JWT" (RFC 7519 §5.2).
+    // A nested JWT (a JWS as the plaintext) is signalled with cty:"JWT" (RFC
+    // 7519 §5.2).
     if (plaintext.split('.').length === 3) protectedHeader.cty = 'JWT';
 
-    var derived = await jose.deriveCek(alg, enc, protectedHeader, val('jwe_public_key'));
+    var derived = await jose.deriveCek(alg, enc, protectedHeader,
+        val('jwe_public_key'));
     var protectedB64 = strToB64u(JSON.stringify(protectedHeader));
-    var aad = new TextEncoder().encode(protectedB64); // ASCII(BASE64URL(protected header))
+    var aad = new TextEncoder()
+        .encode(protectedB64); // ASCII(BASE64URL(protected header))
 
     var iv = new Uint8Array(12);
     crypto.getRandomValues(iv);
@@ -656,11 +775,13 @@ async function encryptJWT() {
       { name: 'AES-GCM', iv: iv, additionalData: aad, tagLength: 128 },
       derived.cek, new TextEncoder().encode(plaintext)));
 
-    // Web Crypto appends the 16-byte auth tag; JWE keeps ciphertext and tag separate.
+    // Web Crypto appends the 16-byte auth tag; JWE keeps ciphertext and tag
+    // separate.
     var ciphertext = full.slice(0, full.length - 16);
     var tag = full.slice(full.length - 16);
 
-    var jwe = [protectedB64, derived.encryptedKey, bytesToB64u(iv), bytesToB64u(ciphertext), bytesToB64u(tag)].join('.');
+    var jwe = [protectedB64, derived.encryptedKey, bytesToB64u(iv),
+        bytesToB64u(ciphertext), bytesToB64u(tag)].join('.');
     setVal('jwt_tools_jwe', jwe);
     setVal('jwe_decrypt_input', jwe);
     setVal('jwt_tools_encoded', jwe);
@@ -675,7 +796,8 @@ async function encryptJWT() {
     var composeHeader;
     try {
       composeHeader = JSON.parse(val('jwt_tools_header'));
-      if (composeHeader === null || typeof composeHeader !== 'object' || Array.isArray(composeHeader)) composeHeader = {};
+      if (composeHeader === null || typeof composeHeader !== 'object' ||
+          Array.isArray(composeHeader)) composeHeader = {};
     } catch (e) {
       composeHeader = {};
     }
@@ -686,7 +808,8 @@ async function encryptJWT() {
     setVal('jwt_tools_header', JSON.stringify(composeHeader, null, 2));
 
     setVal('jwe_status', 'JWE produced with ' + alg + ' / ' + enc + '.');
-    setVal('jwt_tools_sync_status', 'Encoded field now holds the JWE encrypted token.');
+    setVal('jwt_tools_sync_status',
+           'Encoded field now holds the JWE encrypted token.');
   } catch (e) {
     log.error('encryptJWT: ' + e.message);
     setVal('jwe_status', 'Error: ' + e.message);
@@ -701,19 +824,23 @@ async function decryptJWT() {
   setVal('jwe_status', 'Decrypting...');
   try {
     var parts = jwe.split('.');
-    if (parts.length !== 5) throw new Error('Invalid JWE compact format (expected 5 segments).');
+    if (parts.length !== 5) throw new Error('Invalid JWE compact format ' +
+        '(expected 5 segments).');
     var protectedHeader = JSON.parse(b64uToStr(parts[0]));
     var alg = protectedHeader.alg;
     var enc = protectedHeader.enc;
-    if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content encryption: ' + enc);
+    if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content ' +
+        'encryption: ' + enc);
 
-    var cekKey = await jose.unwrapCek(alg, enc, protectedHeader, parts[1], val('jwe_private_key'));
+    var cekKey = await jose.unwrapCek(alg, enc, protectedHeader, parts[1],
+        val('jwe_private_key'));
     var aad = new TextEncoder().encode(parts[0]);
     var iv = b64uToBytes(parts[2]);
     var ctPlusTag = concatBytes(b64uToBytes(parts[3]), b64uToBytes(parts[4]));
 
     var plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: iv, additionalData: aad, tagLength: 128 }, cekKey, ctPlusTag);
+      { name: 'AES-GCM', iv: iv, additionalData: aad, tagLength: 128 }, cekKey,
+       ctPlusTag);
     setVal('jwe_decrypt_output', new TextDecoder().decode(plaintext));
     setVal('jwe_status', 'Decrypted with ' + alg + ' / ' + enc + '.');
   } catch (e) {
@@ -741,63 +868,111 @@ var OID_FRIENDLY_NAME = '1.2.840.113549.1.9.20';
 // RSA keys (RS*/PS*/RSA-OAEP*) sign the cert with RSASSA-PKCS1-v1_5/SHA-256;
 // EC keys (ES*/ECDH-ES) with ECDSA over the curve's natural hash.
 function certDescriptor(alg) {
+  log.debug("Entering certDescriptor().");
   var ecCurve = { ES256: 'P-256', ES384: 'P-384', ES512: 'P-521' };
   var ecHash = { ES256: 'SHA-256', ES384: 'SHA-384', ES512: 'SHA-512' };
-  if (alg[0] === 'H') return { kind: 'hmac' };
-  if (alg === 'EdDSA') return { kind: 'okp', name: 'Ed25519' };
-  if (alg.indexOf('ECDH-ES') === 0) return { kind: 'ec', curve: 'P-256', hash: 'SHA-256' }; // ECDH-ES[+A*KW]
-  if (alg[0] === 'E') return { kind: 'ec', curve: ecCurve[alg], hash: ecHash[alg] };         // ES256/384/512
+  if (alg[0] === 'H') {
+    log.debug("Leaving certDescriptor().");
+    return { kind: 'hmac' };
+  }
+  if (alg === 'EdDSA') {
+    log.debug("Leaving certDescriptor().");
+    return { kind: 'okp', name: 'Ed25519' };
+  }
+  if (alg.indexOf('ECDH-ES') === 0) {
+    log.debug("Leaving certDescriptor().");
+    return { kind: 'ec', curve: 'P-256', hash: 'SHA-256' };
+  } // ECDH-ES[+A*KW]
+  if (alg[0] === 'E') {
+    log.debug("Leaving certDescriptor().");
+    return { kind: 'ec', curve: ecCurve[alg], hash: ecHash[alg] };
+  }         // ES256/384/512
+  log.debug("Leaving certDescriptor().");
   return { kind: 'rsa', hash: 'SHA-256' }; // RS*/PS*/RSA-OAEP*
 }
 
-function strBuf(s) { return new TextEncoder().encode(s).buffer; }
+function strBuf(s) {
+  log.debug("Entering strBuf().");
+  log.debug("Leaving strBuf().");
+  return new TextEncoder().encode(s).buffer;
+}
 
 // ---------------------------------------------------------------------------
 // PEM <-> JWK conversion for the key fields (driven by the per-step toggle).
 // Conversion is key-material only, so any compatible import params work; we
 // pick RSASSA-PKCS1-v1_5 for RSA-family keys and ECDSA for EC-family keys.
 // ---------------------------------------------------------------------------
-function isJwk(text) { return (text || '').trim().charAt(0) === '{'; }
+function isJwk(text) {
+  log.debug("Entering isJwk().");
+  log.debug("Leaving isJwk().");
+  return (text || '').trim().charAt(0) === '{';
+}
 
 function stripJwkForImport(jwk) {
+  log.debug("Entering stripJwkForImport().");
   var out = {};
   Object.keys(jwk).forEach(function (k) {
     if (['alg', 'use', 'key_ops', 'ext'].indexOf(k) === -1) out[k] = jwk[k];
   });
+  log.debug("Leaving stripJwkForImport().");
   return out;
 }
 
 function convParams(desc) {
-  if (desc.kind === 'rsa') return { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' };
-  if (desc.kind === 'okp') return { name: desc.name };
+  log.debug("Entering convParams().");
+  if (desc.kind === 'rsa') {
+    log.debug("Leaving convParams().");
+    return { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' };
+  }
+  if (desc.kind === 'okp') {
+    log.debug("Leaving convParams().");
+    return { name: desc.name };
+  }
+  log.debug("Leaving convParams().");
   return { name: 'ECDSA', namedCurve: desc.curve };
 }
 
 async function privToJwk(pem, desc, jwtAlg, use) {
-  var key = await crypto.subtle.importKey('pkcs8', pemToDer(pem), convParams(desc), true, ['sign']);
+  log.debug("Entering privToJwk().");
+  var key = await crypto.subtle.importKey('pkcs8', pemToDer(pem),
+      convParams(desc), true, ['sign']);
   var jwk = await crypto.subtle.exportKey('jwk', key);
   delete jwk.key_ops; delete jwk.ext; jwk.alg = jwtAlg; jwk.use = use;
+  log.debug("Leaving privToJwk().");
   return jwk;
 }
 async function pubToJwk(pem, desc, jwtAlg, use) {
-  var key = await crypto.subtle.importKey('spki', pemToDer(pem), convParams(desc), true, ['verify']);
+  log.debug("Entering pubToJwk().");
+  var key = await crypto.subtle.importKey('spki', pemToDer(pem),
+      convParams(desc), true, ['verify']);
   var jwk = await crypto.subtle.exportKey('jwk', key);
   delete jwk.key_ops; delete jwk.ext; jwk.alg = jwtAlg; jwk.use = use;
+  log.debug("Leaving pubToJwk().");
   return jwk;
 }
 async function privToPem(jwkText, desc) {
-  var key = await crypto.subtle.importKey('jwk', stripJwkForImport(JSON.parse(jwkText)), convParams(desc), true, ['sign']);
+  log.debug("Entering privToPem().");
+  var key = await crypto.subtle.importKey('jwk',
+      stripJwkForImport(JSON.parse(jwkText)), convParams(desc), true, ['sign']);
+  log.debug("Leaving privToPem().");
   return derToPem(await crypto.subtle.exportKey('pkcs8', key), 'PRIVATE KEY');
 }
 async function pubToPem(jwkText, desc) {
-  var key = await crypto.subtle.importKey('jwk', stripJwkForImport(JSON.parse(jwkText)), convParams(desc), true, ['verify']);
+  log.debug("Entering pubToPem().");
+  var key = await crypto.subtle.importKey('jwk',
+      stripJwkForImport(JSON.parse(jwkText)), convParams(desc), true,
+      ['verify']);
+  log.debug("Leaving pubToPem().");
   return derToPem(await crypto.subtle.exportKey('spki', key), 'PUBLIC KEY');
 }
 
-// Import a key that may be PEM or JWK, under the given params/usages. The shared
-// module does exactly this (and also accepts a JWK object or an already-imported
-// CryptoKey), so this is its name on this page rather than a second copy.
+// Import a key that may be PEM or JWK, under the given params/usages. The
+// shared module does exactly this (and also accepts a JWK object or an
+// already-imported CryptoKey), so this is its name on this page rather than a
+// second copy.
 function importKeyFlexible(text, format, params, usages) {
+  log.debug("Entering importKeyFlexible().");
+  log.debug("Leaving importKeyFlexible().");
   return jose.importKey(text, format, params, usages);
 }
 
@@ -805,7 +980,8 @@ function importKeyFlexible(text, format, params, usages) {
 async function applyKeyFormat(step) {
   log.debug("Entering applyKeyFormat().");
   var s = step === 'sign';
-  var toJwk = document.getElementById(s ? 'sign_key_jwk' : 'jwe_key_jwk').checked;
+  var toJwk = document.getElementById(s ?
+      'sign_key_jwk' : 'jwe_key_jwk').checked;
   var alg = val(s ? 'sign_alg' : 'jwe_alg');
   var desc = certDescriptor(alg);
   var privId = s ? 'sign_private_key' : 'jwe_private_key';
@@ -814,20 +990,26 @@ async function applyKeyFormat(step) {
   var statusId = s ? 'sign_status' : 'jwe_status';
   try {
     if (desc.kind === 'hmac') {
-      // Symmetric: represent the secret as a base64url string (PEM mode) or oct JWK.
+      // Symmetric: represent the secret as a base64url string (PEM mode) or oct
+      // JWK.
       var cur = val(privId).trim();
       var secret = cur ? (isJwk(cur) ? (JSON.parse(cur).k || '') : cur) : '';
-      if (secret) setVal(privId, toJwk ? JSON.stringify({ kty: 'oct', k: secret, alg: alg, use: 'sig' }, null, 2) : secret);
+      if (secret) setVal(privId, toJwk ? JSON.stringify({ kty: 'oct', k: secret,
+          alg: alg, use: 'sig' }, null, 2) : secret);
+      log.debug("Leaving applyKeyFormat().");
       return false;
     }
     var priv = val(privId).trim();
     if (priv) {
-      if (toJwk && !isJwk(priv)) setVal(privId, JSON.stringify(await privToJwk(priv, desc, alg, use), null, 2));
-      else if (!toJwk && isJwk(priv)) setVal(privId, await privToPem(priv, desc));
+      if (toJwk && !isJwk(priv)) setVal(privId,
+          JSON.stringify(await privToJwk(priv, desc, alg, use), null, 2));
+      else if (!toJwk && isJwk(priv)) setVal(privId, await privToPem(priv,
+               desc));
     }
     var pub = val(pubId).trim();
     if (pub) {
-      if (toJwk && !isJwk(pub)) setVal(pubId, JSON.stringify(await pubToJwk(pub, desc, alg, use), null, 2));
+      if (toJwk && !isJwk(pub)) setVal(pubId, JSON.stringify(await pubToJwk(pub,
+          desc, alg, use), null, 2));
       else if (!toJwk && isJwk(pub)) setVal(pubId, await pubToPem(pub, desc));
     }
   } catch (e) {
@@ -837,7 +1019,11 @@ async function applyKeyFormat(step) {
   log.debug("Leaving applyKeyFormat().");
   return false;
 }
-function toggleKeyFormat(step) { return applyKeyFormat(step); }
+function toggleKeyFormat(step) {
+  log.debug("Entering toggleKeyFormat().");
+  log.debug("Leaving toggleKeyFormat().");
+  return applyKeyFormat(step);
+}
 
 // When the Validate-a-Signature type is "X.509 Certificate (PEM)", default the
 // verification key to the step's generated public key (as SPKI PEM). Converts
@@ -845,13 +1031,26 @@ function toggleKeyFormat(step) { return applyKeyFormat(step); }
 async function syncVerificationKey() {
   log.debug("Entering syncVerificationKey().");
   try {
-    if (val('jwt_verification_type') !== 'x509') return false;
-    if (val('jwt_verification_key').trim()) return false; // don't clobber a manual entry
+    if (val('jwt_verification_type') !== 'x509') {
+      log.debug("Leaving syncVerificationKey().");
+      return false;
+    }
+    if (val('jwt_verification_key').trim()) {
+      log.debug("Leaving syncVerificationKey().");
+      return false;
+    } // don't clobber a manual entry
     var pub = val('sign_public_key').trim();
-    if (!pub) return false;
+    if (!pub) {
+      log.debug("Leaving syncVerificationKey().");
+      return false;
+    }
     var desc = certDescriptor(val('sign_alg'));
-    if (desc.kind === 'hmac') return false; // no public key for HMAC
-    setVal('jwt_verification_key', isJwk(pub) ? await pubToPem(pub, desc) : pub);
+    if (desc.kind === 'hmac') {
+      log.debug("Leaving syncVerificationKey().");
+      return false;
+    } // no public key for HMAC
+    setVal('jwt_verification_key', isJwk(pub) ? await pubToPem(pub,
+           desc) : pub);
   } catch (e) {
     log.error('syncVerificationKey: ' + e.message);
   }
@@ -860,17 +1059,29 @@ async function syncVerificationKey() {
 }
 
 async function importCertSigningKey(privPem, desc) {
+  log.debug("Entering importCertSigningKey().");
   if (desc.kind === 'rsa') {
-    return crypto.subtle.importKey('pkcs8', pemToDer(privPem), { name: 'RSASSA-PKCS1-v1_5', hash: desc.hash }, false, ['sign']);
+    log.debug("Leaving importCertSigningKey().");
+    return crypto.subtle.importKey('pkcs8', pemToDer(privPem),
+                                   { name: 'RSASSA-PKCS1-v1_5',
+                                   hash: desc.hash }, false, ['sign']);
   }
-  return crypto.subtle.importKey('pkcs8', pemToDer(privPem), { name: 'ECDSA', namedCurve: desc.curve }, false, ['sign']);
+  log.debug("Leaving importCertSigningKey().");
+  return crypto.subtle.importKey('pkcs8', pemToDer(privPem), { name: 'ECDSA',
+                                 namedCurve: desc.curve }, false, ['sign']);
 }
 
 async function importCertPublicKey(pubPem, desc) {
+  log.debug("Entering importCertPublicKey().");
   if (desc.kind === 'rsa') {
-    return crypto.subtle.importKey('spki', pemToDer(pubPem), { name: 'RSASSA-PKCS1-v1_5', hash: desc.hash }, true, ['verify']);
+    log.debug("Leaving importCertPublicKey().");
+    return crypto.subtle.importKey('spki', pemToDer(pubPem),
+                                   { name: 'RSASSA-PKCS1-v1_5',
+                                   hash: desc.hash }, true, ['verify']);
   }
-  return crypto.subtle.importKey('spki', pemToDer(pubPem), { name: 'ECDSA', namedCurve: desc.curve }, true, ['verify']);
+  log.debug("Leaving importCertPublicKey().");
+  return crypto.subtle.importKey('spki', pemToDer(pubPem), { name: 'ECDSA',
+                                 namedCurve: desc.curve }, true, ['verify']);
 }
 
 async function buildSelfSignedCert(privPem, pubPem, desc) {
@@ -880,7 +1091,8 @@ async function buildSelfSignedCert(privPem, pubPem, desc) {
   var cert = new pkijs.Certificate();
   cert.version = 2;
   cert.serialNumber = new asn1js.Integer({ value: 1 });
-  var dn = new pkijs.AttributeTypeAndValue({ type: '2.5.4.3', value: new asn1js.Utf8String({ value: 'jwt-tools generated key' }) });
+  var dn = new pkijs.AttributeTypeAndValue({ type: '2.5.4.3',
+      value: new asn1js.Utf8String({ value: 'jwt-tools generated key' }) });
   cert.issuer.typesAndValues.push(dn);
   cert.subject.typesAndValues.push(dn);
   cert.notBefore.value = new Date(Date.UTC(2020, 0, 1));
@@ -896,9 +1108,17 @@ async function buildSelfSignedCert(privPem, pubPem, desc) {
 async function viewSigningCert() {
   log.debug("Entering viewSigningCert().");
   var desc = certDescriptor(val('sign_alg'));
-  if (desc.kind === 'hmac') { setVal('sign_status', 'HMAC is symmetric — there is no X.509 certificate.'); return false; }
+  if (desc.kind === 'hmac') {
+    setVal('sign_status', 'HMAC is symmetric — there is no X.509 certificate.');
+    log.debug("Leaving viewSigningCert().");
+    return false;
+  }
   var priv = val('sign_private_key'), pub = val('sign_public_key');
-  if (!priv.trim() || !pub.trim()) { setVal('sign_status', 'Generate a signing key pair first.'); return false; }
+  if (!priv.trim() || !pub.trim()) {
+    setVal('sign_status', 'Generate a signing key pair first.');
+    log.debug("Leaving viewSigningCert().");
+    return false;
+  }
   try {
     var privPem = isJwk(priv) ? await privToPem(priv, desc) : priv;
     var pubPem = isJwk(pub) ? await pubToPem(pub, desc) : pub;
@@ -921,11 +1141,15 @@ var PBES2_OPTS = {
   pbkdf2HashAlgorithm: 'SHA-256'
 };
 
-// Encrypt a PKCS#8 private key into an EncryptedPrivateKeyInfo (PBES2). Returns DER bytes.
+// Encrypt a PKCS#8 private key into an EncryptedPrivateKeyInfo (PBES2). Returns
+// DER bytes.
 async function encryptedPkcs8Der(privDer, password) {
-  var bag = new pkijs.PKCS8ShroudedKeyBag({ parsedValue: pkijs.PrivateKeyInfo.fromBER(privDer) });
+  log.debug("Entering encryptedPkcs8Der().");
+  var bag = new pkijs.PKCS8ShroudedKeyBag({
+      parsedValue: pkijs.PrivateKeyInfo.fromBER(privDer) });
   var opts = Object.assign({ password: strBuf(password) }, PBES2_OPTS);
   await bag.makeInternalValues(opts);
+  log.debug("Leaving encryptedPkcs8Der().");
   return new Uint8Array(bag.toSchema().toBER(false));
 }
 
@@ -935,14 +1159,24 @@ async function buildPkcs12(privPem, pubPem, desc, password) {
   var privDer = pemToDer(privPem);
   var keyId = crypto.getRandomValues(new Uint8Array(20));
   function attrs() {
+    log.debug("Entering attrs().");
+    log.debug("Leaving attrs().");
     return [
-      new pkijs.Attribute({ type: OID_LOCAL_KEY_ID, values: [new asn1js.OctetString({ valueHex: keyId })] }),
-      new pkijs.Attribute({ type: OID_FRIENDLY_NAME, values: [new asn1js.BmpString({ value: 'jwt-tools' })] })
+      new pkijs.Attribute({ type: OID_LOCAL_KEY_ID,
+          values: [new asn1js.OctetString({ valueHex: keyId })] }),
+      new pkijs.Attribute({ type: OID_FRIENDLY_NAME,
+          values: [new asn1js.BmpString({ value: 'jwt-tools' })] })
     ];
   }
-  var certBag = new pkijs.SafeBag({ bagId: PKCS12_CERT_OID, bagValue: new pkijs.CertBag({ parsedValue: cert }), bagAttributes: attrs() });
-  var keyBag = new pkijs.SafeBag({ bagId: PKCS12_KEY_OID, bagValue: new pkijs.PKCS8ShroudedKeyBag({ parsedValue: pkijs.PrivateKeyInfo.fromBER(privDer) }), bagAttributes: attrs() });
-  await keyBag.bagValue.makeInternalValues(Object.assign({ password: strBuf(password) }, PBES2_OPTS));
+  var certBag = new pkijs.SafeBag({ bagId: PKCS12_CERT_OID,
+      bagValue: new pkijs.CertBag({ parsedValue: cert }),
+      bagAttributes: attrs() });
+  var keyBag = new pkijs.SafeBag({ bagId: PKCS12_KEY_OID,
+      bagValue: new pkijs.PKCS8ShroudedKeyBag({
+      parsedValue: pkijs.PrivateKeyInfo.fromBER(privDer) }),
+      bagAttributes: attrs() });
+  await keyBag.bagValue.makeInternalValues(Object.assign({ password: strBuf(
+                                           password) }, PBES2_OPTS));
 
   var pfx = new pkijs.PFX({
     parsedValue: {
@@ -950,15 +1184,20 @@ async function buildPkcs12(privPem, pubPem, desc, password) {
       authenticatedSafe: new pkijs.AuthenticatedSafe({
         parsedValue: {
           safeContents: [
-            { privacyMode: 0, value: new pkijs.SafeContents({ safeBags: [certBag] }) },
-            { privacyMode: 0, value: new pkijs.SafeContents({ safeBags: [keyBag] }) }
+            { privacyMode: 0,
+             value: new pkijs.SafeContents({ safeBags: [certBag] }) },
+            { privacyMode: 0,
+             value: new pkijs.SafeContents({ safeBags: [keyBag] }) }
           ]
         }
       })
     }
   });
-  await pfx.parsedValue.authenticatedSafe.makeInternalValues({ safeContents: [{}, {}] });
-  await pfx.makeInternalValues({ password: strBuf(password), iterations: 100000, pbkdf2HashAlgorithm: 'SHA-256', hmacHashAlgorithm: 'SHA-256' });
+  await pfx.parsedValue.authenticatedSafe.makeInternalValues({ safeContents: [{
+      }, {}] });
+  await pfx.makeInternalValues({ password: strBuf(password), iterations: 100000,
+                               pbkdf2HashAlgorithm: 'SHA-256',
+                               hmacHashAlgorithm: 'SHA-256' });
   log.debug("Leaving buildPkcs12().");
   return new Uint8Array(pfx.toSchema().toBER(false));
 }
@@ -970,11 +1209,14 @@ async function keysToJwk(privPem, pubPem, desc, jwtAlg, use) {
     : desc.kind === 'okp'
       ? { name: desc.name }
       : { name: 'ECDSA', namedCurve: desc.curve };
-  var privKey = await crypto.subtle.importKey('pkcs8', pemToDer(privPem), importParams, true, ['sign']);
-  var pubKey = await crypto.subtle.importKey('spki', pemToDer(pubPem), importParams, true, ['verify']);
+  var privKey = await crypto.subtle.importKey('pkcs8', pemToDer(privPem),
+      importParams, true, ['sign']);
+  var pubKey = await crypto.subtle.importKey('spki', pemToDer(pubPem),
+      importParams, true, ['verify']);
   var jp = await crypto.subtle.exportKey('jwk', privKey);
   var jpub = await crypto.subtle.exportKey('jwk', pubKey);
-  [jp, jpub].forEach(function (j) { delete j.key_ops; delete j.ext; j.alg = jwtAlg; j.use = use; });
+  [jp, jpub].forEach(function (j) { delete j.key_ops; delete j.ext; j.alg =
+   jwtAlg; j.use = use; });
   log.debug("Leaving keysToJwk().");
   return { publicKey: jpub, privateKey: jp };
 }
@@ -985,22 +1227,29 @@ async function pbes2JweEncrypt(plaintext, password) {
   var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
   var p2s = crypto.getRandomValues(new Uint8Array(16));
   var p2c = 100000;
-  var pwKey = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
-  var saltInput = concatBytes(new TextEncoder().encode(alg), new Uint8Array([0]), p2s);
-  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: saltInput, iterations: p2c, hash: 'SHA-256' },
+  var pwKey = await crypto.subtle.importKey('raw',
+      new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
+  var saltInput = concatBytes(new TextEncoder().encode(alg),
+      new Uint8Array([0]), p2s);
+  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: saltInput,
+      iterations: p2c, hash: 'SHA-256' },
     pwKey, { name: 'AES-KW', length: 128 }, false, ['wrapKey']);
-  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
-  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey, 'AES-KW'));
+  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 },
+      true, ['encrypt']);
+  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey,
+      'AES-KW'));
   var ph = { alg: alg, enc: enc, p2s: bytesToB64u(p2s), p2c: p2c };
   var phB64 = strToB64u(JSON.stringify(ph));
   var iv = crypto.getRandomValues(new Uint8Array(12));
   var full = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv, additionalData: new TextEncoder().encode(phB64), tagLength: 128 },
+    { name: 'AES-GCM', iv: iv, additionalData: new TextEncoder().encode(phB64),
+     tagLength: 128 },
     cek, new TextEncoder().encode(plaintext)));
   var ct = full.slice(0, full.length - 16);
   var tag = full.slice(full.length - 16);
   log.debug("Leaving pbes2JweEncrypt().");
-  return [phB64, bytesToB64u(wrapped), bytesToB64u(iv), bytesToB64u(ct), bytesToB64u(tag)].join('.');
+  return [phB64, bytesToB64u(wrapped), bytesToB64u(iv), bytesToB64u(ct),
+          bytesToB64u(tag)].join('.');
 }
 
 function triggerDownload(filename, data, mime) {
@@ -1021,30 +1270,57 @@ function triggerDownload(filename, data, mime) {
 async function downloadKeys(step) {
   log.debug("Entering downloadKeys().");
   var cfg = step === 'sign'
-    ? { alg: val('sign_alg'), priv: val('sign_private_key'), pub: val('sign_public_key'),
-        fmt: val('sign_ks_format'), pw: val('sign_ks_password'), status: 'sign_status', base: 'jwt-tools-signing-key', use: 'sig' }
-    : { alg: val('jwe_alg'), priv: val('jwe_private_key'), pub: val('jwe_public_key'),
-        fmt: val('jwe_ks_format'), pw: val('jwe_ks_password'), status: 'jwe_status', base: 'jwt-tools-encryption-key', use: 'enc' };
+    ? { alg: val('sign_alg'), priv: val('sign_private_key'),
+        pub: val('sign_public_key'),
+        fmt: val('sign_ks_format'), pw: val('sign_ks_password'),
+                 status: 'sign_status', base: 'jwt-tools-signing-key',
+                 use: 'sig' }
+    : { alg: val('jwe_alg'), priv: val('jwe_private_key'),
+       pub: val('jwe_public_key'),
+        fmt: val('jwe_ks_format'), pw: val('jwe_ks_password'),
+                 status: 'jwe_status', base: 'jwt-tools-encryption-key',
+                 use: 'enc' };
 
-  function fail(msg) { setVal(cfg.status, msg); }
+  function fail(msg) {
+    log.debug("Entering fail().");
+    setVal(cfg.status, msg);
+    log.debug("Leaving fail().");
+  }
 
   try {
     var desc = certDescriptor(cfg.alg);
 
     // HMAC has no key pair — only a JWK (oct) makes sense.
     if (desc.kind === 'hmac') {
-      if (cfg.fmt !== 'jwk') { fail('HMAC is a symmetric secret — only JWK export applies. Choose JWK.'); return false; }
-      if (!cfg.priv.trim()) { fail('No secret to export. Generate or paste an HMAC secret first.'); return false; }
-      var secret = isJwk(cfg.priv) ? (JSON.parse(cfg.priv).k || '') : cfg.priv.trim();
+      if (cfg.fmt !== 'jwk') {
+        fail('HMAC is a symmetric secret — only JWK export applies. ' +
+             'Choose JWK.');
+        log.debug("Leaving downloadKeys().");
+        return false;
+      }
+      if (!cfg.priv.trim()) {
+        fail('No secret to export. Generate or paste an HMAC secret first.');
+        log.debug("Leaving downloadKeys().");
+        return false;
+      }
+      var secret = isJwk(cfg.priv) ? (JSON.parse(cfg.priv).k ||
+          '') : cfg.priv.trim();
       var octJwk = { kty: 'oct', k: secret, alg: cfg.alg, use: cfg.use };
       var octText = JSON.stringify(octJwk, null, 2);
-      if (cfg.pw) { triggerDownload(cfg.base + '.jwe', await pbes2JweEncrypt(octText, cfg.pw), 'application/jose'); }
-      else { triggerDownload(cfg.base + '.jwk.json', octText, 'application/jwk+json'); }
+      if (cfg.pw) { triggerDownload(cfg.base + '.jwe',
+          await pbes2JweEncrypt(octText, cfg.pw), 'application/jose'); }
+      else { triggerDownload(cfg.base + '.jwk.json', octText,
+            'application/jwk+json'); }
       fail('Downloaded HMAC secret as JWK.');
+      log.debug("Leaving downloadKeys().");
       return false;
     }
 
-    if (!cfg.priv.trim() || !cfg.pub.trim()) { fail('No key pair to export. Generate or paste a key pair first.'); return false; }
+    if (!cfg.priv.trim() || !cfg.pub.trim()) {
+      fail('No key pair to export. Generate or paste a key pair first.');
+      log.debug("Leaving downloadKeys().");
+      return false;
+    }
 
     // The key fields may hold PEM or JWK (per the format toggle); the export
     // paths below all work from PEM, so normalize JWK inputs first.
@@ -1052,29 +1328,45 @@ async function downloadKeys(step) {
     if (isJwk(cfg.pub)) cfg.pub = await pubToPem(cfg.pub, desc);
 
     if (cfg.fmt === 'pkcs12') {
-      if (desc.kind === 'okp') { fail('PKCS#12 export is not supported for EdDSA (Ed25519) keys in-browser. Use PEM, DER, or JWK.'); return false; }
-      if (!cfg.pw) { fail('PKCS#12 requires a password. Enter one in the password field.'); return false; }
+      if (desc.kind === 'okp') {
+        fail('PKCS#12 export is not supported for EdDSA (Ed25519) keys ' +
+             'in-browser. Use PEM, DER, or JWK.');
+        log.debug("Leaving downloadKeys().");
+        return false;
+      }
+      if (!cfg.pw) {
+        fail('PKCS#12 requires a password. Enter one in the password field.');
+        log.debug("Leaving downloadKeys().");
+        return false;
+      }
       var p12 = await buildPkcs12(cfg.priv, cfg.pub, desc, cfg.pw);
       triggerDownload(cfg.base + '.p12', p12, 'application/x-pkcs12');
       fail('Downloaded password-protected PKCS#12 (.p12).');
+      log.debug("Leaving downloadKeys().");
       return false;
     }
 
     if (cfg.fmt === 'pem') {
       var privBlock;
-      if (cfg.pw) { privBlock = derToPem(await encryptedPkcs8Der(pemToDer(cfg.priv), cfg.pw), 'ENCRYPTED PRIVATE KEY'); }
+      if (cfg.pw) { privBlock =
+          derToPem(await encryptedPkcs8Der(pemToDer(cfg.priv), cfg.pw),
+          'ENCRYPTED PRIVATE KEY'); }
       else { privBlock = cfg.priv.trim() + '\n'; }
       var combined = privBlock + '\n' + cfg.pub.trim() + '\n';
       triggerDownload(cfg.base + '.pem', combined, 'application/x-pem-file');
       fail(cfg.pw ? 'Downloaded PEM (encrypted private key + public key).' : 'Downloaded PEM (private + public key).');
+      log.debug("Leaving downloadKeys().");
       return false;
     }
 
     if (cfg.fmt === 'der') {
-      var privDer = cfg.pw ? await encryptedPkcs8Der(pemToDer(cfg.priv), cfg.pw) : pemToDer(cfg.priv);
+      var privDer = cfg.pw ? await encryptedPkcs8Der(pemToDer(cfg.priv),
+          cfg.pw) : pemToDer(cfg.priv);
       triggerDownload(cfg.base + '-private.der', privDer, 'application/pkcs8');
-      triggerDownload(cfg.base + '-public.der', pemToDer(cfg.pub), 'application/octet-stream');
+      triggerDownload(cfg.base + '-public.der', pemToDer(cfg.pub),
+                      'application/octet-stream');
       fail(cfg.pw ? 'Downloaded DER (encrypted private + public), two files.' : 'Downloaded DER (private + public), two files.');
+      log.debug("Leaving downloadKeys().");
       return false;
     }
 
@@ -1082,8 +1374,14 @@ async function downloadKeys(step) {
       var pair = await keysToJwk(cfg.priv, cfg.pub, desc, cfg.alg, cfg.use);
       var jwks = { keys: [pair.publicKey, pair.privateKey] };
       var jwksText = JSON.stringify(jwks, null, 2);
-      if (cfg.pw) { triggerDownload(cfg.base + '.jwe', await pbes2JweEncrypt(jwksText, cfg.pw), 'application/jose'); fail('Downloaded PBES2-encrypted JWK set (.jwe).'); }
-      else { triggerDownload(cfg.base + '.jwk.json', jwksText, 'application/jwk+json'); fail('Downloaded JWK set (public + private).'); }
+      if (cfg.pw) { triggerDownload(cfg.base + '.jwe',
+          await pbes2JweEncrypt(jwksText, cfg.pw),
+          'application/jose'); fail('Downloaded PBES2-encrypted JWK ' +
+          'set (.jwe).'); }
+      else { triggerDownload(cfg.base + '.jwk.json', jwksText,
+            'application/jwk+json'); fail('Downloaded JWK set (public + ' +
+            'private).'); }
+      log.debug("Leaving downloadKeys().");
       return false;
     }
 
@@ -1096,8 +1394,16 @@ async function downloadKeys(step) {
   return false;
 }
 
-function downloadSigningKeys() { return downloadKeys('sign'); }
-function downloadEncryptionKeys() { return downloadKeys('enc'); }
+function downloadSigningKeys() {
+  log.debug("Entering downloadSigningKeys().");
+  log.debug("Leaving downloadSigningKeys().");
+  return downloadKeys('sign');
+}
+function downloadEncryptionKeys() {
+  log.debug("Entering downloadEncryptionKeys().");
+  log.debug("Leaving downloadEncryptionKeys().");
+  return downloadKeys('enc');
+}
 
 // ---------------------------------------------------------------------------
 // Copy a field's contents to the clipboard.
@@ -1105,10 +1411,15 @@ function downloadEncryptionKeys() { return downloadKeys('enc'); }
 function copyField(elementId) {
   log.debug("Entering copyField().");
   var el = document.getElementById(elementId);
-  if (!el) { log.error('copyField: element not found: ' + elementId); return false; }
+  if (!el) {
+    log.error('copyField: element not found: ' + elementId);
+    log.debug("Leaving copyField().");
+    return false;
+  }
   var text = el.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
+    navigator.clipboard.writeText(text).catch(function (err) { log.error(
+                                  'copyField: ' + err); });
   } else {
     // Fallback for browsers without the async clipboard API.
     try {
@@ -1127,12 +1438,15 @@ function copyField(elementId) {
 // Tab switching (matches token_detail look and feel)
 // ---------------------------------------------------------------------------
 function populateTable(evt, tabName) {
+  log.debug("Entering populateTable().");
   var i, tabcontent = document.getElementsByClassName('tabcontent');
   for (i = 0; i < tabcontent.length; i++) tabcontent[i].style.display = 'none';
   var tablinks = document.getElementsByClassName('tablinks');
-  for (i = 0; i < tablinks.length; i++) tablinks[i].className = tablinks[i].className.replace(' active', '');
+  for (i = 0; i < tablinks.length; i++) tablinks[i].className =
+       tablinks[i].className.replace(' active', '');
   document.getElementById(tabName).style.display = 'block';
   evt.currentTarget.className += ' active';
+  log.debug("Leaving populateTable().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1140,24 +1454,28 @@ function populateTable(evt, tabName) {
 // Only known debugger pages are honoured to avoid an open redirect.
 // ---------------------------------------------------------------------------
 function setReturnLink() {
-  var allowed = { 'debugger.html': '/debugger.html', 'debugger2.html': '/debugger2.html' };
+  log.debug("Entering setReturnLink().");
+  var allowed = { 'debugger.html': '/debugger.html',
+      'debugger2.html': '/debugger2.html' };
   var from = new URLSearchParams(window.location.search).get('from');
   var target = allowed[from] || '/debugger.html';
   var link = document.getElementById('return_link');
   if (link) link.setAttribute('href', target);
+  log.debug("Leaving setReturnLink().");
 }
 
 // ---------------------------------------------------------------------------
 // Initial (garbage) values
 // ---------------------------------------------------------------------------
 // Mark the JWE options this browser cannot perform. RFC 7518 defines AES-192,
-// Chrome's Web Crypto does not implement it, and offering an option that can only
-// fail is worse than not offering it — the failure arrives as an OperationError
-// from inside a key import, which explains nothing.
+// Chrome's Web Crypto does not implement it, and offering an option that can
+// only fail is worse than not offering it — the failure arrives as an
+// OperationError from inside a key import, which explains nothing.
 async function annotateUnsupportedJweOptions() {
   log.debug("Entering annotateUnsupportedJweOptions().");
   var support = await jose.probeAesSupport();
-  [['jwe_alg', jose.algUnsupportedReason], ['jwe_enc', jose.encUnsupportedReason]].forEach(function (pair) {
+  [['jwe_alg', jose.algUnsupportedReason], ['jwe_enc',
+   jose.encUnsupportedReason]].forEach(function (pair) {
     var select = document.getElementById(pair[0]);
     if (!select) return;
     Array.prototype.slice.call(select.options).forEach(function (option) {
@@ -1165,13 +1483,16 @@ async function annotateUnsupportedJweOptions() {
       if (!reason) return;
       option.disabled = true;
       if (option.textContent.indexOf("unsupported") === -1) {
-        option.textContent = option.textContent + " — unsupported here (" + reason + ")";
+        option.textContent = option.textContent + " — unsupported here (" +
+            reason + ")";
       }
-      log.debug("annotateUnsupportedJweOptions(): " + option.value + " is unusable: " + reason);
+      log.debug("annotateUnsupportedJweOptions(): " + option.value +
+                " is unusable: " + reason);
     });
     // If the page defaulted to one of them, move to something that works.
     if (select.selectedOptions.length && select.selectedOptions[0].disabled) {
-      var usable = Array.prototype.slice.call(select.options).filter(function (o) { return !o.disabled; })[0];
+      var usable = Array.prototype.slice.call(select.options)
+          .filter(function (o) { return !o.disabled; })[0];
       if (usable) select.value = usable.value;
     }
   });
@@ -1179,11 +1500,12 @@ async function annotateUnsupportedJweOptions() {
 }
 
 window.onload = function () {
+  log.debug("Entering onload().");
   log.debug('Entering onload function.');
   setReturnLink();
   annotateUnsupportedJweOptions().catch(function (e) {
-    // Not being able to probe is not a reason to fail the page; the options stay
-    // as they are and an attempt will report its own error.
+    // Not being able to probe is not a reason to fail the page; the options
+    // stay as they are and an attempt will report its own error.
     log.debug('annotateUnsupportedJweOptions: ' + e.message);
   });
   var now = Math.floor(Date.now() / 1000);

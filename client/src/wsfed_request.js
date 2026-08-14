@@ -6,18 +6,20 @@
 //
 // WS-Federation Test Tools — configuration page for the WS-Federation Passive
 // Requestor Profile. Loads/parses IdP federation metadata, builds the passive
-// sign-in request (wa=wsignin1.0 + wtrealm/wreply/wctx/wct/wfresh/whr/wauth/wreq)
-// and the sign-out request (wa=wsignout1.0), and drives the browser to the IdP.
+// sign-in request (wa=wsignin1.0 +
+// wtrealm/wreply/wctx/wct/wfresh/whr/wauth/wreq) and the sign-out request
+// (wa=wsignout1.0), and drives the browser to the IdP.
 //
-// Modeled on saml_tools.js / wstrust_tools.js: the same pane / .stored-localStorage
-// conventions and the shared xmldsig.js key-pair generation. Because the passive
-// sign-in is a top-level browser NAVIGATION (not an XHR), CORS never applies to
-// the sign-in leg and there is nothing to proxy — the backend option only
-// changes (a) how metadata is fetched and (b) the wreply target (the API /wsfed
-// landing endpoint vs the static response page). The passive-profile sign-in
-// request is NOT signed; all signature/encryption handling is on the returned
-// token (wresult) side, in wsfed_response.js. On the static (backend-less) build
-// the backend routing option is disabled.
+// Modeled on saml_tools.js / wstrust_tools.js: the same pane /
+// .stored-localStorage conventions and the shared xmldsig.js key-pair
+// generation. Because the passive sign-in is a top-level browser NAVIGATION
+// (not an XHR), CORS never applies to the sign-in leg and there is nothing to
+// proxy — the backend option only changes (a) how metadata is fetched and (b)
+// the wreply target (the API /wsfed landing endpoint vs the static response
+// page). The passive-profile sign-in request is NOT signed; all
+// signature/encryption handling is on the returned token (wresult) side, in
+// wsfed_response.js. On the static (backend-less) build the backend routing
+// option is disabled.
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -27,7 +29,8 @@ var xd = require("./xmldsig");
 var urlSafety = require("./url_safety");
 var history = require('./wsfed_history');
 var wm = require("./wsfed_msg");
-var log = bunyan.createLogger({ name: 'wsfed_request', level: appconfig.logLevel });
+var log = bunyan.createLogger({ name: 'wsfed_request',
+    level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
 var STORE_PREFIX = "wsfedtools_";
@@ -35,27 +38,69 @@ var STORE_PREFIX = "wsfedtools_";
 // ---------------------------------------------------------------------------
 // Small DOM helpers (mirror saml_tools.js / wstrust_tools.js).
 // ---------------------------------------------------------------------------
-function el(id) { return document.getElementById(id); }
-function val(id) { var e = el(id); return e ? e.value : ''; }
-function setVal(id, v) { var e = el(id); if (e) e.value = (v == null ? '' : v); }
-function setStatus(id, msg) { setVal(id, msg); }
-function show(id, on) { var e = el(id); if (e) { if (on) e.classList.remove('saml-hidden'); else e.classList.add('saml-hidden'); } }
-function checked(id) { var e = el(id); return !!(e && e.checked); }
-function tags(root, localName) { return root.getElementsByTagNameNS('*', localName); }
-function firstText(root, localName) { var e = tags(root, localName)[0]; return e ? (e.textContent || '').trim() : ''; }
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
+}
+function val(id) {
+  log.debug("Entering val().");
+  var e = el(id);
+  log.debug("Leaving val().");
+  return e ? e.value : '';
+}
+function setVal(id, v) {
+  log.debug("Entering setVal().");
+  var e = el(id);
+  if (e) e.value = (v == null ? '' : v);
+  log.debug("Leaving setVal().");
+}
+function setStatus(id, msg) {
+  log.debug("Entering setStatus().");
+  setVal(id, msg);
+  log.debug("Leaving setStatus().");
+}
+function show(id, on) {
+  log.debug("Entering show().");
+  var e = el(id);
+  if (e) { if (on) e.classList.remove('saml-hidden'); else e.classList.add(
+      'saml-hidden'); }
+  log.debug("Leaving show().");
+}
+function checked(id) {
+  log.debug("Entering checked().");
+  var e = el(id);
+  log.debug("Leaving checked().");
+  return !!(e && e.checked);
+}
+function tags(root, localName) {
+  log.debug("Entering tags().");
+  log.debug("Leaving tags().");
+  return root.getElementsByTagNameNS('*', localName);
+}
+function firstText(root, localName) {
+  log.debug("Entering firstText().");
+  var e = tags(root, localName)[0];
+  log.debug("Leaving firstText().");
+  return e ? (e.textContent || '').trim() : '';
+}
 
 // ---------------------------------------------------------------------------
 // localStorage persistence — every .stored element is saved by its id.
 // ---------------------------------------------------------------------------
-function persistedEls() { return document.querySelectorAll('.stored'); }
+function persistedEls() {
+  log.debug("Entering persistedEls().");
+  log.debug("Leaving persistedEls().");
+  return document.querySelectorAll('.stored');
+}
 
 // The relying-party key pair, and whether it may be written to localStorage.
 //
 // The same exception, and the same opt-out, as the SP key pair on
 // saml_request.html and the requestor pair on wstrust_tools.html — see the note
 // in saml_request.js. Everything else this page persists is configuration; this
-// is key material, and the debugger's standing rule is that credentials stay out
-// of localStorage. It is kept anyway by default because the workflow spans
+// is key material, and the debugger's standing rule is that credentials stay
+// out of localStorage. It is kept anyway by default because the workflow spans
 // screens: wsfed_response.html needs this private key to decrypt an
 // EncryptedAssertion, and the Passive Requestor Profile means the round trip
 // leaves this page entirely.
@@ -67,16 +112,21 @@ function persistedEls() { return document.querySelectorAll('.stored'); }
 var KEYPAIR_FIELDS = ['wsfed_rp_private_key', 'wsfed_rp_cert'];
 
 function keyPairMayBeStored() {
+  log.debug("Entering keyPairMayBeStored().");
   var e = el('wsfed_save_keypair');
   // Absent checkbox (an older cached copy of the page) keeps the previous
   // behaviour rather than silently dropping a key pair the user expects to
   // still be there after a reload.
+  log.debug("Leaving keyPairMayBeStored().");
   return !e || e.checked;
 }
 
 function forgetStoredKeyPair() {
   log.debug("Entering forgetStoredKeyPair().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving forgetStoredKeyPair().");
+    return;
+  }
   for (var i = 0; i < KEYPAIR_FIELDS.length; i++) {
     localStorage.removeItem(STORE_PREFIX + KEYPAIR_FIELDS[i]);
   }
@@ -89,14 +139,20 @@ function forgetStoredKeyPair() {
 function renderKeyPairStorageNote() {
   log.debug("Entering renderKeyPairStorageNote().");
   var note = el('wsfed_keypair_storage_note');
-  if (!note) return;
+  if (!note) {
+    log.debug("Leaving renderKeyPairStorageNote().");
+    return;
+  }
   if (keyPairMayBeStored()) {
     note.textContent = '';
+    log.debug("Leaving renderKeyPairStorageNote().");
     return;
   }
   // textContent, not innerHTML: this is a message, not markup.
-  note.textContent = 'Not saved. Use Download to keep this key pair. After a reload you will need ' +
-    'to paste it back into these two fields, and paste the private key into the Decryption Key ' +
+  note.textContent = 'Not saved. Use Download to keep this key pair. After a ' +
+      'reload you will need ' +
+    'to paste it back into these two fields, and paste the private key into ' +
+        'the Decryption Key ' +
     'field on the WS-Federation Response page before an encrypted token can be decrypted.';
   log.debug("Leaving renderKeyPairStorageNote().");
 }
@@ -113,13 +169,17 @@ function onSaveKeyPairChange() {
 
 function saveState() {
   log.debug("Entering saveState().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving saveState().");
+    return;
+  }
   var storeKeyPair = keyPairMayBeStored();
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
     if (!els[i].id) continue;
     if (!storeKeyPair && KEYPAIR_FIELDS.indexOf(els[i].id) >= 0) continue;
-    var v = els[i].type === 'checkbox' ? (els[i].checked ? '1' : '0') : els[i].value;
+    var v = els[i].type === 'checkbox' ? (els[i].checked ?
+        '1' : '0') : els[i].value;
     localStorage.setItem(STORE_PREFIX + els[i].id, v);
   }
   // Not merely "skip writing": remove what an earlier save (or an earlier
@@ -130,13 +190,17 @@ function saveState() {
 }
 function restoreState() {
   log.debug("Entering restoreState().");
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    log.debug("Leaving restoreState().");
+    return;
+  }
   var els = persistedEls();
   for (var i = 0; i < els.length; i++) {
     if (!els[i].id) continue;
     var v = localStorage.getItem(STORE_PREFIX + els[i].id);
     if (v === null) continue;
-    if (els[i].type === 'checkbox') els[i].checked = (v === '1' || v === 'true' || v === 'on');
+    if (els[i].type === 'checkbox') els[i].checked = (v === '1' ||
+        v === 'true' || v === 'on');
     else els[i].value = v;
   }
   log.debug("Leaving restoreState().");
@@ -145,7 +209,14 @@ function restoreState() {
 // ---------------------------------------------------------------------------
 // Section-visibility toggles.
 // ---------------------------------------------------------------------------
-function onIncludeWreqChange() { show('wsfed_wreq_section', checked('wsfed_include_wreq')); saveState(); autoBuildRequest(); return false; }
+function onIncludeWreqChange() {
+  log.debug("Entering onIncludeWreqChange().");
+  show('wsfed_wreq_section', checked('wsfed_include_wreq'));
+  saveState();
+  autoBuildRequest();
+  log.debug("Leaving onIncludeWreqChange().");
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // IdP federation metadata: load (via the backend proxy or a direct browser
@@ -154,15 +225,22 @@ function onIncludeWreqChange() { show('wsfed_wreq_section', checked('wsfed_inclu
 function loadMetadata() {
   log.debug("Entering loadMetadata().");
   var url = val('wsfed_metadata_url').trim();
-  if (!url) { setStatus('wsfed_metadata_status', 'Enter a federation metadata URL first.'); return false; }
+  if (!url) {
+    setStatus('wsfed_metadata_status',
+              'Enter a federation metadata URL first.');
+    log.debug("Leaving loadMetadata().");
+    return false;
+  }
   setStatus('wsfed_metadata_status', 'Loading metadata…');
   // With a backend, proxy the fetch to dodge CORS (the metadata endpoint rarely
-  // sends CORS headers); on the static build, fetch it directly from the browser.
+  // sends CORS headers); on the static build, fetch it directly from the
+  // browser.
   var fetchUrl = appconfig.backendAvailable
     ? (appconfig.apiUrl + '/samlmetadata?url=' + encodeURIComponent(btoa(url)))
     : url;
   fetch(fetchUrl)
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' +
+        r.status); return r.text(); })
     .then(function (xml) {
       setVal('wsfed_metadata_doc', xml);
       parseWsFedMetadata(xml);
@@ -172,27 +250,36 @@ function loadMetadata() {
     .catch(function (e) {
       log.error('loadMetadata: ' + e.message);
       setStatus('wsfed_metadata_status', 'Metadata load failed: ' + e.message +
-        (appconfig.backendAvailable ? '' : ' — the metadata endpoint likely blocks direct browser calls (CORS); paste the XML into the box below instead.'));
+        (appconfig.backendAvailable ? '' : ' — the metadata endpoint likely ' +
+         'blocks direct browser calls (CORS); paste the XML into the box ' +
+         'below instead.'));
     });
   log.debug("Leaving loadMetadata().");
   return false;
 }
 
 function uploadMetadata() {
+  log.debug("Entering uploadMetadata().");
   var f = el('wsfed_metadata_file');
   if (f) f.click();
+  log.debug("Leaving uploadMetadata().");
   return false;
 }
 function onMetadataFile(evt) {
   log.debug("Entering onMetadataFile().");
   var file = evt && evt.target && evt.target.files && evt.target.files[0];
-  if (!file) return;
+  if (!file) {
+    log.debug("Leaving onMetadataFile().");
+    return;
+  }
   var reader = new FileReader();
   reader.onload = function () {
+    log.debug("Entering onload().");
     setVal('wsfed_metadata_doc', reader.result);
     parseWsFedMetadata(reader.result);
     saveState();
     autoBuildRequest();
+    log.debug("Leaving onload().");
   };
   reader.readAsText(file);
   log.debug("Leaving onMetadataFile().");
@@ -201,15 +288,22 @@ function onMetadataFile(evt) {
 // Parse an XML federation-metadata document and populate the config fields. The
 // WS-Federation IdP/STS role is a <RoleDescriptor> whose xsi:type is
 // SecurityTokenServiceType; rather than resolve the xsi:type prefix we simply
-// pick the RoleDescriptor that CONTAINS a PassiveRequestorEndpoint. Endpoints and
-// the signing certificate are read namespace-agnostically.
+// pick the RoleDescriptor that CONTAINS a PassiveRequestorEndpoint. Endpoints
+// and the signing certificate are read namespace-agnostically.
 function parseWsFedMetadata(xmlText) {
   log.debug("Entering parseWsFedMetadata().");
   var doc;
-  try { doc = new DOMParser().parseFromString(xmlText || '', 'application/xml'); }
-  catch (e) { setStatus('wsfed_metadata_status', 'Parse error: ' + e.message); return; }
-  if (!doc || !doc.documentElement || doc.getElementsByTagName('parsererror').length) {
+  try {
+    doc = new DOMParser().parseFromString(xmlText || '', 'application/xml');
+  } catch (e) {
+    setStatus('wsfed_metadata_status', 'Parse error: ' + e.message);
+    log.debug("Leaving parseWsFedMetadata().");
+    return;
+  }
+  if (!doc || !doc.documentElement ||
+      doc.getElementsByTagName('parsererror').length) {
     setStatus('wsfed_metadata_status', 'Metadata is not well-formed XML.');
+    log.debug("Leaving parseWsFedMetadata().");
     return;
   }
 
@@ -221,7 +315,8 @@ function parseWsFedMetadata(xmlText) {
   var scope = doc;
   var roles = tags(doc, 'RoleDescriptor');
   for (var i = 0; i < roles.length; i++) {
-    if (tags(roles[i], 'PassiveRequestorEndpoint').length) { scope = roles[i]; break; }
+    if (tags(roles[i], 'PassiveRequestorEndpoint').length) { scope =
+        roles[i]; break; }
   }
 
   var passive = tags(scope, 'PassiveRequestorEndpoint')[0];
@@ -231,16 +326,20 @@ function parseWsFedMetadata(xmlText) {
       setVal('wsfed_signin_endpoint', addr);
       // Passive sign-out uses the same endpoint with wa=wsignout1.0 unless a
       // dedicated sign-out endpoint is advertised.
-      if (!val('wsfed_signout_endpoint')) setVal('wsfed_signout_endpoint', addr);
+      if (!val('wsfed_signout_endpoint')) setVal('wsfed_signout_endpoint',
+          addr);
     }
   }
   // Optional dedicated sign-out endpoints (rare).
-  var signout = tags(scope, 'SingleSignOutNotificationEndpoint')[0] || tags(scope, 'SingleSignOutSubscriptionEndpoint')[0];
-  if (signout) { var so = firstText(signout, 'Address'); if (so) setVal('wsfed_signout_endpoint', so); }
+  var signout = tags(scope, 'SingleSignOutNotificationEndpoint')[0] ||
+      tags(scope, 'SingleSignOutSubscriptionEndpoint')[0];
+  if (signout) { var so = firstText(signout,
+      'Address'); if (so) setVal('wsfed_signout_endpoint', so); }
 
   // Optional active (WS-Trust) STS endpoint — handy to seed the WS-Trust page.
   var sts = tags(scope, 'SecurityTokenServiceEndpoint')[0];
-  if (sts) { var stsAddr = firstText(sts, 'Address'); if (stsAddr) setVal('wsfed_sts_endpoint', stsAddr); }
+  if (sts) { var stsAddr = firstText(sts,
+      'Address'); if (stsAddr) setVal('wsfed_sts_endpoint', stsAddr); }
 
   // Token-signing certificate: prefer a KeyDescriptor with use="signing".
   var kds = tags(scope, 'KeyDescriptor');
@@ -263,7 +362,8 @@ function parseWsFedMetadata(xmlText) {
   if (val('wsfed_sts_endpoint')) bits.push('STS endpoint');
   setStatus('wsfed_metadata_status', bits.length
     ? ('Parsed metadata (' + bits.join(', ') + ').')
-    : 'Parsed metadata, but no PassiveRequestorEndpoint was found — enter the sign-in endpoint manually.');
+    : 'Parsed metadata, but no PassiveRequestorEndpoint was found — enter ' +
+        'the sign-in endpoint manually.');
   log.debug("Leaving parseWsFedMetadata().");
 }
 
@@ -287,7 +387,9 @@ function generateKeys() {
       // not the one the buttons would now send.
       buildRequestUi();
       if (!signingEnabled()) {
-        setStatus('wsfed_call_status', 'Key pair generated. The private key is reused on the response page to decrypt an encrypted token.');
+        setStatus('wsfed_call_status', 'Key pair generated. The private key ' +
+                  'is reused on the response page to decrypt an ' +
+                  'encrypted token.');
       }
     } catch (e) {
       log.error('generateKeys: ' + e.message);
@@ -299,18 +401,27 @@ function generateKeys() {
 }
 
 function triggerDownload(filename, data, mime) {
+  log.debug("Entering triggerDownload().");
   var blob = new Blob([data], { type: mime || 'application/octet-stream' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  log.debug("Leaving triggerDownload().");
 }
 function downloadKeys() {
+  log.debug("Entering downloadKeys().");
   var priv = val('wsfed_rp_private_key');
-  if (!priv) { setStatus('wsfed_call_status', 'Generate a key pair first.'); return false; }
+  if (!priv) {
+    setStatus('wsfed_call_status', 'Generate a key pair first.');
+    log.debug("Leaving downloadKeys().");
+    return false;
+  }
   triggerDownload('wsfed-rp-key.pem', priv, 'application/x-pem-file');
-  triggerDownload('wsfed-rp-cert.pem', val('wsfed_rp_cert'), 'application/x-pem-file');
+  triggerDownload('wsfed-rp-cert.pem', val('wsfed_rp_cert'),
+                  'application/x-pem-file');
+  log.debug("Leaving downloadKeys().");
   return false;
 }
 
@@ -337,8 +448,8 @@ function signInOptions() {
 // Signing the sign-in request.
 //
 // The Passive Requestor Profile does not REQUIRE a signed sign-in request — the
-// IdP is free to ignore one — so this is a debugging affordance: it lets you put
-// a signature on the wire and see what an IdP does with it. Two bindings,
+// IdP is free to ignore one — so this is a debugging affordance: it lets you
+// put a signature on the wire and see what an IdP does with it. Two bindings,
 // because there are two places a signature can go and they are not
 // interchangeable:
 //
@@ -355,23 +466,38 @@ function signInOptions() {
 //              without one — and the page turns that on for you rather than
 //              silently producing an unsigned request.
 //
-// Both go through ./xmldsig.js, the same engine the SAML and WS-Trust pages use.
-// Nothing here reimplements a signature.
+// Both go through ./xmldsig.js, the same engine the SAML and WS-Trust pages
+// use. Nothing here reimplements a signature.
 // ---------------------------------------------------------------------------
-function signingEnabled() { return checked('wsfed_sign_request'); }
-function signingBinding() { return val('wsfed_sig_binding') || 'redirect'; }
-function signingAlg() { return val('wsfed_sig_alg') || xd.SIG_ALG_RSA_SHA256; }
+function signingEnabled() {
+  log.debug("Entering signingEnabled().");
+  log.debug("Leaving signingEnabled().");
+  return checked('wsfed_sign_request');
+}
+function signingBinding() {
+  log.debug("Entering signingBinding().");
+  log.debug("Leaving signingBinding().");
+  return val('wsfed_sig_binding') || 'redirect';
+}
+function signingAlg() {
+  log.debug("Entering signingAlg().");
+  log.debug("Leaving signingAlg().");
+  return val('wsfed_sig_alg') || xd.SIG_ALG_RSA_SHA256;
+}
 
 // The private key, or null. A signed run without one degrades to UNSIGNED and
 // says so — silently sending an unsigned request when the box is ticked is the
 // one outcome that would mislead somebody debugging a signature.
 function signingKey() {
+  log.debug("Entering signingKey().");
   var pem = val('wsfed_rp_private_key').trim();
+  log.debug("Leaving signingKey().");
   return /PRIVATE KEY/.test(pem) ? pem : null;
 }
 
 // Selecting the enveloped binding needs XML to sign.
 function onSigBindingChange() {
+  log.debug("Entering onSigBindingChange().");
   if (signingBinding() === 'enveloped' && !checked('wsfed_include_wreq')) {
     var box = el('wsfed_include_wreq');
     if (box) { box.checked = true; }
@@ -379,26 +505,32 @@ function onSigBindingChange() {
   }
   saveState();
   autoBuildRequest();
+  log.debug("Leaving onSigBindingChange().");
   return false;
 }
 
 function onSignRequestChange() {
+  log.debug("Entering onSignRequestChange().");
   show('wsfed_signing_options', signingEnabled());
   saveState();
   autoBuildRequest();
+  log.debug("Leaving onSignRequestChange().");
   return false;
 }
 
 function buildSignInUrl() {
+  log.debug("Entering buildSignInUrl().");
   var endpoint = val('wsfed_signin_endpoint').trim();
   var opts = signInOptions();
   var wantSigned = signingEnabled();
   var key = wantSigned ? signingKey() : null;
 
-  // Enveloped: sign the wreq itself, then build the query around the signed XML.
+  // Enveloped: sign the wreq itself, then build the query around the signed
+  // XML.
   if (wantSigned && key && signingBinding() === 'enveloped') {
     if (!opts.request) {
-      lastSigningNote = 'signing is on with the enveloped binding, but there is no inline wreq to ' +
+      lastSigningNote = 'signing is on with the enveloped binding, but there ' +
+          'is no inline wreq to ' +
                         'sign — tick "Include wreq" and put the RequestSecurityToken in it.';
     } else {
       opts.request = xd.signEnveloped(opts.request, {
@@ -406,8 +538,10 @@ function buildSignInUrl() {
         certPem: val('wsfed_rp_cert').trim() || undefined,
         sigAlg: signingAlg(),
       });
-      lastSigningNote = 'enveloped signature on the inline wreq (' + shortAlg(signingAlg()) + ').';
+      lastSigningNote = 'enveloped signature on the inline wreq (' +
+          shortAlg(signingAlg()) + ').';
     }
+    log.debug("Leaving buildSignInUrl().");
     return wm.buildUrl(endpoint, wm.buildSignInParams(opts));
   }
 
@@ -423,17 +557,21 @@ function buildSignInUrl() {
     var base = qIndex >= 0 ? url.slice(0, qIndex) : url;
     var alg = signingAlg();
     var toSign = query + '&SigAlg=' + encodeURIComponent(alg);
-    var signature = xd.signQueryString(toSign, { privateKeyPem: key, sigAlg: alg });
+    var signature = xd.signQueryString(toSign, { privateKeyPem: key,
+        sigAlg: alg });
     lastSigningNote = 'signed query string (' + shortAlg(alg) + ').';
+    log.debug("Leaving buildSignInUrl().");
     return base + '?' + toSign + '&Signature=' + encodeURIComponent(signature);
   }
 
   if (wantSigned && !key) {
-    lastSigningNote = 'NOT signed: no RP private key. Press Generate Keys, or paste one, and the ' +
+    lastSigningNote = 'NOT signed: no RP private key. Press Generate Keys, ' +
+        'or paste one, and the ' +
                       'request will be rebuilt.';
   } else {
     lastSigningNote = '';
   }
+  log.debug("Leaving buildSignInUrl().");
   return url;
 }
 
@@ -443,16 +581,28 @@ function buildSignInUrl() {
 var lastSigningNote = '';
 
 function shortAlg(uri) {
+  log.debug("Entering shortAlg().");
   var m = /#(rsa-sha\d+)$/.exec(String(uri));
+  log.debug("Leaving shortAlg().");
   return m ? m[1] : uri;
 }
 function buildSignOutUrl() {
-  var endpoint = (val('wsfed_signout_endpoint') || val('wsfed_signin_endpoint')).trim();
-  var params = wm.buildSignOutParams({ reply: val('wsfed_reply'), realm: val('wsfed_realm') });
+  log.debug("Entering buildSignOutUrl().");
+  var endpoint = (val('wsfed_signout_endpoint') ||
+      val('wsfed_signin_endpoint')).trim();
+  var params = wm.buildSignOutParams({ reply: val('wsfed_reply'),
+      realm: val('wsfed_realm') });
+  log.debug("Leaving buildSignOutUrl().");
   return wm.buildUrl(endpoint, params);
 }
 
-function autoBuildRequest() { try { buildRequestUi(); } catch (e) { log.error('autoBuildRequest: ' + e.message); } return false; }
+function autoBuildRequest() {
+  log.debug("Entering autoBuildRequest()."); try {
+  buildRequestUi();
+} catch (e) {
+  log.error('autoBuildRequest: ' + e.message);
+} log.debug("Leaving autoBuildRequest().");
+return false; }
 function buildRequestUi() {
   log.debug("Entering buildRequestUi().");
   try {
@@ -476,8 +626,17 @@ function buildRequestUi() {
 function callIdp() {
   log.debug("Entering callIdp().");
   var endpoint = val('wsfed_signin_endpoint').trim();
-  if (!endpoint) { setStatus('wsfed_call_status', 'Enter (or load from metadata) the IdP passive sign-in endpoint first.'); return false; }
-  if (!val('wsfed_realm').trim()) { setStatus('wsfed_call_status', 'Enter the RP realm (wtrealm) first.'); return false; }
+  if (!endpoint) {
+    setStatus('wsfed_call_status', 'Enter (or load from metadata) the IdP ' +
+              'passive sign-in endpoint first.');
+    log.debug("Leaving callIdp().");
+    return false;
+  }
+  if (!val('wsfed_realm').trim()) {
+    setStatus('wsfed_call_status', 'Enter the RP realm (wtrealm) first.');
+    log.debug("Leaving callIdp().");
+    return false;
+  }
   var url = buildSignInUrl();
   // The endpoint came from a form field (or from IdP metadata), so it is
   // caller-supplied and reaches a navigation sink. Refuse anything that is not
@@ -487,6 +646,7 @@ function callIdp() {
     target = urlSafety.safeExternalUrl(url, 'The IdP sign-in endpoint');
   } catch (e) {
     setStatus('wsfed_call_status', e.message);
+    log.debug("Leaving callIdp().");
     return false;
   }
   setStatus('wsfed_call_status', 'Navigating to the IdP…');
@@ -494,8 +654,9 @@ function callIdp() {
   // Record the attempt BEFORE navigating: this page is about to be replaced by
   // the IdP's, so anything written after the assign() may never run. The entry
   // goes in as `Sent` and wsfed_response.html resolves it to Success or Failure
-  // when the wresult arrives — the two pages match on the operation label, which
-  // is why that label is exported from ./wsfed_history rather than typed here.
+  // when the wresult arrives — the two pages match on the operation label,
+  // which is why that label is exported from ./wsfed_history rather than typed
+  // here.
   history.record({
     operation: history.OP_SIGN_IN,
     result: history.SENT,
@@ -510,14 +671,21 @@ function callIdp() {
 }
 function signOut() {
   log.debug("Entering signOut().");
-  var endpoint = (val('wsfed_signout_endpoint') || val('wsfed_signin_endpoint')).trim();
-  if (!endpoint) { setStatus('wsfed_call_status', 'Enter (or load from metadata) the IdP sign-in/sign-out endpoint first.'); return false; }
+  var endpoint = (val('wsfed_signout_endpoint') ||
+      val('wsfed_signin_endpoint')).trim();
+  if (!endpoint) {
+    setStatus('wsfed_call_status', 'Enter (or load from metadata) the IdP ' +
+              'sign-in/sign-out endpoint first.');
+    log.debug("Leaving signOut().");
+    return false;
+  }
   var url = buildSignOutUrl();
   var target;
   try {
     target = urlSafety.safeExternalUrl(url, 'The IdP sign-out endpoint');
   } catch (e) {
     setStatus('wsfed_call_status', e.message);
+    log.debug("Leaving signOut().");
     return false;
   }
   setStatus('wsfed_call_status', 'Navigating to the IdP sign-out…');
@@ -543,51 +711,82 @@ function signOut() {
 // this page can only record that a sign-in or sign-out was DISPATCHED — the
 // IdP's verdict arrives on the response page, which closes the entry out.
 // ---------------------------------------------------------------------------
-function renderOperationHistory() { history.render(el('wsfed_operation_history')); }
+function renderOperationHistory() {
+  log.debug("Entering renderOperationHistory().");
+  history.render(el('wsfed_operation_history'));
+  log.debug("Leaving renderOperationHistory().");
+}
 function clearOperationHistory() {
+  log.debug("Entering clearOperationHistory().");
   history.clear();
   renderOperationHistory();
   // Reflect the restored signing preference before the first build.
   show('wsfed_signing_options', signingEnabled());
+  log.debug("Leaving clearOperationHistory().");
   return false;
 }
 
 function copyField(id) {
   log.debug("Entering copyField().");
   var e = el(id);
-  if (!e) return false;
+  if (!e) {
+    log.debug("Leaving copyField().");
+    return false;
+  }
   var text = e.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
+    navigator.clipboard.writeText(text).catch(function (err) { log.error(
+                                  'copyField: ' + err); });
   } else {
-    try { e.focus(); e.select(); document.execCommand('copy'); } catch (err) { log.error('copyField fallback: ' + err.message); }
+    try {
+      e.focus();
+      e.select();
+      document.execCommand('copy');
+    } catch (err) {
+      log.error('copyField fallback: ' + err.message);
+    }
   }
   log.debug("Leaving copyField().");
   return false;
 }
 function togglePane(bodyId) {
+  log.debug("Entering togglePane().");
   var b = el(bodyId);
   if (b) b.style.display = (b.style.display === 'none') ? 'block' : 'none';
+  log.debug("Leaving togglePane().");
   return false;
 }
 function showTab(evt, tabId) {
   log.debug("Entering showTab().");
   var target = el(tabId);
-  var scope = (target && target.closest && target.closest('.saml-pane')) || document;
+  var scope = (target && target.closest && target.closest('.saml-pane')) ||
+      document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
-  for (var i = 0; i < contents.length; i++) { contents[i].style.display = 'none'; }
+  for (var i = 0; i < contents.length; i++) { contents[i].style.display =
+       'none'; }
   var links = scope.getElementsByClassName('tablinks');
-  for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
+  for (var k = 0; k < links.length; k++) { links[k].className =
+       links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
   log.debug("Leaving showTab().");
   return false;
 }
 function viewCertificate(fieldId) {
+  log.debug("Entering viewCertificate().");
   var pem = val(fieldId);
-  if (!pem) { setStatus('wsfed_config_status', 'No certificate to view yet.'); return false; }
-  try { if (window.localStorage) localStorage.setItem('saml_cert_view', pem); } catch (e) { /* ignore */ }
+  if (!pem) {
+    setStatus('wsfed_config_status', 'No certificate to view yet.');
+    log.debug("Leaving viewCertificate().");
+    return false;
+  }
+  try {
+    if (window.localStorage) localStorage.setItem('saml_cert_view', pem);
+  } catch (e) {
+    /* ignore */
+  }
   window.open('/saml_cert.html?from=wsfed_request.html', '_blank');
+  log.debug("Leaving viewCertificate().");
   return false;
 }
 
@@ -598,29 +797,39 @@ function viewCertificate(fieldId) {
 // Is there anything at wsfedAcsUrl that can receive the IdP's auto-POST?
 //
 // With the api backend, yes — its /wsfed landing. Without it, only if the
-// deployment put a Lambda@Edge on that path (infra/edge/wsfed_landing.js), which
-// the env config declares with wsfedEdgeLanding. It is a separate flag rather
-// than "wsfedAcsUrl is set" because the static envs have always carried that URL
-// while nothing answered it, and rather than being inferred from backendAvailable
-// because the edge landing is deployed by Terraform, not by the site build: a
-// checkout can be redeployed without the infrastructure having been applied yet.
+// deployment put a Lambda@Edge on that path (infra/edge/wsfed_landing.js),
+// which the env config declares with wsfedEdgeLanding. It is a separate flag
+// rather than "wsfedAcsUrl is set" because the static envs have always carried
+// that URL while nothing answered it, and rather than being inferred from
+// backendAvailable because the edge landing is deployed by Terraform, not by
+// the site build: a checkout can be redeployed without the infrastructure
+// having been applied yet.
 function hasWsFedLanding() {
-  if (appconfig.backendAvailable !== false) return true;
+  log.debug("Entering hasWsFedLanding().");
+  if (appconfig.backendAvailable !== false) {
+    log.debug("Leaving hasWsFedLanding().");
+    return true;
+  }
+  log.debug("Leaving hasWsFedLanding().");
   return appconfig.wsfedEdgeLanding === true && !!appconfig.wsfedAcsUrl;
 }
 
 function enforceBackendAvailability() {
+  log.debug("Entering enforceBackendAvailability().");
   if (appconfig.backendAvailable === false) {
     var front = el('wsfed_initiateFromFrontEnd');
     var back = el('wsfed_initiateFromBackEnd');
     if (front) front.checked = true;
     if (back) { back.checked = false; back.disabled = true; }
   }
+  log.debug("Leaving enforceBackendAvailability().");
 }
 
 function setReturnLink() {
+  log.debug("Entering setReturnLink().");
   var link = el('return_link');
   if (link) link.setAttribute('href', '/index.html');
+  log.debug("Leaving setReturnLink().");
 }
 
 window.onload = function () {
@@ -642,8 +851,11 @@ window.onload = function () {
   renderOperationHistory();
 
   // Seed defaults for blank fields (fresh page).
-  if (!val('wsfed_metadata_url') && appconfig.wsfedMetadataUrlDefault) setVal('wsfed_metadata_url', appconfig.wsfedMetadataUrlDefault);
-  if (!val('wsfed_realm')) setVal('wsfed_realm', appconfig.wsfedRealm || appconfig.spEntityId || '');
+  if (!val('wsfed_metadata_url') &&
+      appconfig.wsfedMetadataUrlDefault) setVal('wsfed_metadata_url',
+      appconfig.wsfedMetadataUrlDefault);
+  if (!val('wsfed_realm')) setVal('wsfed_realm', appconfig.wsfedRealm ||
+      appconfig.spEntityId || '');
   // wreply target — where the IdP auto-POSTs the token. Three deployments, two
   // of which can receive that POST:
   //   * API backend            -> its /wsfed landing (appconfig.wsfedAcsUrl).
@@ -666,7 +878,8 @@ window.onload = function () {
   // also no edge landing to catch the POST.
   show('wsfed_backend_notice', appconfig.backendAvailable === false);
   show('wsfed_manual_capture_notice', !hasWsFedLanding());
-  show('wsfed_edge_landing_notice', appconfig.backendAvailable === false && hasWsFedLanding());
+  show('wsfed_edge_landing_notice', appconfig.backendAvailable === false &&
+       hasWsFedLanding());
   enforceBackendAvailability();
   onIncludeWreqChange();
 

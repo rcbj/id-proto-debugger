@@ -44,9 +44,9 @@ var waitTime = appconfig.waitTime || 15000;
 
 // NOTE the file name. This test is metadata_schema_VALIDATION.js, not
 // metadata_schema.js, because the tests image copies client/src modules FLAT
-// into the same directory as the test scripts — so a test named after the module
-// it loads would be silently overwritten by that module (or overwrite it),
-// depending on which COPY ran last.
+// into the same directory as the test scripts — so a test named after the
+// module it loads would be silently overwritten by that module (or overwrite
+// it), depending on which COPY ran last.
 var schema = paths.requireSharedModule(
   [path.join(__dirname, "metadata_schema.js"),
    path.join(__dirname, "..", "client", "src", "metadata_schema.js")],
@@ -79,16 +79,19 @@ function validVci() {
         vct: "urn:example:identity",
         cryptographic_binding_methods_supported: ["jwk"],
         credential_signing_alg_values_supported: ["ES256"],
-        proof_types_supported: { jwt: { proof_signing_alg_values_supported: ["ES256"] } },
+        proof_types_supported: { jwt: { proof_signing_alg_values_supported: [
+                                "ES256"] } },
         claims: [{ path: ["given_name"] }]
       },
       IdentityCredentialJwtVcJson: {
         format: "jwt_vc_json",
         scope: "identity_credential_jwt",
-        credential_definition: { type: ["VerifiableCredential", "IdentityCredential"] },
+        credential_definition: { type: ["VerifiableCredential",
+                                "IdentityCredential"] },
         cryptographic_binding_methods_supported: ["jwk"],
         credential_signing_alg_values_supported: ["ES256"],
-        proof_types_supported: { jwt: { proof_signing_alg_values_supported: ["ES256"] } }
+        proof_types_supported: { jwt: { proof_signing_alg_values_supported: [
+                                "ES256"] } }
       }
     }
   };
@@ -115,35 +118,48 @@ function validAs() {
 }
 
 function membersReported(result) {
-  return result.errors.concat(result.warnings).map(function (x) { return x.member; });
+  log.debug("Entering membersReported().");
+  log.debug("Leaving membersReported().");
+  return result.errors.concat(result.warnings)
+                              .map(function (x) { return x.member; });
 }
 function errorOn(result, member) {
+  log.debug("Entering errorOn().");
+  log.debug("Leaving errorOn().");
   return result.errors.some(function (e) { return e.member === member; });
 }
 function warningOn(result, member) {
+  log.debug("Entering warningOn().");
+  log.debug("Leaving warningOn().");
   return result.warnings.some(function (w) { return w.member === member; });
 }
 
 // --- the positive cases -----------------------------------------------------
 function validDocumentsPass() {
   log.debug("Entering validDocumentsPass().");
-  log.info("=== A document that satisfies the specification is reported clean ===");
+  log.info("=== A document that satisfies the specification is reported " +
+           "clean ===");
 
   var vci = schema.validateVciMetadata(validVci());
   assert.strictEqual(vci.errors.length, 0,
-    "a valid credential issuer metadata document should produce no errors. Got: " +
+    "a valid credential issuer metadata document should produce no " +
+        "errors. Got: " +
     JSON.stringify(vci.errors));
   assert.strictEqual(vci.warnings.length, 0,
-    "and no warnings either — every member of this fixture is https and present, so a warning here " +
-    "means the validator is complaining about something legal. Got: " + JSON.stringify(vci.warnings));
+    "and no warnings either — every member of this fixture is https and " +
+        "present, so a warning here " +
+    "means the validator is complaining about something legal. Got: " +
+        JSON.stringify(vci.warnings));
 
   var as = schema.validateAsMetadata(validAs());
   assert.strictEqual(as.errors.length, 0,
-    "a valid RFC 8414 document should produce no errors. Got: " + JSON.stringify(as.errors));
+    "a valid RFC 8414 document should produce no errors. Got: " +
+        JSON.stringify(as.errors));
   assert.strictEqual(as.warnings.length, 0,
     "and no warnings. Got: " + JSON.stringify(as.warnings));
 
-  log.info("[positive] OK — both valid documents report 0 errors and 0 warnings.");
+  log.info("[positive] OK — both valid documents report 0 errors and 0 " +
+           "warnings.");
   log.debug("Leaving validDocumentsPass().");
 }
 
@@ -162,7 +178,8 @@ function minimalDocumentsPass() {
     }
   });
   assert.strictEqual(vci.errors.length, 0,
-    "credential_issuer, credential_endpoint and one credential configuration are all OpenID4VCI " +
+    "credential_issuer, credential_endpoint and one credential configuration " +
+        "are all OpenID4VCI " +
     "requires. Got errors: " + JSON.stringify(vci.errors));
 
   var as = schema.validateAsMetadata({
@@ -174,10 +191,12 @@ function minimalDocumentsPass() {
     response_types_supported: ["code"]
   });
   assert.strictEqual(as.errors.length, 0,
-    "issuer and response_types_supported are what RFC 8414 requires outright. Got errors: " +
+    "issuer and response_types_supported are what RFC 8414 requires " +
+        "outright. Got errors: " +
     JSON.stringify(as.errors));
 
-  log.info("[positive] OK — minimal documents are accepted; nothing optional has been made mandatory.");
+  log.info("[positive] OK — minimal documents are accepted; nothing optional " +
+           "has been made mandatory.");
   log.debug("Leaving minimalDocumentsPass().");
 }
 
@@ -187,143 +206,294 @@ function minimalDocumentsPass() {
 var VCI_NEGATIVES = [
   { what: "credential_issuer missing",
     member: "credential_issuer", kind: "error",
-    break: function (d) { delete d.credential_issuer; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.credential_issuer;
+      log.debug("Leaving break().");
+    } },
   { what: "credential_issuer not a URL",
     member: "credential_issuer", kind: "error",
-    break: function (d) { d.credential_issuer = "not a url"; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.credential_issuer = "not a url";
+      log.debug("Leaving break().");
+    } },
   { what: "credential_endpoint missing",
     member: "credential_endpoint", kind: "error",
-    break: function (d) { delete d.credential_endpoint; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.credential_endpoint;
+      log.debug("Leaving break().");
+    } },
   { what: "credential_configurations_supported missing",
     member: "credential_configurations_supported", kind: "error",
-    break: function (d) { delete d.credential_configurations_supported; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.credential_configurations_supported;
+      log.debug("Leaving break().");
+    } },
   { what: "credential_configurations_supported empty",
     member: "credential_configurations_supported", kind: "error",
-    break: function (d) { d.credential_configurations_supported = {}; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.credential_configurations_supported = {};
+      log.debug("Leaving break().");
+    } },
   { what: "credential_configurations_supported an array",
     member: "credential_configurations_supported", kind: "error",
-    break: function (d) { d.credential_configurations_supported = []; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.credential_configurations_supported = [];
+      log.debug("Leaving break().");
+    } },
   { what: "a configuration with no format",
-    member: 'credential_configurations_supported["IdentityCredential"].format', kind: "error",
-    break: function (d) { delete d.credential_configurations_supported.IdentityCredential.format; } },
+    member: 'credential_configurations_supported["IdentityCredential"].format',
+        kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.credential_configurations_supported.IdentityCredential.format;
+      log.debug("Leaving break().");
+    } },
   { what: "an SD-JWT VC configuration with no vct",
-    member: 'credential_configurations_supported["IdentityCredential"].vct', kind: "error",
-    break: function (d) { delete d.credential_configurations_supported.IdentityCredential.vct; } },
+    member: 'credential_configurations_supported["IdentityCredential"].vct',
+        kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.credential_configurations_supported.IdentityCredential.vct;
+      log.debug("Leaving break().");
+    } },
   { what: "a jwt_vc_json configuration with no credential_definition",
     member: 'credential_configurations_supported["IdentityCredentialJwtVcJson"].credential_definition',
     kind: "error",
     break: function (d) {
+      log.debug("Entering break().");
       delete d.credential_configurations_supported.IdentityCredentialJwtVcJson.credential_definition;
+      log.debug("Leaving break().");
     } },
   { what: "a jwt_vc_json configuration whose credential_definition has no type",
     member: 'credential_configurations_supported["IdentityCredentialJwtVcJson"].credential_definition.type',
     kind: "error",
     break: function (d) {
+      log.debug("Entering break().");
       d.credential_configurations_supported.IdentityCredentialJwtVcJson.credential_definition = {};
+      log.debug("Leaving break().");
     } },
   // The two formats naming each other's identifier: legal JSON, wrong document.
   { what: "an SD-JWT VC configuration carrying credential_definition",
     member: 'credential_configurations_supported["IdentityCredential"].credential_definition',
     kind: "warning",
     break: function (d) {
+      log.debug("Entering break().");
       d.credential_configurations_supported.IdentityCredential.credential_definition =
         { type: ["VerifiableCredential"] };
+      log.debug("Leaving break().");
     } },
   { what: "a jwt_vc_json configuration carrying a vct",
     member: 'credential_configurations_supported["IdentityCredentialJwtVcJson"].vct', kind: "warning",
     break: function (d) {
-      d.credential_configurations_supported.IdentityCredentialJwtVcJson.vct = "urn:example:identity";
+      log.debug("Entering break().");
+      d.credential_configurations_supported.IdentityCredentialJwtVcJson.vct =
+          "urn:example:identity";
+      log.debug("Leaving break().");
     } },
   { what: "an mso_mdoc configuration with no doctype",
     member: 'credential_configurations_supported["Mdl"].doctype', kind: "error",
-    break: function (d) { d.credential_configurations_supported.Mdl = { format: "mso_mdoc" }; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.credential_configurations_supported.Mdl = { format: "mso_mdoc" };
+      log.debug("Leaving break().");
+    } },
   { what: "an unknown format",
-    member: 'credential_configurations_supported["Odd"].format', kind: "warning",
-    break: function (d) { d.credential_configurations_supported.Odd = { format: "made_up_format" }; } },
+    member: 'credential_configurations_supported["Odd"].format',
+        kind: "warning",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.credential_configurations_supported.Odd = { format: "made_up_format" };
+      log.debug("Leaving break().");
+    } },
   { what: "proof_types_supported with no algorithms",
     member: 'credential_configurations_supported["IdentityCredential"].proof_types_supported.jwt' +
             ".proof_signing_alg_values_supported", kind: "error",
     break: function (d) {
+      log.debug("Entering break().");
       d.credential_configurations_supported.IdentityCredential.proof_types_supported = { jwt: {} };
+      log.debug("Leaving break().");
     } },
   { what: "authorization_servers not an array",
     member: "authorization_servers", kind: "error",
-    break: function (d) { d.authorization_servers = "https://as.example.com"; } },
+    break: function (d) {
+      log.debug("Entering break()."); d.authorization_servers =
+                "https://as.example.com"; 
+      log.debug("Leaving break().");
+    } },
   { what: "batch_credential_issuance.batch_size zero",
     member: "batch_credential_issuance.batch_size", kind: "error",
-    break: function (d) { d.batch_credential_issuance = { batch_size: 0 }; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.batch_credential_issuance = { batch_size: 0 };
+      log.debug("Leaving break().");
+    } },
   { what: "credential_response_encryption missing encryption_required",
     member: "credential_response_encryption.encryption_required", kind: "error",
-    break: function (d) { delete d.credential_response_encryption.encryption_required; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.credential_response_encryption.encryption_required;
+      log.debug("Leaving break().");
+    } },
   { what: "credential_response_encryption missing alg_values_supported",
     member: "alg_values_supported", kind: "error",
-    break: function (d) { delete d.credential_response_encryption.alg_values_supported; } },
-  { what: "claims as an object (the pre-1.0 shape)",
-    member: 'credential_configurations_supported["IdentityCredential"].claims', kind: "error",
     break: function (d) {
-      d.credential_configurations_supported.IdentityCredential.claims = { given_name: {} };
+      log.debug("Entering break().");
+      delete d.credential_response_encryption.alg_values_supported;
+      log.debug("Leaving break().");
+    } },
+  { what: "claims as an object (the pre-1.0 shape)",
+    member: 'credential_configurations_supported["IdentityCredential"].claims',
+        kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.credential_configurations_supported.IdentityCredential.claims =
+          { given_name: {} };
+      log.debug("Leaving break().");
     } },
   { what: "signed_metadata that is not a compact JWS",
     member: "signed_metadata", kind: "error",
-    break: function (d) { d.signed_metadata = "not.a-jws"; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.signed_metadata = "not.a-jws";
+      log.debug("Leaving break().");
+    } },
   { what: "a plain http endpoint",
-    member: null, kind: "warning",   // folded into one line naming every http member
-    break: function (d) { d.credential_endpoint = "http://issuer.example.com/credential"; } }
+    member: null, kind: "warning",
+        // folded into one line naming every http member
+    break: function (d) {
+      log.debug("Entering break()."); d.credential_endpoint =
+                "http://issuer.example.com/credential"; 
+      log.debug("Leaving break().");
+    } }
 ];
 
 var AS_NEGATIVES = [
   { what: "issuer missing", member: "issuer", kind: "error",
-    break: function (d) { delete d.issuer; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.issuer;
+      log.debug("Leaving break().");
+    } },
   { what: "issuer with a query string", member: "issuer", kind: "error",
-    break: function (d) { d.issuer = "https://as.example.com/?tenant=1"; } },
+    break: function (d) {
+      log.debug("Entering break()."); d.issuer =
+                "https://as.example.com/?tenant=1"; 
+      log.debug("Leaving break().");
+    } },
   { what: "issuer with a fragment", member: "issuer", kind: "error",
-    break: function (d) { d.issuer = "https://as.example.com/#here"; } },
-  { what: "response_types_supported missing", member: "response_types_supported", kind: "error",
-    break: function (d) { delete d.response_types_supported; } },
-  { what: "response_types_supported not an array", member: "response_types_supported", kind: "error",
-    break: function (d) { d.response_types_supported = "code"; } },
-  { what: "response_types_supported empty", member: "response_types_supported", kind: "error",
-    break: function (d) { d.response_types_supported = []; } },
-  { what: "grant_types_supported not an array", member: "grant_types_supported", kind: "error",
-    break: function (d) { d.grant_types_supported = "authorization_code"; } },
+    break: function (d) {
+      log.debug("Entering break()."); d.issuer =
+                "https://as.example.com/#here"; 
+      log.debug("Leaving break().");
+    } },
+  { what: "response_types_supported missing",
+   member: "response_types_supported", kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.response_types_supported;
+      log.debug("Leaving break().");
+    } },
+  { what: "response_types_supported not an array",
+   member: "response_types_supported", kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.response_types_supported = "code";
+      log.debug("Leaving break().");
+    } },
+  { what: "response_types_supported empty", member: "response_types_supported",
+   kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.response_types_supported = [];
+      log.debug("Leaving break().");
+    } },
+  { what: "grant_types_supported not an array", member: "grant_types_supported",
+   kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.grant_types_supported = "authorization_code";
+      log.debug("Leaving break().");
+    } },
   { what: 'token_endpoint_auth_signing_alg_values_supported including "none"',
     member: "token_endpoint_auth_signing_alg_values_supported", kind: "error",
-    break: function (d) { d.token_endpoint_auth_signing_alg_values_supported = ["RS256", "none"]; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.token_endpoint_auth_signing_alg_values_supported = ["RS256", "none"];
+      log.debug("Leaving break().");
+    } },
   { what: "a malformed endpoint URL", member: "token_endpoint", kind: "error",
-    break: function (d) { d.token_endpoint = ":::not a url:::"; } },
-  { what: "signed_metadata that is not a compact JWS", member: "signed_metadata", kind: "error",
-    break: function (d) { d.signed_metadata = "two.parts"; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.token_endpoint = ":::not a url:::";
+      log.debug("Leaving break().");
+    } },
+  { what: "signed_metadata that is not a compact JWS",
+   member: "signed_metadata", kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.signed_metadata = "two.parts";
+      log.debug("Leaving break().");
+    } },
   // Absences the RFC allows but a reader should be told about.
-  { what: "authorization_endpoint absent", member: "authorization_endpoint", kind: "warning",
-    break: function (d) { delete d.authorization_endpoint; } },
+  { what: "authorization_endpoint absent", member: "authorization_endpoint",
+   kind: "warning",
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.authorization_endpoint;
+      log.debug("Leaving break().");
+    } },
   { what: "token_endpoint absent", member: "token_endpoint", kind: "warning",
-    break: function (d) { delete d.token_endpoint; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.token_endpoint;
+      log.debug("Leaving break().");
+    } },
   { what: "jwks_uri absent", member: "jwks_uri", kind: "warning",
-    break: function (d) { delete d.jwks_uri; } },
-  { what: "scopes_supported absent", member: "scopes_supported", kind: "warning",
-    break: function (d) { delete d.scopes_supported; } }
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.jwks_uri;
+      log.debug("Leaving break().");
+    } },
+  { what: "scopes_supported absent", member: "scopes_supported",
+   kind: "warning",
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.scopes_supported;
+      log.debug("Leaving break().");
+    } }
 ];
 
 // ---------------------------------------------------------------------------
 // DIF Well Known DID Configuration.
 //
-// A third document with a schema worth checking, and the one whose rules are most
-// easily broken by accident: the resource permits NO members beyond two, and in the
-// JWT form the header MUST NOT carry `typ` while the payload permits nothing beyond
-// iss/sub/nbf/exp/vc — both of which a JWT library adds for you unless told
-// otherwise. A document with either is well formed to the eye and refused by a
-// conforming verifier.
+// A third document with a schema worth checking, and the one whose rules are
+// most easily broken by accident: the resource permits NO members beyond two,
+// and in the JWT form the header MUST NOT carry `typ` while the payload permits
+// nothing beyond iss/sub/nbf/exp/vc — both of which a JWT library adds for you
+// unless told otherwise. A document with either is well formed to the eye and
+// refused by a conforming verifier.
 // ---------------------------------------------------------------------------
-var DIDCFG_CONTEXT = "https://identity.foundation/.well-known/did-configuration/v1";
+var DIDCFG_CONTEXT =
+    "https://identity.foundation/.well-known/did-configuration/v1";
 var VC_V1 = "https://www.w3.org/2018/credentials/v1";
 var LINKED_DID = "did:web:issuer.example%3A8081";
 
 function b64u(obj) {
+  log.debug("Entering b64u().");
+  log.debug("Leaving b64u().");
   return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
 }
 
 // The credential, as the JWT form's `vc` claim.
 function validLinkageVc() {
+  log.debug("Entering validLinkageVc().");
+  log.debug("Leaving validLinkageVc().");
   return {
     "@context": [VC_V1, DIDCFG_CONTEXT],
     issuer: LINKED_DID,
@@ -334,13 +504,16 @@ function validLinkageVc() {
   };
 }
 
-// A conforming resource in the JWT form. The signature is a placeholder: this checks
-// the SCHEMA, and whether the signature verifies is did.js's job — tests/did_tools.js
-// and tests/vc_did.js cover that against a real one.
+// A conforming resource in the JWT form. The signature is a placeholder: this
+// checks the SCHEMA, and whether the signature verifies is did.js's job —
+// tests/did_tools.js and tests/vc_did.js cover that against a real one.
 function validDidConfiguration() {
+  log.debug("Entering validDidConfiguration().");
   var header = { alg: "RS256", kid: LINKED_DID + "#key-1" };
-  var claims = { iss: LINKED_DID, sub: LINKED_DID, nbf: 1767225600, exp: 1798761600,
+  var claims = { iss: LINKED_DID, sub: LINKED_DID, nbf: 1767225600,
+      exp: 1798761600,
                  vc: validLinkageVc() };
+  log.debug("Leaving validDidConfiguration().");
   return {
     "@context": DIDCFG_CONTEXT,
     linked_dids: [b64u(header) + "." + b64u(claims) + ".c2lnbmF0dXJl"]
@@ -349,96 +522,218 @@ function validDidConfiguration() {
 
 // And in the Linked Data Proof form, which the specification equally allows.
 function validDidConfigurationLd() {
+  log.debug("Entering validDidConfigurationLd().");
   var vc = validLinkageVc();
   vc.proof = { type: "JsonWebSignature2020", proofPurpose: "assertionMethod",
-               verificationMethod: LINKED_DID + "#key-1", created: "2026-01-01T00:00:00Z",
+               verificationMethod: LINKED_DID + "#key-1",
+                   created: "2026-01-01T00:00:00Z",
                jws: "eyJ..placeholder" };
+  log.debug("Leaving validDidConfigurationLd().");
   return { "@context": DIDCFG_CONTEXT, linked_dids: [vc] };
 }
 
 // Rewrite the JWT entry after mutating its header or claims.
 function rebuild(doc, mutate) {
+  log.debug("Entering rebuild().");
   var parts = doc.linked_dids[0].split(".");
   var header = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf8"));
   var claims = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
   mutate(header, claims);
   doc.linked_dids[0] = b64u(header) + "." + b64u(claims) + "." + parts[2];
+  log.debug("Leaving rebuild().");
 }
 
 var DIDCFG_NEGATIVES = [
-  { what: "@context is not the one value the specification fixes", kind: "error", member: "@context",
-    break: function (d) { d["@context"] = "https://example.com/v1"; } },
+  { what: "@context is not the one value the specification fixes",
+   kind: "error", member: "@context",
+    break: function (d) {
+      log.debug("Entering break()."); d["@context"] = "https://example.com/v1"; 
+      log.debug("Leaving break().");
+    } },
   { what: "@context absent", kind: "error", member: "@context",
-    break: function (d) { delete d["@context"]; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d["@context"];
+      log.debug("Leaving break().");
+    } },
   { what: "linked_dids absent", kind: "error", member: "linked_dids",
-    break: function (d) { delete d.linked_dids; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.linked_dids;
+      log.debug("Leaving break().");
+    } },
   { what: "linked_dids is not an array", kind: "error", member: "linked_dids",
-    break: function (d) { d.linked_dids = "a credential"; } },
-  { what: "linked_dids empty — legal, but the origin vouches for nothing", kind: "warning",
-    member: "linked_dids", break: function (d) { d.linked_dids = []; } },
-  { what: "a member the specification does not permit", kind: "error", member: "(document)",
-    break: function (d) { d.linked_did = LINKED_DID; } },
-  { what: "an entry that is neither a JWT nor a credential object", kind: "error",
-    member: "linked_dids[0]", break: function (d) { d.linked_dids = [42]; } },
-  { what: "a JWT entry that is not three parts", kind: "error", member: "linked_dids[0]",
-    break: function (d) { d.linked_dids = ["not.ajwt"]; } },
+    break: function (d) {
+      log.debug("Entering break().");
+      d.linked_dids = "a credential";
+      log.debug("Leaving break().");
+    } },
+  { what: "linked_dids empty — legal, but the origin vouches for nothing",
+   kind: "warning",
+    member: "linked_dids", break: function (d) {
+      log.debug("Entering break().");
+      d.linked_dids = [];
+      log.debug("Leaving break().");
+    } },
+  { what: "a member the specification does not permit", kind: "error",
+   member: "(document)",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.linked_did = LINKED_DID;
+      log.debug("Leaving break().");
+    } },
+  { what: "an entry that is neither a JWT nor a credential object",
+   kind: "error",
+    member: "linked_dids[0]", break: function (d) {
+      log.debug("Entering break().");
+      d.linked_dids = [42];
+      log.debug("Leaving break().");
+    } },
+  { what: "a JWT entry that is not three parts", kind: "error",
+   member: "linked_dids[0]",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.linked_dids = ["not.ajwt"];
+      log.debug("Leaving break().");
+    } },
   // The two a JWT library does for you.
   { what: "typ in the JWT header, which MUST NOT be there", kind: "error",
     member: "linked_dids[0].typ",
-    break: function (d) { rebuild(d, function (h) { h.typ = "JWT"; }); } },
-  { what: "iat in the payload, which is not among the permitted claims", kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h) { h.typ = "JWT"; });
+      log.debug("Leaving break().");
+    } },
+  { what: "iat in the payload, which is not among the permitted claims",
+   kind: "error",
     member: "linked_dids[0] claims",
-    break: function (d) { rebuild(d, function (h, c) { c.iat = 1767225600; }); } },
-  { what: "an extra JWT header member", kind: "error", member: "linked_dids[0] header",
-    break: function (d) { rebuild(d, function (h) { h.cty = "application/json"; }); } },
-  { what: "kid absent, so the signature names no verification method", kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { c.iat = 1767225600; });
+      log.debug("Leaving break().");
+    } },
+  { what: "an extra JWT header member", kind: "error",
+   member: "linked_dids[0] header",
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h) { h.cty = "application/json"; });
+      log.debug("Leaving break().");
+    } },
+  { what: "kid absent, so the signature names no verification method",
+   kind: "error",
     member: "linked_dids[0].kid",
-    break: function (d) { rebuild(d, function (h) { delete h.kid; }); } },
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h) { delete h.kid; });
+      log.debug("Leaving break().");
+    } },
   { what: "sub differs from iss, so it is not self-issued", kind: "error",
     member: "linked_dids[0].sub",
-    break: function (d) { rebuild(d, function (h, c) { c.sub = "did:web:somebody.else"; }); } },
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { c.sub = "did:web:somebody.else"; });
+      log.debug("Leaving break().");
+    } },
   { what: "iss is not a DID", kind: "error", member: "linked_dids[0].iss",
-    break: function (d) { rebuild(d, function (h, c) { c.iss = "https://issuer.example"; }); } },
+    break: function (d) {
+      log.debug("Entering break()."); rebuild(d, function (h, c) { c.iss =
+                "https://issuer.example"; }); 
+      log.debug("Leaving break().");
+    } },
   { what: "the vc claim absent", kind: "error", member: "linked_dids[0].vc",
-    break: function (d) { rebuild(d, function (h, c) { delete c.vc; }); } },
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { delete c.vc; });
+      log.debug("Leaving break().");
+    } },
   // The credential's own rules.
-  { what: "the credential @context missing the did-configuration context", kind: "error",
+  { what: "the credential @context missing the did-configuration context",
+   kind: "error",
     member: "linked_dids[0].vc.@context",
-    break: function (d) { rebuild(d, function (h, c) { c.vc["@context"] = [VC_V1]; }); } },
-  { what: "type missing DomainLinkageCredential", kind: "error", member: "linked_dids[0].vc.type",
-    break: function (d) { rebuild(d, function (h, c) { c.vc.type = ["VerifiableCredential"]; }); } },
-  { what: "an id at the credential root, which MUST NOT be present", kind: "error",
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { c.vc["@context"] = [VC_V1]; });
+      log.debug("Leaving break().");
+    } },
+  { what: "type missing DomainLinkageCredential", kind: "error",
+   member: "linked_dids[0].vc.type",
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { c.vc.type = ["VerifiableCredential"]; });
+      log.debug("Leaving break().");
+    } },
+  { what: "an id at the credential root, which MUST NOT be present",
+   kind: "error",
     member: "linked_dids[0].vc.id",
-    break: function (d) { rebuild(d, function (h, c) { c.vc.id = "urn:uuid:no"; }); } },
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { c.vc.id = "urn:uuid:no"; });
+      log.debug("Leaving break().");
+    } },
   { what: "credentialSubject.id differs from the issuer", kind: "error",
     member: "linked_dids[0].vc.credentialSubject.id",
-    break: function (d) { rebuild(d, function (h, c) { c.vc.credentialSubject.id = "did:web:other"; }); } },
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { c.vc.credentialSubject.id =
+              "did:web:other"; });
+      log.debug("Leaving break().");
+    } },
   { what: "no origin, so the credential links nothing", kind: "error",
     member: "linked_dids[0].vc.credentialSubject.origin",
-    break: function (d) { rebuild(d, function (h, c) { delete c.vc.credentialSubject.origin; }); } },
-  { what: "an origin carrying a path, which a verifier comparing origins will not match",
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { delete c.vc.credentialSubject.origin; });
+      log.debug("Leaving break().");
+    } },
+  { what: "an origin carrying a path, which a verifier comparing origins " +
+   "will not match",
     kind: "warning", member: "linked_dids[0].vc.credentialSubject.origin",
     break: function (d) {
-      rebuild(d, function (h, c) { c.vc.credentialSubject.origin = "https://issuer.example/tenant"; });
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { c.vc.credentialSubject.origin =
+              "https://issuer.example/tenant"; });
+      log.debug("Leaving break().");
     } },
-  { what: "a proof inside the JWT's vc claim, where the JWS already IS the proof",
+  { what: "a proof inside the JWT's vc claim, where the JWS already IS " +
+   "the proof",
     kind: "error", member: "linked_dids[0].vc.proof",
-    break: function (d) { rebuild(d, function (h, c) { c.vc.proof = {}; }); } },
-  { what: "no expirationDate — required, so an indefinite linkage is at least a warning",
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { c.vc.proof = {}; });
+      log.debug("Leaving break().");
+    } },
+  { what: "no expirationDate — required, so an indefinite linkage is at " +
+   "least a warning",
     kind: "warning", member: "linked_dids[0].vc.expirationDate",
-    break: function (d) { rebuild(d, function (h, c) { delete c.vc.expirationDate; }); } }
+    break: function (d) {
+      log.debug("Entering break().");
+      rebuild(d, function (h, c) { delete c.vc.expirationDate; });
+      log.debug("Leaving break().");
+    } }
 ];
 
 var DIDCFG_LD_NEGATIVES = [
-  { what: "the Linked Data form with no proof", kind: "error", member: "linked_dids[0].proof",
-    break: function (d) { delete d.linked_dids[0].proof; } },
-  { what: "the Linked Data form with an id at the root", kind: "error", member: "linked_dids[0].id",
-    break: function (d) { d.linked_dids[0].id = "urn:uuid:no"; } }
+  { what: "the Linked Data form with no proof", kind: "error",
+   member: "linked_dids[0].proof",
+    break: function (d) {
+      log.debug("Entering break().");
+      delete d.linked_dids[0].proof;
+      log.debug("Leaving break().");
+    } },
+  { what: "the Linked Data form with an id at the root", kind: "error",
+   member: "linked_dids[0].id",
+    break: function (d) {
+      log.debug("Entering break().");
+      d.linked_dids[0].id = "urn:uuid:no";
+      log.debug("Leaving break().");
+    } }
 ];
 
 function didConfigurationFormsBothPass() {
+  log.debug("Entering didConfigurationFormsBothPass().");
   log.info("=== DID Configuration: both forms the specification allows ===");
-  [["JWT", validDidConfiguration()], ["Linked Data Proof", validDidConfigurationLd()]]
+  [["JWT", validDidConfiguration()], ["Linked Data Proof",
+   validDidConfigurationLd()]]
     .forEach(function (pair) {
       var result = schema.validateDidConfiguration(pair[1]);
       assert.deepStrictEqual(result.errors, [],
@@ -447,7 +742,9 @@ function didConfigurationFormsBothPass() {
       assert.deepStrictEqual(result.warnings, [],
         "and no warnings: " + JSON.stringify(result.warnings));
     });
-  log.info("[valid] OK — both the JWT and the Linked Data Proof form pass clean.");
+  log.info("[valid] OK — both the JWT and the Linked Data Proof form " +
+           "pass clean.");
+  log.debug("Leaving didConfigurationFormsBothPass().");
 }
 
 function runNegatives(label, makeValid, validate, cases) {
@@ -459,29 +756,36 @@ function runNegatives(label, makeValid, validate, cases) {
     var result = validate(doc);
     if (c.kind === "error") {
       assert.ok(result.errors.length > 0,
-        label + " / " + c.what + ": should be reported as an ERROR and was not. Reported: " +
+        label + " / " + c.what +
+            ": should be reported as an ERROR and was not. Reported: " +
         JSON.stringify(membersReported(result)));
       if (c.member) {
         assert.ok(errorOn(result, c.member),
-          label + " / " + c.what + ': the error should name "' + c.member + '". Reported: ' +
+          label + " / " + c.what + ': the error should name "' + c.member +
+              '". Reported: ' +
           JSON.stringify(result.errors));
       }
     } else {
       assert.ok(result.warnings.length > 0,
-        label + " / " + c.what + ": should be reported as a WARNING and was not. Reported: " +
+        label + " / " + c.what +
+            ": should be reported as a WARNING and was not. Reported: " +
         JSON.stringify(membersReported(result)));
       assert.strictEqual(result.errors.length, 0,
-        label + " / " + c.what + ": the specification permits this, so it must NOT be an error — " +
-        "calling a legal document invalid is how a checker gets ignored. Reported: " +
+        label + " / " + c.what +
+            ": the specification permits this, so it must NOT be an error — " +
+        "calling a legal document invalid is how a checker gets ignored. " +
+            "Reported: " +
         JSON.stringify(result.errors));
       if (c.member) {
         assert.ok(warningOn(result, c.member),
-          label + " / " + c.what + ': the warning should name "' + c.member + '". Reported: ' +
+          label + " / " + c.what + ': the warning should name "' + c.member +
+              '". Reported: ' +
           JSON.stringify(result.warnings));
       }
     }
   });
-  log.info("[negative] OK — " + cases.length + " " + label + " rule(s), each caught, each with the " +
+  log.info("[negative] OK — " + cases.length + " " + label +
+           " rule(s), each caught, each with the " +
            "severity the specification implies.");
   log.debug("Leaving runNegatives().");
 }
@@ -509,24 +813,32 @@ function plainHttpIsOneWarning() {
   log.info("=== Plain http is reported once, not once per member ===");
   var doc = validAs();
   ["issuer", "authorization_endpoint", "token_endpoint", "jwks_uri",
-   "registration_endpoint", "revocation_endpoint", "introspection_endpoint"].forEach(function (m) {
+   "registration_endpoint", "revocation_endpoint",
+       "introspection_endpoint"].forEach(function (m) {
     doc[m] = String(doc[m]).replace("https://", "http://");
   });
   var r = schema.validateAsMetadata(doc);
-  var httpWarnings = r.warnings.filter(function (w) { return /http:\/\//.test(w.message); });
+  var httpWarnings =
+      r.warnings.filter(function (w) { return /http:\/\//.test(w.message); });
   assert.strictEqual(httpWarnings.length, 1,
-    "seven plain-http members should produce ONE warning naming them all, not one each. Got " +
-    httpWarnings.length + ": " + JSON.stringify(r.warnings.map(function (w) { return w.member; })));
-  assert.ok(/issuer/.test(httpWarnings[0].message) && /token_endpoint/.test(httpWarnings[0].message),
-    "and that one warning should name the members. Said: " + httpWarnings[0].message);
+    "seven plain-http members should produce ONE warning naming them all, " +
+        "not one each. Got " +
+    httpWarnings.length + ": " +
+        JSON.stringify(r.warnings.map(function (w) { return w.member; })));
+  assert.ok(/issuer/.test(httpWarnings[0].message) &&
+            /token_endpoint/.test(httpWarnings[0].message),
+    "and that one warning should name the members. Said: " +
+        httpWarnings[0].message);
   assert.strictEqual(r.errors.length, 0,
-    "plain http is not an error — every local deployment this tool is used against serves it.");
-  log.info("[negative] OK — 7 http members produce exactly 1 warning, and no error.");
+    "plain http is not an error — every local deployment this tool is used " +
+        "against serves it.");
+  log.info("[negative] OK — 7 http members produce exactly 1 warning, and " +
+           "no error.");
   log.debug("Leaving plainHttpIsOneWarning().");
 }
 
-// Every finding cites where the rule comes from, so a disagreement is settled by
-// reading the specification rather than this code.
+// Every finding cites where the rule comes from, so a disagreement is settled
+// by reading the specification rather than this code.
 function everyFindingCitesTheSpec() {
   log.debug("Entering everyFindingCitesTheSpec().");
   log.info("=== Every finding cites a specification section ===");
@@ -538,7 +850,8 @@ function everyFindingCitesTheSpec() {
     assert.ok(f.cite && String(f.cite).trim() !== "",
       'the finding on "' + f.member + '" carries no citation.');
   });
-  log.info("[cite] OK — all " + (r.errors.length + r.warnings.length) + " findings cite a section.");
+  log.info("[cite] OK — all " + (r.errors.length + r.warnings.length) +
+           " findings cite a section.");
   log.debug("Leaving everyFindingCitesTheSpec().");
 }
 
@@ -552,28 +865,33 @@ async function populateRunsTheCheck() {
 
   var options = new chrome.Options();
   if (headless) options.addArguments("--headless=new");
-  options.addArguments("--no-sandbox", "--disable-dev-shm-usage", "--window-size=1500,1400");
+  options.addArguments("--no-sandbox", "--disable-dev-shm-usage",
+                       "--window-size=1500,1400");
   browserFlags.addBrowserAccessFlags(options, baseUrl);
-  var driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+  var driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).build();
   try {
     var plant = async function (vci, as) {
       log.debug("Entering plant().");
       await driver.get(baseUrl + "/vc-issuance-1.html");
-      await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
+      await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                        waitTime);
       await driver.executeScript(
         "window.localStorage.clear();" +
         "localStorage.setItem('vci_info', arguments[0]);" +
         "localStorage.setItem('discovery_info', arguments[1]);",
         JSON.stringify(vci), JSON.stringify(as));
       await driver.navigate().refresh();
-      await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
+      await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                        waitTime);
       await driver.sleep(700);
       log.debug("Leaving plant().");
     };
     var clickPopulate = async function (buttonId, reportId) {
       log.debug("Entering clickPopulate().");
       await driver.executeScript(
-        "var b = document.getElementById(arguments[0]); if (b) b.click();", buttonId);
+        "var b = document.getElementById(arguments[0]); if (b) b.click();",
+            buttonId);
       await driver.sleep(700);
       log.debug("Leaving clickPopulate().");
       return await driver.executeScript(
@@ -582,22 +900,26 @@ async function populateRunsTheCheck() {
         "var head = host.querySelector('p');" +
         "return { text: head ? head.textContent.trim() : ''," +
         "         rows: host.querySelectorAll('tbody tr').length," +
-        "         errors: host.querySelectorAll('td.vc-bad').length };", reportId);
+        "         errors: host.querySelectorAll('td.vc-bad').length };",
+            reportId);
     };
 
     // A clean document: the pane should say so, with no findings listed.
     await plant(validVci(), validAs());
     var okVci = await clickPopulate("vci_populate_button", "vci_schema_report");
-    assert.ok(okVci, "the credential issuer pane should have a schema report element.");
+    assert.ok(okVci,
+        "the credential issuer pane should have a schema report element.");
     assert.strictEqual(okVci.rows, 0,
       "a valid document should list no findings. The pane said: " + okVci.text);
     assert.ok(/satisfies every rule/.test(okVci.text),
       "and should say the document is clean. Said: " + okVci.text);
 
     var okAs = await clickPopulate("as_populate_button", "as_schema_report");
-    assert.ok(okAs, "the authorization server pane should have a schema report element.");
+    assert.ok(okAs,
+        "the authorization server pane should have a schema report element.");
     assert.strictEqual(okAs.rows, 0,
-      "a valid RFC 8414 document should list no findings. The pane said: " + okAs.text);
+      "a valid RFC 8414 document should list no findings. The pane said: " +
+          okAs.text);
 
     // A broken pair: the findings must reach the pane, and the pane must still
     // have populated — this is a debugger, not a gate.
@@ -609,26 +931,32 @@ async function populateRunsTheCheck() {
     badAs.issuer = "https://as.example.com/?tenant=1";
 
     await plant(badVci, badAs);
-    var failVci = await clickPopulate("vci_populate_button", "vci_schema_report");
+    var failVci = await clickPopulate("vci_populate_button",
+        "vci_schema_report");
     assert.ok(failVci.errors >= 2,
-      "two broken MUSTs should show as two errors in the pane. Got " + failVci.errors +
+      "two broken MUSTs should show as two errors in the pane. Got " +
+          failVci.errors +
       ": " + failVci.text);
     assert.ok(/error/i.test(failVci.text),
       "and the summary should say so. Said: " + failVci.text);
 
     var failAs = await clickPopulate("as_populate_button", "as_schema_report");
     assert.ok(failAs.errors >= 2,
-      "the RFC 8414 pane should show its two errors. Got " + failAs.errors + ": " + failAs.text);
+      "the RFC 8414 pane should show its two errors. Got " + failAs.errors +
+          ": " + failAs.text);
 
-    // Populated regardless. The authorization_endpoint of the broken AS document
-    // is still valid, so it should have reached the field.
+    // Populated regardless. The authorization_endpoint of the broken AS
+    // document is still valid, so it should have reached the field.
     var populated = await driver.executeScript(
-      "var e = document.getElementById('authorization_endpoint'); return e ? e.value : '';");
+      "var e = document.getElementById('authorization_endpoint'); return e ? " +
+          "e.value : '';");
     assert.strictEqual(populated, badAs.authorization_endpoint,
-      "an out-of-spec document must still populate: refusing would take away the one thing someone " +
+      "an out-of-spec document must still populate: refusing would take away " +
+          "the one thing someone " +
       "debugging an out-of-spec server needs. Got: '" + populated + "'");
 
-    log.info("[wiring] OK — Populate runs the check on both panes, shows the findings, and populates " +
+    log.info("[wiring] OK — Populate runs the check on both panes, shows the " +
+             "findings, and populates " +
              "either way.");
   } finally {
     await driver.quit();
@@ -640,12 +968,14 @@ async function test() {
   log.debug("Entering test().");
   validDocumentsPass();
   minimalDocumentsPass();
-  runNegatives("OpenID4VCI", validVci, schema.validateVciMetadata, VCI_NEGATIVES);
+  runNegatives("OpenID4VCI", validVci, schema.validateVciMetadata,
+               VCI_NEGATIVES);
   runNegatives("RFC 8414", validAs, schema.validateAsMetadata, AS_NEGATIVES);
   didConfigurationFormsBothPass();
   runNegatives("DIF DID Configuration", validDidConfiguration,
                schema.validateDidConfiguration, DIDCFG_NEGATIVES);
-  runNegatives("DIF DID Configuration (Linked Data form)", validDidConfigurationLd,
+  runNegatives("DIF DID Configuration (Linked Data form)",
+               validDidConfigurationLd,
                schema.validateDidConfiguration, DIDCFG_LD_NEGATIVES);
   nonObjectsAreRejected();
   plainHttpIsOneWarning();
@@ -656,8 +986,10 @@ async function test() {
 }
 
 const program = new Command();
-program.addOption(new Option("-u, --url <url>", "base url of the debugger under test"));
-program.addOption(new Option("-h, --headless <headless>", "run headless (true/false)"));
+program.addOption(new Option("-u, --url <url>",
+                  "base url of the debugger under test"));
+program.addOption(new Option("-h, --headless <headless>",
+                  "run headless (true/false)"));
 program.parse(process.argv);
 const opts = program.opts();
 if (opts.url) { baseUrl = opts.url; log.info("Setting url to " + baseUrl); }

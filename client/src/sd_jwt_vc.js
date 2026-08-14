@@ -55,7 +55,8 @@ var KEYS = {
   HOLDER_PRIVATE_JWK: "sdjwtvc_holder_private_jwk",
   // Which OID4VCI Appendix H use case the workflow is running.
   USE_CASE: "sdjwtvc_use_case",
-  // The Credential Offer, when the use case has one: { offer, source, receivedAt }.
+  // The Credential Offer, when the use case has one: { offer, source,
+  // receivedAt }.
   OFFER: "sdjwtvc_credential_offer",
   // ---- refreshing (step 4, OID4VCI section 14.5) --------------------------
   // What the issuer returned to the refresh request, held SEPARATELY from the
@@ -66,22 +67,22 @@ var KEYS = {
   REFRESHED_CREDENTIALS: "sdjwtvc_refreshed_credentials",
   REFRESHED_META: "sdjwtvc_refreshed_credential_meta",
   // The key a refresh bound the new credential to, when it was asked to bind a
-  // NEW one. It becomes the wallet's holder key only if that credential is kept:
-  // overwriting HOLDER_PRIVATE_JWK before then would throw away the private half
-  // of the key the credential still in hand is bound to, leaving it impossible to
-  // present.
+  // NEW one. It becomes the wallet's holder key only if that credential is
+  // kept: overwriting HOLDER_PRIVATE_JWK before then would throw away the
+  // private half of the key the credential still in hand is bound to, leaving
+  // it impossible to present.
   REFRESHED_HOLDER_JWK: "sdjwtvc_refreshed_holder_jwk",
   REFRESHED_HOLDER_PRIVATE_JWK: "sdjwtvc_refreshed_holder_private_jwk",
   // The credential that WAS in hand when a refresh replaced it, so what changed
-  // is still there to look at afterwards — with the key it is bound to, because a
-  // credential without its holder key cannot be presented at all.
+  // is still there to look at afterwards — with the key it is bound to, because
+  // a credential without its holder key cannot be presented at all.
   PREVIOUS_CREDENTIAL: "sdjwtvc_previous_credential",
   PREVIOUS_META: "sdjwtvc_previous_credential_meta",
   PREVIOUS_HOLDER_JWK: "sdjwtvc_previous_holder_jwk",
   PREVIOUS_HOLDER_PRIVATE_JWK: "sdjwtvc_previous_holder_private_jwk",
-  // Every attempt — issuance, access-token refresh, Credential Request, deferred
-  // poll — oldest first, with the outcome of each; and the id of the generation
-  // in hand. See the credential history below.
+  // Every attempt — issuance, access-token refresh, Credential Request,
+  // deferred poll — oldest first, with the outcome of each; and the id of the
+  // generation in hand. See the credential history below.
   HISTORY: "sdjwtvc_credential_history",
   HISTORY_INDEX: "sdjwtvc_credential_history_index",
   // How many held generations the list has had to forget, so it can say so.
@@ -93,22 +94,22 @@ var KEYS = {
 
   // --- DPoP (RFC 9449) ----------------------------------------------------
   // Whether the wallet sender-constrains its access token. "1" is on; absent or
-  // anything else is off, so an existing wallet keeps behaving exactly as it did
-  // and the Bearer path stays the default the workflow demonstrates first.
+  // anything else is off, so an existing wallet keeps behaving exactly as it
+  // did and the Bearer path stays the default the workflow demonstrates first.
   DPOP_ENABLED: "sdjwtvc_dpop_enabled",
   // How the CREDENTIAL is bound, which is a separate question from whether the
-  // TOKEN is: "pop" generates a holder key of its own and proves possession of it
-  // in the Credential Request (what the workflow has always done), "hok" reuses
-  // the DPoP key so the token's cnf.jkt and the credential's cnf.jwk name one
-  // key. See BINDING_MODES below.
+  // TOKEN is: "pop" generates a holder key of its own and proves possession of
+  // it in the Credential Request (what the workflow has always done), "hok"
+  // reuses the DPoP key so the token's cnf.jkt and the credential's cnf.jwk
+  // name one key. See BINDING_MODES below.
   DPOP_BINDING: "sdjwtvc_dpop_binding",
   DPOP_ALG: "sdjwtvc_dpop_alg",
   DPOP_PUBLIC_JWK: "sdjwtvc_dpop_public_jwk",
   DPOP_PRIVATE_JWK: "sdjwtvc_dpop_private_jwk",
   // The RFC 7638 thumbprint of the public half. Stored rather than recomputed
   // because step 1 needs it for the dpop_jkt authorization parameter before any
-  // page has had a reason to hash the key, and because it is what step 2 compares
-  // against the token's cnf.jkt to show the binding took.
+  // page has had a reason to hash the key, and because it is what step 2
+  // compares against the token's cnf.jkt to show the binding took.
   DPOP_JKT: "sdjwtvc_dpop_jkt",
   // The most recent server-supplied nonce (RFC 9449 sections 8 and 9). Kept
   // because the next request should use it WITHOUT waiting to be asked again —
@@ -132,14 +133,14 @@ var KEYS = {
 //         access token's cnf.jkt and as the credential's cnf.jwk, and the
 //         Credential Request's proof is signed by it.
 //
-// Neither is more correct. hok means the holder has one key to protect instead of
-// two and the issuer can see that the party presenting the token is the party the
-// credential will be bound to; pop keeps the credential's lifetime independent of
-// the token's, which matters because the credential outlives the token by months
-// and a key rotated for OAuth reasons should not invalidate a credential. Note
-// hok requires DPoP to be on at all — without a DPoP key there is nothing to
-// reuse — which is why the two checkboxes are not independent, and the pane says
-// so rather than silently ignoring one of them.
+// Neither is more correct. hok means the holder has one key to protect instead
+// of two and the issuer can see that the party presenting the token is the
+// party the credential will be bound to; pop keeps the credential's lifetime
+// independent of the token's, which matters because the credential outlives the
+// token by months and a key rotated for OAuth reasons should not invalidate a
+// credential. Note hok requires DPoP to be on at all — without a DPoP key there
+// is nothing to reuse — which is why the two checkboxes are not independent,
+// and the pane says so rather than silently ignoring one of them.
 var BINDING_MODES = {
   POP: "pop",
   HOK: "hok"
@@ -155,10 +156,10 @@ var HOLDER_PRIVATE_KEYS = [
   "sdjwtvc_previous_holder_private_jwk",
   // The DPoP key's private half belongs on this list for the same reason as the
   // others, and doubly so under Holder of Key, where it IS the holder key. The
-  // consequence is deliberate and the pane says it: with saving off, the DPoP key
-  // does not survive a page load, so the access token bound to it becomes
-  // unusable — which is precisely what a sender-constrained token is supposed to
-  // do when the key is gone.
+  // consequence is deliberate and the pane says it: with saving off, the DPoP
+  // key does not survive a page load, so the access token bound to it becomes
+  // unusable — which is precisely what a sender-constrained token is supposed
+  // to do when the key is gone.
   "sdjwtvc_dpop_private_jwk"
 ];
 
@@ -182,12 +183,16 @@ var USE_CASES = [
     spec: "H.6",
     label: "Wallet-initiated",
     title: "Start from the wallet",
-    summary: "You know which issuer you want. The wallet retrieves its metadata, you pick a credential, " +
+    summary: "You know which issuer you want. The wallet retrieves its " +
+        "metadata, you pick a credential, " +
              "and the wallet asks for it.",
-    detail: "Nothing is offered to you: the wallet drives the whole thing. This is what the workflow did " +
-            "before the other use cases existed, and it is the plain Authorization Code flow with no " +
+    detail: "Nothing is offered to you: the wallet drives the whole thing. " +
+        "This is what the workflow did " +
+            "before the other use cases existed, and it is the plain " +
+                "Authorization Code flow with no " +
             "Credential Offer involved.",
-    mechanics: "Issuer metadata by URL → Authorization Code + PKCE → Credential Request.",
+    mechanics: "Issuer metadata by URL → Authorization Code + PKCE → " +
+        "Credential Request.",
     available: true
   },
   {
@@ -195,12 +200,16 @@ var USE_CASES = [
     spec: "H.1",
     label: "Credential Offer — same device",
     title: "The issuer offers you a credential",
-    summary: "You are on the issuer's web page and follow a link that offers you a credential. It hands " +
+    summary: "You are on the issuer's web page and follow a link that offers " +
+        "you a credential. It hands " +
              "your wallet a Credential Offer, on this same device.",
-    detail: "The issuer builds a Credential Offer naming itself, the credential on offer, and an " +
-            "issuer_state that ties what follows back to the offer. Your wallet shows you what was " +
+    detail: "The issuer builds a Credential Offer naming itself, the " +
+        "credential on offer, and an " +
+            "issuer_state that ties what follows back to the offer. Your " +
+                "wallet shows you what was " +
             "offered before anything is requested.",
-    mechanics: "Credential Offer (by value or by reference) → Authorization Code + PKCE with issuer_state → " +
+    mechanics: "Credential Offer (by value or by reference) → Authorization " +
+        "Code + PKCE with issuer_state → " +
                "Credential Request.",
     available: true
   },
@@ -209,11 +218,15 @@ var USE_CASES = [
     spec: "H.2",
     label: "Credential Offer — cross device",
     title: "Scan a code, type a transaction code",
-    summary: "The issuer shows a QR code on another screen. Your wallet scans it and you type a short " +
+    summary: "The issuer shows a QR code on another screen. Your wallet " +
+        "scans it and you type a short " +
              "transaction code sent to you separately.",
-    detail: "The offer carries a pre-authorized code instead of sending you to a login page, so there is " +
-            "no authorization request at all — the transaction code is what proves it is really you.",
-    mechanics: "Credential Offer with a pre-authorized_code grant + tx_code → Token Request → " +
+    detail: "The offer carries a pre-authorized code instead of sending you " +
+        "to a login page, so there is " +
+            "no authorization request at all — the transaction code is what " +
+                "proves it is really you.",
+    mechanics: "Credential Offer with a pre-authorized_code grant + tx_code " +
+        "→ Token Request → " +
                "Credential Request.",
     available: true
   },
@@ -222,39 +235,57 @@ var USE_CASES = [
     spec: "H.3",
     label: "Credential Offer — deferred",
     title: "The credential is not ready yet",
-    summary: "The issuer accepts your request but needs time — background checks, a human in the loop — " +
+    summary: "The issuer accepts your request but needs time — background " +
+        "checks, a human in the loop — " +
              "and your wallet collects the credential later.",
-    detail: "The credential endpoint answers with a transaction identifier instead of a credential, and " +
+    detail: "The credential endpoint answers with a transaction identifier " +
+        "instead of a credential, and " +
             "the wallet comes back to the deferred endpoint until it is ready.",
-    mechanics: "Credential Request → transaction_id → Deferred Credential Request → Credential.",
+    mechanics: "Credential Request → transaction_id → Deferred Credential " +
+        "Request → Credential.",
     available: true
   }
 ];
 
 var DEFAULT_USE_CASE = "wallet-initiated";
 
-function useCases() { return USE_CASES; }
+function useCases() {
+  log.debug("Entering useCases().");
+  log.debug("Leaving useCases().");
+  return USE_CASES;
+}
 
 function useCaseById(id) {
+  log.debug("Entering useCaseById().");
   for (var i = 0; i < USE_CASES.length; i++) {
-    if (USE_CASES[i].id === id) return USE_CASES[i];
+    if (USE_CASES[i].id === id) {
+      log.debug("Leaving useCaseById().");
+      return USE_CASES[i];
+    }
   }
+  log.debug("Leaving useCaseById().");
   return null;
 }
 
 function currentUseCase() {
+  log.debug("Entering currentUseCase().");
+  log.debug("Leaving currentUseCase().");
   return useCaseById(get(KEYS.USE_CASE)) || useCaseById(DEFAULT_USE_CASE);
 }
 
 function setUseCase(id) {
   log.debug("Entering setUseCase().");
   var uc = useCaseById(id);
-  if (!uc) return null;
+  if (!uc) {
+    log.debug("Leaving setUseCase().");
+    return null;
+  }
   set(KEYS.USE_CASE, uc.id);
   // The use case can change part-way through a page's life — an arriving
   // Credential Offer switches it after the badge has already been drawn — so
   // redraw it here rather than leaving every caller to remember.
-  if (typeof document !== "undefined" && document.getElementById("vc_use_case_badge")) {
+  if (typeof document !== "undefined" &&
+      document.getElementById("vc_use_case_badge")) {
     renderUseCaseBadge();
   }
   log.debug("Leaving setUseCase().");
@@ -265,14 +296,18 @@ function setUseCase(id) {
 function renderUseCaseBadge() {
   log.debug("Entering renderUseCaseBadge().");
   var host = document.getElementById("vc_steps");
-  if (!host) return null;
+  if (!host) {
+    log.debug("Leaving renderUseCaseBadge().");
+    return null;
+  }
   var uc = currentUseCase();
   var existing = document.getElementById("vc_use_case_badge");
   if (existing) existing.parentNode.removeChild(existing);
   var badge = document.createElement("p");
   badge.id = "vc_use_case_badge";
   badge.className = "vc-use-case-badge";
-  badge.innerHTML = 'Use case: <strong>' + uc.spec + ' &middot; ' + uc.label + '</strong> — ' +
+  badge.innerHTML = 'Use case: <strong>' + uc.spec + ' &middot; ' + uc.label +
+      '</strong> — ' +
                     uc.mechanics + ' <a href="/vc-issuance-0.html">change</a>';
   host.parentNode.insertBefore(badge, host.nextSibling);
   log.debug("Leaving renderUseCaseBadge().");
@@ -283,30 +318,49 @@ function renderUseCaseBadge() {
 // The Credential Offer (OID4VCI section 4), for the use cases that have one.
 // ---------------------------------------------------------------------------
 function storeOffer(offer, source) {
-  setJson(KEYS.OFFER, { offer: offer, source: source, receivedAt: new Date().toISOString() });
+  log.debug("Entering storeOffer().");
+  setJson(KEYS.OFFER, { offer: offer, source: source,
+          receivedAt: new Date().toISOString() });
+  log.debug("Leaving storeOffer().");
 }
 
-function storedOffer() { return getJson(KEYS.OFFER); }
+function storedOffer() {
+  log.debug("Entering storedOffer().");
+  log.debug("Leaving storedOffer().");
+  return getJson(KEYS.OFFER);
+}
 
-function forgetOffer() { remove(KEYS.OFFER); }
+function forgetOffer() {
+  log.debug("Entering forgetOffer().");
+  remove(KEYS.OFFER);
+  log.debug("Leaving forgetOffer().");
+}
 
-// The pre-authorized code grant, if that is what the offer carries. An offer has
-// one grant or the other: authorization_code sends the End-User through the
+// The pre-authorized code grant, if that is what the offer carries. An offer
+// has one grant or the other: authorization_code sends the End-User through the
 // authorization server, pre-authorized_code says that already happened
 // somewhere else and this code is the proof of it.
 //
 // Every one of these reads the STORED offer when called with no argument, the
 // same way offerIssuerState() does — a page usually wants "the offer in hand".
-var PRE_AUTHORIZED_GRANT = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
+var PRE_AUTHORIZED_GRANT =
+    "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 
 function offerOrStored(offer) {
-  if (offer) return offer;
+  log.debug("Entering offerOrStored().");
+  if (offer) {
+    log.debug("Leaving offerOrStored().");
+    return offer;
+  }
   var stored = storedOffer();
+  log.debug("Leaving offerOrStored().");
   return (stored && stored.offer) || null;
 }
 
 function preAuthorizedGrant(offer) {
+  log.debug("Entering preAuthorizedGrant().");
   var grants = (offerOrStored(offer) || {}).grants || {};
+  log.debug("Leaving preAuthorizedGrant().");
   return grants[PRE_AUTHORIZED_GRANT] || null;
 }
 
@@ -314,21 +368,27 @@ function preAuthorizedGrant(offer) {
 // the value reaches the End-User by another channel entirely, which is the
 // point of it. { input_mode, length, description } or null.
 function offerTxCode(offer) {
+  log.debug("Entering offerTxCode().");
   var grant = preAuthorizedGrant(offer);
+  log.debug("Leaving offerTxCode().");
   return (grant && grant.tx_code) || null;
 }
 
 function offerPreAuthorizedCode(offer) {
+  log.debug("Entering offerPreAuthorizedCode().");
   var grant = preAuthorizedGrant(offer);
+  log.debug("Leaving offerPreAuthorizedCode().");
   return (grant && grant["pre-authorized_code"]) || "";
 }
 
 // The issuer_state an authorization_code offer carries, if there is one. The
 // authorization request has to send it back.
 function offerIssuerState() {
+  log.debug("Entering offerIssuerState().");
   var stored = storedOffer();
   var grants = stored && stored.offer && stored.offer.grants;
   var authz = grants && grants.authorization_code;
+  log.debug("Leaving offerIssuerState().");
   return (authz && authz.issuer_state) || "";
 }
 
@@ -337,21 +397,26 @@ var STEP2_URL = "/vc-issuance-2.html";
 var STEP3_URL = "/vc-issuance-3.html";
 var STEP4_URL = "/vc-issuance-4.html";
 // Where the PRESENTATION workflow starts. It lives here rather than in
-// sd_jwt_vp.js because the pages that link to it are issuance pages, which do not
-// load that module.
+// sd_jwt_vp.js because the pages that link to it are issuance pages, which do
+// not load that module.
 var PRESENTATION_URL = "/vc-presentation-0.html";
 
 function ls() {
+  log.debug("Entering ls().");
   try {
+    log.debug("Leaving ls().");
     return window.localStorage;
   } catch (e) {
-    // Blocked (private mode, third-party restrictions): the workflow degrades to
-    // "nothing was remembered" rather than failing.
+    // Blocked (private mode, third-party restrictions): the workflow degrades
+    // to "nothing was remembered" rather than failing.
+    log.debug("Leaving ls().");
     return null;
   }
 }
 function get(key) {
+  log.debug("Entering get().");
   var s = ls();
+  log.debug("Leaving get().");
   return s ? s.getItem(key) : null;
 }
 
@@ -359,33 +424,37 @@ function get(key) {
 // Whether the holder key pair's private half may be kept in localStorage.
 //
 // The debugger's standing rule is that credentials do not go to localStorage.
-// This workflow bends it, and unlike the SAML and WS-Trust key pairs it bends it
-// hard: the holder private key is written on step 2, read again on step 4 to
+// This workflow bends it, and unlike the SAML and WS-Trust key pairs it bends
+// it hard: the holder private key is written on step 2, read again on step 4 to
 // refresh, and read by a DIFFERENT workflow entirely — the presentation pages —
-// to sign the Key Binding JWT. Those pages are where the two workflows meet, and
-// they meet at this key.
+// to sign the Key Binding JWT. Those pages are where the two workflows meet,
+// and they meet at this key.
 //
-// So it stays the default, and it is now a choice, made on step 2 where the pair
-// is generated. The gate lives HERE, in set()/setJson(), rather than at the call
-// sites: there are writers in three bundles (issuance step 2, issuance step 4's
-// refresh and generation-activation, and the history), and a gate at each is a
-// gate somebody will forget to add to the fourth.
+// So it stays the default, and it is now a choice, made on step 2 where the
+// pair is generated. The gate lives HERE, in set()/setJson(), rather than at
+// the call sites: there are writers in three bundles (issuance step 2, issuance
+// step 4's refresh and generation-activation, and the history), and a gate at
+// each is a gate somebody will forget to add to the fourth.
 function holderPrivateKeyMayBeStored() {
+  log.debug("Entering holderPrivateKeyMayBeStored().");
   // Only an explicit "0" disables it, so a missing or unreadable preference
   // keeps the previous behaviour rather than silently dropping a key the user
   // expects to still be there.
+  log.debug("Leaving holderPrivateKeyMayBeStored().");
   return get(KEYS.SAVE_HOLDER_KEY) !== "0";
 }
 
 function isHolderPrivateKey(key) {
+  log.debug("Entering isHolderPrivateKey().");
+  log.debug("Leaving isHolderPrivateKey().");
   return HOLDER_PRIVATE_KEYS.indexOf(key) >= 0;
 }
 
 // Remove every stored copy of the private half, including the per-generation
 // copies inside the credential history. Stripping the history is the deliberate
 // part: a generation whose holder key is gone cannot be presented, which is
-// normally a bug (see recordHistoryEntry) — here it is the point, and it is what
-// the user is warned about before choosing it.
+// normally a bug (see recordHistoryEntry) — here it is the point, and it is
+// what the user is warned about before choosing it.
 function forgetStoredHolderPrivateKeys() {
   log.debug("Entering forgetStoredHolderPrivateKeys().");
   for (var i = 0; i < HOLDER_PRIVATE_KEYS.length; i++) {
@@ -401,11 +470,13 @@ function forgetStoredHolderPrivateKeys() {
       }
     }
     if (stripped) {
-      // Written straight through set(), not setJson(): the history is not itself
-      // a private key, and the rows have already had the private halves removed.
+      // Written straight through set(), not setJson(): the history is not
+      // itself a private key, and the rows have already had the private halves
+      // removed.
       set(KEYS.HISTORY, JSON.stringify(history));
     }
-    log.debug("Leaving forgetStoredHolderPrivateKeys(). Stripped " + stripped + " history row(s).");
+    log.debug("Leaving forgetStoredHolderPrivateKeys(). Stripped " + stripped +
+              " history row(s).");
     return stripped;
   }
   log.debug("Leaving forgetStoredHolderPrivateKeys(). No history to strip.");
@@ -415,14 +486,19 @@ function forgetStoredHolderPrivateKeys() {
 function set(key, value) {
   log.debug("Entering set().");
   var s = ls();
-  if (!s) return;
+  if (!s) {
+    log.debug("Leaving set().");
+    return;
+  }
   if (isHolderPrivateKey(key) && !holderPrivateKeyMayBeStored()) {
     // Refused, and anything an earlier session wrote goes too — an opt-out that
     // leaves yesterday's private key in storage is not an opt-out. remove() is
     // called directly rather than via forgetStoredHolderPrivateKeys() to avoid
     // recursing back through set() on the history.
     remove(key);
-    log.debug("set(): refused to store " + key + " — holder key saving is turned off.");
+    log.debug("set(): refused to store " + key +
+              " — holder key saving is turned off.");
+    log.debug("Leaving set().");
     return;
   }
   try {
@@ -434,26 +510,41 @@ function set(key, value) {
 }
 
 function remove(key) {
+  log.debug("Entering remove().");
   var s = ls();
-  if (!s) return;
+  if (!s) {
+    log.debug("Leaving remove().");
+    return;
+  }
   try {
     s.removeItem(key);
   } catch (e) {
     // No storage in this context; nothing to remove.
   }
+  log.debug("Leaving remove().");
 }
 
 function getJson(key) {
+  log.debug("Entering getJson().");
   var raw = get(key);
-  if (!raw) return null;
+  if (!raw) {
+    log.debug("Leaving getJson().");
+    return null;
+  }
   try {
+    log.debug("Leaving getJson().");
     return JSON.parse(raw);
   } catch (e) {
     // A value written by an older build, or hand-edited: treat it as absent.
+    log.debug("Leaving getJson().");
     return null;
   }
 }
-function setJson(key, value) { set(key, JSON.stringify(value)); }
+function setJson(key, value) {
+  log.debug("Entering setJson().");
+  set(key, JSON.stringify(value));
+  log.debug("Leaving setJson().");
+}
 
 // Record the choice and enforce it immediately. Turning it off purges; turning
 // it back on cannot un-purge, which the step 2 pane says out loud.
@@ -467,23 +558,34 @@ function setJson(key, value) { set(key, JSON.stringify(value)); }
 function readHolderPrivateJwk(inputId) {
   log.debug("Entering readHolderPrivateJwk().");
   var stored = getJson(KEYS.HOLDER_PRIVATE_JWK);
-  if (stored) return { jwk: stored, source: "storage", problem: null };
-  var e = (typeof document !== "undefined" && inputId) ? document.getElementById(inputId) : null;
+  if (stored) {
+    log.debug("Leaving readHolderPrivateJwk().");
+    return { jwk: stored, source: "storage", problem: null };
+  }
+  var e = (typeof document !== "undefined" && inputId) ?
+      document.getElementById(inputId) : null;
   var raw = (e && e.value) ? e.value.trim() : "";
-  if (!raw) return { jwk: null, source: "none", problem: null };
+  if (!raw) {
+    log.debug("Leaving readHolderPrivateJwk().");
+    return { jwk: null, source: "none", problem: null };
+  }
   var parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    return { jwk: null, source: "pasted", problem: "the pasted holder key is not JSON: " + err.message };
+    log.debug("Leaving readHolderPrivateJwk().");
+    return { jwk: null, source: "pasted",
+            problem: "the pasted holder key is not JSON: " + err.message };
   }
   // A downloaded pair is { publicJwk, privateJwk }; accept that as well as a
   // bare private JWK, because pasting back the file you were given is the
   // obvious thing to try.
   if (parsed && parsed.privateJwk) parsed = parsed.privateJwk;
   if (!parsed || !parsed.kty || !parsed.d) {
+    log.debug("Leaving readHolderPrivateJwk().");
     return { jwk: null, source: "pasted",
-             problem: "that JSON is not a private JWK — it needs at least kty and d" };
+             problem: "that JSON is not a private JWK — it needs at least " +
+                 "kty and d" };
   }
   log.debug("Leaving readHolderPrivateJwk().");
   return { jwk: parsed, source: "pasted", problem: null };
@@ -493,14 +595,16 @@ function readHolderPrivateJwk(inputId) {
 // DPoP state (RFC 9449).
 //
 // Kept here rather than in dpop.js for the same reason every other storage key
-// is: dpop.js is the MECHANISM and has no DOM and no storage in it, so it can be
-// unit-tested against the RFCs' own vectors without a browser. This half is the
-// wallet's memory of what it decided.
+// is: dpop.js is the MECHANISM and has no DOM and no storage in it, so it can
+// be unit-tested against the RFCs' own vectors without a browser. This half is
+// the wallet's memory of what it decided.
 // ---------------------------------------------------------------------------
 function dpopEnabled() {
-  // Opt IN, unlike the holder-key saving switch above, which is opt out. A wallet
-  // that has never heard of DPoP must go on getting Bearer tokens, and the
-  // workflow's default path is the one the specifications describe first.
+  log.debug("Entering dpopEnabled().");
+  // Opt IN, unlike the holder-key saving switch above, which is opt out. A
+  // wallet that has never heard of DPoP must go on getting Bearer tokens, and
+  // the workflow's default path is the one the specifications describe first.
+  log.debug("Leaving dpopEnabled().");
   return get(KEYS.DPOP_ENABLED) === "1";
 }
 
@@ -510,26 +614,33 @@ function setDpopEnabled(on) {
   if (!on) {
     // The key goes with the switch. Leaving it behind would mean a wallet that
     // turned DPoP off still had a key pair lying in storage that nothing would
-    // ever use again, and — under Holder of Key — one that a later session might
-    // pick up and bind a credential to by accident.
+    // ever use again, and — under Holder of Key — one that a later session
+    // might pick up and bind a credential to by accident.
     remove(KEYS.DPOP_PRIVATE_JWK);
     remove(KEYS.DPOP_PUBLIC_JWK);
     remove(KEYS.DPOP_JKT);
     remove(KEYS.DPOP_NONCE);
     remove(KEYS.DPOP_ALG);
-    log.debug("setDpopEnabled(): DPoP turned off, so its key pair and nonce were discarded.");
+    log.debug("setDpopEnabled(): DPoP turned off, so its key pair and nonce " +
+              "were discarded.");
   }
   log.debug("Leaving setDpopEnabled().");
 }
 
-// Which mechanism binds the CREDENTIAL. Holder of Key needs a DPoP key to reuse,
-// so with DPoP off the answer is always Proof of Possession however the checkbox
-// was left — reported as the effective mode rather than silently corrected, so
-// the pane can say why.
+// Which mechanism binds the CREDENTIAL. Holder of Key needs a DPoP key to
+// reuse, so with DPoP off the answer is always Proof of Possession however the
+// checkbox was left — reported as the effective mode rather than silently
+// corrected, so the pane can say why.
 function credentialBindingMode() {
+  log.debug("Entering credentialBindingMode().");
   var stored = get(KEYS.DPOP_BINDING);
-  var wanted = stored === BINDING_MODES.HOK ? BINDING_MODES.HOK : DEFAULT_BINDING_MODE;
-  if (wanted === BINDING_MODES.HOK && !dpopEnabled()) return BINDING_MODES.POP;
+  var wanted = stored === BINDING_MODES.HOK ?
+      BINDING_MODES.HOK : DEFAULT_BINDING_MODE;
+  if (wanted === BINDING_MODES.HOK && !dpopEnabled()) {
+    log.debug("Leaving credentialBindingMode().");
+    return BINDING_MODES.POP;
+  }
+  log.debug("Leaving credentialBindingMode().");
   return wanted;
 }
 
@@ -537,27 +648,38 @@ function credentialBindingMode() {
 // off the effective mode is pop while the preference may still say hok, and the
 // checkbox must go on showing what the user chose rather than resetting itself.
 function credentialBindingPreference() {
-  return get(KEYS.DPOP_BINDING) === BINDING_MODES.HOK ? BINDING_MODES.HOK : DEFAULT_BINDING_MODE;
+  log.debug("Entering credentialBindingPreference().");
+  log.debug("Leaving credentialBindingPreference().");
+  return get(KEYS.DPOP_BINDING) === BINDING_MODES.HOK ?
+             BINDING_MODES.HOK : DEFAULT_BINDING_MODE;
 }
 
 function setCredentialBindingMode(mode) {
   log.debug("Entering setCredentialBindingMode(). mode=" + mode);
-  set(KEYS.DPOP_BINDING, mode === BINDING_MODES.HOK ? BINDING_MODES.HOK : BINDING_MODES.POP);
+  set(KEYS.DPOP_BINDING, mode === BINDING_MODES.HOK ?
+      BINDING_MODES.HOK : BINDING_MODES.POP);
   log.debug("Leaving setCredentialBindingMode().");
 }
 
 function usingHolderOfKey() {
+  log.debug("Entering usingHolderOfKey().");
+  log.debug("Leaving usingHolderOfKey().");
   return credentialBindingMode() === BINDING_MODES.HOK;
 }
 
-// The DPoP key pair as dpop.js wants it: { alg, publicJwk, privateJwk }. Returns
-// null when there is nothing usable, which is a normal state — the key may never
-// have been generated, or its private half may have been refused by the storage
-// gate above.
+// The DPoP key pair as dpop.js wants it: { alg, publicJwk, privateJwk }.
+// Returns null when there is nothing usable, which is a normal state — the key
+// may never have been generated, or its private half may have been refused by
+// the storage gate above.
 function dpopKeyPair() {
+  log.debug("Entering dpopKeyPair().");
   var privateJwk = getJson(KEYS.DPOP_PRIVATE_JWK);
   var publicJwk = getJson(KEYS.DPOP_PUBLIC_JWK);
-  if (!privateJwk || !publicJwk) return null;
+  if (!privateJwk || !publicJwk) {
+    log.debug("Leaving dpopKeyPair().");
+    return null;
+  }
+  log.debug("Leaving dpopKeyPair().");
   return {
     alg: get(KEYS.DPOP_ALG) || "ES256",
     publicJwk: publicJwk,
@@ -572,7 +694,8 @@ function storeDpopKeyPair(pair, jkt) {
   set(KEYS.DPOP_ALG, pair.alg || "ES256");
   if (jkt) set(KEYS.DPOP_JKT, jkt);
   log.debug("Leaving storeDpopKeyPair(). The private half was " +
-            (getJson(KEYS.DPOP_PRIVATE_JWK) ? "stored" : "REFUSED by the key-saving opt-out"));
+            (getJson(KEYS.DPOP_PRIVATE_JWK) ?
+             "stored" : "REFUSED by the key-saving opt-out"));
 }
 
 // Whether the wallet can actually make a proof right now. The distinction that
@@ -580,43 +703,71 @@ function storeDpopKeyPair(pair, jkt) {
 // wallet that will fail its next call — and it happens routinely, because with
 // holder-key saving off the private half does not survive a page load.
 function dpopReadiness() {
+  log.debug("Entering dpopReadiness().");
   var on = dpopEnabled();
-  if (!on) return { on: false, ready: false, problem: null };
+  if (!on) {
+    log.debug("Leaving dpopReadiness().");
+    return { on: false, ready: false, problem: null };
+  }
   var pair = dpopKeyPair();
-  if (pair) return { on: true, ready: true, problem: null, jkt: get(KEYS.DPOP_JKT) || "" };
+  if (pair) {
+    log.debug("Leaving dpopReadiness().");
+    return { on: true, ready: true, problem: null, jkt: get(KEYS.DPOP_JKT) ||
+            "" };
+  }
   if (!holderPrivateKeyMayBeStored()) {
+    log.debug("Leaving dpopReadiness().");
     return { on: true, ready: false, problem:
-      "DPoP is on but there is no key pair in storage, because saving private keys is turned " +
-      "off. A fresh key is generated for this page, and an access token bound to it stops " +
-      "working as soon as you navigate away \u2014 which is a sender-constrained token behaving " +
+      "DPoP is on but there is no key pair in storage, because saving " +
+          "private keys is turned " +
+      "off. A fresh key is generated for this page, and an access token " +
+          "bound to it stops " +
+      "working as soon as you navigate away \u2014 which is a " +
+          "sender-constrained token behaving " +
       "exactly as it should." };
   }
+  log.debug("Leaving dpopReadiness().");
   return { on: true, ready: false, problem:
     "DPoP is on but no key pair has been generated yet." };
 }
 
-function dpopNonce() { return get(KEYS.DPOP_NONCE) || ""; }
+function dpopNonce() {
+  log.debug("Entering dpopNonce().");
+  log.debug("Leaving dpopNonce().");
+  return get(KEYS.DPOP_NONCE) || "";
+}
 
 // Everything vci_wallet.js needs to sign a request, and nothing it does not.
-// This is the seam between the three DPoP modules and it is deliberate:
-// dpop.js is the cryptography (no storage, no DOM, unit-tested against the RFCs'
-// own vectors), this module is the wallet's memory, and vci_wallet.js is the
-// wire. Passing a descriptor rather than letting the wire module read storage is
-// what keeps the first two testable without a browser.
+// This is the seam between the three DPoP modules and it is deliberate: dpop.js
+// is the cryptography (no storage, no DOM, unit-tested against the RFCs' own
+// vectors), this module is the wallet's memory, and vci_wallet.js is the wire.
+// Passing a descriptor rather than letting the wire module read storage is what
+// keeps the first two testable without a browser.
 //
 // null means "send a Bearer request", which is the answer both when DPoP is off
-// and when it is on but the key is gone — the caller does not have to tell those
-// apart to make a call, only to explain itself, which is what dpopReadiness() is
-// for.
+// and when it is on but the key is gone — the caller does not have to tell
+// those apart to make a call, only to explain itself, which is what
+// dpopReadiness() is for.
 function dpopContext() {
-  if (!dpopEnabled()) return null;
+  log.debug("Entering dpopContext().");
+  if (!dpopEnabled()) {
+    log.debug("Leaving dpopContext().");
+    return null;
+  }
   var pair = dpopKeyPair();
-  if (!pair) return null;
+  if (!pair) {
+    log.debug("Leaving dpopContext().");
+    return null;
+  }
+  log.debug("Leaving dpopContext().");
   return { key: pair, nonce: dpopNonce(), remember: rememberDpopNonce };
 }
 
 function rememberDpopNonce(nonce) {
-  if (!nonce) return;
+  if (!nonce) {
+    log.debug("Leaving rememberDpopNonce().");
+    return;
+  }
   log.debug("Entering rememberDpopNonce().");
   set(KEYS.DPOP_NONCE, String(nonce));
   log.debug("Leaving rememberDpopNonce().");
@@ -628,9 +779,9 @@ function rememberDpopNonce(nonce) {
 // Before DPoP there was only one candidate, so the presentation pages read
 // HOLDER_PRIVATE_JWK and that was always right. Under Holder of Key the
 // credential's cnf.jwk is the DPoP key instead, and signing the Key Binding JWT
-// with the holder key would produce a presentation the verifier refuses — with a
-// complaint about the KB-JWT's signature, which reads as a broken wallet rather
-// than as the wrong key having been chosen.
+// with the holder key would produce a presentation the verifier refuses — with
+// a complaint about the KB-JWT's signature, which reads as a broken wallet
+// rather than as the wrong key having been chosen.
 //
 // So the key is chosen by MATCHING against the credential's own cnf.jwk rather
 // than by remembering which mode was used at issuance. That is deliberate: the
@@ -638,14 +789,28 @@ function rememberDpopNonce(nonce) {
 // generation in Credential History, and the credential is the only thing that
 // actually knows which key it is bound to.
 //
-// Comparison is on the public coordinates — x/y for EC, n for RSA — which is the
-// same test step 4 uses to decide whether a pasted key is the bound one.
+// Comparison is on the public coordinates — x/y for EC, n for RSA — which is
+// the same test step 4 uses to decide whether a pasted key is the bound one.
 // ---------------------------------------------------------------------------
 function samePublicKey(a, b) {
-  if (!a || !b || a.kty !== b.kty) return false;
-  if (a.kty === "EC") return a.crv === b.crv && a.x === b.x && a.y === b.y;
-  if (a.kty === "RSA") return a.n === b.n && a.e === b.e;
-  if (a.kty === "OKP") return a.crv === b.crv && a.x === b.x;
+  log.debug("Entering samePublicKey().");
+  if (!a || !b || a.kty !== b.kty) {
+    log.debug("Leaving samePublicKey().");
+    return false;
+  }
+  if (a.kty === "EC") {
+    log.debug("Leaving samePublicKey().");
+    return a.crv === b.crv && a.x === b.x && a.y === b.y;
+  }
+  if (a.kty === "RSA") {
+    log.debug("Leaving samePublicKey().");
+    return a.n === b.n && a.e === b.e;
+  }
+  if (a.kty === "OKP") {
+    log.debug("Leaving samePublicKey().");
+    return a.crv === b.crv && a.x === b.x;
+  }
+  log.debug("Leaving samePublicKey().");
   return false;
 }
 
@@ -654,66 +819,94 @@ function samePublicKey(a, b) {
 // derivation is needed — which is why this works without Web Crypto and can be
 // used from a synchronous render.
 function publicHalfOf(privateJwk) {
-  if (!privateJwk) return null;
+  log.debug("Entering publicHalfOf().");
+  if (!privateJwk) {
+    log.debug("Leaving publicHalfOf().");
+    return null;
+  }
   if (privateJwk.kty === "EC") {
+    log.debug("Leaving publicHalfOf().");
     return { kty: "EC", crv: privateJwk.crv, x: privateJwk.x, y: privateJwk.y };
   }
-  if (privateJwk.kty === "RSA") return { kty: "RSA", n: privateJwk.n, e: privateJwk.e };
-  if (privateJwk.kty === "OKP") return { kty: "OKP", crv: privateJwk.crv, x: privateJwk.x };
+  if (privateJwk.kty === "RSA") {
+    log.debug("Leaving publicHalfOf().");
+    return { kty: "RSA", n: privateJwk.n, e: privateJwk.e };
+  }
+  if (privateJwk.kty === "OKP") {
+    log.debug("Leaving publicHalfOf().");
+    return { kty: "OKP", crv: privateJwk.crv, x: privateJwk.x };
+  }
+  log.debug("Leaving publicHalfOf().");
   return null;
 }
 
 // cnfJwk: the credential's own cnf.jwk, or null when it has none (a credential
-// with no key binding at all, which is legal — OID4VCI section 8 makes the proof
-// optional when the issuer does not require binding).
+// with no key binding at all, which is legal — OID4VCI section 8 makes the
+// proof optional when the issuer does not require binding).
 //
-// Returns the same shape readHolderPrivateJwk() does, plus `boundTo` naming which
-// key was chosen, so the pane can say "the DPoP key" rather than just "a key".
+// Returns the same shape readHolderPrivateJwk() does, plus `boundTo` naming
+// which key was chosen, so the pane can say "the DPoP key" rather than just "a
+// key".
 function boundPrivateJwk(cnfJwk, inputId) {
-  log.debug("Entering boundPrivateJwk(). cnf=" + (cnfJwk ? cnfJwk.kty : "(none)"));
+  log.debug("Entering boundPrivateJwk(). cnf=" + (cnfJwk ?
+            cnfJwk.kty : "(none)"));
   var candidates = [];
   var holder = getJson(KEYS.HOLDER_PRIVATE_JWK);
-  if (holder) candidates.push({ jwk: holder, source: "storage", boundTo: "the holder key" });
+  if (holder) candidates.push({ jwk: holder, source: "storage",
+      boundTo: "the holder key" });
   var dpop = getJson(KEYS.DPOP_PRIVATE_JWK);
-  if (dpop) candidates.push({ jwk: dpop, source: "storage", boundTo: "the DPoP key (Holder of Key)" });
+  if (dpop) candidates.push({ jwk: dpop, source: "storage",
+      boundTo: "the DPoP key (Holder of Key)" });
 
-  // With no cnf to match against there is nothing to choose BY, so the holder key
-  // is used as it always was. Guessing the DPoP key here would change behaviour
-  // for every credential that has no key binding.
+  // With no cnf to match against there is nothing to choose BY, so the holder
+  // key is used as it always was. Guessing the DPoP key here would change
+  // behaviour for every credential that has no key binding.
   if (!cnfJwk) {
     if (candidates.length) {
-      log.debug("Leaving boundPrivateJwk(). No cnf; using " + candidates[0].boundTo + ".");
+      log.debug("Leaving boundPrivateJwk(). No cnf; using " +
+                candidates[0].boundTo + ".");
       return Object.assign({ problem: null }, candidates[0]);
     }
+    log.debug("Leaving boundPrivateJwk().");
     return readHolderPrivateJwk(inputId);
   }
 
   for (var i = 0; i < candidates.length; i++) {
     if (samePublicKey(publicHalfOf(candidates[i].jwk), cnfJwk)) {
-      log.debug("Leaving boundPrivateJwk(). Matched " + candidates[i].boundTo + ".");
+      log.debug("Leaving boundPrivateJwk(). Matched " + candidates[i].boundTo +
+                ".");
       return Object.assign({ problem: null }, candidates[i]);
     }
   }
 
-  // Nothing in storage matches. A pasted key may — and it is checked against the
-  // cnf too, because a pasted key that is not the bound one produces exactly the
-  // same unhelpful verifier complaint.
+  // Nothing in storage matches. A pasted key may — and it is checked against
+  // the cnf too, because a pasted key that is not the bound one produces
+  // exactly the same unhelpful verifier complaint.
   var pasted = readHolderPrivateJwk(inputId);
   if (pasted.jwk && samePublicKey(publicHalfOf(pasted.jwk), cnfJwk)) {
-    log.debug("Leaving boundPrivateJwk(). A pasted key matched the credential's cnf.");
-    return { jwk: pasted.jwk, source: "pasted", boundTo: "the pasted key", problem: null };
+    log.debug("Leaving boundPrivateJwk(). A pasted key matched the " +
+              "credential's cnf.");
+    return { jwk: pasted.jwk, source: "pasted", boundTo: "the pasted key",
+            problem: null };
   }
   if (pasted.jwk) {
+    log.debug("Leaving boundPrivateJwk().");
     return { jwk: null, source: "pasted", boundTo: "",
-             problem: "the pasted key is not the key this credential is bound to — its cnf.jwk " +
-                      "names a different key, so a Key Binding JWT signed with it would be " +
+             problem: "the pasted key is not the key this credential is " +
+                 "bound to — its cnf.jwk " +
+                      "names a different key, so a Key Binding JWT signed " +
+                          "with it would be " +
                       "refused" };
   }
   if (candidates.length) {
+    log.debug("Leaving boundPrivateJwk().");
     return { jwk: null, source: "storage", boundTo: "",
-             problem: "this browser holds " + candidates.length + " key(s) but none of them is " +
-                      "the one this credential is bound to (its cnf.jwk names another). If it " +
-                      "was issued under Holder of Key, the DPoP key is the one needed — and DPoP " +
+             problem: "this browser holds " + candidates.length +
+                 " key(s) but none of them is " +
+                      "the one this credential is bound to (its cnf.jwk " +
+                          "names another). If it " +
+                      "was issued under Holder of Key, the DPoP key is the " +
+                          "one needed — and DPoP " +
                       "keys are discarded when DPoP is switched off." };
   }
   log.debug("Leaving boundPrivateJwk(). No key at all.");
@@ -730,14 +923,16 @@ function setHolderKeySaving(on) {
 }
 
 // ---------------------------------------------------------------------------
-// The credential history: a log of every ATTEMPT, and the generations it produced.
+// The credential history: a log of every ATTEMPT, and the generations it
+// produced.
 //
 // A credential is not one object over its life. The issuance produces one, and
 // every refresh (OID4VCI section 14.5) is an attempt to produce another — which
 // may be refused, may be deferred, may come back and be kept, or may come back
-// and be thrown away. A wallet that records only the successes cannot answer "what
-// did I try, what did the issuer say, and what am I holding now", which is exactly
-// what a debugger is for. So EVERY attempt is recorded here, oldest first:
+// and be thrown away. A wallet that records only the successes cannot answer
+// "what did I try, what did the issuer say, and what am I holding now", which
+// is exactly what a debugger is for. So EVERY attempt is recorded here, oldest
+// first:
 //
 //   kind      what was attempted — an issuance, an access-token refresh
 //             (RFC 6749 section 6), a Credential Request, or a poll of the
@@ -749,11 +944,11 @@ function setHolderKeySaving(on) {
 //
 // The subset the wallet HOLDS — outcome "kept", with a credential — are the
 // generations step 4 navigates; everything else is a log row that cannot be
-// activated. Generation numbers are derived from that subset in order, not stored,
-// so they stay consistent when the log is trimmed.
+// activated. Generation numbers are derived from that subset in order, not
+// stored, so they stay consistent when the log is trimmed.
 //
-// A held entry carries its own holder key pair, because a credential whose cnf key
-// the wallet has lost cannot be presented at all: going back to an earlier
+// A held entry carries its own holder key pair, because a credential whose cnf
+// key the wallet has lost cannot be presented at all: going back to an earlier
 // generation has to bring that key with it.
 // ---------------------------------------------------------------------------
 // The window the pane shows and the store keeps: 100 attempts. Log rows are
@@ -782,7 +977,10 @@ var HISTORY_OUTCOME = {
 function credentialHistory() {
   log.debug("Entering credentialHistory().");
   var history = getJson(KEYS.HISTORY);
-  if (Object.prototype.toString.call(history) !== "[object Array]") return [];
+  if (Object.prototype.toString.call(history) !== "[object Array]") {
+    log.debug("Leaving credentialHistory().");
+    return [];
+  }
   log.debug("Leaving credentialHistory().");
   return history.map(function (entry, index) {
     var upgraded = entry || {};
@@ -798,25 +996,34 @@ function credentialHistory() {
 
 // The generations the wallet holds, oldest first: { id, entry, generation }.
 function heldGenerations() {
+  log.debug("Entering heldGenerations().");
   var out = [];
   credentialHistory().forEach(function (entry) {
     if (entry.outcome !== HISTORY_OUTCOME.KEPT || !entry.credential) return;
     out.push({ id: entry.id, entry: entry, generation: out.length + 1 });
   });
+  log.debug("Leaving heldGenerations().");
   return out;
 }
 
 // The generation in hand. HISTORY_INDEX holds the entry's id; an id that is no
-// longer there (trimmed, cleared) means the newest generation, which is what has
-// just been recorded.
+// longer there (trimmed, cleared) means the newest generation, which is what
+// has just been recorded.
 function activeGeneration() {
   log.debug("Entering activeGeneration().");
   var held = heldGenerations();
-  if (!held.length) return null;
+  if (!held.length) {
+    log.debug("Leaving activeGeneration().");
+    return null;
+  }
   var wanted = parseInt(get(KEYS.HISTORY_INDEX), 10);
   for (var i = 0; i < held.length; i++) {
-    if (held[i].id === wanted) return { index: i, id: held[i].id, entry: held[i].entry,
-                                        generation: held[i].generation, total: held.length };
+    if (held[i].id === wanted) {
+      log.debug("Leaving activeGeneration().");
+      return { index: i, id: held[i].id, entry: held[i].entry,
+                                        generation: held[i].generation,
+                                            total: held.length };
+    }
   }
   var last = held.length - 1;
   log.debug("Leaving activeGeneration().");
@@ -824,10 +1031,12 @@ function activeGeneration() {
            generation: held[last].generation, total: held.length };
 }
 
-// How many generations fell off the end of the list. Kept so the pane can say so:
-// a history that silently forgets reads as a complete one.
+// How many generations fell off the end of the list. Kept so the pane can say
+// so: a history that silently forgets reads as a complete one.
 function droppedGenerations() {
+  log.debug("Entering droppedGenerations().");
   var n = parseInt(get(KEYS.HISTORY_DROPPED) || "0", 10);
+  log.debug("Leaving droppedGenerations().");
   return isNaN(n) ? 0 : n;
 }
 
@@ -835,30 +1044,32 @@ function droppedGenerations() {
 // when it is recorded rather than on every render.
 function summarizeCredential(serialized) {
   log.debug("Entering summarizeCredential().");
-  var summary = { vct: "", iat: 0, nbf: 0, exp: 0, disclosures: 0, boundKey: "", signature: "",
+  var summary = { vct: "", iat: 0, nbf: 0, exp: 0, disclosures: 0, boundKey: "",
+      signature: "",
                   format: "" };
   var parsed;
   try {
-    // Format-aware: Credential History holds whatever the wallet was issued, and
-    // a jwt_vc_json generation must summarise rather than fall into the
+    // Format-aware: Credential History holds whatever the wallet was issued,
+    // and a jwt_vc_json generation must summarise rather than fall into the
     // unparseable branch below and show a blank row.
     parsed = parseCredential(serialized);
   } catch (e) {
-    // A credential this build cannot parse is still one the wallet held; it goes
-    // in the history with an empty summary rather than being dropped.
+    // A credential this build cannot parse is still one the wallet held; it
+    // goes in the history with an empty summary rather than being dropped.
     log.debug("Leaving summarizeCredential(). Unparseable: " + e.message);
     return summary;
   }
   var payload = parsed.payload || {};
   summary.format = parsed.format || "";
-  // For a jwt_vc_json there is no vct; the row shows what the credential says it
-  // is instead, so the column is never blank for a credential that parsed.
+  // For a jwt_vc_json there is no vct; the row shows what the credential says
+  // it is instead, so the column is never blank for a credential that parsed.
   summary.vct = payload.vct || credentialLabel(parsed);
   summary.iat = payload.iat || 0;
   summary.nbf = payload.nbf || 0;
   summary.exp = payload.exp || 0;
   summary.disclosures = (parsed.disclosures || []).length;
-  summary.boundKey = (payload.cnf && payload.cnf.jwk && payload.cnf.jwk.x) || "";
+  summary.boundKey = (payload.cnf && payload.cnf.jwk && payload.cnf.jwk.x) ||
+      "";
   summary.signature = parsed.signature || "";
   log.debug("Leaving summarizeCredential(). vct=" + summary.vct);
   return summary;
@@ -867,12 +1078,12 @@ function summarizeCredential(serialized) {
 // ---------------------------------------------------------------------------
 // Recording.
 //
-// `recordHistoryEntry` appends one row per attempt and returns its id, which the
-// caller keeps so the row can be resolved later: a Credential Request is recorded
-// the moment the issuer answers, and becomes "kept" or "discarded" when the holder
-// decides. Trimming drops the oldest LOG rows first and only touches a held
-// generation when there is nothing else left to drop, so an audit trail of
-// attempts never costs the ability to go back to a credential.
+// `recordHistoryEntry` appends one row per attempt and returns its id, which
+// the caller keeps so the row can be resolved later: a Credential Request is
+// recorded the moment the issuer answers, and becomes "kept" or "discarded"
+// when the holder decides. Trimming drops the oldest LOG rows first and only
+// touches a held generation when there is nothing else left to drop, so an
+// audit trail of attempts never costs the ability to go back to a credential.
 // ---------------------------------------------------------------------------
 function recordHistoryEntry(entry) {
   log.debug("Entering recordHistoryEntry(). kind=" + (entry && entry.kind) +
@@ -891,41 +1102,48 @@ function recordHistoryEntry(entry) {
   };
   if (credential) {
     row.credential = credential;
-    row.credentials = entry.credentials && entry.credentials.length ? entry.credentials : [credential];
+    row.credentials = entry.credentials && entry.credentials.length ?
+        entry.credentials : [credential];
     row.meta = entry.meta || {};
     row.holderJwk = entry.holderJwk || null;
     // The private half is recorded per generation so an older credential can be
     // made current again and still be presentable — unless the user has opted
     // out of keeping holder private keys at all, in which case the row carries
     // the public half only and that generation is viewable but not presentable.
-    row.holderPrivateJwk = holderPrivateKeyMayBeStored() ? (entry.holderPrivateJwk || null) : null;
+    row.holderPrivateJwk = holderPrivateKeyMayBeStored() ?
+        (entry.holderPrivateJwk || null) : null;
     row.summary = summarizeCredential(credential);
   }
   history.push(row);
   trimHistory(history);
   setJson(KEYS.HISTORY, history);
   // Anything the wallet is now holding is also the generation in hand.
-  if (row.outcome === HISTORY_OUTCOME.KEPT && credential) set(KEYS.HISTORY_INDEX, String(row.id));
-  log.debug("Leaving recordHistoryEntry(). id=" + row.id + ", " + history.length + " row(s).");
+  if (row.outcome === HISTORY_OUTCOME.KEPT &&
+      credential) set(KEYS.HISTORY_INDEX, String(row.id));
+  log.debug("Leaving recordHistoryEntry(). id=" + row.id + ", " +
+            history.length + " row(s).");
   return row.id;
 }
 
 // Resolve an attempt already recorded: pending -> kept / discarded, deferred ->
-// pending, and so on. Merging rather than appending keeps it one row per attempt.
+// pending, and so on. Merging rather than appending keeps it one row per
+// attempt.
 function updateHistoryEntry(id, changes) {
   log.debug("Entering updateHistoryEntry(). id=" + id);
   var history = credentialHistory();
   var found = null;
   history.forEach(function (e) { if (e.id === id) found = e; });
   if (!found) {
-    log.debug("Leaving updateHistoryEntry(). No entry " + id + " (trimmed or cleared).");
+    log.debug("Leaving updateHistoryEntry(). No entry " + id +
+              " (trimmed or cleared).");
     return null;
   }
   Object.keys(changes || {}).forEach(function (k) {
     if (changes[k] === undefined) delete found[k];
     else found[k] = changes[k];
   });
-  if (found.credential && !found.summary) found.summary = summarizeCredential(found.credential);
+  if (found.credential && !found.summary) found.summary =
+      summarizeCredential(found.credential);
   setJson(KEYS.HISTORY, history);
   if (found.outcome === HISTORY_OUTCOME.KEPT && found.credential) {
     set(KEYS.HISTORY_INDEX, String(found.id));
@@ -942,26 +1160,30 @@ function trimHistory(history) {
     // one, the oldest generation goes and is counted, because the pane says so.
     var victim = -1;
     for (var i = 0; i < history.length; i++) {
-      if (history[i].outcome !== HISTORY_OUTCOME.KEPT || !history[i].credential) { victim = i; break; }
+      if (history[i].outcome !== HISTORY_OUTCOME.KEPT ||
+          !history[i].credential) { victim = i; break; }
     }
     if (victim === -1) { victim = 0; droppedHeld++; }
     history.splice(victim, 1);
   }
   if (droppedHeld) {
     set(KEYS.HISTORY_DROPPED, String(droppedGenerations() + droppedHeld));
-    log.debug("trimHistory(): dropped " + droppedHeld + " held generation(s) past the limit of " +
+    log.debug("trimHistory(): dropped " + droppedHeld +
+              " held generation(s) past the limit of " +
               HISTORY_LIMIT + ".");
   }
   log.debug("Leaving trimHistory().");
 }
 
-// Record a credential the wallet has taken into its hand (step 2's issuance), and
-// make it the active generation.
+// Record a credential the wallet has taken into its hand (step 2's issuance),
+// and make it the active generation.
 function recordCredentialGeneration(entry) {
-  log.debug("Entering recordCredentialGeneration(). source=" + (entry && entry.source));
+  log.debug("Entering recordCredentialGeneration(). source=" + (entry &&
+            entry.source));
   var credential = (entry && entry.credential) || "";
   if (!credential) {
-    log.debug("Leaving recordCredentialGeneration(). There is no credential to record.");
+    log.debug("Leaving recordCredentialGeneration(). There is no credential " +
+              "to record.");
     return -1;
   }
   // The same bytes twice in a row are one generation, not two: a page that
@@ -970,7 +1192,8 @@ function recordCredentialGeneration(entry) {
   var held = heldGenerations();
   if (held.length && held[held.length - 1].entry.credential === credential) {
     set(KEYS.HISTORY_INDEX, String(held[held.length - 1].id));
-    log.debug("Leaving recordCredentialGeneration(). Already the newest generation.");
+    log.debug("Leaving recordCredentialGeneration(). Already the newest " +
+              "generation.");
     return held[held.length - 1].id;
   }
   var id = recordHistoryEntry({
@@ -997,7 +1220,8 @@ function activateCredentialGeneration(id) {
   var target = null;
   held.forEach(function (h) { if (h.id === id) target = h; });
   if (!target) {
-    log.debug("Leaving activateCredentialGeneration(). No generation with id " + id + ".");
+    log.debug("Leaving activateCredentialGeneration(). No generation with id " +
+              id + ".");
     return null;
   }
   var entry = target.entry;
@@ -1009,16 +1233,17 @@ function activateCredentialGeneration(id) {
     setJson(KEYS.HOLDER_PRIVATE_JWK, entry.holderPrivateJwk);
   }
   set(KEYS.HISTORY_INDEX, String(id));
-  log.debug("Leaving activateCredentialGeneration(). Generation " + target.generation + " is now in hand.");
+  log.debug("Leaving activateCredentialGeneration(). Generation " +
+            target.generation + " is now in hand.");
   return entry;
 }
 
 // Forget the list, not the credential: whatever is in hand stays in hand.
 //
 // An EMPTY list is written rather than the key removed, because "cleared on
-// purpose" and "nothing was ever recorded" are different: only the second should
-// make a page backfill the credential in hand as generation 1. hasCredentialHistory()
-// is that distinction.
+// purpose" and "nothing was ever recorded" are different: only the second
+// should make a page backfill the credential in hand as generation 1.
+// hasCredentialHistory() is that distinction.
 function clearCredentialHistory() {
   log.debug("Entering clearCredentialHistory().");
   setJson(KEYS.HISTORY, []);
@@ -1027,27 +1252,49 @@ function clearCredentialHistory() {
   log.debug("Leaving clearCredentialHistory().");
 }
 
-// Whether this browser has ever recorded a generation — as opposed to holding an
-// empty list because someone cleared it.
-function hasCredentialHistory() { return get(KEYS.HISTORY) !== null; }
+// Whether this browser has ever recorded a generation — as opposed to holding
+// an empty list because someone cleared it.
+function hasCredentialHistory() {
+  log.debug("Entering hasCredentialHistory().");
+  log.debug("Leaving hasCredentialHistory().");
+  return get(KEYS.HISTORY) !== null;
+}
 
 // --- the hand-off to the OIDC pages ----------------------------------------
 function startFlow() {
+  log.debug("Entering startFlow().");
   set(KEYS.FLOW, FLOW_ACTIVE);
   set(KEYS.RETURN, STEP2_URL);
+  log.debug("Leaving startFlow().");
 }
-function isFlowActive() { return get(KEYS.FLOW) === FLOW_ACTIVE; }
+function isFlowActive() {
+  log.debug("Entering isFlowActive().");
+  log.debug("Leaving isFlowActive().");
+  return get(KEYS.FLOW) === FLOW_ACTIVE;
+}
 // Consumed by debugger2.html the moment it forwards, so a later, unrelated
 // token exchange on that page does not get redirected too.
-function endFlow() { remove(KEYS.FLOW); }
-function returnUrl() { return get(KEYS.RETURN) || STEP2_URL; }
+function endFlow() {
+  log.debug("Entering endFlow().");
+  remove(KEYS.FLOW);
+  log.debug("Leaving endFlow().");
+}
+function returnUrl() {
+  log.debug("Entering returnUrl().");
+  log.debug("Leaving returnUrl().");
+  return get(KEYS.RETURN) || STEP2_URL;
+}
 
 // --- what the Credential Request needs --------------------------------------
 // Read from localStorage rather than the DOM: steps 2 and 3 do not carry the
 // Configuration Parameters pane, but they run on what it saved.
 function storedRequestConfig() {
   log.debug("Entering storedRequestConfig().");
-  function v(name) { return get(vciMetadata.idFor(name)) || ""; }
+  function v(name) {
+    log.debug("Entering v().");
+    log.debug("Leaving v().");
+    return get(vciMetadata.idFor(name)) || "";
+  }
   log.debug("Leaving storedRequestConfig().");
   return {
     credentialIssuer: v("credential_issuer"),
@@ -1089,7 +1336,8 @@ function parseSdJwt(serialized) {
     parts.pop(); // the required trailing empty part
   }
   var jwtParts = String(issuerJwt).split(".");
-  if (jwtParts.length !== 3) throw new Error("The issuer-signed part is not a three-part JWS.");
+  if (jwtParts.length !== 3) throw new Error("The issuer-signed part is not " +
+      "a three-part JWS.");
 
   var header, payload;
   try {
@@ -1103,8 +1351,10 @@ function parseSdJwt(serialized) {
     throw new Error("Cannot read the issuer-signed JWT payload: " + e.message);
   }
 
-  var disclosures = parts.filter(function (p) { return p !== ""; }).map(function (encoded) {
-    var d = { encoded: encoded, salt: "", name: null, value: undefined, arrayElement: false, error: "" };
+  var disclosures =
+      parts.filter(function (p) { return p !== ""; }).map(function (encoded) {
+    var d = { encoded: encoded, salt: "", name: null, value: undefined,
+        arrayElement: false, error: "" };
     try {
       var arr = metadataClient.b64uToJson(encoded);
       if (Object.prototype.toString.call(arr) !== "[object Array]") {
@@ -1113,7 +1363,8 @@ function parseSdJwt(serialized) {
       d.salt = arr[0];
       if (arr.length === 3) { d.name = arr[1]; d.value = arr[2]; }
       else if (arr.length === 2) { d.arrayElement = true; d.value = arr[1]; }
-      else { throw new Error("a Disclosure has 2 (array element) or 3 (object property) members, got " + arr.length); }
+      else { throw new Error("a Disclosure has 2 (array element) or 3 " +
+            "(object property) members, got " + arr.length); }
     } catch (e) {
       d.error = e.message;
     }
@@ -1164,22 +1415,38 @@ function credentialFormat(serialized) {
   // credentials are strings, so an ldp_vc arrives as JSON text beginning with
   // "{" — which neither of the others can.
   if (serialized && typeof serialized === "object") {
-    return (serialized.proof && serialized.proof.type === "DataIntegrityProof") ? FORMAT_LDP_VC : "";
+    log.debug("Leaving credentialFormat().");
+    return (serialized.proof &&
+            serialized.proof.type === "DataIntegrityProof") ?
+            FORMAT_LDP_VC : "";
   }
   var raw = String(serialized || "").trim();
-  if (!raw) return "";
+  if (!raw) {
+    log.debug("Leaving credentialFormat().");
+    return "";
+  }
   if (raw.charAt(0) === "{") {
     try {
       var doc = JSON.parse(raw);
-      if (doc && doc.proof && doc.proof.type === "DataIntegrityProof") return FORMAT_LDP_VC;
+      if (doc && doc.proof && doc.proof.type === "DataIntegrityProof") {
+        log.debug("Leaving credentialFormat().");
+        return FORMAT_LDP_VC;
+      }
     } catch (e) {
       // Not JSON after all; fall through to the string formats below.
       log.debug("credentialFormat(): leading brace but not JSON.");
     }
+    log.debug("Leaving credentialFormat().");
     return "";
   }
-  if (raw.indexOf("~") >= 0) return FORMAT_SD_JWT;
-  if (raw.split(".").length === 3) return FORMAT_JWT_VC_JSON;
+  if (raw.indexOf("~") >= 0) {
+    log.debug("Leaving credentialFormat().");
+    return FORMAT_SD_JWT;
+  }
+  if (raw.split(".").length === 3) {
+    log.debug("Leaving credentialFormat().");
+    return FORMAT_JWT_VC_JSON;
+  }
   log.debug("Leaving credentialFormat().");
   return "";
 }
@@ -1198,9 +1465,11 @@ function parseLdpVc(serialized) {
   var subject = doc.credentialSubject || {};
   log.debug("Leaving parseLdpVc().");
   return {
-    serialized: typeof serialized === "string" ? serialized : JSON.stringify(doc),
+    serialized: typeof serialized === "string" ?
+        serialized : JSON.stringify(doc),
     document: doc,
-    header: { cryptosuite: (doc.proof || {}).cryptosuite, type: (doc.proof || {}).type },
+    header: { cryptosuite: (doc.proof || {}).cryptosuite, type: (doc.proof ||
+             {}).type },
     payload: doc,
     signature: (doc.proof || {}).proofValue || "",
     credentialSubject: subject,
@@ -1217,7 +1486,8 @@ function parseJwtVc(serialized) {
   var raw = String(serialized || "").trim();
   if (!raw) throw new Error("There is no credential to parse.");
   var parts = raw.split(".");
-  if (parts.length !== 3) throw new Error("A jwt_vc_json credential is a three-part JWS.");
+  if (parts.length !== 3) throw new Error("A jwt_vc_json credential is a " +
+      "three-part JWS.");
   var header, payload;
   try {
     header = metadataClient.b64uToJson(parts[0]);
@@ -1230,7 +1500,8 @@ function parseJwtVc(serialized) {
     throw new Error("Cannot read the credential JWT payload: " + e.message);
   }
   var vc = payload.vc || {};
-  if (!vc || typeof vc !== "object") throw new Error("The JWT carries no vc claim, so it is not a VC-JWT.");
+  if (!vc || typeof vc !== "object") throw new Error("The JWT carries no vc " +
+      "claim, so it is not a VC-JWT.");
   log.debug("Leaving parseJwtVc().");
   return {
     serialized: raw, issuerJwt: raw, header: header, payload: payload,
@@ -1247,12 +1518,16 @@ function parseJwtVc(serialized) {
 function claimsOf(parsed) {
   log.debug("Entering claimsOf().");
   var out = {};
-  if (!parsed) return out;
+  if (!parsed) {
+    log.debug("Leaving claimsOf().");
+    return out;
+  }
   if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
     var subject = parsed.credentialSubject || {};
     Object.keys(subject).forEach(function (name) {
       if (name !== "id") out[name] = subject[name];
     });
+    log.debug("Leaving claimsOf().");
     return out;
   }
   (parsed.disclosures || []).forEach(function (d) {
@@ -1266,7 +1541,8 @@ function claimsOf(parsed) {
 function parseCredential(serialized) {
   log.debug("Entering parseCredential().");
   var format = credentialFormat(serialized);
-  if (!format) throw new Error("This does not look like an SD-JWT VC or a jwt_vc_json credential.");
+  if (!format) throw new Error("This does not look like an SD-JWT VC or a " +
+      "jwt_vc_json credential.");
   var parsed = format === FORMAT_LDP_VC ? parseLdpVc(serialized)
              : format === FORMAT_JWT_VC_JSON ? parseJwtVc(serialized)
              : parseSdJwt(serialized);
@@ -1274,15 +1550,19 @@ function parseCredential(serialized) {
   parsed.claims = claimsOf(parsed);
   // ldp_vc IS selectively disclosable — more so than SD-JWT, and unlinkably —
   // but over canonical statements rather than Disclosures.
-  parsed.selectivelyDisclosable = format === FORMAT_SD_JWT || format === FORMAT_LDP_VC;
+  parsed.selectivelyDisclosable = format === FORMAT_SD_JWT ||
+      format === FORMAT_LDP_VC;
   // What the credential says it IS: a vct for an SD-JWT VC, a type array for a
   // W3C VC. Both are surfaced so a caller can name the credential without
   // knowing which format it holds.
   parsed.vct = (parsed.payload || {}).vct || "";
-  parsed.types = format === FORMAT_JWT_VC_JSON ? [].concat((parsed.vc || {}).type || [])
-               : format === FORMAT_LDP_VC ? [].concat((parsed.document || {}).type || [])
+  parsed.types = format === FORMAT_JWT_VC_JSON ? [].concat((parsed.vc ||
+      {}).type || [])
+               : format === FORMAT_LDP_VC ? [].concat((parsed.document ||
+                   {}).type || [])
                : [];
-  parsed.subject = (parsed.payload || {}).sub || (parsed.credentialSubject || {}).id || "";
+  parsed.subject = (parsed.payload || {}).sub || (parsed.credentialSubject ||
+      {}).id || "";
   log.debug("Leaving parseCredential(). format=" + format + ", " +
             Object.keys(parsed.claims).length + " claim(s), " +
             parsed.disclosures.length + " disclosure(s).");
@@ -1291,11 +1571,18 @@ function parseCredential(serialized) {
 
 // What to call this credential in a sentence.
 function credentialLabel(parsed) {
-  if (!parsed) return "credential";
+  log.debug("Entering credentialLabel().");
+  if (!parsed) {
+    log.debug("Leaving credentialLabel().");
+    return "credential";
+  }
   if (parsed.format === FORMAT_JWT_VC_JSON || parsed.format === FORMAT_LDP_VC) {
-    var types = (parsed.types || []).filter(function (t) { return t !== "VerifiableCredential"; });
+    var types = (parsed.types ||
+        []).filter(function (t) { return t !== "VerifiableCredential"; });
+    log.debug("Leaving credentialLabel().");
     return types.length ? types.join(", ") : "Verifiable Credential";
   }
+  log.debug("Leaving credentialLabel().");
   return parsed.vct || "credential";
 }
 
@@ -1342,11 +1629,17 @@ function jwkFromDid(did) {
 // Returns a public JWK or null, so callers can compare it against a key they
 // hold without caring which format produced it.
 function boundHolderJwk(parsed) {
-  if (!parsed) return null;
+  log.debug("Entering boundHolderJwk().");
+  if (!parsed) {
+    log.debug("Leaving boundHolderJwk().");
+    return null;
+  }
   if (parsed.format === FORMAT_LDP_VC) {
+    log.debug("Leaving boundHolderJwk().");
     return jwkFromDid((parsed.credentialSubject || {}).id);
   }
   var cnf = (parsed.payload || {}).cnf;
+  log.debug("Leaving boundHolderJwk().");
   return (cnf && cnf.jwk) || null;
 }
 
@@ -1354,13 +1647,19 @@ function boundHolderJwk(parsed) {
 // cnf.jwk on a credential that has no cnf claim is how a correct pane still
 // tells the user something false.
 function bindingMemberName(parsed) {
-  return (parsed && parsed.format === FORMAT_LDP_VC) ? "credentialSubject.id" : "cnf.jwk";
+  log.debug("Entering bindingMemberName().");
+  log.debug("Leaving bindingMemberName().");
+  return (parsed && parsed.format === FORMAT_LDP_VC) ?
+          "credentialSubject.id" : "cnf.jwk";
 }
 
-// What the credential's TYPE is called: an SD-JWT VC has a vct, a W3C credential
-// has a type array. Same reasoning as bindingMemberName().
+// What the credential's TYPE is called: an SD-JWT VC has a vct, a W3C
+// credential has a type array. Same reasoning as bindingMemberName().
 function typeMemberName(parsed) {
-  return (parsed && (parsed.format === FORMAT_LDP_VC || parsed.format === FORMAT_JWT_VC_JSON))
+  log.debug("Entering typeMemberName().");
+  log.debug("Leaving typeMemberName().");
+  return (parsed && (parsed.format === FORMAT_LDP_VC ||
+          parsed.format === FORMAT_JWT_VC_JSON))
     ? "type" : "vct";
 }
 
@@ -1386,13 +1685,16 @@ function validityWindowOf(parsed) {
   if (parsed && parsed.format === FORMAT_LDP_VC) {
     var from = payload.validFrom || payload.issuanceDate || "";
     var until = payload.validUntil || payload.expirationDate || "";
-    log.debug("Leaving validityWindowOf(). ldp_vc: " + (from || "no start") + " → " +
+    log.debug("Leaving validityWindowOf(). ldp_vc: " + (from || "no start") +
+              " → " +
               (until || "no end"));
     return {
       notBefore: epochFromIso(from),
       expires: epochFromIso(until),
-      notBeforeMember: payload.issuanceDate && !payload.validFrom ? "issuanceDate" : "validFrom",
-      expiresMember: payload.expirationDate && !payload.validUntil ? "expirationDate" : "validUntil"
+      notBeforeMember: payload.issuanceDate && !payload.validFrom ?
+          "issuanceDate" : "validFrom",
+      expiresMember: payload.expirationDate && !payload.validUntil ?
+          "expirationDate" : "validUntil"
     };
   }
   log.debug("Leaving validityWindowOf(). nbf/exp.");
@@ -1404,15 +1706,22 @@ function validityWindowOf(parsed) {
   };
 }
 
-// An ISO 8601 instant as seconds since the epoch. Null for anything unparseable,
-// so a malformed date is reported as absent rather than as 1970.
+// An ISO 8601 instant as seconds since the epoch. Null for anything
+// unparseable, so a malformed date is reported as absent rather than as 1970.
 function epochFromIso(value) {
-  if (!value) return null;
-  var ms = Date.parse(String(value));
-  if (isNaN(ms)) {
-    log.debug("epochFromIso(): not a parseable instant: " + String(value).slice(0, 40));
+  log.debug("Entering epochFromIso().");
+  if (!value) {
+    log.debug("Leaving epochFromIso().");
     return null;
   }
+  var ms = Date.parse(String(value));
+  if (isNaN(ms)) {
+    log.debug("epochFromIso(): not a parseable instant: " +
+              String(value).slice(0, 40));
+    log.debug("Leaving epochFromIso().");
+    return null;
+  }
+  log.debug("Leaving epochFromIso().");
   return Math.floor(ms / 1000);
 }
 
@@ -1433,7 +1742,8 @@ function presentationReadiness() {
   if (!raw) {
     log.debug("Leaving presentationReadiness(). Nothing held.");
     return { ready: false, level: "vc-bad",
-             message: "Nothing is held yet — the presentation workflow presents a credential this wallet " +
+             message: "Nothing is held yet — the presentation workflow " +
+                 "presents a credential this wallet " +
                       "already has." };
   }
   var parsed = null;
@@ -1442,16 +1752,19 @@ function presentationReadiness() {
   } catch (e) {
     log.debug("Leaving presentationReadiness(). Unparseable.");
     return { ready: false, level: "vc-bad",
-             message: "The credential in storage cannot be parsed, so it cannot be presented: " + e.message };
+             message: "The credential in storage cannot be parsed, so it " +
+                 "cannot be presented: " + e.message };
   }
   // What a Verifier would be shown, said differently for the two formats
   // because the difference is the point: an SD-JWT offers a CHOICE of claims,
   // a jwt_vc_json offers all of them or nothing.
   var offered = parsed.format === FORMAT_JWT_VC_JSON
-    ? "the " + credentialLabel(parsed) + " above — all " + Object.keys(parsed.claims).length +
+    ? "the " + credentialLabel(parsed) + " above — all " +
+        Object.keys(parsed.claims).length +
       " of its claims, because jwt_vc_json has no selective disclosure"
     : parsed.format === FORMAT_LDP_VC
-      ? "the " + credentialLabel(parsed) + " above (ldp_vc, bbs-2023) — you choose which statements " +
+      ? "the " + credentialLabel(parsed) +
+          " above (ldp_vc, bbs-2023) — you choose which statements " +
         "go, and each presentation is a fresh proof that cannot be linked to the last"
       : "the " + credentialLabel(parsed) + " above, with its " +
         parsed.disclosures.length + " selectively-disclosable claim(s)";
@@ -1461,30 +1774,36 @@ function presentationReadiness() {
   // the user for a reason that does not apply to this format.
   if (parsed.format === FORMAT_LDP_VC) {
     log.debug("Leaving presentationReadiness(). ldp_vc, ready.");
-    return { ready: true, level: "vc-ok", message: "A Verifier would be offered " + offered + "." };
+    return { ready: true, level: "vc-ok",
+            message: "A Verifier would be offered " + offered + "." };
   }
   if (getJson(KEYS.HOLDER_PRIVATE_JWK)) {
     log.debug("Leaving presentationReadiness(). Ready.");
     return { ready: true, level: "vc-ok",
-             message: "A Verifier would be offered " + offered + ", signed with the holder key it is bound to." };
+             message: "A Verifier would be offered " + offered +
+                 ", signed with the holder key it is bound to." };
   }
   if (holderPrivateKeyMayBeStored()) {
-    // Saving is ON and the key is still absent, so it was never generated in this
-    // browser: there is nothing to paste, and presentation step 1 refuses to
-    // continue past exactly this. Blocking here says so one page earlier.
+    // Saving is ON and the key is still absent, so it was never generated in
+    // this browser: there is nothing to paste, and presentation step 1 refuses
+    // to continue past exactly this. Blocking here says so one page earlier.
     log.debug("Leaving presentationReadiness(). Key lost.");
     return { ready: false, level: "vc-bad",
-             message: "The private half of the holder key is missing, so no Key Binding JWT could be signed " +
-                      "for this credential — the presentation workflow would stop at step 1." };
+             message: "The private half of the holder key is missing, so no " +
+                 "Key Binding JWT could be signed " +
+                      "for this credential — the presentation workflow would " +
+                          "stop at step 1." };
   }
-  // Deliberately not kept (the checkbox on issuance step 2). Presentation step 2
-  // has a field to paste it into, so this is an advisory and must NOT block:
+  // Deliberately not kept (the checkbox on issuance step 2). Presentation step
+  // 2 has a field to paste it into, so this is an advisory and must NOT block:
   // refusing here would strand the user two pages before the only field that
   // fixes it.
   log.debug("Leaving presentationReadiness(). Ready, key to be pasted.");
   return { ready: true, level: "vc-pending",
-           message: "A Verifier would be offered " + offered + ". The holder key is not kept in this browser, " +
-                    "by the choice made on issuance step 2 — you will be asked to paste it when the " +
+           message: "A Verifier would be offered " + offered +
+               ". The holder key is not kept in this browser, " +
+                    "by the choice made on issuance step 2 — you will be " +
+                        "asked to paste it when the " +
                     "presentation is assembled." };
 }
 
@@ -1492,11 +1811,18 @@ function presentationReadiness() {
 // the US-ASCII of the base64url-encoded Disclosure, base64url-encoded.
 // _sd_alg defaults to sha-256 (RFC 9901 section 4.1.1).
 function digestForDisclosure(encoded, sdAlg) {
+  log.debug("Entering digestForDisclosure().");
   var alg = String(sdAlg || "sha-256").toLowerCase();
-  var webcrypto = { "sha-256": "SHA-256", "sha-384": "SHA-384", "sha-512": "SHA-512" }[alg];
-  if (!webcrypto) return Promise.reject(new Error('unsupported _sd_alg "' + sdAlg + '".'));
+  var webcrypto = { "sha-256": "SHA-256", "sha-384": "SHA-384",
+      "sha-512": "SHA-512" }[alg];
+  if (!webcrypto) {
+    log.debug("Leaving digestForDisclosure().");
+    return Promise.reject(new Error('unsupported _sd_alg "' + sdAlg + '".'));
+  }
   var bytes = new Uint8Array(String(encoded).length);
-  for (var i = 0; i < encoded.length; i++) { bytes[i] = encoded.charCodeAt(i) & 0xff; }
+  for (var i = 0; i < encoded.length; i++) { bytes[i] =
+       encoded.charCodeAt(i) & 0xff; }
+  log.debug("Leaving digestForDisclosure().");
   return crypto.subtle.digest(webcrypto, bytes).then(function (buf) {
     return metadataClient.bytesToB64u(buf);
   });
@@ -1507,16 +1833,22 @@ function digestForDisclosure(encoded, sdAlg) {
 function collectSdDigests(node, out) {
   log.debug("Entering collectSdDigests().");
   out = out || [];
-  if (!node || typeof node !== "object") return out;
+  if (!node || typeof node !== "object") {
+    log.debug("Leaving collectSdDigests().");
+    return out;
+  }
   if (Object.prototype.toString.call(node) === "[object Array]") {
     node.forEach(function (item) {
-      if (item && typeof item === "object" && typeof item["..."] === "string") out.push(item["..."]);
+      if (item && typeof item === "object" &&
+          typeof item["..."] === "string") out.push(item["..."]);
       else collectSdDigests(item, out);
     });
+    log.debug("Leaving collectSdDigests().");
     return out;
   }
   Object.keys(node).forEach(function (k) {
-    if (k === "_sd" && Object.prototype.toString.call(node[k]) === "[object Array]") {
+    if (k === "_sd" &&
+        Object.prototype.toString.call(node[k]) === "[object Array]") {
       node[k].forEach(function (d) { if (typeof d === "string") out.push(d); });
     } else if (typeof node[k] === "object") {
       collectSdDigests(node[k], out);

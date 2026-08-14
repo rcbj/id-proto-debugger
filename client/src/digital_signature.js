@@ -5,12 +5,14 @@
 // Standalone Digital Signature tool with three panes:
 //   #1 SLH-DSA (FIPS 205, post-quantum)      — @noble/post-quantum
 //   #2 RSA (PKCS#1 v1.5 / PSS) + any hash     — node-forge (keygen) + pure-JS padding
-//   #3 ECC (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA) + any hash — @noble/curves
+//   #3 ECC (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA) + any hash —
+//   @noble/curves
 //
-// The RSA and ECC panes deliberately DO NOT use the Web Crypto API: crypto.subtle
-// only supports the SHA family, whereas these panes support a wide range of hash
-// algorithms (SHA-2, SHA-3, RIPEMD-160, BLAKE2b, and the legacy/broken SHA-1 and
-// MD5). Everything runs in the browser; no key material is ever persisted.
+// The RSA and ECC panes deliberately DO NOT use the Web Crypto API:
+// crypto.subtle only supports the SHA family, whereas these panes support a
+// wide range of hash algorithms (SHA-2, SHA-3, RIPEMD-160, BLAKE2b, and the
+// legacy/broken SHA-1 and MD5). Everything runs in the browser; no key material
+// is ever persisted.
 //
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -71,67 +73,103 @@ var ML_PARAM_SETS = {
 // Small DOM helpers
 // ---------------------------------------------------------------------------
 function val(id) {
+  log.debug("Entering val().");
   var el = document.getElementById(id);
+  log.debug("Leaving val().");
   return el ? el.value : '';
 }
 function setVal(id, v) {
+  log.debug("Entering setVal().");
   var el = document.getElementById(id);
   if (el) el.value = v;
+  log.debug("Leaving setVal().");
 }
 
 // ---------------------------------------------------------------------------
 // Byte / base64 / hex helpers
 // ---------------------------------------------------------------------------
-function strBytes(s) { return new TextEncoder().encode(s); }
+function strBytes(s) {
+  log.debug("Entering strBytes().");
+  log.debug("Leaving strBytes().");
+  return new TextEncoder().encode(s);
+}
 
 function bytesToB64(bytes) {
+  log.debug("Entering bytesToB64().");
   var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   var bin = '';
   for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+  log.debug("Leaving bytesToB64().");
   return btoa(bin);
 }
 function b64ToBytes(b64) {
+  log.debug("Entering b64ToBytes().");
   var bin = atob(String(b64).replace(/\s+/g, ''));
   var bytes = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  log.debug("Leaving b64ToBytes().");
   return bytes;
 }
 function bytesToHex(bytes) {
+  log.debug("Entering bytesToHex().");
   var s = '';
-  for (var i = 0; i < bytes.length; i++) s += ('0' + bytes[i].toString(16)).slice(-2);
+  for (var i = 0; i < bytes.length; i++) s += ('0' +
+       bytes[i].toString(16)).slice(-2);
+  log.debug("Leaving bytesToHex().");
   return s;
 }
 function hexToBytes(hex) {
+  log.debug("Entering hexToBytes().");
   var h = String(hex).replace(/\s+/g, '');
   var a = new Uint8Array(h.length >> 1);
   for (var i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16);
+  log.debug("Leaving hexToBytes().");
   return a;
 }
 function concatBytes() {
+  log.debug("Entering concatBytes().");
   var total = 0, i;
   for (i = 0; i < arguments.length; i++) total += arguments[i].length;
   var out = new Uint8Array(total), off = 0;
-  for (i = 0; i < arguments.length; i++) { out.set(arguments[i], off); off += arguments[i].length; }
+  for (i = 0; i < arguments.length; i++) { out.set(arguments[i],
+       off); off += arguments[i].length; }
+  log.debug("Leaving concatBytes().");
   return out;
 }
 function bytesEqual(a, b) {
-  if (a.length !== b.length) return false;
+  log.debug("Entering bytesEqual().");
+  if (a.length !== b.length) {
+    log.debug("Leaving bytesEqual().");
+    return false;
+  }
   var diff = 0;
   for (var i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  log.debug("Leaving bytesEqual().");
   return diff === 0;
 }
-function randomBytes(n) { var a = new Uint8Array(n); crypto.getRandomValues(a); return a; }
+function randomBytes(n) {
+  log.debug("Entering randomBytes().");
+  var a = new Uint8Array(n);
+  crypto.getRandomValues(a);
+  log.debug("Leaving randomBytes().");
+  return a;
+}
 
 // PEM framing over raw bytes (used by SLH-DSA, whose keys are opaque bytes).
 function rawToPem(bytes, label) {
+  log.debug("Entering rawToPem().");
   var b64 = bytesToB64(bytes);
   var lines = b64.match(/.{1,64}/g).join('\n');
-  return '-----BEGIN ' + label + '-----\n' + lines + '\n-----END ' + label + '-----\n';
+  log.debug("Leaving rawToPem().");
+  return '-----BEGIN ' + label + '-----\n' + lines + '\n-----END ' + label +
+      '-----\n';
 }
 function pemToRaw(pem) {
+  log.debug("Entering pemToRaw().");
   var b64 = String(pem).split(/\r?\n/)
     .filter(function (line) { return line.indexOf('-----') === -1; })
     .join('').replace(/\s+/g, '');
+  log.debug("Leaving pemToRaw().");
   return b64ToBytes(b64);
 }
 
@@ -141,26 +179,39 @@ function pemToRaw(pem) {
 // that hash — use PSS). `security` flags legacy/broken hashes for the UI.
 // ---------------------------------------------------------------------------
 function md5Digest(bytes) {
+  log.debug("Entering md5Digest().");
   var md = forge.md.md5.create();
   md.update(forge.util.binary.raw.encode(bytes));
+  log.debug("Leaving md5Digest().");
   return forge.util.binary.raw.decode(md.digest().getBytes());
 }
 var HASHES = {
-  'SHA-256':     { fn: nobleSha256,          oid: '3031300d060960864801650304020105000420' },
-  'SHA-384':     { fn: nobleSha512.sha384,   oid: '3041300d060960864801650304020205000430' },
-  'SHA-512':     { fn: nobleSha512.sha512,   oid: '3051300d060960864801650304020305000440' },
-  'SHA3-256':    { fn: nobleSha3.sha3_256,   oid: '3031300d060960864801650304020805000420' },
-  'SHA3-384':    { fn: nobleSha3.sha3_384,   oid: '3041300d060960864801650304020905000430' },
-  'SHA3-512':    { fn: nobleSha3.sha3_512,   oid: '3051300d060960864801650304020a05000440' },
+  'SHA-256':     { fn: nobleSha256,
+                  oid: '3031300d060960864801650304020105000420' },
+  'SHA-384':     { fn: nobleSha512.sha384,
+                  oid: '3041300d060960864801650304020205000430' },
+  'SHA-512':     { fn: nobleSha512.sha512,
+                  oid: '3051300d060960864801650304020305000440' },
+  'SHA3-256':    { fn: nobleSha3.sha3_256,
+                  oid: '3031300d060960864801650304020805000420' },
+  'SHA3-384':    { fn: nobleSha3.sha3_384,
+                  oid: '3041300d060960864801650304020905000430' },
+  'SHA3-512':    { fn: nobleSha3.sha3_512,
+                  oid: '3051300d060960864801650304020a05000440' },
   'BLAKE2b-512': { fn: nobleBlake2b,         oid: null },
   'BLAKE3-256':  { fn: nobleBlake3,          oid: null },
-  'RIPEMD-160':  { fn: nobleRipemd160,       oid: '3021300906052b2403020105000414' },
-  'SHA-1':       { fn: nobleSha1,            oid: '3021300906052b0e03021a05000414' },
-  'MD5':         { fn: md5Digest,            oid: '3020300c06082a864886f70d020505000410' }
+  'RIPEMD-160':  { fn: nobleRipemd160,
+                  oid: '3021300906052b2403020105000414' },
+  'SHA-1':       { fn: nobleSha1,
+                  oid: '3021300906052b0e03021a05000414' },
+  'MD5':         { fn: md5Digest,
+                  oid: '3020300c06082a864886f70d020505000410' }
 };
 function digestOf(hashName, bytes) {
+  log.debug("Entering digestOf().");
   var h = HASHES[hashName];
   if (!h) throw new Error('Unknown hash: ' + hashName);
+  log.debug("Leaving digestOf().");
   return h.fn(bytes);
 }
 
@@ -169,10 +220,14 @@ function digestOf(hashName, bytes) {
 // their hash fixed by the scheme (Ed25519 -> SHA-512, Ed448 -> SHAKE256).
 // ---------------------------------------------------------------------------
 var CURVES = {
-  'P-256':     { kind: 'ecdsa', curve: p256,      jwkCrv: 'P-256',     fieldBytes: 32 },
-  'P-384':     { kind: 'ecdsa', curve: p384,      jwkCrv: 'P-384',     fieldBytes: 48 },
-  'P-521':     { kind: 'ecdsa', curve: p521,      jwkCrv: 'P-521',     fieldBytes: 66 },
-  'secp256k1': { kind: 'ecdsa', curve: secp256k1, jwkCrv: 'secp256k1', fieldBytes: 32 },
+  'P-256':     { kind: 'ecdsa', curve: p256,      jwkCrv: 'P-256',
+                fieldBytes: 32 },
+  'P-384':     { kind: 'ecdsa', curve: p384,      jwkCrv: 'P-384',
+                fieldBytes: 48 },
+  'P-521':     { kind: 'ecdsa', curve: p521,      jwkCrv: 'P-521',
+                fieldBytes: 66 },
+  'secp256k1': { kind: 'ecdsa', curve: secp256k1, jwkCrv: 'secp256k1',
+                fieldBytes: 32 },
   'Ed25519':   { kind: 'eddsa', curve: ed25519,   jwkCrv: 'Ed25519' },
   'Ed448':     { kind: 'eddsa', curve: ed448,     jwkCrv: 'Ed448' },
   // Schnorr (BIP-340 over secp256k1) and BLS (BLS12-381) hash the message
@@ -183,15 +238,21 @@ var CURVES = {
 
 // SLH-DSA / RSA key generation can block for a moment; defer so the "…" status
 // paints first.
-function defer(fn) { setTimeout(fn, 15); }
+function defer(fn) {
+  log.debug("Entering defer().");
+  setTimeout(fn, 15);
+  log.debug("Leaving defer().");
+}
 
 // ===========================================================================
 // Pane #1 — SLH-DSA (post-quantum)
 // ===========================================================================
 function currentAlg() {
+  log.debug("Entering currentAlg().");
   var name = val('ds_param');
   var alg = PARAM_SETS[name];
   if (!alg) throw new Error('Unknown parameter set: ' + name);
+  log.debug("Leaving currentAlg().");
   return alg;
 }
 
@@ -243,21 +304,30 @@ function generateKeys() {
 // only to allow non-SHA hashes); PBES2 here is standard and hash-agnostic.
 // ---------------------------------------------------------------------------
 function b64u(bytes) {
+  log.debug("Entering b64u().");
   var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   var bin = '';
   for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+  log.debug("Leaving b64u().");
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 function forgeBnB64u(bn) {
+  log.debug("Entering forgeBnB64u().");
   var h = bn.toString(16); if (h.length % 2) h = '0' + h;
+  log.debug("Leaving forgeBnB64u().");
   return b64u(hexToBytes(h));
 }
 function derBytes(asn1) {
-  return new Uint8Array(forge.util.binary.raw.decode(forge.asn1.toDer(asn1).getBytes()));
+  log.debug("Entering derBytes().");
+  log.debug("Leaving derBytes().");
+  return new Uint8Array(forge.util.binary.raw.decode(forge.asn1.toDer(asn1)
+                        .getBytes()));
 }
 // A native BigInt (from @noble affine coords) as fixed-length big-endian bytes.
 function bigToBytes(x, len) {
+  log.debug("Entering bigToBytes().");
   var h = x.toString(16); while (h.length < len * 2) h = '0' + h;
+  log.debug("Leaving bigToBytes().");
   return hexToBytes(h);
 }
 
@@ -266,31 +336,41 @@ async function pbes2JweEncrypt(plaintext, password) {
   log.debug("Entering pbes2JweEncrypt().");
   var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
   var p2s = randomBytes(16), p2c = 100000;
-  var pwKey = await crypto.subtle.importKey('raw', strBytes(password), 'PBKDF2', false, ['deriveKey']);
+  var pwKey = await crypto.subtle.importKey('raw', strBytes(password), 'PBKDF2',
+      false, ['deriveKey']);
   var salt = concatBytes(strBytes(alg), new Uint8Array([0]), p2s);
-  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: salt, iterations: p2c, hash: 'SHA-256' },
+  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: salt,
+      iterations: p2c, hash: 'SHA-256' },
     pwKey, { name: 'AES-KW', length: 128 }, false, ['wrapKey']);
-  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
-  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey, 'AES-KW'));
+  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 },
+      true, ['encrypt']);
+  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey,
+      'AES-KW'));
   var ph = { alg: alg, enc: enc, p2s: b64u(p2s), p2c: p2c };
   var phB64 = b64u(strBytes(JSON.stringify(ph)));
   var iv = randomBytes(12);
   var full = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv, additionalData: strBytes(phB64), tagLength: 128 }, cek, strBytes(plaintext)));
+    { name: 'AES-GCM', iv: iv, additionalData: strBytes(phB64),
+     tagLength: 128 }, cek, strBytes(plaintext)));
   log.debug("Leaving pbes2JweEncrypt().");
-  return [phB64, b64u(wrapped), b64u(iv), b64u(full.slice(0, full.length - 16)), b64u(full.slice(full.length - 16))].join('.');
+  return [phB64, b64u(wrapped), b64u(iv), b64u(full.slice(0, full.length - 16)),
+          b64u(full.slice(full.length - 16))].join('.');
 }
 
 // Emit a JWK set (public + private), optionally PBES2-encrypted, as a download.
 async function downloadJwkSet(jwks, password, baseName, statusId) {
+  log.debug("Entering downloadJwkSet().");
   var text = JSON.stringify({ keys: jwks }, null, 2);
   if (password) {
-    triggerDownload(baseName + '.jwe', await pbes2JweEncrypt(text, password), 'application/jose');
-    setVal(statusId, 'Downloaded PBES2-encrypted JWK set (' + baseName + '.jwe).');
+    triggerDownload(baseName + '.jwe', await pbes2JweEncrypt(text, password),
+                    'application/jose');
+    setVal(statusId, 'Downloaded PBES2-encrypted JWK set (' + baseName +
+           '.jwe).');
   } else {
     triggerDownload(baseName + '.jwk.json', text, 'application/jwk+json');
     setVal(statusId, 'Downloaded JWK set (' + baseName + '.jwk.json).');
   }
+  log.debug("Leaving downloadJwkSet().");
 }
 
 // ---------------------------------------------------------------------------
@@ -301,19 +381,31 @@ async function downloadKeys() {
   log.debug("Entering downloadKeys().");
   var fmt = val('ds_slh_ks_format') || 'pem', pw = val('ds_slh_ks_password');
   var priv = val('ds_private_key'), pub = val('ds_public_key');
-  if (!priv && !pub) { setVal('ds_status', 'Nothing to download — generate a key pair first.'); return false; }
+  if (!priv && !pub) {
+    setVal('ds_status', 'Nothing to download — generate a key pair first.');
+    log.debug("Leaving downloadKeys().");
+    return false;
+  }
   try {
     if (fmt === 'pem') {
-      if (pw) { setVal('ds_status', 'Password protection for SLH-DSA is only available in JWK format. Choose JWK.'); return false; }
-      triggerDownload('slh-dsa-keys.pem', pub + '\n' + priv, 'application/x-pem-file');
+      if (pw) {
+        setVal('ds_status', 'Password protection for SLH-DSA is only ' +
+               'available in JWK format. Choose JWK.');
+        log.debug("Leaving downloadKeys().");
+        return false;
+      }
+      triggerDownload('slh-dsa-keys.pem', pub + '\n' + priv,
+                      'application/x-pem-file');
       setVal('ds_status', 'Downloaded key pair (slh-dsa-keys.pem).');
     } else if (fmt === 'jwk') {
       var alg = val('ds_param');
       var pubJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)), use: 'sig' };
-      var privJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)), d: b64u(pemToRaw(priv)), use: 'sig' };
+      var privJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)),
+          d: b64u(pemToRaw(priv)), use: 'sig' };
       await downloadJwkSet([pubJwk, privJwk], pw, 'slh-dsa-keys', 'ds_status');
     } else {
-      setVal('ds_status', fmt.toUpperCase() + ' export is not supported for SLH-DSA keys. Use PEM or JWK.');
+      setVal('ds_status', fmt.toUpperCase() +
+             ' export is not supported for SLH-DSA keys. Use PEM or JWK.');
     }
   } catch (e) {
     log.error('downloadKeys: ' + e.message);
@@ -333,10 +425,12 @@ function sign() {
       var sk = pemToRaw(val('ds_private_key'));
       var sig = alg.sign(sk, strBytes(val('ds_value')));
       setVal('ds_signature', bytesToB64(sig));
-      setVal('ds_status', 'Signed (' + name + ') — signature is ' + sig.length + ' bytes.');
+      setVal('ds_status', 'Signed (' + name + ') — signature is ' + sig.length +
+             ' bytes.');
     } catch (e) {
       log.error('sign: ' + e.message);
-      setVal('ds_status', 'Sign error: ' + e.message + ' (does the parameter set match the key pair?)');
+      setVal('ds_status', 'Sign error: ' + e.message +
+             ' (does the parameter set match the key pair?)');
     }
   });
   log.debug("Leaving sign().");
@@ -350,13 +444,15 @@ function validate() {
   defer(function () {
     try {
       var alg = currentAlg();
-      var ok = alg.verify(pemToRaw(val('ds_public_key')), strBytes(val('ds_value')), b64ToBytes(val('ds_signature')));
+      var ok = alg.verify(pemToRaw(val('ds_public_key')),
+          strBytes(val('ds_value')), b64ToBytes(val('ds_signature')));
       setVal('ds_status', ok
         ? 'Signature VALID ✓ — the signature matches the value and public key.'
         : 'Signature INVALID ✗ — the signature does not verify.');
     } catch (e) {
       log.error('validate: ' + e.message);
-      setVal('ds_status', 'Validation error: ' + e.message + ' (does the parameter set match the key pair?)');
+      setVal('ds_status', 'Validation error: ' + e.message +
+             ' (does the parameter set match the key pair?)');
     }
   });
   log.debug("Leaving validate().");
@@ -367,9 +463,11 @@ function validate() {
 // Pane #4 — ML-DSA (FIPS 204, post-quantum)
 // ===========================================================================
 function currentMldsaAlg() {
+  log.debug("Entering currentMldsaAlg().");
   var name = val('ds_ml_param');
   var alg = ML_PARAM_SETS[name];
   if (!alg) throw new Error('Unknown ML-DSA parameter set: ' + name);
+  log.debug("Leaving currentMldsaAlg().");
   return alg;
 }
 
@@ -399,12 +497,15 @@ function mldsaSign() {
   setVal('ds_ml_status', 'Signing with ' + name + '…');
   defer(function () {
     try {
-      var sig = currentMldsaAlg().sign(pemToRaw(val('ds_ml_private_key')), strBytes(val('ds_ml_value')));
+      var sig = currentMldsaAlg().sign(pemToRaw(val('ds_ml_private_key')),
+          strBytes(val('ds_ml_value')));
       setVal('ds_ml_signature', bytesToB64(sig));
-      setVal('ds_ml_status', 'Signed (' + name + ') — signature is ' + sig.length + ' bytes.');
+      setVal('ds_ml_status', 'Signed (' + name + ') — signature is ' +
+             sig.length + ' bytes.');
     } catch (e) {
       log.error('mldsaSign: ' + e.message);
-      setVal('ds_ml_status', 'Sign error: ' + e.message + ' (does the parameter set match the key pair?)');
+      setVal('ds_ml_status', 'Sign error: ' + e.message +
+             ' (does the parameter set match the key pair?)');
     }
   });
   log.debug("Leaving mldsaSign().");
@@ -417,13 +518,15 @@ function mldsaValidate() {
   setVal('ds_ml_status', 'Validating signature with ' + name + '…');
   defer(function () {
     try {
-      var ok = currentMldsaAlg().verify(pemToRaw(val('ds_ml_public_key')), strBytes(val('ds_ml_value')), b64ToBytes(val('ds_ml_signature')));
+      var ok = currentMldsaAlg().verify(pemToRaw(val('ds_ml_public_key')),
+          strBytes(val('ds_ml_value')), b64ToBytes(val('ds_ml_signature')));
       setVal('ds_ml_status', ok
         ? 'Signature VALID ✓ — the signature matches the value and public key.'
         : 'Signature INVALID ✗ — the signature does not verify.');
     } catch (e) {
       log.error('mldsaValidate: ' + e.message);
-      setVal('ds_ml_status', 'Validation error: ' + e.message + ' (does the parameter set match the key pair?)');
+      setVal('ds_ml_status', 'Validation error: ' + e.message +
+             ' (does the parameter set match the key pair?)');
     }
   });
   log.debug("Leaving mldsaValidate().");
@@ -436,19 +539,32 @@ async function mldsaDownloadKeys() {
   log.debug("Entering mldsaDownloadKeys().");
   var fmt = val('ds_ml_ks_format') || 'pem', pw = val('ds_ml_ks_password');
   var priv = val('ds_ml_private_key'), pub = val('ds_ml_public_key');
-  if (!priv && !pub) { setVal('ds_ml_status', 'Nothing to download — generate a key pair first.'); return false; }
+  if (!priv && !pub) {
+    setVal('ds_ml_status', 'Nothing to download — generate a key pair first.');
+    log.debug("Leaving mldsaDownloadKeys().");
+    return false;
+  }
   try {
     if (fmt === 'pem') {
-      if (pw) { setVal('ds_ml_status', 'Password protection for ML-DSA is only available in JWK format. Choose JWK.'); return false; }
-      triggerDownload('ml-dsa-keys.pem', pub + '\n' + priv, 'application/x-pem-file');
+      if (pw) {
+        setVal('ds_ml_status', 'Password protection for ML-DSA is only ' +
+               'available in JWK format. Choose JWK.');
+        log.debug("Leaving mldsaDownloadKeys().");
+        return false;
+      }
+      triggerDownload('ml-dsa-keys.pem', pub + '\n' + priv,
+                      'application/x-pem-file');
       setVal('ds_ml_status', 'Downloaded key pair (ml-dsa-keys.pem).');
     } else if (fmt === 'jwk') {
       var alg = val('ds_ml_param');
       var pubJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)), use: 'sig' };
-      var privJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)), d: b64u(pemToRaw(priv)), use: 'sig' };
-      await downloadJwkSet([pubJwk, privJwk], pw, 'ml-dsa-keys', 'ds_ml_status');
+      var privJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)),
+          d: b64u(pemToRaw(priv)), use: 'sig' };
+      await downloadJwkSet([pubJwk, privJwk], pw, 'ml-dsa-keys',
+                           'ds_ml_status');
     } else {
-      setVal('ds_ml_status', fmt.toUpperCase() + ' export is not supported for ML-DSA keys. Use PEM or JWK.');
+      setVal('ds_ml_status', fmt.toUpperCase() +
+             ' export is not supported for ML-DSA keys. Use PEM or JWK.');
     }
   } catch (e) {
     log.error('mldsaDownloadKeys: ' + e.message);
@@ -462,23 +578,47 @@ async function mldsaDownloadKeys() {
 // Pane #2 — RSA (PKCS#1 v1.5 / PSS) with a selectable hash (pure JS)
 // ===========================================================================
 // RSA primitives on native BigInt (this is a debugging tool, not a hardened
-// constant-time implementation).
-// BigInt constants written as BigInt(...) rather than 0n/1n literals: browserify's
-// insert-module-globals lexes this file (it references `process`) with an esprima
-// build that predates BigInt literals.
+// constant-time implementation). BigInt constants written as BigInt(...) rather
+// than 0n/1n literals: browserify's insert-module-globals lexes this file (it
+// references `process`) with an esprima build that predates BigInt literals.
 var _B0 = BigInt(0), _B1 = BigInt(1), _B8 = BigInt(8), _B255 = BigInt(255);
-function forgeToBig(fbn) { return BigInt('0x' + fbn.toString(16)); }
-function os2ip(bytes) { var x = _B0; for (var i = 0; i < bytes.length; i++) x = (x << _B8) | BigInt(bytes[i]); return x; }
-function i2osp(x, len) { var o = new Uint8Array(len); for (var i = len - 1; i >= 0; i--) { o[i] = Number(x & _B255); x >>= _B8; } return o; }
-function modpow(b, e, m) { var r = _B1; b %= m; while (e > _B0) { if (e & _B1) r = r * b % m; e >>= _B1; b = b * b % m; } return r; }
+function forgeToBig(fbn) {
+  log.debug("Entering forgeToBig().");
+  log.debug("Leaving forgeToBig().");
+  return BigInt('0x' + fbn.toString(16));
+}
+function os2ip(bytes) {
+  log.debug("Entering os2ip().");
+  var x = _B0;
+  for (var i = 0; i < bytes.length; i++) x = (x << _B8) | BigInt(bytes[i]);
+  log.debug("Leaving os2ip().");
+  return x;
+}
+function i2osp(x, len) {
+  log.debug("Entering i2osp().");
+  var o = new Uint8Array(len);
+  for (var i = len - 1; i >= 0; i--) { o[i] = Number(x & _B255); x >>= _B8; }
+  log.debug("Leaving i2osp().");
+  return o;
+}
+function modpow(b, e, m) {
+  log.debug("Entering modpow().");
+  var r = _B1;
+  b %= m;
+  while (e > _B0) { if (e & _B1) r = r * b % m; e >>= _B1; b = b * b % m; }
+  log.debug("Leaving modpow().");
+  return r;
+}
 
 // EMSA-PKCS1-v1_5 (RFC 8017 §9.2): 0x00 01 FF..FF 00 || DigestInfo(hash) || H
 function emsaPkcs1v15(msg, hashName, emLen) {
   log.debug("Entering emsaPkcs1v15().");
   var h = HASHES[hashName];
-  if (!h.oid) throw new Error('PKCS#1 v1.5 has no DigestInfo OID for ' + hashName + '. Choose PSS padding instead.');
+  if (!h.oid) throw new Error('PKCS#1 v1.5 has no DigestInfo OID for ' +
+      hashName + '. Choose PSS padding instead.');
   var T = concatBytes(hexToBytes(h.oid), digestOf(hashName, msg));
-  if (emLen < T.length + 11) throw new Error('Modulus too short for ' + hashName + '.');
+  if (emLen < T.length + 11) throw new Error('Modulus too short for ' +
+      hashName + '.');
   var psLen = emLen - T.length - 3;
   var em = new Uint8Array(emLen);
   em[0] = 0x00; em[1] = 0x01;
@@ -491,11 +631,14 @@ function emsaPkcs1v15(msg, hashName, emLen) {
 
 // MGF1 (RFC 8017 §B.2.1) using the same hash as the signature.
 function mgf1(seed, len, hashName) {
+  log.debug("Entering mgf1().");
   var t = new Uint8Array(0), counter = 0;
   while (t.length < len) {
-    t = concatBytes(t, digestOf(hashName, concatBytes(seed, i2osp(BigInt(counter), 4))));
+    t = concatBytes(t, digestOf(hashName, concatBytes(seed,
+        i2osp(BigInt(counter), 4))));
     counter++;
   }
+  log.debug("Leaving mgf1().");
   return t.slice(0, len);
 }
 
@@ -504,10 +647,12 @@ function emsaPssEncode(msg, hashName, emBits) {
   log.debug("Entering emsaPssEncode().");
   var mHash = digestOf(hashName, msg), hLen = mHash.length, sLen = hLen;
   var emLen = Math.ceil(emBits / 8);
-  if (emLen < hLen + sLen + 2) throw new Error('Modulus too short for PSS with ' + hashName + '.');
+  if (emLen < hLen + sLen +
+      2) throw new Error('Modulus too short for PSS with ' + hashName + '.');
   var salt = randomBytes(sLen);
   var H = digestOf(hashName, concatBytes(new Uint8Array(8), mHash, salt));
-  var DB = concatBytes(new Uint8Array(emLen - sLen - hLen - 2), new Uint8Array([0x01]), salt);
+  var DB = concatBytes(new Uint8Array(emLen - sLen - hLen - 2),
+      new Uint8Array([0x01]), salt);
   var dbMask = mgf1(H, emLen - hLen - 1, hashName);
   var maskedDB = DB.map(function (b, i) { return b ^ dbMask[i]; });
   maskedDB[0] &= (0xff >> (8 * emLen - emBits));
@@ -518,30 +663,48 @@ function emsaPssVerify(msg, em, hashName, emBits) {
   log.debug("Entering emsaPssVerify().");
   var mHash = digestOf(hashName, msg), hLen = mHash.length, sLen = hLen;
   var emLen = Math.ceil(emBits / 8);
-  if (em.length !== emLen || em[em.length - 1] !== 0xbc) return false;
-  var maskedDB = em.slice(0, emLen - hLen - 1), H = em.slice(emLen - hLen - 1, emLen - 1);
-  var DB = maskedDB.map(function (b, i) { return b ^ mgf1(H, emLen - hLen - 1, hashName)[i]; });
+  if (em.length !== emLen || em[em.length - 1] !== 0xbc) {
+    log.debug("Leaving emsaPssVerify().");
+    return false;
+  }
+  var maskedDB = em.slice(0, emLen - hLen - 1), H = em.slice(emLen - hLen - 1,
+      emLen - 1);
+  var DB = maskedDB.map(function (b, i) { return b ^ mgf1(H, emLen - hLen - 1,
+      hashName)[i]; });
   DB[0] &= (0xff >> (8 * emLen - emBits));
-  for (var i = 0; i < emLen - sLen - hLen - 2; i++) if (DB[i] !== 0) return false;
-  if (DB[emLen - sLen - hLen - 2] !== 0x01) return false;
+  for (var i = 0; i < emLen - sLen - hLen - 2; i++) if (DB[i] !== 0) {
+    log.debug("Leaving emsaPssVerify().");
+    return false;
+  }
+  if (DB[emLen - sLen - hLen - 2] !== 0x01) {
+    log.debug("Leaving emsaPssVerify().");
+    return false;
+  }
   var salt = DB.slice(DB.length - sLen);
   var H2 = digestOf(hashName, concatBytes(new Uint8Array(8), mHash, salt));
   log.debug("Leaving emsaPssVerify().");
   return bytesEqual(H, H2);
 }
 
-function rsaPaddingLabel(p) { return p === 'pss' ? 'PSS' : 'PKCS#1 v1.5'; }
+function rsaPaddingLabel(p) {
+  log.debug("Entering rsaPaddingLabel().");
+  log.debug("Leaving rsaPaddingLabel().");
+  return p === 'pss' ? 'PSS' : 'PKCS#1 v1.5';
+}
 
 // Generate a 2048-bit RSA key pair with node-forge (pure JS); display as PEM.
 function rsaGenerateKeys() {
   log.debug("Entering rsaGenerateKeys().");
   var bits = parseInt(val('ds_rsa_bits'), 10) || 2048;
-  setVal('ds_rsa_status', 'Generating RSA ' + bits + '-bit key pair… (pure JS — larger sizes take longer)');
+  setVal('ds_rsa_status', 'Generating RSA ' + bits +
+         '-bit key pair… (pure JS — larger sizes take longer)');
   defer(function () {
     try {
       var kp = forge.pki.rsa.generateKeyPair({ bits: bits, e: 0x10001 });
-      setVal('ds_rsa_private_key', forge.pki.privateKeyToPem(kp.privateKey).trim() + '\n');
-      setVal('ds_rsa_public_key', forge.pki.publicKeyToPem(kp.publicKey).trim() + '\n');
+      setVal('ds_rsa_private_key',
+             forge.pki.privateKeyToPem(kp.privateKey).trim() + '\n');
+      setVal('ds_rsa_public_key',
+             forge.pki.publicKeyToPem(kp.publicKey).trim() + '\n');
       setVal('ds_rsa_status', 'Generated RSA ' + bits + '-bit key pair.');
     } catch (e) {
       log.error('rsaGenerateKeys: ' + e.message);
@@ -572,9 +735,14 @@ function rsaSelfSignedCert(privateKey, publicKey) {
 function viewRsaCert() {
   log.debug("Entering viewRsaCert().");
   var privPem = val('ds_rsa_private_key'), pubPem = val('ds_rsa_public_key');
-  if (!privPem.trim() || !pubPem.trim()) { setVal('ds_rsa_status', 'Generate an RSA key pair first.'); return false; }
+  if (!privPem.trim() || !pubPem.trim()) {
+    setVal('ds_rsa_status', 'Generate an RSA key pair first.');
+    log.debug("Leaving viewRsaCert().");
+    return false;
+  }
   try {
-    var cert = rsaSelfSignedCert(forge.pki.privateKeyFromPem(privPem), forge.pki.publicKeyFromPem(pubPem));
+    var cert = rsaSelfSignedCert(forge.pki.privateKeyFromPem(privPem),
+        forge.pki.publicKeyFromPem(pubPem));
     var pem = forge.pki.certificateToPem(cert);
     if (window.localStorage) localStorage.setItem('saml_cert_view', pem);
     window.open('/saml_cert.html?from=digital_signature.html', '_blank');
@@ -590,33 +758,56 @@ async function rsaDownloadKeys() {
   log.debug("Entering rsaDownloadKeys().");
   var fmt = val('ds_rsa_ks_format') || 'pem', pw = val('ds_rsa_ks_password');
   var privPem = val('ds_rsa_private_key'), pubPem = val('ds_rsa_public_key');
-  if (!privPem.trim() || !pubPem.trim()) { setVal('ds_rsa_status', 'No key pair to export. Generate a key pair first.'); return false; }
+  if (!privPem.trim() || !pubPem.trim()) {
+    setVal('ds_rsa_status',
+           'No key pair to export. Generate a key pair first.');
+    log.debug("Leaving rsaDownloadKeys().");
+    return false;
+  }
   try {
     var key = forge.pki.privateKeyFromPem(privPem);
     var pub = forge.pki.publicKeyFromPem(pubPem);
-    var pkcs8 = forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(key)); // PrivateKeyInfo
+    var pkcs8 = forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(
+        key)); // PrivateKeyInfo
 
     if (fmt === 'pem') {
       var privBlock = pw
-        ? forge.pki.encryptedPrivateKeyToPem(forge.pki.encryptPrivateKeyInfo(pkcs8, pw, { algorithm: 'aes256' }))
+        ? forge.pki.encryptedPrivateKeyToPem(forge.pki.encryptPrivateKeyInfo(
+            pkcs8, pw, { algorithm: 'aes256' }))
         : forge.pki.privateKeyInfoToPem(pkcs8);
-      triggerDownload('rsa-keys.pem', privBlock.trim() + '\n' + forge.pki.publicKeyToPem(pub).trim() + '\n', 'application/x-pem-file');
+      triggerDownload('rsa-keys.pem', privBlock.trim() + '\n' +
+                      forge.pki.publicKeyToPem(pub).trim() + '\n',
+                      'application/x-pem-file');
       setVal('ds_rsa_status', pw ? 'Downloaded PEM (encrypted private key + public key).' : 'Downloaded PEM (private + public key).');
     } else if (fmt === 'der') {
-      var privDer = pw ? derBytes(forge.pki.encryptPrivateKeyInfo(pkcs8, pw, { algorithm: 'aes256' })) : derBytes(pkcs8);
+      var privDer = pw ? derBytes(forge.pki.encryptPrivateKeyInfo(pkcs8, pw,
+          { algorithm: 'aes256' })) : derBytes(pkcs8);
       triggerDownload('rsa-private.der', privDer, 'application/pkcs8');
-      triggerDownload('rsa-public.der', derBytes(forge.pki.publicKeyToAsn1(pub)), 'application/octet-stream');
+      triggerDownload('rsa-public.der',
+                      derBytes(forge.pki.publicKeyToAsn1(pub)),
+                      'application/octet-stream');
       setVal('ds_rsa_status', pw ? 'Downloaded DER (encrypted private + public), two files.' : 'Downloaded DER (private + public), two files.');
     } else if (fmt === 'jwk') {
-      var pubJwk = { kty: 'RSA', n: forgeBnB64u(key.n), e: forgeBnB64u(key.e), use: 'sig' };
-      var privJwk = { kty: 'RSA', n: forgeBnB64u(key.n), e: forgeBnB64u(key.e), d: forgeBnB64u(key.d),
-        p: forgeBnB64u(key.p), q: forgeBnB64u(key.q), dp: forgeBnB64u(key.dP), dq: forgeBnB64u(key.dQ), qi: forgeBnB64u(key.qInv), use: 'sig' };
+      var pubJwk = { kty: 'RSA', n: forgeBnB64u(key.n), e: forgeBnB64u(key.e),
+          use: 'sig' };
+      var privJwk = { kty: 'RSA', n: forgeBnB64u(key.n), e: forgeBnB64u(key.e),
+          d: forgeBnB64u(key.d),
+        p: forgeBnB64u(key.p), q: forgeBnB64u(key.q), dp: forgeBnB64u(key.dP),
+                       dq: forgeBnB64u(key.dQ), qi: forgeBnB64u(key.qInv),
+                       use: 'sig' };
       await downloadJwkSet([pubJwk, privJwk], pw, 'rsa-keys', 'ds_rsa_status');
     } else if (fmt === 'pkcs12') {
-      if (!pw) { setVal('ds_rsa_status', 'PKCS#12 requires a password. Enter one in the password field.'); return false; }
-      var p12 = forge.pkcs12.toPkcs12Asn1(key, [rsaSelfSignedCert(key, pub)], pw, { algorithm: '3des' });
+      if (!pw) {
+        setVal('ds_rsa_status',
+               'PKCS#12 requires a password. Enter one in the password field.');
+        log.debug("Leaving rsaDownloadKeys().");
+        return false;
+      }
+      var p12 = forge.pkcs12.toPkcs12Asn1(key, [rsaSelfSignedCert(key, pub)],
+          pw, { algorithm: '3des' });
       triggerDownload('rsa-keys.p12', derBytes(p12), 'application/x-pkcs12');
-      setVal('ds_rsa_status', 'Downloaded password-protected PKCS#12 (rsa-keys.p12).');
+      setVal('ds_rsa_status',
+             'Downloaded password-protected PKCS#12 (rsa-keys.p12).');
     } else {
       setVal('ds_rsa_status', 'Unknown keystore format: ' + fmt);
     }
@@ -631,16 +822,19 @@ async function rsaDownloadKeys() {
 function rsaSign() {
   log.debug("Entering rsaSign().");
   var padding = val('ds_rsa_padding'), hashName = val('ds_rsa_hash');
-  setVal('ds_rsa_status', 'Signing with RSA ' + rsaPaddingLabel(padding) + ' / ' + hashName + '…');
+  setVal('ds_rsa_status', 'Signing with RSA ' + rsaPaddingLabel(padding) +
+         ' / ' + hashName + '…');
   try {
     var key = forge.pki.privateKeyFromPem(val('ds_rsa_private_key'));
     var n = forgeToBig(key.n), d = forgeToBig(key.d);
     var modBits = n.toString(2).length, k = Math.ceil(modBits / 8);
     var msg = strBytes(val('ds_rsa_value'));
-    var em = padding === 'pss' ? emsaPssEncode(msg, hashName, modBits - 1) : emsaPkcs1v15(msg, hashName, k);
+    var em = padding === 'pss' ? emsaPssEncode(msg, hashName, modBits -
+        1) : emsaPkcs1v15(msg, hashName, k);
     var sig = i2osp(modpow(os2ip(em), d, n), k);
     setVal('ds_rsa_signature', bytesToB64(sig));
-    setVal('ds_rsa_status', 'Signed (RSA ' + rsaPaddingLabel(padding) + ' / ' + hashName + ') — ' + sig.length + ' bytes.');
+    setVal('ds_rsa_status', 'Signed (RSA ' + rsaPaddingLabel(padding) + ' / ' +
+           hashName + ') — ' + sig.length + ' bytes.');
   } catch (e) {
     log.error('rsaSign: ' + e.message);
     setVal('ds_rsa_status', 'Sign error: ' + e.message);
@@ -652,7 +846,8 @@ function rsaSign() {
 function rsaValidate() {
   log.debug("Entering rsaValidate().");
   var padding = val('ds_rsa_padding'), hashName = val('ds_rsa_hash');
-  setVal('ds_rsa_status', 'Validating RSA ' + rsaPaddingLabel(padding) + ' / ' + hashName + '…');
+  setVal('ds_rsa_status', 'Validating RSA ' + rsaPaddingLabel(padding) + ' / ' +
+         hashName + '…');
   try {
     var key = forge.pki.publicKeyFromPem(val('ds_rsa_public_key'));
     var n = forgeToBig(key.n), e = forgeToBig(key.e);
@@ -678,9 +873,11 @@ function rsaValidate() {
 // Pane #3 — ECC (ECDSA / EdDSA) with a selectable hash (@noble/curves)
 // ===========================================================================
 function eccCurve() {
+  log.debug("Entering eccCurve().");
   var name = val('ds_ecc_curve');
   var c = CURVES[name];
   if (!c) throw new Error('Unknown curve: ' + name);
+  log.debug("Leaving eccCurve().");
   return c;
 }
 
@@ -694,7 +891,8 @@ function eccGenerateKeys() {
     var pub = c.curve.getPublicKey(priv);
     setVal('ds_ecc_private_key', bytesToHex(priv));
     setVal('ds_ecc_public_key', bytesToHex(pub));
-    setVal('ds_ecc_status', 'Generated ' + name + ' key pair (private ' + priv.length + ' B, public ' + pub.length + ' B).');
+    setVal('ds_ecc_status', 'Generated ' + name + ' key pair (private ' +
+           priv.length + ' B, public ' + pub.length + ' B).');
   } catch (e) {
     log.error('eccGenerateKeys: ' + e.message);
     setVal('ds_ecc_status', 'Key generation error: ' + e.message);
@@ -703,20 +901,24 @@ function eccGenerateKeys() {
   return false;
 }
 
-// Build a JWK pair for the current ECC keys (EC for ECDSA curves, OKP for EdDSA).
+// Build a JWK pair for the current ECC keys (EC for ECDSA curves, OKP for
+// EdDSA).
 function eccJwkSet() {
   log.debug("Entering eccJwkSet().");
   var c = eccCurve();
-  var priv = hexToBytes(val('ds_ecc_private_key')), pubHex = val('ds_ecc_public_key');
+  var priv = hexToBytes(val('ds_ecc_private_key')), pubHex =
+      val('ds_ecc_public_key');
   if (c.kind === 'eddsa') {
     var pub = hexToBytes(pubHex);
+    log.debug("Leaving eccJwkSet().");
     return [
       { kty: 'OKP', crv: c.jwkCrv, x: b64u(pub), use: 'sig' },
       { kty: 'OKP', crv: c.jwkCrv, x: b64u(pub), d: b64u(priv), use: 'sig' }
     ];
   }
   var pt = c.curve.ProjectivePoint.fromHex(pubHex).toAffine();
-  var x = b64u(bigToBytes(pt.x, c.fieldBytes)), y = b64u(bigToBytes(pt.y, c.fieldBytes));
+  var x = b64u(bigToBytes(pt.x, c.fieldBytes)), y = b64u(bigToBytes(pt.y,
+      c.fieldBytes));
   log.debug("Leaving eccJwkSet().");
   return [
     { kty: 'EC', crv: c.jwkCrv, x: x, y: y, use: 'sig' },
@@ -728,15 +930,22 @@ async function eccDownloadKeys() {
   log.debug("Entering eccDownloadKeys().");
   var fmt = val('ds_ecc_ks_format') || 'jwk', pw = val('ds_ecc_ks_password');
   var priv = val('ds_ecc_private_key'), pub = val('ds_ecc_public_key');
-  if (!priv && !pub) { setVal('ds_ecc_status', 'Nothing to download — generate a key pair first.'); return false; }
+  if (!priv && !pub) {
+    setVal('ds_ecc_status', 'Nothing to download — generate a key pair first.');
+    log.debug("Leaving eccDownloadKeys().");
+    return false;
+  }
   try {
     var c = eccCurve();
     if (fmt === 'jwk' && (c.kind === 'schnorr' || c.kind === 'bls')) {
-      setVal('ds_ecc_status', 'JWK is not defined for ' + val('ds_ecc_curve') + '. Copy the hex from the key fields.');
+      setVal('ds_ecc_status', 'JWK is not defined for ' + val('ds_ecc_curve') +
+             '. Copy the hex from the key fields.');
     } else if (fmt === 'jwk') {
       await downloadJwkSet(eccJwkSet(), pw, 'ecc-keys', 'ds_ecc_status');
     } else {
-      setVal('ds_ecc_status', fmt.toUpperCase() + ' export is not supported for these raw ECC keys. Use JWK (or copy the hex from the key fields).');
+      setVal('ds_ecc_status', fmt.toUpperCase() + ' export is not supported ' +
+             'for these raw ECC keys. Use JWK (or copy the hex from the ' +
+             'key fields).');
     }
   } catch (e) {
     log.error('eccDownloadKeys: ' + e.message);
@@ -764,10 +973,12 @@ function eccSign() {
       detail = name;
     }
     setVal('ds_ecc_signature', bytesToB64(sig));
-    setVal('ds_ecc_status', 'Signed (' + detail + ') — signature is ' + sig.length + ' bytes.');
+    setVal('ds_ecc_status', 'Signed (' + detail + ') — signature is ' +
+           sig.length + ' bytes.');
   } catch (e) {
     log.error('eccSign: ' + e.message);
-    setVal('ds_ecc_status', 'Sign error: ' + e.message + ' (does the curve match the key pair?)');
+    setVal('ds_ecc_status', 'Sign error: ' + e.message +
+           ' (does the curve match the key pair?)');
   }
   log.debug("Leaving eccSign().");
   return false;
@@ -790,7 +1001,8 @@ function eccValidate() {
       : 'Signature INVALID ✗ — the signature does not verify.');
   } catch (e) {
     log.error('eccValidate: ' + e.message);
-    setVal('ds_ecc_status', 'Validation error: ' + e.message + ' (does the curve/hash match the signature?)');
+    setVal('ds_ecc_status', 'Validation error: ' + e.message +
+           ' (does the curve/hash match the signature?)');
   }
   log.debug("Leaving eccValidate().");
   return false;
@@ -804,12 +1016,29 @@ function eccValidate() {
 
 // --- AES single 16-byte block (raw ECB via forge), for CMAC/CBC-MAC ---
 function aesBlock(keyBytes, block16) {
-  var c = forge.cipher.createCipher('AES-ECB', forge.util.createBuffer(forge.util.binary.raw.encode(keyBytes)));
-  c.start(); c.update(forge.util.createBuffer(forge.util.binary.raw.encode(block16))); c.finish();
+  log.debug("Entering aesBlock().");
+  var c = forge.cipher.createCipher('AES-ECB',
+      forge.util.createBuffer(forge.util.binary.raw.encode(keyBytes)));
+  c.start(); c.update(forge.util.createBuffer(forge.util.binary.raw.encode(
+          block16))); c.finish();
+  log.debug("Leaving aesBlock().");
   return forge.util.binary.raw.decode(c.output.getBytes()).slice(0, 16);
 }
-function xorBytes(a, b) { var o = new Uint8Array(a.length); for (var i = 0; i < a.length; i++) o[i] = a[i] ^ b[i]; return o; }
-function shl1(b) { var o = new Uint8Array(16), carry = 0; for (var i = 15; i >= 0; i--) { o[i] = ((b[i] << 1) | carry) & 0xff; carry = (b[i] & 0x80) ? 1 : 0; } return o; }
+function xorBytes(a, b) {
+  log.debug("Entering xorBytes().");
+  var o = new Uint8Array(a.length);
+  for (var i = 0; i < a.length; i++) o[i] = a[i] ^ b[i];
+  log.debug("Leaving xorBytes().");
+  return o;
+}
+function shl1(b) {
+  log.debug("Entering shl1().");
+  var o = new Uint8Array(16), carry = 0;
+  for (var i = 15; i >= 0; i--) { o[i] = ((b[i] << 1) | carry) & 0xff; carry =
+       (b[i] & 0x80) ? 1 : 0; }
+  log.debug("Leaving shl1().");
+  return o;
+}
 
 // AES-CMAC (RFC 4493), verified against the RFC test vectors.
 function aesCmac(key, msg) {
@@ -822,21 +1051,26 @@ function aesCmac(key, msg) {
   var complete = msg.length > 0 && msg.length % 16 === 0;
   var last;
   if (complete) { last = xorBytes(msg.slice((n - 1) * 16), K1); }
-  else { var pad = new Uint8Array(16); var rem = msg.slice((n - 1) * 16); pad.set(rem); pad[rem.length] = 0x80; last = xorBytes(pad, K2); }
+  else { var pad = new Uint8Array(16); var rem = msg.slice((n -
+        1) * 16); pad.set(rem); pad[rem.length] = 0x80; last = xorBytes(pad,
+        K2); }
   var x = new Uint8Array(16);
-  for (var i = 0; i < n - 1; i++) x = aesBlock(key, xorBytes(x, msg.slice(i * 16, i * 16 + 16)));
+  for (var i = 0; i < n - 1; i++) x = aesBlock(key, xorBytes(x,
+       msg.slice(i * 16, i * 16 + 16)));
   log.debug("Leaving aesCmac().");
   return aesBlock(key, xorBytes(x, last));
 }
 
 // AES-CBC-MAC (legacy; zero IV, last block). Insecure for variable-length msgs.
 function aesCbcMac(key, msg) {
+  log.debug("Entering aesCbcMac().");
   var n = Math.ceil(msg.length / 16) || 1;
   var x = new Uint8Array(16);
   for (var i = 0; i < n; i++) {
     var blk = new Uint8Array(16); blk.set(msg.slice(i * 16, i * 16 + 16));
     x = aesBlock(key, xorBytes(x, blk));
   }
+  log.debug("Leaving aesCbcMac().");
   return x;
 }
 
@@ -844,9 +1078,13 @@ function aesCbcMac(key, msg) {
 // fixed all-zero nonce for a deterministic key+value->tag; real GMAC needs a
 // unique nonce per message per key.
 function aesGmac(key, msg) {
-  var g = forge.cipher.createCipher('AES-GCM', forge.util.createBuffer(forge.util.binary.raw.encode(key)));
-  g.start({ iv: forge.util.binary.raw.encode(new Uint8Array(12)), additionalData: forge.util.binary.raw.encode(msg), tagLength: 128 });
+  log.debug("Entering aesGmac().");
+  var g = forge.cipher.createCipher('AES-GCM',
+      forge.util.createBuffer(forge.util.binary.raw.encode(key)));
+  g.start({ iv: forge.util.binary.raw.encode(new Uint8Array(12)),
+          additionalData: forge.util.binary.raw.encode(msg), tagLength: 128 });
   g.finish();
+  log.debug("Leaving aesGmac().");
   return forge.util.binary.raw.decode(g.mode.tag.getBytes()).slice(0, 16);
 }
 
@@ -854,11 +1092,13 @@ function aesGmac(key, msg) {
 // the 32-byte key MUST be unique per message.
 function poly1305(key, msg) {
   log.debug("Entering poly1305().");
-  var P = (BigInt(1) << BigInt(130)) - BigInt(5), M128 = (BigInt(1) << BigInt(128)) - BigInt(1);
+  var P = (BigInt(1) << BigInt(130)) - BigInt(5), M128 =
+      (BigInt(1) << BigInt(128)) - BigInt(1);
   var r = BigInt(0), i;
   for (i = 15; i >= 0; i--) r = (r << BigInt(8)) | BigInt(key[i]);
   r &= BigInt('0x0ffffffc0ffffffc0ffffffc0fffffff');
-  var s = BigInt(0); for (i = 15; i >= 0; i--) s = (s << BigInt(8)) | BigInt(key[16 + i]);
+  var s = BigInt(0); for (i = 15; i >= 0; i--) s =
+      (s << BigInt(8)) | BigInt(key[16 + i]);
   var acc = BigInt(0);
   for (i = 0; i < msg.length; i += 16) {
     var ch = msg.slice(i, i + 16), n = BigInt(0), j;
@@ -867,7 +1107,8 @@ function poly1305(key, msg) {
     acc = ((acc + n) * r) % P;
   }
   acc = (acc + s) & M128;
-  var out = new Uint8Array(16); for (i = 0; i < 16; i++) { out[i] = Number(acc & BigInt(0xff)); acc >>= BigInt(8); }
+  var out = new Uint8Array(16); for (i = 0; i < 16; i++) { out[i] =
+      Number(acc & BigInt(0xff)); acc >>= BigInt(8); }
   log.debug("Leaving poly1305().");
   return out;
 }
@@ -876,25 +1117,41 @@ function poly1305(key, msg) {
 function siphash24(key, msg) {
   log.debug("Entering siphash24().");
   var M = (BigInt(1) << BigInt(64)) - BigInt(1);
-  function rotl(x, b) { return ((x << BigInt(b)) | (x >> BigInt(64 - b))) & M; }
-  function rd(b, o) { var v = BigInt(0); for (var i = 7; i >= 0; i--) v = (v << BigInt(8)) | BigInt(b[o + i]); return v; }
+  function rotl(x, b) {
+    log.debug("Entering rotl().");
+    log.debug("Leaving rotl().");
+    return ((x << BigInt(b)) | (x >> BigInt(64 - b))) & M;
+  }
+  function rd(b, o) {
+    log.debug("Entering rd().");
+    var v = BigInt(0);
+    for (var i = 7; i >= 0; i--) v = (v << BigInt(8)) | BigInt(b[o + i]);
+    log.debug("Leaving rd().");
+    return v;
+  }
   var k0 = rd(key, 0), k1 = rd(key, 8);
-  var v0 = BigInt('0x736f6d6570736575') ^ k0, v1 = BigInt('0x646f72616e646f6d') ^ k1,
-      v2 = BigInt('0x6c7967656e657261') ^ k0, v3 = BigInt('0x7465646279746573') ^ k1;
+  var v0 = BigInt('0x736f6d6570736575') ^ k0, v1 =
+      BigInt('0x646f72616e646f6d') ^ k1,
+      v2 = BigInt('0x6c7967656e657261') ^ k0, v3 =
+          BigInt('0x7465646279746573') ^ k1;
   function round() {
+    log.debug("Entering round().");
     v0 = (v0 + v1) & M; v1 = rotl(v1, 13); v1 ^= v0; v0 = rotl(v0, 32);
     v2 = (v2 + v3) & M; v3 = rotl(v3, 16); v3 ^= v2;
     v0 = (v0 + v3) & M; v3 = rotl(v3, 21); v3 ^= v0;
     v2 = (v2 + v1) & M; v1 = rotl(v1, 17); v1 ^= v2; v2 = rotl(v2, 32);
+    log.debug("Leaving round().");
   }
   var len = msg.length, end = len - (len % 8), off, i;
-  for (off = 0; off < end; off += 8) { var m = rd(msg, off); v3 ^= m; round(); round(); v0 ^= m; }
+  for (off = 0; off < end; off += 8) { var m = rd(msg,
+       off); v3 ^= m; round(); round(); v0 ^= m; }
   var b = BigInt(len & 0xff) << BigInt(56);
   for (i = 0; i < (len % 8); i++) b |= BigInt(msg[end + i]) << BigInt(8 * i);
   v3 ^= b; round(); round(); v0 ^= b;
   v2 ^= BigInt(0xff); round(); round(); round(); round();
   var outv = (v0 ^ v1 ^ v2 ^ v3) & M;
-  var o = new Uint8Array(8); for (i = 0; i < 8; i++) { o[i] = Number(outv & BigInt(0xff)); outv >>= BigInt(8); }
+  var o = new Uint8Array(8); for (i = 0; i < 8; i++) { o[i] =
+      Number(outv & BigInt(0xff)); outv >>= BigInt(8); }
   log.debug("Leaving siphash24().");
   return o;
 }
@@ -903,45 +1160,120 @@ function siphash24(key, msg) {
 // generate with "Generate Key".
 var MACS = {
   // Keyed-hash family
-  'HMAC-SHA256':  { fn: function (k, m) { return nobleHmac(nobleSha256, k, m); },        keyBytes: 32 },
-  'HMAC-SHA384':  { fn: function (k, m) { return nobleHmac(nobleSha512.sha384, k, m); }, keyBytes: 48 },
-  'HMAC-SHA512':  { fn: function (k, m) { return nobleHmac(nobleSha512.sha512, k, m); }, keyBytes: 64 },
-  'HMAC-SHA3-256':{ fn: function (k, m) { return nobleHmac(nobleSha3.sha3_256, k, m); }, keyBytes: 32 },
-  'HMAC-SHA3-512':{ fn: function (k, m) { return nobleHmac(nobleSha3.sha3_512, k, m); }, keyBytes: 64 },
-  'HMAC-SHA1':    { fn: function (k, m) { return nobleHmac(nobleSha1, k, m); },          keyBytes: 20 }, // insecure
-  'KMAC128':      { fn: function (k, m) { return nobleKmac128(k, m, { dkLen: 32 }); },   keyBytes: 32 },
-  'KMAC256':      { fn: function (k, m) { return nobleKmac256(k, m, { dkLen: 64 }); },   keyBytes: 32 },
-  'BLAKE2b':      { fn: function (k, m) { return nobleBlake2b(m, { key: k }); },         keyBytes: 32 },
-  'BLAKE2s':      { fn: function (k, m) { return nobleBlake2s(m, { key: k }); },         keyBytes: 32 },
-  'BLAKE3':       { fn: function (k, m) { return nobleBlake3(m, { key: k }); },          keyBytes: 32 }, // key must be 32B
+  'HMAC-SHA256':  { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleHmac(nobleSha256, k, m);
+  },        keyBytes: 32 },
+  'HMAC-SHA384':  { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleHmac(nobleSha512.sha384, k, m);
+  }, keyBytes: 48 },
+  'HMAC-SHA512':  { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleHmac(nobleSha512.sha512, k, m);
+  }, keyBytes: 64 },
+  'HMAC-SHA3-256':{ fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleHmac(nobleSha3.sha3_256, k, m);
+  }, keyBytes: 32 },
+  'HMAC-SHA3-512':{ fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleHmac(nobleSha3.sha3_512, k, m);
+  }, keyBytes: 64 },
+  'HMAC-SHA1':    { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleHmac(nobleSha1, k, m);
+  },          keyBytes: 20 }, // insecure
+  'KMAC128':      { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleKmac128(k, m, { dkLen: 32 });
+  },   keyBytes: 32 },
+  'KMAC256':      { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleKmac256(k, m, { dkLen: 64 });
+  },   keyBytes: 32 },
+  'BLAKE2b':      { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleBlake2b(m, { key: k });
+  },         keyBytes: 32 },
+  'BLAKE2s':      { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleBlake2s(m, { key: k });
+  },         keyBytes: 32 },
+  'BLAKE3':       { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return nobleBlake3(m, { key: k });
+  },          keyBytes: 32 }, // key must be 32B
   // Block-cipher family (AES)
-  'AES-CMAC':     { fn: function (k, m) { return aesCmac(k, m); },                       keyBytes: 32 },
-  'AES-CBC-MAC':  { fn: function (k, m) { return aesCbcMac(k, m); },                     keyBytes: 32 }, // legacy
-  'AES-GMAC':     { fn: function (k, m) { return aesGmac(k, m); },                       keyBytes: 32 },
+  'AES-CMAC':     { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return aesCmac(k, m);
+  },                       keyBytes: 32 },
+  'AES-CBC-MAC':  { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return aesCbcMac(k, m);
+  },                     keyBytes: 32 }, // legacy
+  'AES-GMAC':     { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return aesGmac(k, m);
+  },                       keyBytes: 32 },
   // Universal-hash family
-  'Poly1305':     { fn: function (k, m) { return poly1305(k, m); },                      keyBytes: 32 }, // one-time key
-  'SipHash-2-4':  { fn: function (k, m) { return siphash24(k, m); },                     keyBytes: 16 }
+  'Poly1305':     { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return poly1305(k, m);
+  },                      keyBytes: 32 }, // one-time key
+  'SipHash-2-4':  { fn: function (k, m) {
+    log.debug("Entering fn().");
+    log.debug("Leaving fn().");
+    return siphash24(k, m);
+  },                     keyBytes: 16 }
 };
 
 // Pane handlers — one set, parameterized by pane prefix (khmac/bcmac/uhmac).
 function macGenerateKey(prefix) {
+  log.debug("Entering macGenerateKey().");
   var alg = val('ds_' + prefix + '_alg'), mac = MACS[alg];
-  if (!mac) { setVal('ds_' + prefix + '_status', 'Unknown MAC: ' + alg); return false; }
+  if (!mac) {
+    setVal('ds_' + prefix + '_status', 'Unknown MAC: ' + alg);
+    log.debug("Leaving macGenerateKey().");
+    return false;
+  }
   setVal('ds_' + prefix + '_key', bytesToHex(randomBytes(mac.keyBytes)));
-  setVal('ds_' + prefix + '_status', 'Generated ' + (mac.keyBytes * 8) + '-bit key for ' + alg + '.');
+  setVal('ds_' + prefix + '_status', 'Generated ' + (mac.keyBytes * 8) +
+         '-bit key for ' + alg + '.');
+  log.debug("Leaving macGenerateKey().");
   return false;
 }
 function macCompute(prefix) {
   log.debug("Entering macCompute().");
   var alg = val('ds_' + prefix + '_alg');
   try {
-    var mac = MACS[alg]; if (!mac) throw new Error('Unknown MAC: ' + alg);
-    var tag = mac.fn(hexToBytes(val('ds_' + prefix + '_key')), strBytes(val('ds_' + prefix + '_value')));
+    var mac = MACS[alg];
+    if (!mac) throw new Error('Unknown MAC: ' + alg);
+    var tag = mac.fn(hexToBytes(val('ds_' + prefix + '_key')),
+        strBytes(val('ds_' + prefix + '_value')));
     setVal('ds_' + prefix + '_mac', bytesToB64(tag));
-    setVal('ds_' + prefix + '_status', 'Computed ' + alg + ' — ' + tag.length + '-byte tag.');
+    setVal('ds_' + prefix + '_status', 'Computed ' + alg + ' — ' + tag.length +
+           '-byte tag.');
   } catch (e) {
     log.error('macCompute: ' + e.message);
-    setVal('ds_' + prefix + '_status', 'MAC error: ' + e.message + ' (check the key length for this algorithm).');
+    setVal('ds_' + prefix + '_status', 'MAC error: ' + e.message +
+           ' (check the key length for this algorithm).');
   }
   log.debug("Leaving macCompute().");
   return false;
@@ -950,8 +1282,10 @@ function macVerify(prefix) {
   log.debug("Entering macVerify().");
   var alg = val('ds_' + prefix + '_alg');
   try {
-    var mac = MACS[alg]; if (!mac) throw new Error('Unknown MAC: ' + alg);
-    var tag = mac.fn(hexToBytes(val('ds_' + prefix + '_key')), strBytes(val('ds_' + prefix + '_value')));
+    var mac = MACS[alg];
+    if (!mac) throw new Error('Unknown MAC: ' + alg);
+    var tag = mac.fn(hexToBytes(val('ds_' + prefix + '_key')),
+        strBytes(val('ds_' + prefix + '_value')));
     var ok = bytesEqual(tag, b64ToBytes(val('ds_' + prefix + '_mac')));
     setVal('ds_' + prefix + '_status', ok
       ? 'MAC VALID ✓ — recomputed tag matches the value and key.'
@@ -968,15 +1302,25 @@ function macVerify(prefix) {
 // Collapse / expand all panes.
 // ---------------------------------------------------------------------------
 function setAllCollapsed(collapsed) {
+  log.debug("Entering setAllCollapsed().");
   var panes = document.querySelectorAll('.ds-grid > fieldset');
   for (var i = 0; i < panes.length; i++) {
     if (collapsed) panes[i].classList.add('ds-collapsed');
     else panes[i].classList.remove('ds-collapsed');
   }
+  log.debug("Leaving setAllCollapsed().");
   return false;
 }
-function expandAll() { return setAllCollapsed(false); }
-function collapseAll() { return setAllCollapsed(true); }
+function expandAll() {
+  log.debug("Entering expandAll().");
+  log.debug("Leaving expandAll().");
+  return setAllCollapsed(false);
+}
+function collapseAll() {
+  log.debug("Entering collapseAll().");
+  log.debug("Leaving collapseAll().");
+  return setAllCollapsed(true);
+}
 
 // ---------------------------------------------------------------------------
 // Copy a field's contents to the clipboard.
@@ -984,10 +1328,15 @@ function collapseAll() { return setAllCollapsed(true); }
 function copyField(elementId) {
   log.debug("Entering copyField().");
   var el = document.getElementById(elementId);
-  if (!el) { log.error('copyField: element not found: ' + elementId); return false; }
+  if (!el) {
+    log.error('copyField: element not found: ' + elementId);
+    log.debug("Leaving copyField().");
+    return false;
+  }
   var text = el.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
+    navigator.clipboard.writeText(text).catch(function (err) { log.error(
+                                  'copyField: ' + err); });
   } else {
     try {
       el.focus();
@@ -1005,14 +1354,18 @@ function copyField(elementId) {
 // "Return to debugger" link — point back at whichever page sent us here.
 // ---------------------------------------------------------------------------
 function setReturnLink() {
-  var allowed = { 'debugger.html': '/debugger.html', 'debugger2.html': '/debugger2.html' };
+  log.debug("Entering setReturnLink().");
+  var allowed = { 'debugger.html': '/debugger.html',
+      'debugger2.html': '/debugger2.html' };
   var from = new URLSearchParams(window.location.search).get('from');
   var target = allowed[from] || '/debugger.html';
   var link = document.getElementById('return_link');
   if (link) link.setAttribute('href', target);
+  log.debug("Leaving setReturnLink().");
 }
 
 window.onload = function () {
+  log.debug("Entering onload().");
   log.debug('Entering onload function.');
   setReturnLink();
   setVal('ds_value', 'Sign me with SLH-DSA!');
@@ -1020,14 +1373,18 @@ window.onload = function () {
   setVal('ds_ecc_value', 'Sign me with ECC!');
   setVal('ds_ml_value', 'Sign me with ML-DSA!');
   // Symmetric MAC panes: seed a value and an initial random key.
-  setVal('ds_khmac_value', 'MAC me with a keyed hash!'); macGenerateKey('khmac');
-  setVal('ds_bcmac_value', 'MAC me with a block cipher!'); macGenerateKey('bcmac');
-  setVal('ds_uhmac_value', 'MAC me with a universal hash!'); macGenerateKey('uhmac');
+  setVal('ds_khmac_value',
+         'MAC me with a keyed hash!'); macGenerateKey('khmac');
+  setVal('ds_bcmac_value',
+         'MAC me with a block cipher!'); macGenerateKey('bcmac');
+  setVal('ds_uhmac_value',
+         'MAC me with a universal hash!'); macGenerateKey('uhmac');
 
   // Make each pane collapsible: clicking its legend toggles the fieldset.
   var legends = document.querySelectorAll('.ds-grid > fieldset > legend');
   for (var i = 0; i < legends.length; i++) {
-    legends[i].addEventListener('click', function () { this.parentNode.classList.toggle('ds-collapsed'); });
+    legends[i].addEventListener('click',
+            function () { this.parentNode.classList.toggle('ds-collapsed'); });
   }
 
   // Default to all panes minimized on load; the user expands the ones they need

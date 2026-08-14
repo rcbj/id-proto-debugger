@@ -56,28 +56,38 @@ require("./wait_for").configure({ timeout: fetchWait });
 // walt.id's service, and the Credential Issuer Identifier it publishes — which
 // is the service URL plus a path. That path is the whole point of several of
 // the assertions below.
-var waltidBase = (process.env.WALTID_ISSUER_URL || "http://localhost:7005").replace(/\/+$/, "");
+var waltidBase = (process.env.WALTID_ISSUER_URL ||
+    "http://localhost:7005").replace(/\/+$/, "");
 var issuerId = waltidBase + "/openid4vci";
-var metadataUrl = waltidBase + "/.well-known/openid-credential-issuer/openid4vci";
+var metadataUrl = waltidBase +
+    "/.well-known/openid-credential-issuer/openid4vci";
 var keycloakBase = process.env.KEYCLOAK_BASE_URL || "http://localhost:8080";
 
 // The OIDC Authorization Code public client the suite provisions; its user has
 // the same name and password, and the same first and last name. walt.id copies
 // the id_token's given_name / family_name into the credential, so that user's
 // name is what the issued credential must end up carrying.
-var clientId = process.env.SD_JWT_VC_CLIENT_ID || "oidc-authorization-code-public";
+var clientId = process.env.SD_JWT_VC_CLIENT_ID ||
+    "oidc-authorization-code-public";
 var CONFIGURATION_ID = "identity_credential";
 var PROFILE_ID = "identityCredentialSdJwt";
 var SD_JWT_VC_TYP = "dc+sd-jwt";
-var PRE_AUTHORIZED_GRANT = "urn:ietf:params:oauth:grant-type:pre-authorized_code";
+var PRE_AUTHORIZED_GRANT =
+    "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 
 // ---------------------------------------------------------------------------
 // helpers (same shapes as sd_jwt_vc_issuance.js, so the two read alike)
 // ---------------------------------------------------------------------------
 function b64uDecode(s) {
+  log.debug("Entering b64uDecode().");
+  log.debug("Leaving b64uDecode().");
   return Buffer.from(String(s).replace(/-/g, "+").replace(/_/g, "/"), "base64");
 }
-function jsonFromB64u(s) { return JSON.parse(b64uDecode(s).toString("utf8")); }
+function jsonFromB64u(s) {
+  log.debug("Entering jsonFromB64u().");
+  log.debug("Leaving jsonFromB64u().");
+  return JSON.parse(b64uDecode(s).toString("utf8"));
+}
 
 function httpJson(url, options) {
   log.debug("Entering httpJson().");
@@ -100,7 +110,8 @@ async function click(driver, locator) {
   log.debug("Entering click().");
   await driver.wait(until.elementLocated(locator), waitTime);
   var e = driver.findElement(locator);
-  await driver.executeScript("arguments[0].scrollIntoView({ block: 'center' });", e);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", e);
   await driver.sleep(120);
   try {
     await e.click();
@@ -113,15 +124,18 @@ async function click(driver, locator) {
 }
 
 // text()/value() and the waitFor* family live in ./wait_for.js — one
-// implementation, shared by these suites. It waits on CONTENT rather than on the
-// element: every field here is static markup, so locating it proves nothing about
-// whether the page has filled it in, and the fixed sleeps that used to stand in
-// for that lost the race periodically. It also reports what the field LAST held
-// on a timeout, which the local copy of waitForStatus could not — its message was
-// built before the first poll, so it always said "(last status: )".
+// implementation, shared by these suites. It waits on CONTENT rather than on
+// the element: every field here is static markup, so locating it proves nothing
+// about whether the page has filled it in, and the fixed sleeps that used to
+// stand in for that lost the race periodically. It also reports what the field
+// LAST held on a timeout, which the local copy of waitForStatus could not — its
+// message was built before the first poll, so it always said "(last status: )".
 const { text, value, waitForStatus, waitForValue } = require("./wait_for");
 function severeErrors(driver) {
-  return driver.manage().logs().get(logging.Type.BROWSER).then(function (entries) {
+  log.debug("Entering severeErrors().");
+  log.debug("Leaving severeErrors().");
+  return driver.manage().logs().get(logging.Type.BROWSER)
+                       .then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
       // A favicon that is not there is not a page error.
       .filter(function (e) { return !/favicon/.test(e.message); })
@@ -141,21 +155,26 @@ var WRONG_ISSUER = "http://localhost:1/not-the-offering-issuer";
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
   await driver.get(baseUrl + "/vc-issuance-1.html");
-  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
     "var wrong = {" +
-    "  vci_metadata_endpoint: arguments[0] + '/.well-known/openid-credential-issuer'," +
+    "  vci_metadata_endpoint: arguments[0] + " +
+        "'/.well-known/openid-credential-issuer'," +
     "  vci_credential_issuer: arguments[0]," +
     "  vci_credential_endpoint: arguments[0] + '/credential'," +
-    "  vci_deferred_credential_endpoint: arguments[0] + '/deferred_credential'," +
+    "  vci_deferred_credential_endpoint: arguments[0] + " +
+        "'/deferred_credential'," +
     "  vci_credential_configuration_id: 'NotTheOfferedCredential'," +
     "  authorization_endpoint: arguments[0] + '/authorize'," +
     "  token_endpoint: arguments[0] + '/token'" +
     "};" +
-    "Object.keys(wrong).forEach(function (k) { window.localStorage.setItem(k, wrong[k]); });",
+    "Object.keys(wrong).forEach(function (k) { " +
+        "window.localStorage.setItem(k, wrong[k]); });",
     WRONG_ISSUER);
-  log.debug("Leaving misconfigureTheWallet(). The wallet now points at " + WRONG_ISSUER + ".");
+  log.debug("Leaving misconfigureTheWallet(). The wallet now points at " +
+            WRONG_ISSUER + ".");
 }
 
 // ---------------------------------------------------------------------------
@@ -167,41 +186,58 @@ async function whatWaltidPublishes() {
   log.debug("Entering whatWaltidPublishes().");
   var inserted = await httpJson(metadataUrl);
   assert.strictEqual(inserted.status, 200,
-    "walt.id should serve its credential issuer metadata at the RFC 8414 path-inserted URL " +
-    metadataUrl + ". Got HTTP " + inserted.status + ". Is the waltid-issuer container up?");
+    "walt.id should serve its credential issuer metadata at the RFC 8414 " +
+        "path-inserted URL " +
+    metadataUrl + ". Got HTTP " + inserted.status +
+        ". Is the waltid-issuer container up?");
   var meta = inserted.body;
 
   assert.strictEqual(meta.credential_issuer, issuerId,
-    "the Credential Issuer Identifier should be " + issuerId + ". Got: " + meta.credential_issuer);
+    "the Credential Issuer Identifier should be " + issuerId + ". Got: " +
+        meta.credential_issuer);
 
   // The identifier has a path, so the two ways of building a well-known URL are
   // different strings — and only one of them is where the document is. A wallet
   // that appends finds nothing here, which is exactly the bug this suite exists
   // to keep fixed.
-  var appended = await httpJson(issuerId + "/.well-known/openid-credential-issuer");
+  var appended = await httpJson(issuerId +
+      "/.well-known/openid-credential-issuer");
   assert.ok(appended.status === 404,
-    "appending the well-known to an issuer identifier WITH a path should not find the document " +
-    "(that is what makes this a real interop test). Got HTTP " + appended.status + ".");
+    "appending the well-known to an issuer identifier WITH a path should not " +
+        "find the document " +
+    "(that is what makes this a real interop test). Got HTTP " +
+        appended.status + ".");
 
-  var config = (meta.credential_configurations_supported || {})[CONFIGURATION_ID];
-  assert.ok(config, "walt.id should offer the " + CONFIGURATION_ID + " configuration. Got: " +
+  var config = (meta.credential_configurations_supported ||
+      {})[CONFIGURATION_ID];
+  assert.ok(config, "walt.id should offer the " + CONFIGURATION_ID +
+            " configuration. Got: " +
     Object.keys(meta.credential_configurations_supported || {}).join(", "));
   assert.strictEqual(config.format, SD_JWT_VC_TYP,
-    "the offered credential should be an SD-JWT VC (" + SD_JWT_VC_TYP + "). Got: " + config.format);
-  assert.ok(meta.nonce_endpoint, "OID4VCI 1.0 issuers publish a nonce_endpoint; walt.id's is missing.");
+    "the offered credential should be an SD-JWT VC (" + SD_JWT_VC_TYP +
+        "). Got: " + config.format);
+  assert.ok(meta.nonce_endpoint,
+      "OID4VCI 1.0 issuers publish a nonce_endpoint; walt.id's is missing.");
   assert.ok(!meta.authorization_servers,
-    "this deployment of walt.id is its own authorization server, so authorization_servers should be " +
+    "this deployment of walt.id is its own authorization server, so " +
+        "authorization_servers should be " +
     "absent — the wallet has to fall back to the credential issuer. Got: " +
     JSON.stringify(meta.authorization_servers));
 
-  var as = await httpJson(waltidBase + "/.well-known/oauth-authorization-server/openid4vci");
-  assert.strictEqual(as.status, 200, "walt.id should publish RFC 8414 metadata at the inserted path.");
-  assert.strictEqual(as.body.issuer, issuerId, "its authorization server should be the issuer itself.");
-  assert.ok(String(as.body.grant_types_supported || "").indexOf("authorization_code") !== -1,
-    "the authorization code grant should be supported. Got: " + JSON.stringify(as.body.grant_types_supported));
+  var as = await httpJson(waltidBase +
+      "/.well-known/oauth-authorization-server/openid4vci");
+  assert.strictEqual(as.status, 200,
+      "walt.id should publish RFC 8414 metadata at the inserted path.");
+  assert.strictEqual(as.body.issuer, issuerId,
+                     "its authorization server should be the issuer itself.");
+  assert.ok(String(as.body.grant_types_supported ||
+            "").indexOf("authorization_code") !== -1,
+    "the authorization code grant should be supported. Got: " +
+        JSON.stringify(as.body.grant_types_supported));
 
   log.info("[waltid] OK — a real OID4VCI 1.0 issuer at " + issuerId +
-           ": " + SD_JWT_VC_TYP + " " + CONFIGURATION_ID + ", metadata at the path-inserted URL, " +
+           ": " + SD_JWT_VC_TYP + " " + CONFIGURATION_ID +
+               ", metadata at the path-inserted URL, " +
            "its own authorization server.");
   log.debug("Leaving whatWaltidPublishes().");
   return meta;
@@ -214,7 +250,8 @@ async function whatWaltidPublishes() {
 async function configureFromWaltid(driver) {
   log.debug("Entering configureFromWaltid().");
   await driver.executeScript(
-    "document.getElementById('vci_metadata_endpoint').value = arguments[0];", metadataUrl);
+    "document.getElementById('vci_metadata_endpoint').value = arguments[0];",
+        metadataUrl);
   await click(driver, By.id("vci_retrieve_button"));
   await waitForStatus(driver, "vci_signed_metadata_status",
     function (s) { return /^Retrieved/.test(s); },
@@ -222,9 +259,11 @@ async function configureFromWaltid(driver) {
 
   assert.strictEqual(await value(driver, "vci_credential_issuer"), issuerId,
     "the pane should be populated from walt.id's document.");
-  assert.strictEqual(await value(driver, "vci_credential_endpoint"), issuerId + "/credential",
+  assert.strictEqual(await value(driver, "vci_credential_endpoint"), issuerId +
+                     "/credential",
     "the credential endpoint should come from that document.");
-  assert.strictEqual(await value(driver, "vci_nonce_endpoint"), issuerId + "/nonce",
+  assert.strictEqual(await value(driver, "vci_nonce_endpoint"), issuerId +
+                     "/nonce",
     "the nonce endpoint should come from that document.");
   // Choose the credential to ask for, the way a user does: the pane lists every
   // configuration the issuer supports and this deployment of walt.id may well
@@ -243,15 +282,18 @@ async function configureFromWaltid(driver) {
   // the credential issuer is one — and look for its metadata at the inserted
   // path, under the issuer's own path component.
   var asUrl = await value(driver, "oidc_discovery_endpoint");
-  assert.strictEqual(asUrl, waltidBase + "/.well-known/oauth-authorization-server/openid4vci",
-    "with no authorization_servers member the wallet should fall back to the credential issuer " +
+  assert.strictEqual(asUrl, waltidBase +
+                     "/.well-known/oauth-authorization-server/openid4vci",
+    "with no authorization_servers member the wallet should fall back to the " +
+        "credential issuer " +
     "itself, at the path-inserted well-known URL. Got: " + asUrl);
 
   await click(driver, By.id("as_retrieve_button"));
   await waitForStatus(driver, "as_signed_metadata_status",
     function (s) { return /^Retrieved/.test(s); },
     "step 1 should retrieve walt.id's authorization server metadata");
-  assert.strictEqual(await value(driver, "authorization_endpoint"), issuerId + "/authorize",
+  assert.strictEqual(await value(driver, "authorization_endpoint"), issuerId +
+                     "/authorize",
     "the authorization endpoint should come from walt.id's RFC 8414 document.");
   assert.strictEqual(await value(driver, "token_endpoint"), issuerId + "/token",
     "the token endpoint should come from walt.id's RFC 8414 document.");
@@ -280,7 +322,8 @@ async function authorizeAtWaltid(driver) {
     "walt.id should send the End-User to Keycloak to authenticate.");
   var loginUrl = await driver.getCurrentUrl();
   assert.ok(loginUrl.indexOf(keycloakBase) === 0,
-    "the login should happen at the external OpenID Provider walt.id was configured with (" +
+    "the login should happen at the external OpenID Provider walt.id was " +
+        "configured with (" +
     keycloakBase + "). Got: " + loginUrl);
 
   await driver.findElement(By.id("username")).sendKeys(clientId);
@@ -288,7 +331,8 @@ async function authorizeAtWaltid(driver) {
   await click(driver, By.id("kc-login"));
 
   await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
-    "after authenticating, the workflow should come back to step 2 with tokens.");
+    "after authenticating, the workflow should come back to step 2 " +
+        "with tokens.");
   await driver.wait(async function () {
     return !!(await value(driver, "vc_access_token"));
   }, fetchWait, "step 2 should have an access token issued BY WALT.ID.");
@@ -296,8 +340,10 @@ async function authorizeAtWaltid(driver) {
   var accessToken = await value(driver, "vc_access_token");
   var claims = jsonFromB64u(accessToken.split(".")[1]);
   assert.strictEqual(claims.iss, issuerId,
-    "the access token should have been issued by walt.id itself. Got iss: " + claims.iss);
-  log.info("[waltid] OK — authenticated at Keycloak and came back with an access token walt.id issued.");
+    "the access token should have been issued by walt.id itself. Got iss: " +
+        claims.iss);
+  log.info("[waltid] OK — authenticated at Keycloak and came back with an " +
+           "access token walt.id issued.");
   log.debug("Leaving authorizeAtWaltid().");
   return accessToken;
 }
@@ -308,29 +354,35 @@ async function approveAndCollect(driver) {
   log.debug("Entering approveAndCollect().");
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
-  }, fetchWait, "step 2 should fetch a c_nonce from walt.id and sign a proof of possession with it.");
+  }, fetchWait, "step 2 should fetch a c_nonce from walt.id and sign a proof " +
+      "of possession with it.");
 
-  // The c_nonce is displayed, not typed: it lives in a <code>, so read its text.
+  // The c_nonce is displayed, not typed: it lives in a <code>, so read its
+  // text.
   var nonce = await text(driver, "vc_nonce");
   var proof = await value(driver, "vc_proof_jwt");
   var proofHeader = jsonFromB64u(proof.split(".")[0]);
   var proofPayload = jsonFromB64u(proof.split(".")[1]);
-  // The page writes an explanatory "— (…)" in that spot when it has no nonce, so
-  // a non-empty string is not enough on its own.
+  // The page writes an explanatory "— (…)" in that spot when it has no nonce,
+  // so a non-empty string is not enough on its own.
   assert.ok(nonce && nonce.indexOf("\u2014") !== 0,
-    "walt.id's nonce endpoint should have answered with a c_nonce. Got: " + nonce);
+    "walt.id's nonce endpoint should have answered with a c_nonce. Got: " +
+        nonce);
   assert.strictEqual(proofHeader.typ, "openid4vci-proof+jwt",
     "the proof should be typed as OID4VCI requires. Got: " + proofHeader.typ);
   assert.strictEqual(proofPayload.aud, issuerId,
-    "the proof's audience must be walt.id's Credential Issuer Identifier. Got: " + proofPayload.aud);
+    "the proof's audience must be walt.id's Credential Issuer " +
+        "Identifier. Got: " + proofPayload.aud);
   assert.strictEqual(proofPayload.nonce, nonce,
     "the proof should carry the c_nonce walt.id handed out.");
 
   await click(driver, By.id("vc_approve_button"));
   await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
-    "walt.id should accept the Credential Request and the workflow should move to step 3.");
+    "walt.id should accept the Credential Request and the workflow should " +
+        "move to step 3.");
   await driver.sleep(900);
-  log.info("[waltid] OK — walt.id accepted our c_nonce, our proof of possession and our " +
+  log.info("[waltid] OK — walt.id accepted our c_nonce, our proof of " +
+           "possession and our " +
            "Credential Request, and issued a credential.");
   log.debug("Leaving approveAndCollect().");
 }
@@ -350,25 +402,31 @@ async function checkCredential(driver, what, opts) {
   var header = jsonFromB64u(parts[0].split(".")[0]);
   var payload = jsonFromB64u(parts[0].split(".")[1]);
   assert.strictEqual(header.typ, SD_JWT_VC_TYP,
-    "the issuer-signed JWT should be typed " + SD_JWT_VC_TYP + ". Got: " + header.typ);
+    "the issuer-signed JWT should be typed " + SD_JWT_VC_TYP + ". Got: " +
+        header.typ);
   assert.ok(String(payload.iss).indexOf("did:jwk:") === 0,
-    "walt.id signs with a did:jwk, so that is what iss should be. Got: " + payload.iss);
+    "walt.id signs with a did:jwk, so that is what iss should be. Got: " +
+        payload.iss);
   assert.ok(payload.cnf && payload.cnf.jwk,
     "the credential should be bound to the holder key step 2 generated.");
   assert.strictEqual(payload.vct, issuerId + "/" + CONFIGURATION_ID,
-    "the vct should be the type walt.id publishes for this configuration. Got: " + payload.vct);
+    "the vct should be the type walt.id publishes for this " +
+        "configuration. Got: " + payload.vct);
 
   // The credential must be bound to the key THIS browser generated. The holder
-  // key is displayed on step 2 and we are on step 3 by now, so take it from what
-  // the workflow recorded when it made the request — a different source from the
-  // credential itself, which is what makes the comparison worth making.
+  // key is displayed on step 2 and we are on step 3 by now, so take it from
+  // what the workflow recorded when it made the request — a different source
+  // from the credential itself, which is what makes the comparison worth
+  // making.
   var record = await driver.executeScript(
     "return JSON.parse(window.localStorage.getItem('sdjwtvc_credential_meta') || '{}');");
   assert.ok(record.holderJwk && record.holderJwk.x,
-    "the workflow should record the holder key it asked the issuer to bind to. Got: " +
+    "the workflow should record the holder key it asked the issuer to bind " +
+        "to. Got: " +
     JSON.stringify(record.holderJwk));
   assert.strictEqual(payload.cnf.jwk.x, record.holderJwk.x,
-    "the cnf key should be the holder key this browser generated, not another.");
+    "the cnf key should be the holder key this browser generated, " +
+        "not another.");
 
   // Whoever signed in at Keycloak is who the credential is about: walt.id maps
   // the id_token's given_name into it. That is the three-party flow, proven.
@@ -383,41 +441,56 @@ async function checkCredential(driver, what, opts) {
     // issuer decided who this credential is about before the wallet appeared,
     // so what it must NOT be is the identity of some signed-in user.
     assert.ok(subjectName,
-      "the credential should still describe somebody. Got: " + JSON.stringify(disclosed));
+      "the credential should still describe somebody. Got: " +
+          JSON.stringify(disclosed));
     assert.notStrictEqual(subjectName, clientId,
-      "nobody authenticated in this flow, so the subject cannot be the Keycloak user — that would mean " +
+      "nobody authenticated in this flow, so the subject cannot be the " +
+          "Keycloak user — that would mean " +
       "an identity leaked in from another section. Got: " + subjectName);
   } else {
     assert.strictEqual(subjectName, clientId,
-      "the credential should describe the user who authenticated at Keycloak (" + clientId +
-      "), which is how walt.id's id_token claims mapping is wired. Got: " + subjectName);
+      "the credential should describe the user who authenticated at " +
+          "Keycloak (" + clientId +
+      "), which is how walt.id's id_token claims mapping is wired. Got: " +
+          subjectName);
   }
 
   // And the page's own verdicts, which are what a user reads.
   var checks = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks tbody tr')).map(function (tr) {" +
+    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
+        "tbody tr')).map(function (tr) {" +
     "  var td = tr.querySelectorAll('td');" +
-    "  return { name: td[0].textContent.trim(), result: td[1].textContent.trim()," +
+    "  return { name: td[0].textContent.trim(), result: " +
+        "td[1].textContent.trim()," +
     "           detail: td[2].textContent.trim() };" +
     "});");
-  assert.ok(checks.length >= 7, "step 3 should report its checks, got " + checks.length + ".");
+  assert.ok(checks.length >= 7, "step 3 should report its checks, got " +
+            checks.length + ".");
   var failed = checks.filter(function (c) { return c.result === "FAILED"; });
   assert.strictEqual(failed.length, 0,
     "no check should fail for a credential a real issuer just issued: " +
     failed.map(function (c) { return c.name + " — " + c.detail; }).join("; "));
-  var signature = checks.filter(function (c) { return c.name === "Issuer signature"; })[0];
+  var signature =
+      checks.filter(function (c) { return c.name === "Issuer signature"; })[0];
   assert.ok(signature && signature.result === "OK",
-    "step 3 must verify walt.id's issuer signature — the key is inside the did:jwk in iss. Got: " +
+    "step 3 must verify walt.id's issuer signature — the key is inside the " +
+        "did:jwk in iss. Got: " +
     JSON.stringify(signature));
-  var binding = checks.filter(function (c) { return c.name === "Key binding (cnf)"; })[0];
+  var binding =
+      checks.filter(function (c) { return c.name === "Key binding (cnf)"; })[0];
   assert.ok(binding && binding.result === "OK",
-    "the credential must be bound to the holder key step 2 generated. Got: " + JSON.stringify(binding));
-  var digests = checks.filter(function (c) { return c.name === "Disclosure digests"; })[0];
+    "the credential must be bound to the holder key step 2 generated. Got: " +
+        JSON.stringify(binding));
+  var digests = checks.filter(function (c) {
+      return c.name === "Disclosure digests"; })[0];
   assert.ok(digests && digests.result === "OK",
-    "every Disclosure's digest must be found in _sd. Got: " + JSON.stringify(digests));
+    "every Disclosure's digest must be found in _sd. Got: " +
+        JSON.stringify(digests));
 
-  log.info("[waltid] OK — " + what + ": walt.id's SD-JWT VC verifies, is bound to the holder key, " +
-           "carries vct " + payload.vct + " and describes " + subjectName + ".");
+  log.info("[waltid] OK — " + what +
+           ": walt.id's SD-JWT VC verifies, is bound to the holder key, " +
+           "carries vct " + payload.vct + " and describes " + subjectName +
+               ".");
   log.debug("Leaving checkCredential().");
 }
 
@@ -429,9 +502,11 @@ async function walletInitiated(driver) {
   log.debug("Entering walletInitiated().");
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-0.html");
-  await driver.wait(until.elementLocated(By.id("vc_usecase_wallet-initiated")), waitTime);
+  await driver.wait(until.elementLocated(By.id("vc_usecase_wallet-initiated")),
+                    waitTime);
   await click(driver, By.id("vc_usecase_wallet-initiated"));
-  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), fetchWait,
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    fetchWait,
     "choosing the wallet-initiated use case should start at the wallet.");
 
   await configureFromWaltid(driver);
@@ -443,20 +518,22 @@ async function walletInitiated(driver) {
 
 // Sign out of the identity provider.
 //
-// walt.id delegates authentication to Keycloak, and Keycloak remembers. Once one
-// section has signed in, the next authorization request is answered from that
-// session and no login form is ever shown — so a section that asserts the
+// walt.id delegates authentication to Keycloak, and Keycloak remembers. Once
+// one section has signed in, the next authorization request is answered from
+// that session and no login form is ever shown — so a section that asserts the
 // End-User is sent to the IdP would hang waiting for a form that is not coming.
 //
 // driver.manage().deleteAllCookies() clears only the origin the browser is
 // currently on, which is the wallet; the session cookie lives on Keycloak's
-// origin. Hence the trip there first, to a document that is certain to exist and
-// will not redirect.
+// origin. Hence the trip there first, to a document that is certain to exist
+// and will not redirect.
 async function signOutOfKeycloak(driver) {
   log.debug("Entering signOutOfKeycloak().");
-  await driver.get(keycloakBase + "/realms/debugger-testing/.well-known/openid-configuration");
+  await driver.get(keycloakBase +
+                   "/realms/debugger-testing/.well-known/openid-configuration");
   await driver.manage().deleteAllCookies();
-  log.debug("Leaving signOutOfKeycloak(). The browser holds no session at " + keycloakBase + ".");
+  log.debug("Leaving signOutOfKeycloak(). The browser holds no session at " +
+            keycloakBase + ".");
 }
 
 // ---------------------------------------------------------------------------
@@ -479,17 +556,23 @@ async function issuerInitiated(driver) {
     })
   });
   assert.strictEqual(created.status, 201,
-    "walt.id should create an authorization-code Credential Offer. Got HTTP " + created.status +
+    "walt.id should create an authorization-code Credential Offer. Got HTTP " +
+        created.status +
     ": " + created.raw.slice(0, 300));
 
   var offerUrl = new URL(String(created.body.credentialOffer)
     .replace("openid-credential-offer://", "https://wallet.invalid/"));
   var offerParam = offerUrl.searchParams.get("credential_offer");
-  assert.ok(offerParam, "the offer should be passed by value. Got: " + created.body.credentialOffer);
+  assert.ok(offerParam, "the offer should be passed by value. Got: " +
+            created.body.credentialOffer);
   var offer = JSON.parse(offerParam);
-  assert.strictEqual(offer.credential_issuer, issuerId, "the offer should name walt.id as the issuer.");
-  var issuerState = ((offer.grants || {}).authorization_code || {}).issuer_state;
-  assert.ok(issuerState, "an issuer-initiated offer carries an issuer_state. Got: " + offerParam);
+  assert.strictEqual(offer.credential_issuer, issuerId,
+                     "the offer should name walt.id as the issuer.");
+  var issuerState = ((offer.grants || {}).authorization_code ||
+      {}).issuer_state;
+  assert.ok(issuerState,
+            "an issuer-initiated offer carries an issuer_state. Got: " +
+            offerParam);
 
   // Hand it to the wallet the way the openid-credential-offer link does.
   await misconfigureTheWallet(driver);
@@ -499,16 +582,22 @@ async function issuerInitiated(driver) {
     "the wallet should show the Credential Offer it was handed.");
   await driver.wait(async function () {
     return !!(await value(driver, "authorization_endpoint"));
-  }, fetchWait, "the wallet should discover walt.id and its authorization server from the offer alone.");
+  }, fetchWait, "the wallet should discover walt.id and its authorization " +
+      "server from the offer alone.");
 
   assert.strictEqual(await value(driver, "vci_metadata_endpoint"), metadataUrl,
-    "the offer names only the issuer identifier, so the wallet has to derive the path-inserted " +
+    "the offer names only the issuer identifier, so the wallet has to derive " +
+        "the path-inserted " +
     "metadata URL from it.");
-  assert.strictEqual(await value(driver, "vci_credential_configuration_id"), CONFIGURATION_ID,
+  assert.strictEqual(await value(driver, "vci_credential_configuration_id"),
+                     CONFIGURATION_ID,
     "the offered credential should be the one selected.");
-  assert.strictEqual(await value(driver, "authorization_endpoint"), issuerId + "/authorize",
-    "the wallet should have followed the offer all the way to walt.id's authorization server.");
-  log.info("[waltid] OK — walt.id's own Credential Offer configured the wallet with nothing typed in.");
+  assert.strictEqual(await value(driver, "authorization_endpoint"), issuerId +
+                     "/authorize",
+    "the wallet should have followed the offer all the way to walt.id's " +
+        "authorization server.");
+  log.info("[waltid] OK — walt.id's own Credential Offer configured the " +
+           "wallet with nothing typed in.");
 
   await driver.executeScript(
     "document.getElementById('scope').value = arguments[0];" +
@@ -527,7 +616,8 @@ async function issuerInitiated(driver) {
   // created for that offer should be the one that ended in a credential.
   var session = await httpJson(waltidBase + "/issuer2/sessions/" + issuerState);
   if (session.status === 200) {
-    log.info("[waltid] the issuance session walt.id created for this offer reports: " +
+    log.info("[waltid] the issuance session walt.id created for this offer " +
+             "reports: " +
              JSON.stringify(session.body).slice(0, 200));
   }
   log.debug("Leaving issuerInitiated().");
@@ -558,26 +648,35 @@ async function crossDeviceOffer(driver) {
     })
   });
   assert.strictEqual(created.status, 201,
-    "walt.id should create a pre-authorized Credential Offer. Got HTTP " + created.status +
+    "walt.id should create a pre-authorized Credential Offer. Got HTTP " +
+        created.status +
     ": " + created.raw.slice(0, 300));
   assert.strictEqual(created.body.txCodeValue, TX,
-    "the issuer keeps the Transaction Code it will demand; that is the value its screen would show.");
+    "the issuer keeps the Transaction Code it will demand; that is the value " +
+        "its screen would show.");
 
   var offerUri = String(created.body.credentialOffer);
-  var offerParam = new URL(offerUri.replace("openid-credential-offer://", "https://wallet.invalid/"))
+  var offerParam = new URL(offerUri.replace("openid-credential-offer://",
+      "https://wallet.invalid/"))
     .searchParams.get("credential_offer");
-  assert.ok(offerParam, "the offer should be passed by value here. Got: " + offerUri.slice(0, 120));
+  assert.ok(offerParam, "the offer should be passed by value here. Got: " +
+            offerUri.slice(0, 120));
   var offer = JSON.parse(offerParam);
   var grant = offer.grants[PRE_AUTHORIZED_GRANT];
-  assert.ok(grant, "an H.2 offer uses the pre-authorized code grant. Got: " + Object.keys(offer.grants));
-  assert.ok(grant["pre-authorized_code"], "it should carry the pre-authorized code itself.");
+  assert.ok(grant, "an H.2 offer uses the pre-authorized code grant. Got: " +
+            Object.keys(offer.grants));
+  assert.ok(grant["pre-authorized_code"],
+            "it should carry the pre-authorized code itself.");
   assert.ok(grant.tx_code && grant.tx_code.length === TX.length,
-    "it should say a Transaction Code of that length is required — its shape, not its value. Got: " +
+    "it should say a Transaction Code of that length is required — its " +
+        "shape, not its value. Got: " +
     JSON.stringify(grant.tx_code));
   assert.strictEqual(offerUri.indexOf(TX), -1,
-    "the Transaction Code must not travel in the offer: it reaches the End-User by another channel, " +
+    "the Transaction Code must not travel in the offer: it reaches the " +
+        "End-User by another channel, " +
     "which is what makes a QR code anyone can photograph safe to display.");
-  log.info("[waltid] OK — walt.id minted a pre-authorized offer whose tx_code requirement is stated but " +
+  log.info("[waltid] OK — walt.id minted a pre-authorized offer whose " +
+           "tx_code requirement is stated but " +
            "whose value is not in it.");
 
   // ---- the wallet takes what the QR code carried --------------------------
@@ -585,22 +684,28 @@ async function crossDeviceOffer(driver) {
   await driver.get(baseUrl + "/vc-issuance-1.html");
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
-    "document.getElementById('scan_offer_input').value = arguments[0];", offerUri);
+    "document.getElementById('scan_offer_input').value = arguments[0];",
+        offerUri);
   await click(driver, By.id("scan_offer_button"));
   // Wait for the value the OFFER should produce, not merely for a non-empty
   // field: the wallet was deliberately pointed somewhere else, so "not empty"
   // is already true and would wave the test through before anything happened.
   await driver.wait(async function () {
-    return (await value(driver, "vci_credential_endpoint")) === issuerId + "/credential";
+    return (await value(driver, "vci_credential_endpoint")) === issuerId +
+            "/credential";
   }, fetchWait, "taking walt.id's offer should discover the issuer it names.");
   await waitForValue(driver, "vci_metadata_endpoint",
     function (v) { return v === metadataUrl; },
-    "the offer names only the issuer identifier, so the wallet has to derive the path-inserted metadata URL");
-  assert.strictEqual(await value(driver, "vci_credential_endpoint"), issuerId + "/credential",
+    "the offer names only the issuer identifier, so the wallet has to derive " +
+        "the path-inserted metadata URL");
+  assert.strictEqual(await value(driver, "vci_credential_endpoint"), issuerId +
+                     "/credential",
     "and read walt.id's metadata from there.");
   var grantShown = await text(driver, "offer_grant");
-  assert.ok(grantShown.indexOf("pre-authorized_code") !== -1 && /Transaction Code is required/.test(grantShown),
-    "the pane should show the grant and that a Transaction Code is required. Got: " + grantShown);
+  assert.ok(grantShown.indexOf("pre-authorized_code") !== -1 &&
+            /Transaction Code is required/.test(grantShown),
+    "the pane should show the grant and that a Transaction Code is " +
+        "required. Got: " + grantShown);
 
   // The credential to ask for, and the client walt.id will see.
   await driver.executeScript(
@@ -615,38 +720,48 @@ async function crossDeviceOffer(driver) {
   // ---- no authorization request, and no Keycloak --------------------------
   await click(driver, By.id("start_issuance_button"));
   await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
-    "a pre-authorized offer must not go through an authorization server at all.");
+    "a pre-authorized offer must not go through an authorization " +
+        "server at all.");
   await driver.wait(async function () {
     return !!(await text(driver, "vc_pre_authorized_code"));
-  }, fetchWait, "step 2 should show the pre-authorized code it is about to redeem.");
+  }, fetchWait,
+      "step 2 should show the pre-authorized code it is about to redeem.");
   var currentUrl = await driver.getCurrentUrl();
   assert.strictEqual(currentUrl.indexOf(keycloakBase), -1,
     "nobody should have been sent to an identity provider. Got: " + currentUrl);
 
   // walt.id refuses a wrong Transaction Code, as it must.
   await driver.executeScript(
-    "document.getElementById('vc_tx_code').value = '00000'; vcissuance2.onTxCodeChange();");
+    "document.getElementById('vc_tx_code').value = '00000'; " +
+        "vcissuance2.onTxCodeChange();");
   await click(driver, By.id("vc_token_request_button"));
   await driver.wait(async function () {
     return /refused/i.test((await text(driver, "vc_token_status")) || "");
   }, fetchWait, "walt.id should refuse a wrong Transaction Code.");
   assert.strictEqual(await value(driver, "vc_access_token"), "",
     "a wrong Transaction Code must not produce an access token.");
-  log.info("[waltid] OK — walt.id refused a wrong Transaction Code: " + (await text(driver, "vc_token_status")));
+  log.info("[waltid] OK — walt.id refused a wrong Transaction Code: " +
+           (await text(driver, "vc_token_status")));
 
   await driver.executeScript(
-    "document.getElementById('vc_tx_code').value = arguments[0]; vcissuance2.onTxCodeChange();", TX);
+    "document.getElementById('vc_tx_code').value = arguments[0]; " +
+        "vcissuance2.onTxCodeChange();", TX);
   await click(driver, By.id("vc_token_request_button"));
   await driver.wait(async function () {
     return !!(await value(driver, "vc_access_token"));
-  }, fetchWait, "the right Transaction Code should redeem walt.id's pre-authorized code.");
-  var claims = jsonFromB64u((await value(driver, "vc_access_token")).split(".")[1]);
+  }, fetchWait, "the right Transaction Code should redeem walt.id's " +
+      "pre-authorized code.");
+  var claims = jsonFromB64u((await value(driver,
+      "vc_access_token")).split(".")[1]);
   assert.strictEqual(claims.iss, issuerId,
-    "the access token should have been issued by walt.id. Got iss: " + claims.iss);
-  log.info("[waltid] OK — the pre-authorized code was redeemed at walt.id with the Transaction Code.");
+    "the access token should have been issued by walt.id. Got iss: " +
+        claims.iss);
+  log.info("[waltid] OK — the pre-authorized code was redeemed at walt.id " +
+           "with the Transaction Code.");
 
   await approveAndCollect(driver);
-  await checkCredential(driver, "cross-device (H.2)", { subjectFromKeycloak: false });
+  await checkCredential(driver, "cross-device (H.2)",
+                        { subjectFromKeycloak: false });
   log.debug("Leaving crossDeviceOffer().");
 }
 
@@ -668,17 +783,21 @@ async function deferredNotSupportedHere(driver) {
   log.debug("Entering deferredNotSupportedHere().");
   var meta = (await httpJson(metadataUrl)).body;
   assert.ok(!meta.deferred_credential_endpoint,
-    "walt.id does not implement deferred issuance; if that has changed, this section should start " +
-    "exercising it instead of asserting its absence. Got: " + meta.deferred_credential_endpoint);
+    "walt.id does not implement deferred issuance; if that has changed, this " +
+        "section should start " +
+    "exercising it instead of asserting its absence. Got: " +
+        meta.deferred_credential_endpoint);
 
   // The wallet must show that as "not defined" rather than inventing an
   // endpoint — a wallet that guesses <issuer>/deferred_credential would send a
   // Deferred Credential Request into a 404 the moment an issuer took its time.
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
-  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
   await driver.executeScript(
-    "document.getElementById('vci_metadata_endpoint').value = arguments[0];", metadataUrl);
+    "document.getElementById('vci_metadata_endpoint').value = arguments[0];",
+        metadataUrl);
   await click(driver, By.id("vci_retrieve_button"));
   await waitForStatus(driver, "vci_signed_metadata_status",
     function (s) { return /^Retrieved/.test(s); },
@@ -686,7 +805,8 @@ async function deferredNotSupportedHere(driver) {
 
   var deferredField = await value(driver, "vci_deferred_credential_endpoint");
   assert.strictEqual(deferredField, "",
-    "the wallet should leave the deferred endpoint empty for an issuer that publishes none. Got: " +
+    "the wallet should leave the deferred endpoint empty for an issuer that " +
+        "publishes none. Got: " +
     deferredField);
   // Empty is not enough on its own: empty and "this issuer does not offer it"
   // are different facts, and a wallet that cannot tell them apart is what this
@@ -695,23 +815,28 @@ async function deferredNotSupportedHere(driver) {
   // still shows through.
   var marks = await driver.executeScript(
     "var out = {};" +
-    "['vci_deferred_credential_endpoint','vci_credential_endpoint'].forEach(function (id) {" +
+    "['vci_deferred_credential_endpoint'," +
+        "'vci_credential_endpoint'].forEach(function (id) {" +
     "  var e = document.getElementById(id);" +
     "  out[id] = e ? { value: e.value, note: e.placeholder || '' } : null;" +
     "}); return out;");
-  assert.strictEqual(marks.vci_deferred_credential_endpoint.note, "-->not defined<--",
-    "the deferred endpoint should be marked as not defined by this issuer. Got: " +
+  assert.strictEqual(marks.vci_deferred_credential_endpoint.note,
+                     "-->not defined<--",
+    "the deferred endpoint should be marked as not defined by this " +
+        "issuer. Got: " +
     JSON.stringify(marks.vci_deferred_credential_endpoint));
   assert.strictEqual(marks.vci_credential_endpoint.note, "",
     "and a member the issuer DOES publish should carry no such note. Got: " +
     JSON.stringify(marks.vci_credential_endpoint));
-  log.info("[waltid] OK — walt.id publishes no deferred_credential_endpoint, and the wallet says so " +
+  log.info("[waltid] OK — walt.id publishes no deferred_credential_endpoint, " +
+           "and the wallet says so " +
            "rather than inventing one.");
   log.debug("Leaving deferredNotSupportedHere().");
 }
 
 // ---------------------------------------------------------------------------
-// The optional parts of OID4VCI, against a real issuer that does not offer them.
+// The optional parts of OID4VCI, against a real issuer that does not offer
+// them.
 //
 // walt.id's issuer-api2 publishes no authorization_details_types_supported, no
 // notification_endpoint, no batch_credential_issuance and no
@@ -721,9 +846,9 @@ async function deferredNotSupportedHere(driver) {
 // End-User something the issuer cannot do.
 //
 // So what is checked here is capability detection. The mock issuer covers the
-// mechanics of each feature (tests/sd_jwt_vc_issuance.js); this covers the other
-// half, which only a second implementation can show: behaving correctly when the
-// feature is absent.
+// mechanics of each feature (tests/sd_jwt_vc_issuance.js); this covers the
+// other half, which only a second implementation can show: behaving correctly
+// when the feature is absent.
 //
 // If walt.id gains any of these, the assertions below fail loudly rather than
 // quietly testing nothing — which is the point of asserting the absence rather
@@ -732,7 +857,8 @@ async function deferredNotSupportedHere(driver) {
 async function optionalFeaturesAbsentHere(driver) {
   log.debug("Entering optionalFeaturesAbsentHere().");
   var meta = (await httpJson(metadataUrl)).body;
-  var asMeta = (await httpJson(waltidBase + "/.well-known/oauth-authorization-server/openid4vci")).body;
+  var asMeta = (await httpJson(waltidBase +
+      "/.well-known/oauth-authorization-server/openid4vci")).body;
 
   var absent = {
     authorization_details_types_supported: asMeta.authorization_details_types_supported,
@@ -743,17 +869,22 @@ async function optionalFeaturesAbsentHere(driver) {
   };
   Object.keys(absent).forEach(function (member) {
     assert.ok(!absent[member],
-      "this section is about what walt.id does NOT offer, and it now offers " + member + " (" +
-      JSON.stringify(absent[member]) + "). Start exercising it instead of asserting its absence.");
+      "this section is about what walt.id does NOT offer, and it now offers " +
+          member + " (" +
+      JSON.stringify(absent[member]) +
+          "). Start exercising it instead of asserting its absence.");
   });
-  log.info("[waltid] OK — walt.id offers none of: " + Object.keys(absent).join(", ") + ".");
+  log.info("[waltid] OK — walt.id offers none of: " +
+           Object.keys(absent).join(", ") + ".");
 
   // ---- the wallet's configuration pane says so ---------------------------
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
-  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")), waitTime);
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
   await driver.executeScript(
-    "document.getElementById('vci_metadata_endpoint').value = arguments[0];", metadataUrl);
+    "document.getElementById('vci_metadata_endpoint').value = arguments[0];",
+        metadataUrl);
   await click(driver, By.id("vci_retrieve_button"));
   await waitForStatus(driver, "vci_signed_metadata_status",
     function (s) { return /^Retrieved/.test(s); },
@@ -762,24 +893,29 @@ async function optionalFeaturesAbsentHere(driver) {
   var marks = await driver.executeScript(
     "var out = {};" +
     "['vci_notification_endpoint','vci_batch_credential_issuance'," +
-    " 'vci_credential_response_encryption','vci_deferred_credential_endpoint'," +
+    " 'vci_credential_response_encryption'," +
+        "'vci_deferred_credential_endpoint'," +
     " 'vci_credential_endpoint'].forEach(function (id) {" +
     "  var e = document.getElementById(id);" +
     "  out[id] = e ? { value: e.value, note: e.placeholder || '' } : null;" +
     "}); return out;");
   ["vci_notification_endpoint", "vci_batch_credential_issuance",
-   "vci_credential_response_encryption", "vci_deferred_credential_endpoint"].forEach(function (id) {
+   "vci_credential_response_encryption",
+       "vci_deferred_credential_endpoint"].forEach(function (id) {
     assert.ok(marks[id], "the pane should carry " + id + ".");
     assert.strictEqual(marks[id].value, "",
-      id + " should be empty for an issuer that does not publish it. Got: " + marks[id].value);
+      id + " should be empty for an issuer that does not publish it. Got: " +
+          marks[id].value);
     assert.strictEqual(marks[id].note, "-->not defined<--",
-      id + " should be marked as not defined rather than left ambiguously blank. Got: " +
+      id + " should be marked as not defined rather than left ambiguously " +
+          "blank. Got: " +
       JSON.stringify(marks[id]));
   });
   assert.strictEqual(marks.vci_credential_endpoint.note, "",
     "while a member walt.id DOES publish carries no such note. Got: " +
     JSON.stringify(marks.vci_credential_endpoint));
-  log.info("[waltid] OK — every optional member walt.id omits is marked not defined, and the ones it " +
+  log.info("[waltid] OK — every optional member walt.id omits is marked not " +
+           "defined, and the ones it " +
            "publishes are not.");
 
   // ---- step 1 does not promise authorization_details ---------------------
@@ -788,19 +924,22 @@ async function optionalFeaturesAbsentHere(driver) {
     function (s) { return /^Retrieved/.test(s); },
     "step 1 should retrieve walt.id's authorization server metadata");
   await driver.executeScript(
-    "document.getElementById('handoff_request_mechanism').value = 'authorization_details';" +
+    "document.getElementById('handoff_request_mechanism').value = " +
+        "'authorization_details';" +
     "vcissuance1.onRequestMechanismChange();");
   var note = await waitForStatus(driver, "handoff_mechanism_note",
     function (s) { return s.trim() !== ""; },
     "step 1 said nothing about the request mechanism it was switched to");
   assert.ok(/does not advertise authorization_details_types_supported|may refuse/.test(note),
-    "choosing authorization_details against a server that does not advertise support for it should say " +
+    "choosing authorization_details against a server that does not advertise " +
+        "support for it should say " +
     "so, rather than implying it will work. Got: " + note);
-  log.info("[waltid] OK — the workflow warns that this server does not advertise authorization_details.");
+  log.info("[waltid] OK — the workflow warns that this server does not " +
+           "advertise authorization_details.");
 
-  // Back to the scope path, which is what this issuer supports, and then all the
-  // way to a credential — so the section proves the wallet still WORKS here, not
-  // just that it complains.
+  // Back to the scope path, which is what this issuer supports, and then all
+  // the way to a credential — so the section proves the wallet still WORKS
+  // here, not just that it complains.
   await driver.executeScript(
     "document.getElementById('handoff_request_mechanism').value = 'scope';" +
     "vcissuance1.onRequestMechanismChange();" +
@@ -814,67 +953,92 @@ async function optionalFeaturesAbsentHere(driver) {
 
   await signOutOfKeycloak(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
-  await driver.wait(until.elementLocated(By.id("start_issuance_button")), waitTime);
+  await driver.wait(until.elementLocated(By.id("start_issuance_button")),
+                    waitTime);
   await authorizeAtWaltid(driver);
 
   // Step 2 must offer neither batching nor encryption against this issuer.
   var options = await driver.executeScript(
-    "return { batchDisabled: document.getElementById('vc_batch_size').disabled," +
+    "return { batchDisabled: " +
+        "document.getElementById('vc_batch_size').disabled," +
     "         batchMax: document.getElementById('vc_batch_size').max," +
-    "         batchNote: document.getElementById('vc_batch_note').textContent.trim()," +
-    "         encDisabled: document.getElementById('vc_encrypt_response').disabled," +
-    "         encChecked: document.getElementById('vc_encrypt_response').checked," +
-    "         encNote: document.getElementById('vc_encrypt_note').textContent.trim()," +
-    "         identifierMode: document.getElementById('vc_identifier_mode').textContent.trim() };");
+    "         batchNote: " +
+        "document.getElementById('vc_batch_note').textContent.trim()," +
+    "         encDisabled: " +
+        "document.getElementById('vc_encrypt_response').disabled," +
+    "         encChecked: " +
+        "document.getElementById('vc_encrypt_response').checked," +
+    "         encNote: " +
+        "document.getElementById('vc_encrypt_note').textContent.trim()," +
+    "         identifierMode: " +
+        "document.getElementById('vc_identifier_mode').textContent.trim() };");
   assert.strictEqual(options.batchDisabled, true,
-    "with no batch_credential_issuance advertised, asking for several keys should not be offered. Got: " +
+    "with no batch_credential_issuance advertised, asking for several keys " +
+        "should not be offered. Got: " +
     JSON.stringify(options));
-  assert.ok(/does not advertise batch_credential_issuance/.test(options.batchNote),
+  assert.ok(/does not advertise batch_credential_issuance/.test(
+            options.batchNote),
     "and the pane should say why. Got: " + options.batchNote);
   assert.strictEqual(options.encDisabled, true,
-    "with no credential_response_encryption advertised, encryption should not be offered.");
+    "with no credential_response_encryption advertised, encryption should " +
+        "not be offered.");
   assert.strictEqual(options.encChecked, false, "and certainly not requested.");
-  assert.ok(/does not advertise credential_response_encryption/.test(options.encNote),
+  assert.ok(/does not advertise credential_response_encryption/.test(
+            options.encNote),
     "with the reason. Got: " + options.encNote);
   assert.ok(/credential_configuration_id/.test(options.identifierMode),
-    "and the credential should be named by its configuration id, since no identifiers were granted. Got: " +
+    "and the credential should be named by its configuration id, since no " +
+        "identifiers were granted. Got: " +
     options.identifierMode);
-  log.info("[waltid] OK — step 2 offers neither batching nor encryption here, and names the credential by " +
+  log.info("[waltid] OK — step 2 offers neither batching nor encryption " +
+           "here, and names the credential by " +
            "configuration id.");
 
   var body = JSON.parse(await text(driver, "vc_request_body"));
-  assert.strictEqual(body.proofs.jwt.length, 1, "so the request carries exactly one proof.");
+  assert.strictEqual(body.proofs.jwt.length, 1,
+                     "so the request carries exactly one proof.");
   assert.ok(!body.credential_response_encryption,
-    "and no encryption parameters. Got: " + JSON.stringify(body.credential_response_encryption));
+    "and no encryption parameters. Got: " +
+        JSON.stringify(body.credential_response_encryption));
   assert.ok(!("credential_identifier" in body),
-    "and no credential_identifier, which was never granted. Got: " + JSON.stringify(body));
+    "and no credential_identifier, which was never granted. Got: " +
+        JSON.stringify(body));
 
   await approveAndCollect(driver);
   await checkCredential(driver, "with every optional feature absent");
 
   // ---- step 3 offers no notification it cannot send ---------------------
   var notification = await driver.executeScript(
-    "return { id: document.getElementById('vc_notification_id').textContent.trim()," +
+    "return { id: " +
+        "document.getElementById('vc_notification_id').textContent.trim()," +
     "         endpoint: document.getElementById('vc_notification_endpoint').textContent.trim()," +
-    "         request: document.getElementById('vc_notification_request').value," +
-    "         disabled: document.getElementById('vc_notification_button').disabled," +
+    "         request: " +
+        "document.getElementById('vc_notification_request').value," +
+    "         disabled: " +
+        "document.getElementById('vc_notification_button').disabled," +
     "         status: document.getElementById('vc_notification_status').textContent.trim()," +
-    "         pickerShown: document.getElementById('vc_batch_row').style.display !== 'none' };");
+    "         pickerShown: " +
+        "document.getElementById('vc_batch_row').style.display !== 'none' };");
   assert.strictEqual(notification.disabled, true,
-    "there is nowhere to notify, so the button should be disabled rather than failing when pressed.");
+    "there is nowhere to notify, so the button should be disabled rather " +
+        "than failing when pressed.");
   assert.strictEqual(notification.request, "",
-    "and no call should be assembled. Got: " + notification.request.slice(0, 120));
-  assert.ok(/publishes no notification_endpoint|no notification_id/.test(notification.status),
+    "and no call should be assembled. Got: " + notification.request.slice(0,
+        120));
+  assert.ok(/publishes no notification_endpoint|no notification_id/.test(
+            notification.status),
     "step 3 should say why it cannot notify. Got: " + notification.status);
   assert.strictEqual(notification.pickerShown, false,
     "and with one credential there is nothing to pick between.");
-  log.info("[waltid] OK — step 3 does not offer a notification this issuer never asked for.");
+  log.info("[waltid] OK — step 3 does not offer a notification this issuer " +
+           "never asked for.");
   log.debug("Leaving optionalFeaturesAbsentHere().");
 }
 
 async function test() {
   log.debug("Entering test().");
-  log.info("Starting Test run. waltid=" + issuerId + ", keycloak=" + keycloakBase);
+  log.info("Starting Test run. waltid=" + issuerId + ", keycloak=" +
+           keycloakBase);
   await whatWaltidPublishes();
 
   var prefs = new logging.Preferences();
@@ -882,21 +1046,24 @@ async function test() {
   var options = new chrome.Options().setLoggingPrefs(prefs)
     .addArguments("--window-size=1500,1400");
   if (headless) {
-    options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage");
+    options.addArguments("--headless=new", "--no-sandbox",
+                         "--disable-dev-shm-usage");
   }
-  // Two environment hazards this workflow is exposed to, both silent: it is all Web
-  // Crypto (holder key pairs, proofs of possession, Key Binding JWTs, signature
-  // verification), which needs a secure context; and its pages must fetch this
-  // suite's services on loopback, which a deployed https page may not do without
-  // the private-network flags. See tests/browser_flags.js.
+  // Two environment hazards this workflow is exposed to, both silent: it is all
+  // Web Crypto (holder key pairs, proofs of possession, Key Binding JWTs,
+  // signature verification), which needs a secure context; and its pages must
+  // fetch this suite's services on loopback, which a deployed https page may
+  // not do without the private-network flags. See tests/browser_flags.js.
   browserFlags.addBrowserAccessFlags(options, baseUrl);
-  var driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
+  var driver = await new Builder().forBrowser("chrome")
+      .setChromeOptions(options).build();
   try {
     await walletInitiated(driver);
 
     var errors = await severeErrors(driver);
     assert.strictEqual(errors.length, 0,
-      "the workflow logged browser errors while talking to walt.id:\n" + errors.join("\n"));
+      "the workflow logged browser errors while talking to walt.id:\n" +
+          errors.join("\n"));
     log.info("[waltid] OK — no console errors driving a real issuer.");
 
     await issuerInitiated(driver);
@@ -911,8 +1078,10 @@ async function test() {
 }
 
 const program = new Command();
-program.addOption(new Option('-u, --url <url>', 'base url of the debugger under test'));
-program.addOption(new Option('-h, --headless <headless>', 'run headless (true/false)'));
+program.addOption(new Option('-u, --url <url>',
+                  'base url of the debugger under test'));
+program.addOption(new Option('-h, --headless <headless>',
+                  'run headless (true/false)'));
 program.parse(process.argv);
 const opts = program.opts();
 if (opts.url) { baseUrl = opts.url; log.info("Setting url to " + baseUrl); }

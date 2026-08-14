@@ -51,8 +51,8 @@ var KEYS = {
   // The Authorization Request in hand: { params, source, receivedAt, signed,
   // signatureVerdict, requestObject }.
   REQUEST: "sdjwtvp_request",
-  // Which Disclosures the holder chose, by their base64url value — not by index,
-  // because an index means nothing if the credential in hand changes.
+  // Which Disclosures the holder chose, by their base64url value — not by
+  // index, because an index means nothing if the credential in hand changes.
   SELECTED: "sdjwtvp_selected_disclosures",
   // The presentation that was built and sent: { presentation, kbJwt, sdHash,
   // sentAt, responseUri, vpToken, response }.
@@ -84,11 +84,11 @@ var KB_ALG = "ES256";
 // ---------------------------------------------------------------------------
 // How the presentation starts.
 //
-// OID4VP section 3 describes the same-device and cross-device flows, and section
-// 5 the two ways the request itself can travel: by value in the query, or by
-// reference at a request_uri where it can be SIGNED. They are not different
-// protocols — what differs is how the wallet gets the request and how much it
-// can prove about who sent it — so the choice is made once, here.
+// OID4VP section 3 describes the same-device and cross-device flows, and
+// section 5 the two ways the request itself can travel: by value in the query,
+// or by reference at a request_uri where it can be SIGNED. They are not
+// different protocols — what differs is how the wallet gets the request and how
+// much it can prove about who sent it — so the choice is made once, here.
 // ---------------------------------------------------------------------------
 var USE_CASES = [
   {
@@ -96,12 +96,16 @@ var USE_CASES = [
     spec: "Same device",
     label: "Request by value",
     title: "A link on the verifier's page opens your wallet",
-    summary: "You are on the verifier's web page on this device. Following its link hands your wallet the " +
+    summary: "You are on the verifier's web page on this device. Following " +
+        "its link hands your wallet the " +
              "whole Authorization Request in the query string.",
-    detail: "The client_id uses the redirect_uri prefix, which means the request cannot be signed — there is " +
-            "no key the wallet could check it against. What binds the request to the verifier is that the " +
+    detail: "The client_id uses the redirect_uri prefix, which means the " +
+        "request cannot be signed — there is " +
+            "no key the wallet could check it against. What binds the " +
+                "request to the verifier is that the " +
             "presentation goes back to that same URL and nowhere else.",
-    mechanics: "Request by value → wallet consent → vp_token POSTed to response_uri (direct_post).",
+    mechanics: "Request by value → wallet consent → vp_token POSTed to " +
+        "response_uri (direct_post).",
     available: true
   },
   {
@@ -109,11 +113,15 @@ var USE_CASES = [
     spec: "Same device",
     label: "Signed request by reference",
     title: "The wallet fetches a signed request",
-    summary: "The link carries only client_id and request_uri. Your wallet fetches the Request Object from " +
+    summary: "The link carries only client_id and request_uri. Your wallet " +
+        "fetches the Request Object from " +
              "there and checks its signature before showing you anything.",
-    detail: "A pre-registered client with a known key, so the wallet can verify that the request really came " +
-            "from the verifier it claims to be, and that nobody altered the claims being asked for on the way.",
-    mechanics: "request_uri → signed Request Object (RFC 9101) → verify → consent → direct_post.",
+    detail: "A pre-registered client with a known key, so the wallet can " +
+        "verify that the request really came " +
+            "from the verifier it claims to be, and that nobody altered the " +
+                "claims being asked for on the way.",
+    mechanics: "request_uri → signed Request Object (RFC 9101) → verify → " +
+        "consent → direct_post.",
     available: true
   },
   {
@@ -121,37 +129,60 @@ var USE_CASES = [
     spec: "Cross device",
     label: "QR code",
     title: "Scan the verifier's QR code",
-    summary: "The verifier shows the request as a QR code on its own screen. Your wallet is on another " +
-             "device, so nothing can be redirected — it reads the request from the code.",
-    detail: "The presentation cannot come back through a redirect either, which is exactly why " +
-            "response_mode=direct_post exists: the wallet POSTs it straight to the verifier.",
-    mechanics: "QR code (openid4vp://) → wallet reads the request → direct_post.",
+    summary: "The verifier shows the request as a QR code on its own screen. " +
+        "Your wallet is on another " +
+             "device, so nothing can be redirected — it reads the request " +
+                 "from the code.",
+    detail: "The presentation cannot come back through a redirect either, " +
+        "which is exactly why " +
+            "response_mode=direct_post exists: the wallet POSTs it straight " +
+                "to the verifier.",
+    mechanics: "QR code (openid4vp://) → wallet reads the request → " +
+        "direct_post.",
     available: true
   }
 ];
 
 var DEFAULT_USE_CASE = "same-device";
 
-function useCases() { return USE_CASES; }
+function useCases() {
+  log.debug("Entering useCases().");
+  log.debug("Leaving useCases().");
+  return USE_CASES;
+}
 
 function useCaseById(id) {
+  log.debug("Entering useCaseById().");
   for (var i = 0; i < USE_CASES.length; i++) {
-    if (USE_CASES[i].id === id) return USE_CASES[i];
+    if (USE_CASES[i].id === id) {
+      log.debug("Leaving useCaseById().");
+      return USE_CASES[i];
+    }
   }
+  log.debug("Leaving useCaseById().");
   return null;
 }
 
 function currentUseCase() {
-  return useCaseById(sdJwtVc.get(KEYS.USE_CASE)) || useCaseById(DEFAULT_USE_CASE);
+  log.debug("Entering currentUseCase().");
+  log.debug("Leaving currentUseCase().");
+  return useCaseById(sdJwtVc.get(KEYS.USE_CASE)) ||
+                     useCaseById(DEFAULT_USE_CASE);
 }
 
 function setUseCase(id) {
+  log.debug("Entering setUseCase().");
   var uc = useCaseById(id);
-  if (!uc) return null;
+  if (!uc) {
+    log.debug("Leaving setUseCase().");
+    return null;
+  }
   sdJwtVc.set(KEYS.USE_CASE, uc.id);
-  if (typeof document !== "undefined" && document.getElementById("vp_use_case_badge")) {
+  if (typeof document !== "undefined" &&
+      document.getElementById("vp_use_case_badge")) {
     renderUseCaseBadge();
   }
+  log.debug("Leaving setUseCase().");
   return uc;
 }
 
@@ -159,15 +190,20 @@ function setUseCase(id) {
 // includes.
 function renderUseCaseBadge() {
   log.debug("Entering renderUseCaseBadge().");
-  var host = typeof document === "undefined" ? null : document.getElementById("vp_steps");
-  if (!host) return null;
+  var host = typeof document === "undefined" ?
+      null : document.getElementById("vp_steps");
+  if (!host) {
+    log.debug("Leaving renderUseCaseBadge().");
+    return null;
+  }
   var uc = currentUseCase();
   var existing = document.getElementById("vp_use_case_badge");
   if (existing) existing.parentNode.removeChild(existing);
   var badge = document.createElement("p");
   badge.id = "vp_use_case_badge";
   badge.className = "vc-use-case-badge";
-  badge.innerHTML = 'Flow: <strong>' + metadataClient.escapeHtmlText(uc.spec) + ' &middot; ' +
+  badge.innerHTML = 'Flow: <strong>' + metadataClient.escapeHtmlText(uc.spec) +
+      ' &middot; ' +
                     metadataClient.escapeHtmlText(uc.label) + '</strong> — ' +
                     metadataClient.escapeHtmlText(uc.mechanics) +
                     ' <a href="/vc-presentation-0.html">change</a>';
@@ -177,21 +213,34 @@ function renderUseCaseBadge() {
 }
 
 // --- the request in hand ----------------------------------------------------
-function storeRequest(record) { sdJwtVc.setJson(KEYS.REQUEST, record); }
-function storedRequest() { return sdJwtVc.getJson(KEYS.REQUEST); }
+function storeRequest(record) {
+  log.debug("Entering storeRequest().");
+  sdJwtVc.setJson(KEYS.REQUEST, record);
+  log.debug("Leaving storeRequest().");
+}
+function storedRequest() {
+  log.debug("Entering storedRequest().");
+  log.debug("Leaving storedRequest().");
+  return sdJwtVc.getJson(KEYS.REQUEST);
+}
 function forgetRequest() {
+  log.debug("Entering forgetRequest().");
   sdJwtVc.remove(KEYS.REQUEST);
   sdJwtVc.remove(KEYS.SELECTED);
   sdJwtVc.remove(KEYS.PRESENTATION);
   sdJwtVc.remove(KEYS.RESULT);
+  log.debug("Leaving forgetRequest().");
 }
 
 // The Authorization Request parameters OID4VP defines, read out of a query
-// string. Everything is a string on the wire; dcql_query and client_metadata are
-// JSON-serialized objects (section 5.1), so they are parsed here.
-var REQUEST_PARAMS = ["client_id", "response_type", "response_mode", "response_uri", "redirect_uri",
-                      "nonce", "state", "dcql_query", "client_metadata", "request_uri",
-                      "request_uri_method", "request", "scope", "transaction_data"];
+// string. Everything is a string on the wire; dcql_query and client_metadata
+// are JSON-serialized objects (section 5.1), so they are parsed here.
+var REQUEST_PARAMS = ["client_id", "response_type", "response_mode",
+    "response_uri", "redirect_uri",
+                      "nonce", "state", "dcql_query", "client_metadata",
+                          "request_uri",
+                      "request_uri_method", "request", "scope",
+                          "transaction_data"];
 
 function parseRequestQuery(search) {
   log.debug("Entering parseRequestQuery().");
@@ -205,11 +254,13 @@ function parseRequestQuery(search) {
     if (!pair) return;
     var eq = pair.indexOf("=");
     var name = decodeURIComponent(eq < 0 ? pair : pair.slice(0, eq));
-    var value = eq < 0 ? "" : decodeURIComponent(pair.slice(eq + 1).replace(/\+/g, " "));
+    var value = eq < 0 ? "" : decodeURIComponent(pair.slice(eq +
+        1).replace(/\+/g, " "));
     if (REQUEST_PARAMS.indexOf(name) === -1) return;
     params[name] = value;
   });
-  log.debug("Leaving parseRequestQuery(). " + Object.keys(params).length + " known parameter(s).");
+  log.debug("Leaving parseRequestQuery(). " + Object.keys(params).length +
+            " known parameter(s).");
   return params;
 }
 
@@ -229,12 +280,20 @@ function parseRequestUri(text) {
 function requestObjectValue(params, name) {
   log.debug("Entering requestObjectValue().");
   var raw = params && params[name];
-  if (!raw) return null;
-  if (typeof raw === "object") return raw;
+  if (!raw) {
+    log.debug("Leaving requestObjectValue().");
+    return null;
+  }
+  if (typeof raw === "object") {
+    log.debug("Leaving requestObjectValue().");
+    return raw;
+  }
   try {
+    log.debug("Leaving requestObjectValue().");
     return JSON.parse(raw);
   } catch (e) {
     log.error("the " + name + " parameter is not JSON: " + e.message);
+    log.debug("Leaving requestObjectValue().");
     return null;
   }
   log.debug("Leaving requestObjectValue().");
@@ -248,7 +307,9 @@ function requestObjectValue(params, name) {
 // this a selective-disclosure request — the claim paths it is asking for.
 // ---------------------------------------------------------------------------
 function dcqlCredentialQueries(dcql) {
+  log.debug("Entering dcqlCredentialQueries().");
   var list = (dcql && dcql.credentials) || [];
+  log.debug("Leaving dcqlCredentialQueries().");
   return Object.prototype.toString.call(list) === "[object Array]" ? list : [];
 }
 
@@ -261,7 +322,8 @@ function dcqlClaimPaths(credentialQuery) {
   if (Object.prototype.toString.call(claims) === "[object Array]") {
     claims.forEach(function (claim) {
       var path = claim && claim.path;
-      if (Object.prototype.toString.call(path) === "[object Array]") out.push(path.join("."));
+      if (Object.prototype.toString.call(path) === "[object Array]") out.push(
+          path.join("."));
       else if (path) out.push(String(path));
     });
   }
@@ -279,19 +341,24 @@ function dcqlClaimPaths(credentialQuery) {
 // is compared against it.
 //
 // Skipping this does not fail loudly, which is why it is worth a function: the
-// comparison simply never matches, and every requested claim is then reported as
-// WITHHELD even though all of them were sent. That is a lie in the reassuring
-// direction for the verifier and the alarming direction for the holder.
+// comparison simply never matches, and every requested claim is then reported
+// as WITHHELD even though all of them were sent. That is a lie in the
+// reassuring direction for the verifier and the alarming direction for the
+// holder.
 function claimNameForPath(path, format) {
+  log.debug("Entering claimNameForPath().");
   var parts = String(path || "").split(".");
-  if (format === sdJwtVc.FORMAT_JWT_VC_JSON && parts.length > 1 && parts[0] === "credentialSubject") {
+  if (format === sdJwtVc.FORMAT_JWT_VC_JSON && parts.length > 1 &&
+      parts[0] === "credentialSubject") {
     parts = parts.slice(1);
   }
+  log.debug("Leaving claimNameForPath().");
   return parts.join(".");
 }
 
 // Every claim the whole query asks for, named as the wallet holds them.
 function requestedClaims(dcql) {
+  log.debug("Entering requestedClaims().");
   var out = [];
   dcqlCredentialQueries(dcql).forEach(function (q) {
     dcqlClaimPaths(q).forEach(function (p) {
@@ -299,11 +366,14 @@ function requestedClaims(dcql) {
       if (out.indexOf(name) === -1) out.push(name);
     });
   });
+  log.debug("Leaving requestedClaims().");
   return out;
 }
 
 function firstCredentialQueryId(dcql) {
+  log.debug("Entering firstCredentialQueryId().");
   var queries = dcqlCredentialQueries(dcql);
+  log.debug("Leaving firstCredentialQueryId().");
   return (queries[0] && queries[0].id) || "";
 }
 
@@ -320,15 +390,22 @@ function firstCredentialQueryId(dcql) {
 // that treated "absent" as "whatever I hold" would be back to the same bug, so
 // callers are left to decide rather than being handed a default here.
 function firstCredentialQueryFormat(dcql) {
+  log.debug("Entering firstCredentialQueryFormat().");
   var queries = dcqlCredentialQueries(dcql);
+  log.debug("Leaving firstCredentialQueryFormat().");
   return (queries[0] && queries[0].format) || "";
 }
 
 // Whether the verifier insists on a Key Binding JWT. The default is true
-// (section 6.1): a presentation without holder binding is the exception, and the
-// wallet should not guess it is allowed.
+// (section 6.1): a presentation without holder binding is the exception, and
+// the wallet should not guess it is allowed.
 function requiresKeyBinding(credentialQuery) {
-  if (!credentialQuery) return true;
+  log.debug("Entering requiresKeyBinding().");
+  if (!credentialQuery) {
+    log.debug("Leaving requiresKeyBinding().");
+    return true;
+  }
+  log.debug("Leaving requiresKeyBinding().");
   return credentialQuery.require_cryptographic_holder_binding !== false;
 }
 
@@ -339,18 +416,25 @@ function requiresKeyBinding(credentialQuery) {
 // Disclosures, each followed by a tilde (RFC 9901 section 4.3.1). Note the
 // trailing tilde — it is part of what is hashed.
 function presentedPrefix(issuerJwt, selectedDisclosures) {
+  log.debug("Entering presentedPrefix().");
+  log.debug("Leaving presentedPrefix().");
   return [issuerJwt].concat(selectedDisclosures || []).join("~") + "~";
 }
 
-// sd_hash: the base64url of the digest of the US-ASCII of those bytes, using the
-// same hash the Disclosures use (_sd_alg, default sha-256).
+// sd_hash: the base64url of the digest of the US-ASCII of those bytes, using
+// the same hash the Disclosures use (_sd_alg, default sha-256).
 function sdHash(prefix, sdAlg) {
   log.debug("Entering sdHash(). alg=" + (sdAlg || "sha-256"));
   var alg = String(sdAlg || "sha-256").toLowerCase();
-  var webcrypto = { "sha-256": "SHA-256", "sha-384": "SHA-384", "sha-512": "SHA-512" }[alg];
-  if (!webcrypto) return Promise.reject(new Error('unsupported _sd_alg "' + sdAlg + '".'));
+  var webcrypto = { "sha-256": "SHA-256", "sha-384": "SHA-384",
+      "sha-512": "SHA-512" }[alg];
+  if (!webcrypto) {
+    log.debug("Leaving sdHash().");
+    return Promise.reject(new Error('unsupported _sd_alg "' + sdAlg + '".'));
+  }
   var bytes = new Uint8Array(prefix.length);
-  for (var i = 0; i < prefix.length; i++) { bytes[i] = prefix.charCodeAt(i) & 0xff; }
+  for (var i = 0; i < prefix.length; i++) { bytes[i] =
+       prefix.charCodeAt(i) & 0xff; }
   log.debug("Leaving sdHash().");
   return crypto.subtle.digest(webcrypto, bytes).then(function (buf) {
     return metadataClient.bytesToB64u(buf);
@@ -359,7 +443,8 @@ function sdHash(prefix, sdAlg) {
 
 // The Key Binding JWT (RFC 9901 section 4.3): typ kb+jwt, and a payload of
 // exactly iat, aud, nonce and sd_hash. OID4VP fixes the first two of those: the
-// nonce is the request's nonce, and the aud is the verifier's Client Identifier.
+// nonce is the request's nonce, and the aud is the verifier's Client
+// Identifier.
 function signKbJwt(opts) {
   log.debug("Entering signKbJwt(). aud=" + opts.aud);
   var header = { typ: KB_TYP, alg: KB_ALG };
@@ -371,24 +456,29 @@ function signKbJwt(opts) {
   };
   var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) + "." +
                      metadataClient.utf8ToB64u(JSON.stringify(payload));
+  log.debug("Leaving signKbJwt().");
   return crypto.subtle.importKey("jwk", opts.holderPrivateJwk,
       { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])
     .then(function (key) {
-      return crypto.subtle.sign({ name: "ECDSA", hash: { name: "SHA-256" } }, key,
+      return crypto.subtle.sign({ name: "ECDSA", hash: { name: "SHA-256" } },
+                                key,
         new TextEncoder().encode(signingInput));
     })
     .then(function (sig) {
       // Web Crypto returns raw r||s, which is the JWS ES256 encoding.
       log.debug("Leaving signKbJwt().");
-      return { jwt: signingInput + "." + metadataClient.bytesToB64u(sig), header: header, payload: payload };
+      return { jwt: signingInput + "." + metadataClient.bytesToB64u(sig),
+              header: header, payload: payload };
     });
 }
 
 // The whole presentation: the prefix above with the KB-JWT appended.
 function buildPresentation(opts) {
-  log.debug("Entering buildPresentation(). " + (opts.selected || []).length + " Disclosure(s) selected.");
+  log.debug("Entering buildPresentation(). " + (opts.selected || []).length +
+            " Disclosure(s) selected.");
   var parsed = opts.parsed || sdJwtVc.parseSdJwt(opts.credential);
   var prefix = presentedPrefix(parsed.issuerJwt, opts.selected || []);
+  log.debug("Leaving buildPresentation().");
   return sdHash(prefix, (parsed.payload || {})._sd_alg)
     .then(function (hash) {
       if (!opts.keyBinding) {
@@ -405,7 +495,8 @@ function buildPresentation(opts) {
         sdHash: hash
       }).then(function (kb) {
         log.debug("Leaving buildPresentation(). Signed a KB-JWT.");
-        return { presentation: prefix + kb.jwt, prefix: prefix, sdHash: hash, kb: kb };
+        return { presentation: prefix + kb.jwt, prefix: prefix, sdHash: hash,
+                kb: kb };
       });
     });
 }
@@ -420,8 +511,8 @@ function buildPresentation(opts) {
 // Verifier's nonce and Client Identifier as claims of that JWT rather than of a
 // Key Binding JWT.
 //
-// So the KB-JWT's job is done here by the VP JWT itself: same questions (is this
-// fresh, is it for us, is the presenter the holder), different artefact.
+// So the KB-JWT's job is done here by the VP JWT itself: same questions (is
+// this fresh, is it for us, is the presenter the holder), different artefact.
 // ---------------------------------------------------------------------------
 function signVpJwt(opts) {
   log.debug("Entering signVpJwt(). aud=" + opts.aud);
@@ -439,15 +530,18 @@ function signVpJwt(opts) {
   };
   var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) + "." +
                      metadataClient.utf8ToB64u(JSON.stringify(payload));
+  log.debug("Leaving signVpJwt().");
   return crypto.subtle.importKey("jwk", opts.holderPrivateJwk,
       { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])
     .then(function (key) {
-      return crypto.subtle.sign({ name: "ECDSA", hash: { name: "SHA-256" } }, key,
+      return crypto.subtle.sign({ name: "ECDSA", hash: { name: "SHA-256" } },
+                                key,
         new TextEncoder().encode(signingInput));
     })
     .then(function (sig) {
       log.debug("Leaving signVpJwt().");
-      return { jwt: signingInput + "." + metadataClient.bytesToB64u(sig), header: header, payload: payload };
+      return { jwt: signingInput + "." + metadataClient.bytesToB64u(sig),
+              header: header, payload: payload };
     });
 }
 
@@ -457,8 +551,12 @@ function signVpJwt(opts) {
 // has nothing to select and nothing to commit to beyond its own signature.
 function buildPresentationFor(opts) {
   var format = sdJwtVc.credentialFormat(opts.credential);
-  if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) return buildPresentation(opts);
-  log.debug("Entering buildPresentationFor(). jwt_vc_json — nothing to select.");
+  if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) {
+    log.debug("Leaving buildPresentationFor().");
+    return buildPresentation(opts);
+  }
+  log.debug("Entering buildPresentationFor(). jwt_vc_json — nothing " +
+            "to select.");
   log.debug("Leaving buildPresentationFor().");
   return signVpJwt({
     credential: opts.credential,
@@ -475,8 +573,10 @@ function buildPresentationFor(opts) {
 // The vp_token: a JSON object keyed by the DCQL credential query id, each value
 // an array of presentations (OID4VP section 8.1).
 function vpToken(credentialQueryId, presentation) {
+  log.debug("Entering vpToken().");
   var token = {};
   token[credentialQueryId || "credential"] = [presentation];
+  log.debug("Leaving vpToken().");
   return token;
 }
 
@@ -491,15 +591,18 @@ function presentedClaims(presentation) {
   // holder's.
   if (sdJwtVc.credentialFormat(presentation) === sdJwtVc.FORMAT_JWT_VC_JSON) {
     var outer = sdJwtVc.parseJwtVc(presentation);
-    var embedded = [].concat(((outer.payload || {}).vp || {}).verifiableCredential || [])[0] || "";
+    var embedded = [].concat(((outer.payload || {}).vp ||
+        {}).verifiableCredential || [])[0] || "";
     var inner = sdJwtVc.parseCredential(embedded);
-    log.debug("Leaving presentedClaims(). jwt_vc_json, " + Object.keys(inner.claims).length + " claim(s).");
+    log.debug("Leaving presentedClaims(). jwt_vc_json, " +
+              Object.keys(inner.claims).length + " claim(s).");
     return { parsed: inner, claims: inner.claims, outer: outer };
   }
   var parsed = sdJwtVc.parseSdJwt(presentation);
   var claims = sdJwtVc.disclosedClaims(parsed);
   delete claims.cnf;
-  log.debug("Leaving presentedClaims(). " + Object.keys(claims).length + " claim(s).");
+  log.debug("Leaving presentedClaims(). " + Object.keys(claims).length +
+            " claim(s).");
   return { parsed: parsed, claims: claims };
 }
 

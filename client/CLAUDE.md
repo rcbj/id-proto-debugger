@@ -83,6 +83,8 @@ Client-side JavaScript lives in `/client/src/` and is compiled into `/client/pub
 
 The browserify build runs inside Docker. There is no local build script — to rebuild bundles you must use Docker.
 
+**One file in `client/src` is not a module and must not be treated as one: `coverage_beacon.js`.** It ships browser coverage back to the client server, and the coverage build gets it there by *appending* it to each finished bundle — `cat src/coverage_beacon.js >> public/js/${src_name}.js`, in the `COVERAGE` block of `client/Dockerfile`. So it is the only file here that browserify and envify never see: in the browser it is raw script text where **`require` and `process` do not exist**, and its `log` is a console-backed shim written *inside* its IIFE (at the top it would be new globals in the page's own scope). A `require("bunyan")` added to it by the 2026-08-14 style sweep therefore threw before `setInterval()` ever ran, which collected **zero** frontend coverage and failed the 12 tests that assert a clean browser console — none of which named the beacon. Only `./run-coverage.sh` appends it, so no ordinary run can reproduce that; `appendedBeaconNeedsNoModuleSystem()` in `tests/jwk_pem_encoding.js` reads the file instead. Anything it needs from configuration has to be a literal in it.
+
 **A new page has to be registered in TWO places**, and they are not near each other: the `BUNDLES` array in `client/build.js` (which the static deployments use) and a `RUN browserify` line in `client/Dockerfile` (which the container image uses). Miss the second and the deployed static site is perfectly fine while the containerized page's `<script>` 404s — so the failure appears only in the suite, and only as a page that does nothing.
 
 ### Keeping `elliptic` out of the bundles
@@ -106,4 +108,16 @@ Three rules follow, and `tests/jwk_pem_encoding.js` enforces all three:
 * `browserify` and the minifiers are **devDependencies**, not dependencies. They are build tools that ship to nobody, and moving them is what makes `npm audit --omit=dev` report **0 vulnerabilities** — the full `npm audit` still shows the four `elliptic` lows, correctly, because the *build tool* still contains it. Both images install with plain `npm ci`, which includes devDependencies, so the build is unaffected. Note `client/Dockerfile` uses `npm ci`, so **`client/package-lock.json` must stay in sync with `package.json`** or the image build fails outright — unlike `api/`, which uses `npm install` and whose lock is knowingly stale.
 
 What remains is `browserify`'s own copy, on disk in the built image. It is not reachable from any page, and removing it needs the runtime image to prune devDependencies (a multi-stage build, or `npm prune --omit=dev` after the bundling steps plus dropping the global `npm install -g browserify`) — not done.
+
+### No BigInt literals in `client/src`
+
+`0n`, `8n`, `0xffn` — write `BigInt(0)` instead, and hoist it: `var _B0 = BigInt(0), _B8 = BigInt(8), _B255 = BigInt(255);`. Both `digital_signature.js` and `bbs.js` do, and both learned it the same way.
+
+The reason is the toolchain, not the language. **browserify runs the `envify` transform over every file in a bundle that references `process.env`, and `envify` parses with an `esprima` build old enough to predate BigInt literals** — it rejects one outright as `Line NNN: Unexpected token ILLEGAL`. `insert-module-globals` lexes the same files for the same reason.
+
+What makes this expensive is *when* it fires. A literal is completely harmless until the file it sits in acquires a `process.env` reference — and then the build fails with a **syntax error against a file the change never touched**, reported in the bundle of whichever page happens to require it, however many requires away that is. `bbs.js` carried three of them for months while nothing in it mentioned `process`; adding a `log.debug` logger (whose level comes from `CONFIG_FILE`) took out `browserify src/vc_presentation_2.js` at `Error: Line 104: Unexpected token ILLEGAL`, with nothing in the message naming `bbs.js`, BigInt, or the logger.
+
+So the rule is "none in `client/src`", not "none in a file that mentions `process.env`": the trigger is not a property of the file, so a rule conditioned on it is one that passes until the day it matters. `bigIntLiteralsStayOutOfTheBundles()` in `tests/jwk_pem_encoding.js` enforces it, beside the `elliptic` check and for the same reason — it is the only thing that catches it without a full image build, and it is mutation-tested against putting `0xffn` back.
+
+**If you hit `Unexpected token ILLEGAL` from a browserify step, do not start with the file the step names.** Run `esprima` over every file in that bundle's require graph; the offender is usually a module the entry point reaches indirectly.
 

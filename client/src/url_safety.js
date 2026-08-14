@@ -77,7 +77,8 @@ function safeExternalUrl(value, what) {
   // there is no location, and these URLs are absolute anyway, so parsing with
   // no base is correct there and an unparseable value is refused below.
   var base;
-  if (typeof window !== "undefined" && window.location && window.location.href) {
+  if (typeof window !== "undefined" && window.location &&
+      window.location.href) {
     base = window.location.href;
   }
 
@@ -92,7 +93,8 @@ function safeExternalUrl(value, what) {
     // Name the scheme that was refused. This is the branch a `javascript:` URL
     // takes, and saying so is more use than a generic refusal.
     throw new TypeError(
-      label + ' must be http or https, but the scheme is "' + parsed.protocol + '". Refused.'
+      label + ' must be http or https, but the scheme is "' + parsed.protocol +
+          '". Refused.'
     );
   }
 
@@ -103,12 +105,15 @@ function safeExternalUrl(value, what) {
 // The same test without the throw, for somewhere that wants to disable a button
 // rather than report a failure.
 function isSafeExternalUrl(value) {
+  log.debug("Entering isSafeExternalUrl().");
   try {
     safeExternalUrl(value);
+    log.debug("Leaving isSafeExternalUrl().");
     return true;
   } catch (e) {
     // The reason is the return value here; callers wanting it use
     // safeExternalUrl() and read the message off the exception.
+    log.debug("Leaving isSafeExternalUrl().");
     return false;
   }
 }

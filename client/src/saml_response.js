@@ -7,20 +7,22 @@
 // Four ways the response reaches this page, all handled below:
 //
 //   ?id=<stash>       the API ACS (/samlacs) captured the IdP's POST server-side
-//                     and stashed the XML; fetched here with GET /samlresponse?id=.
+//                     and stashed the XML; fetched here with GET
+//                     /samlresponse?id=.
 //   ?posted=1         the STATIC deployments' Lambda@Edge ACS
-//                     (infra/edge/saml_landing.js) captured the POST at the edge
-//                     and, having nowhere to stash it, handed it to the browser
-//                     in sessionStorage under the edge_landing.js SAML keys. Read
-//                     ONCE and deleted — a response left behind would make the
-//                     next visit render a stale login as though it had just
-//                     happened. The value arrives still base64-encoded, exactly
-//                     as the IdP sent it, and goes through the same
-//                     decodeSamlParam() as the query-string form.
+//                     (infra/edge/saml_landing.js) captured the POST at the
+//                     edge and, having nowhere to stash it, handed it to the
+//                     browser in sessionStorage under the edge_landing.js SAML
+//                     keys. Read ONCE and deleted — a response left behind
+//                     would make the next visit render a stale login as though
+//                     it had just happened. The value arrives still
+//                     base64-encoded, exactly as the IdP sent it, and goes
+//                     through the same decodeSamlParam() as the query-string
+//                     form.
 //   ?SAMLResponse=    the HTTP-Redirect binding delivering straight to this page,
-//                     which is what a deployment with no ACS landing asks the IdP
-//                     for (responseProtocolBinding() in saml_request.js). Also
-//                     useful for pasting a response in by hand.
+//                     which is what a deployment with no ACS landing asks the
+//                     IdP for (responseProtocolBinding() in saml_request.js).
+//                     Also useful for pasting a response in by hand.
 //   none              nothing arrived; the last rendered response is restored
 //                     from localStorage, or paste one in.
 
@@ -29,7 +31,8 @@ var history = require("./saml_history");
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
 var edge = require("./edge_landing"); // the static landings' hand-off contract
-var log = bunyan.createLogger({ name: 'saml_response', level: appconfig.logLevel });
+var log = bunyan.createLogger({ name: 'saml_response',
+    level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
 // Signer certificate extracted from the response-level <Signature>; handed to
@@ -47,30 +50,58 @@ var SAML_RESP_KEY = 'saml_last_response';
 var lastAssertionXml = '';
 
 // The first <xenc:EncryptedData> in the response (an EncryptedAssertion, or a
-// message/wrapper-level EncryptedData), serialized — used by the decrypt option.
+// message/wrapper-level EncryptedData), serialized — used by the decrypt
+// option.
 var lastEncryptedXml = '';
 
-function el(id) { return document.getElementById(id); }
-function setVal(id, v) { var e = el(id); if (e) e.value = (v == null ? '' : v); }
-function setStatus(msg) { setVal('saml_resp_status', msg); }
+function el(id) {
+  log.debug("Entering el().");
+  log.debug("Leaving el().");
+  return document.getElementById(id);
+}
+function setVal(id, v) {
+  log.debug("Entering setVal().");
+  var e = el(id);
+  if (e) e.value = (v == null ? '' : v);
+  log.debug("Leaving setVal().");
+}
+function setStatus(msg) {
+  log.debug("Entering setStatus().");
+  setVal('saml_resp_status', msg);
+  log.debug("Leaving setStatus().");
+}
 function esc(s) {
+  log.debug("Entering esc().");
+  log.debug("Leaving esc().");
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
-function qp(name) { return new URLSearchParams(window.location.search).get(name); }
-function tags(root, localName) { return root.getElementsByTagNameNS('*', localName); }
+function qp(name) {
+  log.debug("Entering qp().");
+  log.debug("Leaving qp().");
+  return new URLSearchParams(window.location.search).get(name);
+}
+function tags(root, localName) {
+  log.debug("Entering tags().");
+  log.debug("Leaving tags().");
+  return root.getElementsByTagNameNS('*', localName);
+}
 
 // Minimal, dependency-free XML pretty-printer.
 function formatXml(xml) {
   log.debug("Entering formatXml().");
-  if (!xml) return '';
+  if (!xml) {
+    log.debug("Leaving formatXml().");
+    return '';
+  }
   var reg = /(>)(<)(\/*)/g;
   xml = xml.replace(reg, '$1\n$2$3');
   var pad = 0, out = '';
   xml.split('\n').forEach(function (node) {
     var indent = 0;
     if (/^<\/\w/.test(node)) { pad = Math.max(pad - 1, 0); }
-    else if (/^<\w[^>]*[^\/]>.*$/.test(node) && !/<\/\w/.test(node)) { indent = 1; }
+    else if (/^<\w[^>]*[^\/]>.*$/.test(node) && !/<\/\w/.test(node)) { indent =
+             1; }
     out += new Array(pad + 1).join('  ') + node + '\n';
     pad += indent;
   });
@@ -79,9 +110,12 @@ function formatXml(xml) {
 }
 
 function serialize(node) {
+  log.debug("Entering serialize().");
   try {
+    log.debug("Leaving serialize().");
     return new XMLSerializer().serializeToString(node);
   } catch (e) {
+    log.debug("Leaving serialize().");
     return '';
   }
 }
@@ -94,33 +128,40 @@ function serialize(node) {
 // (or a value pasted in for manual testing) are just base64. decodeSamlParam()
 // tries inflate first and falls back to a plain base64 decode.
 function base64ToBytes(b64) {
+  log.debug("Entering base64ToBytes().");
   var bin = atob(b64);
   var bytes = new Uint8Array(bin.length);
   for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  log.debug("Leaving base64ToBytes().");
   return bytes;
 }
 function bytesToUtf8(bytes) {
   log.debug("Entering bytesToUtf8().");
   try {
+    log.debug("Leaving bytesToUtf8().");
     return new TextDecoder('utf-8').decode(bytes);
   } catch (e) {
     var s = '';
     for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
     try {
+      log.debug("Leaving bytesToUtf8().");
       return decodeURIComponent(escape(s));
     } catch (e2) {
       // Not UTF-8 after all: hand back the byte-per-character reading.
+      log.debug("Leaving bytesToUtf8().");
       return s;
     }
   }
   log.debug("Leaving bytesToUtf8().");
 }
-// RAW DEFLATE inflate (no zlib header) via the native DecompressionStream —
-// the mirror of the deflate-raw saml_request.js uses to build a Redirect request.
+// RAW DEFLATE inflate (no zlib header) via the native DecompressionStream — the
+// mirror of the deflate-raw saml_request.js uses to build a Redirect request.
 function inflateRaw(bytes) {
   log.debug("Entering inflateRaw().");
   if (typeof DecompressionStream === 'undefined') {
-    return Promise.reject(new Error('This browser lacks DecompressionStream; cannot inflate a Redirect-binding response.'));
+    log.debug("Leaving inflateRaw().");
+    return Promise.reject(new Error('This browser lacks DecompressionStream; ' +
+                          'cannot inflate a Redirect-binding response.'));
   }
   var ds = new DecompressionStream('deflate-raw');
   var writer = ds.writable.getWriter();
@@ -137,13 +178,16 @@ function decodeSamlParam(b64) {
   try {
     bytes = base64ToBytes(b64);
   } catch (e) {
+    log.debug("Leaving decodeSamlParam().");
     return Promise.reject(new Error('not valid base64: ' + e.message));
   }
   log.debug("Leaving decodeSamlParam().");
   return inflateRaw(bytes)
-    // A successful inflate that yields XML is a Redirect-binding message; if the
-    // bytes weren't actually deflated, treat the base64 as a raw (POST) message.
-    .then(function (xml) { return (xml && xml.indexOf('<') >= 0) ? xml : bytesToUtf8(bytes); })
+    // A successful inflate that yields XML is a Redirect-binding message; if
+    // the bytes weren't actually deflated, treat the base64 as a raw (POST)
+    // message.
+    .then(function (xml) { return (xml && xml.indexOf('<') >= 0) ?
+        xml : bytesToUtf8(bytes); })
     .catch(function () { return bytesToUtf8(bytes); });
 }
 
@@ -152,11 +196,17 @@ function decodeSamlParam(b64) {
 // record that a call was dispatched — the IdP's verdict arrives here. Close out
 // the pending entry with the top-level <samlp:StatusCode>.
 // ---------------------------------------------------------------------------
-function renderOperationHistory() { history.render(el('saml_operation_history')); }
+function renderOperationHistory() {
+  log.debug("Entering renderOperationHistory().");
+  history.render(el('saml_operation_history'));
+  log.debug("Leaving renderOperationHistory().");
+}
 
 function clearOperationHistory() {
+  log.debug("Entering clearOperationHistory().");
   history.clear();
   renderOperationHistory();
+  log.debug("Leaving clearOperationHistory().");
   return false;
 }
 
@@ -164,7 +214,8 @@ function resolveHistoryFromStatus(doc, msgType) {
   log.debug("Entering resolveHistoryFromStatus().");
   // A LogoutResponse answers the Single Logout; anything else answers the
   // AuthnRequest.
-  var operation = (msgType === 'LogoutResponse') ? 'Single Logout' : 'Send AuthnRequest';
+  var operation = (msgType === 'LogoutResponse') ?
+      'Single Logout' : 'Send AuthnRequest';
   var statusEl = tags(doc, 'Status')[0];
   var codes = statusEl ? tags(statusEl, 'StatusCode') : [];
   var top = codes.length ? (codes[0].getAttribute('Value') || '') : '';
@@ -173,13 +224,17 @@ function resolveHistoryFromStatus(doc, msgType) {
   var message = smEl ? (smEl.textContent || '').trim() : '';
 
   if (!top) {
-    history.resolvePending(history.FAILURE, 'the response carries no <samlp:Status>.', operation);
+    history.resolvePending(history.FAILURE,
+                           'the response carries no <samlp:Status>.',
+                           operation);
     renderOperationHistory();
+    log.debug("Leaving resolveHistoryFromStatus().");
     return;
   }
   if (top.indexOf(':status:Success') >= 0) {
     history.resolvePending(history.SUCCESS, 'IdP returned Success', operation);
     renderOperationHistory();
+    log.debug("Leaving resolveHistoryFromStatus().");
     return;
   }
   var detail = 'IdP returned ' + shortStatus(top);
@@ -192,8 +247,10 @@ function resolveHistoryFromStatus(doc, msgType) {
 
 // The answer never arrived (or could not be read) — the call still failed.
 function resolveHistoryUnreadable(reason) {
+  log.debug("Entering resolveHistoryUnreadable().");
   history.resolvePending(history.FAILURE, reason);
   renderOperationHistory();
+  log.debug("Leaving resolveHistoryUnreadable().");
 }
 
 function render(responseXml, isFresh) {
@@ -203,7 +260,9 @@ function render(responseXml, isFresh) {
   var doc = new DOMParser().parseFromString(responseXml, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) {
     setStatus('Response received, but XML is malformed.');
-    if (isFresh) resolveHistoryUnreadable('the IdP response was malformed XML.');
+    if (isFresh) resolveHistoryUnreadable('the IdP response was ' +
+        'malformed XML.');
+    log.debug("Leaving render().");
     return;
   }
 
@@ -228,18 +287,21 @@ function render(responseXml, isFresh) {
 
   // Detect an encrypted assertion / message-level EncryptedData for the decrypt
   // option (the response may carry <saml:EncryptedAssertion> instead of a
-  // plaintext <Assertion>).
-  // Prefer the <saml:EncryptedAssertion> wrapper (it also contains any sibling
-  // <xenc:EncryptedKey> referenced by RetrievalMethod), else the bare EncryptedData.
-  var encEl = tags(doc, 'EncryptedAssertion')[0] || tags(doc, 'EncryptedData')[0];
+  // plaintext <Assertion>). Prefer the <saml:EncryptedAssertion> wrapper (it
+  // also contains any sibling <xenc:EncryptedKey> referenced by
+  // RetrievalMethod), else the bare EncryptedData.
+  var encEl = tags(doc, 'EncryptedAssertion')[0] || tags(doc,
+      'EncryptedData')[0];
   lastEncryptedXml = encEl ? serialize(encEl) : '';
   if (encEl && !assertion) {
-    setVal('saml_dec_status', 'Response contains encrypted content — paste/confirm the recipient key and click Decrypt.');
+    setVal('saml_dec_status', 'Response contains encrypted content — ' +
+           'paste/confirm the recipient key and click Decrypt.');
   }
   var noAssertionNote = isLogout
     ? '(LogoutResponse carries no assertion — see the Details tab for the logout status.)'
     : '(no <Assertion> — the response may be an error or encrypted)';
-  setVal('saml_assertion_xml', assertionXml ? formatXml(assertionXml) : noAssertionNote);
+  setVal('saml_assertion_xml', assertionXml ?
+         formatXml(assertionXml) : noAssertionNote);
 
   buildAttributesTable(assertion);
   saveSubjectForLogout(assertion);
@@ -250,58 +312,79 @@ function render(responseXml, isFresh) {
   log.debug("Leaving render().");
 }
 
-// Persist the NameID + SessionIndex so the config page's Single Logout can build
-// a LogoutRequest for this session.
+// Persist the NameID + SessionIndex so the config page's Single Logout can
+// build a LogoutRequest for this session.
 function saveSubjectForLogout(assertion) {
   log.debug("Entering saveSubjectForLogout().");
-  if (!assertion || !window.localStorage) return;
+  if (!assertion || !window.localStorage) {
+    log.debug("Leaving saveSubjectForLogout().");
+    return;
+  }
   var subj = tags(assertion, 'Subject')[0];
   var nameId = subj ? tags(subj, 'NameID')[0] : null;
   if (nameId) {
     localStorage.setItem('saml_last_nameid', (nameId.textContent || '').trim());
-    localStorage.setItem('saml_last_nameid_format', nameId.getAttribute('Format') || '');
+    localStorage.setItem('saml_last_nameid_format',
+                         nameId.getAttribute('Format') || '');
   }
   var authn = tags(assertion, 'AuthnStatement')[0];
-  if (authn) localStorage.setItem('saml_last_session_index', authn.getAttribute('SessionIndex') || '');
+  if (authn) localStorage.setItem('saml_last_session_index',
+      authn.getAttribute('SessionIndex') || '');
   log.debug("Leaving saveSubjectForLogout().");
 }
 
 function row(cells) {
-  return '<tr>' + cells.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
+  log.debug("Entering row().");
+  log.debug("Leaving row().");
+  return '<tr>' + cells.map(function (c) { return '<td>' + c +
+      '</td>'; }).join('') + '</tr>';
 }
 
 function buildAttributesTable(assertion) {
   log.debug("Entering buildAttributesTable().");
   var container = el('saml_attrs_table');
-  if (!assertion) { container.innerHTML = '<em>No assertion available.</em>'; return; }
+  if (!assertion) {
+    container.innerHTML = '<em>No assertion available.</em>';
+    log.debug("Leaving buildAttributesTable().");
+    return;
+  }
 
   var html = '<table class="saml-table"><tr><th>Name</th><th>Value(s)</th><th>Format</th><th>FriendlyName</th></tr>';
 
   // Assertion metadata.
-  html += row(['<span class="saml-key">Assertion ID</span>', esc(assertion.getAttribute('ID') || ''), '', '']);
-  html += row(['<span class="saml-key">IssueInstant</span>', esc(assertion.getAttribute('IssueInstant') || ''), '', '']);
+  html += row(['<span class="saml-key">Assertion ID</span>',
+              esc(assertion.getAttribute('ID') || ''), '', '']);
+  html += row(['<span class="saml-key">IssueInstant</span>',
+              esc(assertion.getAttribute('IssueInstant') || ''), '', '']);
 
-  // Conditions: validity window plus every restriction (Audience, etc.). Wrapped
-  // so an unexpected condition shape can never blank the whole table (which would
-  // drop the NameID/attribute rows built below).
+  // Conditions: validity window plus every restriction (Audience, etc.).
+  // Wrapped so an unexpected condition shape can never blank the whole table
+  // (which would drop the NameID/attribute rows built below).
   try {
     var cond = tags(assertion, 'Conditions')[0];
     if (cond) {
       if (cond.getAttribute('NotBefore')) {
-        html += row(['<span class="saml-key">Conditions NotBefore</span>', esc(cond.getAttribute('NotBefore')), '', '']);
+        html += row(['<span class="saml-key">Conditions NotBefore</span>',
+                    esc(cond.getAttribute('NotBefore')), '', '']);
       }
       if (cond.getAttribute('NotOnOrAfter')) {
-        html += row(['<span class="saml-key">Conditions NotOnOrAfter</span>', esc(cond.getAttribute('NotOnOrAfter')), '', '']);
+        html += row(['<span class="saml-key">Conditions NotOnOrAfter</span>',
+                    esc(cond.getAttribute('NotOnOrAfter')), '', '']);
       }
       var cc = cond.firstChild;
       while (cc) {
         if (cc.nodeType === 1) {
           if (cc.localName === 'AudienceRestriction') {
             var auds = tags(cc, 'Audience'), list = [];
-            for (var ci = 0; ci < auds.length; ci++) { list.push(esc((auds[ci].textContent || '').trim())); }
-            html += row(['<span class="saml-key">Condition: AudienceRestriction</span>', list.join('<br>'), '', '']);
+            for (var ci = 0; ci < auds.length; ci++) { list.push(esc((auds[ci]
+                 .textContent || '').trim())); }
+            html += row(['<span class="saml-key">Condition: ' +
+                        'AudienceRestriction</span>', list.join('<br>'), '',
+                        '']);
           } else {
-            html += row(['<span class="saml-key">Condition: ' + esc(cc.localName) + '</span>', esc((cc.textContent || '').trim()) || '(present)', '', '']);
+            html += row(['<span class="saml-key">Condition: ' +
+                        esc(cc.localName) + '</span>', esc((cc.textContent ||
+                        '').trim()) || '(present)', '', '']);
           }
         }
         cc = cc.nextSibling;
@@ -331,7 +414,9 @@ function buildAttributesTable(assertion) {
     var a = attrs[i];
     var vals = tags(a, 'AttributeValue');
     var valStrs = [];
-    for (var j = 0; j < vals.length; j++) { valStrs.push(esc((vals[j].textContent || '').trim())); }
+    for (var j =
+         0; j < vals.length; j++) { valStrs.push(esc((vals[j].textContent ||
+         '').trim())); }
     html += row([
       esc(a.getAttribute('Name') || ''),
       valStrs.join('<br>'),
@@ -345,28 +430,40 @@ function buildAttributesTable(assertion) {
 }
 
 // Two-column key/value row (value may already contain HTML).
-function kv(k, v) { return '<tr><td class="saml-key">' + esc(k) + '</td><td>' + v + '</td></tr>'; }
+function kv(k, v) {
+  log.debug("Entering kv().");
+  log.debug("Leaving kv().");
+  return '<tr><td class="saml-key">' + esc(k) + '</td><td>' + v + '</td></tr>';
+}
 
 // Text of a direct-child element by local name (avoids grabbing a nested
 // element of the same name, e.g. the assertion's Issuer vs the response's).
 function directChildText(parent, localName) {
+  log.debug("Entering directChildText().");
   var kids = parent.childNodes;
   for (var i = 0; i < kids.length; i++) {
-    if (kids[i].nodeType === 1 && kids[i].localName === localName) return (kids[i].textContent || '').trim();
+    if (kids[i].nodeType === 1 && kids[i].localName === localName) {
+      log.debug("Leaving directChildText().");
+      return (kids[i].textContent || '').trim();
+    }
   }
+  log.debug("Leaving directChildText().");
   return '';
 }
 
 // The X509Certificate from the response-level <Signature> (a direct child of
 // <Response>), not the assertion's signature.
 function responseSignerCert(responseEl) {
+  log.debug("Entering responseSignerCert().");
   var kids = responseEl.childNodes;
   for (var i = 0; i < kids.length; i++) {
     if (kids[i].nodeType === 1 && kids[i].localName === 'Signature') {
       var c = tags(kids[i], 'X509Certificate')[0];
+      log.debug("Leaving responseSignerCert().");
       return c ? (c.textContent || '').replace(/\s+/g, '') : '';
     }
   }
+  log.debug("Leaving responseSignerCert().");
   return '';
 }
 
@@ -375,16 +472,23 @@ function buildResponseDetailsTable(doc) {
   var container = el('saml_resp_details');
   // The document root is the protocol message (Response / LogoutResponse / …).
   var msg = doc.documentElement;
-  if (!msg) { container.innerHTML = '<em>No SAML message element found.</em>'; return; }
+  if (!msg) {
+    container.innerHTML = '<em>No SAML message element found.</em>';
+    log.debug("Leaving buildResponseDetailsTable().");
+    return;
+  }
 
   var certB64 = responseSignerCert(msg);
   responseSignerCertPem = certB64; // saml_cert.js accepts bare base64 DER
 
   var certCell;
   if (certB64) {
-    certCell = '<a href="/saml_cert.html?from=saml_response.html" onclick="return saml_response.viewSignerCert();">View certificate details &rarr;</a>' +
+    certCell = '<a href="/saml_cert.html?from=saml_response.html" ' +
+        'onclick="return saml_response.viewSignerCert();">View certificate ' +
+        'details &rarr;</a>' +
       '<div style="word-break:break-all; font-size:0.85em; margin-top:4px;">' +
-      esc(certB64.substring(0, 96)) + (certB64.length > 96 ? '…' : '') + '</div>';
+      esc(certB64.substring(0, 96)) + (certB64.length > 96 ? '…' : '') +
+          '</div>';
   } else {
     certCell = '<em>(not signed / no certificate)</em>';
   }
@@ -392,7 +496,8 @@ function buildResponseDetailsTable(doc) {
   var html = '<table class="saml-table">';
   html += kv('Message Type', esc(msg.localName || ''));
   html += kv('SAML Version', esc(msg.getAttribute('Version') || ''));
-  html += kv('Issue Date (IssueInstant)', esc(msg.getAttribute('IssueInstant') || ''));
+  html += kv('Issue Date (IssueInstant)',
+             esc(msg.getAttribute('IssueInstant') || ''));
   html += kv('In Response To', esc(msg.getAttribute('InResponseTo') || ''));
   html += kv('ID', esc(msg.getAttribute('ID') || ''));
   var dest = msg.getAttribute('Destination') || '';
@@ -407,11 +512,15 @@ function buildResponseDetailsTable(doc) {
 
 // Render <samlp:Status>: a colored friendly label for the top-level StatusCode,
 // the full code URI, an optional nested (second-level) StatusCode, and any
-// StatusMessage — this is the key result for a LogoutResponse and error responses.
+// StatusMessage — this is the key result for a LogoutResponse and error
+// responses.
 function statusHtml(msg) {
   log.debug("Entering statusHtml().");
   var statusEl = tags(msg, 'Status')[0];
-  if (!statusEl) return '<em>(no Status)</em>';
+  if (!statusEl) {
+    log.debug("Leaving statusHtml().");
+    return '<em>(no Status)</em>';
+  }
   var codes = tags(statusEl, 'StatusCode');
   var top = codes[0] ? (codes[0].getAttribute('Value') || '') : '';
   var sub = codes[1] ? (codes[1].getAttribute('Value') || '') : '';
@@ -419,8 +528,10 @@ function statusHtml(msg) {
   var sm = smEl ? (smEl.textContent || '').trim() : '';
 
   var isSuccess = top.indexOf(':status:Success') >= 0;
-  var out = '<strong style="color:' + (isSuccess ? '#2e7d32' : '#b00') + ';">' + esc(shortStatus(top)) + '</strong>';
-  if (top) out += ' <span style="color:#888; word-break:break-all;">' + esc(top) + '</span>';
+  var out = '<strong style="color:' + (isSuccess ? '#2e7d32' : '#b00') + ';">' +
+      esc(shortStatus(top)) + '</strong>';
+  if (top) out += ' <span style="color:#888; word-break:break-all;">' +
+      esc(top) + '</span>';
   if (sub) out += '<br>Sub-status: ' + esc(sub);
   if (sm) out += '<br>Message: ' + esc(sm);
   log.debug("Leaving statusHtml().");
@@ -429,19 +540,30 @@ function statusHtml(msg) {
 
 // Last segment of a SAML status URI (…:status:Success -> "Success").
 function shortStatus(uri) {
-  if (!uri) return '(none)';
+  log.debug("Entering shortStatus().");
+  if (!uri) {
+    log.debug("Leaving shortStatus().");
+    return '(none)';
+  }
   var i = uri.lastIndexOf(':');
+  log.debug("Leaving shortStatus().");
   return i >= 0 ? uri.substring(i + 1) : uri;
 }
 
 function viewSignerCert() {
-  if (!responseSignerCertPem) return false;
+  log.debug("Entering viewSignerCert().");
+  if (!responseSignerCertPem) {
+    log.debug("Leaving viewSignerCert().");
+    return false;
+  }
   try {
-    if (window.localStorage) localStorage.setItem('saml_cert_view', responseSignerCertPem);
+    if (window.localStorage) localStorage.setItem('saml_cert_view',
+        responseSignerCertPem);
   } catch (e) {
     // No storage available in this context.
   }
   window.open('/saml_cert.html?from=saml_response.html', '_blank');
+  log.debug("Leaving viewSignerCert().");
   return false;
 }
 
@@ -450,11 +572,14 @@ function viewSignerCert() {
 function showTab(evt, tabId) {
   log.debug("Entering showTab().");
   var target = el(tabId);
-  var scope = (target && target.closest && target.closest('.saml-pane')) || document;
+  var scope = (target && target.closest && target.closest('.saml-pane')) ||
+      document;
   var contents = scope.getElementsByClassName('saml-tabcontent');
-  for (var i = 0; i < contents.length; i++) { contents[i].style.display = 'none'; }
+  for (var i = 0; i < contents.length; i++) { contents[i].style.display =
+       'none'; }
   var links = scope.getElementsByClassName('tablinks');
-  for (var k = 0; k < links.length; k++) { links[k].className = links[k].className.replace(' active', ''); }
+  for (var k = 0; k < links.length; k++) { links[k].className =
+       links[k].className.replace(' active', ''); }
   if (target) target.style.display = 'block';
   if (evt && evt.currentTarget) evt.currentTarget.className += ' active';
   log.debug("Leaving showTab().");
@@ -464,10 +589,14 @@ function showTab(evt, tabId) {
 function copyField(id) {
   log.debug("Entering copyField().");
   var e = el(id);
-  if (!e) return false;
+  if (!e) {
+    log.debug("Leaving copyField().");
+    return false;
+  }
   var text = e.value || '';
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error('copyField: ' + err); });
+    navigator.clipboard.writeText(text).catch(function (err) { log.error(
+                                  'copyField: ' + err); });
   } else {
     try {
       e.focus();
@@ -491,38 +620,55 @@ function renderFromStorage(msgIfMissing) {
   } catch (e) {
     saved = null;
   }
-  if (saved) { render(saved); return true; }
+  if (saved) {
+    render(saved);
+    log.debug("Leaving renderFromStorage().");
+    return true;
+  }
   if (msgIfMissing) setStatus(msgIfMissing);
   log.debug("Leaving renderFromStorage().");
   return false;
 }
 
-// Render a signature-verification result (from xd.verifyXmlSignature) as a table.
+// Render a signature-verification result (from xd.verifyXmlSignature) as a
+// table.
 function formatSigResult(res) {
   log.debug("Entering formatSigResult().");
-  if (res.error) return '<span style="color:#b00;">Cannot validate: ' + esc(res.error) + '</span>';
+  if (res.error) {
+    log.debug("Leaving formatSigResult().");
+    return '<span style="color:#b00;">Cannot validate: ' + esc(res.error) +
+        '</span>';
+  }
   var color = res.valid ? '#2e7d32' : '#b00';
   var refs = (res.references || []).length;
   var html = '<table class="saml-table">';
-  html += '<tr><td class="saml-key">Signature</td><td><strong style="color:' + color + ';">' + (res.valid ? 'VALID' : 'INVALID') + '</strong></td></tr>';
-  html += '<tr><td class="saml-key">SignatureValue</td><td>' + (res.signatureValid ? 'verified' : 'FAILED') + '</td></tr>';
-  html += '<tr><td class="saml-key">Reference digests</td><td>' + (res.referencesValid ? 'match' : 'MISMATCH') + ' (' + refs + ')</td></tr>';
-  html += '<tr><td class="saml-key">Signature Method</td><td>' + esc(res.signatureMethod || '') + '</td></tr>';
-  html += '<tr><td class="saml-key">Canonicalization</td><td>' + esc(res.canonicalization || '') + '</td></tr>';
-  html += '<tr><td class="saml-key">Signer (cert CN)</td><td>' + esc(res.signerSubject || '(from KeyInfo)') + '</td></tr>';
+  html += '<tr><td class="saml-key">Signature</td><td><strong style="color:' +
+      color + ';">' + (res.valid ? 'VALID' : 'INVALID') + '</strong></td></tr>';
+  html += '<tr><td class="saml-key">SignatureValue</td><td>' +
+      (res.signatureValid ? 'verified' : 'FAILED') + '</td></tr>';
+  html += '<tr><td class="saml-key">Reference digests</td><td>' +
+      (res.referencesValid ? 'match' : 'MISMATCH') + ' (' + refs +
+      ')</td></tr>';
+  html += '<tr><td class="saml-key">Signature Method</td><td>' +
+      esc(res.signatureMethod || '') + '</td></tr>';
+  html += '<tr><td class="saml-key">Canonicalization</td><td>' +
+      esc(res.canonicalization || '') + '</td></tr>';
+  html += '<tr><td class="saml-key">Signer (cert CN)</td><td>' +
+      esc(res.signerSubject || '(from KeyInfo)') + '</td></tr>';
   html += '</table>';
   log.debug("Leaving formatSigResult().");
   return html;
 }
 
-// Validate the enveloped XML digital signature on the extracted assertion, using
-// the certificate embedded in the signature's KeyInfo. Reuses xmldsig.js.
+// Validate the enveloped XML digital signature on the extracted assertion,
+// using the certificate embedded in the signature's KeyInfo. Reuses xmldsig.js.
 function validateAssertionSignature() {
   log.debug("Entering validateAssertionSignature().");
   var details = el('saml_sig_details');
   if (!lastAssertionXml || lastAssertionXml.indexOf('<') < 0) {
     setVal('saml_sig_status', 'No assertion available to validate.');
     if (details) details.innerHTML = '';
+    log.debug("Leaving validateAssertionSignature().");
     return false;
   }
   var res;
@@ -530,9 +676,12 @@ function validateAssertionSignature() {
     res = xd.verifyXmlSignature(lastAssertionXml);
   } catch (e) {
     setVal('saml_sig_status', 'Validation error: ' + e.message);
+    log.debug("Leaving validateAssertionSignature().");
     return false;
   }
-  setVal('saml_sig_status', res.error ? ('Cannot validate: ' + res.error) : (res.valid ? 'Assertion signature VALID.' : 'Assertion signature INVALID.'));
+  setVal('saml_sig_status', res.error ? ('Cannot validate: ' +
+         res.error) : (res.valid ?
+         'Assertion signature VALID.' : 'Assertion signature INVALID.'));
   if (details) details.innerHTML = formatSigResult(res);
   log.debug("Leaving validateAssertionSignature().");
   return false;
@@ -543,15 +692,26 @@ function validateAssertionSignature() {
 // assertion. Reuses xmldsig.js decryptXml.
 function decryptAssertion() {
   log.debug("Entering decryptAssertion().");
-  if (!lastEncryptedXml) { setVal('saml_dec_status', 'No <xenc:EncryptedData> / <saml:EncryptedAssertion> found in this response.'); return false; }
+  if (!lastEncryptedXml) {
+    setVal('saml_dec_status', 'No <xenc:EncryptedData> / ' +
+           '<saml:EncryptedAssertion> found in this response.');
+    log.debug("Leaving decryptAssertion().");
+    return false;
+  }
   var keyEl = el('saml_dec_key');
   var key = keyEl ? keyEl.value : '';
-  if (!key.trim()) { setVal('saml_dec_status', 'Paste the recipient (SP) private key to decrypt.'); return false; }
+  if (!key.trim()) {
+    setVal('saml_dec_status',
+           'Paste the recipient (SP) private key to decrypt.');
+    log.debug("Leaving decryptAssertion().");
+    return false;
+  }
   var plaintext;
   try {
     plaintext = xd.decryptXml(lastEncryptedXml, { privateKeyPem: key });
   } catch (e) {
     setVal('saml_dec_status', 'Decryption failed: ' + e.message);
+    log.debug("Leaving decryptAssertion().");
     return false;
   }
   lastAssertionXml = plaintext;
@@ -564,7 +724,8 @@ function decryptAssertion() {
   } catch (e) {
     log.error('decrypt render: ' + e.message);
   }
-  setVal('saml_dec_status', 'Decrypted. The assertion is shown in the XML tab; use Validate Signature to verify it.');
+  setVal('saml_dec_status', 'Decrypted. The assertion is shown in the XML ' +
+         'tab; use Validate Signature to verify it.');
   log.debug("Leaving decryptAssertion().");
   return false;
 }
@@ -573,34 +734,44 @@ function decryptAssertion() {
 // The edge ACS's hand-off (static deployments — infra/edge/saml_landing.js).
 //
 // The value handed over is the SAMLResponse exactly as the IdP sent it: base64,
-// and DEFLATE-compressed if it came over the Redirect binding. decodeSamlParam()
-// already distinguishes the two — it is the decoder the ?SAMLResponse= path has
-// always used — so nothing is decoded at the edge and there is one decoder here.
+// and DEFLATE-compressed if it came over the Redirect binding.
+// decodeSamlParam() already distinguishes the two — it is the decoder the
+// ?SAMLResponse= path has always used — so nothing is decoded at the edge and
+// there is one decoder here.
 // ---------------------------------------------------------------------------
 function handleEdgeHandoff(posted) {
   log.debug('Entering handleEdgeHandoff(). posted=' + posted);
   if (posted === 'blocked') {
-    setStatus('The IdP\'s POST was captured at the edge, but this browser would not let that page store ' +
-              'the response (sessionStorage is blocked), so it could not be handed over. Capture the POST ' +
+    setStatus('The IdP\'s POST was captured at the edge, but this browser ' +
+              'would not let that page store ' +
+              'the response (sessionStorage is blocked), so it could not be ' +
+                  'handed over. Capture the POST ' +
               'with the developer tools and paste the SAMLResponse below.');
-    resolveHistoryUnreadable('the browser blocked the edge landing\'s hand-off (sessionStorage).');
+    resolveHistoryUnreadable('the browser blocked the edge landing\'s ' +
+                             'hand-off (sessionStorage).');
+    log.debug("Leaving handleEdgeHandoff().");
     return;
   }
   var handoff = edge.takeHandoff({
     response: edge.SAML.responseKey,
     relayState: edge.SAML.relayStateKey
   });
-  if (!handoff.ok) { log.error('handleEdgeHandoff: sessionStorage could not be read.'); }
+  if (!handoff.ok) { log.error('handleEdgeHandoff: sessionStorage could ' +
+      'not be read.'); }
   if (!handoff.response) {
     // Most often a reload: the response is deliberately read once and removed,
     // so say that rather than showing an empty page. Fall back to the cached
     // last response if there is one, exactly as the ?id= path does.
     if (!renderFromStorage()) {
-      setStatus('The edge landing redirected here but no SAMLResponse was waiting in sessionStorage. ' +
-                'A reload will do this — it is read once and removed. Sign in again, or paste a ' +
+      setStatus('The edge landing redirected here but no SAMLResponse was ' +
+                'waiting in sessionStorage. ' +
+                'A reload will do this — it is read once and removed. Sign ' +
+                    'in again, or paste a ' +
                 'response below.');
-      resolveHistoryUnreadable('no SAMLResponse was waiting from the edge landing.');
+      resolveHistoryUnreadable('no SAMLResponse was waiting from the ' +
+                               'edge landing.');
     }
+    log.debug("Leaving handleEdgeHandoff().");
     return;
   }
   setStatus('Decoding SAMLResponse…');
@@ -608,8 +779,10 @@ function handleEdgeHandoff(posted) {
     .then(function (xml) { render(xml, true); })
     .catch(function (e) {
       log.error('decode edge SAMLResponse: ' + e.message);
-      setStatus('Could not decode the SAMLResponse handed over by the edge landing: ' + e.message);
-      resolveHistoryUnreadable('could not decode the IdP response: ' + e.message);
+      setStatus('Could not decode the SAMLResponse handed over by the edge ' +
+                'landing: ' + e.message);
+      resolveHistoryUnreadable('could not decode the IdP response: ' +
+                               e.message);
     });
   log.debug('Leaving handleEdgeHandoff().');
 }
@@ -621,18 +794,23 @@ window.onload = function () {
   // Tools page (the IdP encrypts to the SP's certificate).
   try {
     var dk = el('saml_dec_key');
-    var sk = window.localStorage && localStorage.getItem('samltools_saml_sp_private_key');
+    var sk = window.localStorage &&
+        localStorage.getItem('samltools_saml_sp_private_key');
     if (dk && !dk.value && sk) dk.value = sk;
     // The Test Tools page can be told not to keep the key pair in localStorage,
-    // in which case there is nothing to prefill from and the standing "Prefilled
-    // from…" wording would be a promise this page did not keep. Say what is
-    // actually true, so an empty field reads as expected rather than broken.
-    // This page never WRITES the key: whatever is pasted here stays in the field.
+    // in which case there is nothing to prefill from and the standing
+    // "Prefilled from…" wording would be a promise this page did not keep. Say
+    // what is actually true, so an empty field reads as expected rather than
+    // broken. This page never WRITES the key: whatever is pasted here stays in
+    // the field.
     var note = el('saml_dec_key_note');
     if (note && dk && !dk.value) {
-      note.textContent = 'If the response carries an EncryptedAssertion (or a message-level ' +
-        'EncryptedData), decrypt it in the browser with the recipient (SP) private key. Nothing was ' +
-        'prefilled — either no key pair has been generated yet, or "Save this key pair in browser ' +
+      note.textContent =
+          'If the response carries an EncryptedAssertion (or a message-level ' +
+        'EncryptedData), decrypt it in the browser with the recipient (SP) ' +
+            'private key. Nothing was ' +
+        'prefilled — either no key pair has been generated yet, or "Save ' +
+            'this key pair in browser ' +
         'localStorage" is turned off on the SAML Test Tools page. Paste the private key below.';
     }
   } catch (e) {
@@ -645,6 +823,7 @@ window.onload = function () {
   var posted = qp(edge.SAML.handoffParam);
   if (posted) {
     handleEdgeHandoff(posted);
+    log.debug("Leaving onload().");
     return;
   }
 
@@ -653,7 +832,8 @@ window.onload = function () {
   if (id) {
     setStatus('Loading response…');
     fetch(appconfig.apiUrl + '/samlresponse?id=' + encodeURIComponent(id))
-      .then(function (r) { if (!r.ok) { throw new Error('HTTP ' + r.status); } return r.json(); })
+      .then(function (r) { if (!r.ok) { throw new Error('HTTP ' +
+          r.status); } return r.json(); })
       .then(function (j) {
         // Stash expired/unknown — fall back to the last response we cached.
         if (!j || !j.responseXml) {
@@ -669,7 +849,8 @@ window.onload = function () {
         log.error('fetch response: ' + e.message);
         if (!renderFromStorage()) {
           setStatus('Failed to load response: ' + e.message);
-          resolveHistoryUnreadable('could not load the IdP response: ' + e.message);
+          resolveHistoryUnreadable('could not load the IdP response: ' +
+                                   e.message);
         }
       });
   } else if (direct) {
@@ -679,12 +860,14 @@ window.onload = function () {
       .catch(function (e) {
         log.error('decode SAMLResponse: ' + e.message);
         setStatus('Could not decode SAMLResponse parameter: ' + e.message);
-        resolveHistoryUnreadable('could not decode the SAMLResponse: ' + e.message);
+        resolveHistoryUnreadable('could not decode the SAMLResponse: ' +
+                                 e.message);
       });
   } else {
     // No id/param (e.g. returned from the certificate-details page, which drops
     // the ?id=) — repopulate the fields from the last cached response.
-    renderFromStorage('No response id in the URL. Start from the SAML Test Tools page and click "Call IdP".');
+    renderFromStorage('No response id in the URL. Start from the SAML Test ' +
+                      'Tools page and click "Call IdP".');
   }
   log.debug("Leaving onload().");
 };

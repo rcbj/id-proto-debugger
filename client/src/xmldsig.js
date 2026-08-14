@@ -8,9 +8,9 @@
 // reusable module whose functions take explicit arguments/options instead of
 // reading specific DOM element ids, so they are not tied to the SAML page.
 //
-// node-forge does all the crypto (RSA sign/keygen, block ciphers, RSA key wrap).
-// Only browser-native APIs (DOMParser/XMLSerializer, window.crypto) are used
-// besides forge, so this bundles cleanly with browserify + envify.
+// node-forge does all the crypto (RSA sign/keygen, block ciphers, RSA key
+// wrap). Only browser-native APIs (DOMParser/XMLSerializer, window.crypto) are
+// used besides forge, so this bundles cleanly with browserify + envify.
 
 
 var bunyan = require("bunyan");
@@ -35,19 +35,25 @@ var DS_NS = 'http://www.w3.org/2000/09/xmldsig#';
 var XENC_NS = 'http://www.w3.org/2001/04/xmlenc#';
 var XENC11_NS = 'http://www.w3.org/2009/xmlenc11#';
 var C14N_EXCLUSIVE = 'http://www.w3.org/2001/10/xml-exc-c14n#';
-var TRANSFORM_ENVELOPED = 'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
+var TRANSFORM_ENVELOPED =
+    'http://www.w3.org/2000/09/xmldsig#enveloped-signature';
 var SIG_ALG_RSA_SHA256 = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
 
 // RFC 4122-ish id suitable for an XML ID (an NCName: starts with '_').
 function genId() {
+  log.debug("Entering genId().");
   var b = new Uint8Array(16);
   (window.crypto || window.msCrypto).getRandomValues(b);
   var hex = '';
-  for (var i = 0; i < b.length; i++) { hex += ('0' + b[i].toString(16)).slice(-2); }
+  for (var i = 0; i < b.length; i++) { hex += ('0' +
+       b[i].toString(16)).slice(-2); }
+  log.debug("Leaving genId().");
   return '_' + hex;
 }
 
 function xmlEscape(s) {
+  log.debug("Entering xmlEscape().");
+  log.debug("Leaving xmlEscape().");
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
@@ -55,24 +61,35 @@ function xmlEscape(s) {
 
 // Strip PEM armor to bare base64 DER.
 function certPemToB64(pem) {
+  log.debug("Entering certPemToB64().");
+  log.debug("Leaving certPemToB64().");
   return String(pem || '')
     .replace(/-----BEGIN CERTIFICATE-----/g, '')
     .replace(/-----END CERTIFICATE-----/g, '')
     .replace(/\s+/g, '');
 }
 
-// Wrap bare base64 DER in PEM (pass-through if already PEM) so forge can parse it.
+// Wrap bare base64 DER in PEM (pass-through if already PEM) so forge can parse
+// it.
 function pemWrapCert(certPemOrB64) {
+  log.debug("Entering pemWrapCert().");
   var s = String(certPemOrB64 || '');
-  if (/-----BEGIN CERTIFICATE-----/.test(s)) return s;
+  if (/-----BEGIN CERTIFICATE-----/.test(s)) {
+    log.debug("Leaving pemWrapCert().");
+    return s;
+  }
   var b64 = s.replace(/\s+/g, '');
   var lines = b64.match(/.{1,64}/g) || [];
-  return '-----BEGIN CERTIFICATE-----\n' + lines.join('\n') + '\n-----END CERTIFICATE-----\n';
+  log.debug("Leaving pemWrapCert().");
+  return '-----BEGIN CERTIFICATE-----\n' + lines.join('\n') +
+      '\n-----END CERTIFICATE-----\n';
 }
 
 function digestBase64(str, mdFactory) {
+  log.debug("Entering digestBase64().");
   var md = mdFactory();
   md.update(str, 'utf8');
+  log.debug("Leaving digestBase64().");
   return forge.util.encode64(md.digest().getBytes());
 }
 
@@ -83,14 +100,22 @@ function sigAlgSpec(uri) {
   log.debug("Entering sigAlgSpec().");
   switch (uri) {
     case 'http://www.w3.org/2000/09/xmldsig#rsa-sha1':
-      return { md: forge.md.sha1.create, digestUri: 'http://www.w3.org/2000/09/xmldsig#sha1' };
+      log.debug("Leaving sigAlgSpec().");
+      return { md: forge.md.sha1.create,
+              digestUri: 'http://www.w3.org/2000/09/xmldsig#sha1' };
     case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha384':
-      return { md: forge.md.sha384.create, digestUri: 'http://www.w3.org/2001/04/xmldsig-more#sha384' };
+      log.debug("Leaving sigAlgSpec().");
+      return { md: forge.md.sha384.create,
+              digestUri: 'http://www.w3.org/2001/04/xmldsig-more#sha384' };
     case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha512':
-      return { md: forge.md.sha512.create, digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512' };
+      log.debug("Leaving sigAlgSpec().");
+      return { md: forge.md.sha512.create,
+              digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512' };
     case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256':
     default:
-      return { md: forge.md.sha256.create, digestUri: 'http://www.w3.org/2001/04/xmlenc#sha256' };
+      log.debug("Leaving sigAlgSpec().");
+      return { md: forge.md.sha256.create,
+              digestUri: 'http://www.w3.org/2001/04/xmlenc#sha256' };
   }
   log.debug("Leaving sigAlgSpec().");
 }
@@ -100,7 +125,11 @@ function sigAlgSpec(uri) {
 // (its own prefix + the prefixes of namespace-qualified attributes), so a
 // subtree canonicalizes identically standalone or nested — the property the
 // detached SignedInfo signature relies on. (Verbatim from saml_request.js.)
-function canonicalize(apex) { return c14nSerialize(apex, {}); }
+function canonicalize(apex) {
+  log.debug("Entering canonicalize().");
+  log.debug("Leaving canonicalize().");
+  return c14nSerialize(apex, {});
+}
 
 function c14nInScopeNs(el) {
   log.debug("Entering c14nInScopeNs().");
@@ -118,10 +147,16 @@ function c14nInScopeNs(el) {
   return map;
 }
 function c14nTextEscape(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r/g, '&#xD;');
+  log.debug("Entering c14nTextEscape().");
+  log.debug("Leaving c14nTextEscape().");
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g,
+                '&gt;').replace(/\r/g, '&#xD;');
 }
 function c14nAttrEscape(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;')
+  log.debug("Entering c14nAttrEscape().");
+  log.debug("Leaving c14nAttrEscape().");
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g,
+                '&quot;')
     .replace(/\t/g, '&#x9;').replace(/\n/g, '&#xA;').replace(/\r/g, '&#xD;');
 }
 function c14nSerialize(el, rendered) {
@@ -137,10 +172,12 @@ function c14nSerialize(el, rendered) {
     attrs.push(a);
   }
   var childRendered = {};
-  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] = rendered[k]; }
+  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] =
+       rendered[k]; }
   var nsOut = [];
   Object.keys(utilized).forEach(function (prefix) {
-    var uri = inscope.hasOwnProperty(prefix) ? inscope[prefix] : (prefix === '' ? '' : undefined);
+    var uri = inscope.hasOwnProperty(prefix) ?
+        inscope[prefix] : (prefix === '' ? '' : undefined);
     if (uri === undefined) return;
     if (prefix === '' && uri === '' && !rendered.hasOwnProperty('')) return;
     if (childRendered[prefix] !== uri) {
@@ -156,7 +193,8 @@ function c14nSerialize(el, rendered) {
   });
   var out = '<' + el.nodeName;
   nsOut.forEach(function (n) {
-    out += ' ' + (n.prefix ? ('xmlns:' + n.prefix) : 'xmlns') + '="' + c14nAttrEscape(n.uri) + '"';
+    out += ' ' + (n.prefix ? ('xmlns:' + n.prefix) : 'xmlns') + '="' +
+        c14nAttrEscape(n.uri) + '"';
   });
   attrs.sort(function (a, b) {
     var au = a.namespaceURI || '', bu = b.namespaceURI || '';
@@ -164,20 +202,27 @@ function c14nSerialize(el, rendered) {
     var al = a.localName || a.name, bl = b.localName || b.name;
     return al < bl ? -1 : (al > bl ? 1 : 0);
   });
-  attrs.forEach(function (a) { out += ' ' + a.name + '="' + c14nAttrEscape(a.value) + '"'; });
+  attrs.forEach(function (a) { out += ' ' + a.name + '="' +
+                c14nAttrEscape(a.value) + '"'; });
   out += '>';
   var child = el.firstChild;
   while (child) {
     if (child.nodeType === 1) out += c14nSerialize(child, childRendered);
-    else if (child.nodeType === 3 || child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
+    else if (child.nodeType === 3 ||
+             child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
     child = child.nextSibling;
   }
   log.debug("Leaving c14nSerialize().");
   return out + '</' + el.nodeName + '>';
 }
 
-// Inclusive Canonical XML 1.0 — only for the encryption "Inclusive C14N" option.
-function canonicalizeInclusive(apex) { return c14nIncl(apex, {}, true); }
+// Inclusive Canonical XML 1.0 — only for the encryption "Inclusive C14N"
+// option.
+function canonicalizeInclusive(apex) {
+  log.debug("Entering canonicalizeInclusive().");
+  log.debug("Leaving canonicalizeInclusive().");
+  return c14nIncl(apex, {}, true);
+}
 function c14nIncl(el, rendered, isApex) {
   log.debug("Entering c14nIncl().");
   var nsSource = {};
@@ -186,14 +231,17 @@ function c14nIncl(el, rendered, isApex) {
     for (var a = 0; a < el.attributes.length; a++) {
       var at = el.attributes[a];
       if (at.name === 'xmlns') nsSource[''] = at.value;
-      else if (at.name.indexOf('xmlns:') === 0) nsSource[at.name.slice(6)] = at.value;
+      else if (at.name.indexOf('xmlns:') === 0) nsSource[at.name.slice(6)] =
+               at.value;
     }
   }
   var childRendered = {};
-  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] = rendered[k]; }
+  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] =
+       rendered[k]; }
   var nsOut = [];
   Object.keys(nsSource).forEach(function (p) {
-    if (childRendered[p] !== nsSource[p]) { nsOut.push({ prefix: p, uri: nsSource[p] }); childRendered[p] = nsSource[p]; }
+    if (childRendered[p] !== nsSource[p]) { nsOut.push({ prefix: p,
+        uri: nsSource[p] }); childRendered[p] = nsSource[p]; }
   });
   nsOut.sort(function (a, b) {
     if (a.prefix === b.prefix) return 0;
@@ -202,7 +250,8 @@ function c14nIncl(el, rendered, isApex) {
     return a.prefix < b.prefix ? -1 : 1;
   });
   var out = '<' + el.nodeName;
-  nsOut.forEach(function (n) { out += ' ' + (n.prefix ? ('xmlns:' + n.prefix) : 'xmlns') + '="' + c14nAttrEscape(n.uri) + '"'; });
+  nsOut.forEach(function (n) { out += ' ' + (n.prefix ? ('xmlns:' +
+                n.prefix) : 'xmlns') + '="' + c14nAttrEscape(n.uri) + '"'; });
   var attrs = [];
   for (var i = 0; i < el.attributes.length; i++) {
     var aa = el.attributes[i];
@@ -215,12 +264,14 @@ function c14nIncl(el, rendered, isApex) {
     var al = a.localName || a.name, bl = b.localName || b.name;
     return al < bl ? -1 : (al > bl ? 1 : 0);
   });
-  attrs.forEach(function (a) { out += ' ' + a.name + '="' + c14nAttrEscape(a.value) + '"'; });
+  attrs.forEach(function (a) { out += ' ' + a.name + '="' +
+                c14nAttrEscape(a.value) + '"'; });
   out += '>';
   var child = el.firstChild;
   while (child) {
     if (child.nodeType === 1) out += c14nIncl(child, childRendered, false);
-    else if (child.nodeType === 3 || child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
+    else if (child.nodeType === 3 ||
+             child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
     child = child.nextSibling;
   }
   log.debug("Leaving c14nIncl().");
@@ -231,33 +282,69 @@ function c14nIncl(el, rendered, isApex) {
 function dataAlgSpec(uri) {
   log.debug("Entering dataAlgSpec().");
   switch (uri) {
-    case XENC11_NS + 'aes128-gcm': return { cipher: 'AES-GCM', keyBytes: 16, ivBytes: 12, gcm: true };
-    case XENC11_NS + 'aes192-gcm': return { cipher: 'AES-GCM', keyBytes: 24, ivBytes: 12, gcm: true };
-    case XENC11_NS + 'aes256-gcm': return { cipher: 'AES-GCM', keyBytes: 32, ivBytes: 12, gcm: true };
-    case XENC_NS + 'aes128-cbc': return { cipher: 'AES-CBC', keyBytes: 16, ivBytes: 16, gcm: false };
-    case XENC_NS + 'aes192-cbc': return { cipher: 'AES-CBC', keyBytes: 24, ivBytes: 16, gcm: false };
-    case XENC_NS + 'aes256-cbc': return { cipher: 'AES-CBC', keyBytes: 32, ivBytes: 16, gcm: false };
-    case XENC_NS + 'tripledes-cbc': return { cipher: '3DES-CBC', keyBytes: 24, ivBytes: 8, gcm: false };
+    case XENC11_NS + 'aes128-gcm':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-GCM', keyBytes: 16, ivBytes: 12, gcm: true };
+    case XENC11_NS + 'aes192-gcm':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-GCM', keyBytes: 24, ivBytes: 12, gcm: true };
+    case XENC11_NS + 'aes256-gcm':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-GCM', keyBytes: 32, ivBytes: 12, gcm: true };
+    case XENC_NS + 'aes128-cbc':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-CBC', keyBytes: 16, ivBytes: 16, gcm: false };
+    case XENC_NS + 'aes192-cbc':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-CBC', keyBytes: 24, ivBytes: 16, gcm: false };
+    case XENC_NS + 'aes256-cbc':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: 'AES-CBC', keyBytes: 32, ivBytes: 16, gcm: false };
+    case XENC_NS + 'tripledes-cbc':
+      log.debug("Leaving dataAlgSpec().");
+      return { cipher: '3DES-CBC', keyBytes: 24, ivBytes: 8, gcm: false };
     default: throw new Error('Unsupported data encryption algorithm: ' + uri);
   }
   log.debug("Leaving dataAlgSpec().");
 }
 function forgeMdFor(uri) {
+  log.debug("Entering forgeMdFor().");
   switch (uri) {
-    case 'http://www.w3.org/2000/09/xmldsig#sha1': return forge.md.sha1.create();
-    case XENC_NS + 'sha256': return forge.md.sha256.create();
-    case 'http://www.w3.org/2001/04/xmldsig-more#sha384': return forge.md.sha384.create();
-    case XENC_NS + 'sha512': return forge.md.sha512.create();
-    default: return forge.md.sha256.create();
+    case 'http://www.w3.org/2000/09/xmldsig#sha1':
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha1.create();
+    case XENC_NS + 'sha256':
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha256.create();
+    case 'http://www.w3.org/2001/04/xmldsig-more#sha384':
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha384.create();
+    case XENC_NS + 'sha512':
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha512.create();
+    default:
+      log.debug("Leaving forgeMdFor().");
+      return forge.md.sha256.create();
   }
 }
 function mgfMdFor(uri) {
+  log.debug("Entering mgfMdFor().");
   switch (uri) {
-    case XENC11_NS + 'mgf1sha1': return forge.md.sha1.create();
-    case XENC11_NS + 'mgf1sha256': return forge.md.sha256.create();
-    case XENC11_NS + 'mgf1sha384': return forge.md.sha384.create();
-    case XENC11_NS + 'mgf1sha512': return forge.md.sha512.create();
-    default: return forge.md.sha1.create();
+    case XENC11_NS + 'mgf1sha1':
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha1.create();
+    case XENC11_NS + 'mgf1sha256':
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha256.create();
+    case XENC11_NS + 'mgf1sha384':
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha384.create();
+    case XENC11_NS + 'mgf1sha512':
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha512.create();
+    default:
+      log.debug("Leaving mgfMdFor().");
+      return forge.md.sha1.create();
   }
 }
 // Parse caller-supplied XML, refusing anything that is not well-formed.
@@ -281,7 +368,8 @@ function parseXmlStrict(xml, what) {
     throw new Error(label + ' is empty.');
   }
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
-  if (!doc || doc.getElementsByTagName('parsererror').length || !doc.documentElement) {
+  if (!doc || doc.getElementsByTagName('parsererror').length ||
+      !doc.documentElement) {
     throw new Error('malformed ' + label + ' — it is not well-formed XML.');
   }
   log.debug("Leaving parseXmlStrict().");
@@ -295,15 +383,23 @@ function encPlaintext(xml, c14nMode, type) {
     var fn = (c14nMode === 'c14n') ? canonicalizeInclusive : canonicalize;
     var doc = parseXmlStrict(xml, 'the XML to encrypt');
     var root = doc.documentElement;
-    if (!isContent) return fn(root);
+    if (!isContent) {
+      log.debug("Leaving encPlaintext().");
+      return fn(root);
+    }
     var inner = '', ch = root.firstChild;
     while (ch) { if (ch.nodeType === 1) inner += fn(ch); ch = ch.nextSibling; }
+    log.debug("Leaving encPlaintext().");
     return inner;
   }
-  if (!isContent) return xml;
+  if (!isContent) {
+    log.debug("Leaving encPlaintext().");
+    return xml;
+  }
   var d2 = parseXmlStrict(xml, 'the XML to encrypt');
   var r2 = d2.documentElement, s = '', c = r2.firstChild;
-  while (c) { s += new XMLSerializer().serializeToString(c); c = c.nextSibling; }
+  while (c) { s += new XMLSerializer().serializeToString(c); c =
+         c.nextSibling; }
   log.debug("Leaving encPlaintext().");
   return s;
 }
@@ -315,7 +411,8 @@ function encryptXml(xml, opts) {
   log.debug("Entering encryptXml().");
   opts = opts || {};
   var certField = opts.certPem || '';
-  if (!String(certField).trim()) throw new Error('No encryption certificate — paste a recipient certificate.');
+  if (!String(certField).trim()) throw new Error('No encryption certificate ' +
+      '— paste a recipient certificate.');
   var certB64 = certPemToB64(certField);
   var cert = forge.pki.certificateFromPem(pemWrapCert(certField));
   var pub = cert.publicKey;
@@ -334,7 +431,8 @@ function encryptXml(xml, opts) {
   cipher.start(spec.gcm ? { iv: iv, tagLength: 128 } : { iv: iv });
   cipher.update(forge.util.createBuffer(ptBytes));
   if (!cipher.finish()) throw new Error('Data encryption failed.');
-  var cipherValue = iv + cipher.output.getBytes() + (spec.gcm ? cipher.mode.tag.getBytes() : '');
+  var cipherValue = iv + cipher.output.getBytes() + (spec.gcm ?
+      cipher.mode.tag.getBytes() : '');
   var cipherB64 = forge.util.encode64(cipherValue);
 
   var wrapped, keyMethodInner = '';
@@ -343,11 +441,13 @@ function encryptXml(xml, opts) {
   } else {
     var digestUri = opts.digest || (XENC_NS + 'sha256');
     var oaepOpts = { md: forgeMdFor(digestUri) };
-    keyMethodInner = '<ds:DigestMethod xmlns:ds="' + DS_NS + '" Algorithm="' + digestUri + '"/>';
+    keyMethodInner = '<ds:DigestMethod xmlns:ds="' + DS_NS + '" Algorithm="' +
+        digestUri + '"/>';
     if (keyAlg === XENC11_NS + 'rsa-oaep') {
       var mgfUri = opts.mgf || (XENC11_NS + 'mgf1sha256');
       oaepOpts.mgf1 = { md: mgfMdFor(mgfUri) };
-      keyMethodInner += '<xenc11:MGF xmlns:xenc11="' + XENC11_NS + '" Algorithm="' + mgfUri + '"/>';
+      keyMethodInner += '<xenc11:MGF xmlns:xenc11="' + XENC11_NS +
+          '" Algorithm="' + mgfUri + '"/>';
     } else {
       oaepOpts.mgf1 = { md: forge.md.sha1.create() };
     }
@@ -356,16 +456,21 @@ function encryptXml(xml, opts) {
   var wrappedB64 = forge.util.encode64(wrapped);
 
   log.debug("Leaving encryptXml().");
-  return '<xenc:EncryptedData xmlns:xenc="' + XENC_NS + '" Type="' + type + '">' +
+  return '<xenc:EncryptedData xmlns:xenc="' + XENC_NS + '" Type="' + type +
+      '">' +
       '<xenc:EncryptionMethod Algorithm="' + dataAlg + '"/>' +
       '<ds:KeyInfo xmlns:ds="' + DS_NS + '">' +
         '<xenc:EncryptedKey>' +
-          '<xenc:EncryptionMethod Algorithm="' + keyAlg + '">' + keyMethodInner + '</xenc:EncryptionMethod>' +
-          '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 + '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
-          '<xenc:CipherData><xenc:CipherValue>' + wrappedB64 + '</xenc:CipherValue></xenc:CipherData>' +
+          '<xenc:EncryptionMethod Algorithm="' + keyAlg + '">' +
+              keyMethodInner + '</xenc:EncryptionMethod>' +
+          '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 +
+              '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
+          '<xenc:CipherData><xenc:CipherValue>' + wrappedB64 +
+              '</xenc:CipherValue></xenc:CipherData>' +
         '</xenc:EncryptedKey>' +
       '</ds:KeyInfo>' +
-      '<xenc:CipherData><xenc:CipherValue>' + cipherB64 + '</xenc:CipherValue></xenc:CipherData>' +
+      '<xenc:CipherData><xenc:CipherValue>' + cipherB64 +
+          '</xenc:CipherValue></xenc:CipherData>' +
     '</xenc:EncryptedData>';
 }
 
@@ -379,19 +484,23 @@ function encryptXml(xml, opts) {
 // opts: { privateKeyPem, certPem, sigAlg, signTimestamp }
 var WSU_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd';
 function firstByLocal(root, name) {
+  log.debug("Entering firstByLocal().");
   var els = root.getElementsByTagNameNS('*', name);
+  log.debug("Leaving firstByLocal().");
   return els && els.length ? els[0] : null;
 }
 function signWsSecurity(soapXml, opts) {
   log.debug("Entering signWsSecurity().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('signWsSecurity: privateKeyPem is required.');
+  if (!opts.privateKeyPem) throw new Error('signWsSecurity: privateKeyPem is ' +
+      'required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
   var spec = sigAlgSpec(sigAlg);
 
   var doc = parseXmlStrict(soapXml, 'the SOAP envelope to sign');
   var security = firstByLocal(doc, 'Security');
-  if (!security) throw new Error('No <wsse:Security> header to hold the signature — enable a timestamp or a credential.');
+  if (!security) throw new Error('No <wsse:Security> header to hold the ' +
+      'signature — enable a timestamp or a credential.');
 
   var targets = [];
   var body = firstByLocal(doc, 'Body');
@@ -405,15 +514,18 @@ function signWsSecurity(soapXml, opts) {
     var id = t.getAttributeNS(WSU_NS, 'Id') || t.getAttribute('wsu:Id') || '';
     var digest = digestBase64(canonicalize(t), spec.md);
     return '<ds:Reference URI="#' + id + '">' +
-      '<ds:Transforms><ds:Transform Algorithm="' + C14N_EXCLUSIVE + '"/></ds:Transforms>' +
+      '<ds:Transforms><ds:Transform Algorithm="' + C14N_EXCLUSIVE +
+          '"/></ds:Transforms>' +
       '<ds:DigestMethod Algorithm="' + spec.digestUri + '"/>' +
       '<ds:DigestValue>' + digest + '</ds:DigestValue></ds:Reference>';
   }).join('');
 
   var signedInfo = '<ds:SignedInfo xmlns:ds="' + DS_NS + '">' +
     '<ds:CanonicalizationMethod Algorithm="' + C14N_EXCLUSIVE + '"/>' +
-    '<ds:SignatureMethod Algorithm="' + sigAlg + '"/>' + refs + '</ds:SignedInfo>';
-  var siCanon = canonicalize(new DOMParser().parseFromString(signedInfo, 'application/xml').documentElement);
+    '<ds:SignatureMethod Algorithm="' + sigAlg + '"/>' + refs +
+        '</ds:SignedInfo>';
+  var siCanon = canonicalize(new DOMParser().parseFromString(signedInfo,
+      'application/xml').documentElement);
   var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
   var md = spec.md(); md.update(siCanon, 'utf8');
   var sigVal = forge.util.encode64(pk.sign(md));
@@ -421,21 +533,23 @@ function signWsSecurity(soapXml, opts) {
 
   var signature = '<ds:Signature xmlns:ds="' + DS_NS + '">' + signedInfo +
     '<ds:SignatureValue>' + sigVal + '</ds:SignatureValue>' +
-    '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 + '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
+    '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 +
+        '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
     '</ds:Signature>';
-  var sigNode = doc.importNode(new DOMParser().parseFromString(signature, 'application/xml').documentElement, true);
+  var sigNode = doc.importNode(new DOMParser().parseFromString(signature,
+      'application/xml').documentElement, true);
   security.insertBefore(sigNode, security.firstChild);
   log.debug("Leaving signWsSecurity().");
   return new XMLSerializer().serializeToString(doc);
 }
 
 // --- Enveloped XML Signature (XML-DSIG) -------------------------------------
-// The generic form of saml_request.js's signPostEnveloped(): digest the document
-// element, build a <ds:SignedInfo> referencing it, insert the <ds:Signature>
-// into the document, then sign the canonicalized SignedInfo in place. Same
-// primitives (exclusive C14N + RSA-SHA*, node-forge) — only the reference URI
-// and the placement of the <ds:Signature> are parameterized, because the SAML
-// schemas disagree about both:
+// The generic form of saml_request.js's signPostEnveloped(): digest the
+// document element, build a <ds:SignedInfo> referencing it, insert the
+// <ds:Signature> into the document, then sign the canonicalized SignedInfo in
+// place. Same primitives (exclusive C14N + RSA-SHA*, node-forge) — only the
+// reference URI and the placement of the <ds:Signature> are parameterized,
+// because the SAML schemas disagree about both:
 //
 //   SAML 2.0   ID="_x"          Reference URI="#_x"  Signature after <Issuer>
 //   SAML 1.1   AssertionID="_x" Reference URI="#_x"  Signature is the LAST child
@@ -448,7 +562,8 @@ function signWsSecurity(soapXml, opts) {
 function signEnveloped(xml, opts) {
   log.debug("Entering signEnveloped().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('signEnveloped: privateKeyPem is required.');
+  if (!opts.privateKeyPem) throw new Error('signEnveloped: privateKeyPem is ' +
+      'required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
   var spec = sigAlgSpec(sigAlg);
   var digestUri = opts.digestUri || spec.digestUri;
@@ -456,12 +571,14 @@ function signEnveloped(xml, opts) {
   var c14nFn = c14nForAlg(c14nAlg);
 
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
-  if (doc.getElementsByTagName('parsererror').length) throw new Error('malformed XML — cannot sign.');
+  if (doc.getElementsByTagName('parsererror')
+      .length) throw new Error('malformed XML — cannot sign.');
   var root = doc.documentElement;
 
   var refUri = opts.refUri;
   if (refUri == null) {
-    var id = root.getAttribute('ID') || root.getAttribute('AssertionID') || root.getAttribute('Id') || '';
+    var id = root.getAttribute('ID') || root.getAttribute('AssertionID') ||
+        root.getAttribute('Id') || '';
     refUri = id ? ('#' + id) : '';
   }
 
@@ -484,17 +601,19 @@ function signEnveloped(xml, opts) {
   var keyInfo = '';
   if (opts.includeKeyInfo !== false && opts.certPem) {
     keyInfo = '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
-      certPemToB64(opts.certPem) + '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>';
+      certPemToB64(opts.certPem) +
+                   '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>';
   }
   // Insert the signature with an empty SignatureValue FIRST, then canonicalize
-  // the SignedInfo in place. Inclusive C14N pulls in every namespace declared by
-  // the ancestors, so a SignedInfo canonicalized while detached would not match
-  // the octets a verifier computes from the finished document. (Exclusive C14N
-  // is unaffected — it only renders visibly-utilized prefixes — so this ordering
-  // is correct for both.)
+  // the SignedInfo in place. Inclusive C14N pulls in every namespace declared
+  // by the ancestors, so a SignedInfo canonicalized while detached would not
+  // match the octets a verifier computes from the finished document. (Exclusive
+  // C14N is unaffected — it only renders visibly-utilized prefixes — so this
+  // ordering is correct for both.)
   var signature = '<ds:Signature xmlns:ds="' + DS_NS + '">' + signedInfo +
     '<ds:SignatureValue></ds:SignatureValue>' + keyInfo + '</ds:Signature>';
-  var sigNode = doc.importNode(new DOMParser().parseFromString(signature, 'application/xml').documentElement, true);
+  var sigNode = doc.importNode(new DOMParser().parseFromString(signature,
+      'application/xml').documentElement, true);
 
   var placement = opts.placement || 'after-issuer';
   if (placement === 'last') {
@@ -504,7 +623,8 @@ function signEnveloped(xml, opts) {
   } else {
     var issuer = null, kids = root.childNodes;
     for (var i = 0; i < kids.length; i++) {
-      if (kids[i].nodeType === 1 && kids[i].localName === 'Issuer') { issuer = kids[i]; break; }
+      if (kids[i].nodeType === 1 && kids[i].localName === 'Issuer') { issuer =
+          kids[i]; break; }
     }
     if (issuer) root.insertBefore(sigNode, issuer.nextSibling);
     else root.insertBefore(sigNode, root.firstChild);
@@ -525,12 +645,14 @@ function signEnveloped(xml, opts) {
 // Verify an enveloped XML digital signature such as the one on a SAML assertion
 // (or any signed element): checks every Reference digest (after applying the
 // enveloped-signature + C14N transforms) and the SignatureValue over the
-// canonicalized SignedInfo, using the certificate embedded in KeyInfo
-// (or opts.certPem if supplied). Reuses the same exclusive/inclusive C14N,
-// digest, and sigAlgSpec helpers used for signing. RSA keys (RSASSA-PKCS1-v1_5).
+// canonicalized SignedInfo, using the certificate embedded in KeyInfo (or
+// opts.certPem if supplied). Reuses the same exclusive/inclusive C14N, digest,
+// and sigAlgSpec helpers used for signing. RSA keys (RSASSA-PKCS1-v1_5).
 //
-// Returns { valid, signatureValid, referencesValid, references[], signatureMethod,
-//           canonicalization, signerSubject, signerCertB64 } or { valid:false, error }.
+// Returns { valid, signatureValid, referencesValid, references[],
+// signatureMethod,
+//           canonicalization, signerSubject, signerCertB64 } or { valid:false,
+//           error }.
 function findById(root, id) {
   log.debug("Entering findById().");
   var all = root.getElementsByTagName('*');
@@ -541,24 +663,40 @@ function findById(root, id) {
       var ln = a.localName || a.name;
       // Id/ID/id cover SAML 2.0 (ID), WS-Security (wsu:Id) and generic ids;
       // AssertionID is the SAML 1.1 assertion id attribute (WS-Fed tokens are
-      // frequently SAML 1.1), whose enveloped signature references #<AssertionID>.
-      if ((ln === 'Id' || ln === 'ID' || ln === 'id' || ln === 'AssertionID') && a.value === id) return e;
+      // frequently SAML 1.1), whose enveloped signature references
+      // #<AssertionID>.
+      if ((ln === 'Id' || ln === 'ID' || ln === 'id' || ln === 'AssertionID') &&
+          a.value === id) {
+        log.debug("Leaving findById().");
+        return e;
+      }
     }
   }
   log.debug("Leaving findById().");
   return null;
 }
 function c14nForAlg(alg) {
+  log.debug("Entering c14nForAlg().");
   alg = alg || '';
-  if (alg.indexOf('exc-c14n') >= 0) return canonicalize;
-  if (alg.indexOf('xml-c14n') >= 0) return canonicalizeInclusive; // inclusive C14N 1.0
+  if (alg.indexOf('exc-c14n') >= 0) {
+    log.debug("Leaving c14nForAlg().");
+    return canonicalize;
+  }
+  if (alg.indexOf('xml-c14n') >= 0) {
+    log.debug("Leaving c14nForAlg().");
+    return canonicalizeInclusive;
+  } // inclusive C14N 1.0
+  log.debug("Leaving c14nForAlg().");
   return canonicalize; // default to exclusive (what SAML/WS-Trust use)
 }
 function certSubjectCN(cert) {
+  log.debug("Entering certSubjectCN().");
   try {
     var f = cert.subject.getField('CN');
+    log.debug("Leaving certSubjectCN().");
     return f ? f.value : '';
   } catch (e) {
+    log.debug("Leaving certSubjectCN().");
     return '';
   }
 }
@@ -567,38 +705,58 @@ function verifyXmlSignature(xml, opts) {
   log.debug("Entering verifyXmlSignature().");
   opts = opts || {};
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
-  if (doc.getElementsByTagName('parsererror').length) return { valid: false, error: 'malformed XML' };
+  if (doc.getElementsByTagName('parsererror').length) {
+    log.debug("Leaving verifyXmlSignature().");
+    return { valid: false, error: 'malformed XML' };
+  }
 
   var sig = firstByLocal(doc, 'Signature');
-  if (!sig) return { valid: false, error: 'No <ds:Signature> element found.' };
+  if (!sig) {
+    log.debug("Leaving verifyXmlSignature().");
+    return { valid: false, error: 'No <ds:Signature> element found.' };
+  }
   var si = firstByLocal(sig, 'SignedInfo');
-  if (!si) return { valid: false, error: 'Signature has no <SignedInfo>.' };
+  if (!si) {
+    log.debug("Leaving verifyXmlSignature().");
+    return { valid: false, error: 'Signature has no <SignedInfo>.' };
+  }
   var smEl = firstByLocal(si, 'SignatureMethod');
   var sigAlg = smEl ? smEl.getAttribute('Algorithm') : '';
   var cmEl = firstByLocal(si, 'CanonicalizationMethod');
   var c14nAlg = cmEl ? cmEl.getAttribute('Algorithm') : C14N_EXCLUSIVE;
   var svEl = firstByLocal(sig, 'SignatureValue');
-  if (!svEl) return { valid: false, error: 'Signature has no <SignatureValue>.' };
+  if (!svEl) {
+    log.debug("Leaving verifyXmlSignature().");
+    return { valid: false, error: 'Signature has no <SignatureValue>.' };
+  }
   var spec = sigAlgSpec(sigAlg);
 
   // Signing certificate: prefer a supplied cert, else the one in KeyInfo.
   var certB64 = '';
   var x509 = firstByLocal(sig, 'X509Certificate');
   if (x509) certB64 = (x509.textContent || '').replace(/\s+/g, '');
-  var certPem = opts.certPem ? pemWrapCert(opts.certPem) : (certB64 ? pemWrapCert(certB64) : '');
-  if (!certPem) return { valid: false, error: 'No signing certificate in KeyInfo and none supplied.' };
+  var certPem = opts.certPem ? pemWrapCert(opts.certPem) : (certB64 ?
+      pemWrapCert(certB64) : '');
+  if (!certPem) {
+    log.debug("Leaving verifyXmlSignature().");
+    return { valid: false,
+            error: 'No signing certificate in KeyInfo and none supplied.' };
+  }
   var cert, pub;
   try {
     cert = forge.pki.certificateFromPem(certPem);
     pub = cert.publicKey;
   } catch (e) {
-    return { valid: false, error: 'Could not parse signing certificate: ' + e.message };
+    log.debug("Leaving verifyXmlSignature().");
+    return { valid: false, error: 'Could not parse signing certificate: ' +
+            e.message };
   }
 
   // 1) SignatureValue over C14N(SignedInfo) — compute before detaching the
   //    signature (exclusive C14N is position-independent, but keep it in-tree).
   var siCanon = c14nForAlg(c14nAlg)(si);
-  var signatureBytes = forge.util.decode64((svEl.textContent || '').replace(/\s+/g, ''));
+  var signatureBytes = forge.util.decode64((svEl.textContent ||
+      '').replace(/\s+/g, ''));
   var signatureValid = false;
   try {
     var md1 = spec.md();
@@ -620,17 +778,23 @@ function verifyXmlSignature(xml, opts) {
     var digAlg = dmEl ? dmEl.getAttribute('Algorithm') : (XENC_NS + 'sha256');
     var dvEl = firstByLocal(ref, 'DigestValue');
     var declared = dvEl ? (dvEl.textContent || '').replace(/\s+/g, '') : '';
-    var target = uri === '' ? doc.documentElement : findById(doc, uri.replace(/^#/, ''));
-    if (!target) { references.push({ uri: uri, ok: false, reason: 'referenced element not found' }); continue; }
+    var target = uri === '' ? doc.documentElement : findById(doc,
+        uri.replace(/^#/, ''));
+    if (!target) { references.push({ uri: uri, ok: false,
+        reason: 'referenced element not found' }); continue; }
     var c14nRef = C14N_EXCLUSIVE;
     var trs = ref.getElementsByTagNameNS('*', 'Transform');
-    for (var t = 0; t < trs.length; t++) { var ta = trs[t].getAttribute('Algorithm') || ''; if (ta.indexOf('c14n') >= 0) c14nRef = ta; }
+    for (var t = 0; t < trs.length; t++) { var ta =
+         trs[t].getAttribute('Algorithm') ||
+         ''; if (ta.indexOf('c14n') >= 0) c14nRef = ta; }
     var canon = c14nForAlg(c14nRef)(target);
     var rmd = forgeMdFor(digAlg); rmd.update(canon, 'utf8');
     var computed = forge.util.encode64(rmd.digest().getBytes());
-    references.push({ uri: uri, ok: computed === declared, computed: computed, declared: declared, digestAlg: digAlg });
+    references.push({ uri: uri, ok: computed === declared, computed: computed,
+                    declared: declared, digestAlg: digAlg });
   }
-  var referencesValid = references.length > 0 && references.every(function (r) { return r.ok; });
+  var referencesValid = references.length > 0 &&
+      references.every(function (r) { return r.ok; });
 
   log.debug("Leaving verifyXmlSignature().");
   return {
@@ -654,24 +818,36 @@ function verifyXmlSignature(xml, opts) {
 //
 // opts: { privateKeyPem }  (the recipient's RSA private key, PEM)
 function directChildByLocal(el, name) {
+  log.debug("Entering directChildByLocal().");
   var c = el.firstChild;
-  while (c) { if (c.nodeType === 1 && (c.localName === name)) return c; c = c.nextSibling; }
+  while (c) { if (c.nodeType === 1 && (c.localName === name)) {
+    log.debug("Leaving directChildByLocal().");
+    return c;
+  } c = c.nextSibling; }
+  log.debug("Leaving directChildByLocal().");
   return null;
 }
 function cipherValueOf(container) {
+  log.debug("Entering cipherValueOf().");
   // The <xenc:CipherData><xenc:CipherValue> directly under `container`.
   var cd = directChildByLocal(container, 'CipherData');
-  if (!cd) return '';
+  if (!cd) {
+    log.debug("Leaving cipherValueOf().");
+    return '';
+  }
   var cv = directChildByLocal(cd, 'CipherValue');
+  log.debug("Leaving cipherValueOf().");
   return cv ? (cv.textContent || '').replace(/\s+/g, '') : '';
 }
 
 function decryptXml(xml, opts) {
   log.debug("Entering decryptXml().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('decryptXml: privateKeyPem is required.');
+  if (!opts.privateKeyPem) throw new Error('decryptXml: privateKeyPem is ' +
+      'required.');
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
-  if (doc.getElementsByTagName('parsererror').length) throw new Error('malformed XML');
+  if (doc.getElementsByTagName('parsererror')
+      .length) throw new Error('malformed XML');
 
   var ed = firstByLocal(doc, 'EncryptedData');
   if (!ed) throw new Error('no <xenc:EncryptedData> to decrypt.');
@@ -679,11 +855,14 @@ function decryptXml(xml, opts) {
   var dataAlg = emEl ? emEl.getAttribute('Algorithm') : '';
   var spec = dataAlgSpec(dataAlg);
 
-  // The wrapped session key may be nested in EncryptedData/KeyInfo, or a sibling
-  // <xenc:EncryptedKey> (referenced by a ds:RetrievalMethod) — the layout
-  // Keycloak and other IdPs emit. Look inside EncryptedData first, then anywhere.
-  var ek = firstByLocal(ed, 'EncryptedKey') || firstByLocal(doc, 'EncryptedKey');
-  if (!ek) throw new Error('no <xenc:EncryptedKey> — could not find the wrapped session key.');
+  // The wrapped session key may be nested in EncryptedData/KeyInfo, or a
+  // sibling <xenc:EncryptedKey> (referenced by a ds:RetrievalMethod) — the
+  // layout Keycloak and other IdPs emit. Look inside EncryptedData first, then
+  // anywhere.
+  var ek = firstByLocal(ed, 'EncryptedKey') || firstByLocal(doc,
+      'EncryptedKey');
+  if (!ek) throw new Error('no <xenc:EncryptedKey> — could not find the ' +
+      'wrapped session key.');
   var kmEl = firstByLocal(ek, 'EncryptionMethod');
   var keyAlg = kmEl ? kmEl.getAttribute('Algorithm') : '';
   var wrappedB64 = cipherValueOf(ek);
@@ -697,11 +876,13 @@ function decryptXml(xml, opts) {
       sessionKey = priv.decrypt(wrapped, 'RSAES-PKCS1-V1_5');
     } else {
       var digEl = kmEl ? firstByLocal(kmEl, 'DigestMethod') : null;
-      var digestUri = digEl ? digEl.getAttribute('Algorithm') : (XENC_NS + 'sha256');
+      var digestUri = digEl ? digEl.getAttribute('Algorithm') : (XENC_NS +
+          'sha256');
       var oaep = { md: forgeMdFor(digestUri) };
       if (keyAlg === XENC11_NS + 'rsa-oaep') {
         var mgfEl = kmEl ? firstByLocal(kmEl, 'MGF') : null;
-        var mgfUri = mgfEl ? mgfEl.getAttribute('Algorithm') : (XENC11_NS + 'mgf1sha1');
+        var mgfUri = mgfEl ? mgfEl.getAttribute('Algorithm') : (XENC11_NS +
+            'mgf1sha1');
         oaep.mgf1 = { md: mgfMdFor(mgfUri) };
       } else {
         // rsa-oaep-mgf1p: MGF1 is fixed to SHA-1.
@@ -710,7 +891,8 @@ function decryptXml(xml, opts) {
       sessionKey = priv.decrypt(wrapped, 'RSA-OAEP', oaep);
     }
   } catch (e) {
-    throw new Error('could not unwrap the session key (wrong private key or key-transport algorithm mismatch): ' + e.message);
+    throw new Error('could not unwrap the session key (wrong private key or ' +
+                    'key-transport algorithm mismatch): ' + e.message);
   }
 
   var dataB64 = cipherValueOf(ed);
@@ -721,13 +903,15 @@ function decryptXml(xml, opts) {
   if (spec.gcm) {
     var tag = cipherRaw.substring(cipherRaw.length - 16);
     var body = cipherRaw.substring(spec.ivBytes, cipherRaw.length - 16);
-    decipher.start({ iv: iv, tag: forge.util.createBuffer(tag), tagLength: 128 });
+    decipher.start({ iv: iv, tag: forge.util.createBuffer(tag),
+                   tagLength: 128 });
     decipher.update(forge.util.createBuffer(body));
   } else {
     decipher.start({ iv: iv });
     decipher.update(forge.util.createBuffer(cipherRaw.substring(spec.ivBytes)));
   }
-  if (!decipher.finish()) throw new Error('data decryption failed (wrong key or corrupted ciphertext).');
+  if (!decipher.finish()) throw new Error('data decryption failed (wrong key ' +
+      'or corrupted ciphertext).');
   log.debug("Leaving decryptXml().");
   return forge.util.decodeUtf8(decipher.output.getBytes());
 }
@@ -765,7 +949,8 @@ function generateKeyPair(bits, cn) {
 function signQueryString(queryString, opts) {
   log.debug("Entering signQueryString().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('signQueryString: privateKeyPem is required.');
+  if (!opts.privateKeyPem) throw new Error('signQueryString: privateKeyPem ' +
+      'is required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
   var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
   var md = sigAlgSpec(sigAlg).md();
