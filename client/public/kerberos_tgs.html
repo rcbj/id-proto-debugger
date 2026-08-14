@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — Kerberos TGS Exchange</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/kerberos.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/kerberos_tgs.js">
+</script>
+
+<p class="krb-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="krb-title">Kerberos &mdash; the TGS exchange: spend a TGT on a service ticket</h3>
+
+<p class="krb-intro">A TGT is not a ticket to anything useful. It is a ticket to <code>krbtgt</code>, and
+its purpose is to buy others without the password being used again. This page does that: name a service
+and the KDC issues a ticket to it.
+<a href="/kerberos.html">Get a TGT first</a> if you have none;
+<a href="/kerberos_ap.html">present the result</a> when you have one; or
+<a href="/kerberos_delegation.html">spend the TGT on somebody else's behalf</a> &mdash; S4U2Self,
+S4U2Proxy, forwarding and renewal.</p>
+
+<p class="krb-intro krb-boundary"><strong>This page never asks for your password</strong>, and that is
+the point of the exchange rather than a convenience. A TGS-REQ is signed with the <em>session key</em>
+inside the TGT, so the password is used once, at logon, and never again for the life of the ticket. The
+shape is worth knowing too: the TGT travels as <strong>pre-authentication</strong> &mdash; a
+<code>PA-TGS-REQ</code> whose value is an entire <code>AP-REQ</code>, whose Authenticator carries a
+checksum over the encoded request body. The panes below show that nesting.</p>
+
+<div id="krb_environment_note"></div>
+
+<fieldset class="krb-pane">
+  <legend>The TGT you hold</legend>
+  <div id="krb_tgt_pane"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>The service you want a ticket for</legend>
+  <div class="krb-keys">
+    <label for="krb_spn">Service principal name (SPN)</label>
+    <input type="text" id="krb_spn" class="krb-field" value="HTTP/web.example.com" spellcheck="false"
+           placeholder="HTTP/web.example.com, cifs/fileserver.example.com, MSSQLSvc/db.example.com:1433">
+    <p class="krb-note">The commonest failure here is <code>KDC_ERR_S_PRINCIPAL_UNKNOWN</code>, and it
+    almost never means the host does not exist: it means the SPN is not <em>registered</em>, or is
+    registered on a different account. <code>setspn -Q &lt;spn&gt;</code> is the check on Windows. Note
+    the name-type as well &mdash; a two-part SPN is <code>NT-SRV-HST</code>, and AD is inconsistent about
+    enforcing that, which is worse than being strict.</p>
+
+    <label for="krb_realm">Realm</label>
+    <input type="text" id="krb_realm" class="krb-field" value="EXAMPLE.COM" spellcheck="false">
+
+    <label for="krb_kdc_host">KDC host or address</label>
+    <input type="text" id="krb_kdc_host" class="krb-field" value="127.0.0.1" spellcheck="false">
+
+    <label for="krb_kdc_port">Port</label>
+    <input type="text" id="krb_kdc_port" class="krb-field" value="88">
+
+    <label for="krb_transport">Transport</label>
+    <select id="krb_transport" class="krb-field">
+      <option value="tcp" selected="selected">TCP</option>
+      <option value="udp">UDP</option>
+    </select>
+
+    <label for="krb_etypes">Encryption types offered for the new ticket</label>
+    <input type="text" id="krb_etypes" class="krb-field" value="18 17" spellcheck="false">
+    <p class="krb-note">The KDC picks the first of these the <em>service account</em> supports &mdash;
+    not the first the user supports. A ticket the client can read and the service cannot is
+    <code>KDC_ERR_ETYPE_NOSUPP</code> from the service's point of view.</p>
+
+    <label class="krb-check"><input type="checkbox" id="krb_use_subkey">
+      send a subkey in the Authenticator</label>
+    <p class="krb-note">A subkey changes which key the reply is encrypted under: <strong>key usage
+    9</strong> with one, <strong>key usage 8</strong> without. The KDC chooses based on what was sent,
+    so a client that always tries one of the two fails half the time &mdash; and the failure is an
+    integrity error that names neither. This page reports which usage opened the reply.</p>
+  </div>
+  <input type="button" id="krb_tgs_button" class="btn2" value="Request a service ticket"
+         disabled="disabled">
+  <div id="krb_tgs_status" class="krb-status"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>What went out</legend>
+  <div id="krb_request_pane"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>What came back</legend>
+  <div id="krb_reply_pane"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>Service tickets held</legend>
+  <div id="krb_tickets_pane"></div>
+  <input type="button" id="krb_forget_tickets_button" class="btn2" value="Forget these tickets"
+         disabled="disabled">
+</fieldset>
+
+<p class="krb-intro"><strong>What a service ticket does not tell you.</strong> That the KDC issued one
+says only that the KDC was willing. Whether the <em>service</em> accepts it depends on its own key
+version, its clock, and &mdash; on Windows &mdash; on the PAC inside the ticket, which is where the group
+memberships live and which this build does not yet produce.
+<a href="/kerberos_ap.html">Presenting the ticket</a> is the only way to find out, and that is the next
+page.</p>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

@@ -97,6 +97,7 @@
 .landing-card:nth-child(7) .landing-icon { color: #7a5c00; }
 .landing-card:nth-child(8) .landing-icon { color: #167a8a; }
 .landing-card:nth-child(9) .landing-icon { color: #6b3fa0; }
+.landing-card:nth-child(10) .landing-icon { color: #8a4b2a; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

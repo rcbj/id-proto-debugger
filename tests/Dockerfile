@@ -138,6 +138,83 @@ COPY client/src/dpop.js ./
 # with the same code the pages use.
 COPY client/src/did.js ./
 COPY client/src/metadata_client.js client/src/vci_metadata.js client/src/op_metadata.js ./
+# The Kerberos v5 codec, loaded directly by tests/krb5_crypto_vectors.js so the
+# RFC 3961/3962/8009 vectors can be checked with no browser and no KDC.
+#
+# These modules are named krb5_* in common/krb5/ rather than crypto.js /
+# primitives.js BECAUSE of this flat copy — a crypto.js landing beside the test
+# scripts is the kind of shadowing that fails somewhere else entirely. For the
+# same reason the TEST is krb5_crypto_vectors.js and not krb5_crypto.js: two
+# files of one name copied here means whichever COPY ran last wins, and the test
+# would end up loading itself.
+COPY common/krb5/krb5_primitives.js common/krb5/krb5_crypto.js ./
+COPY common/krb5/krb5_asn1.js common/krb5/krb5_messages.js ./
+COPY common/krb5/krb5_describe.js common/krb5/krb5_keytab.js ./
+COPY common/krb5/krb5_gss.js common/krb5/krb5_client.js ./
+COPY common/krb5/krb5_ndr.js common/krb5/krb5_pac.js ./
+COPY tests/krb5_crypto_vectors.js tests/krb5_codec.js tests/krb5_describe_output.js tests/kerberos_decoder_page.js tests/krb5_codec_sync.js tests/kerberos_as_page.js ./
+COPY tests/kerberos_tgs_ap_page.js ./
+COPY tests/krb5_tgs_ap.js tests/krb5_pac.js ./
+COPY tests/kerberos_delegation_page.js ./
+# The mock KDC and the ticket-protected service, out of the sts/ SUBMODULE, so that
+# krb5_as_exchange.js and krb5_tgs_ap.js can start them in-process and drive the real
+# exchanges with no docker and no running service.
+#
+# They come in under sts/ rather than flat because krb5_kdc.js requires ./app and
+# ./helpers — the submodule's own modules — and those resolve relative to where the
+# file sits. Flattening it would break those requires in a way that reads as a missing
+# dependency rather than a misplaced file.
+#
+# **This COPY can only exist once the sts/ gitlink points at a commit containing these
+# files.** Added before the bump it fails the build with "COPY sts/krb5_kdc.js: not
+# found", which says nothing about submodules; the launchers call
+# requireMockStsCheckout() (common/common.sh) for the same reason.
+# The set below is the TRANSITIVE closure of what krb5_kdc.js and krb5_service.js
+# require, computed rather than guessed: they pull in app.js (the shared express app,
+# because requiring a module registers its routes) and helpers.js, and helpers.js pulls
+# in bbs2023.js. Recompute it by walking `require('./...')` from those two files if
+# either grows a new dependency — and note that the whole submodule is not copied
+# instead because there is no .dockerignore here, so `COPY sts/` would drag its
+# node_modules into the image.
+#
+# If this set is ever short, the failure is "Cannot find module './bbs2023.js'" from
+# inside the submodule, which names the file but not the reason; tests/krb5_as_exchange.js
+# catches that and says which COPY is missing.
+COPY sts/krb5_kdc.js sts/krb5_service.js sts/krb5_principals.js ./sts/
+COPY sts/app.js sts/helpers.js sts/bbs2023.js ./sts/
+COPY sts/krb5_primitives.js sts/krb5_asn1.js sts/krb5_crypto.js sts/krb5_messages.js sts/krb5_gss.js ./sts/
+# krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
+# minting a PAC. **This line is the one the paragraph above is about**: it cannot build
+# until the sts/ gitlink points at a mock-sts commit that has both files.
+COPY sts/krb5_ndr.js sts/krb5_pac.js ./sts/
+# And the submodule's own env/, which is NOT optional: helpers.js does
+# require(process.env.CONFIG_FILE), and a RELATIVE CONFIG_FILE ('./env/test.js')
+# resolves against the requiring file's own directory — so it means sts/env/test.js
+# here, not the tests' copy. Without this the KDC fails to load with
+# "Cannot find module './env/test.js'", which names the config rather than the
+# missing directory.
+COPY sts/env ./sts/env
+# ...and sts/contexts, which a Kerberos test has no business needing and needs
+# anyway. The submodule has ONE shared helpers.js for eight protocol families, and
+# it requires bbs2023.js at load time; bbs2023.js reads its vendored JSON-LD
+# contexts at load time too. So loading the KDC in-process drags the BBS stack in
+# behind it. 28K of JSON is a cheaper price than restructuring somebody else's
+# service, and the coupling is pre-existing rather than something Kerberos
+# introduced.
+#
+# The better fix lives in mock-sts, not here: helpers.js could require bbs2023
+# lazily (its only use is already lazy — `if (!bbsKeys) ... generateKeyPair()`), or
+# bbs2023.js could read its contexts on first use. Recorded here rather than done,
+# because it is a change to a separate repository for a test-plumbing reason.
+COPY sts/contexts ./sts/contexts
+# The Kerberos relay's modules, loaded directly by tests/api_krb5_relay.js: it
+# drives them rather than going over HTTP, so every refusal can be checked with no
+# running service. Copied FLAT, like api/ssrf_guard.js below, and the test resolves
+# either layout through module_paths.js — the same arrangement every other borrowed
+# module here uses. (api/ssrf_guard.js is not repeated: it is already copied
+# further down, and copying it twice is how the two lines drift apart.)
+COPY api/krb5_relay.js api/krb5_frame.js ./
+COPY tests/api_krb5_relay.js ./
 # The WebAuthn decoder, loaded directly by tests/webauthn_decode.js: the CBOR
 # reader, the COSE_Key decoder (which requires ./jwk_pem, copied above) and the
 # artifact parser/verifier. The vectors beside them are real ceremonies produced

@@ -1,0 +1,215 @@
+/* kerberos.css — the Kerberos workflow's look.
+ *
+ * Every class here is prefixed `krb-`, and tests/navigation.js's
+ * checkStylesheetsLoaded() now knows that prefix: a page using a `krb-` class
+ * that this sheet does not define fails that test. That guard exists because the
+ * WS-Federation pages once linked the wrong stylesheet after a rename and
+ * rendered completely unstyled — the link resolved, so nothing 404'd and nothing
+ * noticed.
+ *
+ * The one layout constraint worth stating: this page renders values whose length
+ * it does not control. A base64url ticket is hundreds of characters with no
+ * spaces in it, and bootstrap's `code { white-space: nowrap }` plus an
+ * auto-layout table sized to min-content is exactly how such a value pushes a
+ * pane past the edge of the viewport. So the value column is capped and wraps on
+ * any character, and the mono spans wrap too. See the SD-JWT VC notes in
+ * docs/sd-jwt-vc-issuance.md, which cost a debugging round to learn.
+ */
+
+.krb-return { margin-top: 10px; }
+.krb-title { margin-bottom: 10px; }
+
+.krb-intro {
+  max-width: 900px;
+  margin-bottom: 10px;
+}
+
+.krb-boundary {
+  border-left: 3px solid #999;
+  padding-left: 10px;
+}
+
+.krb-pane {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+}
+
+.krb-pane > legend {
+  font-size: 15px;
+  font-weight: bold;
+  width: auto;
+  padding: 0 6px;
+  margin-bottom: 6px;
+  border: 0;
+}
+
+.krb-input,
+.krb-raw {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  /* A pasted ticket is one long unbroken token. */
+  word-break: break-all;
+}
+
+.krb-buttons { margin: 8px 0; }
+
+.krb-field {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 6px;
+}
+
+.krb-keys label {
+  display: block;
+  font-weight: bold;
+  margin-top: 6px;
+}
+
+/* A checkbox and its explanation on one line. This class was used by kerberos.html,
+   kerberos_tgs.html and kerberos_ap.html from the day they were written and defined
+   NOWHERE — so `checkStylesheetsLoaded()` in tests/navigation.js would have failed all
+   three the first time that job ran against a stack, for a reason that reads as the page
+   linking the wrong sheet. The label inherits `display: block` and `font-weight: bold`
+   from the rule above, and neither is right for a sentence beside a checkbox. */
+.krb-check {
+  display: block;
+  font-weight: normal;
+  margin-top: 8px;
+  line-height: 1.4;
+}
+
+.krb-check input[type="checkbox"] {
+  margin-right: 6px;
+  vertical-align: baseline;
+}
+
+.krb-note {
+  font-size: 12px;
+  color: #555;
+  margin: 4px 0;
+  max-width: 900px;
+}
+
+.krb-status {
+  margin: 8px 0;
+  font-weight: bold;
+}
+
+.krb-ok { color: #2e7d32; }
+/* An alias for .krb-ok. Both names exist because the pages were written at different
+   times and `checkStylesheetsLoaded()` in tests/navigation.js fails a page that uses a
+   krb- class this sheet does not define — so the choice is one declaration or a rename
+   across four bundles. */
+.krb-good { color: #2e7d32; }
+.krb-bad { color: #b00; }
+.krb-pending { color: #8a6d00; }
+/* Distinct from .krb-bad on purpose: on the delegation page a great deal is NOT an error
+   and still needs to be noticed — a ticket that came back without the forwardable flag, a
+   renewal that moved authtime. Rendering those in the failure colour would train the
+   reader to ignore it. */
+.krb-warn {
+  color: #8a4b00;
+  background: #fff8ee;
+  border-left: 3px solid #d98b2b;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+
+.krb-output { margin-top: 16px; }
+
+.krb-summary {
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  background: #f4f4f4;
+  border-left: 4px solid #555;
+}
+
+.krb-kind {
+  display: inline-block;
+  font-weight: bold;
+  font-size: 15px;
+  margin-right: 10px;
+}
+
+.krb-summary-text { color: #333; }
+
+.krb-problems {
+  padding: 8px 10px;
+  margin-bottom: 12px;
+  border-left: 4px solid #b00;
+  background: #fdf3f3;
+}
+
+.krb-problems ul { margin: 4px 0 0 18px; }
+.krb-problems li { margin-bottom: 4px; }
+
+.krb-section {
+  margin-bottom: 12px;
+  padding: 6px 0 6px 0;
+}
+
+/* Nested sections — a decrypted EncTicketPart inside a Ticket inside an AS-REP —
+ * are indented rather than boxed, because three nested boxes on a phone leave no
+ * width for the content. */
+.krb-depth-1 { margin-left: 14px; border-left: 2px solid #ddd; padding-left: 10px; }
+.krb-depth-2 { margin-left: 14px; border-left: 2px solid #e6e6e6; padding-left: 10px; }
+.krb-depth-3 { margin-left: 14px; border-left: 2px solid #eee; padding-left: 10px; }
+
+.krb-section-title {
+  font-size: 14px;
+  font-weight: bold;
+  margin: 6px 0 4px 0;
+}
+
+.krb-section-note {
+  font-size: 12px;
+  color: #555;
+  margin: 0 0 6px 0;
+  max-width: 900px;
+}
+
+/* table-layout:fixed with a capped value column is what keeps a long base64
+ * value inside the pane instead of stretching the table. */
+.krb-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin-bottom: 6px;
+}
+
+.krb-table td {
+  border: 1px solid #ddd;
+  padding: 3px 6px;
+  vertical-align: top;
+  font-size: 12px;
+}
+
+.krb-name {
+  width: 26%;
+  font-weight: bold;
+  word-break: break-word;
+}
+
+.krb-value {
+  /* max-width:0 with table-layout:fixed makes the cell wrap rather than grow. */
+  max-width: 0;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Values are pre-wrap because several of them are deliberately multi-line — an
+ * etype list is one per line, and collapsing that loses the preference order. */
+.krb-mono {
+  display: block;
+  font-family: Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.krb-tree { list-style: none; margin: 0 0 0 14px; padding: 0; }
+.krb-tree li { margin: 2px 0; border-left: 1px dotted #ccc; padding-left: 8px; }
+.krb-tree-tag { font-weight: bold; font-size: 12px; }
+.krb-tree-meta { font-size: 11px; color: #777; }
+.krb-tree-text { font-size: 11px; color: #333; }

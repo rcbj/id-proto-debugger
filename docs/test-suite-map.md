@@ -78,6 +78,17 @@ Jobs, in the same directory, carrying no entry above:
 - `saml_sso.js`
 - `saml_tools.js`
 - `token_introspection.js`
+- `krb5_pac.js` (**the Windows PAC** — `common/krb5/krb5_pac.js` and `krb5_ndr.js`. This is the worst case in the repository for self-consistency testing, and the entry exists to say why: the logon information is **NDR**, [MS-RPCE]'s RPC marshalling, where a reader and a writer sharing ONE misunderstanding agree perfectly with each other and with nothing else in the world. Read `FILETIME` as an 8-aligned 64-bit integer in both halves and every field still round-trips — the two just insert and skip the same four bytes of padding no real KDC ever wrote. So the assertions are byte offsets **counted out of [MS-PAC] section 2.5's field list by hand** (`UserId` at struct offset 100, because six FILETIMEs are 48 bytes and six RPC_UNICODE_STRINGs are 48 more), fixed patterns from the spec (`01 10 08 00 cc cc cc cc`), and structures with **more than one element** — an `ExtraSids` array defers ALL its SID pointers past the END of the array, so a reader that follows each as it goes is right for one element and wrong for two, and a one-element test passes on the broken implementation. The four signatures are checked separately, including the case that matters: altering the PAC's contents breaks the server and extended KDC signatures and leaves the KDC signature **verifying**, because that one covers only the server signature's bytes — the shape of CVE-2022-37967, and a test asserting merely "a signature failed" would pass against a verifier checking the wrong one. Eighteen mutations, all caught; two were real bugs it found — a signed/unsigned comparison that made the two-bit `SE_GROUP_LOGON_ID` unmatchable, and a consistency check reading a field one line before it was assigned. Node only)
+- `krb5_codec_sync.js` (**the codec exists TWICE** — `common/krb5` for the browser and the api, and a vendored copy in the `sts/` submodule for the KDC, because compose builds that service with `context: ./sts` and a Docker build cannot COPY from outside its context. A file comparison alone would not be enough: the failure mode of a vendored wire codec is not "one copy is broken" but that BOTH are self-consistent and disagree only with each other, each one's own tests passing, with the symptom an integrity failure indistinguishable from a wrong password. So the copies are cross-checked **behaviourally** — one encrypts and the other decrypts, one builds a PAC and the other verifies its signatures, in both directions, because a shared misunderstanding of what a signature covers survives one direction and not both. Then the files are compared too, naming the one command that fixes drift (`common/krb5/sync-to-mock-sts.sh`). With the submodule uninitialised it says so and passes — an uninitialised submodule is an EMPTY DIRECTORY, and reporting that as a codec failure sends somebody looking in the wrong place)
+- `krb5_crypto_vectors.js`
+- `krb5_codec.js`
+- `krb5_describe_output.js`
+- `krb5_as_exchange.js`
+- `krb5_tgs_ap.js` (its name understates it: TGS and AP, plus the PAC the live KDC minted, cross-realm referrals, S4U2Self/S4U2Proxy with both authorization routes, and renewals. See the note in `tests/run-report.js`, which records the four coverage gaps that were only found by mutation)
+- `api_krb5_relay.js`
+- `kerberos_decoder_page.js`
+- `kerberos_as_page.js`
+- `kerberos_tgs_ap_page.js`
 - `url_safety.js`
 - `wstrust.js`
 - `wstrust_operation_history.js`

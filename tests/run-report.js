@@ -692,6 +692,371 @@ function buildJobs() {
     env: {},
   });
 
+  // The Kerberos v5 encryption framework (common/krb5/krb5_primitives.js and
+  // krb5_crypto.js) against the RFCs' own published values: RFC 3961's n-fold,
+  // RFC 3962's AES string-to-key and CBC ciphertext stealing, RFC 8009's SHA-2
+  // KDF and sample encryptions, plus RFC 1320/1321/2202 for the MD4, MD5 and
+  // HMAC-MD5 that etype 23 needs and Web Crypto does not have.
+  //
+  // This is the one test in the Kerberos workflow that cannot be replaced by a
+  // test against the mock KDC, and the reason is worth keeping: every error in
+  // this layer produces the SAME symptom — one opaque integrity failure at the
+  // far end, indistinguishable from a wrong password — and two implementations
+  // written from the same misreading agree with each other perfectly. A wrong
+  // n-fold, a wrong key usage number, an omitted CTS block swap or a MAC over
+  // the ciphertext where the specification says plaintext all round-trip
+  // happily and interoperate with nothing. It is mutation-tested: six
+  // deliberate defects were each confirmed to fail it.
+  // Node only, never skipped.
+  jobs.push({
+    name: "Kerberos v5 crypto (RFC 3961/3962/8009 vectors, CTS, etypes 17/18/19/20/23)",
+    script: "krb5_crypto_vectors.js",
+    env: {},
+  });
+
+  // The Kerberos v5 DER codec and message structures (common/krb5/krb5_asn1.js
+  // and krb5_messages.js) against RFC 4120's grammar.
+  //
+  // A codec that round-trips its own output proves nothing — every field could
+  // be under the wrong context tag and it would still pass — so a third of these
+  // assertions are byte-exact expectations that pin each tag NUMBER, and another
+  // third are the compatibility behaviours only a real deployment produces: an
+  // AS-REP enc-part tagged EncTGSRepPart (RFC 4120 section 5.4.2 requires a
+  // client to accept it), a NEGATIVE checksum type (-138, which S4U2Self uses),
+  // a KRB-ERROR carrying the salt in its e-data, and a relayed Ticket whose
+  // original bytes must survive re-encoding. The rest is the negative half: this
+  // codec parses bytes pasted into a web page and bytes returned by a host the
+  // user named, so refusing malformed and oversized input is part of the job.
+  //
+  // Mutation-testing it found a real defect: three writers had `addresses`
+  // hard-coded to null, so a captured message carrying them could be decoded and
+  // never re-encoded. Node only, never skipped.
+  jobs.push({
+    name: "Kerberos v5 DER codec (RFC 4120 messages, byte-exact tags, compatibility cases)",
+    script: "krb5_codec.js",
+    env: {},
+  });
+
+  // What the Kerberos decoder page SHOWS (common/krb5/krb5_describe.js), plus the
+  // keytab reader that lets it show the inside of a ticket (krb5_keytab.js).
+  //
+  // The page is a renderer with no protocol knowledge in it — the split follows
+  // webauthn.js / webauthn_panes.js — so everything it displays is checkable here
+  // with no browser. Three behaviours are the ones worth having a test for, and
+  // all three are judgement rather than arithmetic: a capture arrives as hex, as
+  // base64 or with the TCP length prefix still attached (and the prefix must be
+  // stripped AND reported, since leaving it makes the ASN.1 parse fail on byte
+  // zero); a failure to decrypt is CONTENT rather than an error, because most of a
+  // Kerberos message is encrypted under keys the reader does not have; and
+  // `problems` must hold things that are WRONG (a lower-case realm, an RC4-only
+  // etype list, a clock five minutes out) and NOT things that are merely absent —
+  // KDC_ERR_PREAUTH_REQUIRED specifically is not a problem, it is where the salt
+  // comes from.
+  //
+  // It found a real defect on its first run: an AS-REP was reported as "does not
+  // parse" because the describer read `doc.kind` from inside the literal defining
+  // `doc`. A parse failure blamed on the message when the fault is in the tool is
+  // the worst outcome this page can have. Node only, never skipped.
+  jobs.push({
+    name: "Kerberos v5 decoder output (input forms, decryption reporting, findings, keytabs)",
+    script: "krb5_describe_output.js",
+    env: {},
+  });
+
+  // The Kerberos Decoder PAGE (client/public/kerberos_decoder.html). The content
+  // it shows is already covered without a browser by krb5_describe_output.js, so
+  // this job covers only what needs one:
+  //
+  //  * that the bundle loaded at all — a page registered in client/build.js but
+  //    not in client/Dockerfile builds fine for the static deployments while the
+  //    containerized page's <script> 404s, so the failure appears only here and
+  //    only as a page that does nothing;
+  //  * that a hostile value in a KDC's realm or e-text renders as TEXT. This page
+  //    displays bytes a stranger pasted in, is built entirely with createElement
+  //    and textContent, and the check is mutation-tested: swapping one
+  //    textContent for innerHTML fails it;
+  //  * that decryption works on Web Crypto, which is a different implementation
+  //    from the node path the other tests exercise;
+  //  * and that the page persists NOTHING, because everything it is given — a
+  //    password, a keytab, a session key out of a decrypted ticket — is a
+  //    credential.
+  //
+  // Needs only the site: this page talks to no KDC and has no back end, which is
+  // why it is the one part of the Kerberos workflow that ships to the static
+  // deployments.
+  jobs.push({
+    name: "Kerberos Decoder page (wiring, hostile input as text, in-browser decryption)",
+    script: "kerberos_decoder_page.js",
+    env: {},
+  });
+
+  // The Kerberos relay (api/krb5_relay.js, api/krb5_frame.js) behind POST
+  // /krb5/kdc. This is the most important test in phase 2, for a specific reason:
+  // api/ssrf_guard.js is installed on the shared AXIOS instance, and a raw
+  // `net.connect` walks past all of it — so the relay is a SECOND enforcement of
+  // the same address policy for a transport the guard has never seen.
+  //
+  // It is also a broader primitive than anything this service had before: it
+  // carries caller-supplied bytes to a caller-supplied host and port. An HTTP
+  // fetcher aimed at port 22 gets nothing; a byte relay aimed at port 22 is a port
+  // scanner with a payload of the caller's choosing. Four things bound it and all
+  // four are tested: the shared address policy, resolve-then-connect-to-the-literal,
+  // a port allowlist (new with this endpoint), and a message-shape pre-flight that
+  // runs before any socket opens.
+  //
+  // The assertion that earns its keep most is the same one api_connect_timeout.js
+  // makes for the HTTP side: a host that CONNECTS AND THEN SAYS NOTHING must be
+  // given until callTimeout, not killed at connectTimeout. That fails against an
+  // implementation expressing both deadlines with one timer, which is the natural
+  // way to write it. Mutation-tested: eight deliberate defects, all caught.
+  // Node only, never skipped.
+  jobs.push({
+    name: "Kerberos relay (address policy on raw sockets, port allowlist, pre-flight, limits)",
+    script: "api_krb5_relay.js",
+    env: {},
+  });
+
+  // The AS exchange end to end: the wallet-side codec (common/krb5) against the
+  // mock KDC (the sts/ submodule), over a real socket, through the api's relay. It
+  // starts the KDC in-process on an ephemeral port, so it needs no docker and no
+  // running service.
+  //
+  // This is the first test that puts a CLIENT and a KDC on opposite ends of a wire
+  // and makes them agree — a different claim from the vector tests, because the two
+  // disagree in ways neither can detect alone: a key usage number one folds in and
+  // the other does not, a salt one derives from the principal name and the other
+  // from configuration, a nonce one echoes and the other regenerates. It is still
+  // NOT proof of interoperability: both ends are this repository's code, and the
+  // interoperability evidence is the MIT krb5 / Samba AD exchange in phase 4.
+  //
+  // Most of it is the negative half, which is the product: KDC_ERR_ETYPE_NOSUPP to
+  // an RC4-only client against a hardened account (the 2026 case), a locked
+  // account, an expired password, a wrong salt reported as PREAUTH_FAILED with
+  // ETYPE-INFO2 re-sent so the client can find out, and a clock outside the
+  // tolerance. Mutation-tested: nine deliberate defects in the KDC, all caught —
+  // including a regenerated nonce, a pre-authent flag set when no pre-authentication
+  // happened, and a computer account salted like a user.
+  // Node only, never skipped.
+  jobs.push({
+    name: "Kerberos AS exchange (the codec against the mock KDC: the two-message dance, refusals)",
+    script: "krb5_as_exchange.js",
+    env: {},
+  });
+
+  // The rest of the protocol: TGS then AP, with mutual authentication and
+  // per-message tokens. The client is common/krb5; the KDC and the protected service
+  // are the sts/ submodule's, started in-process on ephemeral ports so this needs no
+  // docker and no running service.
+  //
+  // The AS test gets a TGT, which is the easy half. This one is a ticket being
+  // PRESENTED to something that decrypts it, checks it, and proves itself back —
+  // until something does that, "the ticket looks right" is the strongest claim
+  // available about any of it.
+  //
+  // Four things here fail in ways nothing else catches: a TGS-REQ carries the TGT
+  // inside a PA-TGS-REQ whose value is an entire AP-REQ, whose Authenticator
+  // checksums the ENCODED request body (re-encode it and the checksum covers
+  // something else); the TGS-REP is at key usage 8 or 9 depending on whether a subkey
+  // was sent, and both paths are exercised; the 0x8003 checksum is not a checksum and
+  // its integers are LITTLE-endian; and mutual authentication is an ECHO that has to
+  // be CHECKED, not merely requested.
+  //
+  // It found a real bug on its first run: KerberosTime carries no fractional seconds,
+  // so the wire ctime is truncated to the second and the client was comparing the
+  // AP-REP's echo against a millisecond-precision Date — accusing a correct service
+  // of not being itself.
+  //
+  // The negatives are the point: a replayed Authenticator, a ticket for the wrong
+  // service, a stale key version, a request body swapped after signing, a clock
+  // outside the tolerance, a checksum that is not 0x8003, and a forged echo.
+  // Mutation-tested: the KDC's checksum check, the service's replay cache, its
+  // ticket-is-for-me check, and the 0x8003 byte order — all caught.
+  //
+  // Phases 4 and 5 grew it well beyond its name, because each addition needs the live
+  // exchange rather than a fixture:
+  //
+  //  * **the PAC the KDC actually minted**, in BOTH kinds of ticket. In a TGT the service
+  //    key and the krbtgt key are the same key, so a KDC using the wrong one for the
+  //    server signature passes every TGT test ever written and issues service tickets no
+  //    Windows service accepts. Only the service ticket separates them.
+  //  * **cross-realm referrals**, chased end to end: a referral is an ordinary successful
+  //    TGS-REP whose `sname` is not what was asked for, and a client that does not compare
+  //    those two presents a ticket-granting ticket to a web server. The PAC is re-signed by
+  //    the target realm, and the test proves the OLD signatures no longer verify — if they
+  //    did, nothing had been re-signed.
+  //  * **S4U2Self and S4U2Proxy, authorized both ways**: classic constrained delegation
+  //    (`msDS-AllowedToDelegateTo` on the front end) and RBCD (`msDS-AllowedToActOn-
+  //    BehalfOfOtherIdentity` on the back end), with the asymmetries that make RBCD the
+  //    easier path — and five refusals, without which the successes prove nothing.
+  //  * **renewals**, which preserve authtime and cap at renew-till. That test contains the
+  //    only deliberate sleep in the file: KerberosTime has one-second resolution and the
+  //    test runs inside one second, so without a clock boundary a KDC that reset authtime
+  //    on renewal produced an identical value and the mutation went undetected.
+  //
+  // Thirty-three further mutations were used to develop those sections and all thirty-three
+  // fail them. Four were caught only after the test was strengthened, each a real gap: a
+  // realm-aware principal lookup that needed a client NATIVE to the second realm, a PAC
+  // domain SID nothing asserted, the delegation flag that is invisible where it is set, and
+  // a vacuous authtime comparison that compared a value with itself.
+  // Node only, never skipped.
+  jobs.push({
+    name: "Kerberos TGS + AP, the PAC, cross-realm referrals, S4U delegation and renewals",
+    script: "krb5_tgs_ap.js",
+    env: {},
+  });
+
+  // The Kerberos codec exists TWICE — common/krb5 for the browser and the api, and
+  // a vendored copy in the sts/ submodule for the KDC, because compose builds that
+  // service with `context: ./sts` and a Docker build cannot COPY from outside its
+  // context. This is the test that makes that safe.
+  //
+  // A file comparison alone would not be enough. The failure mode of a vendored
+  // wire codec is not "one copy is broken" — it is that BOTH copies are
+  // self-consistent and disagree only with each other, each one's own tests
+  // passing, and the symptom is an integrity failure indistinguishable from a wrong
+  // password. So the copies are cross-checked behaviourally: messages built by one
+  // and read by the other, and — the assertion nothing else can make — one copy
+  // ENCRYPTS and the other DECRYPTS. Then the files are compared too, which catches
+  // drift before it has consequences and names the one command that fixes it
+  // (common/krb5/sync-to-mock-sts.sh).
+  //
+  // Proved against five real drift scenarios, each caught by a different assertion:
+  // a key usage number, a MAC over the ciphertext instead of the plaintext, a
+  // context tag, a comment-only edit, and a reader silently dropping a field.
+  // With the submodule uninitialised it says so and passes — an uninitialised
+  // submodule is an EMPTY DIRECTORY, and reporting that as a codec failure sends
+  // somebody looking in the wrong place. Node only, never skipped.
+  jobs.push({
+    name: "Kerberos codec sync (common/krb5 against the mock STS's vendored copy, cross-wise)",
+    script: "krb5_codec_sync.js",
+    env: {},
+  });
+
+  // The Windows PAC (common/krb5/krb5_pac.js and krb5_ndr.js), which is the structure
+  // a Windows service actually authorizes on: a Kerberos ticket proves who you are and
+  // says nothing about your group memberships, so "authentication worked and access was
+  // denied" is nearly always a question about this.
+  //
+  // It is also the worst case for self-consistency testing, and the reason this job
+  // exists separately from the codec one. The logon information is NDR — [MS-RPCE]'s RPC
+  // marshalling, with referent-id pointers and alignment padding — so a reader and a
+  // writer that share ONE misunderstanding agree perfectly with each other and with
+  // nothing else in the world. Read FILETIME as an 8-aligned 64-bit integer in both
+  // halves and every field still round-trips; the two just insert and skip four bytes of
+  // padding no real KDC ever wrote. So the assertions are byte offsets counted out of
+  // [MS-PAC] section 2.5's field list BY HAND, structures with more than one element
+  // (an ExtraSids array defers all its SID pointers past the END of the array, so a
+  // reader that follows each as it goes is right for one element and wrong for two), and
+  // the four signatures checked SEPARATELY — including the case that matters: altering
+  // the PAC's contents breaks the server and extended KDC signatures and leaves the KDC
+  // signature verifying, because that one covers only the server signature's bytes. That
+  // is the shape of CVE-2022-37967.
+  //
+  // Eighteen mutations were used to develop it and all eighteen fail it, two of which
+  // were real bugs it found: a signed/unsigned comparison that made SE_GROUP_LOGON_ID
+  // unmatchable, and a consistency check reading a field one line before it was
+  // assigned. Node only, never skipped.
+  jobs.push({
+    name: "Kerberos PAC (MS-PAC: the NDR layout at hand-derived offsets, and all four signatures)",
+    script: "krb5_pac.js",
+    env: {},
+  });
+
+  // The Kerberos AS exchange PAGE. krb5_as_exchange.js already drives the same
+  // exchange with no browser, so this job covers only what needs one: that the
+  // bundle is registered in BOTH client/build.js and client/Dockerfile, that the
+  // api's CORS allowlist actually lets the page call POST /krb5/kdc (a failure no
+  // node test can see, and one that appears as a fetch which never resolves rather
+  // than as anything naming CORS), that step 2 is DISABLED until step 1 has learned
+  // the salt, that the salt the KDC sent is shown AND used, and that the session key
+  // is treated as the credential it is — sessionStorage by default, localStorage
+  // only when asked, purged when the box is unticked.
+  //
+  // Needs the client, the api and the mock STS (which carries the KDC). It SKIPS
+  // with a named reason when the KDC is unreachable, because an absent service is an
+  // environment fact rather than a defect.
+  //
+  // Mutation-tested against the built bundle: step 2 enabled from the start, the
+  // cache always going to localStorage, the salt field left unfilled, and the purge
+  // removed — the last needing BOTH purge paths removed to fail, which is the
+  // belt-and-braces arrangement CLAUDE.md prescribes for key material.
+  jobs.push({
+    name: "Kerberos AS exchange page (wiring, CORS, the two-step flow, credential handling)",
+    script: "kerberos_as_page.js",
+    env: {
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "localhost",
+      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+    },
+  });
+
+  // The TGS and AP exchange pages, and — the part nothing else covers — the CREDENTIAL
+  // HANDOFF between all three. The AS page produces a TGT, the TGS page spends it, the
+  // AP page presents the result, and they pass those through a shared cache in
+  // kerberos_panes.js. Testing the TGS page in isolation would mean fabricating a TGT
+  // in storage, which tests the fabrication rather than the workflow — and the handoff
+  // is exactly where a rename breaks things silently. One did: a refactor left three
+  // sites calling removeItem(KEYS.CCACHE) after the shared module renamed the key to
+  // KEYS.TGT, so removeItem(undefined) deleted a key called "undefined" and the
+  // storage opt-out quietly stopped purging a session key.
+  //
+  // Browser-only assertions: the TGS button is ENABLED once a TGT is held (the markup
+  // ships it disabled, so that direction is the one proving the page read the cache);
+  // the page reports key usage 8 without a subkey and 9 with one; the issued ticket is
+  // NOT flagged `initial`; the AP page decodes the 0x8003 checksum field by field
+  // including that its integers are little-endian and that Bnd is sixteen ZERO bytes
+  // rather than absent; mutual authentication reads CONFIRMED only when the echo was
+  // checked; per-message tokens are keyed from the ACCEPTOR's subkey; and unticking
+  // MUTUAL says plainly that nothing has proved the service's identity.
+  //
+  // Needs the client, the api, the mock STS (KDC and protected service) AND the api's
+  // krb5ServicePorts set — POST /krb5/service is off by default. It skips with a named
+  // reason for each of those, because a disabled capability is a configuration fact
+  // rather than a defect.
+  jobs.push({
+    name: "Kerberos TGS + AP pages (the credential handoff, 0x8003, mutual auth, per-message tokens)",
+    script: "kerberos_tgs_ap_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "localhost",
+      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+      KRB5_SERVICE_HOST: env.KRB5_SERVICE_HOST || "localhost",
+      KRB5_SERVICE_PORT: env.KRB5_SERVICE_PORT || "8888",
+    },
+  });
+
+  // The DELEGATION page: S4U2Self, S4U2Proxy with both authorization routes, forwarding
+  // and renewal. tests/krb5_tgs_ap.js already drives every one of those exchanges with no
+  // browser, so this job covers only what needs one:
+  //
+  //  * **the credential handoff** — the service's own TGT comes from the AS page and the
+  //    evidence ticket from S4U2Self is stored for S4U2Proxy to find, under keys the
+  //    shared module owns. A rename there breaks this and nothing else, which has happened
+  //    once already. The evidence ticket carries a session key, so the storage opt-out has
+  //    to purge it too, and this checks it leaves — including that nothing lands under a
+  //    key literally called "undefined", which is what a purge using a renamed constant
+  //    writes while leaving the real key in place.
+  //  * **what the page SAYS when a delegation fails.** Every refusal here is
+  //    KDC_ERR_BADOPTION whatever the cause — missing PA-PAC-OPTIONS, an unauthorized
+  //    pair, non-forwardable evidence — and the error names none of them. So the page's
+  //    job is to narrow it, and that text IS the product: a test asserting only "it
+  //    failed" would pass against a page that said nothing useful. Three refusals are
+  //    checked for naming their actual cause, including both attributes on both accounts.
+  //  * **forwardability reported when the evidence ARRIVES**, not two steps later when
+  //    classic S4U2Proxy refuses it — a missing TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION
+  //    surfaces as a complaint about the evidence ticket, which is not where it is.
+  //
+  // It authenticates as HTTP/frontend.example.com rather than as a user, because S4U2Self
+  // is a request a SERVICE makes and that is the commonest misunderstanding about it.
+  // Needs the client, the api's relay and the mock KDC; without them it SKIPS naming what
+  // was absent, since an environment capability is not a defect.
+  jobs.push({
+    name: "Kerberos delegation page (S4U2Self, S4U2Proxy, RBCD, forwarding, renewal)",
+    script: "kerberos_delegation_page.js",
+    env: {},
+  });
+
   // The api's outbound address policy (api/ssrf_guard.js): the service fetches
   // URLs its caller supplies, so it must refuse loopback and private destinations
   // or it is an SSRF probe into whatever network it runs in. Node only — no

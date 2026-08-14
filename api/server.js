@@ -15,6 +15,7 @@ const {
   convertToOAuth2Format  } = require('./data.js');
 const ssrfGuard = require('./ssrf_guard.js');
 const connectTimeout = require('./connect_timeout.js');
+const krb5Relay = require('./krb5_relay.js');
 
 // Constants
 const PORT = appconfig.port || 4000;
@@ -410,6 +411,11 @@ log.info("CORS allowed origins: " +
 // ---------------------------------------------------------------------------
 const guard = ssrfGuard.createGuard(appconfig, log);
 guard.install(axios);
+// The Kerberos relay reuses the guard's address DECISION rather than keeping its
+// own copy of the ranges — see api/krb5_relay.js. It cannot reuse the guard's
+// INSTALLATION, because that is hooks on the axios agents and this transport is a
+// raw socket with no axios in the path.
+const krb5 = krb5Relay.createRelay(appconfig, guard, log);
 
 // ---------------------------------------------------------------------------
 // The agents every outbound call uses: the SSRF guard's hooks, the connect-phase
@@ -1915,6 +1921,170 @@ let options = {
     basedir: __dirname, //app absolute path
     files: ['server.js'] //Path to the API handle folder
 };
+/**
+ * Relay a Kerberos v5 message to a KDC and return its reply.
+ * @route POST /krb5/kdc
+ * @param {string} host.body.required - the KDC's host name or address
+ * @param {integer} port.body - the KDC's port; defaults to 88
+ * @param {string} transport.body - "tcp" (default) or "udp"
+ * @param {string} message.body.required - the request, base64
+ * @returns {object} 200 - the KDC's reply, base64, with timings
+ * @returns {object} 400 - the request was refused (see the reason)
+ * @returns {object} 502 - the KDC could not be reached or did not answer
+ */
+app.post('/krb5/kdc', function (req, res) {
+  log.debug('Entering POST /krb5/kdc.');
+  var b = req.body || {};
+  var host = b.host;
+  var port = (b.port === undefined || b.port === null || b.port === '') ? 88 : b.port;
+  var transport = b.transport || 'tcp';
+
+  if (!host || !b.message) {
+    log.debug('Leaving POST /krb5/kdc. Missing host or message.');
+    return res.status(STATUS_400).json({
+      error: 'host and message are required. message is the Kerberos request, base64-encoded.' });
+  }
+
+  // Node's base64 decoder is LENIENT: Buffer.from('!!!not base64!!!', 'base64')
+  // does not throw, it silently skips the characters it does not recognise and
+  // hands back whatever is left. So a caller who pasted something that is not
+  // base64 at all got as far as the Kerberos pre-flight and was told "this is not
+  // a Kerberos request" — true, but it names the wrong mistake and sends them
+  // looking at the wrong thing. Validate the alphabet first so the diagnosis
+  // matches the error.
+  var raw = String(b.message).trim();
+  var normalised = raw.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalised) || normalised.length % 4 === 1) {
+    log.debug('Leaving POST /krb5/kdc. message is not base64.');
+    return res.status(STATUS_400).json({
+      error: 'message is not valid base64. It must be the Kerberos request encoded as base64 or ' +
+             'base64url; note that node decodes invalid base64 silently, so this is checked here ' +
+             'rather than surfacing later as "not a Kerberos request".' });
+  }
+  var message = Buffer.from(normalised, 'base64');
+  if (!message.length) {
+    log.debug('Leaving POST /krb5/kdc. message decoded to nothing.');
+    return res.status(STATUS_400).json({ error: 'message decoded to zero bytes.' });
+  }
+
+  krb5.send({ host: host, port: port, transport: transport, message: message })
+    .then(function (result) {
+      log.debug('Leaving POST /krb5/kdc. ' + result.request.message + ' -> ' + result.replyMessage);
+      return res.status(STATUS_200).json({
+        reply: Buffer.from(result.reply).toString('base64'),
+        replyMessage: result.replyMessage,
+        request: result.request,
+        target: result.target,
+        timing: result.timing
+      });
+    })
+    .catch(function (error) {
+      // THE NO-RESPONSE BRANCH MUST ANSWER, and for this endpoint it is the
+      // COMMON branch rather than the rare one: the whole point is aiming it at a
+      // host that may not be there. api/CLAUDE.md records three handlers that
+      // answered only when an error carried a `response`, so every network-level
+      // failure left the browser waiting forever. This one answers on every path.
+      //
+      // A refusal by policy is a 400 (the caller asked for something this service
+      // will not do); a network failure is a 502 (the caller asked for something
+      // reasonable and the far end did not deliver). The distinction matters
+      // because the page shows them differently: one is a mistake to correct, the
+      // other is a fact about the KDC.
+      var refusedByPolicy = ['EKRB5NOTKERBEROS', 'EKRB5PORTNOTALLOWED', 'EBLOCKEDADDRESS',
+                             'EKRB5NOHOST', 'EKRB5NOPORT'].indexOf(error.code) !== -1;
+      var status = refusedByPolicy ? STATUS_400 : 502;
+      log.warn('POST /krb5/kdc failed [' + error.code + ']: ' + error.message);
+      log.debug('Leaving POST /krb5/kdc. status=' + status);
+      return res.status(status).json({ error: error.message, code: error.code });
+    });
+});
+
+/**
+ * Present a Kerberos AP-REQ to a service and return its answer.
+ * @route POST /krb5/service
+ * @param {string} host.body.required - the service's host name or address
+ * @param {integer} port.body.required - the service's port
+ * @param {string} message.body.required - a GSS-wrapped AP-REQ (or a bare one), base64
+ * @returns {object} 200 - the service's answer, base64 (or null when it sent none)
+ * @returns {object} 400 - the request was refused (see the reason)
+ * @returns {object} 502 - the service could not be reached or did not answer
+ */
+app.post('/krb5/service', function (req, res) {
+  log.debug('Entering POST /krb5/service.');
+  var b = req.body || {};
+  if (!b.host || !b.port || !b.message) {
+    log.debug('Leaving POST /krb5/service. Missing host, port or message.');
+    return res.status(STATUS_400).json({
+      error: 'host, port and message are required. Unlike the KDC there is no default port: a ' +
+             'Kerberos service can be on any port, so it has to be named.' });
+  }
+  var raw = String(b.message).trim();
+  var normalised = raw.replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(normalised) || normalised.length % 4 === 1) {
+    log.debug('Leaving POST /krb5/service. message is not base64.');
+    return res.status(STATUS_400).json({ error: 'message is not valid base64.' });
+  }
+  var message = Buffer.from(normalised, 'base64');
+  if (!message.length) {
+    return res.status(STATUS_400).json({ error: 'message decoded to zero bytes.' });
+  }
+
+  krb5.send({ host: b.host, port: b.port, transport: b.transport || 'tcp', message: message,
+              purpose: 'service' })
+    .then(function (result) {
+      log.debug('Leaving POST /krb5/service. ' + result.request.message + ' -> ' +
+        (result.replyMessage || 'no reply'));
+      return res.status(STATUS_200).json({
+        reply: result.reply && result.reply.length ? Buffer.from(result.reply).toString('base64') : null,
+        replyMessage: result.replyMessage,
+        request: result.request,
+        target: result.target,
+        timing: result.timing
+      });
+    })
+    .catch(function (error) {
+      // A service that closes cleanly WITHOUT answering is not a failure: a client
+      // that did not ask for mutual authentication is not owed a reply, and reporting
+      // that as an error would send somebody looking for a fault that is not there.
+      if (error.code === 'EKRB5SHORTREPLY' && /closed after 0 byte/.test(error.message)) {
+        log.debug('Leaving POST /krb5/service. Accepted with no reply.');
+        return res.status(STATUS_200).json({
+          reply: null,
+          replyMessage: null,
+          note: 'the service closed the connection without answering. That is not an error: a ' +
+                'client that did not request mutual authentication is not owed a reply — but it ' +
+                'does mean nothing has proved the service is who it claims to be.'
+        });
+      }
+      var refusedByPolicy = ['EKRB5NOTKERBEROS', 'EKRB5PORTNOTALLOWED', 'EBLOCKEDADDRESS',
+                             'EKRB5NOHOST', 'EKRB5NOPORT', 'EKRB5SERVICENOTENABLED']
+        .indexOf(error.code) !== -1;
+      var status = refusedByPolicy ? STATUS_400 : 502;
+      log.warn('POST /krb5/service failed [' + error.code + ']: ' + error.message);
+      log.debug('Leaving POST /krb5/service. status=' + status);
+      return res.status(status).json({ error: error.message, code: error.code });
+    });
+});
+
+/**
+ * What the Kerberos relay will and will not do, so the page can say so before a
+ * call fails. A debugger that discovers its own limits by hitting them is a
+ * debugger that reports them as somebody else's fault.
+ * @route GET /krb5/limits
+ * @returns {object} 200 - the ports, timeouts and caps in force
+ */
+app.get('/krb5/limits', function (req, res) {
+  log.debug('Entering GET /krb5/limits.');
+  log.debug('Leaving GET /krb5/limits.');
+  return res.status(STATUS_200).json({
+    allowedPorts: krb5.allowedPorts,
+    servicePorts: krb5.servicePorts,
+    serviceEnabled: krb5.serviceEnabled,
+    addressPolicyEnabled: krb5.addressPolicyEnabled,
+    limits: krb5.limits
+  });
+});
+
 expressSwagger(options)
 app.listen(PORT, HOST);
 log.info(`Running on http://${HOST}:${PORT}`);

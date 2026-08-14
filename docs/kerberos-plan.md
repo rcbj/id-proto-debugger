@@ -1,6 +1,8 @@
 # Kerberos v5 Debugger — design and implementation plan
 
-**Status: nothing is implemented. This is the plan, dated 2026-08-12.** It is written in the same voice as the rest of `docs/` — the reasoning attached to each decision, so the decision can be argued with later — so every "does" below should be read as "will do". When a phase lands, the parts of this file describing it should move into `docs/kerberos.md` (the workflow's own notes) and this file should shrink to the phases still outstanding, exactly as `docs/webauthn-plan.md` is doing.
+**Status: phases 0–5 are implemented. The workflow's own notes are now [`docs/kerberos.md`](kerberos.md) — read that first.** What remains here is the record of how each decision was reached and what is still outstanding. Dated 2026-08-12 and revised as each phase landed; it is written in the same voice as the rest of `docs/` — the reasoning attached to each decision, so the decision can be argued with later — so every "does" below should be read as "will do".
+
+**What is left**: SPNEGO (phase 6, deliberately out of scope for this plan), kpasswd, SID filtering across a trust, and — the largest risk in the feature — **interoperability evidence against a real domain controller**. Everything built so far has been verified against this project's own mock KDC, which is not the same thing as being correct. See the last section of `docs/kerberos.md`.
 
 ## What this adds
 
@@ -187,6 +189,8 @@ Browser tests follow `tests/CLAUDE.md`'s hazards unchanged — wait on content r
 
 ## Phases
 
+Each row's **Deliverable** is what was planned. Where a phase has landed, what it actually produced is in `docs/kerberos.md` rather than repeated here — the point of keeping this table is the *sizing*, which is what the next estimate will be argued against.
+
 | Phase | Deliverable | Rough effort |
 |---|---|---|
 | **0 — Spike** | ~600 throwaway lines: n-fold, AES-CTS and string-to-key passing the RFC vectors, and a TGT out of an MIT krb5 container. Settles the `asn1js`-versus-hand-rolled question. Confirms or kills the whole approach for the price of two days. | 1–2 days |
@@ -194,7 +198,10 @@ Browser tests follow `tests/CLAUDE.md`'s hazards unchanged — wait on content r
 | **2 — Walking skeleton** | The relay endpoint and all of its security work; the mock KDC's AS exchange; `kerberos.html`; the pre-auth round trip end to end; KKDCP | 1–2 weeks |
 | **3 — TGS and AP** | Service tickets, GSS framing and the 0x8003 checksum, the mock protected TCP service, mutual auth, the ccache pages | 1–2 weeks |
 | **4 — Windows realism** | PAC decode, referrals, skew detection, the error catalogue, the etype-negotiation display, RFC 8009 etypes, the Samba AD oracle | 1.5–2.5 weeks |
+| | **Cross-realm referrals are built** — see `docs/kerberos.md`. | |
+| | **The PAC is built** — see `docs/kerberos.md`. | |
 | **5 — Delegation** | S4U2Self, S4U2Proxy, RBCD, forwarded TGTs and `KRB-CRED`, renewals, possibly kpasswd | 1–1.5 weeks |
+| | **S4U and renewals are built** — see `docs/kerberos.md`. | |
 | **6 — out of scope here** | SPNEGO: a wrapper over phase 3's acceptor, if phases 1–3 keep the seam clean | — |
 
 Six to ten weeks of focused work. **The unit is a human engineer's week**, which is how the sizes above should be compared against each other — it is a statement about the size of the problem, not about elapsed calendar time for any particular way of building it. **This would be the largest feature in the repository** — larger than the SD-JWT VC workflow, with more specification surface and considerably less forgiving failure modes.

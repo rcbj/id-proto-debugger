@@ -72,6 +72,43 @@ var config = {
   // rather than built per call: an agent holds the idle-socket pool, so a
   // per-call agent would pool nothing AND leak the socket it parked.
   keepAlive: true,
+  // The ports the Kerberos relay (api/krb5_relay.js) may connect to.
+  //
+  // This setting exists because `POST /krb5/kdc` is a broader primitive than
+  // anything else this service does: it carries CALLER-SUPPLIED BYTES to a
+  // CALLER-SUPPLIED host and port over a raw TCP or UDP socket. An HTTP fetcher
+  // aimed at port 22 gets nothing useful; a byte relay aimed at port 22 is a port
+  // scanner whose payload the caller chooses. So the reachable ports are an
+  // allowlist, not a denylist.
+  //
+  // 88 is Kerberos, 464 is kpasswd (password change) and 749 is kadmin. A
+  // malformed entry is dropped with its reason logged; an allowlist that ends up
+  // empty refuses every call, which is the safe direction but is almost certainly
+  // a mistake. Omit the setting entirely to get these three.
+  //
+  // Note what this does NOT relax: the address policy above still applies, and so
+  // does the requirement that the payload actually be an AS-REQ, a TGS-REQ or an
+  // AP-REQ (api/krb5_frame.js). The relay also reuses `connectionTimeout`,
+  // `callTimeout` and `maxContentLength` from this same file.
+  krb5AllowedPorts: [88, 464, 749],
+  // The ports POST /krb5/service may reach — the AP exchange, i.e. presenting a
+  // ticket to a Kerberos-protected service.
+  //
+  // This is a BROADER capability than the KDC relay and is therefore OFF by default
+  // (an absent or empty setting refuses every call). The reason it cannot be bounded
+  // the same way: a Kerberos service can be on any port — 443 for HTTP, 1433 for SQL
+  // Server, 389 for LDAP — so no small allowlist covers the real cases. What bounds
+  // it instead is the payload check in api/krb5_frame.js, which requires a GSS
+  // InitialContextToken naming the Kerberos v5 mechanism and wrapping a well-formed
+  // AP-REQ (or a bare AP-REQ). An HTTP request, a Redis command and a TLS handshake
+  // all fail that.
+  //
+  // Set it to a list of ports, or to the string "any" if a deployment genuinely needs
+  // arbitrary ones. "any" is a word rather than an empty list or a 0 so that enabling
+  // it is unmistakable rather than a plausible typo.
+  // Left empty here: this configuration is for the node-only tests, which drive the
+  // relay directly and set their own policy.
+  krb5ServicePorts: [],
   // SAML Service Provider identity (this debugger acting as an SP).
   spEntityId: "https://tools.test.idptools.io/saml/sp",
   acsUrl: "https://api.tools.test.idptools.io/samlacs",

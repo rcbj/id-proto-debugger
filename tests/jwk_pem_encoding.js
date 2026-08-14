@@ -366,6 +366,16 @@ function ellipticStaysOutOfTheBundles() {
     log.info("[bundles] SKIPPED — no client/src in this layout (running from the tests image).");
     return;
   }
+  // common/krb5 is scanned as well, and for exactly the same reason: those
+  // modules are STAGED INTO client/src at build time (the way common/data.js
+  // already is, see client/Dockerfile and client/build.js), so browserify treats
+  // them as bundle source even though they do not live under client/src. A
+  // `require("crypto")` there would put `elliptic` into the Kerberos bundle with
+  // nothing in this repository noticing — the Kerberos crypto reaches Web Crypto
+  // through globalThis specifically to avoid it, and this is what holds it to
+  // that.
+  const extraDirs = [path.join(__dirname, "..", "common", "krb5")]
+    .filter(function (d) { return fs.existsSync(d); });
   const banned = [
     { pattern: /require\(\s*['"]jwk-to-pem['"]\s*\)/, name: "jwk-to-pem",
       why: "builds its EC point through elliptic; use ./jwk_pem instead" },
@@ -381,26 +391,43 @@ function ellipticStaysOutOfTheBundles() {
   // Recursive: client/src has subdirectories (env, vendor_claims), and a bundle
   // reaches whatever any of its requires reach, at any depth.
   const files = [];
-  (function walk(dir) {
+  (function walk(dir, label) {
     fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        walk(full);
+        walk(full, label);
       } else if (/\.js$/.test(entry.name)) {
-        files.push(path.relative(srcDir, full));
+        files.push({ path: full, label: label + "/" + path.relative(dir, full) });
       }
     });
-  })(srcDir);
+  })(srcDir, "client/src");
+  extraDirs.forEach(function (dir) {
+    walkExtra(dir, path.relative(path.join(__dirname, ".."), dir));
+  });
+  function walkExtra(dir, label) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkExtra(full, label + "/" + entry.name);
+      else if (/\.js$/.test(entry.name)) files.push({ path: full, label: label + "/" + entry.name });
+    });
+  }
   assert.ok(files.length > 0, "found no .js files in client/src");
+  // The staged directories must actually have been read, or this check reports a
+  // pass over files it never opened — the silent-no-op failure mode.
+  extraDirs.forEach(function (dir) {
+    const rel = path.relative(path.join(__dirname, ".."), dir);
+    assert.ok(files.some(function (f) { return f.label.indexOf(rel) === 0; }),
+      "found no .js files under " + rel + ", which is staged into a bundle and must be scanned");
+  });
   files.forEach(function (file) {
-    const text = fs.readFileSync(path.join(srcDir, file), "utf8");
+    const text = fs.readFileSync(file.path, "utf8");
     text.split("\n").forEach(function (line, index) {
       // Comments in these files discuss the banned requires on purpose (that is
       // where the reasoning lives), so a commented line is not an offence.
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
       banned.forEach(function (rule) {
         if (rule.pattern.test(line)) {
-          offences.push("client/src/" + file + ":" + (index + 1) + " requires " + rule.name +
+          offences.push(file.label + ":" + (index + 1) + " requires " + rule.name +
                         " — " + rule.why);
         }
       });
@@ -422,7 +449,9 @@ function ellipticStaysOutOfTheBundles() {
   assert.ok(declared["create-hash"],
     "client/package.json must declare create-hash — debugger.js requires it for the PKCE " +
     "code_challenge, and it is currently only present as a transitive dependency of browserify");
-  log.info("[bundles] OK — " + files.length + " files in client/src, none requiring a package that " +
+  log.info("[bundles] OK — " + files.length + " files in client/src plus the staged directories (" +
+    extraDirs.map(function (d) { return path.relative(path.join(__dirname, ".."), d); }).join(", ") +
+    "), none requiring a package that " +
            "reaches elliptic, and none of those packages declared.");
   log.debug("Leaving ellipticStaysOutOfTheBundles().");
 }

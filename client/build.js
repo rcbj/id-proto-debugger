@@ -73,6 +73,11 @@ const BUNDLES = [
   ['webauthn_analyzer', 'webauthnanalyzer'],
   ['wsfed_request', 'wsfed_request'],
   ['wsfed_response', 'wsfed_response'],
+  ['kerberos_decoder', 'kerberos_decoder'],
+  ['kerberos', 'kerberos'],
+  ['kerberos_tgs', 'kerberos_tgs'],
+  ['kerberos_ap', 'kerberos_ap'],
+  ['kerberos_delegation', 'kerberos_delegation'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>
@@ -141,8 +146,31 @@ fs.copyFileSync(CLAIM_XML_SRC, path.join(DIST, 'claimdescription'));
 
 // 3. Bundle. debugger2 requires('./data.js'), so stage common/data.js into src/
 //    (the Docker build does the same COPY). Removed again afterward.
+//
+//    The Kerberos codec is staged the same way and for the same reason:
+//    kerberos_decoder.js requires('./krb5_describe.js') and that module requires
+//    its siblings, so browserify has to find them beside the bundle entry point.
+//    They live in common/krb5/ rather than client/src because the api's relay and
+//    the mock KDC read the same code — a second copy of a wire codec is a codec
+//    that drifts.
+//
+//    Two consequences worth knowing. These files are BUNDLE SOURCE even though
+//    they are not under client/src, so the no-bare-require('crypto') rule applies
+//    to them (tests/jwk_pem_encoding.js scans common/krb5 for exactly that — a
+//    `require("crypto")` there would put `elliptic` into this bundle). And the
+//    staging is removed in the `finally` below, so a failed build does not leave
+//    copies behind for the next one to bundle silently.
 const stagedData = path.join(SRC, 'data.js');
 fs.copyFileSync(COMMON_DATA, stagedData);
+const KRB5_DIR = path.join(CLIENT_DIR, '..', 'common', 'krb5');
+const stagedKrb5 = fs.existsSync(KRB5_DIR)
+  ? fs.readdirSync(KRB5_DIR).filter((f) => f.endsWith('.js')).map((f) => {
+      const dest = path.join(SRC, f);
+      log('staging common/krb5/' + f + ' -> src/' + f);
+      fs.copyFileSync(path.join(KRB5_DIR, f), dest);
+      return dest;
+    })
+  : [];
 try {
   for (const [name, standalone] of BUNDLES) {
     const out = path.join(DIST, 'js', name + '.js');
@@ -165,6 +193,7 @@ try {
   }
 } finally {
   fs.rmSync(stagedData, { force: true });
+  stagedKrb5.forEach((f) => fs.rmSync(f, { force: true }));
 }
 
 // 4. Resolve <!--#include file="/partials/x.html"--> directives in-place

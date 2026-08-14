@@ -65,6 +65,14 @@ COPY client/src/ /usr/src/app/src/
 RUN true
 COPY client/src/env/ /usr/src/app/public/js/env/
 COPY common/data.js /usr/src/app/src
+# The Kerberos codec, staged into src/ the same way and for the same reason:
+# kerberos_decoder.js requires('./krb5_describe.js'), which requires its siblings,
+# so browserify has to find them beside the bundle entry point. They live in
+# common/krb5/ because the api's relay and the mock KDC read the same code.
+# client/build.js does the equivalent staging for the static deployments — BOTH
+# have to be kept in step, which is the same two-places rule as the browserify
+# line further down.
+COPY common/krb5/ /usr/src/app/src/
 RUN browserify src/jwks.js -o public/js/jwks.js --debug --standalone jwks -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/debugger.js -o public/js/debugger.js --debug --standalone debug -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/token_detail.js -o public/js/token_detail.js --debug --standalone token_detail -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
@@ -98,6 +106,11 @@ RUN browserify src/webauthn_analyzer.js -o public/js/webauthn_analyzer.js --debu
 RUN browserify src/vc_presentation_3.js -o public/js/vc_presentation_3.js --debug --standalone vcpresentation3 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_request.js -o public/js/wsfed_request.js --debug --standalone wsfed_request -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wsfed_response.js -o public/js/wsfed_response.js --debug --standalone wsfed_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/kerberos_decoder.js -o public/js/kerberos_decoder.js --debug --standalone kerberos_decoder -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/kerberos.js -o public/js/kerberos.js --debug --standalone kerberos -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/kerberos_tgs.js -o public/js/kerberos_tgs.js --debug --standalone kerberos_tgs -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/kerberos_ap.js -o public/js/kerberos_ap.js --debug --standalone kerberos_ap -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/kerberos_delegation.js -o public/js/kerberos_delegation.js --debug --standalone kerberos_delegation -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----

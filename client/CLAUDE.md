@@ -79,6 +79,7 @@ Client-side JavaScript lives in `/client/src/` and is compiled into `/client/pub
 | `wsfed_response.js` | `wsfed_response.js` | WS-Federation response debugger (`wsfed_response.html`) |
 | `webauthn_lab.js` | `webauthn_lab.js` | WebAuthn Lab — this origin as the relying party (`webauthn.html`) |
 | `webauthn_analyzer.js` | `webauthn_analyzer.js` | WebAuthn Analyzer — decode artifacts from anywhere (`webauthn_analyzer.html`) |
+| `kerberos_delegation.js` | `kerberos_delegation.js` | Kerberos delegation — S4U2Self, S4U2Proxy (classic and resource-based), forwarding and renewal (`kerberos_delegation.html`) |
 
 The browserify build runs inside Docker. There is no local build script — to rebuild bundles you must use Docker.
 

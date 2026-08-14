@@ -49,7 +49,63 @@ function requireSharedModule(candidates, what) {
   throw new Error("could not locate " + what + " (looked in: " + candidates.join(", ") + ")");
 }
 
+// ---------------------------------------------------------------------------
+// Locating a module that lives in the mock STS.
+//
+// sts/ is a SUBMODULE — a separate repository (rcbj/mock-sts) — so a change to the
+// mock KDC is written in a sibling checkout, pushed there, and only then does this
+// repository's gitlink move. Between those two steps the submodule does not carry the
+// change, and a test that could not run until the push would make that loop unusable.
+//
+// Hence three orders of preference, and the middle one is the one that had to be added
+// after it cost a debugging round:
+//
+//  1. Normally: the submodule, then the tests image's flat copies.
+//  2. `MOCK_STS_DIR=../mock-sts` — an EXPLICIT override, for verifying a change to a
+//     module that ALREADY EXISTS in the submodule. The fallback below cannot help
+//     there: the file is present, just stale, so it is found and used and the change
+//     under test is silently not exercised. That failure is genuinely confusing,
+//     because the test fails asserting something the developer just implemented.
+//  3. Otherwise, a sibling checkout if the submodule lacks the file entirely.
+//
+// Cases 2 and 3 both WARN, naming the reason. A green run against an unpushed working
+// copy corresponds to no commit, and that has to be impossible to miss.
+// ---------------------------------------------------------------------------
+function mockStsModule(name, warn) {
+  const say = warn || function () {};
+  const override = process.env.MOCK_STS_DIR;
+  if (override) {
+    const overridden = path.join(override, name);
+    if (fs.existsSync(overridden)) {
+      say("MOCK_STS_DIR is set, so " + overridden + " is being used INSTEAD of the sts/ " +
+        "submodule. This run reflects a working copy rather than the commit the gitlink points " +
+        "at. Unset MOCK_STS_DIR to test what is committed.");
+      return overridden;
+    }
+    say("MOCK_STS_DIR is set to " + override + " but it does not contain " + name +
+      "; falling back to the submodule.");
+  }
+  const candidates = [
+    path.join(__dirname, "..", "sts", name),         // a checkout with the submodule initialised
+    path.join(__dirname, "sts", name),               // the tests image
+    path.join(__dirname, "sts_" + name)              // the tests image, flattened with a prefix
+  ];
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  const sibling = path.join(__dirname, "..", "..", "mock-sts", name);
+  if (fs.existsSync(sibling)) {
+    say("USING AN UNPUSHED WORKING COPY: " + sibling + ". The sts/ submodule does not carry " +
+      name + " yet, so this run reflects a sibling checkout rather than the commit this " +
+      "repository's gitlink points at. Push mock-sts and bump the gitlink before trusting a " +
+      "green result here.");
+    return sibling;
+  }
+  return null;
+}
+
 module.exports = {
   addTestsModulesToResolutionPath: addTestsModulesToResolutionPath,
-  requireSharedModule: requireSharedModule
+  requireSharedModule: requireSharedModule,
+  mockStsModule: mockStsModule
 };

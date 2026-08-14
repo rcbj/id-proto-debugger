@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — Kerberos AP Exchange</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/kerberos.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/kerberos_ap.js">
+</script>
+
+<p class="krb-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="krb-title">Kerberos &mdash; the AP exchange: present the ticket</h3>
+
+<p class="krb-intro">The end of the protocol, and the only page that answers the question the rest were
+preparation for: <strong>will the service accept it?</strong> A KDC issuing a ticket says only that the
+KDC was willing. <a href="/kerberos_tgs.html">Buy a service ticket first</a> if you have none, or see
+<a href="/kerberos_delegation.html">delegation</a> for the ways a ticket can be obtained on somebody
+else's behalf.</p>
+
+<p class="krb-intro krb-boundary"><strong>A service is not sent a bare AP-REQ.</strong> It is sent an
+RFC 2743 <code>InitialContextToken</code> &mdash; <code>0x60</code>, the Kerberos mechanism OID, the token
+id <code>01 00</code>, then the AP-REQ &mdash; and inside that AP-REQ's Authenticator sits a checksum of
+<strong>type 0x8003</strong>, which is not a checksum at all. It carries the channel bindings and the GSS
+flags, and every integer in it is <strong>little-endian</strong> in a protocol where everything else is
+big-endian. It is the most commonly botched field in Kerberos, so this page decodes it field by field
+rather than showing you a hex blob.</p>
+
+<div id="krb_environment_note"></div>
+
+<fieldset class="krb-pane">
+  <legend>The ticket to present</legend>
+  <label for="krb_ticket_select">Service ticket</label>
+  <select id="krb_ticket_select" class="krb-field"></select>
+  <div id="krb_ticket_pane"></div>
+  <p class="krb-note">A TGT will not do: it is a ticket to <code>krbtgt</code>, and a service refuses it
+  with <code>KRB_AP_ERR_NOT_US</code>. That refusal is worth seeing once, and the decoder page will show
+  you the ticket's <code>sname</code> if you want to know why.</p>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>Where the service is</legend>
+  <div class="krb-keys">
+    <label for="krb_service_host">Host or address</label>
+    <input type="text" id="krb_service_host" class="krb-field" value="127.0.0.1" spellcheck="false">
+    <p class="krb-note">Prefilled from the SPN's host component, which is a <em>guess</em>: an SPN's host
+    part and the address a service actually answers on are not required to agree, and on a load-balanced
+    service they routinely do not.</p>
+
+    <label for="krb_service_port">Port</label>
+    <input type="text" id="krb_service_port" class="krb-field" value="8888">
+    <p class="krb-note">There is no default: a Kerberos service can be on any port. That is also why the
+    api disables this relay endpoint unless <code>krb5ServicePorts</code> is set &mdash; sending
+    caller-supplied bytes to an arbitrary port is a broader capability than reaching a KDC on port 88, so
+    it is switched on deliberately. What bounds it instead is the payload check: only a GSS-wrapped
+    AP-REQ, or a bare one, gets through.</p>
+  </div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>What to ask for &mdash; the GSS flags</legend>
+  <div class="krb-keys">
+    <label class="krb-check"><input type="checkbox" id="krb_flag_mutual" checked="checked">
+      MUTUAL &mdash; require the service to prove itself back</label>
+    <label class="krb-check"><input type="checkbox" id="krb_flag_integ" checked="checked">
+      INTEG &mdash; integrity protection for per-message tokens</label>
+    <label class="krb-check"><input type="checkbox" id="krb_flag_conf" checked="checked">
+      CONF &mdash; confidentiality (GSS_Wrap)</label>
+    <label class="krb-check"><input type="checkbox" id="krb_flag_replay">
+      REPLAY &mdash; replay detection for per-message tokens</label>
+    <label class="krb-check"><input type="checkbox" id="krb_flag_sequence">
+      SEQUENCE &mdash; out-of-sequence detection</label>
+    <label class="krb-check"><input type="checkbox" id="krb_send_subkey" checked="checked">
+      send a subkey in the Authenticator</label>
+    <p class="krb-note">Untick <strong>MUTUAL</strong> to see what a one-way context looks like: the
+    service may accept the ticket and answer nothing at all, which is legitimate and means
+    <em>nothing has proved the service is who it claims to be</em>. That is the difference between
+    authenticating a client and authenticating a connection.</p>
+  </div>
+  <input type="button" id="krb_present_button" class="btn2" value="Present the ticket"
+         disabled="disabled">
+  <div id="krb_ap_status" class="krb-status"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>What went out</legend>
+  <div id="krb_request_pane"></div>
+  <div id="krb_apreq_pane"></div>
+  <div id="krb_checksum_pane"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>What came back</legend>
+  <div id="krb_reply_pane"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>The security context</legend>
+  <div id="krb_context_pane"></div>
+  <p class="krb-note">Mutual authentication is an <strong>echo</strong>: the AP-REP returns the
+  Authenticator's <code>ctime</code> and <code>cusec</code> encrypted under the ticket's session key. Only
+  something holding the service's long-term key could have decrypted the ticket to learn that session key,
+  so a correct echo <em>is</em> the service's identity. This page checks the echo &mdash; a client that
+  asks for mutual authentication and does not verify it has only asked.</p>
+  <p class="krb-note">Note that <code>KerberosTime</code> carries no fractional seconds, so the echoed
+  <code>ctime</code> is second-precision and the sub-second part travels in <code>cusec</code>. Comparing
+  a millisecond-precision timestamp here accuses a perfectly correct service of not being itself.</p>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>Per-message tokens</legend>
+  <div class="krb-keys">
+    <label for="krb_message">Message</label>
+    <input type="text" id="krb_message" class="krb-field" value="the quick brown fox">
+  </div>
+  <input type="button" id="krb_mic_button" class="btn2" value="GetMIC (integrity)" disabled="disabled">
+  <input type="button" id="krb_wrap_button" class="btn2" value="Wrap (confidentiality)"
+         disabled="disabled">
+  <div id="krb_permessage_pane"></div>
+  <p class="krb-note">Once the acceptor has offered a subkey, these must be keyed from <strong>it</strong>
+  rather than from the ticket's session key &mdash; and the key usage depends on who is speaking: an
+  initiator signs with 25 and seals with 24, an acceptor with 23 and 22. The wrong pair produces a token
+  the far end cannot verify, and the error names the checksum rather than the direction.</p>
+</fieldset>
+
+<p class="krb-intro"><strong>The PAC, and what a Windows service actually reads.</strong> A ticket proves
+who the client is and says nothing about its group memberships &mdash; a Windows service authorizes on the
+<a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-pac/" target="_blank"
+rel="noopener noreferrer">PAC</a> inside the ticket instead, which carries the account's SID, its groups
+and its <code>UserAccountControl</code> flags. Supply the service key below and the pane will decode it:
+the group SIDs with their well-known names, and each of the <strong>four signatures</strong> checked
+separately. Those four are not interchangeable. The server signature is made with <em>this service's own
+key</em>, which is what lets a service verify the PAC by itself; the other three are made with the
+<code>krbtgt</code> key, so only a KDC can confirm them &mdash; and altering the PAC's contents breaks the
+server signature while leaving the KDC signature verifying, because that one covers only the server
+signature's bytes. That is the gap the extended KDC signature
+(<a href="https://nvd.nist.gov/vuln/detail/CVE-2022-37967" target="_blank"
+rel="noopener noreferrer">CVE-2022-37967</a>) was added to close, and it is why a signature that cannot be
+checked here is reported as <em>not checked</em> rather than as a failure: on a service ticket you do not
+hold the <code>krbtgt</code> key at all.</p>
+
+<p class="krb-intro"><strong>What is still missing.</strong> Constrained delegation &mdash; S4U2Self,
+S4U2Proxy and resource-based constrained delegation &mdash; and cross-realm referrals. A ticket this build
+produces carries a PAC a Windows service can read, but nothing here yet asks a KDC to obtain one
+<em>on behalf of</em> somebody else.</p>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

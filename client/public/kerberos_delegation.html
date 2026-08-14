@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — Kerberos Delegation</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/kerberos.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/kerberos_delegation.js">
+</script>
+
+<p class="krb-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="krb-title">Kerberos &mdash; delegation: acting as somebody else</h3>
+
+<p class="krb-intro">Four things a ticket-granting ticket can be spent on that are not "get me a service
+ticket", and they are on one page because the interesting part is the <em>comparison</em>. A reader who has
+seen only one of them has the wrong model of the others.
+<a href="/kerberos.html">Get a TGT first</a> if you have none.</p>
+
+<p class="krb-intro krb-boundary"><strong>S4U2Self is not a privilege and S4U2Proxy is.</strong> The first
+gets a service a ticket to <em>itself</em>, naming a user who takes no part in it &mdash; no password, no
+ticket of theirs, nothing they consented to. Anyone with a service account can do that, because the ticket
+is to themselves. The second reaches <em>another</em> service as that user, and what stands between the two
+is <strong>one attribute on one account</strong>. Two different attributes can grant it, on opposite
+accounts: <code>msDS-AllowedToDelegateTo</code> on the <em>front end</em> (classic constrained delegation,
+which only a domain admin can set) or <code>msDS-AllowedToActOnBehalfOfOtherIdentity</code> on the
+<em>back end</em> (resource-based, which whoever controls that object can set). That inversion is why
+resource-based delegation turns &ldquo;I can write to this computer account&rdquo; into &ldquo;I can reach
+this service as anybody&rdquo;.</p>
+
+<div id="krb_environment"></div>
+
+<fieldset class="krb-pane">
+  <legend>The ticket-granting ticket you hold</legend>
+  <div id="krb_held_pane"></div>
+  <p class="krb-note"><strong>Whose TGT this should be depends on which half you are doing.</strong>
+  S4U2Self and S4U2Proxy are requests a <em>service</em> makes, so for those the ticket wanted here is the
+  service account's own &mdash; authenticate on the AS page as <code>HTTP/frontend.example.com</code>
+  rather than as a user. Forwarding and renewal are things a <em>user</em>'s client does with its own.</p>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>S4U2Self &mdash; a ticket to myself, as somebody else</legend>
+  <div class="krb-keys">
+    <label for="krb_impersonate">User to impersonate</label>
+    <input type="text" id="krb_impersonate" class="krb-field" value="alice" spellcheck="false"
+           placeholder="alice">
+    <p class="krb-note">This account takes no part in the exchange. The request is a TGS-REQ for the
+    service <em>itself</em>, carrying <code>PA-FOR-USER</code> &mdash; whose keyed checksum is
+    <strong>HMAC-MD5 at key usage 17</strong> over the name type as four little-endian bytes then the name
+    components, the realm and the auth-package, concatenated. That is HMAC-MD5 whatever the session key's
+    own encryption type, which is a detail almost every implementation gets wrong once. The checksum proves
+    only that whoever built the padata holds the TGT's session key: it is integrity, not authorization.</p>
+    <div class="krb-buttons">
+      <input type="button" id="krb_s4u2self_button" class="btn2" value="Request a ticket for that user">
+      <input type="button" id="krb_forget_evidence_button" class="btn2" value="Discard the evidence ticket">
+    </div>
+    <div id="krb_s4u2self_status" class="krb-status"></div>
+  </div>
+  <div id="krb_s4u2self_request_pane" class="krb-output"></div>
+  <div id="krb_s4u2self_reply_pane" class="krb-output"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>The evidence ticket</legend>
+  <div id="krb_evidence_pane"></div>
+  <p class="krb-note"><strong>Watch whether it came back forwardable.</strong> Classic constrained
+  delegation requires forwardable evidence and resource-based does not, and a ticket out of S4U2Self is
+  forwardable only when the requesting account has
+  <code>TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION</code> set. So a missing flag on the front-end account shows
+  up two steps later as S4U2Proxy complaining about the <em>evidence</em> &mdash; which is not where the
+  problem is. That is why this pane says so at the moment the ticket arrives.</p>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>S4U2Proxy &mdash; reach another service as that user</legend>
+  <div class="krb-keys">
+    <label for="krb_deleg_target">Back-end service to reach (SPN)</label>
+    <input type="text" id="krb_deleg_target" class="krb-field" spellcheck="false"
+           placeholder="HTTP/backend.example.com">
+    <label class="krb-check"><input type="checkbox" id="krb_resource_based">
+      send <code>PA-PAC-OPTIONS</code> with the resource-based bit</label>
+    <p class="krb-note">Tick that box when <strong>resource-based</strong> delegation is what would permit
+    this. [MS-SFU] requires a KDC to answer <code>KDC_ERR_BADOPTION</code> when RBCD is the only thing
+    authorizing a request and this padata is absent &mdash; and that error says nothing whatsoever about
+    padata, so it is a refusal worth being able to produce on purpose. Classic constrained delegation does
+    not need it.</p>
+    <p class="krb-note">The request sets <code>cname-in-addl-tkt</code> and carries the evidence ticket in
+    <code>additional-tickets</code>. The KDC reads the client's identity out of <em>that</em> ticket rather
+    than out of the TGT &mdash; which is what makes the reply a ticket for the user rather than for the
+    service asking.</p>
+    <div class="krb-buttons">
+      <input type="button" id="krb_s4u2proxy_button" class="btn2" value="Delegate to that service"
+             disabled="disabled">
+    </div>
+    <div id="krb_s4u2proxy_status" class="krb-status"></div>
+  </div>
+  <div id="krb_trail_pane" class="krb-output"></div>
+  <div id="krb_s4u2proxy_request_pane" class="krb-output"></div>
+  <div id="krb_s4u2proxy_reply_pane" class="krb-output"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>Forwarding &mdash; unconstrained delegation</legend>
+  <p class="krb-note">The oldest form, and by far the most dangerous. The client asks for a second
+  ticket-granting ticket flagged <code>forwarded</code> and hands it to a service inside a
+  <code>KRB-CRED</code>. After that the service can obtain tickets to <strong>anything</strong> as that
+  client until the ticket expires, and the KDC is never asked again &mdash; there is no list of permitted
+  targets, because there is no constraint. Compare the two mechanisms above, where every hop returns to the
+  KDC and is checked against an attribute. A service's <code>ok-as-delegate</code> flag is only
+  <em>advice</em> to the client: nothing enforces it, so the decision is the client's to get right.</p>
+  <p class="krb-note">The one control that does enforce something sits on the account being protected:
+  <code>NOT_DELEGATED</code> (&ldquo;account is sensitive and cannot be delegated&rdquo;). A KDC refuses
+  such an account a forwardable ticket at the AS exchange &mdash; not with an error, but by omitting the
+  flag, so the user still logs on and no service anywhere can forward those credentials.</p>
+  <div class="krb-buttons">
+    <input type="button" id="krb_forward_button" class="btn2"
+           value="Get a forwarded TGT and wrap it as a KRB-CRED">
+  </div>
+  <div id="krb_forward_status" class="krb-status"></div>
+  <div id="krb_krbcred_pane" class="krb-output"></div>
+  <div id="krb_forward_request_pane" class="krb-output"></div>
+  <div id="krb_forward_reply_pane" class="krb-output"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>Renewal &mdash; the same ticket, later</legend>
+  <p class="krb-note">Not delegation, and here because it is the other thing done with a TGT. A renewable
+  ticket is not an immortal one: the new expiry is capped at <code>renew-till</code>, which does
+  <em>not</em> move, and <strong><code>authtime</code> is preserved</strong>. That second rule matters —
+  a renewed ticket must not look freshly authenticated, or a service reading <code>authtime</code> to judge
+  how recently the user proved themselves is told a lie that grows with every renewal. This page asks for
+  longer than <code>renew-till</code> deliberately, so the cap is visible rather than theoretical.</p>
+  <div class="krb-buttons">
+    <input type="button" id="krb_renew_button" class="btn2" value="Renew the ticket">
+  </div>
+  <div id="krb_renew_status" class="krb-status"></div>
+  <div id="krb_renew_request_pane" class="krb-output"></div>
+  <div id="krb_renew_reply_pane" class="krb-output"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>Where the KDC is</legend>
+  <div class="krb-keys">
+    <label for="krb_realm">Realm</label>
+    <input type="text" id="krb_realm" class="krb-field" value="EXAMPLE.COM" spellcheck="false">
+
+    <label for="krb_kdc_host">KDC host or address</label>
+    <input type="text" id="krb_kdc_host" class="krb-field" value="127.0.0.1" spellcheck="false">
+
+    <label for="krb_kdc_port">Port</label>
+    <input type="text" id="krb_kdc_port" class="krb-field" value="88">
+
+    <label for="krb_transport">Transport</label>
+    <select id="krb_transport" class="krb-field">
+      <option value="tcp" selected="selected">TCP</option>
+      <option value="udp">UDP</option>
+    </select>
+  </div>
+</fieldset>
+
+<div class="bottom">
+<!--#include file="/partials/bottom.html"-->
+</div>
+
+    </div>
+
+<div class="footer">
+<!--#include file="/partials/footer.html"-->
+</div>
+
+  </body>
+</html>

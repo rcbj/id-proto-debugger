@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — Kerberos Decoder</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/kerberos.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/kerberos_decoder.js">
+</script>
+
+<p class="krb-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="krb-title">Kerberos Decoder &mdash; read a v5 message, ticket or keytab</h3>
+
+<p class="krb-intro">Paste the bytes of a <a href="https://www.rfc-editor.org/rfc/rfc4120.html"
+target="_blank" rel="noopener noreferrer">Kerberos v5</a> message &mdash; out of a Wireshark capture, out of a
+log, out of a debugger &mdash; and see every field of it, named, with the encryption types and flags spelled out
+rather than left as numbers. <strong>AS-REQ, AS-REP, TGS-REQ, TGS-REP, AP-REQ, AP-REP, KRB-ERROR</strong>, a bare
+<strong>Ticket</strong>, an <strong>Authenticator</strong>, and the decrypted <strong>Enc*Part</strong>
+structures. Anything else is shown as its ASN.1 structure, which is more useful than a refusal.</p>
+
+<p class="krb-intro">Input may be <strong>base64</strong>, <strong>base64url</strong> or <strong>hex</strong>,
+with or without spaces, colons or <code>0x</code> prefixes &mdash; so a Wireshark "copy as hex stream" and a C
+array both work as pasted. Kerberos over TCP puts a four-byte length in front of every message; if that prefix
+is present it is detected, removed, and said so. Leaving it in place is what makes an ASN.1 parser fail on byte
+zero and blame ASN.1.</p>
+
+<p class="krb-intro krb-boundary"><strong>This page does no networking.</strong> It talks to no KDC and needs no
+back end, which is why it works on the deployed site while the rest of the Kerberos workflow &mdash; which needs
+a TCP socket to port 88 &mdash; does not. It also stores <strong>nothing</strong>: not the message, not a
+password, not a keytab. Everything you give it is key material or a credential, and a scratchpad that remembered
+those would be a worse place to leave a keytab than the file it came from.</p>
+
+<fieldset class="krb-pane">
+  <legend>The bytes</legend>
+  <textarea id="krb_input" class="krb-input" rows="10" spellcheck="false"
+            placeholder="base64, base64url or hex — e.g. a0YwRKEDAgEFogMCAQqjDjAMoAMCAQKhBTADoAEA…"></textarea>
+  <div class="krb-buttons">
+    <input type="button" id="krb_decode_button" class="btn2" value="Decode">
+    <input type="button" id="krb_clear_button" class="btn2" value="Clear">
+  </div>
+  <div id="krb_status" class="krb-status"></div>
+  <div id="krb_crypto_note"></div>
+</fieldset>
+
+<fieldset class="krb-pane">
+  <legend>Keys, to see inside the encrypted parts (optional)</legend>
+  <p class="krb-note">Most of what is interesting in a Kerberos message is encrypted, and under three different
+  keys: a ticket is sealed with the <strong>service's</strong> long-term key, an AS-REP's enc-part with the
+  <strong>client's</strong>, and an Authenticator with the <strong>session</strong> key from inside the ticket.
+  Supply whichever you have; each part reports which key opened it, or says what would have.</p>
+
+  <div class="krb-keys">
+    <label for="krb_key_hex">A raw key, in hex</label>
+    <input type="text" id="krb_key_hex" class="krb-field" spellcheck="false"
+           placeholder="e.g. a 32-byte aes256 key as 64 hex characters">
+    <label for="krb_key_etype">…of encryption type</label>
+    <select id="krb_key_etype" class="krb-field">
+      <option value="18" selected="selected">18 — aes256-cts-hmac-sha1-96</option>
+      <option value="17">17 — aes128-cts-hmac-sha1-96</option>
+      <option value="20">20 — aes256-cts-hmac-sha384-192</option>
+      <option value="19">19 — aes128-cts-hmac-sha256-128</option>
+      <option value="23">23 — arcfour-hmac-md5 (legacy)</option>
+    </select>
+
+    <label for="krb_password">…or a password</label>
+    <input type="password" id="krb_password" class="krb-field" autocomplete="off">
+    <label for="krb_salt">…with its salt <strong>(required, and not guessable)</strong></label>
+    <input type="text" id="krb_salt" class="krb-field" spellcheck="false"
+           placeholder="e.g. EXAMPLE.COMalice">
+    <p class="krb-note">The salt is not something to guess. Take it from the KDC's own
+    <code>PA-ETYPE-INFO2</code>, which arrives inside the <code>KDC_ERR_PREAUTH_REQUIRED</code> error &mdash;
+    paste that error in here and this page will read the salt out of it for you. Active Directory's default is
+    the realm followed by the sAMAccountName for a user, but a <em>host</em>-shaped string for a computer
+    account, which is where guessing stops working.</p>
+
+    <label for="krb_keytab">…or a keytab (base64 or hex)</label>
+    <textarea id="krb_keytab" class="krb-raw" rows="4" spellcheck="false"
+              placeholder="the contents of a krb5.keytab, base64-encoded"></textarea>
+    <p class="krb-note">A keytab holds a service's long-term keys, so it is what opens a service ticket. Both
+    MIT formats are read (0x0501 little-endian and 0x0502 big-endian), and deleted slots are skipped rather than
+    treated as the end of the file.</p>
+  </div>
+</fieldset>
+
+<div id="krb_output" class="krb-output"></div>
+
+<p class="krb-intro"><strong>What a decoder cannot tell you.</strong> That a message is well formed and decrypts
+is not the same as it being <em>accepted</em>: a KDC also weighs its own clock, its own policy, and the account's
+state. Where this page can measure such a thing it does &mdash; a <code>KRB-ERROR</code> carries the KDC's own
+timestamp, so the clock difference against this browser is computed rather than guessed &mdash; and where it
+cannot, it says so instead of implying a verdict.</p>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>
