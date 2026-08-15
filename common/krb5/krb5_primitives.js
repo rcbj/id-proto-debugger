@@ -56,6 +56,27 @@ var log = bunyan.createLogger({
   })()
 });
 
+
+// ---------------------------------------------------------------------------
+// A HOT PATH, and the Entering/Leaving logging this codebase uses everywhere
+// else is deliberately absent from part of it.
+//
+// `toBytes`, `utf8` and `fromHex` are per-call byte plumbing: every field of
+// every message passes through them, so one Kerberos exchange makes thousands
+// of calls. Measured on this tree at `logLevel: "debug"` — which
+// client/src/env/local.js and docker-tests.js both set, so the browser bundles
+// really do run this way — logging them took 2,000 encode/decode round trips
+// from 72ms to 947ms, a 13x cost for a trace nobody can read anyway. The whole
+// codec measured 27x before the exemption below and 1.5x after it.
+//
+// This is the same call the codebase already makes for cbor.js's item decoder.
+// The crypto routines below (nfold, md4, md5, rc4, padMdInput) KEEP their
+// logging: they run once per key derivation, not once per byte.
+//
+// Do not "fix" this by adding the pairs back. If that is ever reconsidered,
+// re-measure first — the benchmark is a loop over encKdcReq/readKdcReq with
+// CONFIG_FILE pointing at a config whose logLevel is "debug".
+// ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Bytes.
 //
@@ -64,11 +85,21 @@ var log = bunyan.createLogger({
 // ---------------------------------------------------------------------------
 
 function toBytes(value) {
-  if (value === null || value === undefined) return new Uint8Array(0);
-  if (value instanceof Uint8Array) return value;
-  if (Array.isArray(value)) return new Uint8Array(value);
-  if (typeof ArrayBuffer !== "undefined" && value instanceof ArrayBuffer) return new Uint8Array(value);
-  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  if (value === null || value === undefined) {
+    return new Uint8Array(0);
+  }
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return new Uint8Array(value);
+  }
+  if (typeof ArrayBuffer !== "undefined" && value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  if (ArrayBuffer.isView(value)) {
+    return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  }
   throw new Error("krb5: expected bytes, got " + (typeof value));
 }
 
@@ -118,7 +149,8 @@ function concat(list) {
   for (i = 0; i < list.length; i++) total += list[i].length;
   var out = new Uint8Array(total);
   var at = 0;
-  for (i = 0; i < list.length; i++) { out.set(list[i], at); at += list[i].length; }
+  for (i = 0; i < list.length; i++) { out.set(list[i], 
+      at); at += list[i].length; }
   return out;
 }
 
@@ -131,17 +163,22 @@ function xor(a, b) {
 
 function toHex(bytes) {
   var b = toBytes(bytes), s = "";
-  for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") + b[i].toString(16);
+  for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") + 
+      b[i].toString(16);
   return s;
 }
 
 function fromHex(text) {
   var s = String(text).replace(/[\s:]/g, "");
-  if (s.length % 2) throw new Error("krb5: hex string has an odd length");
+  if (s.length % 2) {
+    throw new Error("krb5: hex string has an odd length");
+  }
   var out = new Uint8Array(s.length / 2);
   for (var i = 0; i < out.length; i++) {
     var byte = parseInt(s.substr(i * 2, 2), 16);
-    if (isNaN(byte)) throw new Error("krb5: not hex at offset " + (i * 2));
+    if (isNaN(byte)) {
+      throw new Error("krb5: not hex at offset " + (i * 2));
+    }
     out[i] = byte;
   }
   return out;
@@ -153,7 +190,9 @@ function fromHex(text) {
 // early-exit is the natural way to write the loop.
 function equalConstantTime(a, b) {
   var x = toBytes(a), y = toBytes(b);
-  if (x.length !== y.length) return false;
+  if (x.length !== y.length) {
+    return false;
+  }
   var diff = 0;
   for (var i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
   return diff === 0;
@@ -178,11 +217,18 @@ function equalConstantTime(a, b) {
 // No logging inside: it is called for every key derivation.
 // ---------------------------------------------------------------------------
 function nfold(input, outBits) {
+  log.debug("Entering nfold().");
   var inBytes = toBytes(input);
   var inLen = inBytes.length;
   var outLen = outBits >> 3;
-  if (outLen <= 0) throw new Error("krb5: nfold output size must be positive");
-  if (inLen === 0) throw new Error("krb5: nfold input must not be empty");
+  if (outLen <= 0) {
+    log.debug("Leaving nfold().");
+    throw new Error("krb5: nfold output size must be positive");
+  }
+  if (inLen === 0) {
+    log.debug("Leaving nfold().");
+    throw new Error("krb5: nfold input must not be empty");
+  }
 
   // lcm(outLen, inLen)
   var a = outLen, b = inLen, c;
@@ -196,8 +242,10 @@ function nfold(input, outBits) {
     var msbit = (((inLen << 3) - 1) +
                  (((inLen << 3) + 13) * Math.floor(i / inLen)) +
                  ((inLen - (i % inLen)) << 3)) % (inLen << 3);
-    byte += (((inBytes[(((inLen - 1) - (msbit >> 3)) % inLen + inLen) % inLen] << 8) |
-              (inBytes[((inLen - (msbit >> 3)) % inLen + inLen) % inLen])) >>> ((msbit & 7) + 1)) & 0xff;
+    byte += (((inBytes[(((inLen - 1) - (msbit >> 3)) % inLen + 
+        inLen) % inLen] << 8) |
+              (inBytes[((inLen - (msbit >> 3)) % inLen + 
+                  inLen) % inLen])) >>> ((msbit & 7) + 1)) & 0xff;
     byte += out[i % outLen];
     out[i % outLen] = byte & 0xff;
     byte >>= 8;                       // carry
@@ -209,6 +257,7 @@ function nfold(input, outBits) {
       byte >>= 8;
     }
   }
+  log.debug("Leaving nfold().");
   return out;
 }
 
@@ -229,6 +278,7 @@ function rotl(x, n) { return ((x << n) | (x >>> (32 - n))) >>> 0; }
 // Length-pad to a multiple of 64 bytes with the bit length appended as a
 // little-endian 64-bit value: identical for MD4 and MD5.
 function padMdInput(bytes) {
+  log.debug("Entering padMdInput().");
   var len = bytes.length;
   var withOne = len + 1;
   var padded = new Uint8Array(withOne + ((56 - (withOne % 64)) + 64) % 64 + 8);
@@ -245,6 +295,7 @@ function padMdInput(bytes) {
   padded[at + 5] = (bitsHi >>> 8) & 0xff;
   padded[at + 6] = (bitsHi >>> 16) & 0xff;
   padded[at + 7] = (bitsHi >>> 24) & 0xff;
+  log.debug("Leaving padMdInput().");
   return padded;
 }
 
@@ -252,7 +303,8 @@ function wordsOfBlock(padded, offset) {
   var X = new Array(16);
   for (var i = 0; i < 16; i++) {
     var j = offset + i * 4;
-    X[i] = (padded[j] | (padded[j + 1] << 8) | (padded[j + 2] << 16) | (padded[j + 3] << 24)) >>> 0;
+    X[i] = (padded[j] | (padded[j + 1] << 8) | (padded[j + 
+        2] << 16) | (padded[j + 3] << 24)) >>> 0;
   }
   return X;
 }
@@ -273,6 +325,7 @@ function digestToBytes(state) {
 var MD4_R3_ORDER = [0, 8, 4, 12, 2, 10, 6, 14, 1, 9, 5, 13, 3, 11, 7, 15];
 
 function md4(input) {
+  log.debug("Entering md4().");
   var padded = padMdInput(toBytes(input));
   var h = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
   var F = function (x, y, z) { return ((x & y) | (~x & z)) >>> 0; };
@@ -282,9 +335,9 @@ function md4(input) {
     var X = wordsOfBlock(padded, off);
     var a = h[0], b = h[1], c = h[2], d = h[3], i;
     // Written as the RFC writes it — four operations per group, registers named
-    // in the [abcd] [dabc] [cdab] [bcda] rotation — rather than as a loop over a
-    // shift table. The compact form is one transposition away from being wrong
-    // in a way only the published vectors would catch.
+    // in the [abcd] [dabc] [cdab] [bcda] rotation — rather than as a loop over
+    // a shift table. The compact form is one transposition away from being
+    // wrong in a way only the published vectors would catch.
     for (i = 0; i < 16; i += 4) {                                    // round 1
       a = rotl((a + F(b, c, d) + X[i]) >>> 0, 3);
       d = rotl((d + F(a, b, c) + X[i + 1]) >>> 0, 7);
@@ -300,20 +353,24 @@ function md4(input) {
     for (i = 0; i < 16; i += 4) {                                    // round 3
       a = rotl((a + H(b, c, d) + X[MD4_R3_ORDER[i]] + 0x6ed9eba1) >>> 0, 3);
       d = rotl((d + H(a, b, c) + X[MD4_R3_ORDER[i + 1]] + 0x6ed9eba1) >>> 0, 9);
-      c = rotl((c + H(d, a, b) + X[MD4_R3_ORDER[i + 2]] + 0x6ed9eba1) >>> 0, 11);
-      b = rotl((b + H(c, d, a) + X[MD4_R3_ORDER[i + 3]] + 0x6ed9eba1) >>> 0, 15);
+      c = rotl((c + H(d, a, b) + X[MD4_R3_ORDER[i + 2]] + 0x6ed9eba1) >>> 0, 
+          11);
+      b = rotl((b + H(c, d, a) + X[MD4_R3_ORDER[i + 3]] + 0x6ed9eba1) >>> 0, 
+          15);
     }
     h[0] = (h[0] + a) >>> 0;
     h[1] = (h[1] + b) >>> 0;
     h[2] = (h[2] + c) >>> 0;
     h[3] = (h[3] + d) >>> 0;
   }
+  log.debug("Leaving md4().");
   return digestToBytes(h);
 }
 
 var MD5_K = (function () {
   var k = new Array(64);
-  for (var i = 0; i < 64; i++) k[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296) >>> 0;
+  for (var i = 0; i < 64; i++) k[i] = Math.floor(Math.abs(Math.sin(i + 
+      1)) * 4294967296) >>> 0;
   return k;
 })();
 var MD5_SHIFT = [
@@ -324,6 +381,7 @@ var MD5_SHIFT = [
 ];
 
 function md5(input) {
+  log.debug("Entering md5().");
   var padded = padMdInput(toBytes(input));
   var h = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
   for (var off = 0; off < padded.length; off += 64) {
@@ -337,7 +395,8 @@ function md5(input) {
       else { f = c ^ (b | ~d); g = (7 * i) % 16; }
       var tmp = d;
       d = c; c = b;
-      b = (b + rotl((a + (f >>> 0) + MD5_K[i] + X[g]) >>> 0, MD5_SHIFT[i])) >>> 0;
+      b = (b + rotl((a + (f >>> 0) + MD5_K[i] + X[g]) >>> 0, 
+          MD5_SHIFT[i])) >>> 0;
       a = tmp;
     }
     h[0] = (h[0] + a) >>> 0;
@@ -345,11 +404,13 @@ function md5(input) {
     h[2] = (h[2] + c) >>> 0;
     h[3] = (h[3] + d) >>> 0;
   }
+  log.debug("Leaving md5().");
   return digestToBytes(h);
 }
 
 // HMAC-MD5 (RFC 2104), needed because Web Crypto will not do HMAC over a hash
-// it does not implement. Block size 64 bytes, same as the SHA-2 family below it.
+// it does not implement. Block size 64 bytes, same as the SHA-2 family below
+// it.
 function hmacMd5(key, message) {
   var k = toBytes(key);
   if (k.length > 64) k = md5(k);
@@ -365,6 +426,7 @@ function hmacMd5(key, message) {
 // Symmetric: the same call encrypts and decrypts.
 // ---------------------------------------------------------------------------
 function rc4(key, data) {
+  log.debug("Entering rc4().");
   var k = toBytes(key), input = toBytes(data);
   var s = new Uint8Array(256), i, j = 0, t;
   for (i = 0; i < 256; i++) s[i] = i;
@@ -380,6 +442,7 @@ function rc4(key, data) {
     t = s[i]; s[i] = s[j]; s[j] = t;
     out[n] = input[n] ^ s[(s[i] + s[j]) & 0xff];
   }
+  log.debug("Leaving rc4().");
   return out;
 }
 

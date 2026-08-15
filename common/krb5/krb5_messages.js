@@ -62,17 +62,34 @@ var toBytes = prim.toBytes;
 var PVNO = 5;
 
 var MSG_TYPE = {
-  AS_REQ: 10, AS_REP: 11, TGS_REQ: 12, TGS_REP: 13,
-  AP_REQ: 14, AP_REP: 15, SAFE: 20, PRIV: 21, CRED: 22, ERROR: 30
+  AS_REQ: 10,
+  AS_REP: 11,
+  TGS_REQ: 12,
+  TGS_REP: 13,
+  AP_REQ: 14,
+  AP_REP: 15,
+  SAFE: 20,
+  PRIV: 21,
+  CRED: 22,
+  ERROR: 30
 };
 
 var APPLICATION = {
-  TICKET: 1, AUTHENTICATOR: 2, ENC_TICKET_PART: 3,
-  AS_REQ: 10, AS_REP: 11, TGS_REQ: 12, TGS_REP: 13,
-  AP_REQ: 14, AP_REP: 15,
+  TICKET: 1,
+  AUTHENTICATOR: 2,
+  ENC_TICKET_PART: 3,
+  AS_REQ: 10,
+  AS_REP: 11,
+  TGS_REQ: 12,
+  TGS_REP: 13,
+  AP_REQ: 14,
+  AP_REP: 15,
   KRB_CRED: 22,
-  ENC_AS_REP_PART: 25, ENC_TGS_REP_PART: 26, ENC_AP_REP_PART: 27,
-  ENC_KRB_PRIV_PART: 28, ENC_KRB_CRED_PART: 29,
+  ENC_AS_REP_PART: 25,
+  ENC_TGS_REP_PART: 26,
+  ENC_AP_REP_PART: 27,
+  ENC_KRB_PRIV_PART: 28,
+  ENC_KRB_CRED_PART: 29,
   KRB_ERROR: 30
 };
 
@@ -113,10 +130,15 @@ var PA_TYPE_NAMES = (function () {
 // KDCOptions, RFC 4120 section 5.4.1. Bit 0 is the most significant bit of the
 // first octet — see krb5_asn1.js's note on flag order.
 var KDC_OPTION = {
-  FORWARDABLE: 1, FORWARDED: 2, PROXIABLE: 3, PROXY: 4,
-  ALLOW_POSTDATE: 5, POSTDATED: 6, RENEWABLE: 8,
+  FORWARDABLE: 1,
+  FORWARDED: 2,
+  PROXIABLE: 3,
+  PROXY: 4,
+  ALLOW_POSTDATE: 5,
+  POSTDATED: 6,
+  RENEWABLE: 8,
   OPT_HARDWARE_AUTH: 11,
-  CNAME_IN_ADDL_TKT: 14,          // MS-SFU calls this constrained-delegation
+  CNAME_IN_ADDL_TKT: 14,  // MS-SFU calls this constrained-delegation
   CANONICALIZE: 15,
   REQUEST_ANONYMOUS: 16,
   DISABLE_TRANSITED_CHECK: 26,
@@ -127,11 +149,21 @@ var KDC_OPTION = {
 };
 
 var TICKET_FLAG = {
-  FORWARDABLE: 1, FORWARDED: 2, PROXIABLE: 3, PROXY: 4,
-  MAY_POSTDATE: 5, POSTDATED: 6, INVALID: 7, RENEWABLE: 8,
-  INITIAL: 9, PRE_AUTHENT: 10, HW_AUTHENT: 11,
-  TRANSITED_POLICY_CHECKED: 12, OK_AS_DELEGATE: 13,
-  ENC_PA_REP: 15, ANONYMOUS: 16
+  FORWARDABLE: 1,
+  FORWARDED: 2,
+  PROXIABLE: 3,
+  PROXY: 4,
+  MAY_POSTDATE: 5,
+  POSTDATED: 6,
+  INVALID: 7,
+  RENEWABLE: 8,
+  INITIAL: 9,
+  PRE_AUTHENT: 10,
+  HW_AUTHENT: 11,
+  TRANSITED_POLICY_CHECKED: 12,
+  OK_AS_DELEGATE: 13,
+  ENC_PA_REP: 15,
+  ANONYMOUS: 16
 };
 
 var AP_OPTION = { USE_SESSION_KEY: 1, MUTUAL_REQUIRED: 2 };
@@ -144,78 +176,126 @@ var ERROR_CODE = {
   1: ["KDC_ERR_NAME_EXP", "The client's entry has expired"],
   2: ["KDC_ERR_SERVICE_EXP", "The server's entry has expired"],
   3: ["KDC_ERR_BAD_PVNO", "The KDC does not speak this protocol version"],
-  6: ["KDC_ERR_C_PRINCIPAL_UNKNOWN", "No such client principal in this realm — check the spelling AND the realm, which is case-sensitive"],
-  7: ["KDC_ERR_S_PRINCIPAL_UNKNOWN", "No such service principal — an SPN that is not registered, or registered on a different account"],
-  8: ["KDC_ERR_PRINCIPAL_NOT_UNIQUE", "More than one entry matches this principal (a duplicate SPN)"],
-  9: ["KDC_ERR_NULL_KEY", "The principal has no key — often an account that has never had a password set"],
-  10: ["KDC_ERR_CANNOT_POSTDATE", "A postdated ticket was requested and is not allowed"],
-  11: ["KDC_ERR_NEVER_VALID", "The requested validity window is empty or inverted"],
-  12: ["KDC_ERR_POLICY", "Refused by policy — logon hours, workstation restrictions, or a disabled account"],
-  13: ["KDC_ERR_BADOPTION", "An option in the request cannot be honoured for this principal (delegation is a common one)"],
-  14: ["KDC_ERR_ETYPE_NOSUPP", "The KDC supports none of the encryption types offered. In 2026 this is usually RC4 being disabled, or an account whose msDS-SupportedEncryptionTypes excludes AES"],
-  15: ["KDC_ERR_SUMTYPE_NOSUPP", "The KDC supports none of the checksum types offered"],
-  16: ["KDC_ERR_PADATA_TYPE_NOSUPP", "The pre-authentication type is not supported — also what AD answers when PKINIT is attempted without a certificate it trusts"],
+  6: ["KDC_ERR_C_PRINCIPAL_UNKNOWN", "No such client principal in this realm " +
+      "— check the spelling AND the realm, which is case-sensitive"],
+  7: ["KDC_ERR_S_PRINCIPAL_UNKNOWN", "No such service principal — an SPN " +
+      "that is not registered, or registered on a different account"],
+  8: ["KDC_ERR_PRINCIPAL_NOT_UNIQUE", "More than one entry matches this " +
+      "principal (a duplicate SPN)"],
+  9: ["KDC_ERR_NULL_KEY", "The principal has no key — often an account that " +
+      "has never had a password set"],
+  10: ["KDC_ERR_CANNOT_POSTDATE", "A postdated ticket was requested and is " +
+      "not allowed"],
+  11: ["KDC_ERR_NEVER_VALID", "The requested validity window is empty or " +
+      "inverted"],
+  12: ["KDC_ERR_POLICY", "Refused by policy — logon hours, workstation " +
+      "restrictions, or a disabled account"],
+  13: ["KDC_ERR_BADOPTION", "An option in the request cannot be honoured for " +
+      "this principal (delegation is a common one)"],
+  14: ["KDC_ERR_ETYPE_NOSUPP", "The KDC supports none of the encryption " +
+      "types offered. In 2026 this is usually RC4 being disabled, or an " +
+      "account whose msDS-SupportedEncryptionTypes excludes AES"],
+  15: ["KDC_ERR_SUMTYPE_NOSUPP", "The KDC supports none of the checksum " +
+      "types offered"],
+  16: ["KDC_ERR_PADATA_TYPE_NOSUPP", "The pre-authentication type is not " +
+      "supported — also what AD answers when PKINIT is attempted without a " +
+      "certificate it trusts"],
   17: ["KDC_ERR_TRTYPE_NOSUPP", "The transited encoding type is not supported"],
-  18: ["KDC_ERR_CLIENT_REVOKED", "The client's credentials are revoked — a disabled or locked-out account"],
+  18: ["KDC_ERR_CLIENT_REVOKED", "The client's credentials are revoked — a " +
+      "disabled or locked-out account"],
   19: ["KDC_ERR_SERVICE_REVOKED", "The service's credentials are revoked"],
   20: ["KDC_ERR_TGT_REVOKED", "The TGT has been revoked"],
   21: ["KDC_ERR_CLIENT_NOTYET", "The client is not yet valid"],
   22: ["KDC_ERR_SERVICE_NOTYET", "The server is not yet valid"],
   23: ["KDC_ERR_KEY_EXPIRED", "The password has expired and must be changed"],
-  24: ["KDC_ERR_PREAUTH_FAILED", "Pre-authentication failed — the classic wrong password, but ALSO what a wrong salt or a clock outside the skew produces"],
-  25: ["KDC_ERR_PREAUTH_REQUIRED", "Pre-authentication is required. Not a failure: the accompanying PA-ETYPE-INFO2 carries the salt and iteration count needed to build the real request"],
+  24: ["KDC_ERR_PREAUTH_FAILED", "Pre-authentication failed — the classic " +
+      "wrong password, but ALSO what a wrong salt or a clock outside the " +
+      "skew produces"],
+  25: ["KDC_ERR_PREAUTH_REQUIRED", "Pre-authentication is required. Not a " +
+      "failure: the accompanying PA-ETYPE-INFO2 carries the salt and " +
+      "iteration count needed to build the real request"],
   26: ["KDC_ERR_SERVER_NOMATCH", "The server and ticket do not match"],
-  27: ["KDC_ERR_MUST_USE_USER2USER", "The service requires user-to-user authentication"],
-  28: ["KDC_ERR_PATH_NOT_ACCEPTED", "The KDC will not accept the transited path"],
+  27: ["KDC_ERR_MUST_USE_USER2USER", "The service requires user-to-user " +
+      "authentication"],
+  28: ["KDC_ERR_PATH_NOT_ACCEPTED", "The KDC will not accept the transited " +
+      "path"],
   29: ["KDC_ERR_SVC_UNAVAILABLE", "The service is unavailable"],
-  31: ["KRB_AP_ERR_BAD_INTEGRITY", "Decryption integrity check failed. Indistinguishable at this layer from a wrong password, a wrong key usage number, a wrong salt or a wrong encoding"],
+  31: ["KRB_AP_ERR_BAD_INTEGRITY", "Decryption integrity check failed. " +
+      "Indistinguishable at this layer from a wrong password, a wrong key " +
+      "usage number, a wrong salt or a wrong encoding"],
   32: ["KRB_AP_ERR_TKT_EXPIRED", "The ticket has expired"],
   33: ["KRB_AP_ERR_TKT_NYV", "The ticket is not yet valid"],
-  34: ["KRB_AP_ERR_REPEAT", "The request is a replay — the service's replay cache has seen this authenticator"],
+  34: ["KRB_AP_ERR_REPEAT", "The request is a replay — the service's replay " +
+      "cache has seen this authenticator"],
   35: ["KRB_AP_ERR_NOT_US", "The ticket is not for this service"],
   36: ["KRB_AP_ERR_BADMATCH", "The ticket and the authenticator do not match"],
-  37: ["KRB_AP_ERR_SKEW", "The clock skew is too great. AD's default tolerance is five minutes; the KDC's own time is in this message's stime, so the skew can be measured rather than guessed"],
-  38: ["KRB_AP_ERR_BADADDR", "The request is from an address the ticket does not permit"],
+  37: ["KRB_AP_ERR_SKEW", "The clock skew is too great. AD's default " +
+      "tolerance is five minutes; the KDC's own time is in this message's " +
+      "stime, so the skew can be measured rather than guessed"],
+  38: ["KRB_AP_ERR_BADADDR", "The request is from an address the ticket does " +
+      "not permit"],
   39: ["KRB_AP_ERR_BADVERSION", "The protocol version does not match"],
   40: ["KRB_AP_ERR_MSG_TYPE", "An unexpected message type"],
   41: ["KRB_AP_ERR_MODIFIED", "The message was modified in transit"],
   42: ["KRB_AP_ERR_BADORDER", "The message is out of order"],
-  44: ["KRB_AP_ERR_BADKEYVER", "The ticket was encrypted with a different key version than the service holds — a keytab that is out of date with the account's password"],
+  44: ["KRB_AP_ERR_BADKEYVER", "The ticket was encrypted with a different " +
+      "key version than the service holds — a keytab that is out of date " +
+      "with the account's password"],
   45: ["KRB_AP_ERR_NOKEY", "The service has no key of the required type"],
   46: ["KRB_AP_ERR_MUT_FAIL", "Mutual authentication failed"],
   47: ["KRB_AP_ERR_BADDIRECTION", "The message is in the wrong direction"],
   48: ["KRB_AP_ERR_METHOD", "An alternative authentication method is required"],
   49: ["KRB_AP_ERR_BADSEQ", "An incorrect sequence number"],
-  50: ["KRB_AP_ERR_INAPP_CKSUM", "The checksum type is inappropriate — this is what a wrong 0x8003 GSS checksum looks like"],
+  50: ["KRB_AP_ERR_INAPP_CKSUM", "The checksum type is inappropriate — this " +
+      "is what a wrong 0x8003 GSS checksum looks like"],
   51: ["KRB_AP_PATH_NOT_ACCEPTED", "The path is not accepted"],
-  52: ["KRB_ERR_RESPONSE_TOO_BIG", "The reply will not fit in a UDP datagram; retry over TCP. Expected rather than exceptional against AD, whose PAC makes most replies large"],
-  60: ["KRB_ERR_GENERIC", "A generic error — read e-text, which is where the KDC says what it actually objected to"],
+  52: ["KRB_ERR_RESPONSE_TOO_BIG", "The reply will not fit in a UDP " +
+      "datagram; retry over TCP. Expected rather than exceptional against " +
+      "AD, whose PAC makes most replies large"],
+  60: ["KRB_ERR_GENERIC", "A generic error — read e-text, which is where the " +
+      "KDC says what it actually objected to"],
   61: ["KRB_ERR_FIELD_TOOLONG", "A field is too long for this implementation"],
-  62: ["KDC_ERROR_CLIENT_NOT_TRUSTED", "The client certificate is not trusted (PKINIT)"],
-  63: ["KDC_ERROR_KDC_NOT_TRUSTED", "The KDC certificate is not trusted (PKINIT)"],
+  62: ["KDC_ERROR_CLIENT_NOT_TRUSTED", "The client certificate is not " +
+      "trusted (PKINIT)"],
+  63: ["KDC_ERROR_KDC_NOT_TRUSTED", "The KDC certificate is not trusted " +
+      "(PKINIT)"],
   64: ["KDC_ERROR_INVALID_SIG", "An invalid signature (PKINIT)"],
-  68: ["KDC_ERR_WRONG_REALM", "Wrong realm — with a referral this is informational, and the correct realm is in this message"],
-  69: ["KRB_AP_ERR_USER_TO_USER_REQUIRED", "User-to-user authentication is required"],
-  71: ["KDC_ERR_PATH_NOT_ACCEPTED", "The KDC will not accept the transited path"],
+  68: ["KDC_ERR_WRONG_REALM", "Wrong realm — with a referral this is " +
+      "informational, and the correct realm is in this message"],
+  69: ["KRB_AP_ERR_USER_TO_USER_REQUIRED", "User-to-user authentication is " +
+      "required"],
+  71: ["KDC_ERR_PATH_NOT_ACCEPTED", "The KDC will not accept the transited " +
+      "path"],
   76: ["KDC_ERR_PREAUTH_EXPIRED", "The pre-authentication data has expired"],
-  93: ["KDC_ERR_MORE_PREAUTH_DATA_REQUIRED", "More pre-authentication is required (FAST)"]
+  93: ["KDC_ERR_MORE_PREAUTH_DATA_REQUIRED", "More pre-authentication is " +
+      "required (FAST)"]
 };
 
 function describeError(code) {
   var e = ERROR_CODE[code];
   return e ? { code: code, name: e[0], meaning: e[1] }
-           : { code: code, name: "UNKNOWN_ERROR_" + code, meaning: "Not a code this codec knows" };
+           : {
+             code: code,
+             name: "UNKNOWN_ERROR_" + code,
+             meaning: "Not a code this codec knows"
+           };
 }
 
 // ---------------------------------------------------------------------------
 // Small shared structures.
 // ---------------------------------------------------------------------------
 
-// PrincipalName ::= SEQUENCE { name-type [0] Int32, name-string [1] SEQUENCE OF KerberosString }
+// PrincipalName ::= SEQUENCE { name-type [0] Int32, name-string [1] SEQUENCE OF
+// KerberosString }
 function encPrincipalName(principal) {
-  var components = Array.isArray(principal.name) ? principal.name : [principal.name];
+  var components = Array.isArray(principal.name) ? principal.name : 
+      [principal.name];
   return asn1.encTaggedSequence([
-    { tag: 0, value: asn1.encInteger(principal.type === undefined ? NAME_TYPE.PRINCIPAL : principal.type) },
+    {
+      tag: 0,
+      value: asn1.encInteger(principal.type === undefined ? 
+          NAME_TYPE.PRINCIPAL : principal.type)
+    },
     { tag: 1, value: asn1.encSequenceOf(components.map(asn1.encGeneralString)) }
   ]);
 }
@@ -236,27 +316,38 @@ function principalToString(principal, realm) {
 }
 
 function parsePrincipal(text, defaultType) {
+  log.debug("Entering parsePrincipal().");
   var s = String(text).trim();
   var at = s.lastIndexOf("@");
   var realm = null;
   if (at > 0) { realm = s.slice(at + 1); s = s.slice(0, at); }
   var parts = s.split("/").filter(function (p) { return p.length > 0; });
-  if (!parts.length) throw new Error("krb5: empty principal name");
+  if (!parts.length) {
+    log.debug("Leaving parsePrincipal().");
+    throw new Error("krb5: empty principal name");
+  }
   var type = defaultType;
   if (type === undefined) {
     // A guess, and the UI must let it be overridden: a two-part name is
     // conventionally a service, and krbtgt is conventionally an instance.
-    if (parts.length > 1) type = (parts[0] === "krbtgt") ? NAME_TYPE.SRV_INST : NAME_TYPE.SRV_HST;
+    if (parts.length > 1) type = (parts[0] === "krbtgt") ? NAME_TYPE.SRV_INST : 
+        NAME_TYPE.SRV_HST;
     else type = NAME_TYPE.PRINCIPAL;
   }
+  log.debug("Leaving parsePrincipal().");
   return { type: type, name: parts, realm: realm };
 }
 
-// EncryptedData ::= SEQUENCE { etype [0] Int32, kvno [1] UInt32 OPTIONAL, cipher [2] OCTET STRING }
+// EncryptedData ::= SEQUENCE { etype [0] Int32, kvno [1] UInt32 OPTIONAL,
+// cipher [2] OCTET STRING }
 function encEncryptedData(d) {
   return asn1.encTaggedSequence([
     { tag: 0, value: asn1.encInteger(d.etype) },
-    { tag: 1, value: (d.kvno === undefined || d.kvno === null) ? null : asn1.encInteger(d.kvno) },
+    {
+      tag: 1,
+      value: (d.kvno === undefined || d.kvno === null) ? null : 
+          asn1.encInteger(d.kvno)
+    },
     { tag: 2, value: asn1.encOctetString(d.cipher) }
   ]);
 }
@@ -282,7 +373,11 @@ function encEncryptionKey(k) {
 function readEncryptionKey(t) {
   var f = asn1.readTaggedSequence(t.value);
   var etype = asn1.decInteger(f[0]);
-  return { etype: etype, etypeName: kcrypto.etypeName(etype), key: asn1.decOctetString(f[1]) };
+  return {
+    etype: etype,
+    etypeName: kcrypto.etypeName(etype),
+    key: asn1.decOctetString(f[1])
+  };
 }
 
 // Checksum ::= SEQUENCE { cksumtype [0] Int32, checksum [1] OCTET STRING }
@@ -321,12 +416,12 @@ function readPaData(t) {
 // HostAddress / HostAddresses — carried in tickets and requests, and the reason
 // a ticket can be refused for coming from the wrong place.
 //
-// Most deployments use addressless tickets (Active Directory issues them), so it
-// is tempting to read these and never write them. That asymmetry is a bug rather
-// than a simplification: this codec has to re-encode a message it decoded — the
-// decoder page does exactly that to show a round trip, and a relayed request must
-// go back out as it came in — so a field the reader understands and the writer
-// drops turns into silently different bytes.
+// Most deployments use addressless tickets (Active Directory issues them), so
+// it is tempting to read these and never write them. That asymmetry is a bug
+// rather than a simplification: this codec has to re-encode a message it
+// decoded — the decoder page does exactly that to show a round trip, and a
+// relayed request must go back out as it came in — so a field the reader
+// understands and the writer drops turns into silently different bytes.
 function encHostAddresses(addresses) {
   return asn1.encSequenceOf((addresses || []).map(function (a) {
     return asn1.encTaggedSequence([
@@ -343,9 +438,10 @@ function readHostAddresses(t) {
   });
 }
 
-// A SINGLE HostAddress rather than the SEQUENCE OF. KRB-CRED's s-address and r-address are
-// one address each, not a list — encoding them with the plural wraps them in an extra
-// SEQUENCE, which decodes as a HostAddress whose type field is a whole structure.
+// A SINGLE HostAddress rather than the SEQUENCE OF. KRB-CRED's s-address and
+// r-address are one address each, not a list — encoding them with the plural
+// wraps them in an extra SEQUENCE, which decodes as a HostAddress whose type
+// field is a whole structure.
 function encHostAddress(a) {
   return asn1.encTaggedSequence([
     { tag: 0, value: asn1.encInteger(a.type) },
@@ -358,11 +454,12 @@ function readHostAddress(t) {
   return { type: asn1.decInteger(f[0]), address: asn1.decOctetString(f[1]) };
 }
 
-// AuthorizationData ::= SEQUENCE OF SEQUENCE { ad-type [0] Int32, ad-data [1] OCTET STRING }
-// The PAC arrives in here, wrapped in AD-IF-RELEVANT. Kept as raw bytes on purpose — it is
-// not DER inside, so decoding it belongs to krb5_pac.js and not to this module. Use
-// kpac.findPacs() to get at it: looking for ad-type 128 at the top level finds nothing on
-// a ticket that has one, because AD-IF-RELEVANT is a container.
+// AuthorizationData ::= SEQUENCE OF SEQUENCE { ad-type [0] Int32, ad-data [1]
+// OCTET STRING } The PAC arrives in here, wrapped in AD-IF-RELEVANT. Kept as
+// raw bytes on purpose — it is not DER inside, so decoding it belongs to
+// krb5_pac.js and not to this module. Use kpac.findPacs() to get at it: looking
+// for ad-type 128 at the top level finds nothing on a ticket that has one,
+// because AD-IF-RELEVANT is a container.
 function readAuthorizationData(t) {
   return asn1.decSequenceOf(t).map(function (a) {
     var f = asn1.readTaggedSequence(a.value);
@@ -387,7 +484,12 @@ function encAuthorizationData(entries) {
 // risks a different DER than the one a checksum was computed over.
 // ---------------------------------------------------------------------------
 function encTicket(ticket) {
-  if (ticket.raw) return toBytes(ticket.raw);
+  log.debug("Entering encTicket().");
+  if (ticket.raw) {
+    log.debug("Leaving encTicket().");
+    return toBytes(ticket.raw);
+  }
+  log.debug("Leaving encTicket().");
   return asn1.encApplication(APPLICATION.TICKET, asn1.encTaggedSequence([
     { tag: 0, value: asn1.encInteger(PVNO) },
     { tag: 1, value: asn1.encGeneralString(ticket.realm) },
@@ -400,15 +502,21 @@ function encTicket(ticket) {
 // is how it arrives as field [5] of a KDC-REP). Either way `raw` comes out as
 // the ticket's ORIGINAL bytes, because that is what must go back on the wire.
 function elementBytes(t) {
-  if (t instanceof Uint8Array) return t;
-  if (t && t.raw) return t.raw;
+  if (t instanceof Uint8Array) {
+    return t;
+  }
+  if (t && t.raw) {
+    return t.raw;
+  }
   throw new Error("krb5: expected bytes or a parsed ASN.1 element");
 }
 
 function readTicket(t) {
+  log.debug("Entering readTicket().");
   var bytes = elementBytes(t);
   var app = asn1.readApplication(bytes, APPLICATION.TICKET);
   var f = asn1.readTaggedSequence(app.sequence.value);
+  log.debug("Leaving readTicket().");
   return {
     tktVno: asn1.decInteger(f[0]),
     realm: asn1.decGeneralString(f[1]),
@@ -420,8 +528,10 @@ function readTicket(t) {
 
 // EncTicketPart ::= [APPLICATION 3] SEQUENCE
 function readEncTicketPart(bytes) {
+  log.debug("Entering readEncTicketPart().");
   var app = asn1.readApplication(bytes, APPLICATION.ENC_TICKET_PART);
   var f = asn1.readTaggedSequence(app.sequence.value);
+  log.debug("Leaving readEncTicketPart().");
   return {
     flags: asn1.bitsFromFlags(asn1.decFlags(f[0])),
     key: readEncryptionKey(f[1]),
@@ -429,7 +539,10 @@ function readEncTicketPart(bytes) {
     cname: readPrincipalName(f[3]),
     transited: (function () {
       var tf = asn1.readTaggedSequence(f[4].value);
-      return { type: asn1.decInteger(tf[0]), contents: asn1.decOctetString(tf[1]) };
+      return {
+        type: asn1.decInteger(tf[0]),
+        contents: asn1.decOctetString(tf[1])
+      };
     })(),
     authtime: asn1.decKerberosTime(f[5]),
     starttime: f[6] ? asn1.decKerberosTime(f[6]) : null,
@@ -441,21 +554,38 @@ function readEncTicketPart(bytes) {
 }
 
 function encEncTicketPart(p) {
-  return asn1.encApplication(APPLICATION.ENC_TICKET_PART, asn1.encTaggedSequence([
+  log.debug("Leaving encEncTicketPart().");
+  log.debug("Entering encEncTicketPart().");
+  return asn1.encApplication(APPLICATION.ENC_TICKET_PART, 
+      asn1.encTaggedSequence([
     { tag: 0, value: asn1.encFlags(p.flags) },
     { tag: 1, value: encEncryptionKey(p.key) },
     { tag: 2, value: asn1.encGeneralString(p.crealm) },
     { tag: 3, value: encPrincipalName(p.cname) },
     { tag: 4, value: asn1.encTaggedSequence([
-        { tag: 0, value: asn1.encInteger((p.transited && p.transited.type) || 0) },
-        { tag: 1, value: asn1.encOctetString((p.transited && p.transited.contents) || new Uint8Array(0)) }
+        {
+          tag: 0,
+          value: asn1.encInteger((p.transited && p.transited.type) || 0)
+        },
+        {
+          tag: 1,
+          value: asn1.encOctetString((p.transited && p.transited.contents) || 
+              new Uint8Array(0))
+        }
       ]) },
     { tag: 5, value: asn1.encKerberosTime(p.authtime) },
     { tag: 6, value: p.starttime ? asn1.encKerberosTime(p.starttime) : null },
     { tag: 7, value: asn1.encKerberosTime(p.endtime) },
     { tag: 8, value: p.renewTill ? asn1.encKerberosTime(p.renewTill) : null },
-    { tag: 9, value: (p.caddr && p.caddr.length) ? encHostAddresses(p.caddr) : null },
-    { tag: 10, value: p.authorizationData ? encAuthorizationData(p.authorizationData) : null }
+    {
+      tag: 9,
+      value: (p.caddr && p.caddr.length) ? encHostAddresses(p.caddr) : null
+    },
+    {
+      tag: 10,
+      value: p.authorizationData ? encAuthorizationData(p.authorizationData) : 
+          null
+    }
   ]));
 }
 
@@ -463,6 +593,8 @@ function encEncTicketPart(p) {
 // KDC-REQ (AS-REQ / TGS-REQ).
 // ---------------------------------------------------------------------------
 function encKdcReqBody(body) {
+  log.debug("Leaving encKdcReqBody().");
+  log.debug("Entering encKdcReqBody().");
   return asn1.encTaggedSequence([
     { tag: 0, value: asn1.encFlags(body.kdcOptions || []) },
     { tag: 1, value: body.cname ? encPrincipalName(body.cname) : null },
@@ -472,17 +604,32 @@ function encKdcReqBody(body) {
     { tag: 5, value: asn1.encKerberosTime(body.till) },
     { tag: 6, value: body.rtime ? asn1.encKerberosTime(body.rtime) : null },
     { tag: 7, value: asn1.encInteger(body.nonce) },
-    { tag: 8, value: asn1.encSequenceOf((body.etypes || []).map(asn1.encInteger)) },
-    { tag: 9, value: (body.addresses && body.addresses.length)
-        ? encHostAddresses(body.addresses) : null },
-    { tag: 10, value: body.encAuthorizationData ? encEncryptedData(body.encAuthorizationData) : null },
-    { tag: 11, value: (body.additionalTickets && body.additionalTickets.length)
-        ? asn1.encSequenceOf(body.additionalTickets.map(encTicket)) : null }
+    {
+      tag: 8,
+      value: asn1.encSequenceOf((body.etypes || []).map(asn1.encInteger))
+    },
+    {
+      tag: 9,
+      value: (body.addresses && body.addresses.length)
+        ? encHostAddresses(body.addresses) : null
+    },
+    {
+      tag: 10,
+      value: body.encAuthorizationData ? 
+          encEncryptedData(body.encAuthorizationData) : null
+    },
+    {
+      tag: 11,
+      value: (body.additionalTickets && body.additionalTickets.length)
+        ? asn1.encSequenceOf(body.additionalTickets.map(encTicket)) : null
+    }
   ]);
 }
 
 function readKdcReqBody(t) {
+  log.debug("Entering readKdcReqBody().");
   var f = asn1.readTaggedSequence(t.value);
+  log.debug("Leaving readKdcReqBody().");
   return {
     kdcOptions: asn1.bitsFromFlags(asn1.decFlags(f[0])),
     cname: f[1] ? readPrincipalName(f[1]) : null,
@@ -504,22 +651,33 @@ function readKdcReqBody(t) {
 }
 
 function encKdcReq(req) {
+  log.debug("Entering encKdcReq().");
   var isTgs = req.msgType === MSG_TYPE.TGS_REQ;
+  log.debug("Leaving encKdcReq().");
   return asn1.encApplication(isTgs ? APPLICATION.TGS_REQ : APPLICATION.AS_REQ,
     asn1.encTaggedSequence([
       { tag: 1, value: asn1.encInteger(PVNO) },
       { tag: 2, value: asn1.encInteger(req.msgType) },
-      { tag: 3, value: (req.padata && req.padata.length)
-          ? asn1.encSequenceOf(req.padata.map(encPaData)) : null },
-      { tag: 4, value: req.reqBody.raw ? toBytes(req.reqBody.raw) : encKdcReqBody(req.reqBody) }
+      {
+        tag: 3,
+        value: (req.padata && req.padata.length)
+          ? asn1.encSequenceOf(req.padata.map(encPaData)) : null
+      },
+      {
+        tag: 4,
+        value: req.reqBody.raw ? toBytes(req.reqBody.raw) : 
+            encKdcReqBody(req.reqBody)
+      }
     ]));
 }
 
 function readKdcReq(bytes) {
   log.debug("Entering readKdcReq().");
   var app = asn1.readApplication(bytes);
-  if (app.applicationNumber !== APPLICATION.AS_REQ && app.applicationNumber !== APPLICATION.TGS_REQ) {
-    throw new Error("krb5: expected AS-REQ [APPLICATION 10] or TGS-REQ [APPLICATION 12], found [APPLICATION " +
+  if (app.applicationNumber !== APPLICATION.AS_REQ && 
+      app.applicationNumber !== APPLICATION.TGS_REQ) {
+    throw new Error("krb5: expected AS-REQ [APPLICATION 10] or TGS-REQ " +
+        "[APPLICATION 12], found [APPLICATION " +
       app.applicationNumber + "]");
   }
   var f = asn1.readTaggedSequence(app.sequence.value);
@@ -529,7 +687,9 @@ function readKdcReq(bytes) {
     padata: f[3] ? asn1.decSequenceOf(f[3]).map(readPaData) : [],
     reqBody: readKdcReqBody(f[4])
   };
-  if (out.pvno !== PVNO) throw new Error("krb5: protocol version " + out.pvno + ", expected 5");
+  if (out.pvno !== PVNO) {
+    throw new Error("krb5: protocol version " + out.pvno + ", expected 5");
+  }
   log.debug("Leaving readKdcReq(). msgType=" + out.msgType);
   return out;
 }
@@ -538,13 +698,18 @@ function readKdcReq(bytes) {
 // KDC-REP (AS-REP / TGS-REP).
 // ---------------------------------------------------------------------------
 function encKdcRep(rep) {
+  log.debug("Entering encKdcRep().");
   var isTgs = rep.msgType === MSG_TYPE.TGS_REP;
+  log.debug("Leaving encKdcRep().");
   return asn1.encApplication(isTgs ? APPLICATION.TGS_REP : APPLICATION.AS_REP,
     asn1.encTaggedSequence([
       { tag: 0, value: asn1.encInteger(PVNO) },
       { tag: 1, value: asn1.encInteger(rep.msgType) },
-      { tag: 2, value: (rep.padata && rep.padata.length)
-          ? asn1.encSequenceOf(rep.padata.map(encPaData)) : null },
+      {
+        tag: 2,
+        value: (rep.padata && rep.padata.length)
+          ? asn1.encSequenceOf(rep.padata.map(encPaData)) : null
+      },
       { tag: 3, value: asn1.encGeneralString(rep.crealm) },
       { tag: 4, value: encPrincipalName(rep.cname) },
       { tag: 5, value: encTicket(rep.ticket) },
@@ -555,8 +720,10 @@ function encKdcRep(rep) {
 function readKdcRep(bytes) {
   log.debug("Entering readKdcRep().");
   var app = asn1.readApplication(bytes);
-  if (app.applicationNumber !== APPLICATION.AS_REP && app.applicationNumber !== APPLICATION.TGS_REP) {
-    throw new Error("krb5: expected AS-REP [APPLICATION 11] or TGS-REP [APPLICATION 13], found [APPLICATION " +
+  if (app.applicationNumber !== APPLICATION.AS_REP && 
+      app.applicationNumber !== APPLICATION.TGS_REP) {
+    throw new Error("krb5: expected AS-REP [APPLICATION 11] or TGS-REP " +
+        "[APPLICATION 13], found [APPLICATION " +
       app.applicationNumber + "]");
   }
   var f = asn1.readTaggedSequence(app.sequence.value);
@@ -582,21 +749,29 @@ function readKdcRep(bytes) {
 // fails against a real deployment with "cannot decode", which reads as a
 // crypto problem.
 function readEncKdcRepPart(bytes) {
+  log.debug("Entering readEncKdcRepPart().");
   var app = asn1.readApplication(bytes);
   if (app.applicationNumber !== APPLICATION.ENC_AS_REP_PART &&
       app.applicationNumber !== APPLICATION.ENC_TGS_REP_PART) {
-    throw new Error("krb5: expected EncASRepPart [APPLICATION 25] or EncTGSRepPart [APPLICATION 26], found " +
+    log.debug("Leaving readEncKdcRepPart().");
+    throw new Error("krb5: expected EncASRepPart [APPLICATION 25] or " +
+        "EncTGSRepPart [APPLICATION 26], found " +
       "[APPLICATION " + app.applicationNumber + "]");
   }
   var f = asn1.readTaggedSequence(app.sequence.value);
+  log.debug("Leaving readEncKdcRepPart().");
   return {
     // Which tag actually arrived, so the UI can show that a KDC used the
     // irregular one rather than hiding it.
-    taggedAs: app.applicationNumber === APPLICATION.ENC_AS_REP_PART ? "EncASRepPart" : "EncTGSRepPart",
+    taggedAs: app.applicationNumber === APPLICATION.ENC_AS_REP_PART ? 
+        "EncASRepPart" : "EncTGSRepPart",
     key: readEncryptionKey(f[0]),
     lastReq: asn1.decSequenceOf(f[1]).map(function (lr) {
       var lf = asn1.readTaggedSequence(lr.value);
-      return { type: asn1.decInteger(lf[0]), value: asn1.decKerberosTime(lf[1]) };
+      return {
+        type: asn1.decInteger(lf[0]),
+        value: asn1.decKerberosTime(lf[1])
+      };
     }),
     nonce: asn1.decInteger(f[2]),
     keyExpiration: f[3] ? asn1.decKerberosTime(f[3]) : null,
@@ -613,16 +788,25 @@ function readEncKdcRepPart(bytes) {
 }
 
 function encEncKdcRepPart(p, applicationNumber) {
-  return asn1.encApplication(applicationNumber || APPLICATION.ENC_AS_REP_PART, asn1.encTaggedSequence([
+  log.debug("Leaving encEncKdcRepPart().");
+  log.debug("Entering encEncKdcRepPart().");
+  return asn1.encApplication(applicationNumber || APPLICATION.ENC_AS_REP_PART, 
+      asn1.encTaggedSequence([
     { tag: 0, value: encEncryptionKey(p.key) },
-    { tag: 1, value: asn1.encSequenceOf((p.lastReq || []).map(function (lr) {
+    {
+      tag: 1,
+      value: asn1.encSequenceOf((p.lastReq || []).map(function (lr) {
         return asn1.encTaggedSequence([
           { tag: 0, value: asn1.encInteger(lr.type) },
           { tag: 1, value: asn1.encKerberosTime(lr.value) }
         ]);
-      })) },
+      }))
+    },
     { tag: 2, value: asn1.encInteger(p.nonce) },
-    { tag: 3, value: p.keyExpiration ? asn1.encKerberosTime(p.keyExpiration) : null },
+    {
+      tag: 3,
+      value: p.keyExpiration ? asn1.encKerberosTime(p.keyExpiration) : null
+    },
     { tag: 4, value: asn1.encFlags(p.flags) },
     { tag: 5, value: asn1.encKerberosTime(p.authtime) },
     { tag: 6, value: p.starttime ? asn1.encKerberosTime(p.starttime) : null },
@@ -630,9 +814,15 @@ function encEncKdcRepPart(p, applicationNumber) {
     { tag: 8, value: p.renewTill ? asn1.encKerberosTime(p.renewTill) : null },
     { tag: 9, value: asn1.encGeneralString(p.srealm) },
     { tag: 10, value: encPrincipalName(p.sname) },
-    { tag: 11, value: (p.caddr && p.caddr.length) ? encHostAddresses(p.caddr) : null },
-    { tag: 12, value: (p.encryptedPaData && p.encryptedPaData.length)
-        ? asn1.encSequenceOf(p.encryptedPaData.map(encPaData)) : null }
+    {
+      tag: 11,
+      value: (p.caddr && p.caddr.length) ? encHostAddresses(p.caddr) : null
+    },
+    {
+      tag: 12,
+      value: (p.encryptedPaData && p.encryptedPaData.length)
+        ? asn1.encSequenceOf(p.encryptedPaData.map(encPaData)) : null
+    }
   ]));
 }
 
@@ -640,6 +830,8 @@ function encEncKdcRepPart(p, applicationNumber) {
 // AP-REQ / AP-REP / Authenticator.
 // ---------------------------------------------------------------------------
 function encAuthenticator(a) {
+  log.debug("Leaving encAuthenticator().");
+  log.debug("Entering encAuthenticator().");
   return asn1.encApplication(APPLICATION.AUTHENTICATOR, asn1.encTaggedSequence([
     { tag: 0, value: asn1.encInteger(PVNO) },
     { tag: 1, value: asn1.encGeneralString(a.crealm) },
@@ -648,15 +840,24 @@ function encAuthenticator(a) {
     { tag: 4, value: asn1.encInteger(a.cusec || 0) },
     { tag: 5, value: asn1.encKerberosTime(a.ctime) },
     { tag: 6, value: a.subkey ? encEncryptionKey(a.subkey) : null },
-    { tag: 7, value: (a.seqNumber === undefined || a.seqNumber === null)
-        ? null : asn1.encInteger(a.seqNumber) },
-    { tag: 8, value: a.authorizationData ? encAuthorizationData(a.authorizationData) : null }
+    {
+      tag: 7,
+      value: (a.seqNumber === undefined || a.seqNumber === null)
+        ? null : asn1.encInteger(a.seqNumber)
+    },
+    {
+      tag: 8,
+      value: a.authorizationData ? encAuthorizationData(a.authorizationData) : 
+          null
+    }
   ]));
 }
 
 function readAuthenticator(bytes) {
+  log.debug("Entering readAuthenticator().");
   var app = asn1.readApplication(bytes, APPLICATION.AUTHENTICATOR);
   var f = asn1.readTaggedSequence(app.sequence.value);
+  log.debug("Leaving readAuthenticator().");
   return {
     vno: asn1.decInteger(f[0]),
     crealm: asn1.decGeneralString(f[1]),
@@ -681,8 +882,10 @@ function encApReq(r) {
 }
 
 function readApReq(bytes) {
+  log.debug("Entering readApReq().");
   var app = asn1.readApplication(bytes, APPLICATION.AP_REQ);
   var f = asn1.readTaggedSequence(app.sequence.value);
+  log.debug("Leaving readApReq().");
   return {
     pvno: asn1.decInteger(f[0]),
     msgType: asn1.decInteger(f[1]),
@@ -711,12 +914,18 @@ function readApRep(bytes) {
 }
 
 function encEncApRepPart(p) {
-  return asn1.encApplication(APPLICATION.ENC_AP_REP_PART, asn1.encTaggedSequence([
+  log.debug("Leaving encEncApRepPart().");
+  log.debug("Entering encEncApRepPart().");
+  return asn1.encApplication(APPLICATION.ENC_AP_REP_PART, 
+      asn1.encTaggedSequence([
     { tag: 0, value: asn1.encKerberosTime(p.ctime) },
     { tag: 1, value: asn1.encInteger(p.cusec || 0) },
     { tag: 2, value: p.subkey ? encEncryptionKey(p.subkey) : null },
-    { tag: 3, value: (p.seqNumber === undefined || p.seqNumber === null)
-        ? null : asn1.encInteger(p.seqNumber) }
+    {
+      tag: 3,
+      value: (p.seqNumber === undefined || p.seqNumber === null)
+        ? null : asn1.encInteger(p.seqNumber)
+    }
   ]));
 }
 
@@ -735,11 +944,17 @@ function readEncApRepPart(bytes) {
 // KRB-ERROR.
 // ---------------------------------------------------------------------------
 function encKrbError(e) {
+  log.debug("Leaving encKrbError().");
+  log.debug("Entering encKrbError().");
   return asn1.encApplication(APPLICATION.KRB_ERROR, asn1.encTaggedSequence([
     { tag: 0, value: asn1.encInteger(PVNO) },
     { tag: 1, value: asn1.encInteger(MSG_TYPE.ERROR) },
     { tag: 2, value: e.ctime ? asn1.encKerberosTime(e.ctime) : null },
-    { tag: 3, value: (e.cusec === undefined || e.cusec === null) ? null : asn1.encInteger(e.cusec) },
+    {
+      tag: 3,
+      value: (e.cusec === undefined || e.cusec === null) ? null : 
+          asn1.encInteger(e.cusec)
+    },
     { tag: 4, value: asn1.encKerberosTime(e.stime) },
     { tag: 5, value: asn1.encInteger(e.susec || 0) },
     { tag: 6, value: asn1.encInteger(e.errorCode) },
@@ -779,13 +994,16 @@ function readKrbError(bytes) {
   // entirely (a TYPED-DATA, or on AD sometimes nothing useful).
   if (out.eData && out.eData.length) {
     try {
-      out.eDataPaData = asn1.readChildren(asn1.readTlv(out.eData, 0).value).map(readPaData);
+      out.eDataPaData = asn1.readChildren(asn1.readTlv(out.eData, 
+          0).value).map(readPaData);
     } catch (err) {
       out.eDataPaData = null;
-      out.eDataNote = "e-data is not a SEQUENCE OF PA-DATA (" + err.message + ")";
+      out.eDataNote = "e-data is not a SEQUENCE OF PA-DATA (" + err.message + 
+          ")";
     }
   }
-  log.debug("Leaving readKrbError(). code=" + code + " (" + out.error.name + ")");
+  log.debug("Leaving readKrbError(). code=" + code + " (" + out.error.name + 
+      ")");
   return out;
 }
 
@@ -793,25 +1011,35 @@ function readKrbError(bytes) {
 // Pre-authentication payloads.
 // ---------------------------------------------------------------------------
 
-// PA-ENC-TS-ENC ::= SEQUENCE { patimestamp [0] KerberosTime, pausec [1] Microseconds OPTIONAL }
+// PA-ENC-TS-ENC ::= SEQUENCE { patimestamp [0] KerberosTime, pausec [1]
+// Microseconds OPTIONAL }
 function encPaEncTsEnc(when, usec) {
   return asn1.encTaggedSequence([
     { tag: 0, value: asn1.encKerberosTime(when) },
-    { tag: 1, value: (usec === undefined || usec === null) ? null : asn1.encInteger(usec) }
+    {
+      tag: 1,
+      value: (usec === undefined || usec === null) ? null : 
+          asn1.encInteger(usec)
+    }
   ]);
 }
 
 function readPaEncTsEnc(bytes) {
   var t = asn1.readTlv(bytes, 0);
   var f = asn1.readTaggedSequence(t.value);
-  return { patimestamp: asn1.decKerberosTime(f[0]), pausec: f[1] ? asn1.decInteger(f[1]) : null };
+  return {
+    patimestamp: asn1.decKerberosTime(f[0]),
+    pausec: f[1] ? asn1.decInteger(f[1]) : null
+  };
 }
 
 // ETYPE-INFO2 — the reason KDC_ERR_PREAUTH_REQUIRED is not a failure. The salt
 // in here is not guessable (see the header note) and the s2kparams carry the
 // iteration count.
 function readEtypeInfo2(bytes) {
+  log.debug("Entering readEtypeInfo2().");
   var t = asn1.readTlv(bytes, 0);
+  log.debug("Leaving readEtypeInfo2().");
   return asn1.readChildren(t.value).map(function (entry) {
     var f = asn1.readTaggedSequence(entry.value);
     var etype = asn1.decInteger(f[0]);
@@ -825,10 +1053,16 @@ function readEtypeInfo2(bytes) {
 }
 
 function encEtypeInfo2(entries) {
+  log.debug("Leaving encEtypeInfo2().");
+  log.debug("Entering encEtypeInfo2().");
   return asn1.encSequenceOf(entries.map(function (e) {
     return asn1.encTaggedSequence([
       { tag: 0, value: asn1.encInteger(e.etype) },
-      { tag: 1, value: e.salt === null || e.salt === undefined ? null : asn1.encGeneralString(e.salt) },
+      {
+        tag: 1,
+        value: e.salt === null || e.salt === undefined ? null : 
+            asn1.encGeneralString(e.salt)
+      },
       { tag: 2, value: e.s2kparams ? asn1.encOctetString(e.s2kparams) : null }
     ]);
   }));
@@ -837,7 +1071,9 @@ function encEtypeInfo2(entries) {
 // The older ETYPE-INFO, whose salt is an OCTET STRING rather than a
 // KerberosString. Read-only: it is what an old KDC sends.
 function readEtypeInfo(bytes) {
+  log.debug("Entering readEtypeInfo().");
   var t = asn1.readTlv(bytes, 0);
+  log.debug("Leaving readEtypeInfo().");
   return asn1.readChildren(t.value).map(function (entry) {
     var f = asn1.readTaggedSequence(entry.value);
     var etype = asn1.decInteger(f[0]);
@@ -850,10 +1086,11 @@ function readEtypeInfo(bytes) {
 }
 
 // PA-PAC-REQUEST ::= SEQUENCE { include-pac [0] BOOLEAN } — MS-KILE. Being able
-// to ask for a ticket WITHOUT a PAC and watch a service's behaviour change is one
-// of the more useful things this tool can do.
+// to ask for a ticket WITHOUT a PAC and watch a service's behaviour change is
+// one of the more useful things this tool can do.
 function encPaPacRequest(include) {
-  return asn1.encSequence([asn1.encContext(0, asn1.tlv(0x01, new Uint8Array([include ? 0xff : 0x00])))]);
+  return asn1.encSequence([asn1.encContext(0, asn1.tlv(0x01, 
+      new Uint8Array([include ? 0xff : 0x00])))]);
 }
 
 function readPaPacRequest(bytes) {
@@ -899,27 +1136,47 @@ function encPaForUser(u) {
 // has forwarded something unusable. That is checked on read rather than assumed.
 // ---------------------------------------------------------------------------
 function encKrbCredInfo(info) {
+  log.debug("Leaving encKrbCredInfo().");
+  log.debug("Entering encKrbCredInfo().");
   return asn1.encTaggedSequence([
     { tag: 0, value: encEncryptionKey(info.key) },
     { tag: 1, value: info.prealm ? asn1.encGeneralString(info.prealm) : null },
     { tag: 2, value: info.pname ? encPrincipalName(info.pname) : null },
     { tag: 3, value: info.flags ? asn1.encFlags(info.flags) : null },
-    { tag: 4, value: info.authtime ? asn1.encKerberosTime(info.authtime) : null },
-    { tag: 5, value: info.starttime ? asn1.encKerberosTime(info.starttime) : null },
+    {
+      tag: 4,
+      value: info.authtime ? asn1.encKerberosTime(info.authtime) : null
+    },
+    {
+      tag: 5,
+      value: info.starttime ? asn1.encKerberosTime(info.starttime) : null
+    },
     { tag: 6, value: info.endtime ? asn1.encKerberosTime(info.endtime) : null },
-    { tag: 7, value: info.renewTill ? asn1.encKerberosTime(info.renewTill) : null },
+    {
+      tag: 7,
+      value: info.renewTill ? asn1.encKerberosTime(info.renewTill) : null
+    },
     { tag: 8, value: info.srealm ? asn1.encGeneralString(info.srealm) : null },
     { tag: 9, value: info.sname ? encPrincipalName(info.sname) : null },
-    { tag: 10, value: (info.caddr && info.caddr.length) ? encHostAddresses(info.caddr) : null }
+    {
+      tag: 10,
+      value: (info.caddr && info.caddr.length) ? encHostAddresses(info.caddr) : 
+          null
+    }
   ]);
 }
 
 function readKrbCredInfo(t) {
+  log.debug("Entering readKrbCredInfo().");
   var f = asn1.readTaggedSequence(t.value);
   if (!f[0]) {
-    throw new Error("krb5: a KrbCredInfo with no session key. Every other field is optional but " +
-      "that one is not — a forwarded ticket without its key cannot be used for anything.");
+    log.debug("Leaving readKrbCredInfo().");
+    throw new Error("krb5: a KrbCredInfo with no session key. Every other " +
+        "field is optional but " +
+      "that one is not — a forwarded ticket without its key cannot be used " +
+          "for anything.");
   }
+  log.debug("Leaving readKrbCredInfo().");
   return {
     key: readEncryptionKey(f[0]),
     prealm: f[1] ? asn1.decGeneralString(f[1]) : null,
@@ -936,19 +1193,35 @@ function readKrbCredInfo(t) {
 }
 
 function encEncKrbCredPart(p) {
-  return asn1.encApplication(APPLICATION.ENC_KRB_CRED_PART, asn1.encTaggedSequence([
-    { tag: 0, value: asn1.encSequenceOf((p.ticketInfo || []).map(encKrbCredInfo)) },
-    { tag: 1, value: p.nonce === undefined || p.nonce === null ? null : asn1.encInteger(p.nonce) },
+  log.debug("Leaving encEncKrbCredPart().");
+  log.debug("Entering encEncKrbCredPart().");
+  return asn1.encApplication(APPLICATION.ENC_KRB_CRED_PART, 
+      asn1.encTaggedSequence([
+    {
+      tag: 0,
+      value: asn1.encSequenceOf((p.ticketInfo || []).map(encKrbCredInfo))
+    },
+    {
+      tag: 1,
+      value: p.nonce === undefined || p.nonce === null ? null : 
+          asn1.encInteger(p.nonce)
+    },
     { tag: 2, value: p.timestamp ? asn1.encKerberosTime(p.timestamp) : null },
-    { tag: 3, value: p.usec === undefined || p.usec === null ? null : asn1.encInteger(p.usec) },
+    {
+      tag: 3,
+      value: p.usec === undefined || p.usec === null ? null : 
+          asn1.encInteger(p.usec)
+    },
     { tag: 4, value: p.sAddress ? encHostAddress(p.sAddress) : null },
     { tag: 5, value: p.rAddress ? encHostAddress(p.rAddress) : null }
   ]));
 }
 
 function readEncKrbCredPart(bytes) {
+  log.debug("Entering readEncKrbCredPart().");
   var app = asn1.readApplication(bytes, APPLICATION.ENC_KRB_CRED_PART);
   var f = asn1.readTaggedSequence(app.sequence.value);
+  log.debug("Leaving readEncKrbCredPart().");
   return {
     ticketInfo: asn1.decSequenceOf(f[0]).map(readKrbCredInfo),
     nonce: f[1] ? asn1.decInteger(f[1]) : null,
@@ -969,17 +1242,23 @@ function encKrbCred(c) {
 }
 
 function readKrbCred(bytes) {
+  log.debug("Entering readKrbCred().");
   var app = asn1.readApplication(bytes, APPLICATION.KRB_CRED);
   var f = asn1.readTaggedSequence(app.sequence.value);
   var msgType = asn1.decInteger(f[1]);
   if (msgType !== MSG_TYPE.CRED) {
-    throw new Error("krb5: this is tagged [APPLICATION 22] but its msg-type is " + msgType +
+    log.debug("Leaving readKrbCred().");
+    throw new Error("krb5: this is tagged [APPLICATION 22] but its msg-type " +
+        "is " + msgType +
       ", not 22");
   }
   var tickets = asn1.decSequenceOf(f[2]).map(readTicket);
   if (!tickets.length) {
-    throw new Error("krb5: a KRB-CRED carrying no tickets. There is nothing to delegate.");
+    log.debug("Leaving readKrbCred().");
+    throw new Error("krb5: a KRB-CRED carrying no tickets. There is nothing " +
+        "to delegate.");
   }
+  log.debug("Leaving readKrbCred().");
   return {
     pvno: asn1.decInteger(f[0]),
     msgType: msgType,
@@ -988,16 +1267,18 @@ function readKrbCred(bytes) {
   };
 }
 
-// PA-PAC-OPTIONS ([MS-KILE] section 2.2.10, extended by [MS-SFU] section 2.2.5).
+// PA-PAC-OPTIONS ([MS-KILE] section 2.2.10, extended by [MS-SFU] section
+// 2.2.5).
 //
 // A SEQUENCE around a KerberosFlags, and the bit that matters here is number 3:
-// **resource-based constrained delegation**. It is not decoration. [MS-SFU] requires a
-// KDC to answer an S4U2proxy request with KDC_ERR_BADOPTION when RBCD is what would
-// authorize it and this bit is absent — so a client that knows how to do RBCD but omits
-// the padata gets refused for a reason that says nothing about the padata.
+// **resource-based constrained delegation**. It is not decoration. [MS-SFU]
+// requires a KDC to answer an S4U2proxy request with KDC_ERR_BADOPTION when
+// RBCD is what would authorize it and this bit is absent — so a client that
+// knows how to do RBCD but omits the padata gets refused for a reason that says
+// nothing about the padata.
 //
-// Bit order is KerberosFlags order: bit 0 is the MOST significant bit of the FIRST
-// octet, so bit 3 is 0x10 of byte 0 rather than 0x08 of anything.
+// Bit order is KerberosFlags order: bit 0 is the MOST significant bit of the
+// FIRST octet, so bit 3 is 0x10 of byte 0 rather than 0x08 of anything.
 var PAC_OPTION = {
   CLAIMS: 0,
   BRANCH_AWARE: 1,
@@ -1032,7 +1313,8 @@ function flagNames(table, bits) {
   var byNumber = {};
   Object.keys(table).forEach(function (name) { byNumber[table[name]] = name; });
   return (bits || []).map(function (b) {
-    return byNumber[b] ? byNumber[b].toLowerCase().replace(/_/g, "-") : ("bit-" + b);
+    return byNumber[b] ? byNumber[b].toLowerCase().replace(/_/g, "-") : (
+        "bit-" + b);
   });
 }
 
@@ -1044,17 +1326,33 @@ function apOptionNames(bits) { return flagNames(AP_OPTION, bits); }
 // decoder page to choose a reader and by the api's relay to decide whether a
 // payload is a Kerberos request at all.
 var APPLICATION_NAMES = {
-  1: "Ticket", 2: "Authenticator", 3: "EncTicketPart",
-  10: "AS-REQ", 11: "AS-REP", 12: "TGS-REQ", 13: "TGS-REP",
-  14: "AP-REQ", 15: "AP-REP", 22: "KRB-CRED",
-  25: "EncASRepPart", 26: "EncTGSRepPart", 27: "EncAPRepPart",
-  28: "EncKrbPrivPart", 29: "EncKrbCredPart", 30: "KRB-ERROR"
+  1: "Ticket",
+  2: "Authenticator",
+  3: "EncTicketPart",
+  10: "AS-REQ",
+  11: "AS-REP",
+  12: "TGS-REQ",
+  13: "TGS-REP",
+  14: "AP-REQ",
+  15: "AP-REP",
+  22: "KRB-CRED",
+  25: "EncASRepPart",
+  26: "EncTGSRepPart",
+  27: "EncAPRepPart",
+  28: "EncKrbPrivPart",
+  29: "EncKrbCredPart",
+  30: "KRB-ERROR"
 };
 
 function identify(bytes) {
   var n = asn1.peekApplicationNumber(bytes);
-  if (n === null) return null;
-  return { applicationNumber: n, name: APPLICATION_NAMES[n] || ("[APPLICATION " + n + "]") };
+  if (n === null) {
+    return null;
+  }
+  return {
+    applicationNumber: n,
+    name: APPLICATION_NAMES[n] || ("[APPLICATION " + n + "]")
+  };
 }
 
 // Read whichever KDC message this is — a reply or the error that replaced it.
@@ -1062,15 +1360,24 @@ function identify(bytes) {
 // AS-REP or with a KRB-ERROR, and treating the error as a parse failure is how
 // KDC_ERR_PREAUTH_REQUIRED ends up looking like a broken codec.
 function readKdcResponse(bytes) {
+  log.debug("Entering readKdcResponse().");
   var id = identify(bytes);
-  if (!id) throw new Error("krb5: not a Kerberos message (no [APPLICATION n] tag)");
+  if (!id) {
+    log.debug("Leaving readKdcResponse().");
+    throw new Error("krb5: not a Kerberos message (no [APPLICATION n] tag)");
+  }
   if (id.applicationNumber === APPLICATION.KRB_ERROR) {
+    log.debug("Leaving readKdcResponse().");
     return { kind: "KRB-ERROR", error: readKrbError(bytes) };
   }
-  if (id.applicationNumber === APPLICATION.AS_REP || id.applicationNumber === APPLICATION.TGS_REP) {
+  if (id.applicationNumber === APPLICATION.AS_REP || 
+      id.applicationNumber === APPLICATION.TGS_REP) {
+    log.debug("Leaving readKdcResponse().");
     return { kind: id.name, rep: readKdcRep(bytes) };
   }
-  throw new Error("krb5: a KDC answered with " + id.name + ", which is neither a reply nor an error");
+  log.debug("Leaving readKdcResponse().");
+  throw new Error("krb5: a KDC answered with " + id.name + ", which is " +
+      "neither a reply nor an error");
 }
 
 module.exports = {

@@ -70,6 +70,7 @@ async function decode(driver, text) {
   await driver.wait(async function () {
     return (await driver.findElement(By.id("krb_output")).getText()).trim().length > 40;
   }, 20000, "the decoder produced no output");
+  log.debug("Leaving decode().");
   return driver.findElement(By.id("krb_output")).getText();
 }
 
@@ -81,10 +82,13 @@ async function theBundleLoadedAndTheButtonsWork(driver) {
   // A missing bundle leaves the module global undefined and every button inert,
   // which otherwise reads as "the decoder is broken" rather than "the script
   // 404'd".
-  const loaded = await driver.executeScript("return typeof window.kerberos_decoder;");
+  const loaded = await driver.executeScript("return typeof " +
+      "window.kerberos_decoder;");
   assert.strictEqual(loaded, "object",
-    "the kerberos_decoder bundle did not load — check the browserify line in client/Dockerfile " +
-    "AND the BUNDLES entry in client/build.js; a page registered in only one of the two fails " +
+    "the kerberos_decoder bundle did not load — check the browserify line in " +
+        "client/Dockerfile " +
+    "AND the BUNDLES entry in client/build.js; a page registered in only one " +
+        "of the two fails " +
     "in exactly this way, in only one of the two environments");
 
   const initial = await driver.findElement(By.id("krb_status")).getText();
@@ -100,11 +104,18 @@ async function decodesAPreauthErrorAndReadsOutTheSalt(driver) {
   log.debug("Entering decodesAPreauthErrorAndReadsOutTheSalt().");
   const err = msgs.encKrbError({
     stime: new Date(), susec: 0, errorCode: 25, realm: "EXAMPLE.COM",
-    sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] }, eText: "NEEDED_PREAUTH",
+    sname: {
+      type: 2,
+      name: ["krbtgt", "EXAMPLE.COM"]
+    }, eText: "NEEDED_PREAUTH",
     eData: asn1.encSequenceOf([msgs.encPaData({
       type: msgs.PA_TYPE.ETYPE_INFO2,
       value: msgs.encEtypeInfo2([
-        { etype: 18, salt: "EXAMPLE.COMalice", s2kparams: prim.fromHex("00001000") },
+        {
+          etype: 18,
+          salt: "EXAMPLE.COMalice",
+          s2kparams: prim.fromHex("00001000")
+        },
         { etype: 23, salt: null, s2kparams: null }])
     })])
   });
@@ -115,19 +126,23 @@ async function decodesAPreauthErrorAndReadsOutTheSalt(driver) {
     new Uint8Array([0, 0, (err.length >> 8) & 255, err.length & 255]), err]);
 
   const out = await decode(driver, b64(framed));
-  assert.strictEqual(await driver.findElement(By.css(".krb-kind")).getText(), "KRB-ERROR",
+  assert.strictEqual(await driver.findElement(By.css(".krb-kind")).getText(), 
+      "KRB-ERROR",
     "the message kind must be shown prominently");
   assert.ok(/TCP length prefix/.test(out),
     "the stripped TCP framing must be reported, not silently removed");
   assert.ok(/KDC_ERR_PREAUTH_REQUIRED/.test(out), "the error must be named");
-  assert.ok(/EXAMPLE\.COMalice/.test(out), "the SALT must be shown — it is the point of this error");
+  assert.ok(/EXAMPLE\.COMalice/.test(out), "the SALT must be shown — it is " +
+      "the point of this error");
   assert.ok(/4096/.test(out), "the s2kparams iteration count must be decoded");
   assert.ok(/not guessable/i.test(out),
-    "and the page must say the salt cannot be guessed, which is why this error matters");
+    "and the page must say the salt cannot be guessed, which is why this " +
+        "error matters");
   // PREAUTH_REQUIRED is not a failure, so the page must not present it as one.
   const problems = await driver.findElements(By.css(".krb-problems"));
   assert.strictEqual(problems.length, 0,
-    "KDC_ERR_PREAUTH_REQUIRED must NOT be listed as a problem — it is where the salt comes from");
+    "KDC_ERR_PREAUTH_REQUIRED must NOT be listed as a problem — it is where " +
+        "the salt comes from");
   log.debug("Leaving decodesAPreauthErrorAndReadsOutTheSalt().");
 }
 
@@ -148,12 +163,16 @@ async function surfacesWhatIsWrongWithARequest(driver) {
       etypes: [23]                                   // RC4 only
     }
   })));
-  assert.ok(/AS-REQ/.test(await driver.findElement(By.css(".krb-kind")).getText()), "kind");
+  assert.ok(/AS-REQ/.test(await driver.findElement(By.css(".krb-kind")).getText()), 
+      "kind");
   const problems = await driver.findElement(By.css(".krb-problems")).getText();
-  assert.ok(/not upper case/.test(problems), "a lower-case realm must be a finding: " + problems);
+  assert.ok(/not upper case/.test(problems), "a lower-case realm must be a " +
+      "finding: " + problems);
   assert.ok(/RC4/.test(problems) && /2025/.test(problems),
-    "an RC4-only etype list must be a finding naming the 2026 cause: " + problems);
-  assert.ok(/arcfour-hmac-md5/.test(out), "etypes must be named, not left as numbers");
+    "an RC4-only etype list must be a finding naming the 2026 cause: " + 
+        problems);
+  assert.ok(/arcfour-hmac-md5/.test(out), "etypes must be named, not left as " +
+      "numbers");
   log.debug("Leaving surfacesWhatIsWrongWithARequest().");
 }
 
@@ -176,7 +195,10 @@ async function renderesHostileValuesAsTextAndNotAsMarkup(driver) {
   const err = msgs.encKrbError({
     stime: new Date(), susec: 0, errorCode: 6,
     realm: payloadRealm,
-    sname: { type: 2, name: ["krbtgt", '<script>window.__krbPwned=1</script>'] },
+    sname: {
+      type: 2,
+      name: ["krbtgt", '<script>window.__krbPwned=1</script>']
+    },
     eText: payloadText
   });
 
@@ -185,21 +207,26 @@ async function renderesHostileValuesAsTextAndNotAsMarkup(driver) {
 
   const pwned = await driver.executeScript("return !!window.__krbPwned;");
   assert.strictEqual(pwned, false,
-    "a payload in a KDC's realm or e-text EXECUTED — this page must build every node with " +
+    "a payload in a KDC's realm or e-text EXECUTED — this page must build " +
+        "every node with " +
     "textContent, never innerHTML");
 
   const injected = await driver.executeScript(
-    "return document.querySelectorAll('#krb_output img, #krb_output h1, #krb_output script, " +
+    "return document.querySelectorAll('#krb_output img, #krb_output h1, " +
+        "#krb_output script, " +
     "#krb_injected').length;");
   assert.strictEqual(injected, 0,
-    "the payload created " + injected + " element(s) inside the output — it was parsed as markup");
+    "the payload created " + injected + " element(s) inside the output — it " +
+        "was parsed as markup");
 
   // ...and it must still be SHOWN. A decoder that silently swallows a hostile
   // value is safe and useless.
   assert.ok(out.indexOf("img src=x onerror") !== -1,
-    "the hostile realm must be visible as text — a value dropped rather than escaped is a " +
+    "the hostile realm must be visible as text — a value dropped rather than " +
+        "escaped is a " +
     "different defect with the same appearance in the check above");
-  assert.ok(out.indexOf("injected") !== -1, "the hostile e-text must be visible as text");
+  assert.ok(out.indexOf("injected") !== -1, "the hostile e-text must be " +
+      "visible as text");
   log.debug("Leaving renderesHostileValuesAsTextAndNotAsMarkup().");
 }
 
@@ -208,15 +235,18 @@ async function renderesHostileValuesAsTextAndNotAsMarkup(driver) {
 // ---------------------------------------------------------------------------
 async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
   log.debug("Entering decryptsAnAsRepFromAPasswordAndSalt().");
-  const secure = await driver.executeScript("return !!(window.crypto && window.crypto.subtle);");
+  const secure = await driver.executeScript("return !!(window.crypto && " +
+      "window.crypto.subtle);");
   if (!secure) {
-    // Not a skip to be quiet about: the page's own note must say so, and that is
-    // the assertion. An environment without Web Crypto is a capability limit, not
-    // a defect, but a page that failed silently in it would be.
+    // Not a skip to be quiet about: the page's own note must say so, and that
+    // is the assertion. An environment without Web Crypto is a capability
+    // limit, not a defect, but a page that failed silently in it would be.
     const note = await driver.findElement(By.id("krb_crypto_note")).getText();
     assert.ok(/not in a secure context/.test(note),
-      "without Web Crypto the page must SAY decryption is unavailable, got: " + JSON.stringify(note));
-    log.info("Web Crypto is unavailable on this origin; the page says so, which is what matters here.");
+      "without Web Crypto the page must SAY decryption is unavailable, got: " + 
+          JSON.stringify(note));
+    log.info("Web Crypto is unavailable on this origin; the page says so, " +
+        "which is what matters here.");
     return;
   }
 
@@ -234,11 +264,21 @@ async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
     cname: { type: 1, name: ["alice"] },
     ticket: {
       realm: "EXAMPLE.COM", sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
-      encPart: { etype: 18, cipher: kcrypto.randomBytes(96) }   // not ours to open
+      encPart: {
+        etype: 18,
+        cipher: kcrypto.randomBytes(96)
+      }   // not ours to open
     },
-    encPart: { etype: 18, cipher: await e.encrypt(clientKey, kcrypto.KEY_USAGE.AS_REP_ENCPART,
+    encPart: { etype: 18, cipher: await e.encrypt(clientKey, 
+        kcrypto.KEY_USAGE.AS_REP_ENCPART,
       msgs.encEncKdcRepPart({
-        key: { etype: 18, key: sessionKey }, lastReq: [{ type: 0, value: now }], nonce: 424242,
+        key: {
+          etype: 18,
+          key: sessionKey
+        }, lastReq: [{
+          type: 0,
+          value: now
+        }], nonce: 424242,
         flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.INITIAL],
         authtime: now, endtime: end, srealm: "EXAMPLE.COM",
         sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] }
@@ -250,9 +290,11 @@ async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
   const blind = await decode(driver, b64(asRep));
   assert.ok(/No keys supplied/.test(await driver.findElement(By.id("krb_status")).getText()),
     "with no keys the status must say so");
-  assert.ok(/service/i.test(blind), "the ticket must say whose key would open it");
+  assert.ok(/service/i.test(blind), "the ticket must say whose key would " +
+      "open it");
   assert.ok(blind.indexOf(String(424242)) === -1,
-    "the nonce lives inside the enc-part and must NOT appear before anything is decrypted");
+    "the nonce lives inside the enc-part and must NOT appear before anything " +
+        "is decrypted");
 
   // Now with the password and the salt.
   await driver.findElement(By.id("krb_input")).clear();
@@ -267,11 +309,13 @@ async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
   const opened = await driver.findElement(By.id("krb_output")).getText();
   assert.ok(/EncASRepPart \(decrypted\)/.test(opened),
     "the decrypted enc-part must be shown as its own section");
-  assert.ok(new RegExp(prim.toHex(sessionKey).slice(0, 24)).test(opened.replace(/\s/g, "")) ||
+  assert.ok(new RegExp(prim.toHex(sessionKey).slice(0, 
+      24)).test(opened.replace(/\s/g, "")) ||
             /aes256-cts-hmac-sha1-96/.test(opened),
     "the session key inside must be revealed");
   assert.ok(/the password with salt/.test(opened),
-    "the page must say WHICH key opened it, so a reader with several keys knows");
+    "the page must say WHICH key opened it, so a reader with several keys " +
+        "knows");
 
   // A wrong salt must fail, and fail informatively: the same password with a
   // different salt is a different key, which is the single commonest reason a
@@ -293,11 +337,14 @@ async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
   }, 30000, "a wrong salt produced no 'tried and failed' report");
   const failed = await driver.findElement(By.id("krb_output")).getText();
   assert.ok(/none decrypted this/.test(failed),
-    "a key of the right type that does not work must say it was tried and failed: " +
+    "a key of the right type that does not work must say it was tried and " +
+        "failed: " +
     failed.slice(0, 300));
   assert.ok(failed.indexOf("424242") === -1,
-    "and a wrong salt must NOT have decrypted the enc-part — the same password with a different " +
-    "salt is a different key, which is the commonest reason a reader who has the password still " +
+    "and a wrong salt must NOT have decrypted the enc-part — the same " +
+        "password with a different " +
+    "salt is a different key, which is the commonest reason a reader who has " +
+        "the password still " +
     "cannot open an AS-REP");
   log.debug("Leaving decryptsAnAsRepFromAPasswordAndSalt().");
 }
@@ -317,7 +364,8 @@ async function fallsBackAndRefusesInformatively(driver) {
   // Input that is neither hex nor base64 must be refused with an explanation,
   // and the page must not be left showing the previous result.
   await driver.findElement(By.id("krb_clear_button")).click();
-  await driver.findElement(By.id("krb_input")).sendKeys("this is not base64 or hex!!!");
+  await driver.findElement(By.id("krb_input")).sendKeys("this is not base64 " +
+      "or hex!!!");
   await driver.findElement(By.id("krb_decode_button")).click();
   await driver.wait(async function () {
     const s = await driver.findElement(By.id("krb_status")).getText();
@@ -328,7 +376,8 @@ async function fallsBackAndRefusesInformatively(driver) {
     "the refusal must name both encodings it tried: " + status);
   const stale = await driver.findElement(By.id("krb_output")).getText();
   assert.ok(!/SEQUENCE/.test(stale),
-    "a refused decode must clear the previous result — a page showing the last message's output " +
+    "a refused decode must clear the previous result — a page showing the " +
+        "last message's output " +
     "beside a new error reads as though the new input decoded");
   log.debug("Leaving fallsBackAndRefusesInformatively().");
 }
@@ -339,29 +388,37 @@ async function persistsNothing(driver) {
   log.debug("Entering persistsNothing().");
   const stored = await driver.executeScript(
     "var out = {}; for (var i = 0; i < localStorage.length; i++) {" +
-    "  var k = localStorage.key(i); out[k] = String(localStorage.getItem(k)).slice(0, 40); }" +
+    "  var k = localStorage.key(i); out[k] = " +
+        "String(localStorage.getItem(k)).slice(0, 40); }" +
     "return out;");
   const offending = Object.keys(stored).filter(function (k) { return /^krb/i.test(k); });
   assert.deepStrictEqual(offending, [],
-    "this page stored " + JSON.stringify(offending) + " in localStorage. It must persist nothing: " +
-    "a password, a keytab and a session key out of a decrypted ticket are all credentials, and a " +
-    "scratchpad that remembered them would be a worse place to leave a keytab than the file it came from");
+    "this page stored " + JSON.stringify(offending) + " in localStorage. It " +
+        "must persist nothing: " +
+    "a password, a keytab and a session key out of a decrypted ticket are " +
+        "all credentials, and a " +
+    "scratchpad that remembered them would be a worse place to leave a " +
+        "keytab than the file it came from");
   const sessionStored = await driver.executeScript(
-    "var n = []; for (var i = 0; i < sessionStorage.length; i++) n.push(sessionStorage.key(i)); return n;");
-  assert.deepStrictEqual(sessionStored.filter(function (k) { return /^krb/i.test(k); }), [],
+    "var n = []; for (var i = 0; i < sessionStorage.length; i++) " +
+        "n.push(sessionStorage.key(i)); return n;");
+  assert.deepStrictEqual(sessionStored.filter(function (k) { return /^krb/i.test(k); }), 
+      [],
     "nor in sessionStorage");
   log.debug("Leaving persistsNothing().");
 }
 
 async function test() {
   log.debug("Entering test().");
-  log.info("Starting Test run. Verifying the Kerberos Decoder page at " + baseUrl + ".");
+  log.info("Starting Test run. Verifying the Kerberos Decoder page at " + 
+      baseUrl + ".");
   const options = new chrome.Options();
   // --headless=new, never bare --headless: in the image's Chrome 121 the old
   // headless mode ignores --unsafely-treat-insecure-origin-as-secure, so
   // crypto.subtle stays undefined however carefully the flags were set. See
   // tests/CLAUDE.md.
-  options.addArguments("--headless=new", "--no-sandbox", "--disable-dev-shm-usage",
+  options.addArguments("--headless=new", "--no-sandbox", 
+      "--disable-dev-shm-usage",
                        "--window-size=1400,1100");
   // The decryption half runs on Web Crypto, which does not exist on the
   // containerized origin without these. See tests/browser_flags.js.
@@ -388,8 +445,10 @@ async function test() {
 const program = new Command();
 program
   .name("kerberos_decoder_page")
-  .description("Verify the Kerberos Decoder page: wiring, hostile input rendered as text, in-browser decryption.")
-  .addOption(new Option("-u, --url <url>", "base url of the site under test").default(baseUrl))
+  .description("Verify the Kerberos Decoder page: wiring, hostile input " +
+      "rendered as text, in-browser decryption.")
+  .addOption(new Option("-u, --url <url>", 
+      "base url of the site under test").default(baseUrl))
   .parse(process.argv);
 baseUrl = program.opts().url || baseUrl;
 

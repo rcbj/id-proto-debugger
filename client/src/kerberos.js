@@ -53,12 +53,13 @@ var asn1 = require("./krb5_asn1.js");
 var msgs = require("./krb5_messages.js");
 var kcrypto = require("./krb5_crypto.js");
 var describer = require("./krb5_describe.js");
-// The shared DOM half, the credential cache and the relay calls. These were copied
-// into this file and into kerberos_decoder.js before the TGS and AP pages made it
-// four copies; the cache in particular has three writers now (this page produces a
-// TGT, the TGS page spends it, the AP page presents the result), and shared state
-// with three writers needs one implementation — three would drift on the question
-// that matters most, which is WHERE a session key is kept.
+// The shared DOM half, the credential cache and the relay calls. These were
+// copied into this file and into kerberos_decoder.js before the TGS and AP
+// pages made it four copies; the cache in particular has three writers now
+// (this page produces a TGT, the TGS page spends it, the AP page presents the
+// result), and shared state with three writers needs one implementation — three
+// would drift on the question that matters most, which is WHERE a session key
+// is kept.
 var panes = require("./kerberos_panes.js");
 
 // ---------------------------------------------------------------------------
@@ -80,7 +81,11 @@ var readCache = panes.readTgt;
 var purgeCache = panes.forgetTgt;
 
 function saveConfiguration() {
-  if (!window.localStorage) return;
+  log.debug("Entering saveConfiguration().");
+  if (!window.localStorage) {
+    log.debug("Leaving saveConfiguration().");
+    return;
+  }
   try {
     localStorage.setItem(KEYS.REALM, val("krb_realm"));
     localStorage.setItem(KEYS.KDC_HOST, val("krb_kdc_host"));
@@ -88,23 +93,26 @@ function saveConfiguration() {
     localStorage.setItem(KEYS.TRANSPORT, val("krb_transport"));
     localStorage.setItem(KEYS.PRINCIPAL, val("krb_principal"));
     localStorage.setItem(KEYS.ETYPES, val("krb_etypes"));
-    localStorage.setItem(KEYS.SAVE_CCACHE, checked("krb_save_ccache") ? "1" : "0");
-    // The PASSWORD is deliberately absent from this list, as it is on every other
-    // page in this repository.
+    localStorage.setItem(KEYS.SAVE_CCACHE, checked("krb_save_ccache") ? "1" : 
+        "0");
+    // The PASSWORD is deliberately absent from this list, as it is on every
+    // other page in this repository.
     if (!checked("krb_save_ccache")) panes.enforceStoragePreference();
   } catch (e) {
     log.error("could not store the configuration: " + e.message);
   }
+  log.debug("Leaving saveConfiguration().");
 }
 
-// The build's own defaults, applied BEFORE anything stored so a value the user has
-// typed still wins. They come from the config rather than from the markup because the
-// right answer differs per build: the relay reaches the KDC from inside the API
-// container, so the working host is the compose service name `sts` — `localhost` there
-// is the api itself — while a deployed build has no api at all and defaults to nothing.
-// Writing the working value into the HTML would be right in one environment and wrong
-// in the two others, with the failure reading as a connection refused to an address the
-// user can reach from their own shell.
+// The build's own defaults, applied BEFORE anything stored so a value the user
+// has typed still wins. They come from the config rather than from the markup
+// because the right answer differs per build: the relay reaches the KDC from
+// inside the API container, so the working host is the compose service name
+// `sts` — `localhost` there is the api itself — while a deployed build has no
+// api at all and defaults to nothing. Writing the working value into the HTML
+// would be right in one environment and wrong in the two others, with the
+// failure reading as a connection refused to an address the user can reach from
+// their own shell.
 function applyBuildDefaults() {
   log.debug("Entering applyBuildDefaults().");
   var defaults = [
@@ -116,7 +124,9 @@ function applyBuildDefaults() {
   ];
   var applied = 0;
   defaults.forEach(function (pair) {
-    if (!pair[1]) return;                       // absent or "" on a build with no api
+    if (!pair[1]) {
+      return;
+    }                       // absent or "" on a build with no api
     setVal(pair[0], pair[1]);
     applied++;
   });
@@ -127,7 +137,9 @@ function applyBuildDefaults() {
 function loadConfiguration() {
   log.debug("Entering loadConfiguration().");
   applyBuildDefaults();
-  if (!window.localStorage) return;
+  if (!window.localStorage) {
+    return;
+  }
   var stored = {
     krb_realm: localStorage.getItem(KEYS.REALM),
     krb_kdc_host: localStorage.getItem(KEYS.KDC_HOST),
@@ -137,13 +149,15 @@ function loadConfiguration() {
     krb_etypes: localStorage.getItem(KEYS.ETYPES)
   };
   Object.keys(stored).forEach(function (id) {
-    if (stored[id] !== null && stored[id] !== undefined && stored[id] !== "") setVal(id, stored[id]);
+    if (stored[id] !== null && stored[id] !== undefined && 
+        stored[id] !== "") setVal(id, stored[id]);
   });
   var save = localStorage.getItem(KEYS.SAVE_CCACHE);
   var box = el("krb_save_ccache");
-  // Absent means the default, which is OFF: unlike the SAML and WS-Federation key
-  // panes (where saving is the default because the workflow spans pages), nothing
-  // here needs the cache to survive a page load, so the safer default is available.
+  // Absent means the default, which is OFF: unlike the SAML and WS-Federation
+  // key panes (where saving is the default because the workflow spans pages),
+  // nothing here needs the cache to survive a page load, so the safer default
+  // is available.
   if (box) box.checked = save === "1";
   if (!box || !box.checked) panes.enforceStoragePreference();
   log.debug("Leaving loadConfiguration().");
@@ -158,9 +172,10 @@ var renderMessage = panes.renderMessage;
 var bytesToB64 = panes.bytesToB64;
 var b64ToBytes = panes.b64ToBytes;
 
-// The AS page's own relay call: it reads the KDC coordinates out of ITS fields, which
-// the shared helper deliberately does not do — the TGS page has the same fields and
-// the AP page has different ones, so the field names belong to the page.
+// The AS page's own relay call: it reads the KDC coordinates out of ITS fields,
+// which the shared helper deliberately does not do — the TGS page has the same
+// fields and the AP page has different ones, so the field names belong to the
+// page.
 async function sendToKdc(message) {
   return panes.sendToKdc({
     host: val("krb_kdc_host").trim(),
@@ -174,14 +189,21 @@ async function sendToKdc(message) {
 // Building the request.
 // ---------------------------------------------------------------------------
 function requestedEtypes() {
+  log.debug("Entering requestedEtypes().");
   var text = val("krb_etypes").trim();
-  if (!text) return kcrypto.DEFAULT_ETYPE_PREFERENCE.slice();
+  if (!text) {
+    log.debug("Leaving requestedEtypes().");
+    return kcrypto.DEFAULT_ETYPE_PREFERENCE.slice();
+  }
   var ids = [];
   text.split(/[\s,]+/).forEach(function (part) {
-    if (!part) return;
+    if (!part) {
+      return;
+    }
     var id = parseInt(part, 10);
     if (Number.isInteger(id)) ids.push(id);
   });
+  log.debug("Leaving requestedEtypes().");
   return ids.length ? ids : kcrypto.DEFAULT_ETYPE_PREFERENCE.slice();
 }
 
@@ -195,30 +217,38 @@ function requestedOptions() {
 
 var lastNonce = 0;
 function freshNonce() {
-  // A UInt32 from the browser's own CSPRNG. The nonce is the client's only defence
-  // against a replayed reply, so it must be unpredictable rather than a counter.
+  // A UInt32 from the browser's own CSPRNG. The nonce is the client's only
+  // defence against a replayed reply, so it must be unpredictable rather than a
+  // counter.
   var b = kcrypto.randomBytes(4);
   lastNonce = ((b[0] << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0;
   return lastNonce;
 }
 
 function buildAsReq(padata) {
+  log.debug("Entering buildAsReq().");
   var realm = val("krb_realm").trim();
-  var principal = msgs.parsePrincipal(val("krb_principal").trim(), msgs.NAME_TYPE.PRINCIPAL);
+  var principal = msgs.parsePrincipal(val("krb_principal").trim(), 
+      msgs.NAME_TYPE.PRINCIPAL);
   var lifetime = parseInt(val("krb_lifetime"), 10) || 10;
+  log.debug("Leaving buildAsReq().");
   return msgs.encKdcReq({
     msgType: msgs.MSG_TYPE.AS_REQ,
-    // PA-PAC-REQUEST has THREE states and only two of them are a checkbox, so the
-    // mapping matters. Ticked sends include-pac=TRUE and unticked sends
-    // include-pac=FALSE — an explicit decline, which is what actually gets a ticket
-    // with no PAC in it. Omitting the padata altogether is the third state and means
-    // "the KDC decides", and Active Directory decides to include one; a control that
-    // omitted it while offering to show you a ticket without a PAC would hand you a
-    // ticket with one. That difference is visible in the reply: an implicitly-granted
-    // PAC says PAC_WAS_GIVEN_IMPLICITLY in PAC_ATTRIBUTES_INFO rather than
+    // PA-PAC-REQUEST has THREE states and only two of them are a checkbox, so
+    // the mapping matters. Ticked sends include-pac=TRUE and unticked sends
+    // include-pac=FALSE — an explicit decline, which is what actually gets a
+    // ticket with no PAC in it. Omitting the padata altogether is the third
+    // state and means "the KDC decides", and Active Directory decides to
+    // include one; a control that omitted it while offering to show you a
+    // ticket without a PAC would hand you a ticket with one. That difference is
+    // visible in the reply: an implicitly-granted PAC says
+    // PAC_WAS_GIVEN_IMPLICITLY in PAC_ATTRIBUTES_INFO rather than
     // PAC_WAS_REQUESTED.
     padata: (padata || []).concat([
-      { type: msgs.PA_TYPE.PAC_REQUEST, value: msgs.encPaPacRequest(checked("krb_opt_pac")) }
+      {
+        type: msgs.PA_TYPE.PAC_REQUEST,
+        value: msgs.encPaPacRequest(checked("krb_opt_pac"))
+      }
     ]),
     reqBody: {
       kdcOptions: requestedOptions(),
@@ -226,7 +256,8 @@ function buildAsReq(padata) {
       realm: realm,
       sname: { type: msgs.NAME_TYPE.SRV_INST, name: ["krbtgt", realm] },
       till: new Date(Date.now() + lifetime * 3600 * 1000),
-      rtime: checked("krb_opt_renewable") ? new Date(Date.now() + 7 * 24 * 3600 * 1000) : null,
+      rtime: checked("krb_opt_renewable") ? new Date(Date.now() + 
+          7 * 24 * 3600 * 1000) : null,
       nonce: freshNonce(),
       etypes: requestedEtypes()
     }
@@ -243,12 +274,14 @@ var discovered = null;
 // ---------------------------------------------------------------------------
 async function onRequestWithoutPreAuth() {
   log.debug("Entering onRequestWithoutPreAuth().");
-  status("krb_as_status", "Sending an AS-REQ with no pre-authentication…", "krb-pending");
+  status("krb_as_status", "Sending an AS-REQ with no pre-authentication…", 
+      "krb-pending");
   var request;
   try {
     request = buildAsReq([]);
   } catch (e) {
-    status("krb_as_status", "The request could not be built: " + e.message, "krb-bad");
+    status("krb_as_status", "The request could not be built: " + e.message, 
+        "krb-bad");
     return false;
   }
   saveConfiguration();
@@ -258,9 +291,9 @@ async function onRequestWithoutPreAuth() {
   try {
     result = await sendToKdc(request);
   } catch (e) {
-    // A failure is rendered where the action happened, and the request pane keeps
-    // what it was showing: the bytes that were sent are still the most useful thing
-    // on the screen when the send failed.
+    // A failure is rendered where the action happened, and the request pane
+    // keeps what it was showing: the bytes that were sent are still the most
+    // useful thing on the screen when the send failed.
     status("krb_as_status", e.message, "krb-bad");
     log.debug("Leaving onRequestWithoutPreAuth(). send failed.");
     return false;
@@ -271,7 +304,8 @@ async function onRequestWithoutPreAuth() {
   try {
     response = msgs.readKdcResponse(result.reply);
   } catch (e) {
-    status("krb_as_status", "The KDC answered something this page cannot read: " + e.message, "krb-bad");
+    status("krb_as_status", "The KDC answered something this page cannot " +
+        "read: " + e.message, "krb-bad");
     return false;
   }
 
@@ -289,8 +323,10 @@ async function onRequestWithoutPreAuth() {
     });
     if (!info || !info.length) {
       status("krb_as_status",
-        "The KDC asked for pre-authentication but sent no PA-ETYPE-INFO2, so it has not said which " +
-        "salt to use. Supply one by hand below — Active Directory's default is the realm followed " +
+        "The KDC asked for pre-authentication but sent no PA-ETYPE-INFO2, so " +
+            "it has not said which " +
+        "salt to use. Supply one by hand below — Active Directory's default " +
+            "is the realm followed " +
         "by the sAMAccountName for a user account.", "krb-bad");
       discovered = null;
       renderDiscovered(null);
@@ -299,8 +335,10 @@ async function onRequestWithoutPreAuth() {
     discovered = info;
     renderDiscovered(info);
     status("krb_as_status",
-      "KDC_ERR_PREAUTH_REQUIRED — which is the expected answer, not a failure. The KDC has told us " +
-      "the salt and iteration count for " + info.length + " encryption type(s); step 2 can now " +
+      "KDC_ERR_PREAUTH_REQUIRED — which is the expected answer, not a " +
+          "failure. The KDC has told us " +
+      "the salt and iteration count for " + info.length + " encryption " +
+          "type(s); step 2 can now " +
       "derive the right key.", "krb-ok");
     var second = el("krb_preauth_button");
     if (second) second.disabled = false;
@@ -309,33 +347,47 @@ async function onRequestWithoutPreAuth() {
   }
 
   if (response.kind === "AS-REP") {
-    // An account with pre-authentication disabled. Unusual against AD, and worth
-    // saying so rather than quietly succeeding.
+    // An account with pre-authentication disabled. Unusual against AD, and
+    // worth saying so rather than quietly succeeding.
     status("krb_as_status",
-      "The KDC issued a ticket WITHOUT pre-authentication, which means this account does not " +
-      "require it. On Active Directory that is the DONT_REQUIRE_PREAUTH flag, and it is the " +
-      "condition that makes an account's password attackable offline from a single AS-REP.",
+      "The KDC issued a ticket WITHOUT pre-authentication, which means this " +
+          "account does not " +
+      "require it. On Active Directory that is the DONT_REQUIRE_PREAUTH " +
+          "flag, and it is the " +
+      "condition that makes an account's password attackable offline from a " +
+          "single AS-REP.",
       "krb-ok");
     await completeWithReply(result.reply, null);
     return false;
   }
 
-  status("krb_as_status", "The KDC refused: " + response.error.error.name + " — " +
+  status("krb_as_status", "The KDC refused: " + response.error.error.name + 
+      " — " +
     response.error.error.meaning, "krb-bad");
-  log.debug("Leaving onRequestWithoutPreAuth(). refused with " + response.error.error.name);
+  log.debug("Leaving onRequestWithoutPreAuth(). refused with " + 
+      response.error.error.name);
   return false;
 }
 
 function renderDiscovered(info) {
+  log.debug("Entering renderDiscovered().");
   var host = el("krb_discovered_pane");
-  if (!host) return;
+  if (!host) {
+    log.debug("Leaving renderDiscovered().");
+    return;
+  }
   clear(host);
-  if (!info) return;
+  if (!info) {
+    log.debug("Leaving renderDiscovered().");
+    return;
+  }
   var pane = make("div", "krb-section");
   pane.appendChild(make("h4", "krb-section-title", "What the KDC told us"));
   pane.appendChild(make("p", "krb-section-note",
-    "The salt is not guessable and this is the only place it comes from. Active Directory uses the " +
-    "realm followed by the sAMAccountName for a user, but a host-shaped string for a computer " +
+    "The salt is not guessable and this is the only place it comes from. " +
+        "Active Directory uses the " +
+    "realm followed by the sAMAccountName for a user, but a host-shaped " +
+        "string for a computer " +
     "account — so if you are debugging a service, expect the second shape."));
   var table = make("table", "krb-table");
   info.forEach(function (entry) {
@@ -346,10 +398,12 @@ function renderDiscovered(info) {
     }
     renderRow(table, {
       name: "etype " + entry.etype + " " + entry.etypeName,
-      value: "salt: " + (entry.salt === null ? "(none — arcfour is unsalted)" : entry.salt) +
+      value: "salt: " + (entry.salt === null ? "(none — arcfour is unsalted)" : 
+          entry.salt) +
              (iterations !== null ? "\niterations: " + iterations : ""),
       note: entry.salt === null
-        ? "arcfour-hmac-md5's string-to-key is the NT hash and ignores the salt entirely."
+        ? "arcfour-hmac-md5's string-to-key is the NT hash and ignores the " +
+            "salt entirely."
         : null
     });
   });
@@ -368,6 +422,7 @@ function renderDiscovered(info) {
     });
   }
   setVal("krb_salt", (info[0] && info[0].salt) || "");
+  log.debug("Leaving renderDiscovered().");
 }
 
 // ---------------------------------------------------------------------------
@@ -377,27 +432,33 @@ async function onRequestWithPreAuth() {
   log.debug("Entering onRequestWithPreAuth().");
   var password = val("krb_password");
   if (!password) {
-    status("krb_as_status", "A password is needed to build PA-ENC-TIMESTAMP. It is used here in the " +
+    status("krb_as_status", "A password is needed to build PA-ENC-TIMESTAMP. " +
+        "It is used here in the " +
       "browser and is never sent to the api.", "krb-bad");
     return false;
   }
   var etype = parseInt(val("krb_preauth_etype"), 10);
   if (!Number.isInteger(etype)) {
-    status("krb_as_status", "Choose an encryption type first — step 1 fills this list from what the " +
+    status("krb_as_status", "Choose an encryption type first — step 1 fills " +
+        "this list from what the " +
       "KDC offered.", "krb-bad");
     return false;
   }
   var salt = val("krb_salt");
-  var entry = (discovered || []).filter(function (e) { return e.etype === etype; })[0] || null;
+  var entry = (discovered || 
+      []).filter(function (e) { return e.etype === etype; })[0] || null;
 
-  status("krb_as_status", "Deriving the key and sending an AS-REQ with PA-ENC-TIMESTAMP…", "krb-pending");
+  status("krb_as_status", "Deriving the key and sending an AS-REQ with " +
+      "PA-ENC-TIMESTAMP…", "krb-pending");
   var profile;
   var key;
   try {
     profile = kcrypto.etypeById(etype);
-    key = await profile.stringToKey(password, prim.utf8(salt), entry && entry.s2kparams);
+    key = await profile.stringToKey(password, prim.utf8(salt), entry && 
+        entry.s2kparams);
   } catch (e) {
-    status("krb_as_status", "The key could not be derived: " + e.message, "krb-bad");
+    status("krb_as_status", "The key could not be derived: " + e.message, 
+        "krb-bad");
     return false;
   }
 
@@ -408,13 +469,15 @@ async function onRequestWithPreAuth() {
       type: msgs.PA_TYPE.ENC_TIMESTAMP,
       value: msgs.encEncryptedData({
         etype: etype,
-        // Key usage 1, and only 1. Any other number produces a well-formed message
-        // the KDC reports as a wrong password.
-        cipher: await profile.encrypt(key, kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, stamp)
+        // Key usage 1, and only 1. Any other number produces a well-formed
+        // message the KDC reports as a wrong password.
+        cipher: await profile.encrypt(key, 
+            kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, stamp)
       })
     }]);
   } catch (e) {
-    status("krb_as_status", "The request could not be built: " + e.message, "krb-bad");
+    status("krb_as_status", "The request could not be built: " + e.message, 
+        "krb-bad");
     return false;
   }
   saveConfiguration();
@@ -427,17 +490,26 @@ async function onRequestWithPreAuth() {
     status("krb_as_status", e.message, "krb-bad");
     return false;
   }
-  await completeWithReply(result.reply, { etype: etype, key: key, profile: profile, salt: salt });
+  await completeWithReply(result.reply, {
+    etype: etype,
+    key: key,
+    profile: profile,
+    salt: salt
+  });
   log.debug("Leaving onRequestWithPreAuth().");
   return false;
 }
 
-// Read a reply, and if it is a ticket, open it with the client key and store it.
+// Read a reply, and if it is a ticket, open it with the client key and store
+// it.
 async function completeWithReply(replyBytes, clientKey) {
   log.debug("Entering completeWithReply().");
   var keys = clientKey
-    ? [{ etype: clientKey.etype, key: clientKey.key,
-         label: "the password with salt " + JSON.stringify(clientKey.salt) }]
+    ? [{
+      etype: clientKey.etype,
+      key: clientKey.key,
+      label: "the password with salt " + JSON.stringify(clientKey.salt)
+    }]
     : [];
   await renderMessage("krb_reply_pane", "Received", replyBytes, keys);
 
@@ -445,7 +517,8 @@ async function completeWithReply(replyBytes, clientKey) {
   try {
     response = msgs.readKdcResponse(replyBytes);
   } catch (e) {
-    status("krb_as_status", "The reply could not be read: " + e.message, "krb-bad");
+    status("krb_as_status", "The reply could not be read: " + e.message, 
+        "krb-bad");
     return;
   }
   if (response.kind === "KRB-ERROR") {
@@ -458,8 +531,10 @@ async function completeWithReply(replyBytes, clientKey) {
   var rep = response.rep;
   if (rep.encPart.nonce !== undefined) { /* nothing: the nonce is inside the enc-part */ }
   if (!clientKey) {
-    status("krb_as_status", "A ticket arrived, but without a key this page cannot open its " +
-      "enc-part — so the session key inside is not available and the ticket cannot be used yet.",
+    status("krb_as_status", "A ticket arrived, but without a key this page " +
+        "cannot open its " +
+      "enc-part — so the session key inside is not available and the ticket " +
+          "cannot be used yet.",
       "krb-pending");
     renderCache(null);
     return;
@@ -468,22 +543,27 @@ async function completeWithReply(replyBytes, clientKey) {
   var part;
   try {
     part = msgs.readEncKdcRepPart(
-      await clientKey.profile.decrypt(clientKey.key, kcrypto.KEY_USAGE.AS_REP_ENCPART,
+      await clientKey.profile.decrypt(clientKey.key, 
+          kcrypto.KEY_USAGE.AS_REP_ENCPART,
         rep.encPart.cipher));
   } catch (err) {
     status("krb_as_status",
-      "The KDC issued a ticket, but its enc-part will not decrypt with the key derived from this " +
-      "password and salt (" + err.message + "). The commonest cause is the SALT rather than the " +
+      "The KDC issued a ticket, but its enc-part will not decrypt with the " +
+          "key derived from this " +
+      "password and salt (" + err.message + "). The commonest cause is the " +
+          "SALT rather than the " +
       "password — check it against what step 1 reported.", "krb-bad");
     return;
   }
 
-  // The nonce check. It is the client's only defence against a replayed reply, and
-  // a page that did not check it would be a page that cannot detect one.
+  // The nonce check. It is the client's only defence against a replayed reply,
+  // and a page that did not check it would be a page that cannot detect one.
   if (part.nonce !== lastNonce) {
     status("krb_as_status",
-      "THE NONCE DOES NOT MATCH. This reply carries " + part.nonce + " and the request sent " +
-      lastNonce + ", so this is not an answer to the request just made — it may be a replay. The " +
+      "THE NONCE DOES NOT MATCH. This reply carries " + part.nonce + 
+          " and the request sent " +
+      lastNonce + ", so this is not an answer to the request just made — it " +
+          "may be a replay. The " +
       "ticket has NOT been stored.", "krb-bad");
     log.error("nonce mismatch: sent " + lastNonce + ", received " + part.nonce);
     return;
@@ -505,22 +585,31 @@ async function completeWithReply(replyBytes, clientKey) {
   saveCache(entry);
   renderCache(entry);
   status("krb_as_status",
-    "A TGT for " + entry.client + " was issued and stored, valid until " + entry.endtime + ". " +
+    "A TGT for " + entry.client + " was issued and stored, valid until " + 
+        entry.endtime + ". " +
     (checked("krb_save_ccache")
-      ? "It is in localStorage because you asked for that; the session key inside it is a credential."
-      : "It is in sessionStorage only, so it goes when this tab closes."), "krb-ok");
+      ? "It is in localStorage because you asked for that; the session key " +
+          "inside it is a credential."
+      : "It is in sessionStorage only, so it goes when this tab closes."), 
+          "krb-ok");
   log.debug("Leaving completeWithReply(). ticket stored.");
 }
 
 function renderCache(entry) {
+  log.debug("Entering renderCache().");
   var host = el("krb_cache_pane");
-  if (!host) return;
+  if (!host) {
+    log.debug("Leaving renderCache().");
+    return;
+  }
   clear(host);
   var current = entry || readCache();
   if (!current) {
-    host.appendChild(make("p", "krb-note", "No ticket held. Complete the exchange above to get one."));
+    host.appendChild(make("p", "krb-note", "No ticket held. Complete the " +
+        "exchange above to get one."));
     var button = el("krb_forget_button");
     if (button) button.disabled = true;
+    log.debug("Leaving renderCache().");
     return;
   }
   var pane = make("div", "krb-section");
@@ -528,18 +617,22 @@ function renderCache(entry) {
   var table = make("table", "krb-table");
   [
     ["client", current.client, null],
-    // "phase 3" was this project's build order and means nothing to a reader of the page.
+    // "phase 3" was this project's build order and means nothing to a reader of
+    // the page.
     ["service", current.service,
-      "a TGT is a ticket for krbtgt, and useful only for buying others — the TGS page spends it"],
+      "a TGT is a ticket for krbtgt, and useful only for buying others — the " +
+          "TGS page spends it"],
     ["flags", (current.flags || []).join(", "), null],
     ["session key", current.sessionKeyEtype + ": " + current.sessionKey,
-      "A CREDENTIAL. Anything holding this can use the ticket, which is why it is not persisted " +
+      "A CREDENTIAL. Anything holding this can use the ticket, which is why " +
+          "it is not persisted " +
       "unless you ask."],
     ["valid from", current.authtime, null],
     ["valid until", current.endtime, null],
     ["renewable until", current.renewTill || "(not renewable)", null],
     ["ticket", (current.ticket || "").slice(0, 96) + "…",
-      "Opaque here: it is encrypted under the service's key. Paste it into the Kerberos Decoder " +
+      "Opaque here: it is encrypted under the service's key. Paste it into " +
+          "the Kerberos Decoder " +
       "with that key or its keytab to see inside."]
   ].forEach(function (row) {
     renderRow(table, { name: row[0], value: row[1], note: row[2] });
@@ -548,13 +641,15 @@ function renderCache(entry) {
   host.appendChild(pane);
   var forget = el("krb_forget_button");
   if (forget) forget.disabled = false;
+  log.debug("Leaving renderCache().");
 }
 
 function onForget() {
   log.debug("Entering onForget().");
   purgeCache();
   renderCache(null);
-  status("krb_as_status", "The credential cache was cleared from both sessionStorage and " +
+  status("krb_as_status", "The credential cache was cleared from both " +
+      "sessionStorage and " +
     "localStorage.", null);
   log.debug("Leaving onForget().");
   return false;
@@ -563,6 +658,7 @@ function onForget() {
 function onSaveCacheChanged() {
   // Unticking must purge what was already written. An opt-out that leaves
   // yesterday's session key in localStorage is not an opt-out.
+  log.debug("Entering onSaveCacheChanged().");
   if (!checked("krb_save_ccache")) {
     try {
       panes.enforceStoragePreference();
@@ -571,6 +667,7 @@ function onSaveCacheChanged() {
     }
   }
   saveConfiguration();
+  log.debug("Leaving onSaveCacheChanged().");
   return true;
 }
 
@@ -580,16 +677,21 @@ function onSaveCacheChanged() {
 function reportEnvironment() {
   log.debug("Entering reportEnvironment().");
   var note = el("krb_environment_note");
-  if (!note) return;
+  if (!note) {
+    return;
+  }
   clear(note);
 
   // No api means no socket means no Kerberos. Said on arrival rather than by
   // failing, and the controls are disabled so the page cannot pretend.
   if (appconfig.backendAvailable === false) {
     var pane = make("p", "krb-note krb-bad");
-    pane.textContent = "This build has no api behind it, and Kerberos needs one: the protocol " +
-      "speaks DER over a TCP socket to port 88, which a browser cannot open. Every other workflow " +
-      "here can run entirely in the browser; this one cannot. The Kerberos Decoder page does work " +
+    pane.textContent = "This build has no api behind it, and Kerberos needs " +
+        "one: the protocol " +
+      "speaks DER over a TCP socket to port 88, which a browser cannot open. " +
+          "Every other workflow " +
+      "here can run entirely in the browser; this one cannot. The Kerberos " +
+          "Decoder page does work " +
       "on this build — it parses bytes you already have.";
     note.appendChild(pane);
     ["krb_noreauth_button", "krb_preauth_button"].forEach(function (id) {
@@ -601,24 +703,36 @@ function reportEnvironment() {
 
   if (!(window.crypto && window.crypto.subtle)) {
     note.appendChild(make("p", "krb-note krb-bad",
-      "This page is not in a secure context, so Web Crypto is unavailable and no key can be " +
+      "This page is not in a secure context, so Web Crypto is unavailable " +
+          "and no key can be " +
       "derived. Load it over https, or from localhost."));
   }
 
-  // What the relay will and will not do, fetched so the page can say so before a
-  // call fails rather than reporting its own limits as the KDC's fault.
-  fetch(appconfig.apiUrl + "/krb5/limits").then(function (r) { return r.json(); }).then(function (limits) {
-    var text = "The api will relay to ports " + (limits.allowedPorts || []).join(", ") +
-      "; its address policy is " + (limits.addressPolicyEnabled ? "ON" : "off") +
+  // What the relay will and will not do, fetched so the page can say so before
+  // a call fails rather than reporting its own limits as the KDC's fault.
+  fetch(appconfig.apiUrl + 
+      
+          
+              
+                  
+                      
+                          "/krb5/limits").then(function (r) { return r.json(); }).then(function (limits) {
+    var text = "The api will relay to ports " + (limits.allowedPorts || 
+        []).join(", ") +
+      "; its address policy is " + (limits.addressPolicyEnabled ? "ON" : 
+          "off") +
       (limits.addressPolicyEnabled
-        ? " (so a KDC on a private or loopback address will be refused — the local and " +
+        ? " (so a KDC on a private or loopback address will be refused — the " +
+            "local and " +
           "containerized stacks turn it off for exactly that reason)"
         : "") + ".";
     note.appendChild(make("p", "krb-note", text));
   }).catch(function (e) {
     note.appendChild(make("p", "krb-note krb-bad",
-      "The api at " + appconfig.apiUrl + " did not answer GET /krb5/limits (" + e.message +
-      "), so it may not be running or may be an older build without the Kerberos relay."));
+      "The api at " + appconfig.apiUrl + " did not answer GET /krb5/limits (" + 
+          e.message +
+      "), so it may not be running or may be an older build without the " +
+          "Kerberos relay."));
   });
   log.debug("Leaving reportEnvironment().");
 }
@@ -629,14 +743,17 @@ window.onload = function () {
   reportEnvironment();
   renderCache(null);
   var without = el("krb_noreauth_button");
-  if (without) without.addEventListener("click", function () { onRequestWithoutPreAuth(); });
+  if (without) without.addEventListener("click", 
+      function () { onRequestWithoutPreAuth(); });
   var withPre = el("krb_preauth_button");
-  if (withPre) withPre.addEventListener("click", function () { onRequestWithPreAuth(); });
+  if (withPre) withPre.addEventListener("click", 
+      function () { onRequestWithPreAuth(); });
   var forget = el("krb_forget_button");
   if (forget) forget.addEventListener("click", onForget);
   var box = el("krb_save_ccache");
   if (box) box.addEventListener("change", onSaveCacheChanged);
-  status("krb_as_status", "Step 1 asks the KDC for a ticket with no pre-authentication, which is " +
+  status("krb_as_status", "Step 1 asks the KDC for a ticket with no " +
+      "pre-authentication, which is " +
     "how the salt is discovered.", null);
   log.debug("Leaving onload().");
 };

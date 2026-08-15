@@ -65,8 +65,9 @@ var log = bunyan.createLogger({
 });
 
 var MAX_NDR_BYTES = 1024 * 1024;
-// A PAC listing more groups than this is not a PAC. Windows' own practical limit is
-// far lower, and an unbounded count is an allocation an attacker chooses.
+// A PAC listing more groups than this is not a PAC. Windows' own practical
+// limit is far lower, and an unbounded count is an allocation an attacker
+// chooses.
 var MAX_ARRAY_ELEMENTS = 8192;
 
 // ---------------------------------------------------------------------------
@@ -74,15 +75,19 @@ var MAX_ARRAY_ELEMENTS = 8192;
 // ---------------------------------------------------------------------------
 
 function createReader(bytes) {
+  log.debug("Entering createReader().");
   var b = prim.toBytes(bytes);
   if (b.length > MAX_NDR_BYTES) {
-    throw new Error("krb5: refusing to read " + b.length + " bytes of NDR (limit " + MAX_NDR_BYTES + ")");
+    log.debug("Leaving createReader().");
+    throw new Error("krb5: refusing to read " + b.length + " bytes of NDR " +
+        "(limit " + MAX_NDR_BYTES + ")");
   }
   var at = 0;
 
   function need(n, what) {
     if (at + n > b.length) {
-      throw new Error("krb5: NDR ran off the end reading " + (what || (n + " bytes")) + " at offset " +
+      throw new Error("krb5: NDR ran off the end reading " + (what || (n + 
+          " bytes")) + " at offset " +
         at + " (" + (b.length - at) + " byte(s) remain of " + b.length + ")");
     }
   }
@@ -95,7 +100,8 @@ function createReader(bytes) {
 
   function u32() {
     align(4); need(4, "a 32-bit value");
-    var v = ((b[at]) | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0;
+    var v = ((b[at]) | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 
+        3] << 24)) >>> 0;
     at += 4;
     return v;
   }
@@ -106,7 +112,8 @@ function createReader(bytes) {
     get remaining() { return b.length - at; },
     seek: function (n) {
       if (n < 0 || n > b.length) {
-        throw new Error("krb5: cannot seek to " + n + " in a " + b.length + "-byte NDR stream");
+        throw new Error("krb5: cannot seek to " + n + " in a " + b.length + 
+            "-byte NDR stream");
       }
       at = n;
     },
@@ -119,12 +126,14 @@ function createReader(bytes) {
       return v;
     },
     u32: u32,
-    // A genuine 8-aligned ULONG64. The PAC's own header uses one; KERB_VALIDATION_INFO
-    // does not — see rule 3.
+    // A genuine 8-aligned ULONG64. The PAC's own header uses one;
+    // KERB_VALIDATION_INFO does not — see rule 3.
     u64: function () {
       align(8); need(8, "a 64-bit value");
-      var lo = ((b[at]) | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 3] << 24)) >>> 0;
-      var hi = ((b[at + 4]) | (b[at + 5] << 8) | (b[at + 6] << 16) | (b[at + 7] << 24)) >>> 0;
+      var lo = ((b[at]) | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 
+          3] << 24)) >>> 0;
+      var hi = ((b[at + 4]) | (b[at + 5] << 8) | (b[at + 6] << 16) | (b[at + 
+          7] << 24)) >>> 0;
       at += 8;
       return { low: lo, high: hi, value: hi * 0x100000000 + lo };
     },
@@ -134,131 +143,194 @@ function createReader(bytes) {
       at += n;
       return out;
     },
-    // A referent id: non-zero means the data follows later in the stream, zero means
-    // NULL. It is NOT an offset, and that distinction is rule 4.
+    // A referent id: non-zero means the data follows later in the stream, zero
+    // means NULL. It is NOT an offset, and that distinction is rule 4.
     pointer: function () { return u32() !== 0; },
     arrayCount: function (what) {
       var n = u32();
       if (n > MAX_ARRAY_ELEMENTS) {
-        throw new Error("krb5: an NDR array of " + n + " " + (what || "element(s)") +
-          " is not credible (limit " + MAX_ARRAY_ELEMENTS + "). Check the byte order — NDR is " +
+        throw new Error("krb5: an NDR array of " + n + " " + (what || 
+            "element(s)") +
+          " is not credible (limit " + MAX_ARRAY_ELEMENTS + "). Check the " +
+              "byte order — NDR is " +
           "LITTLE-endian, unlike the rest of Kerberos.");
       }
       return n;
     }
   };
+  log.debug("Leaving createReader().");
   return r;
 }
 
 // FILETIME: 100-nanosecond intervals since 1601-01-01 UTC, as TWO 32-bit halves
-// (rule 3). Two sentinel values are meaningful rather than exceptional, and a reader
-// that rendered them as dates in the year 30828 would be technically right and
-// useless.
+// (rule 3). Two sentinel values are meaningful rather than exceptional, and a
+// reader that rendered them as dates in the year 30828 would be technically
+// right and useless.
 var FILETIME_EPOCH_DIFFERENCE_MS = 11644473600000;
 
 function readFileTime(r) {
+  log.debug("Entering readFileTime().");
   var lo = r.u32();
   var hi = r.u32();
   if (hi === 0x7fffffff && lo === 0xffffffff) {
-    return { low: lo, high: hi, never: true, text: "(never — 0x7FFFFFFFFFFFFFFF)", date: null };
+    log.debug("Leaving readFileTime().");
+    return {
+      low: lo,
+      high: hi,
+      never: true,
+      text: "(never — 0x7FFFFFFFFFFFFFFF)",
+      date: null
+    };
   }
   if (hi === 0 && lo === 0) {
-    return { low: lo, high: hi, unset: true, text: "(not set — zero)", date: null };
+    log.debug("Leaving readFileTime().");
+    return {
+      low: lo,
+      high: hi,
+      unset: true,
+      text: "(not set — zero)",
+      date: null
+    };
   }
-  var date = new Date((hi * 0x100000000 + lo) / 10000 - FILETIME_EPOCH_DIFFERENCE_MS);
+  var date = new Date((hi * 0x100000000 + 
+      lo) / 10000 - FILETIME_EPOCH_DIFFERENCE_MS);
+  log.debug("Leaving readFileTime().");
   return {
-    low: lo, high: hi, date: date,
+    low: lo,
+    high: hi,
+    date: date,
     text: isNaN(date.getTime()) ? "(unreadable)" : date.toISOString()
   };
 }
 
 function fileTimeFromDate(date) {
-  if (date === null || date === undefined) return { low: 0, high: 0 };
-  if (date === "never") return { low: 0xffffffff, high: 0x7fffffff };
-  var t = (date instanceof Date ? date.getTime() : Number(date)) + FILETIME_EPOCH_DIFFERENCE_MS;
+  log.debug("Entering fileTimeFromDate().");
+  if (date === null || date === undefined) {
+    log.debug("Leaving fileTimeFromDate().");
+    return { low: 0, high: 0 };
+  }
+  if (date === "never") {
+    log.debug("Leaving fileTimeFromDate().");
+    return { low: 0xffffffff, high: 0x7fffffff };
+  }
+  var t = (date instanceof Date ? date.getTime() : Number(date)) + 
+      FILETIME_EPOCH_DIFFERENCE_MS;
   var ticks = Math.round(t) * 10000;
+  log.debug("Leaving fileTimeFromDate().");
   return { low: ticks % 0x100000000, high: Math.floor(ticks / 0x100000000) };
 }
 
-// RPC_UNICODE_STRING: Length and MaximumLength in BYTES (not characters), then a
-// referent id. The characters arrive later, in field order.
+// RPC_UNICODE_STRING: Length and MaximumLength in BYTES (not characters), then
+// a referent id. The characters arrive later, in field order.
 function readUnicodeStringHeader(r) {
+  log.debug("Entering readUnicodeStringHeader().");
   var length = r.u16();
   var maximumLength = r.u16();
   var present = r.pointer();
-  return { length: length, maximumLength: maximumLength, present: present, value: null };
+  log.debug("Leaving readUnicodeStringHeader().");
+  return {
+    length: length,
+    maximumLength: maximumLength,
+    present: present,
+    value: null
+  };
 }
 
-// The deferred half: a conformant VARYING array of UTF-16LE code units, so it carries
-// both a maximum count and an actual count with an offset between them.
+// The deferred half: a conformant VARYING array of UTF-16LE code units, so it
+// carries both a maximum count and an actual count with an offset between them.
 function readUnicodeStringValue(r, header) {
+  log.debug("Entering readUnicodeStringValue().");
   if (!header.present) {
     header.value = null;
+    log.debug("Leaving readUnicodeStringValue().");
     return header;
   }
   var maxCount = r.arrayCount("UTF-16 code unit(s)");
   var offset = r.u32();
   var actualCount = r.arrayCount("UTF-16 code unit(s)");
   if (offset !== 0) {
-    // Legal NDR, but Windows does not emit it here, and honouring it silently would
-    // conceal a structure that is really being misread.
-    throw new Error("krb5: an RPC_UNICODE_STRING with a non-zero array offset (" + offset +
-      ") — Windows does not emit that, so this PAC is malformed or is being read at the wrong offset");
+    // Legal NDR, but Windows does not emit it here, and honouring it silently
+    // would conceal a structure that is really being misread.
+    log.debug("Leaving readUnicodeStringValue().");
+    throw new Error("krb5: an RPC_UNICODE_STRING with a non-zero array " +
+        "offset (" + offset +
+      ") — Windows does not emit that, so this PAC is malformed or is being " +
+          "read at the wrong offset");
   }
   if (actualCount > maxCount) {
-    throw new Error("krb5: an RPC_UNICODE_STRING claims " + actualCount + " characters in an array " +
+    log.debug("Leaving readUnicodeStringValue().");
+    throw new Error("krb5: an RPC_UNICODE_STRING claims " + actualCount + 
+        " characters in an array " +
       "of at most " + maxCount);
   }
   var s = "";
   for (var i = 0; i < actualCount; i++) s += String.fromCharCode(r.u16());
-  // Windows does not count a terminator in Length, but some producers do. Trim only
-  // TRAILING NULs: one in the middle is corruption worth seeing, not worth hiding.
+  // Windows does not count a terminator in Length, but some producers do. Trim
+  // only TRAILING NULs: one in the middle is corruption worth seeing, not worth
+  // hiding.
   while (s.length && s.charCodeAt(s.length - 1) === 0) s = s.slice(0, -1);
   header.value = s;
+  log.debug("Leaving readUnicodeStringValue().");
   return header;
 }
 
-// RPC_SID, plus the canonical display form — a SID is what a Windows service actually
-// authorizes against, so `S-1-5-21-…` matters more here than the bytes do.
+// RPC_SID, plus the canonical display form — a SID is what a Windows service
+// actually authorizes against, so `S-1-5-21-…` matters more here than the bytes
+// do.
 function readSid(r) {
+  log.debug("Entering readSid().");
   var revision = r.u8();
   var subAuthorityCount = r.u8();
   if (subAuthorityCount > 15) {
-    throw new Error("krb5: a SID with " + subAuthorityCount + " sub-authorities (the maximum is 15) " +
+    log.debug("Leaving readSid().");
+    throw new Error("krb5: a SID with " + subAuthorityCount + " " +
+        "sub-authorities (the maximum is 15) " +
       "— this is not a SID, or it is being read at the wrong offset");
   }
   var authorityBytes = r.bytes(6);
-  // The identifier authority is the ONE big-endian field in the structure. That kind
-  // of inconsistency is why this reader is hand-written.
+  // The identifier authority is the ONE big-endian field in the structure. That
+  // kind of inconsistency is why this reader is hand-written.
   var authority = 0;
   for (var i = 0; i < 6; i++) authority = authority * 256 + authorityBytes[i];
   var subAuthorities = [];
   for (var j = 0; j < subAuthorityCount; j++) subAuthorities.push(r.u32());
+  log.debug("Leaving readSid().");
   return {
     revision: revision,
     authority: authority,
     subAuthorities: subAuthorities,
-    text: "S-" + revision + "-" + authority + (subAuthorities.length ? "-" + subAuthorities.join("-") : "")
+    text: "S-" + revision + "-" + authority + (subAuthorities.length ? "-" + 
+        subAuthorities.join("-") : "")
   };
 }
 
-// A pointed-to SID: the deferred form is a conformant structure, so its sub-authority
-// count appears AHEAD of the structure as well as inside it, and the two must agree.
+// A pointed-to SID: the deferred form is a conformant structure, so its
+// sub-authority count appears AHEAD of the structure as well as inside it, and
+// the two must agree.
 function readConformantSid(r) {
   var declaredCount = r.arrayCount("SID sub-authorit(ies)");
   var sid = readSid(r);
   if (declaredCount !== sid.subAuthorities.length) {
-    throw new Error("krb5: a SID's conformant count (" + declaredCount + ") does not match its own " +
+    throw new Error("krb5: a SID's conformant count (" + declaredCount + 
+        ") does not match its own " +
       "sub-authority count (" + sid.subAuthorities.length + ")");
   }
   return sid;
 }
 
 function parseSidText(text) {
+  log.debug("Entering parseSidText().");
   var m = /^S-(\d+)-(\d+)((?:-\d+)*)$/.exec(String(text || "").trim());
-  if (!m) throw new Error("krb5: '" + text + "' is not a SID in S-R-A-S… form");
+  if (!m) {
+    log.debug("Leaving parseSidText().");
+    throw new Error("krb5: '" + text + "' is not a SID in S-R-A-S… form");
+  }
   var subs = m[3] ? m[3].split("-").slice(1).map(Number) : [];
-  if (subs.length > 15) throw new Error("krb5: a SID may have at most 15 sub-authorities");
+  if (subs.length > 15) {
+    log.debug("Leaving parseSidText().");
+    throw new Error("krb5: a SID may have at most 15 sub-authorities");
+  }
+  log.debug("Leaving parseSidText().");
   return {
     revision: Number(m[1]),
     authority: Number(m[2]),
@@ -282,11 +354,12 @@ function sidWithRid(sid, rid) {
 // ---------------------------------------------------------------------------
 
 function createWriter() {
+  log.debug("Entering createWriter().");
   var chunks = [];
   var at = 0;
-  // Referent ids are arbitrary and non-zero; Windows hands them out from 0x00020000
-  // upward in steps of 4, and matching that makes a hand comparison with a real
-  // capture readable.
+  // Referent ids are arbitrary and non-zero; Windows hands them out from
+  // 0x00020000 upward in steps of 4, and matching that makes a hand comparison
+  // with a real capture readable.
   var nextReferent = 0x00020000;
 
   function push(arr) {
@@ -308,7 +381,8 @@ function createWriter() {
     },
     u32: function (v) {
       w.align(4);
-      push(new Uint8Array([v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff]));
+      push(new Uint8Array([v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, 
+          (v >>> 24) & 0xff]));
       return w;
     },
     u64: function (lo, hi) {
@@ -323,7 +397,9 @@ function createWriter() {
     zeros: function (n) { push(new Uint8Array(n)); return w; },
     // A non-NULL referent id, or NULL.
     pointer: function (present) {
-      if (!present) return w.u32(0);
+      if (!present) {
+        return w.u32(0);
+      }
       var id = nextReferent;
       nextReferent += 4;
       return w.u32(id);
@@ -340,8 +416,8 @@ function createWriter() {
       chunks.forEach(function (c) { out.set(c, o); o += c.length; });
       return out;
     },
-    // Overwrite four bytes already emitted — needed for a length that is only known
-    // once the rest is encoded.
+    // Overwrite four bytes already emitted — needed for a length that is only
+    // known once the rest is encoded.
     patchU32: function (offset, v) {
       var out = w.build();
       out[offset] = v & 0xff;
@@ -352,6 +428,7 @@ function createWriter() {
       return w;
     }
   };
+  log.debug("Leaving createWriter().");
   return w;
 }
 
@@ -367,7 +444,9 @@ function writeUnicodeStringHeader(w, value) {
 }
 
 function writeUnicodeStringValue(w, value) {
-  if (value === null || value === undefined) return;
+  if (value === null || value === undefined) {
+    return;
+  }
   w.u32(value.length);   // maximum count
   w.u32(0);              // offset
   w.u32(value.length);   // actual count
@@ -417,6 +496,7 @@ function writeTypeMarshallingHeaders(w) {
 }
 
 function readTypeMarshallingHeaders(r) {
+  log.debug("Entering readTypeMarshallingHeaders().");
   var version = r.u8();
   var endianness = r.u8();
   var commonHeaderLength = r.u16();
@@ -424,16 +504,24 @@ function readTypeMarshallingHeaders(r) {
   var objectBufferLength = r.u32();
   r.u32();                                        // private-header filler
   if (version !== 1) {
-    throw new Error("krb5: NDR type-marshalling version " + version + ", expected 1");
+    log.debug("Leaving readTypeMarshallingHeaders().");
+    throw new Error("krb5: NDR type-marshalling version " + version + 
+        ", expected 1");
   }
   if (endianness !== 0x10) {
-    throw new Error("krb5: this NDR stream declares byte order 0x" + endianness.toString(16) +
-      "; only 0x10 (little-endian, ASCII) is handled. 0x00 would be big-endian NDR, which " +
+    log.debug("Leaving readTypeMarshallingHeaders().");
+    throw new Error("krb5: this NDR stream declares byte order 0x" + 
+        endianness.toString(16) +
+      "; only 0x10 (little-endian, ASCII) is handled. 0x00 would be " +
+          "big-endian NDR, which " +
       "Windows does not emit.");
   }
   if (commonHeaderLength !== 8) {
-    throw new Error("krb5: NDR common header length " + commonHeaderLength + ", expected 8");
+    log.debug("Leaving readTypeMarshallingHeaders().");
+    throw new Error("krb5: NDR common header length " + commonHeaderLength + 
+        ", expected 8");
   }
+  log.debug("Leaving readTypeMarshallingHeaders().");
   return {
     version: version,
     endianness: endianness,

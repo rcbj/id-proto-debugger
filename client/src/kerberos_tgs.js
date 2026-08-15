@@ -31,7 +31,10 @@
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
-var log = bunyan.createLogger({ name: "kerberos_tgs", level: appconfig.logLevel });
+var log = bunyan.createLogger({
+  name: "kerberos_tgs",
+  level: appconfig.logLevel
+});
 log.info("Log initialized. logLevel=" + log.level());
 
 var prim = require("./krb5_primitives.js");
@@ -50,34 +53,44 @@ var tgt = null;
 var lastExchange = null;
 
 function reviveTgt(entry) {
-  if (!entry) return null;
+  log.debug("Entering reviveTgt().");
+  if (!entry) {
+    log.debug("Leaving reviveTgt().");
+    return null;
+  }
   try {
+    log.debug("Leaving reviveTgt().");
     return {
-      // The ticket goes back on the wire byte-for-byte: it is encrypted under the
-      // KDC's own key and its DER is covered by checksums computed elsewhere, so it
-      // is carried rather than rebuilt.
+      // The ticket goes back on the wire byte-for-byte: it is encrypted under
+      // the KDC's own key and its DER is covered by checksums computed
+      // elsewhere, so it is carried rather than rebuilt.
       ticket: msgs.readTicket(panes.b64ToBytes(entry.ticket)),
       sessionKey: prim.fromHex(entry.sessionKey),
       etype: entry.sessionKeyEtype,
-      client: msgs.parsePrincipal(entry.client.split("@")[0], msgs.NAME_TYPE.PRINCIPAL),
+      client: msgs.parsePrincipal(entry.client.split("@")[0], 
+          msgs.NAME_TYPE.PRINCIPAL),
       realm: entry.realm,
       endtime: new Date(entry.endtime)
     };
   } catch (e) {
     log.error("the stored TGT could not be revived: " + e.message);
+    log.debug("Leaving reviveTgt().");
     return null;
   }
+  log.debug("Leaving reviveTgt().");
 }
 
 function renderHeldTgt() {
   log.debug("Entering renderHeldTgt().");
   var entry = panes.readTgt();
   panes.renderTicketPane("krb_tgt_pane", entry, "The TGT this page will spend",
-    "No TGT held. Get one on the AS exchange page first — this page spends a TGT and cannot " +
+    "No TGT held. Get one on the AS exchange page first — this page spends a " +
+        "TGT and cannot " +
     "obtain one.");
   if (!entry) {
     panes.disable("krb_tgs_button", true);
-    status("krb_tgs_status", "No TGT held, so there is nothing to spend.", "krb-bad");
+    status("krb_tgs_status", "No TGT held, so there is nothing to spend.", 
+        "krb-bad");
     log.debug("Leaving renderHeldTgt(). none held.");
     return false;
   }
@@ -85,17 +98,20 @@ function renderHeldTgt() {
   if (!tgt) {
     panes.disable("krb_tgs_button", true);
     status("krb_tgs_status",
-      "A TGT is stored but this page cannot read it back — it may have been written by an older " +
+      "A TGT is stored but this page cannot read it back — it may have been " +
+          "written by an older " +
       "build. Get a fresh one on the AS exchange page.", "krb-bad");
     return false;
   }
-  // An expired TGT cannot buy anything, and saying so beats a KRB_AP_ERR_TKT_EXPIRED
-  // from the KDC that reads as a server problem.
+  // An expired TGT cannot buy anything, and saying so beats a
+  // KRB_AP_ERR_TKT_EXPIRED from the KDC that reads as a server problem.
   if (tgt.endtime <= new Date()) {
     panes.disable("krb_tgs_button", true);
     status("krb_tgs_status",
-      "The held TGT expired at " + tgt.endtime.toISOString() + ". A TGS-REQ with it would be " +
-      "refused with KRB_AP_ERR_TKT_EXPIRED. Get a fresh one on the AS exchange page.", "krb-bad");
+      "The held TGT expired at " + tgt.endtime.toISOString() + ". A TGS-REQ " +
+          "with it would be " +
+      "refused with KRB_AP_ERR_TKT_EXPIRED. Get a fresh one on the AS " +
+          "exchange page.", "krb-bad");
     return false;
   }
   panes.disable("krb_tgs_button", false);
@@ -107,15 +123,21 @@ function renderHeldTgt() {
 }
 
 function renderServiceTickets() {
+  log.debug("Entering renderServiceTickets().");
   var host = el("krb_tickets_pane");
-  if (!host) return;
+  if (!host) {
+    log.debug("Leaving renderServiceTickets().");
+    return;
+  }
   panes.clear(host);
   var tickets = panes.readServiceTickets();
   if (!tickets.length) {
     host.appendChild(panes.make("p", "krb-note",
-      "No service tickets yet. One will appear here after a successful exchange, and the AP " +
+      "No service tickets yet. One will appear here after a successful " +
+          "exchange, and the AP " +
       "exchange page presents it."));
     panes.disable("krb_forget_tickets_button", true);
+    log.debug("Leaving renderServiceTickets().");
     return;
   }
   panes.disable("krb_forget_tickets_button", false);
@@ -125,16 +147,22 @@ function renderServiceTickets() {
     panes.renderTable(pane, panes.ticketRows(entry));
     host.appendChild(pane);
   });
+  log.debug("Leaving renderServiceTickets().");
 }
 
 function requestedEtypes() {
+  log.debug("Entering requestedEtypes().");
   var text = val("krb_etypes").trim();
-  if (!text) return [tgt ? tgt.etype : 18];
+  if (!text) {
+    log.debug("Leaving requestedEtypes().");
+    return [tgt ? tgt.etype : 18];
+  }
   var ids = [];
   text.split(/[\s,]+/).forEach(function (part) {
     var id = parseInt(part, 10);
     if (Number.isInteger(id)) ids.push(id);
   });
+  log.debug("Leaving requestedEtypes().");
   return ids.length ? ids : [tgt.etype];
 }
 
@@ -147,8 +175,10 @@ async function onRequestServiceTicket() {
   var spnText = val("krb_spn").trim();
   if (!spnText) {
     status("krb_tgs_status",
-      "Name the service you want a ticket for — an SPN such as HTTP/web.example.com. On Active " +
-      "Directory the service class is case-insensitive but the host part must match what is " +
+      "Name the service you want a ticket for — an SPN such as " +
+          "HTTP/web.example.com. On Active " +
+      "Directory the service class is case-insensitive but the host part " +
+          "must match what is " +
       "registered on the account.", "krb-bad");
     return false;
   }
@@ -156,7 +186,8 @@ async function onRequestServiceTicket() {
   try {
     spn = msgs.parsePrincipal(spnText, msgs.NAME_TYPE.SRV_HST);
   } catch (e) {
-    status("krb_tgs_status", "That is not a usable service name: " + e.message, "krb-bad");
+    status("krb_tgs_status", "That is not a usable service name: " + e.message, 
+        "krb-bad");
     return false;
   }
 
@@ -173,7 +204,8 @@ async function onRequestServiceTicket() {
     // No storage: the field simply will not be remembered.
   }
 
-  status("krb_tgs_status", "Building a TGS-REQ signed with the TGT's session key…", "krb-pending");
+  status("krb_tgs_status", "Building a TGS-REQ signed with the TGT's session " +
+      "key…", "krb-pending");
   var built;
   try {
     built = await client.buildTgsReq({
@@ -185,14 +217,19 @@ async function onRequestServiceTicket() {
       kdcOptions: [msgs.KDC_OPTION.FORWARDABLE, msgs.KDC_OPTION.RENEWABLE]
     });
   } catch (e) {
-    status("krb_tgs_status", "The request could not be built: " + e.message, "krb-bad");
+    status("krb_tgs_status", "The request could not be built: " + e.message, 
+        "krb-bad");
     return false;
   }
 
-  // Both the outer request and the AP-REQ inside its padata are worth showing: the
-  // nesting is the thing about this message people do not expect.
+  // Both the outer request and the AP-REQ inside its padata are worth showing:
+  // the nesting is the thing about this message people do not expect.
   await panes.renderMessage("krb_request_pane", "Sent", built.request,
-    [{ etype: tgt.etype, key: tgt.sessionKey, label: "the TGT's session key" }]);
+    [{
+      etype: tgt.etype,
+      key: tgt.sessionKey,
+      label: "the TGT's session key"
+    }]);
 
   status("krb_tgs_status", "Sent. Waiting for the KDC…", "krb-pending");
   var result;
@@ -204,23 +241,36 @@ async function onRequestServiceTicket() {
       message: built.request
     });
   } catch (e) {
-    // The request pane keeps what it was showing: the bytes that were sent are the
-    // most useful thing on screen when the send failed.
+    // The request pane keeps what it was showing: the bytes that were sent are
+    // the most useful thing on screen when the send failed.
     status("krb_tgs_status", e.message, "krb-bad");
     log.debug("Leaving onRequestServiceTicket(). send failed.");
     return false;
   }
 
   await panes.renderMessage("krb_reply_pane", "Received", result.reply,
-    [{ etype: tgt.etype, key: tgt.sessionKey, label: "the TGT's session key" }].concat(
-      subkey ? [{ etype: subkey.etype, key: subkey.key, label: "the Authenticator's subkey" }] : []));
+    [{
+      etype: tgt.etype,
+      key: tgt.sessionKey,
+      label: "the TGT's session key"
+    }].concat(
+      subkey ? [{
+        etype: subkey.etype,
+        key: subkey.key,
+        label: "the Authenticator's subkey"
+      }] : []));
 
   var outcome;
   try {
     outcome = await client.readTgsRep({
-      tgt: tgt, reply: result.reply, nonce: built.nonce, subkey: subkey });
+      tgt: tgt,
+      reply: result.reply,
+      nonce: built.nonce,
+      subkey: subkey
+    });
   } catch (e) {
-    status("krb_tgs_status", "The reply could not be read: " + e.message, "krb-bad");
+    status("krb_tgs_status", "The reply could not be read: " + e.message, 
+        "krb-bad");
     return false;
   }
 
@@ -228,17 +278,23 @@ async function onRequestServiceTicket() {
     var error = outcome.error;
     var extra = "";
     if (error.errorCode === 7) {
-      extra = " On Active Directory this means the SPN is not registered, or is registered on a " +
+      extra = " On Active Directory this means the SPN is not registered, or " +
+          "is registered on a " +
         "different account — `setspn -Q " + spnText + "` is the check.";
     } else if (error.errorCode === 14) {
-      extra = " The service account and this request have no encryption type in common; in 2026 " +
+      extra = " The service account and this request have no encryption type " +
+          "in common; in 2026 " +
         "that usually means RC4 has been disabled on one side.";
     } else if (error.errorCode === 50) {
-      extra = " The Authenticator's checksum did not match the request body. That is either a " +
-        "key usage error (it must be 6) or the body being re-encoded after it was signed.";
+      extra = " The Authenticator's checksum did not match the request body. " +
+          "That is either a " +
+        "key usage error (it must be 6) or the body being re-encoded after " +
+            "it was signed.";
     }
-    status("krb_tgs_status", error.error.name + " — " + error.error.meaning + extra, "krb-bad");
-    log.debug("Leaving onRequestServiceTicket(). refused with " + error.error.name);
+    status("krb_tgs_status", error.error.name + " — " + error.error.meaning + 
+        extra, "krb-bad");
+    log.debug("Leaving onRequestServiceTicket(). refused with " + 
+        error.error.name);
     return false;
   }
 
@@ -261,14 +317,17 @@ async function onRequestServiceTicket() {
   renderServiceTickets();
   lastExchange = outcome;
 
-  // Which key usage opened the reply is reported, not hidden. A client that always
-  // tries one of the two fails whenever the other applies, and the symptom is an
-  // integrity failure that names nothing.
+  // Which key usage opened the reply is reported, not hidden. A client that
+  // always tries one of the two fails whenever the other applies, and the
+  // symptom is an integrity failure that names nothing.
   status("krb_tgs_status",
-    "A service ticket for " + entry.service + " was issued and stored, valid until " +
-    entry.endtime + ". Its enc-part was opened with " + outcome.openedWith + "." +
+    "A service ticket for " + entry.service + " was issued and stored, valid " +
+        "until " +
+    entry.endtime + ". Its enc-part was opened with " + outcome.openedWith + 
+        "." +
     (outcome.flagNames.indexOf("initial") === -1
-      ? " Note it is NOT flagged `initial` — only the AS exchange issues an initial ticket, and a " +
+      ? " Note it is NOT flagged `initial` — only the AS exchange issues an " +
+          "initial ticket, and a " +
         "service may insist on that distinction."
       : ""),
     "krb-ok");
@@ -299,7 +358,8 @@ window.onload = async function () {
   renderHeldTgt();
   renderServiceTickets();
   var button = el("krb_tgs_button");
-  if (button) button.addEventListener("click", function () { onRequestServiceTicket(); });
+  if (button) button.addEventListener("click", 
+      function () { onRequestServiceTicket(); });
   var forget = el("krb_forget_tickets_button");
   if (forget) forget.addEventListener("click", onForgetTickets);
   log.debug("Leaving onload().");

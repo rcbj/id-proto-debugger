@@ -58,17 +58,18 @@ const DEFAULT_ALLOWED_PORTS = [88, 464, 749];
 
 // The SERVICE endpoint's ports default to NOTHING, and that is the whole point.
 //
-// A Kerberos service can be on any port at all — 443, 1433, 389, 5432 — so a port
-// allowlist cannot bound this endpoint the way it bounds the KDC one. What bounds it
-// is the payload check (api/krb5_frame.js's assertServiceRequest: a GSS
-// InitialContextToken naming the Kerberos mechanism and wrapping a well-formed
-// AP-REQ, or a bare AP-REQ). That check is strict enough that an HTTP request, a
-// Redis command and a TLS handshake all fail it.
+// A Kerberos service can be on any port at all — 443, 1433, 389, 5432 — so a
+// port allowlist cannot bound this endpoint the way it bounds the KDC one. What
+// bounds it is the payload check (api/krb5_frame.js's assertServiceRequest: a
+// GSS InitialContextToken naming the Kerberos mechanism and wrapping a
+// well-formed AP-REQ, or a bare AP-REQ). That check is strict enough that an
+// HTTP request, a Redis command and a TLS handshake all fail it.
 //
-// Even so, the capability is off by default. `krb5ServicePorts` must be set — the
-// local and containerized stacks set it to the mock service's port — so that a
-// deployment which has no use for it does not silently acquire the ability to send
-// caller-supplied bytes to an arbitrary port. Fail-safe rather than fail-open.
+// Even so, the capability is off by default. `krb5ServicePorts` must be set —
+// the local and containerized stacks set it to the mock service's port — so
+// that a deployment which has no use for it does not silently acquire the
+// ability to send caller-supplied bytes to an arbitrary port. Fail-safe rather
+// than fail-open.
 const DEFAULT_SERVICE_PORTS = [];
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_CALL_TIMEOUT_MS = 10000;
@@ -81,72 +82,94 @@ const DEFAULT_MAX_REPLY_BYTES = 1048576;
 const UDP_RECEIVE_BYTES = 65535;
 
 function resolvePositiveNumber(value, fallback, name, log) {
-  if (typeof value === 'number' && isFinite(value) && value > 0) return value;
+  if (typeof value === 'number' && isFinite(value) && value > 0) {
+    return value;
+  }
   if (value !== undefined && value !== null) {
-    log.error('krb5_relay: ' + name + ' is not a positive number (' + JSON.stringify(value) +
+    log.error('krb5_relay: ' + name + ' is not a positive number (' + 
+        JSON.stringify(value) +
               '); using ' + fallback + '.');
   }
   return fallback;
 }
 
-// The port allowlist. A malformed entry is dropped with its reason logged, and an
-// allowlist that ends up empty is an error rather than a silent "allow nothing" or
-// — much worse — a silent "allow everything".
+// The port allowlist. A malformed entry is dropped with its reason logged, and
+// an allowlist that ends up empty is an error rather than a silent "allow
+// nothing" or — much worse — a silent "allow everything".
 function resolveAllowedPorts(value, log) {
-  if (value === undefined || value === null) return DEFAULT_ALLOWED_PORTS.slice();
+  log.debug("Entering resolveAllowedPorts().");
+  if (value === undefined || value === null) {
+    log.debug("Leaving resolveAllowedPorts().");
+    return DEFAULT_ALLOWED_PORTS.slice();
+  }
   if (!Array.isArray(value)) {
-    log.error('krb5_relay: krb5AllowedPorts must be an array of port numbers; using the default ' +
+    log.error('krb5_relay: krb5AllowedPorts must be an array of port ' +
+        'numbers; using the default ' +
               DEFAULT_ALLOWED_PORTS.join(', ') + '.');
+    log.debug("Leaving resolveAllowedPorts().");
     return DEFAULT_ALLOWED_PORTS.slice();
   }
   const ports = [];
   for (const entry of value) {
     const port = typeof entry === 'number' ? entry : parseInt(entry, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      log.error('krb5_relay: ignoring krb5AllowedPorts entry ' + JSON.stringify(entry) +
+      log.error('krb5_relay: ignoring krb5AllowedPorts entry ' + 
+          JSON.stringify(entry) +
                 ' — a port must be an integer from 1 to 65535.');
       continue;
     }
     if (ports.indexOf(port) === -1) ports.push(port);
   }
   if (!ports.length) {
-    log.error('krb5_relay: krb5AllowedPorts contained no usable ports, so this relay will refuse ' +
-              'every call. That is the safe direction, but it is almost certainly a configuration ' +
+    log.error('krb5_relay: krb5AllowedPorts contained no usable ports, so ' +
+        'this relay will refuse ' +
+              'every call. That is the safe direction, but it is almost ' +
+                  'certainly a configuration ' +
               'mistake.');
   }
+  log.debug("Leaving resolveAllowedPorts().");
   return ports;
 }
 
 function createRelay(appconfig, guard, log) {
+  log.debug("Entering createRelay().");
   appconfig = appconfig || {};
   const logger = log || { debug() {}, info() {}, warn() {}, error() {} };
 
   const allowedPorts = resolveAllowedPorts(appconfig.krb5AllowedPorts, logger);
-  // "any" is accepted for the service endpoint, because a real deployment debugging
-  // several services genuinely cannot enumerate their ports. It is spelled out as a
-  // word rather than expressed as an empty list or a 0, so that switching it on is
-  // an unmistakable act rather than a plausible typo.
+  // "any" is accepted for the service endpoint, because a real deployment
+  // debugging several services genuinely cannot enumerate their ports. It is
+  // spelled out as a word rather than expressed as an empty list or a 0, so
+  // that switching it on is an unmistakable act rather than a plausible typo.
   const serviceAnyPort = appconfig.krb5ServicePorts === 'any';
   const servicePorts = serviceAnyPort
     ? []
-    : (appconfig.krb5ServicePorts === undefined || appconfig.krb5ServicePorts === null
+    : (appconfig.krb5ServicePorts === undefined || 
+        appconfig.krb5ServicePorts === null
         ? DEFAULT_SERVICE_PORTS.slice()
         : resolveAllowedPorts(appconfig.krb5ServicePorts, logger));
-  const connectTimeout = resolvePositiveNumber(appconfig.connectionTimeout, DEFAULT_CONNECT_TIMEOUT_MS,
+  const connectTimeout = resolvePositiveNumber(appconfig.connectionTimeout, 
+      DEFAULT_CONNECT_TIMEOUT_MS,
     'connectionTimeout', logger);
-  const callTimeout = resolvePositiveNumber(appconfig.callTimeout, DEFAULT_CALL_TIMEOUT_MS,
+  const callTimeout = resolvePositiveNumber(appconfig.callTimeout, 
+      DEFAULT_CALL_TIMEOUT_MS,
     'callTimeout', logger);
-  const maxReplyBytes = resolvePositiveNumber(appconfig.maxContentLength, DEFAULT_MAX_REPLY_BYTES,
+  const maxReplyBytes = resolvePositiveNumber(appconfig.maxContentLength, 
+      DEFAULT_MAX_REPLY_BYTES,
     'maxContentLength', logger);
-  // The address policy is the guard's, not a second copy of it. A relay with its
-  // own idea of what is private is a relay that disagrees with the HTTP side.
+  // The address policy is the guard's, not a second copy of it. A relay with
+  // its own idea of what is private is a relay that disagrees with the HTTP
+  // side.
   const addressPolicyEnabled = !!(guard && guard.enabled);
 
   logger.info('krb5_relay: KDC ports ' + (allowedPorts.join(', ') || '(none)') +
     '; service ports ' + (serviceAnyPort ? 'ANY (krb5ServicePorts is "any")'
-                                         : (servicePorts.join(', ') || 'NONE — POST /krb5/service ' +
-                                            'will refuse every call until krb5ServicePorts is set')) +
-    '; connect timeout ' + connectTimeout + ' milliseconds; call timeout ' + callTimeout +
+                                         : (servicePorts.join(', ') || 
+                                             'NONE — POST /krb5/service ' +
+                                            'will refuse every call until ' +
+                                                'krb5ServicePorts is set')) +
+    '; connect timeout ' + connectTimeout + ' milliseconds; call timeout ' + 
+        callTimeout +
     ' milliseconds; reply cap ' + maxReplyBytes + ' bytes; address policy ' +
     (addressPolicyEnabled ? 'ENABLED (shared with ssrf_guard)' : 'disabled'));
 
@@ -158,100 +181,155 @@ function createRelay(appconfig, guard, log) {
   }
 
   function assertPortAllowed(port, purpose) {
+    log.debug("Entering assertPortAllowed().");
     if (purpose === 'service') {
-      if (serviceAnyPort) return;
+      if (serviceAnyPort) {
+        log.debug("Leaving assertPortAllowed().");
+        return;
+      }
       if (!servicePorts.length) {
-        throw refuse('POST /krb5/service is not enabled on this deployment. It sends ' +
-          'caller-supplied bytes to a caller-supplied port, which is a broader capability than the ' +
-          'KDC relay — a Kerberos service can be on any port, so no small allowlist bounds it and ' +
-          'the payload check does that work instead. Set krb5ServicePorts to the port(s) you need, ' +
+        log.debug("Leaving assertPortAllowed().");
+        throw refuse('POST /krb5/service is not enabled on this deployment. ' +
+            'It sends ' +
+          'caller-supplied bytes to a caller-supplied port, which is a ' +
+              'broader capability than the ' +
+          'KDC relay — a Kerberos service can be on any port, so no small ' +
+              'allowlist bounds it and ' +
+          'the payload check does that work instead. Set krb5ServicePorts to ' +
+              'the port(s) you need, ' +
           'or to the string "any".', 'EKRB5SERVICENOTENABLED');
       }
       if (servicePorts.indexOf(port) === -1) {
-        throw refuse('Refusing to connect to port ' + port + '. This deployment allows Kerberos ' +
-          'service traffic to ' + servicePorts.join(', ') + ' only. Add the port to ' +
+        log.debug("Leaving assertPortAllowed().");
+        throw refuse('Refusing to connect to port ' + port + '. This ' +
+            'deployment allows Kerberos ' +
+          'service traffic to ' + servicePorts.join(', ') + ' only. Add the ' +
+              'port to ' +
           'krb5ServicePorts, or set it to "any".', 'EKRB5PORTNOTALLOWED');
       }
+      log.debug("Leaving assertPortAllowed().");
       return;
     }
     if (allowedPorts.indexOf(port) === -1) {
-      throw refuse('Refusing to connect to port ' + port + '. This relay carries Kerberos to ' +
-        'Kerberos ports only (' + (allowedPorts.join(', ') || 'none configured') + '). It is a raw ' +
-        'byte relay, so an unrestricted port would make it a port scanner with a caller-chosen ' +
-        'payload. Add the port to krb5AllowedPorts if this deployment needs it.',
+      log.debug("Leaving assertPortAllowed().");
+      throw refuse('Refusing to connect to port ' + port + '. This relay ' +
+          'carries Kerberos to ' +
+        'Kerberos ports only (' + (allowedPorts.join(', ') || 
+            'none configured') + '). It is a raw ' +
+        'byte relay, so an unrestricted port would make it a port scanner ' +
+            'with a caller-chosen ' +
+        'payload. Add the port to krb5AllowedPorts if this deployment needs ' +
+            'it.',
         'EKRB5PORTNOTALLOWED');
     }
+    log.debug("Leaving assertPortAllowed().");
   }
 
-  // Resolve the host and return an address that has passed the policy. A literal
-  // is checked directly — node never calls a DNS resolver for one, which is the
-  // gap that made the HTTP guard need two hooks rather than one.
+  // Resolve the host and return an address that has passed the policy. A
+  // literal is checked directly — node never calls a DNS resolver for one,
+  // which is the gap that made the HTTP guard need two hooks rather than one.
   function resolveAllowedAddress(host) {
+    log.debug("Leaving resolveAllowedAddress().");
+    log.debug("Entering resolveAllowedAddress().");
     return new Promise(function (resolve, reject) {
       const literalFamily = net.isIP(host);
       if (literalFamily) {
         const range = addressPolicyEnabled && guard.blockedRangeFor(host);
         if (range) {
-          return reject(refuse('Refusing to open a TCP connection to ' + host + ': it is in the ' +
-            'blocked range ' + range + '. This service does not connect to loopback or private ' +
-            'network addresses. Set blockPrivateNetworkCalls to false in the api configuration if ' +
-            'this deployment is meant to — the local and containerized stacks do, because their ' +
+          return reject(refuse('Refusing to open a TCP connection to ' + host + 
+              ': it is in the ' +
+            'blocked range ' + range + '. This service does not connect to ' +
+                'loopback or private ' +
+            'network addresses. Set blockPrivateNetworkCalls to false in the ' +
+                'api configuration if ' +
+            'this deployment is meant to — the local and containerized ' +
+                'stacks do, because their ' +
             'KDC IS a private address.', 'EBLOCKEDADDRESS'));
         }
-        return resolve({ address: host, family: literalFamily, wasLiteral: true });
+        return resolve({
+          address: host,
+          family: literalFamily,
+          wasLiteral: true
+        });
       }
       dns.lookup(host, { all: true }, function (err, addresses) {
         if (err) {
-          return reject(refuse('Could not resolve ' + host + ': ' + err.message +
+          return reject(refuse('Could not resolve ' + host + ': ' + 
+              err.message +
             ' (' + err.code + ').', 'EKRB5DNS'));
         }
         const list = Array.isArray(addresses) ? addresses : [addresses];
         for (const entry of list) {
-          const range = addressPolicyEnabled && guard.blockedRangeFor(entry.address);
+          const range = addressPolicyEnabled && 
+              guard.blockedRangeFor(entry.address);
           if (range) {
-            logger.warn('krb5_relay: refused ' + host + ' -> ' + entry.address + ' (' + range + ')');
-            return reject(refuse('Refusing to connect to ' + host + ': it resolves to ' +
-              entry.address + ', which is in the blocked range ' + range + '. Note that a name is ' +
-              'judged by what it RESOLVES to, so localtest.me and 127.0.0.1.nip.io are caught by ' +
+            logger.warn('krb5_relay: refused ' + host + ' -> ' + 
+                entry.address + ' (' + range + ')');
+            return reject(refuse('Refusing to connect to ' + host + 
+                ': it resolves to ' +
+              entry.address + ', which is in the blocked range ' + range + 
+                  '. Note that a name is ' +
+              'judged by what it RESOLVES to, so localtest.me and ' +
+                  '127.0.0.1.nip.io are caught by ' +
               'the same rule.', 'EBLOCKEDADDRESS'));
           }
         }
-        // Connect to the literal that was checked, not to the name. Re-resolving
-        // at connect time is the DNS-rebinding window.
-        resolve({ address: list[0].address, family: list[0].family, wasLiteral: false });
+        // Connect to the literal that was checked, not to the name.
+        // Re-resolving at connect time is the DNS-rebinding window.
+        resolve({
+          address: list[0].address,
+          family: list[0].family,
+          wasLiteral: false
+        });
       });
     });
   }
 
   function sendOverTcp(target, payload, timings) {
+    log.debug("Leaving sendOverTcp().");
+    log.debug("Entering sendOverTcp().");
     return new Promise(function (resolve, reject) {
       let settled = false;
       let buffer = Buffer.alloc(0);
       const socket = new net.Socket();
 
       // Two separate deadlines, and they are additive rather than one shadowing
-      // the other. A KDC that connects and then thinks for a while must be given
-      // until callTimeout; a dead address must fail at connectTimeout. Expressing
-      // both with one timer makes whichever is smaller the only one that fires.
+      // the other. A KDC that connects and then thinks for a while must be
+      // given until callTimeout; a dead address must fail at connectTimeout.
+      // Expressing both with one timer makes whichever is smaller the only one
+      // that fires.
       let connectTimer = setTimeout(function () {
-        finish(refuse('Timed out after ' + connectTimeout + ' milliseconds trying to reach ' +
-          target.address + ':' + target.port + '. Nothing accepted a connection — either no KDC is ' +
-          'listening there, or a firewall is dropping the packets silently.', 'EKRB5CONNECTTIMEOUT'));
+        finish(refuse('Timed out after ' + connectTimeout + ' milliseconds ' +
+            'trying to reach ' +
+          target.address + ':' + target.port + '. Nothing accepted a ' +
+              'connection — either no KDC is ' +
+          'listening there, or a firewall is dropping the packets silently.', 
+              'EKRB5CONNECTTIMEOUT'));
       }, connectTimeout);
       const callTimer = setTimeout(function () {
-        finish(refuse('Timed out after ' + callTimeout + ' milliseconds waiting for a reply from ' +
-          target.address + ':' + target.port + '. The connection was established, so something is ' +
+        finish(refuse('Timed out after ' + callTimeout + ' milliseconds ' +
+            'waiting for a reply from ' +
+          target.address + ':' + target.port + '. The connection was ' +
+              'established, so something is ' +
           'listening; it did not answer.', 'EKRB5CALLTIMEOUT'));
       }, callTimeout);
 
       function finish(err, message) {
-        if (settled) return;
+        log.debug("Entering finish().");
+        if (settled) {
+          log.debug("Leaving finish().");
+          return;
+        }
         settled = true;
         if (connectTimer) { clearTimeout(connectTimer); connectTimer = null; }
         clearTimeout(callTimer);
         socket.destroy();
-        if (err) return reject(err);
+        if (err) {
+          log.debug("Leaving finish().");
+          return reject(err);
+        }
         resolve(message);
+        log.debug("Leaving finish().");
       }
 
       socket.on('connect', function () {
@@ -264,11 +342,13 @@ function createRelay(appconfig, guard, log) {
       socket.on('data', function (chunk) {
         buffer = Buffer.concat([buffer, chunk]);
         // The cap is applied to what the far end DECLARED, inside readTcpFrame,
-        // before the rest is waited for. Also guard the accumulating buffer, for a
-        // sender that never sends a prefix at all.
+        // before the rest is waited for. Also guard the accumulating buffer,
+        // for a sender that never sends a prefix at all.
         if (buffer.length > maxReplyBytes + 4) {
-          return finish(refuse('The reply from ' + target.address + ':' + target.port + ' passed ' +
-            maxReplyBytes + ' bytes without a complete message. Abandoned.', 'EKRB5REPLYTOOBIG'));
+          return finish(refuse('The reply from ' + target.address + ':' + 
+              target.port + ' passed ' +
+            maxReplyBytes + ' bytes without a complete message. Abandoned.', 
+                'EKRB5REPLYTOOBIG'));
         }
         let read;
         try {
@@ -280,86 +360,121 @@ function createRelay(appconfig, guard, log) {
       });
 
       socket.on('error', function (err) {
-        finish(refuse('Could not talk to ' + target.address + ':' + target.port + ': ' +
+        finish(refuse('Could not talk to ' + target.address + ':' + 
+            target.port + ': ' +
           err.message + ' (' + err.code + ').', 'EKRB5SOCKET'));
       });
 
       socket.on('end', function () {
         // A KDC that closes without a complete reply. Distinguished from a
         // timeout, because it means something answered and then gave up.
-        finish(refuse('The connection to ' + target.address + ':' + target.port + ' closed after ' +
-          buffer.length + ' byte(s), before a complete reply arrived.', 'EKRB5SHORTREPLY'));
+        finish(refuse('The connection to ' + target.address + ':' + 
+            target.port + ' closed after ' +
+          buffer.length + ' byte(s), before a complete reply arrived.', 
+              'EKRB5SHORTREPLY'));
       });
 
-      socket.connect({ host: target.address, port: target.port, family: target.family });
+      socket.connect({
+        host: target.address,
+        port: target.port,
+        family: target.family
+      });
     });
   }
 
   function sendOverUdp(target, payload, timings) {
+    log.debug("Leaving sendOverUdp().");
+    log.debug("Entering sendOverUdp().");
     return new Promise(function (resolve, reject) {
       let settled = false;
       const socket = dgram.createSocket(target.family === 6 ? 'udp6' : 'udp4');
       const timer = setTimeout(function () {
-        finish(refuse('No UDP reply from ' + target.address + ':' + target.port + ' within ' +
-          callTimeout + ' milliseconds. UDP is unacknowledged, so this may mean the datagram never ' +
-          'arrived. Retry over TCP — which is what a client does anyway when a KDC answers ' +
+        finish(refuse('No UDP reply from ' + target.address + ':' + 
+            target.port + ' within ' +
+          callTimeout + ' milliseconds. UDP is unacknowledged, so this may ' +
+              'mean the datagram never ' +
+          'arrived. Retry over TCP — which is what a client does anyway when ' +
+              'a KDC answers ' +
           'KRB_ERR_RESPONSE_TOO_BIG.', 'EKRB5CALLTIMEOUT'));
       }, callTimeout);
 
       function finish(err, message) {
-        if (settled) return;
+        log.debug("Entering finish().");
+        if (settled) {
+          log.debug("Leaving finish().");
+          return;
+        }
         settled = true;
         clearTimeout(timer);
-        try { socket.close(); } catch (e) {
+        try {
+          socket.close();
+        } catch (e) {
           // Already closing: nothing to do, and nothing worth reporting.
         }
-        if (err) return reject(err);
+        if (err) {
+          log.debug("Leaving finish().");
+          return reject(err);
+        }
         resolve(message);
+        log.debug("Leaving finish().");
       }
 
       socket.on('message', function (msg) {
         timings.connectedAt = timings.connectedAt || Date.now();
         // UDP carries no length prefix: the datagram IS the message.
         if (msg.length > maxReplyBytes) {
-          return finish(refuse('The UDP reply is ' + msg.length + ' bytes, over the ' +
+          return finish(refuse('The UDP reply is ' + msg.length + 
+              ' bytes, over the ' +
             maxReplyBytes + '-byte limit.', 'EKRB5REPLYTOOBIG'));
         }
         finish(null, msg);
       });
       socket.on('error', function (err) {
-        finish(refuse('UDP to ' + target.address + ':' + target.port + ' failed: ' + err.message +
+        finish(refuse('UDP to ' + target.address + ':' + target.port + 
+            ' failed: ' + err.message +
           ' (' + err.code + ').', 'EKRB5SOCKET'));
       });
-      socket.send(Buffer.from(payload), target.port, target.address, function (err) {
+      socket.send(Buffer.from(payload), target.port, target.address, 
+          function (err) {
         if (err) {
-          finish(refuse('Could not send the UDP datagram to ' + target.address + ':' + target.port +
+          finish(refuse('Could not send the UDP datagram to ' + 
+              target.address + ':' + target.port +
             ': ' + err.message + '.', 'EKRB5SOCKET'));
         }
       });
     });
   }
 
-  // The whole operation. Every path resolves or rejects — see the note at the top
-  // about the no-response branch.
+  // The whole operation. Every path resolves or rejects — see the note at the
+  // top about the no-response branch.
   async function send(options) {
+    log.debug("Entering send().");
     const opts = options || {};
     const host = String(opts.host || '').trim();
-    const port = typeof opts.port === 'number' ? opts.port : parseInt(opts.port, 10);
+    const port = typeof opts.port === 'number' ? opts.port : 
+        parseInt(opts.port, 10);
     const transport = (opts.transport === 'udp') ? 'udp' : 'tcp';
-    const payload = Buffer.isBuffer(opts.message) ? opts.message : Buffer.from(opts.message || []);
+    const payload = Buffer.isBuffer(opts.message) ? opts.message : 
+        Buffer.from(opts.message || []);
 
     logger.debug('Entering krb5_relay.send(). host=' + host + ', port=' + port +
-                 ', transport=' + transport + ', purpose=' + (opts.purpose || 'kdc') +
+                 ', transport=' + transport + ', purpose=' + (opts.purpose || 
+                     'kdc') +
                  ', bytes=' + payload.length);
 
-    if (!host) throw refuse('No KDC host given.', 'EKRB5NOHOST');
+    if (!host) {
+      log.debug("Leaving send().");
+      throw refuse('No KDC host given.', 'EKRB5NOHOST');
+    }
     if (!Number.isInteger(port)) {
-      throw refuse('The KDC port is not a number: ' + JSON.stringify(opts.port) + '.', 'EKRB5NOPORT');
+      log.debug("Leaving send().");
+      throw refuse('The KDC port is not a number: ' + 
+          JSON.stringify(opts.port) + '.', 'EKRB5NOPORT');
     }
 
     // The pre-flight, BEFORE the port check and before any socket: the cheapest
-    // and most specific refusal should come first, so a caller sending the wrong
-    // bytes is told that rather than being told about ports.
+    // and most specific refusal should come first, so a caller sending the
+    // wrong bytes is told that rather than being told about ports.
     const purpose = opts.purpose === 'service' ? 'service' : 'kdc';
     let messageName;
     try {
@@ -367,9 +482,12 @@ function createRelay(appconfig, guard, log) {
         ? frame.assertServiceRequest(payload)
         : frame.assertKerberosRequest(payload);
     } catch (e) {
-      throw refuse('Refusing to relay this payload: ' + e.message + ' This endpoint carries Kerberos ' +
+      log.debug("Leaving send().");
+      throw refuse('Refusing to relay this payload: ' + e.message + 
+          ' This endpoint carries Kerberos ' +
         (purpose === 'service' ? 'AP-REQs' : 'KDC requests') +
-        ', not arbitrary bytes — see api/krb5_frame.js for why that restriction exists.',
+        ', not arbitrary bytes — see api/krb5_frame.js for why that ' +
+            'restriction exists.',
         'EKRB5NOTKERBEROS');
     }
     assertPortAllowed(port, purpose);
@@ -384,11 +502,15 @@ function createRelay(appconfig, guard, log) {
     const finishedAt = Date.now();
 
     const replyName = frame.describeReply(reply);
-    logger.info('krb5_relay: ' + messageName + ' (' + payload.length + ' bytes) to ' + host +
-      (target.wasLiteral ? '' : ' [' + target.address + ']') + ':' + port + '/' + transport +
-      ' -> ' + replyName + ' (' + reply.length + ' bytes) in ' + (finishedAt - timings.startedAt) + 'ms');
+    logger.info('krb5_relay: ' + messageName + ' (' + payload.length + 
+        ' bytes) to ' + host +
+      (target.wasLiteral ? '' : ' [' + target.address + ']') + ':' + port + 
+          '/' + transport +
+      ' -> ' + replyName + ' (' + reply.length + ' bytes) in ' + (
+          finishedAt - timings.startedAt) + 'ms');
     logger.debug('Leaving krb5_relay.send().');
 
+    log.debug("Leaving send().");
     return {
       request: { message: messageName, bytes: payload.length },
       reply: reply,
@@ -402,11 +524,13 @@ function createRelay(appconfig, guard, log) {
       },
       timing: {
         totalMs: finishedAt - timings.startedAt,
-        connectMs: timings.connectedAt ? timings.connectedAt - timings.startedAt : null
+        connectMs: timings.connectedAt ? 
+            timings.connectedAt - timings.startedAt : null
       }
     };
   }
 
+  log.debug("Leaving createRelay().");
   return {
     send: send,
     allowedPorts: allowedPorts.slice(),

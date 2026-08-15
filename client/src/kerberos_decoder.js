@@ -34,24 +34,27 @@
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
-var log = bunyan.createLogger({ name: "kerberos_decoder", level: appconfig.logLevel });
+var log = bunyan.createLogger({
+  name: "kerberos_decoder",
+  level: appconfig.logLevel
+});
 log.info("Log initialized. logLevel=" + log.level());
 
 var prim = require("./krb5_primitives.js");
 var kcrypto = require("./krb5_crypto.js");
 var describer = require("./krb5_describe.js");
 var keytabReader = require("./krb5_keytab.js");
-// The shared DOM half, so this page and the three exchange pages cannot disagree
-// about how a message renders. Requiring it is safe on the STATIC deployments: it has
-// no side effects at load, and the only thing in it that touches the network
-// (reportEnvironment / relayLimits) is never called from here — this page talks to
-// nothing.
+// The shared DOM half, so this page and the three exchange pages cannot
+// disagree about how a message renders. Requiring it is safe on the STATIC
+// deployments: it has no side effects at load, and the only thing in it that
+// touches the network (reportEnvironment / relayLimits) is never called from
+// here — this page talks to nothing.
 var panes = require("./kerberos_panes.js");
 
-// The DOM helpers all come from kerberos_panes.js now. They used to be copied into
-// this file, and into kerberos.js, which is exactly the duplication that module was
-// extracted to remove: a pane that disagreed between two of these pages would be a
-// bug visible only by opening both.
+// The DOM helpers all come from kerberos_panes.js now. They used to be copied
+// into this file, and into kerberos.js, which is exactly the duplication that
+// module was extracted to remove: a pane that disagreed between two of these
+// pages would be a bug visible only by opening both.
 var el = panes.el;
 var make = panes.make;
 var clear = panes.clear;
@@ -76,23 +79,39 @@ function renderDocument(doc) {
   var inputPane = make("div", "krb-section");
   inputPane.appendChild(make("h4", "krb-section-title", "Input"));
   var inputTable = make("table", "krb-table");
-  renderRow(inputTable, { name: "read as", value: doc.input.encoding, note: null });
   renderRow(inputTable, {
-    name: "framing", value: doc.input.framing || "(none)",
+    name: "read as",
+    value: doc.input.encoding,
+    note: null
+  });
+  renderRow(inputTable, {
+    name: "framing",
+    value: doc.input.framing || "(none)",
     note: doc.input.framing
-      ? "Kerberos over TCP prefixes every message with its length. It was detected and removed; " +
-        "left in place the ASN.1 parse fails on the first byte and blames ASN.1."
+      ? "Kerberos over TCP prefixes every message with its length. It was " +
+          "detected and removed; " +
+        "left in place the ASN.1 parse fails on the first byte and blames " +
+            "ASN.1."
       : null
   });
-  renderRow(inputTable, { name: "length", value: doc.input.byteLength + " bytes", note: null });
-  renderRow(inputTable, { name: "first bytes", value: doc.input.hex, note: null });
+  renderRow(inputTable, {
+    name: "length",
+    value: doc.input.byteLength + " bytes",
+    note: null
+  });
+  renderRow(inputTable, {
+    name: "first bytes",
+    value: doc.input.hex,
+    note: null
+  });
   inputPane.appendChild(inputTable);
   host.appendChild(inputPane);
 
   if (doc.problems && doc.problems.length) {
     var problems = make("div", "krb-problems");
     problems.appendChild(make("h4", "krb-section-title",
-      doc.problems.length + " thing" + (doc.problems.length === 1 ? "" : "s") + " worth knowing"));
+      doc.problems.length + " thing" + (doc.problems.length === 1 ? "" : "s") + 
+          " worth knowing"));
     var ul = make("ul");
     doc.problems.forEach(function (p) { ul.appendChild(make("li", null, p)); });
     problems.appendChild(ul);
@@ -105,8 +124,10 @@ function renderDocument(doc) {
     var treePane = make("div", "krb-section");
     treePane.appendChild(make("h4", "krb-section-title", "ASN.1 structure"));
     treePane.appendChild(make("p", "krb-section-note",
-      "No reader here recognises these bytes, so this is their structure. A field under an unexpected " +
-      "context tag is visible here and invisible in a decoded view that skipped it."));
+      "No reader here recognises these bytes, so this is their structure. A " +
+          "field under an unexpected " +
+      "context tag is visible here and invisible in a decoded view that " +
+          "skipped it."));
     renderTree(treePane, doc.tree, 0);
     host.appendChild(treePane);
   }
@@ -132,10 +153,15 @@ async function collectKeys() {
       var bytes = prim.fromHex(rawHex.replace(/[\s:]/g, ""));
       var profile = kcrypto.etypeById(etype);
       if (bytes.length !== profile.keyBytes) {
-        notes.push("The key given is " + bytes.length + " bytes, but " + profile.name +
+        notes.push("The key given is " + bytes.length + " bytes, but " + 
+            profile.name +
           " keys are " + profile.keyBytes + " bytes. It was offered anyway.");
       }
-      keys.push({ etype: etype, key: bytes, label: "the key you pasted (" + profile.name + ")" });
+      keys.push({
+        etype: etype,
+        key: bytes,
+        label: "the key you pasted (" + profile.name + ")"
+      });
     } catch (e) {
       notes.push("The pasted key could not be read: " + e.message);
     }
@@ -145,13 +171,18 @@ async function collectKeys() {
   var salt = (el("krb_salt").value || "").trim();
   if (password) {
     if (!salt) {
-      notes.push("A password was given with no salt. The salt is NOT guessable — take it from the " +
-        "KDC's ETYPE-INFO2, which arrives in the KDC_ERR_PREAUTH_REQUIRED error. Active Directory " +
-        "uses the realm plus the sAMAccountName for a user, but a host-shaped string for a computer " +
-        "account. Keys were derived with an empty salt, which will almost certainly be wrong.");
+      notes.push("A password was given with no salt. The salt is NOT " +
+          "guessable — take it from the " +
+        "KDC's ETYPE-INFO2, which arrives in the KDC_ERR_PREAUTH_REQUIRED " +
+            "error. Active Directory " +
+        "uses the realm plus the sAMAccountName for a user, but a " +
+            "host-shaped string for a computer " +
+        "account. Keys were derived with an empty salt, which will almost " +
+            "certainly be wrong.");
     }
     try {
-      keys = keys.concat(await describer.keysFromPassword(password, salt, null));
+      keys = keys.concat(await describer.keysFromPassword(password, salt, 
+          null));
     } catch (e) {
       notes.push("Could not derive keys from the password: " + e.message);
     }
@@ -164,9 +195,11 @@ async function collectKeys() {
       var kt = keytabReader.parseKeytab(parsedInput.bytes);
       var fromKeytab = keytabReader.keysFromKeytab(kt);
       keys = keys.concat(fromKeytab);
-      notes.push("Keytab: version 0x" + kt.version.toString(16) + ", " + kt.entries.length +
+      notes.push("Keytab: version 0x" + kt.version.toString(16) + ", " + 
+          kt.entries.length +
         " entr" + (kt.entries.length === 1 ? "y" : "ies") +
-        (kt.deletedSlots ? " and " + kt.deletedSlots + " deleted slot(s)" : "") +
+        (kt.deletedSlots ? " and " + kt.deletedSlots + " deleted slot(s)" : 
+            "") +
         ", " + fromKeytab.length + " usable key(s): " +
         kt.entries.map(function (e) {
           return e.principal + " kvno " + e.kvno + " " + e.etypeName +
@@ -198,7 +231,10 @@ async function onDecode() {
     // Key assembly must never stop the decode: the structure is useful without
     // any key at all, and that is the common case.
     log.error("collectKeys failed: " + e.message);
-    collected = { keys: [], notes: ["Keys could not be assembled: " + e.message] };
+    collected = {
+      keys: [],
+      notes: ["Keys could not be assembled: " + e.message]
+    };
   }
 
   var doc;
@@ -219,9 +255,11 @@ async function onDecode() {
 
   if (collected.notes.length) {
     var notesPane = make("div", "krb-section");
-    notesPane.appendChild(make("h4", "krb-section-title", "About the keys you supplied"));
+    notesPane.appendChild(make("h4", "krb-section-title", "About the keys " +
+        "you supplied"));
     var ul = make("ul");
-    collected.notes.forEach(function (n) { ul.appendChild(make("li", null, n)); });
+    collected.notes.forEach(function (n) { ul.appendChild(make("li", null, 
+        n)); });
     notesPane.appendChild(ul);
     host.appendChild(notesPane);
   }
@@ -229,9 +267,11 @@ async function onDecode() {
   var keyCount = collected.keys.length;
   status("krb_status",
     doc.kind + " decoded. " +
-    (keyCount ? keyCount + " key(s) offered for decryption." : "No keys supplied, so encrypted parts are " +
+    (keyCount ? keyCount + " key(s) offered for decryption." : "No keys " +
+        "supplied, so encrypted parts are " +
       "described but not opened.") +
-    (doc.problems.length ? " " + doc.problems.length + " thing(s) worth knowing — see below." : ""),
+    (doc.problems.length ? " " + doc.problems.length + " thing(s) worth " +
+        "knowing — see below." : ""),
     doc.problems.length ? "krb-bad" : "krb-ok");
   log.debug("Leaving onDecode(). kind=" + doc.kind);
   return false;
@@ -239,31 +279,42 @@ async function onDecode() {
 
 function onClear() {
   log.debug("Entering onClear().");
-  ["krb_input", "krb_key_hex", "krb_password", "krb_salt", "krb_keytab"].forEach(function (id) {
+  ["krb_input", "krb_key_hex", "krb_password", "krb_salt", 
+      "krb_keytab"].forEach(function (id) {
     var e = el(id);
     if (e) e.value = "";
   });
   clear(el("krb_output"));
-  status("krb_status", "Cleared. Nothing from this page is stored anywhere.", null);
+  status("krb_status", "Cleared. Nothing from this page is stored anywhere.", 
+      null);
   log.debug("Leaving onClear().");
   return false;
 }
 
 // Web Crypto is what the optional decryption needs, and it is absent on a
-// plain-http origin that is not localhost. Say so on arrival rather than letting
-// a decryption attempt fail with something that names AES.
+// plain-http origin that is not localhost. Say so on arrival rather than
+// letting a decryption attempt fail with something that names AES.
 function reportCryptoAvailability() {
-  var available = !!(typeof globalThis !== "undefined" && globalThis.crypto && globalThis.crypto.subtle);
+  log.debug("Entering reportCryptoAvailability().");
+  var available = !!(typeof globalThis !== "undefined" && globalThis.crypto && 
+      globalThis.crypto.subtle);
   var note = el("krb_crypto_note");
-  if (!note) return;
-  if (available) {
-    note.textContent = "";
+  if (!note) {
+    log.debug("Leaving reportCryptoAvailability().");
     return;
   }
-  note.textContent = "This page is not in a secure context, so Web Crypto is unavailable and nothing " +
-    "can be decrypted here. Decoding the structure still works — that is arithmetic over the bytes. " +
+  if (available) {
+    note.textContent = "";
+    log.debug("Leaving reportCryptoAvailability().");
+    return;
+  }
+  note.textContent = "This page is not in a secure context, so Web Crypto is " +
+      "unavailable and nothing " +
+    "can be decrypted here. Decoding the structure still works — that is " +
+        "arithmetic over the bytes. " +
     "Load this page over https (or from localhost) to supply keys.";
   note.className = "krb-note krb-bad";
+  log.debug("Leaving reportCryptoAvailability().");
 }
 
 window.onload = function () {
