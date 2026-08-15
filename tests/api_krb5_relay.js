@@ -392,13 +392,31 @@ async function onlyKerberosPortsAreReachable() {
     assert.ok(/port scanner/.test(err.message),
       "the refusal should explain WHY a byte relay restricts ports: " + err.message);
   }
-  // And the allowed ones get past the port check (they then fail to connect,
-  // which is a different error and proves the check passed).
+  // And the allowed ones get PAST the port check. What must not happen is
+  // EKRB5PORTNOTALLOWED; what happens next is none of this assertion's business.
+  //
+  // It used to be, and that was a bug: the check was written as "it fails to connect,
+  // which proves the port check passed", which silently depends on nothing listening on
+  // 127.0.0.1:88. The containerized suite runs the mock KDC on exactly that address and
+  // port, so the send SUCCEEDED, there was no refusal to catch, and the job failed —
+  // reporting a port-allowlist fault on a run where the allowlist did precisely the right
+  // thing. A test whose result depends on whether a service happens to be up is worse than
+  // no test, because it fails where the code is correct and it passes in the one
+  // environment where the KDC is down.
+  //
+  // So both outcomes are accepted and only the port refusal is excluded. The mutation this
+  // has to catch — an allowlist that wrongly rejects a permitted port — still fails it,
+  // because that produces EKRB5PORTNOTALLOWED either way.
   for (const port of [88, 464, 749]) {
-    const err = await mustReject("port " + port + " passes the allowlist",
-      relay.send({ host: "127.0.0.1", port: port, message: asReq() }));
-    assert.notStrictEqual(err.code, "EKRB5PORTNOTALLOWED",
-      "port " + port + " is on the allowlist and must not be refused by it");
+    let outcome = "connected";
+    try {
+      await relay.send({ host: "127.0.0.1", port: port, message: asReq() });
+    } catch (e) {
+      outcome = e.code || e.message;
+      assert.notStrictEqual(e.code, "EKRB5PORTNOTALLOWED",
+        "port " + port + " is on the allowlist and must not be refused by it: " + e.message);
+    }
+    log.debug("port " + port + " got past the allowlist (" + outcome + ")");
   }
 
   // Configuration robustness. A malformed entry must be dropped with a reason,
@@ -483,11 +501,21 @@ async function theAddressPolicyAppliesToRawSockets() {
   const off = { blockPrivateNetworkCalls: false, krb5AllowedPorts: [88] };
   const openRelay = relayMod.createRelay(off, ssrfGuard.createGuard(off, quiet), quiet);
   assert.strictEqual(openRelay.addressPolicyEnabled, false, "an explicit false disables it");
-  const err = await mustReject("loopback with the policy explicitly off",
-    openRelay.send({ host: "127.0.0.1", port: 88, message: asReq() }));
-  assert.notStrictEqual(err.code, "EBLOCKEDADDRESS",
-    "with the policy off, loopback must fail for a NETWORK reason (nothing listening), not a " +
-    "policy one — got " + err.code + ": " + err.message);
+  // What must not happen is EBLOCKEDADDRESS. Whether the send then connects is not this
+  // assertion's business — and assuming it could not was the same mistake made in
+  // onlyKerberosPortsAreReachable() above: the containerized suite runs the mock KDC on
+  // 127.0.0.1:88, so with the policy off this SUCCEEDS, and a test that demanded a failure
+  // reported an address-policy fault on a run where the policy behaved perfectly.
+  let offCode = "connected";
+  try {
+    await openRelay.send({ host: "127.0.0.1", port: 88, message: asReq() });
+  } catch (e) {
+    offCode = e.code || e.message;
+    assert.notStrictEqual(e.code, "EBLOCKEDADDRESS",
+      "with the policy off, loopback must NOT be refused by the address policy — got " +
+      e.code + ": " + e.message);
+  }
+  log.debug("with the policy off, loopback was not blocked (" + offCode + ")");
 
   log.debug("Leaving theAddressPolicyAppliesToRawSockets().");
 }
@@ -592,11 +620,19 @@ async function theServiceEndpointIsOffUntilConfigured() {
     configured.send({ host: "127.0.0.1", port: 9999, message: gssApReq, purpose: "service" }),
     "EKRB5PORTNOTALLOWED");
   assert.ok(/krb5ServicePorts/.test(wrongPort.message), "and names the setting");
-  const allowed = await mustReject("the allowed service port (nothing listening)",
-    configured.send({ host: "127.0.0.1", port: 8888, message: gssApReq, purpose: "service" }));
-  assert.notStrictEqual(allowed.code, "EKRB5PORTNOTALLOWED",
-    "the configured port must pass the policy and fail for a network reason instead, got " +
-    allowed.code);
+  // The configured port must get PAST the policy. Whether anything answers on it is not
+  // this assertion's business: the containerized suite runs the mock protected service on
+  // exactly 127.0.0.1:8888, so demanding a failure here reported a policy fault on a run
+  // where the policy was correct.
+  let allowedOutcome = "connected";
+  try {
+    await configured.send({ host: "127.0.0.1", port: 8888, message: gssApReq, purpose: "service" });
+  } catch (e) {
+    allowedOutcome = e.code || e.message;
+    assert.notStrictEqual(e.code, "EKRB5PORTNOTALLOWED",
+      "the configured service port must pass the policy, got " + e.code + ": " + e.message);
+  }
+  log.debug("the configured service port got past the policy (" + allowedOutcome + ")");
 
   // "any": the escape hatch, spelled as a word so it cannot be a typo.
   const anyPort = localRelay({ krb5ServicePorts: "any" });
@@ -695,13 +731,20 @@ async function udpWorksAndFailsHonestly() {
   // unacknowledged and points at TCP — which is what a client does anyway when a
   // KDC answers KRB_ERR_RESPONSE_TOO_BIG.
   const started = Date.now();
-  // An ALLOWED port with nothing listening on it. UDP is connectionless, so the
-  // datagram goes out and the silence is what has to be timed out — which is the
-  // behaviour being tested. Port 9 would have been refused by the allowlist first,
-  // and the test would have passed for the wrong reason.
-  const err = await mustReject("a UDP KDC that never answers",
-    relay.send({ host: "127.0.0.1", port: 88, transport: "udp", message: asReq() }),
-    "EKRB5CALLTIMEOUT");
+  // A UDP server that RECEIVES and never answers, so the silence is guaranteed by
+  // construction. This used to aim at 127.0.0.1:88 and rely on nothing being there —
+  // which is false in the containerized suite, where the mock KDC listens on UDP 88 and
+  // answers, so the timeout never happened and the job failed on a correct relay. Port 9
+  // (discard) would be refused by the allowlist first and the test would pass for the
+  // wrong reason, hence an ephemeral port added to the allowlist instead.
+  const err = await withUdpServer(function () {
+    // Deliberately empty: not answering IS the condition under test.
+  }, function (port) {
+    return mustReject("a UDP KDC that never answers",
+      relayAllowing(port, { callTimeout: 1200 })
+        .send({ host: "127.0.0.1", port: port, transport: "udp", message: asReq() }),
+      "EKRB5CALLTIMEOUT");
+  });
   assert.ok(/TCP/.test(err.message) && /RESPONSE_TOO_BIG/.test(err.message),
     "the UDP timeout must point at the TCP retry and name the error that causes it: " + err.message);
   assert.ok(Date.now() - started >= 1000, "and must wait out the call budget");
