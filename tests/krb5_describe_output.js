@@ -47,7 +47,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "krb5_describe_output",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 function shared(name) {
@@ -69,20 +69,19 @@ const b64 = (b) => Buffer.from(prim.toBytes(b)).toString("base64");
 // Every row of a document, flattened, so an assertion can look for content
 // without knowing which section it landed in.
 function allRows(doc) {
+  log.debug("Entering allRows().");
   const out = [];
   (function walk(sections) {
+    log.debug("Entering walk().");
     (sections || []).forEach(function (s) {
-      (s.rows || 
-          
-              
-                  
-                      
-                          
-                              []).forEach(function (r) { out.push(Object.assign({ section: s.title }, 
+      (s.rows ||
+          []).forEach(function (r) { out.push(Object.assign({ section: s.title },
           r)); });
       walk(s.sections);
     });
+    log.debug("Leaving walk().");
   })(doc.sections);
+  log.debug("Leaving allRows().");
   return out;
 }
 
@@ -98,9 +97,9 @@ function allSections(doc) {
 }
 
 function sectionTitled(doc, pattern) {
-  const hits = allSections(doc).filter(function (s) { return pattern.test(s.title || 
+  const hits = allSections(doc).filter(function (s) { return pattern.test(s.title ||
       ""); });
-  assert.ok(hits.length > 0, "no section whose title matches " + pattern + 
+  assert.ok(hits.length > 0, "no section whose title matches " + pattern +
       "\n  sections: " +
     allSections(doc).map(function (s) { return s.title; }).join(", "));
   return hits[0];
@@ -108,7 +107,7 @@ function sectionTitled(doc, pattern) {
 
 function rowNamed(doc, pattern) {
   const hits = allRows(doc).filter(function (r) { return pattern.test(r.name); });
-  assert.ok(hits.length > 0, "no row whose name matches " + pattern + 
+  assert.ok(hits.length > 0, "no row whose name matches " + pattern +
       "\n  rows: " +
     allRows(doc).map(function (r) { return r.name; }).join(", "));
   return hits[0];
@@ -123,17 +122,19 @@ function hasProblem(doc, pattern) {
 // through is how a renderer acquires formatting logic, which is how two pages
 // start disagreeing.
 function everyValueIsAString(doc, what) {
+  log.debug("Entering everyValueIsAString().");
   allRows(doc).forEach(function (r) {
     assert.strictEqual(typeof r.name, "string", what + ": a row name is not " +
         "a string");
     assert.strictEqual(typeof r.value, "string",
-      what + ": the value of row '" + r.name + "' is a " + typeof r.value + 
+      what + ": the value of row '" + r.name + "' is a " + typeof r.value +
           ", not a string");
     if (r.note !== null && r.note !== undefined) {
-      assert.strictEqual(typeof r.note, "string", what + 
+      assert.strictEqual(typeof r.note, "string", what +
           ": the note on row '" + r.name + "' is not a string");
     }
   });
+  log.debug("Leaving everyValueIsAString().");
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +158,7 @@ async function acceptsEveryShapeACaptureArrivesIn() {
   const forms = [
     ["base64", b64(message)],
     ["base64 with newlines", b64(message).replace(/(.{40})/g, "$1\n")],
-    ["base64url", b64(message).replace(/\+/g, "-").replace(/\//g, 
+    ["base64url", b64(message).replace(/\+/g, "-").replace(/\//g,
         "_").replace(/=+$/, "")],
     ["hex", hex(message)],
     ["hex upper case", hex(message).toUpperCase()],
@@ -167,25 +168,25 @@ async function acceptsEveryShapeACaptureArrivesIn() {
   ];
   for (const [label, text] of forms) {
     const doc = await describe.describe(text);
-    assert.strictEqual(doc.kind, "AS-REQ", "input as " + label + 
+    assert.strictEqual(doc.kind, "AS-REQ", "input as " + label +
         " must decode to an AS-REQ");
-    assert.strictEqual(doc.input.byteLength, message.length, label + 
+    assert.strictEqual(doc.input.byteLength, message.length, label +
         ": byte length");
   }
 
   // The TCP framing, which a capture very often includes.
   const framed = prim.concat([
-    new Uint8Array([(message.length >>> 24) & 255, 
+    new Uint8Array([(message.length >>> 24) & 255,
         (message.length >>> 16) & 255,
-                    (message.length >>> 8) & 255, message.length & 255]),
+            (message.length >>> 8) & 255, message.length & 255]),
     message]);
   const framedDoc = await describe.describe(b64(framed));
   assert.strictEqual(framedDoc.kind, "AS-REQ", "a TCP-framed message must " +
       "still decode");
   assert.ok(/TCP length prefix/.test(framedDoc.input.framing || ""),
-    "the stripped framing must be REPORTED, not silently removed: " + 
+    "the stripped framing must be REPORTED, not silently removed: " +
         framedDoc.input.framing);
-  assert.strictEqual(framedDoc.input.byteLength, message.length, 
+  assert.strictEqual(framedDoc.input.byteLength, message.length,
       "the prefix is not part of the message");
 
   // A length prefix that does not match the body is NOT framing, and treating
@@ -211,7 +212,7 @@ async function describesAnAsReqAndNamesWhatIsWrongWithIt() {
       value: msgs.encPaPacRequest(false)
     }],
     reqBody: {
-      kdcOptions: [msgs.KDC_OPTION.FORWARDABLE, msgs.KDC_OPTION.RENEWABLE, 
+      kdcOptions: [msgs.KDC_OPTION.FORWARDABLE, msgs.KDC_OPTION.RENEWABLE,
           msgs.KDC_OPTION.CANONICALIZE],
       cname: { type: 1, name: ["alice"] },
       realm: "EXAMPLE.COM",
@@ -226,17 +227,17 @@ async function describesAnAsReqAndNamesWhatIsWrongWithIt() {
     "the summary must name both parties: " + good.summary);
   everyValueIsAString(good, "AS-REQ");
 
-  assert.ok(/forwardable/.test(rowNamed(good, /^kdc-options$/).value), 
+  assert.ok(/forwardable/.test(rowNamed(good, /^kdc-options$/).value),
       "options rendered by name");
   assert.ok(/preference order/.test(rowNamed(good, /^etype$/).note || ""),
     "the etype list's note must explain that ORDER is what the KDC picks from");
-  assert.ok(/aes256-cts-hmac-sha1-96/.test(rowNamed(good, /^etype$/).value), 
+  assert.ok(/aes256-cts-hmac-sha1-96/.test(rowNamed(good, /^etype$/).value),
       "etypes named, not numbered");
   assert.ok(/case-sensitive/.test(rowNamed(good, /^realm$/).note || ""),
     "the realm row must warn that it is case-sensitive");
   // PA-PAC-REQUEST of false is a legitimate diagnostic and must be shown as
   // such.
-  assert.strictEqual(rowNamed(good, /include-pac/).value, "false", 
+  assert.strictEqual(rowNamed(good, /include-pac/).value, "false",
       "include-pac must be shown");
   assert.deepStrictEqual(good.problems, [], "a well-formed AS-REQ has no " +
       "problems: " + good.problems);
@@ -245,16 +246,22 @@ async function describesAnAsReqAndNamesWhatIsWrongWithIt() {
   // trip, which is normal — so it gets a note, not a problem.
   const noPreauth = await describe.describe(b64(msgs.encKdcReq({
     msgType: msgs.MSG_TYPE.AS_REQ,
-    reqBody: { kdcOptions: [], cname: {
+    reqBody: {
+      kdcOptions: [],
+      cname: {
       type: 1,
       name: ["alice"]
-    }, realm: "EXAMPLE.COM",
-               sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
-               till: new Date(Date.UTC(2026, 7, 14)), nonce: 1, etypes: [18] }
+    },
+      realm: "EXAMPLE.COM",
+      sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
+      till: new Date(Date.UTC(2026, 7, 14)),
+      nonce: 1,
+      etypes: [18]
+    }
   })));
   const padataSection = noPreauth.sections.filter(function (s) { return /padata/i.test(s.title); })[0];
   assert.ok(/PREAUTH_REQUIRED/.test(padataSection.note || ""),
-    "an AS-REQ with no padata must explain what the KDC will answer: " + 
+    "an AS-REQ with no padata must explain what the KDC will answer: " +
         padataSection.note);
   assert.deepStrictEqual(noPreauth.problems, [],
     "no padata on an AS-REQ is normal and must NOT be reported as a problem");
@@ -276,19 +283,25 @@ async function describesAnAsReqAndNamesWhatIsWrongWithIt() {
   assert.ok(hasProblem(bad, /not upper case/), "a lower-case realm must be a " +
       "finding");
   assert.ok(hasProblem(bad, /RC4/) && hasProblem(bad, /Windows Server 2025/),
-    "an RC4-only etype list must be a finding that names the 2026 cause: " + 
+    "an RC4-only etype list must be a finding that names the 2026 cause: " +
         bad.problems.join(" | "));
   assert.ok(hasProblem(bad, /NEVER_VALID/), "till before from must be a " +
       "finding");
 
   const des = await describe.describe(b64(msgs.encKdcReq({
     msgType: msgs.MSG_TYPE.AS_REQ,
-    reqBody: { kdcOptions: [], realm: "EXAMPLE.COM", sname: {
+    reqBody: {
+      kdcOptions: [],
+      realm: "EXAMPLE.COM",
+      sname: {
       type: 2,
       name: ["krbtgt", "EXAMPLE.COM"]
     },
-               till: new Date(Date.UTC(2026, 7, 14)), nonce: 1, etypes: [3, 
-                   18] }
+      till: new Date(Date.UTC(2026, 7, 14)),
+      nonce: 1,
+      etypes: [3,
+                   18]
+    }
   })));
   assert.ok(hasProblem(des, /DES/), "a DES etype must be a finding even " +
       "alongside a good one");
@@ -296,15 +309,21 @@ async function describesAnAsReqAndNamesWhatIsWrongWithIt() {
   // A TGS-REQ with no PA-TGS-REQ cannot be answered by anything.
   const tgsNoTgt = await describe.describe(b64(msgs.encKdcReq({
     msgType: msgs.MSG_TYPE.TGS_REQ,
-    reqBody: { kdcOptions: [], realm: "EXAMPLE.COM", sname: {
+    reqBody: {
+      kdcOptions: [],
+      realm: "EXAMPLE.COM",
+      sname: {
       type: 3,
       name: ["HTTP", "web.example.com"]
     },
-               till: new Date(Date.UTC(2026, 7, 14)), nonce: 1, etypes: [18] }
+      till: new Date(Date.UTC(2026, 7, 14)),
+      nonce: 1,
+      etypes: [18]
+    }
   })));
   assert.strictEqual(tgsNoTgt.kind, "TGS-REQ", "kind");
   assert.ok(hasProblem(tgsNoTgt, /no PA-TGS-REQ/),
-    "a TGS-REQ without its TGT must be called out: " + 
+    "a TGS-REQ without its TGT must be called out: " +
         tgsNoTgt.problems.join(" | "));
 
   log.debug("Leaving describesAnAsReqAndNamesWhatIsWrongWithIt().");
@@ -318,7 +337,7 @@ async function describesAnAsRepAndDecryptsWhenGivenKeys() {
   const e = kcrypto.etypeById(18);
   const salt = "EXAMPLE.COMalice";
   const clientKey = await e.stringToKey("hunter2", prim.utf8(salt), null);
-  const serviceKey = await e.stringToKey("krbtgtpw", 
+  const serviceKey = await e.stringToKey("krbtgtpw",
       prim.utf8("EXAMPLE.COMkrbtgt"), null);
   const sessionKey = kcrypto.randomBytes(32);
   const now = new Date(Date.UTC(2026, 7, 13, 12, 0, 0));
@@ -331,31 +350,40 @@ async function describesAnAsRepAndDecryptsWhenGivenKeys() {
     ticket: {
       realm: "EXAMPLE.COM",
       sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
-      encPart: { etype: 18, cipher: await e.encrypt(serviceKey, 
+      encPart: {
+        etype: 18,
+        cipher: await e.encrypt(serviceKey,
           kcrypto.KEY_USAGE.KDC_REP_TICKET,
         msgs.encEncTicketPart({
-          flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.INITIAL, 
+          flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.INITIAL,
               msgs.TICKET_FLAG.PRE_AUTHENT],
           key: { etype: 18, key: sessionKey },
           crealm: "EXAMPLE.COM",
           cname: { type: 1, name: ["alice"] },
           authtime: now,
           endtime: end
-        })) }
+        }))
+      }
     },
-    encPart: { etype: 18, cipher: await e.encrypt(clientKey, 
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(clientKey,
         kcrypto.KEY_USAGE.AS_REP_ENCPART,
       msgs.encEncKdcRepPart({
         key: {
           etype: 18,
           key: sessionKey
-        }, lastReq: [{
+        },
+        lastReq: [{
           type: 0,
           value: now
-        }], nonce: 4242,
+        }],
+        nonce: 4242,
         flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.INITIAL],
-        authtime: now, endtime: end,
-        srealm: "EXAMPLE.COM", sname: {
+        authtime: now,
+        endtime: end,
+        srealm: "EXAMPLE.COM",
+        sname: {
           type: 2,
           name: ["krbtgt", "EXAMPLE.COM"]
         }
@@ -371,7 +399,7 @@ async function describesAnAsRepAndDecryptsWhenGivenKeys() {
   assert.ok(ticketEnc.length >= 2,
     "both the ticket and the enc-part must report that they were not " +
         "decrypted");
-  assert.ok(ticketEnc.some(function (r) { return /service/i.test(r.note || 
+  assert.ok(ticketEnc.some(function (r) { return /service/i.test(r.note ||
       ""); }),
     "the ticket's note must say whose key would open it: " +
     ticketEnc.map(function (r) { return r.note; }).join(" | "));
@@ -384,13 +412,13 @@ async function describesAnAsRepAndDecryptsWhenGivenKeys() {
     keys: await describe.keysFromPassword("hunter2", salt, [18])
   });
   const keyRow = rowNamed(withClient, /^key$/);
-  assert.strictEqual(keyRow.value.indexOf("aes256-cts-hmac-sha1-96"), 0, 
+  assert.strictEqual(keyRow.value.indexOf("aes256-cts-hmac-sha1-96"), 0,
       "the session key's etype is named");
-  assert.ok(/^EncASRepPart/.test(rowNamed(withClient, /tagged as/).value), 
+  assert.ok(/^EncASRepPart/.test(rowNamed(withClient, /tagged as/).value),
       "the enc-part tag is reported");
-  assert.strictEqual(rowNamed(withClient, /^nonce$/).value, "4242", 
+  assert.strictEqual(rowNamed(withClient, /^nonce$/).value, "4242",
       "the nonce is read out of the enc-part");
-  assert.ok(/must equal the request/.test(rowNamed(withClient, 
+  assert.ok(/must equal the request/.test(rowNamed(withClient,
       /^nonce$/).note || ""),
     "and the nonce row must say why it matters");
 
@@ -449,11 +477,15 @@ async function describesErrorsAndMeasuresSkew() {
     { etype: 23, salt: null, s2kparams: null }
   ]);
   const preauth = await describe.describe(b64(msgs.encKrbError({
-    stime: new Date(), susec: 0, errorCode: 25, realm: "EXAMPLE.COM",
+    stime: new Date(),
+    susec: 0,
+    errorCode: 25,
+    realm: "EXAMPLE.COM",
     sname: {
       type: 2,
       name: ["krbtgt", "EXAMPLE.COM"]
-    }, eText: "NEEDED_PREAUTH",
+    },
+    eText: "NEEDED_PREAUTH",
     eData: asn1.encSequenceOf([msgs.encPaData({ type: 19, value: etypeInfo2 })])
   })));
   assert.strictEqual(preauth.kind, "KRB-ERROR", "kind");
@@ -483,9 +515,9 @@ async function describesErrorsAndMeasuresSkew() {
   })));
   assert.ok(hasProblem(nosupp, /ETYPE_NOSUPP/), "a real error must be a " +
       "problem");
-  assert.ok(/RC4|msDS-SupportedEncryptionTypes/.test(rowNamed(nosupp, 
+  assert.ok(/RC4|msDS-SupportedEncryptionTypes/.test(rowNamed(nosupp,
       /^meaning$/).value),
-    "the meaning must diagnose, not restate: " + rowNamed(nosupp, 
+    "the meaning must diagnose, not restate: " + rowNamed(nosupp,
         /^meaning$/).value);
 
   // Clock skew is measured, not guessed — this is the one message carrying the
@@ -543,11 +575,17 @@ async function fallsBackToStructureRatherThanRefusing() {
   // malformed, or this codec is wrong. Both need the structure alongside.
   const truncated = msgs.encKdcReq({
     msgType: msgs.MSG_TYPE.AS_REQ,
-    reqBody: { kdcOptions: [], realm: "EXAMPLE.COM", sname: {
+    reqBody: {
+      kdcOptions: [],
+      realm: "EXAMPLE.COM",
+      sname: {
       type: 2,
       name: ["krbtgt", "X"]
     },
-               till: new Date(), nonce: 1, etypes: [18] }
+      till: new Date(),
+      nonce: 1,
+      etypes: [18]
+    }
   });
   // Corrupt the msg-type into something that will not read as an AS-REQ body.
   const mangled = truncated.slice(0, truncated.length - 6);
@@ -576,14 +614,14 @@ function buildKeytab(version, entries) {
   log.debug("Entering buildKeytab().");
   const big = version === 0x02;
   const parts = [new Uint8Array([0x05, version])];
-  function u16(n) { return big ? new Uint8Array([(n >> 8) & 255, n & 255]) : 
+  function u16(n) { return big ? new Uint8Array([(n >> 8) & 255, n & 255]) :
       new Uint8Array([n & 255, (n >> 8) & 255]); }
   function u32(n) {
     const b = [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
     return new Uint8Array(big ? b : b.reverse());
   }
   function i32(n) { return u32(n < 0 ? (n >>> 0) : n); }
-  function counted(text) { return prim.concat([u16(text.length), 
+  function counted(text) { return prim.concat([u16(text.length),
       prim.utf8(text)]); }
 
   entries.forEach(function (e) {
@@ -642,7 +680,7 @@ function readsKeytabsInBothByteOrders() {
     const parsed = keytab.parseKeytab(bytes);
     const label = "keytab 0x05" + ("0" + version.toString(16)).slice(-2);
     assert.strictEqual(parsed.version, 0x0500 | version, label + ": version");
-    assert.strictEqual(parsed.bigEndian, version === 0x02, label + 
+    assert.strictEqual(parsed.bigEndian, version === 0x02, label +
         ": byte order");
     // A DELETED slot must be skipped and the entry AFTER it must still be read
     // — ktutil negates the length rather than compacting the file.
@@ -650,16 +688,16 @@ function readsKeytabsInBothByteOrders() {
         "must be counted");
     assert.strictEqual(parsed.entries.length, 2,
       label + ": the entry after a deleted slot must still be read");
-    assert.strictEqual(parsed.entries[0].principal, 
+    assert.strictEqual(parsed.entries[0].principal,
         "HTTP/web.example.com@EXAMPLE.COM",
       label + ": principal");
     assert.strictEqual(parsed.entries[0].kvno, 5, label + ": kvno");
     assert.strictEqual(parsed.entries[0].etype, 18, label + ": etype");
-    assert.strictEqual(parsed.entries[0].etypeName, "aes256-cts-hmac-sha1-96", 
+    assert.strictEqual(parsed.entries[0].etypeName, "aes256-cts-hmac-sha1-96",
         label + ": etype name");
-    assert.strictEqual(hex(parsed.entries[0].key), hex(key18), label + 
+    assert.strictEqual(hex(parsed.entries[0].key), hex(key18), label +
         ": the key itself");
-    assert.strictEqual(hex(parsed.entries[1].key), hex(key17), label + 
+    assert.strictEqual(hex(parsed.entries[1].key), hex(key17), label +
         ": the second key");
 
     const keys = keytab.keysFromKeytab(parsed);
@@ -693,12 +731,12 @@ function readsKeytabsInBothByteOrders() {
   // The negatives.
   const cases = [
     [new Uint8Array(0), /too short/],
-    [unhex("0503"), 
+    [unhex("0503"),
         /too short/],                      // the length check comes first
-    [unhex("05030000"), 
+    [unhex("05030000"),
         /format version/],             // long enough; an unknown version
     [unhex("05040000"), /format version/],
-    [prim.utf8("BQIAAAA="), 
+    [prim.utf8("BQIAAAA="),
         /not a keytab/],           // a base64 keytab pasted as text
     [new Uint8Array(keytab.MAX_KEYTAB_BYTES + 1).fill(5), /refusing to parse/]
   ];
@@ -710,7 +748,7 @@ function readsKeytabsInBothByteOrders() {
       e = err;
     }
     assert.ok(e, "expected a refusal for " + hex(c[0].subarray(0, 4)));
-    assert.ok(c[1].test(e.message), "refusal must explain: " + e.message + 
+    assert.ok(c[1].test(e.message), "refusal must explain: " + e.message +
         " (wanted " + c[1] + ")");
   });
 
@@ -724,7 +762,7 @@ function readsKeytabsInBothByteOrders() {
 async function aKeytabOpensATicket() {
   log.debug("Entering aKeytabOpensATicket().");
   const e = kcrypto.etypeById(18);
-  const serviceKey = await e.stringToKey("Passw0rd!", 
+  const serviceKey = await e.stringToKey("Passw0rd!",
       prim.utf8("EXAMPLE.COMHTTPweb.example.com"), null);
   const sessionKey = kcrypto.randomBytes(32);
   const now = new Date(Date.UTC(2026, 7, 13, 12, 0, 0));
@@ -732,7 +770,9 @@ async function aKeytabOpensATicket() {
   const ticket = msgs.encTicket({
     realm: "EXAMPLE.COM",
     sname: { type: 3, name: ["HTTP", "web.example.com"] },
-    encPart: { etype: 18, cipher: await e.encrypt(serviceKey, 
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(serviceKey,
         kcrypto.KEY_USAGE.KDC_REP_TICKET,
       msgs.encEncTicketPart({
         flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.OK_AS_DELEGATE],
@@ -741,7 +781,8 @@ async function aKeytabOpensATicket() {
         cname: { type: 1, name: ["alice"] },
         authtime: now,
         endtime: new Date(Date.UTC(2026, 7, 13, 22, 0, 0))
-      })) }
+      }))
+    }
   });
 
   const kt = buildKeytab(0x02, [{
@@ -757,17 +798,17 @@ async function aKeytabOpensATicket() {
     keys: keytab.keysFromKeytab(keytab.parseKeytab(kt))
   });
   assert.strictEqual(doc.kind, "Ticket", "a bare ticket must be recognised");
-  assert.strictEqual(hex(prim.fromHex(rowNamed(doc, 
+  assert.strictEqual(hex(prim.fromHex(rowNamed(doc,
       /^key$/).value.split(", ")[1])), hex(sessionKey),
     "the session key inside the ticket must be revealed by the keytab");
-  assert.deepStrictEqual(rowNamed(doc, /^cname$/).value.indexOf("alice") >= 0, 
+  assert.deepStrictEqual(rowNamed(doc, /^cname$/).value.indexOf("alice") >= 0,
       true,
     "and the client the ticket was issued to");
   assert.ok(allRows(doc).some(function (r) { return /ok-as-delegate/.test(r.value); }),
     "ok-as-delegate must be visible — it is what tells a client this service " +
         "may be delegated to");
   assert.ok(doc.sections.some(function (s) {
-    return (s.sections || 
+    return (s.sections ||
         []).some(function (c) { return /keytab HTTP/.test(c.note || ""); });
   }) || allRows(doc).length > 0, "the section must say which keytab entry " +
       "opened it");
@@ -791,7 +832,7 @@ async function aKeytabOpensATicket() {
 async function aTicketsPacIsDecodedAndItsSignaturesReported() {
   log.debug("Entering aTicketsPacIsDecodedAndItsSignaturesReported().");
   const e = kcrypto.etypeById(18);
-  const serviceKey = await e.stringToKey("Passw0rd!", 
+  const serviceKey = await e.stringToKey("Passw0rd!",
       prim.utf8("EXAMPLE.COMHTTPweb.example.com"), null);
   const krbtgtKey = kcrypto.randomBytes(32);
   const now = new Date(Date.UTC(2026, 7, 13, 12, 0, 0));
@@ -823,7 +864,9 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
   const ticket = msgs.encTicket({
     realm: "EXAMPLE.COM",
     sname: { type: 3, name: ["HTTP", "web.example.com"] },
-    encPart: { etype: 18, cipher: await e.encrypt(serviceKey, 
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(serviceKey,
         kcrypto.KEY_USAGE.KDC_REP_TICKET,
       msgs.encEncTicketPart({
         flags: [msgs.TICKET_FLAG.FORWARDABLE],
@@ -834,14 +877,15 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
         endtime: new Date(Date.UTC(2026, 7, 13, 22, 0, 0)),
         // Nested exactly as a real KDC nests it: ad-type 128 inside ad-type 1.
         authorizationData: kpac.wrapPacAsAuthorizationData(pacBytes)
-      })) }
+      }))
+    }
   });
 
   const doc = await describe.describe(b64(ticket), {
     keys: [{ etype: 18, key: serviceKey, label: "the service's password" }]
   });
 
-  const pacSection = sectionTitled(doc, 
+  const pacSection = sectionTitled(doc,
       /^PAC \(Privilege Attribute Certificate\)$/);
   assert.ok(pacSection,
     "the PAC must be described as its own section. Sections present: " +
@@ -877,7 +921,7 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
   assert.ok(/Authentication authority asserted identity/
     .test(rowNamed(doc, /^extra SIDs/).value),
     "S-1-18-1 should be named: it records HOW the identity was established");
-  assert.ok(/USER_ACCOUNT codes, not the LDAP/.test(rowNamed(doc, 
+  assert.ok(/USER_ACCOUNT codes, not the LDAP/.test(rowNamed(doc,
       /UserAccountControl/).note || ""),
     "the UserAccountControl note should warn which of the two tables these " +
         "bits come from");
@@ -891,7 +935,7 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
   assert.ok(/^verified/.test(serverSig.value),
     "the key that decrypted this ticket IS the service's long-term key, so " +
         "the server signature " +
-    "must verify with it and no further input: " + serverSig.value + " — " + 
+    "must verify with it and no further input: " + serverSig.value + " — " +
         serverSig.note);
   assert.ok(/the service's password/.test(serverSig.note || ""),
     "and it should say WHICH key verified it: " + serverSig.note);
@@ -900,22 +944,22 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
   assert.strictEqual(kdcSig.value, "not checked — HMAC_SHA1_96_AES256",
     "the KDC signature needs the krbtgt key, which a service does not have. " +
         "It must read as " +
-    "NOT CHECKED rather than as a failure, or every ticket looks forged: " + 
+    "NOT CHECKED rather than as a failure, or every ticket looks forged: " +
         kdcSig.value);
-  assert.ok(/expected result rather than a sign of tampering/.test(kdcSig.note || 
+  assert.ok(/expected result rather than a sign of tampering/.test(kdcSig.note ||
       ""),
     "and the note must say that this is EXPECTED, not suspicious. The " +
         "service key is in the pool " +
     "and is the same etype, so it gets tried and fails — reporting that as a " +
         "failed signature " +
-    "would put a scary red line on every correct PAC anyone ever pastes in: " + 
+    "would put a scary red line on every correct PAC anyone ever pastes in: " +
         kdcSig.note);
   assert.ok(/krbtgt key/.test(kdcSig.note || ""),
     "and should name the key that would settle it: " + kdcSig.note);
 
   // Nothing here is wrong, so nothing should be reported as wrong.
   assert.ok(!hasProblem(doc, /PAC/),
-    "a well-formed PAC should raise no problems: " + 
+    "a well-formed PAC should raise no problems: " +
         JSON.stringify(doc.problems));
   everyValueIsAString(doc, "a ticket carrying a PAC");
 
@@ -923,12 +967,14 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
   // so. Signature failure is the finding a debugger exists to surface.
   const parsedPac = kpac.parsePac(pacBytes);
   const tamperedPac = new Uint8Array(pacBytes);
-  tamperedPac[kpac.bufferOfType(parsedPac, kpac.TYPE.LOGON_INFO).offset + 
+  tamperedPac[kpac.bufferOfType(parsedPac, kpac.TYPE.LOGON_INFO).offset +
       40] ^= 0xff;
   const tamperedTicket = msgs.encTicket({
     realm: "EXAMPLE.COM",
     sname: { type: 3, name: ["HTTP", "web.example.com"] },
-    encPart: { etype: 18, cipher: await e.encrypt(serviceKey, 
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(serviceKey,
         kcrypto.KEY_USAGE.KDC_REP_TICKET,
       msgs.encEncTicketPart({
         flags: [msgs.TICKET_FLAG.FORWARDABLE],
@@ -938,12 +984,13 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
         authtime: now,
         endtime: new Date(Date.UTC(2026, 7, 13, 22, 0, 0)),
         authorizationData: kpac.wrapPacAsAuthorizationData(tamperedPac)
-      })) }
+      }))
+    }
   });
   const bad = await describe.describe(b64(tamperedTicket), {
     keys: [{ etype: 18, key: serviceKey, label: "the service's password" }]
   });
-  assert.ok(hasProblem(bad, 
+  assert.ok(hasProblem(bad,
       /Server checksum does not verify against the service key/),
     "an altered PAC must be reported as a problem, not merely rendered: " +
     JSON.stringify(bad.problems));
@@ -953,12 +1000,17 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
   const noPac = await describe.describe(b64(msgs.encTicket({
     realm: "EXAMPLE.COM",
     sname: { type: 3, name: ["HTTP", "web.example.com"] },
-    encPart: { etype: 18, cipher: await e.encrypt(serviceKey, 
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(serviceKey,
         kcrypto.KEY_USAGE.KDC_REP_TICKET,
       msgs.encEncTicketPart({
-        flags: [], key: { etype: 18, key: kcrypto.randomBytes(32) },
-        crealm: "EXAMPLE.COM", cname: { type: 1, name: ["alice"] },
-        authtime: now, endtime: new Date(Date.UTC(2026, 7, 13, 22, 0, 0)),
+        flags: [],
+        key: { etype: 18, key: kcrypto.randomBytes(32) },
+        crealm: "EXAMPLE.COM",
+        cname: { type: 1, name: ["alice"] },
+        authtime: now,
+        endtime: new Date(Date.UTC(2026, 7, 13, 22, 0, 0)),
         authorizationData: [{
           type: kpac.AD_TYPE.SERVICE_TARGET,
           data: prim.utf8("x")
@@ -971,9 +1023,9 @@ async function aTicketsPacIsDecodedAndItsSignaturesReported() {
   }] });
   assert.strictEqual(rowNamed(noPac, /^PAC$/).value, "none",
     "a ticket with authorization-data and no PAC should say so explicitly");
-  assert.ok(/USER_NO_AUTH_DATA_REQUIRED/.test(rowNamed(noPac, /^PAC$/).note || 
+  assert.ok(/USER_NO_AUTH_DATA_REQUIRED/.test(rowNamed(noPac, /^PAC$/).note ||
       ""),
-    "and should name a reason that would explain it: " + rowNamed(noPac, 
+    "and should name a reason that would explain it: " + rowNamed(noPac,
         /^PAC$/).note);
   assert.ok(!hasProblem(noPac, /PAC/),
     "but an absent PAC is not by itself WRONG — this file's rule is that " +
@@ -1011,15 +1063,20 @@ async function aDelegatedCredentialIsDescribedAsACapability() {
         msgs.encEncKrbCredPart({
           ticketInfo: [{
             key: { etype: 18, key: forwardedSession },
-            prealm: "EXAMPLE.COM", pname: { type: 1, name: ["alice"] },
+            prealm: "EXAMPLE.COM",
+            pname: { type: 1, name: ["alice"] },
             flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.FORWARDED],
-            authtime: now, endtime: new Date(Date.UTC(2026, 7, 14, 22, 0, 0)),
-            srealm: "EXAMPLE.COM", sname: {
+            authtime: now,
+            endtime: new Date(Date.UTC(2026, 7, 14, 22, 0, 0)),
+            srealm: "EXAMPLE.COM",
+            sname: {
               type: 2,
               name: ["krbtgt", "EXAMPLE.COM"]
             }
           }],
-          nonce: 4242, timestamp: now, usec: 1
+          nonce: 4242,
+    timestamp: now,
+    usec: 1
         }))
     }
   });
@@ -1031,14 +1088,14 @@ async function aDelegatedCredentialIsDescribedAsACapability() {
   assert.strictEqual(closed.kind, "KRB-CRED", "a pasted KRB-CRED must be " +
       "recognised");
   assert.ok(/unconstrained delegation/.test(closed.summary),
-    "and the summary should say what it IS, not just name the message: " + 
+    "and the summary should say what it IS, not just name the message: " +
         closed.summary);
   const section = sectionTitled(closed, /^KRB-CRED$/);
   assert.ok(/tickets to ANYTHING as that client/.test(section.note),
-    "the note must explain the capability rather than naming the structure: " + 
+    "the note must explain the capability rather than naming the structure: " +
         section.note);
   assert.ok(/krbtgt\/EXAMPLE.COM/.test(rowNamed(closed, /^tickets$/).value),
-    "the forwarded ticket should be named: " + rowNamed(closed, 
+    "the forwarded ticket should be named: " + rowNamed(closed,
         /^tickets$/).value);
   assert.ok(/key usage 14/.test(rowNamed(closed, /^decryption$/).note || ""),
     "and an unopened enc-part must say which key opens it — usage 14 under " +
@@ -1060,7 +1117,7 @@ async function aDelegatedCredentialIsDescribedAsACapability() {
     "client, and hiding it would misrepresent what was captured");
   assert.ok(/IS\s+being that client/.test(keyRow.note || ""),
     "and the note should say so: " + keyRow.note);
-  assert.ok(/handed over rather than presented by/.test(rowNamed(open, 
+  assert.ok(/handed over rather than presented by/.test(rowNamed(open,
       /^flags$/).note || ""),
     "the `forwarded` flag is the record a service has that these were " +
         "delegated, and the page " +

@@ -97,7 +97,7 @@ async function buildTgsReq(options) {
   // what goes on the wire; re-encoding between the two is how a checksum stops
   // matching for no visible reason.
   var body = msgs.encKdcReqBody({
-    kdcOptions: opts.kdcOptions || [msgs.KDC_OPTION.FORWARDABLE, 
+    kdcOptions: opts.kdcOptions || [msgs.KDC_OPTION.FORWARDABLE,
         msgs.KDC_OPTION.RENEWABLE],
     realm: realm,
     sname: opts.sname,
@@ -114,7 +114,7 @@ async function buildTgsReq(options) {
   });
 
   // Key usage 6 for the checksum over that body, under the TGT's SESSION key.
-  var checksum = await profile.checksum(tgt.sessionKey, 
+  var checksum = await profile.checksum(tgt.sessionKey,
       kcrypto.KEY_USAGE.TGS_REQ_AUTH_CKSUM, body);
   var now = opts.now || new Date();
   var authenticator = msgs.encAuthenticator({
@@ -124,7 +124,7 @@ async function buildTgsReq(options) {
     cusec: (now.getMilliseconds() * 1000) % 1000000,
     ctime: now,
     subkey: subkey ? { etype: subkey.etype, key: subkey.key } : null,
-    seqNumber: opts.sequenceNumber === undefined ? randomSequenceNumber() : 
+    seqNumber: opts.sequenceNumber === undefined ? randomSequenceNumber() :
         opts.sequenceNumber
   });
 
@@ -134,7 +134,7 @@ async function buildTgsReq(options) {
     ticket: tgt.ticket,
     authenticator: {
       etype: tgt.etype,
-      cipher: await profile.encrypt(tgt.sessionKey, 
+      cipher: await profile.encrypt(tgt.sessionKey,
           kcrypto.KEY_USAGE.TGS_REQ_AUTH, authenticator)
     }
   });
@@ -148,7 +148,7 @@ async function buildTgsReq(options) {
     // The SAME bytes. encKdcReq takes `raw` and uses it verbatim.
     reqBody: { raw: body }
   });
-  log.debug("Leaving buildTgsReq(). bytes=" + request.length + ", nonce=" + 
+  log.debug("Leaving buildTgsReq(). bytes=" + request.length + ", nonce=" +
       nonce);
   // `sname` is returned so the caller can hand it back to readTgsRep as
   // `requestedSname`: a referral is only detectable by comparing the reply's
@@ -179,7 +179,7 @@ async function readTgsRep(options) {
     return { ok: false, error: response.error };
   }
   if (response.kind !== "TGS-REP") {
-    throw new Error("krb5: expected a TGS-REP, the KDC answered " + 
+    throw new Error("krb5: expected a TGS-REP, the KDC answered " +
         response.kind);
   }
   var rep = response.rep;
@@ -205,7 +205,7 @@ async function readTgsRep(options) {
   for (var i = 0; i < attempts.length && !part; i++) {
     try {
       part = msgs.readEncKdcRepPart(
-        await profile.decrypt(attempts[i].key, attempts[i].usage, 
+        await profile.decrypt(attempts[i].key, attempts[i].usage,
             rep.encPart.cipher));
       used = attempts[i];
     } catch (e) {
@@ -213,7 +213,7 @@ async function readTgsRep(options) {
     }
   }
   if (!part) {
-    throw new Error("krb5: the TGS-REP's enc-part would not decrypt. Tried " + 
+    throw new Error("krb5: the TGS-REP's enc-part would not decrypt. Tried " +
         failures.join("; ") +
       ". The KDC uses key usage 9 when the request carried a subkey and 8 " +
           "when it did not, so a " +
@@ -221,7 +221,7 @@ async function readTgsRep(options) {
   }
 
   if (opts.nonce !== undefined && part.nonce !== opts.nonce) {
-    throw new Error("krb5: the TGS-REP's nonce is " + part.nonce + 
+    throw new Error("krb5: the TGS-REP's nonce is " + part.nonce +
         " but the request sent " +
       opts.nonce + ". This is not an answer to that request and may be a " +
           "replay.");
@@ -247,30 +247,30 @@ async function readTgsRep(options) {
   var asked = opts.requestedSname || opts.sname ||
     (opts.built && (opts.built.sname || (opts.built.body || {}).sname)) || null;
   var got = part.sname;
-  if (asked && got && (asked.name || []).join("/") !== (got.name || 
+  if (asked && got && (asked.name || []).join("/") !== (got.name ||
       []).join("/")) {
-    var toRealm = (got.name || []).length > 1 && got.name[0] === "krbtgt" ? 
+    var toRealm = (got.name || []).length > 1 && got.name[0] === "krbtgt" ?
         got.name[1] : null;
     referral = {
       requested: msgs.principalToString(asked),
       issued: msgs.principalToString(got, part.srealm),
       toRealm: toRealm,
       note: toRealm
-        ? "This is a REFERRAL, not the ticket that was asked for. " + 
+        ? "This is a REFERRAL, not the ticket that was asked for. " +
             part.srealm + " has no " +
           msgs.principalToString(asked) + " and has issued a ticket-granting " +
               "ticket for " +
           toRealm + " instead, sealed with the trust key those two realms " +
               "share. Present THIS " +
           "ticket to " + toRealm + "'s KDC and ask it for the service again."
-        : "The reply names " + msgs.principalToString(got, part.srealm) + 
+        : "The reply names " + msgs.principalToString(got, part.srealm) +
             ", which is not the " +
           msgs.principalToString(asked) + " that was requested, and is not a " +
               "krbtgt principal " +
           "either. The KDC has answered a different question from the one " +
               "asked."
     };
-    log.info("krb5: the TGS-REP is a referral to " + (toRealm || 
+    log.info("krb5: the TGS-REP is a referral to " + (toRealm ||
         "an unexpected principal") + ".");
   }
 
@@ -313,16 +313,11 @@ async function buildApReq(options) {
   }
   var profile = kcrypto.etypeById(ticket.etype);
   var mutual = opts.mutual !== false;
-  var flags = (opts.gssFlags || [gss.GSS_FLAG.INTEG, 
+  var flags = (opts.gssFlags || [gss.GSS_FLAG.INTEG,
       gss.GSS_FLAG.CONF]).slice();
-  if (mutual && 
-      
-          
-              
-                  
-                      
-                          flags.indexOf(gss.GSS_FLAG.MUTUAL) === -1) flags.push(gss.GSS_FLAG.MUTUAL);
-  if (opts.delegation && 
+  if (mutual &&
+      flags.indexOf(gss.GSS_FLAG.MUTUAL) === -1) flags.push(gss.GSS_FLAG.MUTUAL);
+  if (opts.delegation &&
       flags.indexOf(gss.GSS_FLAG.DELEG) === -1) flags.push(gss.GSS_FLAG.DELEG);
 
   // The 0x8003 structure: channel bindings and flags, NOT a checksum of the
@@ -342,7 +337,7 @@ async function buildApReq(options) {
   var requested = opts.now || new Date();
   var now = new Date(Math.floor(requested.getTime() / 1000) * 1000);
   var cusec = (requested.getMilliseconds() * 1000) % 1000000;
-  var sequenceNumber = opts.sequenceNumber === undefined ? 
+  var sequenceNumber = opts.sequenceNumber === undefined ?
       randomSequenceNumber() : opts.sequenceNumber;
   var subkey = opts.subkey === undefined
     ? { etype: ticket.etype, key: kcrypto.randomBytes(profile.keyBytes) }
@@ -365,12 +360,12 @@ async function buildApReq(options) {
       etype: ticket.etype,
       // Key usage 11 for an AP-REQ Authenticator, under the ticket's session
       // key.
-      cipher: await profile.encrypt(ticket.sessionKey, 
+      cipher: await profile.encrypt(ticket.sessionKey,
           kcrypto.KEY_USAGE.AP_REQ_AUTH, authenticator)
     }
   });
 
-  log.debug("Leaving buildApReq(). mutual=" + mutual + ", seq=" + 
+  log.debug("Leaving buildApReq(). mutual=" + mutual + ", seq=" +
       sequenceNumber);
   return {
     apReq: apReq,
@@ -406,7 +401,7 @@ async function readApRep(options) {
     bytes = wrapped.inner;
   }
   var identified = msgs.identify(bytes);
-  if (identified && 
+  if (identified &&
       identified.applicationNumber === msgs.APPLICATION.KRB_ERROR) {
     var error = msgs.readKrbError(bytes);
     log.debug("Leaving readApRep(). the service answered " + error.error.name);
@@ -415,7 +410,7 @@ async function readApRep(options) {
   var apRep = msgs.readApRep(bytes);
   var profile = kcrypto.etypeById(apRep.encPart.etype);
   var part = msgs.readEncApRepPart(
-    await profile.decrypt(opts.ticket.sessionKey, 
+    await profile.decrypt(opts.ticket.sessionKey,
         kcrypto.KEY_USAGE.AP_REP_ENCPART,
       apRep.encPart.cipher));
 
@@ -437,7 +432,7 @@ async function readApRep(options) {
     return {
       ok: false,
       mutualOk: false,
-      reason: "the AP-REP echoes ctime " + part.ctime.toISOString() + "/" + 
+      reason: "the AP-REP echoes ctime " + part.ctime.toISOString() + "/" +
           part.cusec +
         " but the Authenticator sent " +
         (sentSecond ? sentSecond.toISOString() : "(unknown)") + "/" +
@@ -526,14 +521,16 @@ function perMessageKey(context) {
 // component, then the realm, then the auth-package — concatenated with no
 // separators and no terminators.
 function s4uByteArray(userName, userRealm, authPackage) {
+  log.debug("Entering s4uByteArray().");
   var parts = [new Uint8Array([
     userName.type & 0xff, (userName.type >>> 8) & 0xff,
     (userName.type >>> 16) & 0xff, (userName.type >>> 24) & 0xff
   ])];
-  (userName.name || 
+  (userName.name ||
       []).forEach(function (component) { parts.push(prim.utf8(component)); });
   parts.push(prim.utf8(userRealm));
   parts.push(prim.utf8(authPackage || "Kerberos"));
+  log.debug("Leaving s4uByteArray().");
   return prim.concat(parts);
 }
 
@@ -546,7 +543,7 @@ async function forUserChecksum(sessionKey, userName, userRealm, authPackage) {
   var arcfour = kcrypto.etypeById(23);
   return {
     type: arcfour.checksumType,                   // -138
-    checksum: await arcfour.checksum(sessionKey, 
+    checksum: await arcfour.checksum(sessionKey,
         kcrypto.KEY_USAGE.PA_FOR_USER_CKSUM,
       s4uByteArray(userName, userRealm, authPackage))
   };
@@ -566,7 +563,7 @@ async function buildS4u2SelfReq(options) {
   var forUser = msgs.encPaForUser({
     userName: user,
     userRealm: userRealm,
-    cksum: await forUserChecksum(opts.tgt.sessionKey, user, userRealm, 
+    cksum: await forUserChecksum(opts.tgt.sessionKey, user, userRealm,
         authPackage),
     authPackage: authPackage
   });
@@ -579,16 +576,16 @@ async function buildS4u2SelfReq(options) {
     // account with TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION. A client that does
     // not ask gets a ticket that works perfectly and then fails at the next
     // step for an unrelated-looking reason.
-    kdcOptions: opts.kdcOptions || [msgs.KDC_OPTION.FORWARDABLE, 
+    kdcOptions: opts.kdcOptions || [msgs.KDC_OPTION.FORWARDABLE,
         msgs.KDC_OPTION.RENEWABLE],
     extraPadata: [{
       type: msgs.PA_TYPE.FOR_USER,
       value: forUser
     }].concat(opts.extraPadata || [])
   }));
-  log.debug("Leaving buildS4u2SelfReq(). impersonating " + 
+  log.debug("Leaving buildS4u2SelfReq(). impersonating " +
       msgs.principalToString(user, userRealm));
-  return Object.assign({ impersonating: msgs.principalToString(user, 
+  return Object.assign({ impersonating: msgs.principalToString(user,
       userRealm) }, built);
 }
 
@@ -621,7 +618,7 @@ async function buildS4u2ProxyReq(options) {
     additionalTickets: [opts.evidenceTicket],
     extraPadata: padata.concat(opts.extraPadata || [])
   }));
-  log.debug("Leaving buildS4u2ProxyReq(). resourceBased=" + 
+  log.debug("Leaving buildS4u2ProxyReq(). resourceBased=" +
       !!opts.resourceBased);
   return built;
 }
@@ -640,7 +637,7 @@ async function buildRenewReq(options) {
       type: msgs.NAME_TYPE.SRV_INST,
       name: ["krbtgt", opts.tgt.realm]
     },
-    kdcOptions: opts.kdcOptions || [msgs.KDC_OPTION.RENEW, 
+    kdcOptions: opts.kdcOptions || [msgs.KDC_OPTION.RENEW,
         msgs.KDC_OPTION.RENEWABLE]
   }));
 }
@@ -685,7 +682,7 @@ async function buildForwardedTgtReq(options) {
     // and would matter against Active Directory — which is why it is stated
     // here rather than left to be discovered, and why no test asserts a
     // difference it cannot produce.
-    kdcOptions: opts.kdcOptions || [msgs.KDC_OPTION.FORWARDED, 
+    kdcOptions: opts.kdcOptions || [msgs.KDC_OPTION.FORWARDED,
         msgs.KDC_OPTION.FORWARDABLE],
     // The address the ticket is being forwarded TO, when the client cares to
     // bind it. AD issues addressless tickets and so does this by default; a
@@ -732,7 +729,7 @@ async function wrapDelegatedCredential(options) {
     tickets: [forwarded.ticket],
     encPart: {
       etype: opts.key.etype,
-      cipher: await profile.encrypt(opts.key.key, 
+      cipher: await profile.encrypt(opts.key.key,
           kcrypto.KEY_USAGE.KRB_CRED_ENCPART, part)
     }
   });
@@ -751,9 +748,9 @@ async function readDelegatedCredential(options) {
   var cred = msgs.readKrbCred(opts.bytes);
   var profile = kcrypto.etypeById(cred.encPart.etype);
   if (opts.key.etype !== cred.encPart.etype) {
-    throw new Error("krb5: this KRB-CRED is encrypted with " + 
+    throw new Error("krb5: this KRB-CRED is encrypted with " +
         cred.encPart.etypeName +
-      " (etype " + cred.encPart.etype + ") and the key supplied is etype " + 
+      " (etype " + cred.encPart.etype + ") and the key supplied is etype " +
           opts.key.etype +
       ". The key is the AP exchange's subkey if one was sent and the " +
           "ticket's session key " +
@@ -762,14 +759,14 @@ async function readDelegatedCredential(options) {
   var part = msgs.readEncKrbCredPart(await profile.decrypt(opts.key.key,
     kcrypto.KEY_USAGE.KRB_CRED_ENCPART, cred.encPart.cipher));
   if (part.ticketInfo.length !== cred.tickets.length) {
-    throw new Error("krb5: this KRB-CRED carries " + cred.tickets.length + 
+    throw new Error("krb5: this KRB-CRED carries " + cred.tickets.length +
         " ticket(s) and " +
       part.ticketInfo.length + " set(s) of ticket information. They are " +
           "positional, so a " +
       "mismatch means no ticket can be paired with its key.");
   }
   var info = part.ticketInfo[0];
-  log.debug("Leaving readDelegatedCredential(). " + 
+  log.debug("Leaving readDelegatedCredential(). " +
       msgs.principalToString(info.pname, info.prealm));
   return {
     ok: true,

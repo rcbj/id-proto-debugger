@@ -51,7 +51,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "krb5_codec_sync",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 // krb5_gss.js is vendored too, because the protected service parses the same
@@ -63,7 +63,7 @@ log.info("Log initialized. logLevel=" + log.level());
 // client half and the presentation layer have no counterpart in the KDC, so
 // vendoring them would create a copy nothing reads — and an unread copy is one
 // that drifts silently.
-const MODULES = ["krb5_primitives.js", "krb5_asn1.js", "krb5_crypto.js", 
+const MODULES = ["krb5_primitives.js", "krb5_asn1.js", "krb5_crypto.js",
     "krb5_messages.js",
                  "krb5_gss.js", "krb5_ndr.js", "krb5_pac.js"];
 
@@ -106,7 +106,7 @@ function findVendoredDir() {
     return path.resolve(candidate.dir) !== path.resolve(CANONICAL_DIR);
   });
   for (const candidate of candidates) {
-    if (MODULES.every(function (m) { return fs.existsSync(path.join(candidate.dir, 
+    if (MODULES.every(function (m) { return fs.existsSync(path.join(candidate.dir,
         m)); })) {
       log.debug("Leaving findVendoredDir().");
       return candidate;
@@ -115,20 +115,14 @@ function findVendoredDir() {
   // Partial is worse than absent and must be reported as a failure: it means a
   // sync half happened, and half a codec is a codec that does not load.
   for (const candidate of candidates) {
-    const present = MODULES.filter(function (m) { return fs.existsSync(path.join(candidate.dir, 
+    const present = MODULES.filter(function (m) { return fs.existsSync(path.join(candidate.dir,
         m)); });
     if (present.length) {
       log.debug("Leaving findVendoredDir().");
-      throw new Error("the vendored codec in " + candidate.what + 
+      throw new Error("the vendored codec in " + candidate.what +
           " is INCOMPLETE: it has " +
         present.join(", ") + " but not " +
-        
-            
-                
-                    
-                        
-                            
-                                MODULES.filter(function (m) { return present.indexOf(m) === -1; }).join(", ") +
+            MODULES.filter(function (m) { return present.indexOf(m) === -1; }).join(", ") +
         ". Run common/krb5/sync-to-mock-sts.sh — a partial copy will fail to " +
             "load rather than " +
         "merely disagree.");
@@ -180,10 +174,10 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
   // --- 1. Constants. A protocol constant that differs between the two ends is
   // a wire incompatibility, and the cheapest possible thing to check.
   ["PVNO"].forEach(function (name) {
-    assert.strictEqual(A.msgs[name], B.msgs[name], "msgs." + name + 
+    assert.strictEqual(A.msgs[name], B.msgs[name], "msgs." + name +
         " differs between the copies");
   });
-  ["MSG_TYPE", "APPLICATION", "NAME_TYPE", "PA_TYPE", "KDC_OPTION", 
+  ["MSG_TYPE", "APPLICATION", "NAME_TYPE", "PA_TYPE", "KDC_OPTION",
       "TICKET_FLAG", "AP_OPTION"]
     .forEach(function (table) {
       assert.deepStrictEqual(A.msgs[table], B.msgs[table],
@@ -198,10 +192,10 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     "well formed and every decryption would fail an integrity check, which a " +
         "KDC reports as a " +
     "wrong password.");
-  assert.deepStrictEqual(A.kcrypto.DEFAULT_ETYPE_PREFERENCE, 
+  assert.deepStrictEqual(A.kcrypto.DEFAULT_ETYPE_PREFERENCE,
       B.kcrypto.DEFAULT_ETYPE_PREFERENCE,
     "the default etype preference differs");
-  assert.deepStrictEqual(Object.keys(A.kcrypto.ETYPES).sort(), 
+  assert.deepStrictEqual(Object.keys(A.kcrypto.ETYPES).sort(),
       Object.keys(B.kcrypto.ETYPES).sort(),
     "the two copies implement different sets of encryption types");
 
@@ -211,12 +205,12 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
   for (const id of Object.keys(A.kcrypto.ETYPES).map(Number)) {
     const profileA = A.kcrypto.etypeById(id);
     const profileB = B.kcrypto.etypeById(id);
-    assert.strictEqual(profileA.name, profileB.name, "etype " + id + 
+    assert.strictEqual(profileA.name, profileB.name, "etype " + id +
         " has a different name");
 
-    const keyA = await profileA.stringToKey("shared secret", 
+    const keyA = await profileA.stringToKey("shared secret",
         A.prim.utf8("EXAMPLE.COMalice"), null);
-    const keyB = await profileB.stringToKey("shared secret", 
+    const keyB = await profileB.stringToKey("shared secret",
         B.prim.utf8("EXAMPLE.COMalice"), null);
     assert.strictEqual(A.prim.toHex(keyA), B.prim.toHex(keyB),
       profileA.name + ": string-to-key differs between the copies, so the " +
@@ -238,10 +232,10 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
 
     // Checksums too, since a service verifies a checksum the client computed.
     const message = A.prim.utf8("the authenticator's checksum covers this");
-    const cksumA = await profileA.checksum(keyA, 
+    const cksumA = await profileA.checksum(keyA,
         A.kcrypto.KEY_USAGE.AP_REQ_AUTH_CKSUM, message);
     assert.strictEqual(
-      await profileB.verifyChecksum(keyB, 
+      await profileB.verifyChecksum(keyB,
           B.kcrypto.KEY_USAGE.AP_REQ_AUTH_CKSUM, message, cksumA),
       true, profileA.name + ": copy B rejected a checksum copy A computed");
     log.debug("etype " + id + " (" + profileA.name + ") agrees across the " +
@@ -260,7 +254,7 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
           value: m.encPaPacRequest(true)
         }],
         reqBody: {
-          kdcOptions: [m.KDC_OPTION.FORWARDABLE, m.KDC_OPTION.RENEWABLE, 
+          kdcOptions: [m.KDC_OPTION.FORWARDABLE, m.KDC_OPTION.RENEWABLE,
               m.KDC_OPTION.CANONICALIZE],
           cname: { type: m.NAME_TYPE.PRINCIPAL, name: ["alice"] },
           realm: "EXAMPLE.COM",
@@ -268,7 +262,9 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
             type: m.NAME_TYPE.SRV_INST,
             name: ["krbtgt", "EXAMPLE.COM"]
           },
-          from: till, till: till, rtime: till,
+          from: till,
+          till: till,
+          rtime: till,
           nonce: 3735928559,
           etypes: [18, 17, 23],
           addresses: [{ type: 2, address: Uint8Array.from([10, 0, 0, 1]) }]
@@ -277,11 +273,15 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     }, function (m, bytes) { return m.readKdcReq(bytes); }],
     ["KRB-ERROR with ETYPE-INFO2", function (m) {
       return m.encKrbError({
-        stime: till, susec: 1, errorCode: 25, realm: "EXAMPLE.COM",
+        stime: till,
+        susec: 1,
+        errorCode: 25,
+        realm: "EXAMPLE.COM",
         sname: {
           type: 2,
           name: ["krbtgt", "EXAMPLE.COM"]
-        }, eText: "NEEDED_PREAUTH",
+        },
+        eText: "NEEDED_PREAUTH",
         eData: A.asn1.encSequenceOf([m.encPaData({
           type: m.PA_TYPE.ETYPE_INFO2,
           value: m.encEtypeInfo2([
@@ -296,7 +296,7 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     }, function (m, bytes) { return m.readKrbError(bytes); }],
     ["EncTicketPart", function (m) {
       return m.encEncTicketPart({
-        flags: [m.TICKET_FLAG.FORWARDABLE, m.TICKET_FLAG.INITIAL, 
+        flags: [m.TICKET_FLAG.FORWARDABLE, m.TICKET_FLAG.INITIAL,
             m.TICKET_FLAG.PRE_AUTHENT],
         key: { etype: 18, key: Uint8Array.from(new Array(32).fill(7)) },
         crealm: "EXAMPLE.COM",
@@ -307,12 +307,15 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     }, function (m, bytes) { return m.readEncTicketPart(bytes); }],
     ["Authenticator with a negative cksumtype", function (m) {
       return m.encAuthenticator({
-        crealm: "EXAMPLE.COM", cname: { type: 1, name: ["alice"] },
+        crealm: "EXAMPLE.COM",
+        cname: { type: 1, name: ["alice"] },
         cksum: {
           type: -138,
           checksum: Uint8Array.from(new Array(16).fill(0xab))
         },
-        cusec: 12345, ctime: till, seqNumber: 1234567890
+        cusec: 12345,
+        ctime: till,
+        seqNumber: 1234567890
       });
     }, function (m, bytes) { return m.readAuthenticator(bytes); }],
     ["KRB-CRED (a forwarded ticket and its key)", function (m) {
@@ -346,7 +349,9 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
           sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
           caddr: [{ type: 2, address: Uint8Array.from([10, 0, 0, 5]) }]
         }],
-        nonce: 3735928559, timestamp: till, usec: 999999,
+        nonce: 3735928559,
+        timestamp: till,
+        usec: 999999,
         // A SINGLE HostAddress, not the SEQUENCE OF — encoding these with the
         // plural form wraps them in an extra SEQUENCE that decodes as an
         // address whose type field is a whole structure.
@@ -386,7 +391,7 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     // Uint8Array and Buffer do not compare unequal for uninteresting reasons.
     const normalise = function (value) {
       return JSON.stringify(value, function (key, v) {
-        if (v && (v instanceof Uint8Array || (v.type === "Buffer" && 
+        if (v && (v instanceof Uint8Array || (v.type === "Buffer" &&
             Array.isArray(v.data)))) {
           return "bytes:" + Buffer.from(v.data || v).toString("hex");
         }
@@ -395,7 +400,7 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     };
     assert.strictEqual(normalise(byA), normalise(byB),
       label + ": the two copies PARSE the same bytes into different shapes");
-    log.debug(label + " agrees across the copies (" + bytesA.length + 
+    log.debug(label + " agrees across the copies (" + bytesA.length +
         " bytes)");
   }
 
@@ -444,7 +449,7 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     requestorSid: "S-1-5-21-1004336348-1177238915-682003330-1104"
   };
 
-  assert.strictEqual(A.kpac.KERB_NON_KERB_CKSUM_SALT, 
+  assert.strictEqual(A.kpac.KERB_NON_KERB_CKSUM_SALT,
       B.kpac.KERB_NON_KERB_CKSUM_SALT,
     "the two copies disagree about the PAC signatures' key usage number. " +
         "Every PAC the KDC signs " +
@@ -453,7 +458,7 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     "rather than about a constant.");
   assert.deepStrictEqual(A.kpac.TYPE, B.kpac.TYPE, "the PAC buffer type " +
       "numbers differ");
-  assert.deepStrictEqual(A.kpac.USER_ACCOUNT_CONTROL, 
+  assert.deepStrictEqual(A.kpac.USER_ACCOUNT_CONTROL,
       B.kpac.USER_ACCOUNT_CONTROL,
     "the UserAccountControl tables differ, so the two ends would name " +
         "different account flags");
@@ -464,22 +469,22 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
         "other ignores");
 
   for (const [signer, verifier, label] of [[A, B, "A signs, B verifies"],
-                                           [B, A, "B signs, A verifies"]]) {
-    const pacBytes = await signer.kpac.buildPac(Object.assign({}, pacSpec, 
+      [B, A, "B signs, A verifies"]]) {
+    const pacBytes = await signer.kpac.buildPac(Object.assign({}, pacSpec,
         pacKeys));
     const parsed = verifier.kpac.parsePac(pacBytes);
     assert.deepStrictEqual(parsed.problems, [],
-      label + ": the verifying copy finds this PAC malformed: " + 
+      label + ": the verifying copy finds this PAC malformed: " +
           parsed.problems.join(" | "));
 
-    const info = verifier.kpac.bufferOfType(parsed, 
+    const info = verifier.kpac.bufferOfType(parsed,
         verifier.kpac.TYPE.LOGON_INFO).parsed;
     assert.strictEqual(info.effectiveName, "alice", label + ": the account " +
         "name did not survive");
-    assert.strictEqual(info.userSid, 
+    assert.strictEqual(info.userSid,
         "S-1-5-21-1004336348-1177238915-682003330-1104",
       label + ": the account SID did not survive");
-    assert.deepStrictEqual(info.groups.map(function (g) { return g.relativeId; }), 
+    assert.deepStrictEqual(info.groups.map(function (g) { return g.relativeId; }),
         [513, 512],
       label + ": the group list did not survive in order");
     assert.deepStrictEqual(info.extraSids.map(function (e) { return e.text; }),
@@ -490,7 +495,7 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
     assert.deepStrictEqual(info.resourceGroups.map(function (g) { return g.relativeId; }),
       [1200, 1201], label + ": the resource groups did not survive");
     assert.ok(info.userAccountControlNames.indexOf("TRUSTED_FOR_DELEGATION") !== -1,
-      label + ": the account flags did not survive: " + 
+      label + ": the account flags did not survive: " +
           info.userAccountControlNames.join(", "));
     assert.deepStrictEqual(info.notes, [],
       label + ": the verifying copy raises consistency notes on a PAC the " +
@@ -506,11 +511,11 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
             "invisible to either " +
         "copy's own tests.");
     });
-    log.debug(label + ": " + pacBytes.length + " bytes, " + sigs.length + 
+    log.debug(label + ": " + pacBytes.length + " bytes, " + sigs.length +
         " signatures verified");
   }
 
-  log.info("the two copies of the codec agree on " + corpus.length + 
+  log.info("the two copies of the codec agree on " + corpus.length +
       " message shapes, " +
     Object.keys(A.kcrypto.ETYPES).length + " encryption types and the PAC, " +
         "cross-wise.");
@@ -529,12 +534,12 @@ function theFilesAreIdentical(vendoredDir, what) {
     const a = sha256(canonical);
     const b = sha256(vendored);
     if (a !== b) {
-      differences.push(module + " (common/krb5 " + a.slice(0, 12) + ", " + 
+      differences.push(module + " (common/krb5 " + a.slice(0, 12) + ", " +
           what + " " + b.slice(0, 12) + ")");
     }
   });
   assert.deepStrictEqual(differences, [],
-    "the vendored codec has drifted from common/krb5:\n  " + 
+    "the vendored codec has drifted from common/krb5:\n  " +
         differences.join("\n  ") +
     "\n\nRun common/krb5/sync-to-mock-sts.sh, then commit and push in " +
         "mock-sts and bump this " +
@@ -573,7 +578,7 @@ async function test() {
     log.info("Test completed successfully.");
     return;
   }
-  log.info("comparing common/krb5 against " + vendored.what + " (" + 
+  log.info("comparing common/krb5 against " + vendored.what + " (" +
       vendored.dir + ")");
   await theTwoCopiesAgreeOnTheWire(vendored.dir);
   theFilesAreIdentical(vendored.dir, vendored.what);

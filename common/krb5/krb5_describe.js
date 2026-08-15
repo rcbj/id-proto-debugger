@@ -72,7 +72,7 @@ function parseInput(text) {
   var how;
   var bytes;
 
-  if (/^[0-9a-f]+$/i.test(cleaned) && cleaned.length % 2 === 0 && 
+  if (/^[0-9a-f]+$/i.test(cleaned) && cleaned.length % 2 === 0 &&
       cleaned.length >= 4) {
     bytes = prim.fromHex(cleaned);
     how = "hex";
@@ -102,7 +102,7 @@ function parseInput(text) {
   var framing = null;
   if (bytes.length > 4 && (bytes[0] & 0x80) === 0) {
     var declared = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0;
-    if (declared === bytes.length - 4 && 
+    if (declared === bytes.length - 4 &&
         asn1.peekApplicationNumber(bytes.subarray(4)) !== null) {
       framing = "TCP length prefix (" + declared + " bytes) stripped";
       bytes = bytes.subarray(4);
@@ -130,7 +130,7 @@ function base64ToBytes(b64) {
 function hexOf(bytes, limit) {
   var h = prim.toHex(bytes);
   var cap = limit || 96;
-  return h.length > cap * 2 ? h.slice(0, cap * 2) + "… (" + 
+  return h.length > cap * 2 ? h.slice(0, cap * 2) + "… (" +
       prim.toBytes(bytes).length + " bytes)" : h;
 }
 
@@ -153,7 +153,7 @@ function principalOf(p, realm) {
   });
   log.debug("Leaving principalOf().");
   return msgs.principalToString(p, realm) +
-    "   [name-type " + p.type + (nameTypeName ? " NT-" + 
+    "   [name-type " + p.type + (nameTypeName ? " NT-" +
         nameTypeName.replace(/_/g, "-") : "") + "]";
 }
 
@@ -167,7 +167,7 @@ function row(name, value, note) {
 
 function etypeListOf(ids) {
   return (ids || []).map(function (id) {
-    return id + " " + kcrypto.etypeName(id) + (kcrypto.isSupportedEtype(id) ? 
+    return id + " " + kcrypto.etypeName(id) + (kcrypto.isSupportedEtype(id) ?
         "" : " (not performed here)");
   }).join("\n");
 }
@@ -182,7 +182,7 @@ function etypeListOf(ids) {
 // ---------------------------------------------------------------------------
 async function tryDecrypt(encPart, usage, keys, what) {
   log.debug("Entering tryDecrypt().");
-  var candidates = (keys || 
+  var candidates = (keys ||
       []).filter(function (k) { return k.etype === encPart.etype; });
   if (!candidates.length) {
     var haveOther = (keys || []).length > 0;
@@ -190,7 +190,7 @@ async function tryDecrypt(encPart, usage, keys, what) {
     return {
       ok: false,
       note: haveOther
-        ? "Encrypted with " + encPart.etypeName + " (etype " + encPart.etype + 
+        ? "Encrypted with " + encPart.etypeName + " (etype " + encPart.etype +
             "), and none of the keys " +
           "supplied is of that type. " + what
         : "Encrypted with " + encPart.etypeName + ". " + what
@@ -203,7 +203,7 @@ async function tryDecrypt(encPart, usage, keys, what) {
     log.debug("Leaving tryDecrypt().");
     return {
       ok: false,
-      note: "This build cannot decrypt " + encPart.etypeName + ": " + 
+      note: "This build cannot decrypt " + encPart.etypeName + ": " +
           err.message
     };
   }
@@ -216,7 +216,7 @@ async function tryDecrypt(encPart, usage, keys, what) {
       // Wrong key of the right type: keep trying the others. Reported below if
       // none works, because "the key you gave is not this key" is a real
       // answer.
-      log.debug("key " + (candidates[i].label || i) + " did not decrypt: " + 
+      log.debug("key " + (candidates[i].label || i) + " did not decrypt: " +
           err.message);
     }
   }
@@ -267,14 +267,14 @@ async function describeTicket(ticket, keys, problems) {
   if (ticket.tktVno !== 5) {
     problems.push("The ticket's tkt-vno is " + ticket.tktVno + ", not 5.");
   }
-  var attempt = await tryDecrypt(ticket.encPart, 
+  var attempt = await tryDecrypt(ticket.encPart,
       kcrypto.KEY_USAGE.KDC_REP_TICKET, keys,
     "Supply the service's key to read the session key, the client name and " +
         "the PAC.");
   if (attempt.ok) {
     try {
       var part = msgs.readEncTicketPart(attempt.plain);
-      section.sections.push(await describeEncTicketPart(part, attempt.usedKey, 
+      section.sections.push(await describeEncTicketPart(part, attempt.usedKey,
           problems, keys));
     } catch (e) {
       section.sections.push({
@@ -312,7 +312,7 @@ async function describeEncTicketPart(p, usedKey, problems, keys) {
   var pacSections = [];
   if (p.authorizationData) {
     rows.push(row("authorization-data", p.authorizationData.map(function (ad) {
-      return kpac.adTypeName(ad.type) + " (" + prim.toBytes(ad.data).length + 
+      return kpac.adTypeName(ad.type) + " (" + prim.toBytes(ad.data).length +
           " bytes)";
     }).join(", "), "the top-level elements only; the PAC is nested inside " +
         "AD-IF-RELEVANT"));
@@ -353,7 +353,7 @@ async function describeEncTicketPart(p, usedKey, problems, keys) {
   log.debug("Leaving describeEncTicketPart().");
   return {
     title: "EncTicketPart (decrypted)",
-    note: usedKey ? "Decrypted with " + (usedKey.label || "a supplied key") + 
+    note: usedKey ? "Decrypted with " + (usedKey.label || "a supplied key") +
         "." : null,
     rows: rows,
     sections: pacSections
@@ -391,7 +391,7 @@ async function describePac(found, keys, problems, serviceKey) {
 
   var section = {
     title: "PAC (Privilege Attribute Certificate)",
-    note: "Found at " + found.path + ". " + found.bytes.length + " bytes in " + 
+    note: "Found at " + found.path + ". " + found.bytes.length + " bytes in " +
         parsed.cBuffers +
       " buffer(s). This is what a Windows service reads to decide what the " +
           "holder may do — " +
@@ -399,18 +399,18 @@ async function describePac(found, keys, problems, serviceKey) {
           "DER.",
     rows: [
       row("buffers", parsed.buffers.map(function (b) {
-        return b.type + " " + b.typeName + " — " + b.size + 
+        return b.type + " " + b.typeName + " — " + b.size +
             " bytes at offset " + b.offset;
       }).join("\n")),
-      row("PACTYPE Version", parsed.version, parsed.version === 0 ? null : 
+      row("PACTYPE Version", parsed.version, parsed.version === 0 ? null :
           "[MS-PAC] requires 0")
     ],
     sections: []
   };
 
   var logon = kpac.bufferOfType(parsed, kpac.TYPE.LOGON_INFO);
-  if (logon && 
-      logon.parsed) section.sections.push(describeLogonInfo(logon.parsed, 
+  if (logon &&
+      logon.parsed) section.sections.push(describeLogonInfo(logon.parsed,
       problems));
   else if (logon) {
     section.sections.push({
@@ -494,7 +494,7 @@ async function describePac(found, keys, problems, serviceKey) {
     });
   }
 
-  section.sections.push(await describePacSignatures(parsed, keys, problems, 
+  section.sections.push(await describePacSignatures(parsed, keys, problems,
       serviceKey));
   log.debug("Leaving describePac().");
   return section;
@@ -503,19 +503,19 @@ async function describePac(found, keys, problems, serviceKey) {
 function describeLogonInfo(info, problems) {
   log.debug("Entering describeLogonInfo().");
   var rows = [
-    row("account", info.effectiveName, info.fullName ? "full name: " + 
+    row("account", info.effectiveName, info.fullName ? "full name: " +
         info.fullName : null),
     row("account SID", info.userSid,
       "assembled from LogonDomainId + UserId (" + info.userId + ") — a PAC " +
           "never carries it whole"),
-    row("primary group SID", info.primaryGroupSid, "RID " + 
+    row("primary group SID", info.primaryGroupSid, "RID " +
         info.primaryGroupId +
-      (kpac.ridName(info.primaryGroupId) ? ", " + 
+      (kpac.ridName(info.primaryGroupId) ? ", " +
           kpac.ridName(info.primaryGroupId) : "")),
     row("logon domain", info.logonDomainName +
       (info.logonDomainId ? "  (" + info.logonDomainId.text + ")" : "")),
     row("logon server", info.logonServer, "the DC that issued the initial TGT"),
-    row("UserAccountControl", info.userAccountControlNames.join("\n") || 
+    row("UserAccountControl", info.userAccountControlNames.join("\n") ||
         "(none set)",
       "[MS-SAMR]'s USER_ACCOUNT codes, not the LDAP userAccountControl bits"),
     row("UserFlags", info.userFlagNames.join("\n") || "(none set)"),
@@ -528,9 +528,9 @@ function describeLogonInfo(info, problems) {
     row("password must change", info.passwordMustChange.text),
     row("groups (" + info.groups.length + ")", info.groups.length
       ? info.groups.map(function (g) {
-        return (info.logonDomainId ? info.logonDomainId.text + "-" : "RID ") + 
+        return (info.logonDomainId ? info.logonDomainId.text + "-" : "RID ") +
             g.relativeId +
-          (g.name ? "  (" + g.name + ")" : "") + "   [" + 
+          (g.name ? "  (" + g.name + ")" : "") + "   [" +
               g.attributeNames.join(", ") + "]";
       }).join("\n")
       : "(none)",
@@ -551,7 +551,7 @@ function describeLogonInfo(info, problems) {
   if (info.resourceGroups.length) {
     rows.push(row("resource groups (" + info.resourceGroups.length + ")",
       info.resourceGroups.map(function (g) {
-        return (info.resourceGroupDomainSid ? 
+        return (info.resourceGroupDomainSid ?
             info.resourceGroupDomainSid.text + "-" : "RID ") +
           g.relativeId + (g.name ? "  (" + g.name + ")" : "") + "   [" +
           g.attributeNames.join(", ") + "]";
@@ -560,13 +560,8 @@ function describeLogonInfo(info, problems) {
           "domain SID from the " +
       "account's"));
   }
-  if (info.userSessionKey && 
-      
-          
-              
-                  
-                      
-                          !prim.toBytes(info.userSessionKey).every(function (b) { return b === 0; })) {
+  if (info.userSessionKey &&
+      !prim.toBytes(info.userSessionKey).every(function (b) { return b === 0; })) {
     rows.push(row("UserSessionKey", hexOf(info.userSessionKey),
       "[MS-PAC] requires this to be zero for Kerberos — it is an NTLM field"));
     problems.push("The PAC's UserSessionKey is not zero. [MS-PAC] section " +
@@ -576,7 +571,7 @@ function describeLogonInfo(info, problems) {
 
   // Each of these parses fine and changes how a real service behaves, which is
   // the definition of a finding here rather than a note.
-  info.notes.forEach(function (n) { problems.push("PAC logon information: " + 
+  info.notes.forEach(function (n) { problems.push("PAC logon information: " +
       n); });
 
   log.debug("Leaving describeLogonInfo().");
@@ -595,7 +590,7 @@ async function describePacSignatures(parsed, keys, problems, serviceKey) {
   var results = await kpac.verifySignaturesWithAnyKey(parsed, keys || [],
     { serverKey: serviceKey || null });
   var rows = results.map(function (r) {
-    var state = r.verified === true ? "verified" : r.verified === false ? 
+    var state = r.verified === true ? "verified" : r.verified === false ?
         "DOES NOT VERIFY"
       : "not checked";
     return row(r.name, state + " — " + r.signatureTypeName, r.note);
@@ -615,7 +610,7 @@ async function describePacSignatures(parsed, keys, problems, serviceKey) {
   // prose is how this check silently stopped firing once the note was reworded.
   results.forEach(function (r) {
     if (r.verified === false && r.roleAsserted) {
-      problems.push("The PAC's " + r.name + " does not verify against the " + 
+      problems.push("The PAC's " + r.name + " does not verify against the " +
           r.role +
         " — the very key that decrypted this ticket. Either the PAC has been " +
             "altered since it " +
@@ -645,7 +640,7 @@ async function describeKdcReq(req, input, keys, problems) {
     kind: isTgs ? "TGS-REQ" : "AS-REQ",
     summary: (isTgs ? "A ticket-granting request" : "An " +
         "authentication-service request") +
-      " for " + msgs.principalToString(body.sname || { name: ["(no sname)"] }, 
+      " for " + msgs.principalToString(body.sname || { name: ["(no sname)"] },
           body.realm) +
       (body.cname ? " by " + msgs.principalToString(body.cname) : ""),
     sections: []
@@ -660,7 +655,7 @@ async function describeKdcReq(req, input, keys, problems) {
 
   var padataRows = [];
   req.padata.forEach(function (pa) {
-    padataRows.push(row(pa.typeName + " (" + pa.type + ")", 
+    padataRows.push(row(pa.typeName + " (" + pa.type + ")",
         prim.toBytes(pa.value).length + " bytes"));
   });
   doc.sections.push({
@@ -675,13 +670,8 @@ async function describeKdcReq(req, input, keys, problems) {
                 "comes from."),
     rows: padataRows.length ? padataRows : [row("padata", "(none)")]
   });
-  if (isTgs && 
-      
-          
-              
-                  
-                      
-                          !req.padata.some(function (p) { return p.type === msgs.PA_TYPE.TGS_REQ; })) {
+  if (isTgs &&
+      !req.padata.some(function (p) { return p.type === msgs.PA_TYPE.TGS_REQ; })) {
     problems.push("This TGS-REQ carries no PA-TGS-REQ, so it has no TGT and " +
         "no KDC can answer it.");
   }
@@ -694,7 +684,7 @@ async function describeKdcReq(req, input, keys, problems) {
         doc.sections.push(describeEncryptedData(enc, "PA-ENC-TIMESTAMP " +
             "(encrypted with the client's key)"));
       } catch (e) {
-        problems.push("PA-ENC-TIMESTAMP does not decode as EncryptedData: " + 
+        problems.push("PA-ENC-TIMESTAMP does not decode as EncryptedData: " +
             e.message);
       }
     }
@@ -702,7 +692,7 @@ async function describeKdcReq(req, input, keys, problems) {
       try {
         doc.sections.push({
           title: "PA-PAC-REQUEST",
-          rows: [row("include-pac", 
+          rows: [row("include-pac",
               String(msgs.readPaPacRequest(pa.value).includePac),
             "asking a Windows KDC to omit the PAC is a legitimate diagnostic")]
         });
@@ -721,7 +711,7 @@ async function describeKdcReq(req, input, keys, problems) {
           rows: [
             row("userName", principalOf(fu.userName, fu.userRealm)),
             row("userRealm", fu.userRealm),
-            row("cksum", "type " + fu.cksum.type + ", " + 
+            row("cksum", "type " + fu.cksum.type + ", " +
                 hexOf(fu.cksum.checksum),
               fu.cksum.type === -138 ? "KERB_CHECKSUM_HMAC_MD5, as MS-SFU " +
                   "requires" : null),
@@ -736,7 +726,7 @@ async function describeKdcReq(req, input, keys, problems) {
 
   var optionNames = msgs.kdcOptionNames(body.kdcOptions);
   var bodyRows = [
-    row("kdc-options", optionNames.join(", ") || "(none)", "bits " + 
+    row("kdc-options", optionNames.join(", ") || "(none)", "bits " +
         body.kdcOptions.join(", ")),
     row("cname", principalOf(body.cname, null)),
     row("realm", body.realm, "case-sensitive, and conventionally UPPER CASE"),
@@ -754,7 +744,7 @@ async function describeKdcReq(req, input, keys, problems) {
     }).join(", ")));
   }
   if (body.additionalTickets) {
-    bodyRows.push(row("additional-tickets", body.additionalTickets.length + 
+    bodyRows.push(row("additional-tickets", body.additionalTickets.length +
         " ticket(s)",
       optionNames.indexOf("cname-in-addl-tkt") !== -1
         ? "with cname-in-addl-tkt set this is S4U2Proxy: the evidence ticket " +
@@ -769,7 +759,7 @@ async function describeKdcReq(req, input, keys, problems) {
       "wire and almost every deployment uses upper case; this is the " +
           "commonest configuration error there is.");
   }
-  if (body.etypes && body.etypes.length && 
+  if (body.etypes && body.etypes.length &&
       body.etypes.every(function (id) { return id === 23; })) {
     problems.push("The only encryption type offered is arcfour-hmac-md5 " +
         "(RC4). The Windows Server 2025 " +
@@ -779,7 +769,7 @@ async function describeKdcReq(req, input, keys, problems) {
   }
   (body.etypes || []).forEach(function (id) {
     if (id >= 1 && id <= 7) {
-      problems.push("Encryption type " + id + " (" + kcrypto.etypeName(id) + 
+      problems.push("Encryption type " + id + " (" + kcrypto.etypeName(id) +
           ") is a DES type. DES was " +
         "removed from Windows Server 2025 entirely.");
     }
@@ -805,7 +795,7 @@ async function describeKdcRep(rep, keys, problems) {
   var kind = isTgs ? "TGS-REP" : "AS-REP";
   var doc = {
     kind: kind,
-    summary: "A ticket for " + msgs.principalToString(rep.ticket.sname, 
+    summary: "A ticket for " + msgs.principalToString(rep.ticket.sname,
         rep.ticket.realm) +
              " issued to " + msgs.principalToString(rep.cname, rep.crealm),
     sections: [{
@@ -822,7 +812,7 @@ async function describeKdcRep(rep, keys, problems) {
     doc.sections.push({
       title: "padata",
       rows: rep.padata.map(function (pa) {
-        return row(pa.typeName + " (" + pa.type + ")", 
+        return row(pa.typeName + " (" + pa.type + ")",
             prim.toBytes(pa.value).length + " bytes");
       })
     });
@@ -840,7 +830,7 @@ async function describeKdcRep(rep, keys, problems) {
   doc.sections.push(encSection);
 
   var usages = isTgs
-    ? [kcrypto.KEY_USAGE.TGS_REP_ENCPART_SESSKEY, 
+    ? [kcrypto.KEY_USAGE.TGS_REP_ENCPART_SESSKEY,
         kcrypto.KEY_USAGE.TGS_REP_ENCPART_SUBKEY]
     : [kcrypto.KEY_USAGE.AS_REP_ENCPART];
   var got = null;
@@ -849,7 +839,7 @@ async function describeKdcRep(rep, keys, problems) {
       isTgs ? "Supply the TGT's session key." : "Supply the client's key, or " +
           "its password and salt.");
     if (attempt.ok) got = attempt;
-    else encSection.rows.push(row("decryption at key usage " + usages[i], "no", 
+    else encSection.rows.push(row("decryption at key usage " + usages[i], "no",
         attempt.note));
   }
   if (got) {
@@ -862,7 +852,7 @@ async function describeKdcRep(rep, keys, problems) {
                 "section 5.4.2 records this and " +
               "requires a client to accept it — this one does."
             : null),
-        row("key", part.key.etypeName + ", " + hexOf(part.key.key), 
+        row("key", part.key.etypeName + ", " + hexOf(part.key.key),
             "the session key"),
         row("nonce", part.nonce, "must equal the request's"),
         row("flags", msgs.ticketFlagNames(part.flags).join(", ") || "(none)"),
@@ -871,20 +861,20 @@ async function describeKdcRep(rep, keys, problems) {
         row("endtime", timeOf(part.endtime)),
         row("renew-till", timeOf(part.renewTill)),
         row("key-expiration", timeOf(part.keyExpiration),
-          part.keyExpiration ? "the password expiry the KDC is reporting" : 
+          part.keyExpiration ? "the password expiry the KDC is reporting" :
               null),
         row("srealm", part.srealm),
         row("sname", principalOf(part.sname, part.srealm))
       ];
       doc.sections.push({
         title: "Enc" + (isTgs ? "TGS" : "AS") + "RepPart (decrypted)",
-        note: "Decrypted with " + (got.usedKey.label || "a supplied key") + 
+        note: "Decrypted with " + (got.usedKey.label || "a supplied key") +
             " at key usage " + got.usage + ".",
         rows: rows
       });
       if (part.sname && rep.ticket.sname &&
           part.sname.name.join("/") !== rep.ticket.sname.name.join("/")) {
-        problems.push("The sname in the enc-part (" + 
+        problems.push("The sname in the enc-part (" +
             part.sname.name.join("/") + ") does not match the " +
           "ticket's (" + rep.ticket.sname.name.join("/") + "). With " +
               "canonicalize set this can be a " +
@@ -905,14 +895,14 @@ async function describeApReq(r, keys, problems) {
   log.debug("Entering describeApReq().");
   var doc = {
     kind: "AP-REQ",
-    summary: "A client presenting a ticket for " + 
+    summary: "A client presenting a ticket for " +
         msgs.principalToString(r.ticket.sname, r.ticket.realm),
     sections: [{
       title: "Message",
       rows: [
         row("pvno", r.pvno),
         row("msg-type", r.msgType + " (AP-REQ)"),
-        row("ap-options", msgs.apOptionNames(r.apOptions).join(", ") || 
+        row("ap-options", msgs.apOptionNames(r.apOptions).join(", ") ||
             "(none)",
           r.apOptions.indexOf(msgs.AP_OPTION.MUTUAL_REQUIRED) !== -1
             ? "mutual-required: the client expects an AP-REP back"
@@ -925,7 +915,7 @@ async function describeApReq(r, keys, problems) {
   var encSection = describeEncryptedData(r.authenticator,
     "Authenticator (encrypted under the ticket's SESSION key)");
   doc.sections.push(encSection);
-  var attempt = await tryDecrypt(r.authenticator, 
+  var attempt = await tryDecrypt(r.authenticator,
       kcrypto.KEY_USAGE.AP_REQ_AUTH, keys,
     "Supply the session key from the ticket, which the service gets by " +
         "decrypting the ticket itself.");
@@ -941,12 +931,12 @@ async function describeApReq(r, keys, problems) {
             "five minutes on AD"),
         row("cusec", a.cusec),
         row("seq-number", a.seqNumber),
-        row("subkey", a.subkey ? a.subkey.etypeName + ", " + 
+        row("subkey", a.subkey ? a.subkey.etypeName + ", " +
             hexOf(a.subkey.key) : "(absent)",
           a.subkey ? "the client proposing a per-context key" : null)
       ];
       if (a.cksum) {
-        rows.push(row("cksum", "type " + a.cksum.type + ", " + 
+        rows.push(row("cksum", "type " + a.cksum.type + ", " +
             hexOf(a.cksum.checksum),
           a.cksum.type === 0x8003
             ? "checksum type 0x8003 — the GSS-API channel-binding-and-flags " +
@@ -956,7 +946,7 @@ async function describeApReq(r, keys, problems) {
       }
       doc.sections.push({
         title: "Authenticator (decrypted)",
-        note: "Decrypted with " + (attempt.usedKey.label || "a supplied key") + 
+        note: "Decrypted with " + (attempt.usedKey.label || "a supplied key") +
             ".",
         rows: rows
       });
@@ -988,7 +978,7 @@ async function describeApRep(r, keys) {
           "key)")
     ]
   };
-  var attempt = await tryDecrypt(r.encPart, kcrypto.KEY_USAGE.AP_REP_ENCPART, 
+  var attempt = await tryDecrypt(r.encPart, kcrypto.KEY_USAGE.AP_REP_ENCPART,
       keys,
     "Supply the session key.");
   if (attempt.ok) {
@@ -999,7 +989,7 @@ async function describeApRep(r, keys) {
         row("ctime", timeOf(p.ctime), "echoes the Authenticator's ctime — " +
             "that echo IS the proof"),
         row("cusec", p.cusec),
-        row("subkey", p.subkey ? p.subkey.etypeName + ", " + 
+        row("subkey", p.subkey ? p.subkey.etypeName + ", " +
             hexOf(p.subkey.key) : "(absent)",
           p.subkey ? "the acceptor's subkey, which per-message tokens are " +
               "then keyed from" : null),
@@ -1058,7 +1048,7 @@ function describeKrbError(e, problems) {
   if (e.eDataPaData) {
     var rows = [];
     e.eDataPaData.forEach(function (pa) {
-      rows.push(row(pa.typeName + " (" + pa.type + ")", 
+      rows.push(row(pa.typeName + " (" + pa.type + ")",
           prim.toBytes(pa.value).length + " bytes"));
       if (pa.type === msgs.PA_TYPE.ETYPE_INFO2) {
         try {
@@ -1069,7 +1059,7 @@ function describeKrbError(e, problems) {
               iterations = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
             }
             rows.push(row("  etype " + info.etype + " " + info.etypeName,
-              "salt: " + (info.salt === null ? "(none — arcfour is unsalted)" : 
+              "salt: " + (info.salt === null ? "(none — arcfour is unsalted)" :
                   JSON.stringify(info.salt)) +
               (iterations !== null ? ", iterations: " + iterations : ""),
               "THIS is the salt to use for string-to-key. It is not " +
@@ -1116,7 +1106,7 @@ async function describe(input, options) {
     encoding: "bytes",
     framing: null
   }
-                                             : parseInput(input);
+      : parseInput(input);
   var bytes = parsed.bytes;
   var problems = [];
   var keys = opts.keys || [];
@@ -1147,7 +1137,7 @@ async function describe(input, options) {
     var A = msgs.APPLICATION;
     try {
       if (n === A.AS_REQ || n === A.TGS_REQ) {
-        doc = await describeKdcReq(msgs.readKdcReq(bytes), parsed, keys, 
+        doc = await describeKdcReq(msgs.readKdcReq(bytes), parsed, keys,
             problems);
       } else if (n === A.AS_REP || n === A.TGS_REP) {
         doc = await describeKdcRep(msgs.readKdcRep(bytes), keys, problems);
@@ -1161,7 +1151,7 @@ async function describe(input, options) {
         doc = {
           kind: "Ticket",
           summary: "A bare Ticket, outside any message",
-          sections: [await describeTicket(msgs.readTicket(bytes), keys, 
+          sections: [await describeTicket(msgs.readTicket(bytes), keys,
               problems)]
         };
       } else if (n === A.KRB_CRED) {
@@ -1172,7 +1162,7 @@ async function describe(input, options) {
         var cred = msgs.readKrbCred(bytes);
         doc = {
           kind: "KRB-CRED",
-          summary: "A delegated credential carrying " + cred.tickets.length + 
+          summary: "A delegated credential carrying " + cred.tickets.length +
               " forwarded " +
             "ticket(s) — unconstrained delegation",
           sections: [{
@@ -1204,7 +1194,7 @@ async function describe(input, options) {
         // the ticket's session key when no subkey was sent — not under any
         // long-term key, so a reader usually cannot open it and saying which
         // key is needed is the useful part.
-        var credAttempt = await tryDecrypt(cred.encPart, 
+        var credAttempt = await tryDecrypt(cred.encPart,
             kcrypto.KEY_USAGE.KRB_CRED_ENCPART, keys,
           "Encrypted at key usage 14 under the AP exchange's SUBKEY, or the " +
               "presented ticket's " +
@@ -1219,11 +1209,11 @@ async function describe(input, options) {
                 row("timestamp", timeOf(credPart.timestamp)),
                 row("nonce", credPart.nonce),
                 row("s-address", credPart.sAddress
-                  ? "type " + credPart.sAddress.type + " " + 
+                  ? "type " + credPart.sAddress.type + " " +
                       prim.toHex(credPart.sAddress.address)
                   : null),
                 row("r-address", credPart.rAddress
-                  ? "type " + credPart.rAddress.type + " " + 
+                  ? "type " + credPart.rAddress.type + " " +
                       prim.toHex(credPart.rAddress.address)
                   : null)
               ],
@@ -1237,15 +1227,10 @@ async function describe(input, options) {
                         "the forwarded ticket's session key — holding this " +
                             "and the ticket IS " +
                         "being that client"),
-                    row("flags", info.flags ? 
+                    row("flags", info.flags ?
                         msgs.ticketFlagNames(info.flags).join(", ") : null,
-                        info.flags && 
-                            
-                                
-                                    
-                                        
-                                            
-                                                info.flags.indexOf(msgs.TICKET_FLAG.FORWARDED) !== -1
+                        info.flags &&
+                            info.flags.indexOf(msgs.TICKET_FLAG.FORWARDED) !== -1
                           ? "flagged `forwarded`, which is the record a " +
                               "receiving service has " +
                             "that these credentials were handed over rather " +
@@ -1268,23 +1253,23 @@ async function describe(input, options) {
           }
         } else {
           doc.sections[0].sections[0].rows.push(
-            row("decryption", "not attempted or not possible", 
+            row("decryption", "not attempted or not possible",
                 credAttempt.note));
         }
       } else if (n === A.AUTHENTICATOR) {
         var a = msgs.readAuthenticator(bytes);
         doc = {
           kind: "Authenticator",
-          summary: "A decrypted Authenticator for " + 
+          summary: "A decrypted Authenticator for " +
               msgs.principalToString(a.cname, a.crealm),
           sections: [{
             title: "Authenticator",
             rows: [
-              row("crealm", a.crealm), row("cname", principalOf(a.cname, 
+              row("crealm", a.crealm), row("cname", principalOf(a.cname,
                   a.crealm)),
               row("ctime", timeOf(a.ctime)), row("cusec", a.cusec),
               row("seq-number", a.seqNumber),
-              row("cksum", a.cksum ? "type " + a.cksum.type + ", " + 
+              row("cksum", a.cksum ? "type " + a.cksum.type + ", " +
                   hexOf(a.cksum.checksum) : "(absent)")
             ]
           }]
@@ -1293,7 +1278,7 @@ async function describe(input, options) {
         doc = {
           kind: "EncTicketPart",
           summary: "A decrypted EncTicketPart",
-          sections: [await describeEncTicketPart(msgs.readEncTicketPart(bytes), 
+          sections: [await describeEncTicketPart(msgs.readEncTicketPart(bytes),
               null,
             problems, keys)]
         };
@@ -1301,7 +1286,7 @@ async function describe(input, options) {
         var p = msgs.readEncKdcRepPart(bytes);
         doc = {
           kind: p.taggedAs,
-          summary: "A decrypted " + p.taggedAs + " for " + 
+          summary: "A decrypted " + p.taggedAs + " for " +
               msgs.principalToString(p.sname, p.srealm),
           sections: [{
             title: p.taggedAs,
@@ -1309,11 +1294,11 @@ async function describe(input, options) {
               row("tagged as", p.taggedAs),
               row("key", p.key.etypeName + ", " + hexOf(p.key.key)),
               row("nonce", p.nonce),
-              row("flags", msgs.ticketFlagNames(p.flags).join(", ") || 
+              row("flags", msgs.ticketFlagNames(p.flags).join(", ") ||
                   "(none)"),
-              row("authtime", timeOf(p.authtime)), row("endtime", 
+              row("authtime", timeOf(p.authtime)), row("endtime",
                   timeOf(p.endtime)),
-              row("srealm", p.srealm), row("sname", principalOf(p.sname, 
+              row("srealm", p.srealm), row("sname", principalOf(p.sname,
                   p.srealm))
             ]
           }]
@@ -1334,7 +1319,7 @@ async function describe(input, options) {
       // wrong. Both deserve the structure alongside the error.
       doc = {
         kind: id.name + " (does not parse)",
-        summary: "These bytes announce themselves as a " + id.name + 
+        summary: "These bytes announce themselves as a " + id.name +
             " but do not parse: " + e.message,
         sections: [],
         tree: null
@@ -1343,7 +1328,7 @@ async function describe(input, options) {
       try {
         doc.tree = asn1.tree(bytes);
       } catch (e2) {
-        problems.push("The ASN.1 structure could not be shown either: " + 
+        problems.push("The ASN.1 structure could not be shown either: " +
             e2.message);
       }
     }
@@ -1356,7 +1341,7 @@ async function describe(input, options) {
     hex: hexOf(bytes, 64)
   };
   doc.problems = (doc.problems || []).concat(problems);
-  log.debug("Leaving describe(). kind=" + doc.kind + ", problems=" + 
+  log.debug("Leaving describe(). kind=" + doc.kind + ", problems=" +
       doc.problems.length);
   return doc;
 }
@@ -1374,7 +1359,7 @@ async function keysFromPassword(password, salt, etypes) {
     out.push({
       etype: e.id,
       key: await e.stringToKey(password, prim.utf8(salt || ""), null),
-      label: "the password with salt " + JSON.stringify(salt || "") + " as " + 
+      label: "the password with salt " + JSON.stringify(salt || "") + " as " +
           e.name
     });
   }

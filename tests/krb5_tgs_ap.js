@@ -48,7 +48,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "krb5_tgs_ap",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 function shared(name) {
@@ -83,17 +83,17 @@ const SERVICE = ["HTTP", "web.example.com"];
 // verify them. They are the mock's own defaults (krb5_principals.js); a
 // mismatch shows up as a signature that does not verify, which is why they are
 // named here rather than inlined.
-const KRBTGT_PASSWORD = process.env.KRB5_KRBTGT_PASSWORD || 
+const KRBTGT_PASSWORD = process.env.KRB5_KRBTGT_PASSWORD ||
     "krbtgt-mock-password";
 const SERVICE_PASSWORD = "service-account-password";
 // The inter-realm trust: ONE shared secret, held as krbtgt/PARTNER.COM in both
 // realms.
-const TRUST_PASSWORD = process.env.KRB5_TRUST_PASSWORD || 
+const TRUST_PASSWORD = process.env.KRB5_TRUST_PASSWORD ||
     "inter-realm-trust-password";
 // And the target realm's own ticket-granting key, which is NOT the trust key.
 const PARTNER_KRBTGT_PASSWORD = process.env.KRB5_TRUSTED_KRBTGT_PASSWORD ||
   "partner-krbtgt-password";
-const DOMAIN_SID = process.env.KRB5_DOMAIN_SID || 
+const DOMAIN_SID = process.env.KRB5_DOMAIN_SID ||
     "S-1-5-21-1004336348-1177238915-682003330";
 // The second realm's domain SID, which must DIFFER from the first: a PAC
 // identifies an account by its own domain's SID, and two realms sharing one SID
@@ -129,7 +129,7 @@ function sendFramed(port, bytes) {
       resolve(value);
       log.debug("Leaving finish().");
     }
-    const timer = setTimeout(function () { finish(new Error("timed out after 10s")); }, 
+    const timer = setTimeout(function () { finish(new Error("timed out after 10s")); },
         10000);
     socket.on("connect", function () {
       const framed = Buffer.alloc(4 + bytes.length);
@@ -169,7 +169,7 @@ async function getTgt(principalName, password, extraPadata, realm, saltOverride,
   const bare = msgs.encKdcReq({
     msgType: msgs.MSG_TYPE.AS_REQ,
     reqBody: {
-      kdcOptions: kdcOptions || [msgs.KDC_OPTION.FORWARDABLE, 
+      kdcOptions: kdcOptions || [msgs.KDC_OPTION.FORWARDABLE,
           msgs.KDC_OPTION.RENEWABLE],
       cname: { type: msgs.NAME_TYPE.PRINCIPAL, name: [principalName] },
       realm: realm || REALM,
@@ -201,13 +201,13 @@ async function getTgt(principalName, password, extraPadata, realm, saltOverride,
       type: msgs.PA_TYPE.ENC_TIMESTAMP,
       value: msgs.encEncryptedData({
         etype: 18,
-        cipher: await profile.encrypt(key, 
+        cipher: await profile.encrypt(key,
             kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP,
           msgs.encPaEncTsEnc(new Date(), 0))
       })
     }].concat(extraPadata || []),
     reqBody: {
-      kdcOptions: kdcOptions || [msgs.KDC_OPTION.FORWARDABLE, 
+      kdcOptions: kdcOptions || [msgs.KDC_OPTION.FORWARDABLE,
           msgs.KDC_OPTION.RENEWABLE],
       cname: { type: msgs.NAME_TYPE.PRINCIPAL, name: [principalName] },
       realm: realm || REALM,
@@ -221,11 +221,11 @@ async function getTgt(principalName, password, extraPadata, realm, saltOverride,
     }
   });
   const response = msgs.readKdcResponse(await sendFramed(kdcPort, withPreauth));
-  assert.strictEqual(response.kind, "AS-REP", "expected a TGT for " + 
+  assert.strictEqual(response.kind, "AS-REP", "expected a TGT for " +
       principalName);
   const rep = response.rep;
   const part = msgs.readEncKdcRepPart(
-    await profile.decrypt(key, kcrypto.KEY_USAGE.AS_REP_ENCPART, 
+    await profile.decrypt(key, kcrypto.KEY_USAGE.AS_REP_ENCPART,
         rep.encPart.cipher));
   assert.strictEqual(part.nonce, nonce, "the AS-REP's nonce must match");
   log.debug("Leaving getTgt().");
@@ -261,10 +261,10 @@ async function theTgsExchangeIssuesAServiceTicket(tgt) {
     subkey: null
   });
   assert.ok(result.ok, "the TGS exchange failed: " +
-    (result.error ? result.error.error.name + " — " + result.error.eText : 
+    (result.error ? result.error.error.name + " — " + result.error.eText :
         "unknown"));
   assert.ok(/key usage 8/.test(result.openedWith),
-    "with no subkey the reply must be at key usage 8, got: " + 
+    "with no subkey the reply must be at key usage 8, got: " +
         result.openedWith);
   assert.deepStrictEqual(result.service.name, SERVICE, "the ticket must be " +
       "for the service asked for");
@@ -272,7 +272,7 @@ async function theTgsExchangeIssuesAServiceTicket(tgt) {
       "the same client");
   assert.strictEqual(prim.toHex(result.sessionKey).length, 64, "an aes256 " +
       "session key is 32 bytes");
-  assert.notStrictEqual(prim.toHex(result.sessionKey), 
+  assert.notStrictEqual(prim.toHex(result.sessionKey),
       prim.toHex(tgt.sessionKey),
     "the service ticket must carry a NEW session key, not the TGT's");
 
@@ -284,13 +284,13 @@ async function theTgsExchangeIssuesAServiceTicket(tgt) {
         "AS exchange issues one: " +
     result.flagNames.join(", "));
   assert.ok(result.flagNames.indexOf("pre-authent") !== -1,
-    "but pre-authent is inherited from the TGT: " + 
+    "but pre-authent is inherited from the TGT: " +
         result.flagNames.join(", "));
   assert.ok(result.flagNames.indexOf("ok-as-delegate") !== -1,
-    "and this service is flagged ok-as-delegate: " + 
+    "and this service is flagged ok-as-delegate: " +
         result.flagNames.join(", "));
   assert.ok(result.endtime <= tgt.endtime,
-    "a service ticket cannot outlive the TGT that bought it (" + 
+    "a service ticket cannot outlive the TGT that bought it (" +
         result.endtime.toISOString() +
     " vs " + tgt.endtime.toISOString() + ")");
 
@@ -302,10 +302,13 @@ async function theTgsExchangeIssuesAServiceTicket(tgt) {
     key: kcrypto.randomBytes(profile.keyBytes)
   };
   const builtWithSubkey = await client.buildTgsReq({
-    tgt: tgt, sname: {
+    tgt: tgt,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: SERVICE
-    }, subkey: subkey });
+    },
+    subkey: subkey
+  });
   const withSubkey = await client.readTgsRep({
     tgt: tgt,
     reply: await sendFramed(kdcPort, builtWithSubkey.request),
@@ -314,11 +317,11 @@ async function theTgsExchangeIssuesAServiceTicket(tgt) {
   });
   assert.ok(withSubkey.ok, "the TGS exchange with a subkey failed");
   assert.ok(/key usage 9/.test(withSubkey.openedWith),
-    "with a subkey the reply must be at key usage 9, got: " + 
+    "with a subkey the reply must be at key usage 9, got: " +
         withSubkey.openedWith);
 
   log.info("the TGS exchange issued a ticket for " + SERVICE.join("/") + " (" +
-    kcrypto.etypeName(result.etype) + ", flags [" + 
+    kcrypto.etypeName(result.etype) + ", flags [" +
         result.flagNames.join(", ") + "])");
   log.debug("Leaving theTgsExchangeIssuesAServiceTicket().");
   return result;
@@ -342,7 +345,7 @@ async function theKdcIssuesAVerifiablePac(tgt, serviceTicket) {
   const profile = kcrypto.etypeById(tgt.etype);
   const krbtgtKey = {
     etype: tgt.etype,
-    key: await profile.stringToKey(KRBTGT_PASSWORD, prim.utf8(REALM + 
+    key: await profile.stringToKey(KRBTGT_PASSWORD, prim.utf8(REALM +
         "krbtgt"), null),
     label: "the krbtgt key"
   };
@@ -383,7 +386,7 @@ async function theKdcIssuesAVerifiablePac(tgt, serviceTicket) {
   assert.strictEqual(tgtInfo.effectiveName, "alice",
     "the PAC must name the account the ticket was issued to");
   assert.strictEqual(tgtInfo.userSid, DOMAIN_SID + "-1104",
-    "and carry its SID, which is what a service authorizes on: " + 
+    "and carry its SID, which is what a service authorizes on: " +
         tgtInfo.userSid);
   assert.ok(tgtInfo.groups.some(function (g) { return g.relativeId === 512; }),
     "alice is a Domain Admin in the principal table, so her PAC must say so: " +
@@ -393,7 +396,7 @@ async function theKdcIssuesAVerifiablePac(tgt, serviceTicket) {
         "logon's PAC: " +
     tgtInfo.extraSids.map(function (e) { return e.text; }).join(", "));
   assert.deepStrictEqual(tgtInfo.notes, [],
-    "the KDC's own PAC should raise no consistency notes: " + 
+    "the KDC's own PAC should raise no consistency notes: " +
         tgtInfo.notes.join(" | "));
 
   // A TGT is encrypted TO krbtgt, so [MS-PAC] sections 2.8.2/2.8.3 say it
@@ -403,34 +406,34 @@ async function theKdcIssuesAVerifiablePac(tgt, serviceTicket) {
   // does not send.
   assert.strictEqual(kpac.countOfType(inTgt.pac, kpac.TYPE.TICKET_CHECKSUM), 0,
     "a TGT is encrypted to krbtgt, so it should carry NO ticket signature");
-  assert.strictEqual(kpac.countOfType(inTgt.pac, 
+  assert.strictEqual(kpac.countOfType(inTgt.pac,
       kpac.TYPE.EXTENDED_KDC_CHECKSUM), 0,
     "and no extended KDC signature either");
 
   // In a TGT the service IS krbtgt, so one key verifies everything.
   const tgtSigs = await kpac.verifySignatures(inTgt.pac,
     { serverKey: krbtgtKey, kdcKey: krbtgtKey });
-  assert.strictEqual(tgtSigs.length, 2, 
+  assert.strictEqual(tgtSigs.length, 2,
       "a TGT's PAC has two signatures, got " + tgtSigs.length);
   tgtSigs.forEach(function (s) {
     assert.strictEqual(s.verified, true,
-      "the TGT's " + s.name + " does not verify with the krbtgt key: " + 
+      "the TGT's " + s.name + " does not verify with the krbtgt key: " +
           s.note);
   });
 
   // --- the service ticket, where the two keys differ ---
-  const inService = await pacIn(serviceTicket.ticket, serviceKey, 
+  const inService = await pacIn(serviceTicket.ticket, serviceKey,
       "the service ticket");
   assert.deepStrictEqual(inService.pac.problems, [],
-    "the service ticket's PAC should be well formed: " + 
+    "the service ticket's PAC should be well formed: " +
         inService.pac.problems.join(" | "));
 
-  assert.strictEqual(kpac.countOfType(inService.pac, 
+  assert.strictEqual(kpac.countOfType(inService.pac,
       kpac.TYPE.TICKET_CHECKSUM), 1,
     "a service ticket is NOT encrypted to krbtgt, so [MS-PAC] section 2.8.2 " +
         "says it SHOULD " +
     "carry a ticket signature");
-  assert.strictEqual(kpac.countOfType(inService.pac, 
+  assert.strictEqual(kpac.countOfType(inService.pac,
       kpac.TYPE.EXTENDED_KDC_CHECKSUM), 1,
     "and an extended KDC signature (the CVE-2022-37967 hardening)");
 
@@ -447,7 +450,7 @@ async function theKdcIssuesAVerifiablePac(tgt, serviceTicket) {
     }))
   });
   assert.strictEqual(serviceSigs.length, 4,
-    "a service ticket's PAC has all four signatures, got " + 
+    "a service ticket's PAC has all four signatures, got " +
         serviceSigs.length + ": " +
     serviceSigs.map(function (s) { return s.name; }).join(", "));
   serviceSigs.forEach(function (s) {
@@ -474,7 +477,7 @@ async function theKdcIssuesAVerifiablePac(tgt, serviceTicket) {
   // The client-info buffer ties the PAC to this ticket's client and to the
   // ORIGINAL authentication time, which is the same in the TGT and in the
   // ticket bought with it.
-  const clientInfo = kpac.bufferOfType(inService.pac, 
+  const clientInfo = kpac.bufferOfType(inService.pac,
       kpac.TYPE.CLIENT_INFO).parsed;
   assert.strictEqual(clientInfo.name, "alice");
   assert.strictEqual(clientInfo.clientId.date.getTime(),
@@ -520,17 +523,17 @@ async function thePacAgreesWithTheAccountsBehaviour() {
     "the noreauth account should be answered with a TGT rather than " +
         "KDC_ERR_PREAUTH_REQUIRED — " +
     "that is the whole reason it exists: " +
-    (reply.error ? reply.error.error.name + " (" + reply.error.errorCode + 
+    (reply.error ? reply.error.error.name + " (" + reply.error.errorCode +
         ")" : ""));
   const profile = kcrypto.etypeById(reply.rep.ticket.encPart.etype);
-  const krbtgtKey = await profile.stringToKey(KRBTGT_PASSWORD, 
+  const krbtgtKey = await profile.stringToKey(KRBTGT_PASSWORD,
       prim.utf8(REALM + "krbtgt"), null);
   const part = msgs.readEncTicketPart(await profile.decrypt(krbtgtKey,
     kcrypto.KEY_USAGE.KDC_REP_TICKET, reply.rep.ticket.encPart.cipher));
   const found = kpac.findPacs(part.authorizationData);
   assert.strictEqual(found.length, 1, "the noreauth account's TGT should " +
       "carry a PAC too");
-  const info = kpac.bufferOfType(kpac.parsePac(found[0].bytes), 
+  const info = kpac.bufferOfType(kpac.parsePac(found[0].bytes),
       kpac.TYPE.LOGON_INFO).parsed;
 
   assert.ok(info.userAccountControlNames.indexOf("DONT_REQUIRE_PREAUTH") !== -1,
@@ -571,7 +574,7 @@ async function decliningThePacYieldsATicketWithoutOne() {
   const declined = await getTgt("alice", "hunter2",
     [{ type: msgs.PA_TYPE.PAC_REQUEST, value: msgs.encPaPacRequest(false) }]);
   const profile = kcrypto.etypeById(declined.etype);
-  const krbtgtKey = await profile.stringToKey(KRBTGT_PASSWORD, 
+  const krbtgtKey = await profile.stringToKey(KRBTGT_PASSWORD,
       prim.utf8(REALM + "krbtgt"), null);
 
   const tgtPart = msgs.readEncTicketPart(await profile.decrypt(krbtgtKey,
@@ -583,10 +586,13 @@ async function decliningThePacYieldsATicketWithoutOne() {
 
   // And the ticket bought with it.
   const built = await client.buildTgsReq({
-    tgt: declined, sname: {
+    tgt: declined,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: SERVICE
-    }, subkey: null });
+    },
+    subkey: null
+  });
   const result = await client.readTgsRep({
     tgt: declined,
     reply: await sendFramed(kdcPort, built.request),
@@ -600,9 +606,9 @@ async function decliningThePacYieldsATicketWithoutOne() {
   const serviceKey = await kcrypto.etypeById(result.etype)
     .stringToKey(SERVICE_PASSWORD, prim.utf8(REALM + "HTTPweb"), null);
   const servicePart = msgs.readEncTicketPart(await kcrypto.etypeById(result.etype)
-    .decrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET, 
+    .decrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
         result.ticket.encPart.cipher));
-  assert.strictEqual(kpac.findPacs(servicePart.authorizationData || []).length, 
+  assert.strictEqual(kpac.findPacs(servicePart.authorizationData || []).length,
       0,
     "a service ticket bought with a PAC-less TGT must also have no PAC — a " +
         "real KDC carries the " +
@@ -617,7 +623,7 @@ async function decliningThePacYieldsATicketWithoutOne() {
   const granted = await getTgt("alice", "hunter2");
   const grantedPart = msgs.readEncTicketPart(await profile.decrypt(krbtgtKey,
     kcrypto.KEY_USAGE.KDC_REP_TICKET, granted.ticket.encPart.cipher));
-  assert.strictEqual(kpac.findPacs(grantedPart.authorizationData || []).length, 
+  assert.strictEqual(kpac.findPacs(grantedPart.authorizationData || []).length,
       1,
     "and without the decline the same request must produce a PAC — otherwise " +
         "the assertions " +
@@ -636,7 +642,7 @@ async function decliningThePacYieldsATicketWithoutOne() {
     kpac.TYPE.ATTRIBUTES_INFO);
   assert.ok(implicitAttrs && implicitAttrs.parsed,
     "the KDC should emit a PAC_ATTRIBUTES_INFO buffer");
-  assert.deepStrictEqual(implicitAttrs.parsed.flagNames, 
+  assert.deepStrictEqual(implicitAttrs.parsed.flagNames,
       ["PAC_WAS_GIVEN_IMPLICITLY"],
     "a client that sent NO PA-PAC-REQUEST still gets a PAC — Active " +
         "Directory decides to include " +
@@ -712,13 +718,13 @@ async function aCrossRealmReferralIsIssuedAndCanBeFollowed(tgt) {
   // --- 2. The client has to notice.
   assert.ok(referred.referral,
     "the reply is a REFERRAL and the client must say so. It names " +
-    msgs.principalToString(referred.service, referred.serviceRealm) + 
+    msgs.principalToString(referred.service, referred.serviceRealm) +
         " rather than the " +
     PARTNER_SERVICE.join("/") + " that was asked for, and a client that does " +
         "not compare those " +
     "two will present a ticket-granting ticket to a web server.");
   assert.strictEqual(referred.referral.toRealm, PARTNER_REALM,
-    "and must name the realm to go and ask next: " + 
+    "and must name the realm to go and ask next: " +
         JSON.stringify(referred.referral));
   assert.deepStrictEqual(referred.service.name, ["krbtgt", PARTNER_REALM],
     "the ticket issued is a ticket-granting ticket for the other realm");
@@ -749,7 +755,7 @@ async function aCrossRealmReferralIsIssuedAndCanBeFollowed(tgt) {
   // RFC 4120 section 3.3.3.2: `transited` lists the realms traversed EXCLUDING
   // the client's and the server's own, so one hop across a direct trust
   // transits nothing.
-  assert.ok(!referralPart.transited || 
+  assert.ok(!referralPart.transited ||
       referralPart.transited.contents.length === 0,
     "a direct trust transits no intermediate realm, so `transited` must be " +
         "empty: " +
@@ -775,9 +781,9 @@ async function aCrossRealmReferralIsIssuedAndCanBeFollowed(tgt) {
   assert.ok(serviceTicket.ok,
     "the other realm's KDC must accept the referral ticket and issue the " +
         "service ticket: " +
-    (serviceTicket.error ? serviceTicket.error.error.name + " — " + 
+    (serviceTicket.error ? serviceTicket.error.error.name + " — " +
         serviceTicket.error.eText
-                         : "unknown"));
+            : "unknown"));
   assert.strictEqual(serviceTicket.referral, null,
     "and THIS reply is not a referral — it names the service that was asked " +
         "for");
@@ -816,7 +822,7 @@ async function aCrossRealmReferralIsIssuedAndCanBeFollowed(tgt) {
     "the service ticket must carry the client's PAC across the trust");
   const crossPac = kpac.parsePac(carried[0].bytes);
   assert.deepStrictEqual(crossPac.problems, [],
-    "and it must still be well formed after re-signing: " + 
+    "and it must still be well formed after re-signing: " +
         crossPac.problems.join(" | "));
 
   const crossInfo = kpac.bufferOfType(crossPac, kpac.TYPE.LOGON_INFO).parsed;
@@ -838,7 +844,7 @@ async function aCrossRealmReferralIsIssuedAndCanBeFollowed(tgt) {
   });
   crossSigs.forEach(function (s) {
     assert.strictEqual(s.verified, true,
-      "after a referral the PAC must verify under " + PARTNER_REALM + 
+      "after a referral the PAC must verify under " + PARTNER_REALM +
           "'s OWN keys — its " + s.name +
       " does not (" + s.note + "). A KDC that carried the signatures across " +
           "without recomputing " +
@@ -888,12 +894,12 @@ async function aCrossRealmReferralIsIssuedAndCanBeFollowed(tgt) {
         "everything gets a referral, " +
     "the referral assertions above prove nothing.");
   assert.strictEqual(refused.error.errorCode, 7,
-    "and the refusal is KDC_ERR_S_PRINCIPAL_UNKNOWN, got " + 
+    "and the refusal is KDC_ERR_S_PRINCIPAL_UNKNOWN, got " +
         refused.error.error.name);
 
   log.info("a referral to " + PARTNER_REALM + " was issued under the trust " +
       "key, detected by the " +
-    "client, followed to a service ticket " + PARTNER_SERVICE.join("/") + 
+    "client, followed to a service ticket " + PARTNER_SERVICE.join("/") +
         " could open, and its " +
     "PAC verified under " + PARTNER_REALM + "'s own keys after re-signing");
   log.debug("Leaving aCrossRealmReferralIsIssuedAndCanBeFollowed().");
@@ -916,7 +922,7 @@ async function aCrossRealmReferralIsIssuedAndCanBeFollowed(tgt) {
 async function theTrustedRealmServesItsOwnClients() {
   log.debug("Entering theTrustedRealmServesItsOwnClients().");
   const PARTNER_REALM = "PARTNER.COM";
-  const carol = await getTgt("carol", "partner-user-password", null, 
+  const carol = await getTgt("carol", "partner-user-password", null,
       PARTNER_REALM);
   assert.strictEqual(carol.realm, PARTNER_REALM,
     "the TGT must be issued by and for " + PARTNER_REALM);
@@ -936,7 +942,7 @@ async function theTrustedRealmServesItsOwnClients() {
   });
   assert.ok(result.ok,
     PARTNER_REALM + " must serve its own client without a referral: " +
-    (result.error ? result.error.error.name + " — " + result.error.eText : 
+    (result.error ? result.error.error.name + " — " + result.error.eText :
         "unknown"));
   assert.strictEqual(result.referral, null,
     "a service in the client's OWN realm is not a referral");
@@ -955,7 +961,7 @@ async function theTrustedRealmServesItsOwnClients() {
   const found = kpac.findPacs(part.authorizationData || []);
   assert.strictEqual(found.length, 1, "carol's service ticket must carry a " +
       "PAC");
-  const info = kpac.bufferOfType(kpac.parsePac(found[0].bytes), 
+  const info = kpac.bufferOfType(kpac.parsePac(found[0].bytes),
       kpac.TYPE.LOGON_INFO).parsed;
   assert.strictEqual(info.effectiveName, "carol");
 
@@ -990,7 +996,7 @@ async function theTrustedRealmServesItsOwnClients() {
     assert.strictEqual(s.verified, true,
       "a ticket issued inside " + PARTNER_REALM + " must be signed with THAT " +
           "realm's own krbtgt " +
-      "key, not with the trust key that shares its principal name — its " + 
+      "key, not with the trust key that shares its principal name — its " +
           s.name + " does not " +
       "verify (" + s.note + ")");
   });
@@ -1038,7 +1044,7 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
   // The front-end service authenticates as ITSELF. A service account gets a TGT
   // the same way a user does — which is the starting point people find
   // surprising.
-  const frontendTgt = await getTgt("HTTP/frontend.example.com", 
+  const frontendTgt = await getTgt("HTTP/frontend.example.com",
       "frontend-service-password",
     null, REALM, prim.utf8(REALM + "HTTPfrontend"));
 
@@ -1056,7 +1062,7 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
     requestedSname: selfReq.sname
   });
   assert.ok(evidence.ok, "S4U2Self failed: " +
-    (evidence.error ? evidence.error.error.name + " — " + 
+    (evidence.error ? evidence.error.error.name + " — " +
         evidence.error.eText : "unknown"));
   assert.strictEqual(evidence.client.name.join("/"), "alice",
     "the ticket must be issued for ALICE even though alice was never " +
@@ -1070,19 +1076,19 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
         "TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION — " +
     "without that flag the ticket still comes back and simply cannot be used " +
         "as evidence, which " +
-    "fails two steps later looking like something else entirely: " + 
+    "fails two steps later looking like something else entirely: " +
         evidence.flagNames.join(", "));
 
   // The PAC inside describes ALICE, which is what makes the delegated ticket
   // useful — and it is the KDC that supplied her groups, not the service asking
   // on her behalf.
   const feKey = await kcrypto.etypeById(evidence.etype)
-    .stringToKey("frontend-service-password", prim.utf8(REALM + 
+    .stringToKey("frontend-service-password", prim.utf8(REALM +
         "HTTPfrontend"), null);
   const evPart = msgs.readEncTicketPart(await kcrypto.etypeById(evidence.etype)
-    .decrypt(feKey, kcrypto.KEY_USAGE.KDC_REP_TICKET, 
+    .decrypt(feKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
         evidence.ticket.encPart.cipher));
-  const evPac = kpac.parsePac(kpac.findPacs(evPart.authorizationData || 
+  const evPac = kpac.parsePac(kpac.findPacs(evPart.authorizationData ||
       [])[0].bytes);
   const evInfo = kpac.bufferOfType(evPac, kpac.TYPE.LOGON_INFO).parsed;
   assert.strictEqual(evInfo.effectiveName, "alice");
@@ -1109,7 +1115,7 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
     requestedSname: proxyReq.sname
   });
   assert.ok(delegated.ok, "classic S4U2Proxy failed: " +
-    (delegated.error ? delegated.error.error.name + " — " + 
+    (delegated.error ? delegated.error.error.name + " — " +
         delegated.error.eText : "unknown"));
   assert.strictEqual(delegated.client.name.join("/"), "alice",
     "the delegated ticket is for ALICE, and the service that asked for it " +
@@ -1119,12 +1125,12 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
   // The audit trail. It is the only record in the ticket that delegation
   // happened at all.
   const beKey = await kcrypto.etypeById(delegated.etype)
-    .stringToKey("backend-service-password", prim.utf8(REALM + "HTTPbackend"), 
+    .stringToKey("backend-service-password", prim.utf8(REALM + "HTTPbackend"),
         null);
   const dPart = msgs.readEncTicketPart(await kcrypto.etypeById(delegated.etype)
-    .decrypt(beKey, kcrypto.KEY_USAGE.KDC_REP_TICKET, 
+    .decrypt(beKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
         delegated.ticket.encPart.cipher));
-  const dPac = kpac.parsePac(kpac.findPacs(dPart.authorizationData || 
+  const dPac = kpac.parsePac(kpac.findPacs(dPart.authorizationData ||
       [])[0].bytes);
   const dInfo = kpac.bufferOfType(dPac, kpac.TYPE.LOGON_INFO).parsed;
   assert.strictEqual(dInfo.effectiveName, "alice",
@@ -1139,10 +1145,10 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
     "this was a delegation rather than alice authenticating directly. " +
         "Buffers present: " +
     dPac.buffers.map(function (b) { return b.type; }).join(", "));
-  assert.strictEqual(delegInfo.parsed.s4u2proxyTarget, 
+  assert.strictEqual(delegInfo.parsed.s4u2proxyTarget,
       "HTTP/backend.example.com",
     "naming the target: " + delegInfo.parsed.s4u2proxyTarget);
-  assert.deepStrictEqual(delegInfo.parsed.transitedServices, 
+  assert.deepStrictEqual(delegInfo.parsed.transitedServices,
       ["HTTP/frontend.example.com"],
     "and every service delegated through: " +
     JSON.stringify(delegInfo.parsed.transitedServices));
@@ -1166,7 +1172,7 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
   });
   dSigs.forEach(function (s) {
     assert.strictEqual(s.verified, true,
-      "the delegated PAC must verify for the back end — its " + s.name + 
+      "the delegated PAC must verify for the back end — its " + s.name +
           " does not: " + s.note);
   });
 
@@ -1190,7 +1196,7 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
         "KDC_ERR_BADOPTION, and a " +
     "KDC that allowed it anyway would make the padata look optional");
   assert.strictEqual(refusedForPadata.error.errorCode, 13,
-    "and the code is KDC_ERR_BADOPTION, got " + 
+    "and the code is KDC_ERR_BADOPTION, got " +
         refusedForPadata.error.error.name);
   assert.ok(/resource-based bit/.test(refusedForPadata.error.eText || ""),
     "with a message that names what is missing, since the error code alone " +
@@ -1211,7 +1217,7 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
     requestedSname: rbcdReq.sname
   });
   assert.ok(rbcd.ok, "resource-based S4U2Proxy failed: " +
-    (rbcd.error ? rbcd.error.error.name + " — " + rbcd.error.eText : 
+    (rbcd.error ? rbcd.error.error.name + " — " + rbcd.error.eText :
         "unknown"));
   assert.strictEqual(rbcd.client.name.join("/"), "alice",
     "RBCD reaches the target as alice just as classic delegation does — the " +
@@ -1237,16 +1243,10 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
     "delegating to a service NOTHING authorized must be refused. If it " +
         "succeeds, constrained " +
     "delegation is not constrained and every assertion above is meaningless.");
-  assert.strictEqual(refused.error.errorCode, 13, "got " + 
+  assert.strictEqual(refused.error.errorCode, 13, "got " +
       refused.error.error.name);
   assert.ok(/msDS-AllowedToDelegateTo/.test(refused.error.eText || "") &&
-            
-                
-                    
-                        
-                            
-                                
-                                    /msDS-AllowedToActOnBehalfOfOtherIdentity/.test(refused.error.eText || 
+      /msDS-AllowedToActOnBehalfOfOtherIdentity/.test(refused.error.eText ||
                 ""),
     "and the refusal should name BOTH attributes that could have permitted " +
         "it, because which one " +
@@ -1261,10 +1261,13 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
   // a KDC problem.
   const aliceTgt = await getTgt("alice", "hunter2");
   const aliceRequest = await client.buildTgsReq({
-    tgt: aliceTgt, sname: {
+    tgt: aliceTgt,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: SERVICE
-    }, subkey: null });
+    },
+    subkey: null
+  });
   const aliceTicket = await client.readTgsRep({
     tgt: aliceTgt,
     reply: await sendFramed(kdcPort, aliceRequest.request),
@@ -1296,7 +1299,9 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
   // A forged PA-FOR-USER checksum: the padata is integrity-protected with the
   // TGT session key, so a service cannot name a user by editing the bytes.
   const forged = await client.buildS4u2SelfReq({
-    tgt: frontendTgt, user: alice, sname: {
+    tgt: frontendTgt,
+    user: alice,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: FRONTEND
     }
@@ -1308,7 +1313,7 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
   const marker = Buffer.from(msgs.encPaForUser({
     userName: alice,
     userRealm: REALM,
-    cksum: await client.forUserChecksum(frontendTgt.sessionKey, alice, REALM, 
+    cksum: await client.forUserChecksum(frontendTgt.sessionKey, alice, REALM,
         "Kerberos"),
     authPackage: "Kerberos"
   }));
@@ -1358,16 +1363,19 @@ async function protocolTransitionNeedsItsOwnFlag() {
   const BACKEND = ["HTTP", "backend.example.com"];
   const alice = { type: msgs.NAME_TYPE.PRINCIPAL, name: ["alice"] };
 
-  const tgt = await getTgt("HTTP/notrusted.example.com", 
+  const tgt = await getTgt("HTTP/notrusted.example.com",
       "notrusted-service-password",
     null, REALM, prim.utf8(REALM + "HTTPnotrusted"));
 
   // S4U2Self still works. That is the trap.
   const selfReq = await client.buildS4u2SelfReq({
-    tgt: tgt, user: alice, sname: {
+    tgt: tgt,
+    user: alice,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: NOTRUSTED
-    } });
+    }
+  });
   const evidence = await client.readTgsRep({
     tgt: tgt,
     reply: await sendFramed(kdcPort, selfReq.request),
@@ -1402,14 +1410,14 @@ async function protocolTransitionNeedsItsOwnFlag() {
     "classic S4U2Proxy requires FORWARDABLE evidence, so this must be " +
         "refused even though " +
     "msDS-AllowedToDelegateTo does permit the pair");
-  assert.strictEqual(refused.error.errorCode, 13, "got " + 
+  assert.strictEqual(refused.error.errorCode, 13, "got " +
       refused.error.error.name);
-  assert.ok(/TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION/.test(refused.error.eText || 
+  assert.ok(/TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION/.test(refused.error.eText ||
       ""),
     "and the message must name the flag that is actually missing, because " +
         "the visible symptom is " +
     "about the evidence ticket: " + refused.error.eText);
-  assert.ok(/resource-based delegation would not have needed either/.test(refused.error.eText || 
+  assert.ok(/resource-based delegation would not have needed either/.test(refused.error.eText ||
       ""),
     "and should note that RBCD needs neither, which is why RBCD is the " +
         "easier path: " +
@@ -1417,10 +1425,13 @@ async function protocolTransitionNeedsItsOwnFlag() {
 
   // S4U2Self naming somebody else's service is not S4U2Self.
   const wrongSname = await client.buildS4u2SelfReq({
-    tgt: tgt, user: alice, sname: {
+    tgt: tgt,
+    user: alice,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: BACKEND
-    } });
+    }
+  });
   const refusedSname = await client.readTgsRep({
     tgt: tgt,
     reply: await sendFramed(kdcPort, wrongSname.request),
@@ -1464,7 +1475,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
   // would make the authtime comparison below compare a value with itself —
   // which it did, and three mutations walked straight through it.
   assert.ok(tgt.authtime instanceof Date,
-    "this test needs the TGT's authtime to compare against; got " + 
+    "this test needs the TGT's authtime to compare against; got " +
         tgt.authtime);
 
   // A DELIBERATE one-second wait, and the only sleep in this file. It is not a
@@ -1493,7 +1504,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
     requestedSname: renewReq.sname
   });
   assert.ok(renewed.ok, "the renewal failed: " +
-    (renewed.error ? renewed.error.error.name + " — " + renewed.error.eText : 
+    (renewed.error ? renewed.error.error.name + " — " + renewed.error.eText :
         "unknown"));
 
   assert.strictEqual(renewed.authtime.getTime(), tgt.authtime.getTime(),
@@ -1501,10 +1512,10 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
         "and a service that " +
     "reads authtime to judge freshness would be deceived by a KDC that moved " +
         "it. Got " +
-    renewed.authtime.toISOString() + ", expected " + 
+    renewed.authtime.toISOString() + ", expected " +
         tgt.authtime.toISOString());
   assert.ok(renewed.endtime > tgt.endtime,
-    "and it must actually extend the ticket: " + 
+    "and it must actually extend the ticket: " +
         renewed.endtime.toISOString() + " vs " +
     tgt.endtime.toISOString());
   assert.strictEqual(renewed.endtime.getTime(), tgt.renewTill.getTime(),
@@ -1512,7 +1523,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
         "asked to be exceeded. " +
     "renew-till does not move; an uncapped renewal is a ticket that never " +
         "expires. Got " +
-    renewed.endtime.toISOString() + ", renew-till " + 
+    renewed.endtime.toISOString() + ", renew-till " +
         tgt.renewTill.toISOString());
   assert.strictEqual(renewed.renewTill.getTime(), tgt.renewTill.getTime(),
     "and renew-till itself must be unchanged by the renewal");
@@ -1525,7 +1536,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
   const renewKrbtgtKey = await kcrypto.etypeById(renewed.etype)
     .stringToKey(KRBTGT_PASSWORD, prim.utf8(REALM + "krbtgt"), null);
   const renewedPart = msgs.readEncTicketPart(await kcrypto.etypeById(renewed.etype)
-    .decrypt(renewKrbtgtKey, kcrypto.KEY_USAGE.KDC_REP_TICKET, 
+    .decrypt(renewKrbtgtKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
         renewed.ticket.encPart.cipher));
   assert.strictEqual(renewedPart.renewTill.getTime(), tgt.renewTill.getTime(),
     "renew-till INSIDE the renewed ticket must be unchanged too — a ticket " +
@@ -1564,7 +1575,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
 
   // A ticket that is not renewable cannot be renewed, and the reason is that
   // renewability is requested when the ticket is first obtained.
-  const notRenewable = await getTgt("bob", "correct horse battery staple", 
+  const notRenewable = await getTgt("bob", "correct horse battery staple",
       null, REALM, null,
     [msgs.KDC_OPTION.FORWARDABLE]);
   assert.ok(!notRenewable.renewTill,
@@ -1574,10 +1585,12 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
         "the assertion below " +
     "would pass for the wrong reason");
   const cannot = await client.buildRenewReq({
-    tgt: notRenewable, sname: {
+    tgt: notRenewable,
+    sname: {
       type: msgs.NAME_TYPE.SRV_INST,
       name: ["krbtgt", REALM]
-    } });
+    }
+  });
   const refusedNotRenewable = await client.readTgsRep({
     tgt: notRenewable,
     reply: await sendFramed(kdcPort, cannot.request),
@@ -1587,7 +1600,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
   });
   assert.ok(!refusedNotRenewable.ok, "a non-renewable ticket must not be " +
       "renewable");
-  assert.ok(/cannot be added afterwards/.test(refusedNotRenewable.error.eText || 
+  assert.ok(/cannot be added afterwards/.test(refusedNotRenewable.error.eText ||
       ""),
     "and the message should say renewability is asked for when the ticket is " +
         "FIRST obtained: " +
@@ -1616,7 +1629,8 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
             // wrong reason.
             flags: [msgs.TICKET_FLAG.RENEWABLE, msgs.TICKET_FLAG.FORWARDABLE],
             key: { etype: 18, key: forgedSessionKey },
-            crealm: REALM, cname: {
+            crealm: REALM,
+            cname: {
               type: msgs.NAME_TYPE.PRINCIPAL,
               name: ["alice"]
             },
@@ -1633,10 +1647,12 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
     realm: REALM
   };
   const staleReq = await client.buildRenewReq({
-    tgt: staleTgt, sname: {
+    tgt: staleTgt,
+    sname: {
       type: msgs.NAME_TYPE.SRV_INST,
       name: ["krbtgt", REALM]
-    } });
+    }
+  });
   const staleRefused = await client.readTgsRep({
     tgt: staleTgt,
     reply: await sendFramed(kdcPort, staleReq.request),
@@ -1654,7 +1670,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
         "which is still in the " +
     "future here: " + staleRefused.error.eText);
 
-  log.info("a renewal extended the ticket to " + 
+  log.info("a renewal extended the ticket to " +
       renewed.endtime.toISOString() + " with authtime " +
     "unchanged and renew-till respected; three refusals held, including a " +
         "ticket whose " +
@@ -1681,7 +1697,7 @@ async function forwardedCredentialsAreUnconstrained() {
   log.debug("Entering forwardedCredentialsAreUnconstrained().");
   const alice = await getTgt("alice", "hunter2");
   assert.ok(alice.flagNames.indexOf("forwardable") !== -1,
-    "alice's TGT must be forwardable for any of this to be possible: " + 
+    "alice's TGT must be forwardable for any of this to be possible: " +
         alice.flagNames.join(", "));
 
   // 1. Ask the KDC for a TGT flagged `forwarded`, to give away.
@@ -1694,7 +1710,7 @@ async function forwardedCredentialsAreUnconstrained() {
     requestedSname: fwdReq.sname
   });
   assert.ok(forwarded.ok, "the KDC should issue a forwarded TGT: " +
-    (forwarded.error ? forwarded.error.error.name + " — " + 
+    (forwarded.error ? forwarded.error.error.name + " — " +
         forwarded.error.eText : "unknown"));
   assert.deepStrictEqual(forwarded.service.name, ["krbtgt", REALM],
     "what comes back is another TICKET-GRANTING ticket — a service ticket " +
@@ -1724,7 +1740,7 @@ async function forwardedCredentialsAreUnconstrained() {
   });
   assert.strictEqual(received.client.name.join("/"), "alice",
     "the receiving service now holds alice's own ticket-granting ticket");
-  assert.strictEqual(prim.toHex(received.sessionKey), 
+  assert.strictEqual(prim.toHex(received.sessionKey),
       prim.toHex(forwarded.sessionKey),
     "with its session key, without which the ticket would be opaque and " +
         "useless");
@@ -1736,10 +1752,13 @@ async function forwardedCredentialsAreUnconstrained() {
   // the difference from S4U2Proxy — no attribute anywhere permitted this
   // particular target.
   const asAlice = await client.buildTgsReq({
-    tgt: received, sname: {
+    tgt: received,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: SERVICE
-    }, subkey: null });
+    },
+    subkey: null
+  });
   const stolen = await client.readTgsRep({
     tgt: received,
     reply: await sendFramed(kdcPort, asAlice.request),
@@ -1758,7 +1777,7 @@ async function forwardedCredentialsAreUnconstrained() {
 
   // A different key must not open the credential: it is sealed for one service.
   const wrongKey = { etype: subkey.etype,
-                     key: kcrypto.randomBytes(kcrypto.etypeById(subkey.etype).keyBytes) };
+      key: kcrypto.randomBytes(kcrypto.etypeById(subkey.etype).keyBytes) };
   await assert.rejects(
     client.readDelegatedCredential({ bytes: credential, key: wrongKey }),
     "a KRB-CRED is encrypted for the ONE service the client chose — any " +
@@ -1784,7 +1803,7 @@ async function forwardedCredentialsAreUnconstrained() {
   });
   assert.ok(!refused.ok,
     "and forwarding it must be refused outright");
-  assert.ok(/needs a FORWARDABLE ticket to forward/.test(refused.error.eText || 
+  assert.ok(/needs a FORWARDABLE ticket to forward/.test(refused.error.eText ||
       ""),
     "here the refusal comes from the ticket not being forwardable — which is " +
         "the FIRST of two " +
@@ -1808,12 +1827,13 @@ async function forwardedCredentialsAreUnconstrained() {
       sname: { type: msgs.NAME_TYPE.SRV_INST, name: ["krbtgt", REALM] },
       encPart: {
         etype: sensitiveEtype,
-        cipher: await sensitiveProfile.encrypt(forgedKrbtgtKey, 
+        cipher: await sensitiveProfile.encrypt(forgedKrbtgtKey,
             kcrypto.KEY_USAGE.KDC_REP_TICKET,
           msgs.encEncTicketPart({
             flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.INITIAL],
             key: { etype: sensitiveEtype, key: forgedSession },
-            crealm: REALM, cname: {
+            crealm: REALM,
+            cname: {
               type: msgs.NAME_TYPE.PRINCIPAL,
               name: ["sensitive"]
             },
@@ -1841,7 +1861,7 @@ async function forwardedCredentialsAreUnconstrained() {
     "exchange — otherwise setting the flag would not take effect until every " +
         "outstanding ticket " +
     "expired");
-  assert.ok(/is flagged NOT_DELEGATED, so its credentials/.test(staleRefused.error.eText || 
+  assert.ok(/is flagged NOT_DELEGATED, so its credentials/.test(staleRefused.error.eText ||
       ""),
     "and this refusal must be the ACCOUNT check rather than the forwardable " +
         "one: " +
@@ -1854,7 +1874,7 @@ async function forwardedCredentialsAreUnconstrained() {
     encPart: {
       etype: subkey.etype,
       cipher: await kcrypto.etypeById(subkey.etype).encrypt(subkey.key,
-        kcrypto.KEY_USAGE.KRB_CRED_ENCPART, 
+        kcrypto.KEY_USAGE.KRB_CRED_ENCPART,
             msgs.encEncKrbCredPart({ ticketInfo: [] }))
     }
   });
@@ -1882,12 +1902,12 @@ async function theTgsExchangeRefusesWhatItShould(tgt) {
     assert.strictEqual(response.kind, "KRB-ERROR", label + ": expected an " +
         "error, got " + response.kind);
     assert.strictEqual(response.error.errorCode, code,
-      label + ": expected " + msgs.describeError(code).name + ", got " + 
+      label + ": expected " + msgs.describeError(code).name + ", got " +
           response.error.error.name +
       (response.error.eText ? " — " + response.error.eText : ""));
     if (textMatch) {
       assert.ok(textMatch.test(response.error.eText || ""),
-        label + ": e-text should explain — " + 
+        label + ": e-text should explain — " +
             JSON.stringify(response.error.eText));
     }
     log.debug(label + " -> " + response.error.error.name);
@@ -1910,11 +1930,13 @@ async function theTgsExchangeRefusesWhatItShould(tgt) {
 
   // An SPN that is not registered — on AD the single commonest TGS failure.
   const forUnknown = await client.buildTgsReq({
-    tgt: tgt, sname: {
+    tgt: tgt,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: ["HTTP", "nosuchhost.example.com"]
-    } });
-  const unknown = await expectError("an unregistered SPN", forUnknown.request, 
+    }
+  });
+  const unknown = await expectError("an unregistered SPN", forUnknown.request,
       7, /no such service/);
   assert.ok(/SPN/.test(unknown.eText || ""),
     "the refusal should name the Active Directory cause, since that is the " +
@@ -1942,7 +1964,7 @@ async function theTgsExchangeRefusesWhatItShould(tgt) {
     padata: parsed.padata,
     reqBody: { raw: tamperedBody }
   });
-  const cksumError = await expectError("a request body swapped after signing", 
+  const cksumError = await expectError("a request body swapped after signing",
       tampered, 50,
     /checksum does not match/);
   assert.ok(/key usage 6/.test(cksumError.eText || ""),
@@ -1977,7 +1999,7 @@ async function theServiceAcceptsTheTicketAndProvesItself(serviceTicket) {
   const apReq = msgs.readApReq(decoded.inner);
   const profile = kcrypto.etypeById(serviceTicket.etype);
   const authenticator = msgs.readAuthenticator(
-    await profile.decrypt(serviceTicket.sessionKey, 
+    await profile.decrypt(serviceTicket.sessionKey,
         kcrypto.KEY_USAGE.AP_REQ_AUTH,
       apReq.authenticator.cipher));
   assert.strictEqual(authenticator.cksum.type, 0x8003,
@@ -2029,13 +2051,7 @@ async function theServiceAcceptsTheTicketAndProvesItself(serviceTicket) {
   };
   const keying = client.perMessageKey(established);
   assert.ok(/acceptor's subkey/.test(keying.which),
-    
-        
-            
-                
-                    
-                        
-                            "once the acceptor has offered a subkey, per-message tokens must use it: " + 
+      "once the acceptor has offered a subkey, per-message tokens must use it: " +
         keying.which);
 
   const message = prim.utf8("the quick brown fox jumps over the lazy dog");
@@ -2115,15 +2131,15 @@ async function theServiceRefusesWhatItShould(serviceTicket, tgt, firstApReq) {
     // nothing; for the replay case in particular the sentence that matters is
     // that the service accepted a replay.
     const identified = msgs.identify(bytes);
-    assert.strictEqual(identified && identified.applicationNumber, 
+    assert.strictEqual(identified && identified.applicationNumber,
         msgs.APPLICATION.KRB_ERROR,
       label + ": the service ACCEPTED this and answered " +
-      ((identified && identified.name) || "something unrecognised") + 
+      ((identified && identified.name) || "something unrecognised") +
           ", where " +
       msgs.describeError(code).name + " was required.");
     const error = msgs.readKrbError(bytes);
     assert.strictEqual(error.errorCode, code,
-      label + ": expected " + msgs.describeError(code).name + ", got " + 
+      label + ": expected " + msgs.describeError(code).name + ", got " +
           error.error.name +
       (error.eText ? " — " + error.eText : ""));
     if (textMatch) {
@@ -2138,7 +2154,7 @@ async function theServiceRefusesWhatItShould(serviceTicket, tgt, firstApReq) {
   // THE REPLAY. The same AP-REQ a second time must be refused — this is the
   // check a mock is most tempted to skip, and the only thing between a captured
   // AP-REQ and a free impersonation.
-  const replay = await expectRefusal("the same AP-REQ presented twice", 
+  const replay = await expectRefusal("the same AP-REQ presented twice",
       firstApReq.token, 34,
     /replay|seen before/);
   assert.ok(/ctime|cusec/.test(replay.eText || ""),
@@ -2156,10 +2172,12 @@ async function theServiceRefusesWhatItShould(serviceTicket, tgt, firstApReq) {
   // key, but the more specific answer is that it was never meant for this
   // service.
   const otherTicket = await client.buildTgsReq({
-    tgt: tgt, sname: {
+    tgt: tgt,
+    sname: {
       type: msgs.NAME_TYPE.SRV_HST,
       name: ["host", "ws01.example.com"]
-    } });
+    }
+  });
   const otherResult = await client.readTgsRep({
     tgt: tgt,
     reply: await sendFramed(kdcPort, otherTicket.request),
@@ -2172,7 +2190,7 @@ async function theServiceRefusesWhatItShould(serviceTicket, tgt, firstApReq) {
     ticket: otherResult,
     mutual: true
   });
-  await expectRefusal("a ticket for a different service", wrongService.token, 
+  await expectRefusal("a ticket for a different service", wrongService.token,
       35,
     /this ticket is for host\/ws01/);
 
@@ -2196,7 +2214,7 @@ async function theServiceRefusesWhatItShould(serviceTicket, tgt, firstApReq) {
   });
   const stale = await expectRefusal("a ticket naming a key version the " +
       "service does not hold",
-    gss.encodeInitialContextToken(gss.TOK_ID.AP_REQ, staleKvno), 44, 
+    gss.encodeInitialContextToken(gss.TOK_ID.AP_REQ, staleKvno), 44,
         /key version/);
   assert.ok(/keytab is out of date/.test(stale.eText || ""),
     "KRB_AP_ERR_BADKEYVER's meaning is the least guessable of any of them, " +
@@ -2211,7 +2229,7 @@ async function theServiceRefusesWhatItShould(serviceTicket, tgt, firstApReq) {
     mutual: true,
     now: new Date(Date.now() - 20 * 60 * 1000)
   });
-  const skewed = await expectRefusal("an Authenticator twenty minutes old", 
+  const skewed = await expectRefusal("an Authenticator twenty minutes old",
       staleAuth.token, 37,
     /clock is \d+ seconds/);
   assert.ok(/tolerance/.test(skewed.eText || ""),
@@ -2225,12 +2243,14 @@ async function theServiceRefusesWhatItShould(serviceTicket, tgt, firstApReq) {
     cksum: {
       type: profile.checksumType,
       checksum: await profile.checksum(
-      serviceTicket.sessionKey, kcrypto.KEY_USAGE.AP_REQ_AUTH_CKSUM, 
+      serviceTicket.sessionKey, kcrypto.KEY_USAGE.AP_REQ_AUTH_CKSUM,
           prim.utf8("not 0x8003"))
     },
-    cusec: 1, ctime: new Date(), seqNumber: 7
+    cusec: 1,
+    ctime: new Date(),
+    seqNumber: 7
   });
-  const wrongChecksumToken = gss.encodeInitialContextToken(gss.TOK_ID.AP_REQ, 
+  const wrongChecksumToken = gss.encodeInitialContextToken(gss.TOK_ID.AP_REQ,
       msgs.encApReq({
     apOptions: [msgs.AP_OPTION.MUTUAL_REQUIRED],
     ticket: serviceTicket.ticket,
@@ -2240,7 +2260,7 @@ async function theServiceRefusesWhatItShould(serviceTicket, tgt, firstApReq) {
       serviceTicket.sessionKey, kcrypto.KEY_USAGE.AP_REQ_AUTH, wrongChecksum)
     }
   }));
-  await expectRefusal("an Authenticator whose checksum is not 0x8003", 
+  await expectRefusal("an Authenticator whose checksum is not 0x8003",
       wrongChecksumToken, 50,
     /32771|0x8003/);
 
@@ -2257,7 +2277,7 @@ async function aFalseEchoIsNotMutualAuthentication(serviceTicket) {
   const forged = msgs.encApRep({
     encPart: {
       etype: serviceTicket.etype,
-      cipher: await profile.encrypt(serviceTicket.sessionKey, 
+      cipher: await profile.encrypt(serviceTicket.sessionKey,
           kcrypto.KEY_USAGE.AP_REP_ENCPART,
         // A DIFFERENT ctime — everything else correct, and correctly encrypted.
         // Five seconds off, so it differs at the SECOND precision the wire uses
@@ -2280,7 +2300,7 @@ async function aFalseEchoIsNotMutualAuthentication(serviceTicket) {
     "decrypts, so a client that does not compare the echo has asked for " +
         "mutual authentication " +
     "without performing it.");
-  assert.ok(/echo/.test(result.reason || ""), "and must say why: " + 
+  assert.ok(/echo/.test(result.reason || ""), "and must say why: " +
       result.reason);
   log.debug("Leaving aFalseEchoIsNotMutualAuthentication().");
 }
@@ -2333,7 +2353,7 @@ async function test() {
     serviceServer.once("listening", resolve);
   });
   servicePort = serviceServer.address().port;
-  log.info("the KDC is on " + kdcPort + " and " + SERVICE.join("/") + 
+  log.info("the KDC is on " + kdcPort + " and " + SERVICE.join("/") +
       " is on " + servicePort);
 
   try {

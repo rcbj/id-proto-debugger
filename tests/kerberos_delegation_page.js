@@ -48,7 +48,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "kerberos_delegation_page",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = "http://localhost:3000";
@@ -63,13 +63,13 @@ var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
 // client in PA-ETYPE-INFO2, so the page does not need to know. Named here only
 // because the password does.
 var frontend = process.env.KRB5_FRONTEND || "HTTP/frontend.example.com";
-var frontendPassword = process.env.KRB5_FRONTEND_PASSWORD || 
+var frontendPassword = process.env.KRB5_FRONTEND_PASSWORD ||
     "frontend-service-password";
 var impersonate = process.env.KRB5_IMPERSONATE || "alice";
-var classicTarget = process.env.KRB5_CLASSIC_TARGET || 
+var classicTarget = process.env.KRB5_CLASSIC_TARGET ||
     "HTTP/backend.example.com";
 var rbcdTarget = process.env.KRB5_RBCD_TARGET || "HTTP/rbcd.example.com";
-var unauthorizedTarget = process.env.KRB5_UNAUTHORIZED_TARGET || 
+var unauthorizedTarget = process.env.KRB5_UNAUTHORIZED_TARGET ||
     "HTTP/web.example.com";
 
 async function waitForText(driver, id, pattern, timeoutMs, what) {
@@ -88,7 +88,7 @@ async function waitForText(driver, id, pattern, timeoutMs, what) {
     // argument is a plain string evaluated at call time and would always report
     // the pre-poll value.
     log.debug("Leaving waitForText().");
-    throw new Error((what || id) + " never matched " + pattern + 
+    throw new Error((what || id) + " never matched " + pattern +
         ". Last text was: " +
       (last.length ? last.replace(/\s+/g, " ").slice(0, 400) : "(empty)"));
   }
@@ -101,7 +101,7 @@ async function setField(driver, id, value) {
   await driver.executeScript(
     "arguments[0].value = arguments[1];" +
     "arguments[0].dispatchEvent(new Event('input', { bubbles: true }));" +
-    "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", 
+    "arguments[0].dispatchEvent(new Event('change', { bubbles: true }));",
         field, value);
 }
 
@@ -134,7 +134,7 @@ async function relayReachable() {
       return { ok: false, why: "GET /krb5/limits answered " + response.status };
     }
     const limits = await response.json();
-    if (!limits.kdcPorts || limits.kdcPorts.indexOf(parseInt(kdcPort, 
+    if (!limits.kdcPorts || limits.kdcPorts.indexOf(parseInt(kdcPort,
         10)) === -1) {
       log.debug("Leaving relayReachable().");
       return {
@@ -170,10 +170,10 @@ async function theServiceAuthenticatesAsItself(driver) {
   await setField(driver, "krb_kdc_host", kdcHost);
   await setField(driver, "krb_kdc_port", kdcPort);
   await click(driver, "krb_get_tgt_button");
-  const text = await waitForText(driver, "krb_status", 
+  const text = await waitForText(driver, "krb_status",
       /ticket-granting ticket|TGT|error|refused/i,
     40000, "the AS page's status");
-  assert.ok(!/refused|error/i.test(text) || 
+  assert.ok(!/refused|error/i.test(text) ||
       /ticket-granting ticket|TGT/i.test(text),
     "the service account should get a TGT of its own — a service " +
         "authenticates exactly as a user " +
@@ -191,7 +191,7 @@ async function s4u2SelfObtainsEvidenceForSomebodyElse(driver) {
 
   // The held TGT must be recognised, and the page must say whose it needs to
   // be.
-  const held = await waitForText(driver, "krb_held_pane", 
+  const held = await waitForText(driver, "krb_held_pane",
       /krbtgt|forwardable|No ticket-granting/,
     20000, "the held-TGT pane");
   assert.ok(!/No ticket-granting ticket is held/.test(held),
@@ -216,7 +216,7 @@ async function s4u2SelfObtainsEvidenceForSomebodyElse(driver) {
   await click(driver, "krb_s4u2self_button");
 
   const status = await waitForText(driver, "krb_s4u2self_status",
-    /Got a ticket for|error|refused|does not|failed/i, 40000, 
+    /Got a ticket for|error|refused|does not|failed/i, 40000,
         "the S4U2Self status");
   assert.ok(/Got a ticket for/.test(status),
     "S4U2Self should succeed for this account: " + status);
@@ -230,14 +230,14 @@ async function s4u2SelfObtainsEvidenceForSomebodyElse(driver) {
     "S4U2Proxy refuses the evidence two steps later: " + status);
 
   // The evidence pane, and the reply pane's decode.
-  const evidence = await waitForText(driver, "krb_evidence_pane", 
+  const evidence = await waitForText(driver, "krb_evidence_pane",
       /krbtgt|HTTP\/|forwardable/, 15000,
     "the evidence pane");
   assert.ok(new RegExp(impersonate).test(evidence),
-    "the evidence pane must show the ticket is for the impersonated user: " + 
+    "the evidence pane must show the ticket is for the impersonated user: " +
         evidence);
 
-  const reply = await waitForText(driver, "krb_s4u2self_reply_pane", 
+  const reply = await waitForText(driver, "krb_s4u2self_reply_pane",
       /TGS-REP|KRB-ERROR/, 15000,
     "the S4U2Self reply pane");
   assert.ok(/TGS-REP/.test(reply),
@@ -247,7 +247,7 @@ async function s4u2SelfObtainsEvidenceForSomebodyElse(driver) {
 
   // And the request pane must show PA-FOR-USER, since that padata IS the
   // mechanism.
-  const request = await waitForText(driver, "krb_s4u2self_request_pane", 
+  const request = await waitForText(driver, "krb_s4u2self_request_pane",
       /TGS-REQ/, 15000,
     "the S4U2Self request pane");
   assert.ok(/FOR.USER|129/.test(request),
@@ -255,7 +255,7 @@ async function s4u2SelfObtainsEvidenceForSomebodyElse(driver) {
         "mechanism: " +
     request.replace(/\s+/g, " ").slice(0, 300));
 
-  log.info("[delegation] S4U2Self obtained a ticket for " + impersonate + 
+  log.info("[delegation] S4U2Self obtained a ticket for " + impersonate +
       " with no involvement " +
     "from that account");
   log.debug("Leaving s4u2SelfObtainsEvidenceForSomebodyElse().");
@@ -291,7 +291,7 @@ async function s4u2ProxyWorksBothWaysAndExplainsRefusals(driver) {
   // The trail pane must explain why it cannot show the trail itself: the PAC is
   // encrypted under the target's key, which a client never holds. Saying so
   // beats an empty box.
-  const trail = await waitForText(driver, "krb_trail_pane", 
+  const trail = await waitForText(driver, "krb_trail_pane",
       /S4U_DELEGATION_INFO/, 15000,
     "the delegation-trail pane");
   assert.ok(/decoder page/.test(trail),
@@ -377,13 +377,13 @@ async function forwardingAndRenewalReportWhatTheyDid(driver) {
 
   // The KRB-CRED pane, and the warning that has to be there: whoever holds
   // these bytes and the key can be that client anywhere.
-  const cred = await waitForText(driver, "krb_krbcred_pane", 
+  const cred = await waitForText(driver, "krb_krbcred_pane",
       /KRB-CRED|tickets/, 20000,
     "the KRB-CRED pane");
   assert.ok(/ANYTHING as/.test(cred),
     "the pane must say what holding this actually confers — there is no list " +
         "of permitted " +
-    "targets, which is the whole difference from the two S4U mechanisms: " + 
+    "targets, which is the whole difference from the two S4U mechanisms: " +
         cred);
   assert.ok(/0x8003/.test(cred),
     "and where it really travels: inside an AP-REQ Authenticator's 0x8003 " +
@@ -392,7 +392,7 @@ async function forwardingAndRenewalReportWhatTheyDid(driver) {
   assert.ok(/Sealed with a subkey generated here: [0-9a-f]{32}/.test(cred),
     "and must show the key it was sealed with, or the bytes cannot be " +
         "decoded on the decoder " +
-    "page and the pane is a dead end: " + cred.replace(/\s+/g, " ").slice(0, 
+    "page and the pane is a dead end: " + cred.replace(/\s+/g, " ").slice(0,
         300));
 
   await click(driver, "krb_renew_button");
@@ -439,7 +439,7 @@ async function theEvidenceTicketIsCoveredByTheStorageOptOut(driver) {
   await driver.executeScript("window.localStorage.setItem('krb_save_ccache', " +
       "'0');");
   await driver.get(baseUrl + "/kerberos_delegation.html");
-  await waitForText(driver, "krb_held_pane", 
+  await waitForText(driver, "krb_held_pane",
       /No ticket-granting ticket is held|krbtgt/, 20000,
     "the held-TGT pane after the opt-out");
 
@@ -510,7 +510,7 @@ program
   .description("Verify the Kerberos delegation page: S4U2Self, S4U2Proxy " +
       "with both authorization " +
                "routes, forwarding and renewal.")
-  .addOption(new Option("-u, --url <url>", 
+  .addOption(new Option("-u, --url <url>",
       "base url of the site under test").default(baseUrl))
   .parse(process.argv);
 baseUrl = program.opts().url || baseUrl;

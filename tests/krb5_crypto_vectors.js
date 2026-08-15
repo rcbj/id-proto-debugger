@@ -44,7 +44,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "krb5_crypto_vectors",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 // In a checkout the modules are under common/krb5/; the tests image copies them
@@ -59,7 +59,7 @@ log.info("Log initialized. logLevel=" + log.level());
 // last wins. The test would then be loading itself, and the failure would be
 // silent.
 var prim = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_primitives.js", __dirname + 
+  [__dirname + "/../common/krb5/krb5_primitives.js", __dirname +
       "/krb5_primitives.js"],
   "krb5_primitives.js");
 var kcrypto = paths.requireSharedModule(
@@ -96,55 +96,45 @@ function primitivesMatchTheirOwnRfcs() {
   // RFC 1320 appendix A.5
   eq("MD4(\"\")", prim.md4(ascii("")), "31d6cfe0d16ae931b73c59d7e0c089c0");
   eq("MD4(\"a\")", prim.md4(ascii("a")), "bde52cb31de33e46245e05fbdbd6fb24");
-  eq("MD4(\"abc\")", prim.md4(ascii("abc")), 
+  eq("MD4(\"abc\")", prim.md4(ascii("abc")),
       "a448017aaf21d8525fc10ae87aa6729d");
-  eq("MD4(\"message digest\")", prim.md4(ascii("message digest")), 
+  eq("MD4(\"message digest\")", prim.md4(ascii("message digest")),
       "d9130a8164549fe818874806e1c7014b");
-  eq("MD4(a..z)", prim.md4(ascii("abcdefghijklmnopqrstuvwxyz")), 
+  eq("MD4(a..z)", prim.md4(ascii("abcdefghijklmnopqrstuvwxyz")),
       "d79e1c308aa5bbcdeea8ed63df412da9");
-  eq("MD4(alnum)", 
-      
-          
-              
-                  
-                      
-                          prim.md4(ascii("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")),
+  eq("MD4(alnum)",
+      prim.md4(ascii("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")),
      "043f8582f241db351ce627e153e7f0e4");
   // Multi-block, which is where a wrong padding length shows up.
-  eq("MD4(80 digits)", prim.md4(ascii("1234567890".repeat(8))), 
+  eq("MD4(80 digits)", prim.md4(ascii("1234567890".repeat(8))),
       "e33b4ddc9c38f2199c3e7b164fcc0536");
 
   // RFC 1321 appendix A.5
   eq("MD5(\"\")", prim.md5(ascii("")), "d41d8cd98f00b204e9800998ecf8427e");
-  eq("MD5(\"abc\")", prim.md5(ascii("abc")), 
+  eq("MD5(\"abc\")", prim.md5(ascii("abc")),
       "900150983cd24fb0d6963f7d28e17f72");
-  eq("MD5(alnum)", 
-      
-          
-              
-                  
-                      
-                          prim.md5(ascii("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")),
+  eq("MD5(alnum)",
+      prim.md5(ascii("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")),
      "d174ab98d277d9f5a5611c2c9f419d9f");
 
   // RFC 2202 sections 2 and 3 — the second case has a key SHORTER than the
   // block size, which is where a missing zero-pad shows up.
-  eq("HMAC-MD5 case 1", prim.hmacMd5(new Uint8Array(16).fill(0x0b), 
+  eq("HMAC-MD5 case 1", prim.hmacMd5(new Uint8Array(16).fill(0x0b),
       ascii("Hi There")),
      "9294727a3638bb1c13f48ef8158bfc9d");
   eq("HMAC-MD5 case 2", prim.hmacMd5(ascii("Jefe"), ascii("what do ya want " +
       "for nothing?")),
      "750c783e6ab0b503eaa86e310a5db738");
 
-  eq("RC4(\"Key\")", prim.rc4(ascii("Key"), ascii("Plaintext")), 
+  eq("RC4(\"Key\")", prim.rc4(ascii("Key"), ascii("Plaintext")),
       "bbf316e8d940af0ad3");
   eq("RC4(\"Wiki\")", prim.rc4(ascii("Wiki"), ascii("pedia")), "1021bf0420");
-  eq("RC4(\"Secret\")", prim.rc4(ascii("Secret"), ascii("Attack at dawn")), 
+  eq("RC4(\"Secret\")", prim.rc4(ascii("Secret"), ascii("Attack at dawn")),
       "45a01f645fc35b383552544b9bf5");
 
   // The NT hash of a known password: MD4 over UTF-16LE. This is the value every
   // Windows administrator has seen, and it is etype 23's whole string-to-key.
-  eq("NT hash of \"password\"", prim.md4(prim.utf16le("password")), 
+  eq("NT hash of \"password\"", prim.md4(prim.utf16le("password")),
       "8846f7eaee8fb117ad06bdd830b7586c");
 
   log.debug("Leaving primitivesMatchTheirOwnRfcs().");
@@ -159,9 +149,9 @@ function primitivesMatchTheirOwnRfcs() {
 // ---------------------------------------------------------------------------
 function nfoldMatchesRfc3961() {
   log.debug("Entering nfoldMatchesRfc3961().");
-  eq("64-fold(\"012345\")", prim.nfold(ascii("012345"), 64), 
+  eq("64-fold(\"012345\")", prim.nfold(ascii("012345"), 64),
       "be072631276b1955");
-  eq("56-fold(\"password\")", prim.nfold(ascii("password"), 56), 
+  eq("56-fold(\"password\")", prim.nfold(ascii("password"), 56),
       "78a07b6caf85fa");
   eq("64-fold(\"Rough Consensus…\")", prim.nfold(ascii("Rough Consensus, and " +
       "Running Code"), 64),
@@ -172,13 +162,13 @@ function nfoldMatchesRfc3961() {
       "INSTITVTE OF TECHNOLOGY"), 192),
      "db3b0d8f0b061e603282b308a50841229ad798fab9540c1b");
   // A one-byte input folded to 21 bytes: the pathological replication case.
-  eq("168-fold(\"Q\")", prim.nfold(ascii("Q"), 168), 
+  eq("168-fold(\"Q\")", prim.nfold(ascii("Q"), 168),
       "518a54a215a8452a518a54a215a8452a518a54a215");
-  eq("168-fold(\"ba\")", prim.nfold(ascii("ba"), 168), 
+  eq("168-fold(\"ba\")", prim.nfold(ascii("ba"), 168),
       "fb25d531ae8974499f52fd92ea9857c4ba24cf297e");
-  eq("64-fold(\"kerberos\")", prim.nfold(ascii("kerberos"), 64), 
+  eq("64-fold(\"kerberos\")", prim.nfold(ascii("kerberos"), 64),
       "6b65726265726f73");
-  eq("128-fold(\"kerberos\")", prim.nfold(ascii("kerberos"), 128), 
+  eq("128-fold(\"kerberos\")", prim.nfold(ascii("kerberos"), 128),
       "6b65726265726f737b9b5b2b93132b93");
   eq("168-fold(\"kerberos\")", prim.nfold(ascii("kerberos"), 168),
      "8372c236344e5f1550cd0747e15d62ca7a5a3bcea4");
@@ -229,7 +219,7 @@ async function ctsMatchesRfc3962() {
     const pt = input.slice(0, len);
     const ct = await kcrypto.ctsEncrypt(key, iv, pt);
     eq("CTS encrypt " + len + " bytes", ct, expected);
-    assert.strictEqual(ct.length, len, "CTS must not change the length (" + 
+    assert.strictEqual(ct.length, len, "CTS must not change the length (" +
         len + ")");
     // Decrypt is a separate code path — it has to recover the truncated block
     // rather than produce it — so it is checked rather than assumed.
@@ -253,7 +243,7 @@ async function stringToKeyMatchesRfc3962() {
   log.debug("Entering stringToKeyMatchesRfc3962().");
   const aes128 = kcrypto.etypeById(17);
   const aes256 = kcrypto.etypeById(18);
-  const iterParam = (n) => new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, 
+  const iterParam = (n) => new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255,
       (n >>> 8) & 255, n & 255]);
 
   const cases = [
@@ -313,11 +303,11 @@ async function stringToKeyMatchesRfc3962() {
   ];
 
   for (const c of cases) {
-    const label = "s2k iter=" + c.iter + " pass=" + 
+    const label = "s2k iter=" + c.iter + " pass=" +
         JSON.stringify(c.pass).slice(0, 18);
-    eq(label + " aes128", await aes128.stringToKey(c.pass, c.salt, 
+    eq(label + " aes128", await aes128.stringToKey(c.pass, c.salt,
         iterParam(c.iter)), c.k128);
-    eq(label + " aes256", await aes256.stringToKey(c.pass, c.salt, 
+    eq(label + " aes256", await aes256.stringToKey(c.pass, c.salt,
         iterParam(c.iter)), c.k256);
   }
 
@@ -345,17 +335,17 @@ async function rfc8009MatchesItsVectors() {
 
   // --- key derivation, key usage 2 ---
   const base128 = unhex("3705D96080C17728A0E800EAB6E0D23C");
-  eq("aes128-sha256 Kc usage 2", await aes128.checksumKey(base128, 2), 
+  eq("aes128-sha256 Kc usage 2", await aes128.checksumKey(base128, 2),
       "b31a018a48f54776f403e9a396325dc3");
-  eq("aes128-sha256 Ke usage 2", await aes128.encryptionKey(base128, 2), 
+  eq("aes128-sha256 Ke usage 2", await aes128.encryptionKey(base128, 2),
       "9b197dd1e8c5609d6e67c3e37c62c72e");
-  eq("aes128-sha256 Ki usage 2", await aes128.integrityKey(base128, 2), 
+  eq("aes128-sha256 Ki usage 2", await aes128.integrityKey(base128, 2),
       "9fda0e56ab2d85e1569a688696c26a6c");
 
   const base256 = unhex("6D404D37FAF79F9DF0D33568D320669800EB4836472EA8A026D16B7182460C52");
   eq("aes256-sha384 Kc usage 2", await aes256.checksumKey(base256, 2),
      "ef5718be86cc84963d8bbb5031e9f5c4ba41f28faf69e73d");
-  eq("aes256-sha384 Ke usage 2 (256 bits, not 192)", 
+  eq("aes256-sha384 Ke usage 2 (256 bits, not 192)",
       await aes256.encryptionKey(base256, 2),
      "56ab22bee63d82d7bc5227f6773f8ea7a5eb1c825160c38312980c442e5c7e49");
   eq("aes256-sha384 Ki usage 2", await aes256.integrityKey(base256, 2),
@@ -365,13 +355,13 @@ async function rfc8009MatchesItsVectors() {
   // enctype name and the realm-and-principal salt, so the salt passed here is
   // those bytes followed by "ATHENA.MIT.EDUraeburn"; the module prepends the
   // enctype name and the NUL itself, which is the part being tested.
-  const salt8009 = prim.concat([unhex("10DF9DD783E5BC8ACEA1730E74355F61"), 
+  const salt8009 = prim.concat([unhex("10DF9DD783E5BC8ACEA1730E74355F61"),
       ascii("ATHENA.MIT.EDUraeburn")]);
   const iter32768 = new Uint8Array([0x00, 0x00, 0x80, 0x00]);
-  eq("aes128-sha256 s2k", await aes128.stringToKey("password", salt8009, 
+  eq("aes128-sha256 s2k", await aes128.stringToKey("password", salt8009,
       iter32768),
      "089bca48b105ea6ea77ca5d2f39dc5e7");
-  eq("aes256-sha384 s2k", await aes256.stringToKey("password", salt8009, 
+  eq("aes256-sha384 s2k", await aes256.stringToKey("password", salt8009,
       iter32768),
      "45bd806dbf6a833a9cffc1c94589a222367a79bc21c413718906e9f578a78467");
 
@@ -382,13 +372,13 @@ async function rfc8009MatchesItsVectors() {
     {
       pt: "",
       conf: "7E5895EAF2672435BAD817F545A37148",
-      ct: "EF85FB890BB8472F4DAB20394DCA781D" + 
+      ct: "EF85FB890BB8472F4DAB20394DCA781D" +
           "AD877EDA39D50C870C0D5A0A8E48C718"
     },
     {
       pt: "000102030405",
       conf: "7BCA285E2FD4130FB55B1A5C83BC5B24",
-      ct: "84D7F30754ED987BAB0BF3506BEB09CFB55402CEF7E6" + 
+      ct: "84D7F30754ED987BAB0BF3506BEB09CFB55402CEF7E6" +
           "877CE99E247E52D16ED4421DFDF8976C"
     },
     {
@@ -407,10 +397,10 @@ async function rfc8009MatchesItsVectors() {
   for (let i = 0; i < enc128.length; i++) {
     const c = enc128[i];
     const out = await aes128.encrypt(base128, 2, unhex(c.pt), unhex(c.conf));
-    eq("aes128-sha256 encrypt case " + (i + 1) + " (" + (c.pt.length / 2) + 
+    eq("aes128-sha256 encrypt case " + (i + 1) + " (" + (c.pt.length / 2) +
         "-byte plaintext)", out, c.ct);
     // And back, through the verifying path.
-    eq("aes128-sha256 decrypt case " + (i + 1), await aes128.decrypt(base128, 
+    eq("aes128-sha256 decrypt case " + (i + 1), await aes128.decrypt(base128,
         2, unhex(c.ct)), c.pt.toLowerCase());
   }
 
@@ -468,7 +458,7 @@ async function aesSha1RoundTripsAtEveryBoundary() {
       const confAndPlain = await kcrypto.ctsDecrypt(
         await e.encryptionKey(key, kcrypto.KEY_USAGE.AS_REP_ENCPART),
         new Uint8Array(16), ct.slice(0, ct.length - e.checksumBytes));
-      const expectedMac = (await kcrypto.hmac("SHA-1", ki, 
+      const expectedMac = (await kcrypto.hmac("SHA-1", ki,
           confAndPlain)).slice(0, e.checksumBytes);
       eq(e.name + " MAC covers conf|plaintext, " + len + " bytes",
          ct.slice(ct.length - e.checksumBytes), hex(expectedMac));
@@ -483,7 +473,7 @@ async function aesSha1RoundTripsAtEveryBoundary() {
     assert.notStrictEqual(k1, k2, e.name + " usage 2 and 3 derived the SAME " +
         "encryption key");
     assert.notStrictEqual(k1, c1, e.name + " Ke and Kc are the same key");
-    log.debug(e.name + ": Ke(2)=" + k1.slice(0, 16) + "… Ke(3)=" + k2.slice(0, 
+    log.debug(e.name + ": Ke(2)=" + k1.slice(0, 16) + "… Ke(3)=" + k2.slice(0,
         16) + "…");
   }
   log.debug("Leaving aesSha1RoundTripsAtEveryBoundary().");
@@ -505,12 +495,12 @@ async function arcfourBehavesLikeRfc4757() {
   const e = kcrypto.etypeById(23);
   assert.strictEqual(e.legacy, true, "etype 23 must be marked legacy");
 
-  eq("arcfour s2k is the NT hash", await e.stringToKey("password"), 
+  eq("arcfour s2k is the NT hash", await e.stringToKey("password"),
       "8846f7eaee8fb117ad06bdd830b7586c");
   // Salted and unsalted must agree, because the salt is not an input.
-  const withSalt = hex(await e.stringToKey("password", ascii("EXAMPLE.COMbob"), 
+  const withSalt = hex(await e.stringToKey("password", ascii("EXAMPLE.COMbob"),
       null));
-  eq("arcfour s2k ignores the salt", withSalt, 
+  eq("arcfour s2k ignores the salt", withSalt,
       "8846f7eaee8fb117ad06bdd830b7586c");
 
   assert.strictEqual(kcrypto.translateArcfourUsage(3), 8, "usage 3 must " +
@@ -540,7 +530,7 @@ async function arcfourBehavesLikeRfc4757() {
   const ct3 = await e.encrypt(key, 3, ascii("same"), unhex("0011223344556677"));
   const ct9 = await e.encrypt(key, 9, ascii("same"), unhex("0011223344556677"));
   eq("arcfour usage 3 and 9 are the same key stream", ct3, hex(ct9));
-  eq("arcfour cross-usage decrypt (3 encrypted, 9 decrypts)", 
+  eq("arcfour cross-usage decrypt (3 encrypted, 9 decrypts)",
       await e.decrypt(key, 9, ct3), hex(ascii("same")));
 
   log.debug("Leaving arcfourBehavesLikeRfc4757().");
@@ -557,16 +547,16 @@ async function checksumsAreKeyedAndVerified() {
     const msg = ascii("the quick brown fox");
     const c = await e.checksum(key, kcrypto.KEY_USAGE.AP_REQ_AUTH_CKSUM, msg);
     assert.strictEqual(c.length, e.checksumBytes, e.name + " checksum length");
-    assert.strictEqual(await e.verifyChecksum(key, 
+    assert.strictEqual(await e.verifyChecksum(key,
         kcrypto.KEY_USAGE.AP_REQ_AUTH_CKSUM, msg, c), true,
       e.name + " must verify its own checksum");
     // A different usage must not verify: the usage is part of the key.
-    assert.strictEqual(await e.verifyChecksum(key, 
+    assert.strictEqual(await e.verifyChecksum(key,
         kcrypto.KEY_USAGE.AP_REP_ENCPART, msg, c), false,
       e.name + " verified a checksum computed under a DIFFERENT key usage");
     // One flipped bit in the message must not verify.
     const tampered = ascii("the quick brown foy");
-    assert.strictEqual(await e.verifyChecksum(key, 
+    assert.strictEqual(await e.verifyChecksum(key,
         kcrypto.KEY_USAGE.AP_REQ_AUTH_CKSUM, tampered, c), false,
       e.name + " verified a checksum over a MODIFIED message");
   }
@@ -595,7 +585,7 @@ async function refusesWhatItMustRefuse() {
     assert.ok(threw, "expected a refusal: " + what);
     if (matching) {
       assert.ok(matching.test(threw.message),
-        what + ": refused, but the message does not say why (" + 
+        what + ": refused, but the message does not say why (" +
             threw.message + ")");
     }
     log.debug("refused as it should: " + what + " (" + threw.message + ")");
@@ -604,51 +594,51 @@ async function refusesWhatItMustRefuse() {
 
   for (const id of [17, 18, 19, 20, 23]) {
     const e = kcrypto.etypeById(id);
-    const key = await e.stringToKey("correct horse", ascii("EXAMPLE.COMalice"), 
+    const key = await e.stringToKey("correct horse", ascii("EXAMPLE.COMalice"),
         null);
-    const wrongKey = await e.stringToKey("correct horsf", 
+    const wrongKey = await e.stringToKey("correct horsf",
         ascii("EXAMPLE.COMalice"), null);
     const usage = kcrypto.KEY_USAGE.AS_REP_ENCPART;
     const ct = await e.encrypt(key, usage, ascii("the session key goes here"));
 
-    await mustThrow(e.name + ": wrong key", () => e.decrypt(wrongKey, usage, 
+    await mustThrow(e.name + ": wrong key", () => e.decrypt(wrongKey, usage,
         ct), /integrity check failed/);
-    await mustThrow(e.name + ": wrong key usage", () => e.decrypt(key, usage + 
+    await mustThrow(e.name + ": wrong key usage", () => e.decrypt(key, usage +
         1, ct), /integrity check failed/);
 
     // A flipped bit in the ciphertext body.
     const bitFlipped = ct.slice();
     bitFlipped[4] ^= 0x01;
-    await mustThrow(e.name + ": one flipped ciphertext bit", 
+    await mustThrow(e.name + ": one flipped ciphertext bit",
         () => e.decrypt(key, usage, bitFlipped),
       /integrity check failed/);
 
     // A flipped bit in the MAC itself.
     const macFlipped = ct.slice();
     macFlipped[macFlipped.length - 1] ^= 0x80;
-    await mustThrow(e.name + ": one flipped MAC bit", () => e.decrypt(key, 
+    await mustThrow(e.name + ": one flipped MAC bit", () => e.decrypt(key,
         usage, macFlipped),
       /integrity check failed/);
 
     // Truncated: a short read on a KDC reply must not be mistaken for a short
     // message.
-    await mustThrow(e.name + ": truncated ciphertext", () => e.decrypt(key, 
+    await mustThrow(e.name + ": truncated ciphertext", () => e.decrypt(key,
         usage, ct.slice(0, 8)),
       /too short/);
-    await mustThrow(e.name + ": empty ciphertext", () => e.decrypt(key, usage, 
+    await mustThrow(e.name + ": empty ciphertext", () => e.decrypt(key, usage,
         new Uint8Array(0)),
       /too short/);
   }
 
   // DES is decode-only and must be refused by name rather than by a generic
   // "unknown etype", because a KDC offering it is a finding in itself.
-  await mustThrow("etype 3 (des-cbc-md5) refused by name", 
+  await mustThrow("etype 3 (des-cbc-md5) refused by name",
       async () => kcrypto.etypeById(3),
     /des-cbc-md5.*not implemented|not implemented.*des-cbc-md5/);
-  await mustThrow("etype 1 mentions the Windows removal", 
+  await mustThrow("etype 1 mentions the Windows removal",
       async () => kcrypto.etypeById(1),
     /Windows Server 2025/);
-  await mustThrow("an unknown etype", async () => kcrypto.etypeById(9999), 
+  await mustThrow("an unknown etype", async () => kcrypto.etypeById(9999),
       /unknown/);
   assert.strictEqual(kcrypto.etypeName(3), "des-cbc-md5", "a refused etype " +
       "must still have a NAME to display");
@@ -658,7 +648,7 @@ async function refusesWhatItMustRefuse() {
   // CTS cannot operate on less than a block; the confounder guarantees this
   // never happens in the protocol, so a caller hitting it has a bug and should
   // hear about it rather than get silence.
-  await mustThrow("CTS on 15 bytes", 
+  await mustThrow("CTS on 15 bytes",
       () => kcrypto.ctsEncrypt(new Uint8Array(16), new Uint8Array(16),
     new Uint8Array(15)), /at least one block/);
 
@@ -666,7 +656,7 @@ async function refusesWhatItMustRefuse() {
   // 3962 encodes that as an all-zero s2kparams. Attempting it would hang the
   // browser for hours, which is a denial of service delivered by a reply.
   await mustThrow("s2kparams of 2^32 iterations", () => kcrypto.etypeById(18)
-    .stringToKey("password", ascii("EXAMPLE.COMalice"), new Uint8Array([0, 0, 
+    .stringToKey("password", ascii("EXAMPLE.COMalice"), new Uint8Array([0, 0,
         0, 0])), /2\^32/);
 
   log.debug("Leaving refusesWhatItMustRefuse().");
@@ -710,9 +700,9 @@ function keyUsageNumbersArePinned() {
   // The derivation constant is the usage as four big-endian octets and then the
   // purpose byte. A little-endian mistake here is invisible for usage 0 and
   // wrong for every other one.
-  eq("usage constant for 2 / 0xAA", kcrypto.usageConstant(2, 0xaa), 
+  eq("usage constant for 2 / 0xAA", kcrypto.usageConstant(2, 0xaa),
       "00000002aa");
-  eq("usage constant for 258 / 0x55", kcrypto.usageConstant(258, 0x55), 
+  eq("usage constant for 258 / 0x55", kcrypto.usageConstant(258, 0x55),
       "0000010255");
 
   // The default preference must lead with an AES etype and must not lead with

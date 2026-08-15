@@ -137,7 +137,7 @@ function tlv(tag, value) {
 
 // Two's complement, minimal length. See the header note: negative values occur.
 function integerContent(value) {
-  if (typeof value !== "number" || !isFinite(value) || 
+  if (typeof value !== "number" || !isFinite(value) ||
       Math.floor(value) !== value) {
     throw new Error("krb5: INTEGER must be a whole number, got " + value);
   }
@@ -167,7 +167,7 @@ function encOctetString(bytes) { return tlv(TAG.OCTET_STRING, toBytes(bytes)); }
 // KerberosString ::= GeneralString. Realms and principal name components are
 // this type, and they are case-sensitive on the wire: a realm is conventionally
 // upper case and a KDC will not fold it for you.
-function encGeneralString(text) { return tlv(TAG.GENERAL_STRING, 
+function encGeneralString(text) { return tlv(TAG.GENERAL_STRING,
     prim.utf8(text)); }
 
 // KerberosFlags ::= BIT STRING (SIZE (32..MAX)). Always 32 bits here, no unused
@@ -186,7 +186,7 @@ function encFlags(bitNumbers) {
 
 function flagsFromBits(bitNumbers) {
   var bytes = new Uint8Array(4);
-  (bitNumbers || 
+  (bitNumbers ||
       []).forEach(function (bit) { bytes[bit >> 3] |= 0x80 >> (bit & 7); });
   return bytes;
 }
@@ -202,14 +202,17 @@ function bitsFromFlags(bytes) {
 // KerberosTime ::= GeneralizedTime, "YYYYMMDDHHMMSSZ" and nothing else. No
 // milliseconds, no offset, no fractional part.
 function formatKerberosTime(date) {
+  log.debug("Entering formatKerberosTime().");
   var d = (date instanceof Date) ? date : new Date(date);
   if (isNaN(d.getTime())) {
+    log.debug("Leaving formatKerberosTime().");
     throw new Error("krb5: not a date: " + date);
   }
   function two(n) { return (n < 10 ? "0" : "") + n; }
-  return String(d.getUTCFullYear()) + two(d.getUTCMonth() + 1) + 
+  log.debug("Leaving formatKerberosTime().");
+  return String(d.getUTCFullYear()) + two(d.getUTCMonth() + 1) +
       two(d.getUTCDate()) +
-         two(d.getUTCHours()) + two(d.getUTCMinutes()) + 
+         two(d.getUTCHours()) + two(d.getUTCMinutes()) +
              two(d.getUTCSeconds()) + "Z";
 }
 
@@ -217,7 +220,7 @@ function parseKerberosTime(text) {
   var s = String(text);
   var m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/.exec(s);
   if (!m) {
-    throw new Error("krb5: KerberosTime must be YYYYMMDDHHMMSSZ, got " + 
+    throw new Error("krb5: KerberosTime must be YYYYMMDDHHMMSSZ, got " +
         JSON.stringify(s));
   }
   return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
@@ -279,12 +282,12 @@ function readTlv(bytes, offset, depth) {
     // Indefinite length is BER, not DER, and Kerberos is DER. Refusing it is
     // not pedantry: an indefinite length in a KDC reply means something is
     // re-encoding the traffic.
-    throw new Error("krb5: indefinite ASN.1 length at offset " + at + 
+    throw new Error("krb5: indefinite ASN.1 length at offset " + at +
         " — DER requires a definite length");
   } else {
     var n = lenByte & 0x7f;
     if (n > 4) {
-      throw new Error("krb5: ASN.1 length field of " + n + 
+      throw new Error("krb5: ASN.1 length field of " + n +
           " bytes at offset " + at);
     }
     if (at + 2 + n > b.length) {
@@ -338,13 +341,13 @@ function readTaggedSequence(value, depth) {
   var map = {};
   readChildren(value, depth).forEach(function (child) {
     if ((child.tag & 0xc0) !== 0x80) {
-      throw new Error("krb5: expected a context tag in this SEQUENCE, saw 0x" + 
+      throw new Error("krb5: expected a context tag in this SEQUENCE, saw 0x" +
           child.tag.toString(16));
     }
     var n = child.tag & 0x1f;
     var inner = readChildren(child.value, (depth || 0) + 1);
     if (inner.length !== 1) {
-      throw new Error("krb5: context tag [" + n + "] wraps " + inner.length + 
+      throw new Error("krb5: context tag [" + n + "] wraps " + inner.length +
           " elements, expected 1");
     }
     map[n] = inner[0];
@@ -424,7 +427,7 @@ function readApplication(bytes, expectedNumber) {
   var b = toBytes(bytes);
   if (b.length > MAX_INPUT_BYTES) {
     log.debug("Leaving readApplication().");
-    throw new Error("krb5: refusing to parse " + b.length + " bytes (limit " + 
+    throw new Error("krb5: refusing to parse " + b.length + " bytes (limit " +
         MAX_INPUT_BYTES + ")");
   }
   var outer = readTlv(b, 0, 0);
@@ -437,16 +440,16 @@ function readApplication(bytes, expectedNumber) {
   var number = outer.tag & 0x1f;
   if (expectedNumber !== undefined && number !== expectedNumber) {
     log.debug("Leaving readApplication().");
-    throw new Error("krb5: expected [APPLICATION " + expectedNumber + 
+    throw new Error("krb5: expected [APPLICATION " + expectedNumber +
         "] but found [APPLICATION " + number + "]");
   }
   var inner = readChildren(outer.value, 1);
   if (inner.length !== 1) {
     log.debug("Leaving readApplication().");
-    throw new Error("krb5: [APPLICATION " + number + "] wraps " + 
+    throw new Error("krb5: [APPLICATION " + number + "] wraps " +
         inner.length + " elements, expected 1");
   }
-  expectTag(inner[0], TAG.SEQUENCE, "the SEQUENCE inside [APPLICATION " + 
+  expectTag(inner[0], TAG.SEQUENCE, "the SEQUENCE inside [APPLICATION " +
       number + "]");
   log.debug("Leaving readApplication().");
   return { applicationNumber: number, sequence: inner[0], outer: outer };
@@ -526,7 +529,7 @@ function looksConstructed(t) {
   }
   try {
     var children = readChildren(t.value, 0);
-    return children.length > 0 && 
+    return children.length > 0 &&
         children[children.length - 1].end === t.value.length;
   } catch (e) {
     // Not parseable as a sequence of elements: treat as opaque.
@@ -540,7 +543,7 @@ function tree(bytes, depth) {
   var b = toBytes(bytes);
   if (b.length > MAX_INPUT_BYTES) {
     log.debug("Leaving tree().");
-    throw new Error("krb5: refusing to parse " + b.length + " bytes (limit " + 
+    throw new Error("krb5: refusing to parse " + b.length + " bytes (limit " +
         MAX_INPUT_BYTES + ")");
   }
   var out = [];
@@ -598,7 +601,7 @@ function renderPrimitive(t) {
     }
     if (t.tag === TAG.BIT_STRING && t.value.length === 5) {
       log.debug("Leaving renderPrimitive().");
-      return "bits set: " + (bitsFromFlags(t.value.subarray(1)).join(", ") || 
+      return "bits set: " + (bitsFromFlags(t.value.subarray(1)).join(", ") ||
           "(none)");
     }
   } catch (e) {
@@ -607,7 +610,7 @@ function renderPrimitive(t) {
   }
   var hex = prim.toHex(t.value);
   log.debug("Leaving renderPrimitive().");
-  return hex.length > 128 ? hex.slice(0, 128) + "… (" + t.value.length + 
+  return hex.length > 128 ? hex.slice(0, 128) + "… (" + t.value.length +
       " bytes)" : hex;
 }
 

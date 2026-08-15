@@ -48,7 +48,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "kerberos_tgs_ap_page",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = "http://localhost:3000";
@@ -76,7 +76,7 @@ async function waitForText(driver, id, pattern, timeoutMs, what) {
     }, timeoutMs || 60000);
   } catch (e) {
     log.debug("Leaving waitForText().");
-    throw new Error(what + " (last text in #" + id + ": " + 
+    throw new Error(what + " (last text in #" + id + ": " +
         JSON.stringify(last.slice(0, 300)) + ")");
   }
   log.debug("Leaving waitForText().");
@@ -176,7 +176,7 @@ async function getATgtOnTheAsPage(driver) {
   await setField(driver, "krb_kdc_host", kdcHost);
   await setField(driver, "krb_kdc_port", kdcPort);
   await driver.findElement(By.id("krb_noreauth_button")).click();
-  await waitForText(driver, "krb_as_status", 
+  await waitForText(driver, "krb_as_status",
       /PREAUTH_REQUIRED|issued a ticket WITHOUT/, 60000,
     "the AS page's first request produced no result");
   // CLEAR FIRST: the field arrives pre-filled from the build's
@@ -187,7 +187,7 @@ async function getATgtOnTheAsPage(driver) {
   await driver.findElement(By.id("krb_password")).clear();
   await driver.findElement(By.id("krb_password")).sendKeys(password);
   await driver.findElement(By.id("krb_preauth_button")).click();
-  const status = await waitForText(driver, "krb_as_status", 
+  const status = await waitForText(driver, "krb_as_status",
       /A TGT for|will not decrypt|refused/, 60000,
     "the AS page produced no ticket");
   assert.ok(/A TGT for/.test(status), "a TGT is needed before this test can " +
@@ -235,7 +235,7 @@ async function theTgsPageSpendsTheTgt(driver) {
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
   const tgtPane = await driver.findElement(By.id("krb_tgt_pane")).getText();
   assert.ok(/krbtgt/.test(tgtPane),
-    "the TGS page must show the held TGT, and it is a ticket for krbtgt: " + 
+    "the TGS page must show the held TGT, and it is a ticket for krbtgt: " +
         tgtPane.slice(0, 200));
   assert.ok(/A CREDENTIAL/.test(tgtPane),
     "and must label the session key as the credential it is");
@@ -265,7 +265,7 @@ async function theTgsPageSpendsTheTgt(driver) {
         "8: " + status);
 
   const tickets = await driver.findElement(By.id("krb_tickets_pane")).getText();
-  assert.ok(tickets.indexOf(spn) !== -1, 
+  assert.ok(tickets.indexOf(spn) !== -1,
       "the service ticket must be listed: " + tickets.slice(0, 200));
   // Only the AS exchange issues an `initial` ticket, and a service may insist
   // on that distinction — so a TGS-issued ticket carrying it would be a lie.
@@ -277,7 +277,7 @@ async function theTgsPageSpendsTheTgt(driver) {
   const lines = tickets.split("\n").map(function (l) { return l.trim(); });
   const flagsAt = lines.indexOf("flags");
   assert.ok(flagsAt !== -1 && lines[flagsAt + 1],
-    "the ticket pane must have a flags row with a value under it: " + 
+    "the ticket pane must have a flags row with a value under it: " +
         tickets.slice(0, 300));
   const flagsLine = lines[flagsAt + 1];
   assert.ok(flagsLine.indexOf("initial") === -1,
@@ -290,7 +290,7 @@ async function theTgsPageSpendsTheTgt(driver) {
   // Now WITH a subkey: key usage 9. The KDC chooses based on what was sent.
   await driver.findElement(By.id("krb_use_subkey")).click();
   await driver.findElement(By.id("krb_tgs_button")).click();
-  const withSubkey = await waitForText(driver, "krb_tgs_status", 
+  const withSubkey = await waitForText(driver, "krb_tgs_status",
       /key usage 9|key usage 8|—/, 60000,
     "the TGS exchange with a subkey produced no result");
   assert.ok(/key usage 9/.test(withSubkey),
@@ -312,7 +312,7 @@ async function theApPagePresentsItAndChecksTheEcho(driver) {
   await driver.get(baseUrl + "/kerberos_ap.html");
   await driver.wait(until.elementLocated(By.id("krb_present_button")), 20000);
 
-  const environment = await waitForText(driver, "krb_environment_note", 
+  const environment = await waitForText(driver, "krb_environment_note",
       /relay|did not answer/, 20000,
     "the AP page never reported what the api allows");
   assert.ok(/presenting a ticket to a service is enabled/.test(environment),
@@ -322,7 +322,7 @@ async function theApPagePresentsItAndChecksTheEcho(driver) {
 
   const ticketPane = await driver.findElement(By.id("krb_ticket_pane")).getText();
   assert.ok(ticketPane.indexOf(spn) !== -1,
-    "the ticket the TGS page bought must be offered here: " + 
+    "the ticket the TGS page bought must be offered here: " +
         ticketPane.slice(0, 200));
 
   await setField(driver, "krb_service_host", serviceHost);
@@ -368,7 +368,7 @@ async function theApPagePresentsItAndChecksTheEcho(driver) {
       "reported as confirmed: " +
     context.slice(0, 200));
   assert.ok(/echoed/.test(context) && /session key/.test(context),
-    "and the page must explain that the echo IS the proof: " + context.slice(0, 
+    "and the page must explain that the echo IS the proof: " + context.slice(0,
         300));
   assert.ok(/acceptor's subkey/.test(context),
     "once the acceptor offers a subkey, per-message tokens must be keyed " +
@@ -380,10 +380,10 @@ async function theApPagePresentsItAndChecksTheEcho(driver) {
 async function perMessageTokensWorkAndRejectTampering(driver) {
   log.debug("Entering perMessageTokensWorkAndRejectTampering().");
   await driver.findElement(By.id("krb_mic_button")).click();
-  const mic = await waitForText(driver, "krb_permessage_pane", 
+  const mic = await waitForText(driver, "krb_permessage_pane",
       /GetMIC|token id/, 40000,
     "GetMIC produced nothing");
-  assert.ok(/04 04/.test(mic), "a MIC token's id is 04 04: " + mic.slice(0, 
+  assert.ok(/04 04/.test(mic), "a MIC token's id is 04 04: " + mic.slice(0,
       200));
   assert.ok(/does not verify/.test(mic),
     "the pane must show that the same MIC does NOT verify over a modified " +
@@ -394,9 +394,9 @@ async function perMessageTokensWorkAndRejectTampering(driver) {
         "the SENDER's key usage");
 
   await driver.findElement(By.id("krb_wrap_button")).click();
-  const wrap = await waitForText(driver, "krb_permessage_pane", /GSS_Wrap/, 
+  const wrap = await waitForText(driver, "krb_permessage_pane", /GSS_Wrap/,
       40000, "Wrap produced nothing");
-  assert.ok(/05 04/.test(wrap), "a Wrap token's id is 05 04: " + wrap.slice(0, 
+  assert.ok(/05 04/.test(wrap), "a Wrap token's id is 05 04: " + wrap.slice(0,
       200));
   assert.ok(/the quick brown fox/.test(wrap), "and what was wrapped must " +
       "come back out");
@@ -430,7 +430,7 @@ async function withoutMutualNothingProvesTheService(driver) {
 
 async function test() {
   log.debug("Entering test().");
-  log.info("Starting Test run. The TGS and AP exchange pages at " + baseUrl + 
+  log.info("Starting Test run. The TGS and AP exchange pages at " + baseUrl +
       ".");
   const ready = await preconditions();
   if (!ready.ok) {
@@ -444,12 +444,12 @@ async function test() {
     return;
   }
   if (ready.kdcPort && ready.kdcPort !== String(kdcPort)) {
-    log.warn("the mock STS reports its KDC on port " + ready.kdcPort + 
+    log.warn("the mock STS reports its KDC on port " + ready.kdcPort +
         "; using that.");
     kdcPort = ready.kdcPort;
   }
   if (ready.servicePort && ready.servicePort !== String(servicePort)) {
-    log.warn("the mock STS reports its protected service on port " + 
+    log.warn("the mock STS reports its protected service on port " +
         ready.servicePort + "; using that.");
     servicePort = ready.servicePort;
   }
@@ -458,9 +458,9 @@ async function test() {
   // --headless=new, never bare --headless: the image's Chrome 121 ignores
   // --unsafely-treat-insecure-origin-as-secure in the old mode, and these pages
   // derive keys with Web Crypto.
-  options.addArguments("--headless=new", "--no-sandbox", 
+  options.addArguments("--headless=new", "--no-sandbox",
       "--disable-dev-shm-usage",
-                       "--window-size=1400,1400");
+          "--window-size=1400,1400");
   browserFlags.addBrowserAccessFlags(options, baseUrl);
   const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
 
@@ -484,7 +484,7 @@ program
   .name("kerberos_tgs_ap_page")
   .description("Verify the TGS and AP exchange pages, and the credential " +
       "handoff between all three.")
-  .addOption(new Option("-u, --url <url>", 
+  .addOption(new Option("-u, --url <url>",
       "base url of the site under test").default(baseUrl))
   .parse(process.argv);
 baseUrl = program.opts().url || baseUrl;

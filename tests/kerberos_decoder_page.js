@@ -43,7 +43,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "kerberos_decoder_page",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 function shared(name) {
@@ -103,11 +103,15 @@ async function theBundleLoadedAndTheButtonsWork(driver) {
 async function decodesAPreauthErrorAndReadsOutTheSalt(driver) {
   log.debug("Entering decodesAPreauthErrorAndReadsOutTheSalt().");
   const err = msgs.encKrbError({
-    stime: new Date(), susec: 0, errorCode: 25, realm: "EXAMPLE.COM",
+    stime: new Date(),
+    susec: 0,
+    errorCode: 25,
+    realm: "EXAMPLE.COM",
     sname: {
       type: 2,
       name: ["krbtgt", "EXAMPLE.COM"]
-    }, eText: "NEEDED_PREAUTH",
+    },
+    eText: "NEEDED_PREAUTH",
     eData: asn1.encSequenceOf([msgs.encPaData({
       type: msgs.PA_TYPE.ETYPE_INFO2,
       value: msgs.encEtypeInfo2([
@@ -126,7 +130,7 @@ async function decodesAPreauthErrorAndReadsOutTheSalt(driver) {
     new Uint8Array([0, 0, (err.length >> 8) & 255, err.length & 255]), err]);
 
   const out = await decode(driver, b64(framed));
-  assert.strictEqual(await driver.findElement(By.css(".krb-kind")).getText(), 
+  assert.strictEqual(await driver.findElement(By.css(".krb-kind")).getText(),
       "KRB-ERROR",
     "the message kind must be shown prominently");
   assert.ok(/TCP length prefix/.test(out),
@@ -163,13 +167,13 @@ async function surfacesWhatIsWrongWithARequest(driver) {
       etypes: [23]                                   // RC4 only
     }
   })));
-  assert.ok(/AS-REQ/.test(await driver.findElement(By.css(".krb-kind")).getText()), 
+  assert.ok(/AS-REQ/.test(await driver.findElement(By.css(".krb-kind")).getText()),
       "kind");
   const problems = await driver.findElement(By.css(".krb-problems")).getText();
   assert.ok(/not upper case/.test(problems), "a lower-case realm must be a " +
       "finding: " + problems);
   assert.ok(/RC4/.test(problems) && /2025/.test(problems),
-    "an RC4-only etype list must be a finding naming the 2026 cause: " + 
+    "an RC4-only etype list must be a finding naming the 2026 cause: " +
         problems);
   assert.ok(/arcfour-hmac-md5/.test(out), "etypes must be named, not left as " +
       "numbers");
@@ -193,7 +197,9 @@ async function renderesHostileValuesAsTextAndNotAsMarkup(driver) {
   const payloadRealm = '<img src=x onerror="window.__krbPwned=1">';
   const payloadText = '</td></tr></table><h1 id="krb_injected">injected</h1>';
   const err = msgs.encKrbError({
-    stime: new Date(), susec: 0, errorCode: 6,
+    stime: new Date(),
+    susec: 0,
+    errorCode: 6,
     realm: payloadRealm,
     sname: {
       type: 2,
@@ -243,7 +249,7 @@ async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
     // limit, not a defect, but a page that failed silently in it would be.
     const note = await driver.findElement(By.id("krb_crypto_note")).getText();
     assert.ok(/not in a secure context/.test(note),
-      "without Web Crypto the page must SAY decryption is unavailable, got: " + 
+      "without Web Crypto the page must SAY decryption is unavailable, got: " +
           JSON.stringify(note));
     log.info("Web Crypto is unavailable on this origin; the page says so, " +
         "which is what matters here.");
@@ -263,24 +269,31 @@ async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
     crealm: "EXAMPLE.COM",
     cname: { type: 1, name: ["alice"] },
     ticket: {
-      realm: "EXAMPLE.COM", sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
+      realm: "EXAMPLE.COM",
+      sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
       encPart: {
         etype: 18,
         cipher: kcrypto.randomBytes(96)
-      }   // not ours to open
+      }  // not ours to open
     },
-    encPart: { etype: 18, cipher: await e.encrypt(clientKey, 
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(clientKey,
         kcrypto.KEY_USAGE.AS_REP_ENCPART,
       msgs.encEncKdcRepPart({
         key: {
           etype: 18,
           key: sessionKey
-        }, lastReq: [{
+        },
+        lastReq: [{
           type: 0,
           value: now
-        }], nonce: 424242,
+        }],
+        nonce: 424242,
         flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.INITIAL],
-        authtime: now, endtime: end, srealm: "EXAMPLE.COM",
+        authtime: now,
+        endtime: end,
+        srealm: "EXAMPLE.COM",
         sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] }
       }, msgs.APPLICATION.ENC_AS_REP_PART)) }
   });
@@ -309,7 +322,7 @@ async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
   const opened = await driver.findElement(By.id("krb_output")).getText();
   assert.ok(/EncASRepPart \(decrypted\)/.test(opened),
     "the decrypted enc-part must be shown as its own section");
-  assert.ok(new RegExp(prim.toHex(sessionKey).slice(0, 
+  assert.ok(new RegExp(prim.toHex(sessionKey).slice(0,
       24)).test(opened.replace(/\s/g, "")) ||
             /aes256-cts-hmac-sha1-96/.test(opened),
     "the session key inside must be revealed");
@@ -402,7 +415,7 @@ async function persistsNothing(driver) {
   const sessionStored = await driver.executeScript(
     "var n = []; for (var i = 0; i < sessionStorage.length; i++) " +
         "n.push(sessionStorage.key(i)); return n;");
-  assert.deepStrictEqual(sessionStored.filter(function (k) { return /^krb/i.test(k); }), 
+  assert.deepStrictEqual(sessionStored.filter(function (k) { return /^krb/i.test(k); }),
       [],
     "nor in sessionStorage");
   log.debug("Leaving persistsNothing().");
@@ -410,16 +423,16 @@ async function persistsNothing(driver) {
 
 async function test() {
   log.debug("Entering test().");
-  log.info("Starting Test run. Verifying the Kerberos Decoder page at " + 
+  log.info("Starting Test run. Verifying the Kerberos Decoder page at " +
       baseUrl + ".");
   const options = new chrome.Options();
   // --headless=new, never bare --headless: in the image's Chrome 121 the old
   // headless mode ignores --unsafely-treat-insecure-origin-as-secure, so
   // crypto.subtle stays undefined however carefully the flags were set. See
   // tests/CLAUDE.md.
-  options.addArguments("--headless=new", "--no-sandbox", 
+  options.addArguments("--headless=new", "--no-sandbox",
       "--disable-dev-shm-usage",
-                       "--window-size=1400,1100");
+          "--window-size=1400,1100");
   // The decryption half runs on Web Crypto, which does not exist on the
   // containerized origin without these. See tests/browser_flags.js.
   browserFlags.addBrowserAccessFlags(options, baseUrl);
@@ -447,7 +460,7 @@ program
   .name("kerberos_decoder_page")
   .description("Verify the Kerberos Decoder page: wiring, hostile input " +
       "rendered as text, in-browser decryption.")
-  .addOption(new Option("-u, --url <url>", 
+  .addOption(new Option("-u, --url <url>",
       "base url of the site under test").default(baseUrl))
   .parse(process.argv);
 baseUrl = program.opts().url || baseUrl;

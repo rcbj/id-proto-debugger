@@ -93,7 +93,7 @@ function saveConfiguration() {
     localStorage.setItem(KEYS.TRANSPORT, val("krb_transport"));
     localStorage.setItem(KEYS.PRINCIPAL, val("krb_principal"));
     localStorage.setItem(KEYS.ETYPES, val("krb_etypes"));
-    localStorage.setItem(KEYS.SAVE_CCACHE, checked("krb_save_ccache") ? "1" : 
+    localStorage.setItem(KEYS.SAVE_CCACHE, checked("krb_save_ccache") ? "1" :
         "0");
     // The PASSWORD is deliberately absent from this list, as it is on every
     // other page in this repository.
@@ -149,7 +149,7 @@ function loadConfiguration() {
     krb_etypes: localStorage.getItem(KEYS.ETYPES)
   };
   Object.keys(stored).forEach(function (id) {
-    if (stored[id] !== null && stored[id] !== undefined && 
+    if (stored[id] !== null && stored[id] !== undefined &&
         stored[id] !== "") setVal(id, stored[id]);
   });
   var save = localStorage.getItem(KEYS.SAVE_CCACHE);
@@ -228,7 +228,7 @@ function freshNonce() {
 function buildAsReq(padata) {
   log.debug("Entering buildAsReq().");
   var realm = val("krb_realm").trim();
-  var principal = msgs.parsePrincipal(val("krb_principal").trim(), 
+  var principal = msgs.parsePrincipal(val("krb_principal").trim(),
       msgs.NAME_TYPE.PRINCIPAL);
   var lifetime = parseInt(val("krb_lifetime"), 10) || 10;
   log.debug("Leaving buildAsReq().");
@@ -256,7 +256,7 @@ function buildAsReq(padata) {
       realm: realm,
       sname: { type: msgs.NAME_TYPE.SRV_INST, name: ["krbtgt", realm] },
       till: new Date(Date.now() + lifetime * 3600 * 1000),
-      rtime: checked("krb_opt_renewable") ? new Date(Date.now() + 
+      rtime: checked("krb_opt_renewable") ? new Date(Date.now() +
           7 * 24 * 3600 * 1000) : null,
       nonce: freshNonce(),
       etypes: requestedEtypes()
@@ -274,13 +274,13 @@ var discovered = null;
 // ---------------------------------------------------------------------------
 async function onRequestWithoutPreAuth() {
   log.debug("Entering onRequestWithoutPreAuth().");
-  status("krb_as_status", "Sending an AS-REQ with no pre-authentication…", 
+  status("krb_as_status", "Sending an AS-REQ with no pre-authentication…",
       "krb-pending");
   var request;
   try {
     request = buildAsReq([]);
   } catch (e) {
-    status("krb_as_status", "The request could not be built: " + e.message, 
+    status("krb_as_status", "The request could not be built: " + e.message,
         "krb-bad");
     return false;
   }
@@ -361,10 +361,10 @@ async function onRequestWithoutPreAuth() {
     return false;
   }
 
-  status("krb_as_status", "The KDC refused: " + response.error.error.name + 
+  status("krb_as_status", "The KDC refused: " + response.error.error.name +
       " — " +
     response.error.error.meaning, "krb-bad");
-  log.debug("Leaving onRequestWithoutPreAuth(). refused with " + 
+  log.debug("Leaving onRequestWithoutPreAuth(). refused with " +
       response.error.error.name);
   return false;
 }
@@ -398,7 +398,7 @@ function renderDiscovered(info) {
     }
     renderRow(table, {
       name: "etype " + entry.etype + " " + entry.etypeName,
-      value: "salt: " + (entry.salt === null ? "(none — arcfour is unsalted)" : 
+      value: "salt: " + (entry.salt === null ? "(none — arcfour is unsalted)" :
           entry.salt) +
              (iterations !== null ? "\niterations: " + iterations : ""),
       note: entry.salt === null
@@ -445,7 +445,7 @@ async function onRequestWithPreAuth() {
     return false;
   }
   var salt = val("krb_salt");
-  var entry = (discovered || 
+  var entry = (discovered ||
       []).filter(function (e) { return e.etype === etype; })[0] || null;
 
   status("krb_as_status", "Deriving the key and sending an AS-REQ with " +
@@ -454,10 +454,10 @@ async function onRequestWithPreAuth() {
   var key;
   try {
     profile = kcrypto.etypeById(etype);
-    key = await profile.stringToKey(password, prim.utf8(salt), entry && 
+    key = await profile.stringToKey(password, prim.utf8(salt), entry &&
         entry.s2kparams);
   } catch (e) {
-    status("krb_as_status", "The key could not be derived: " + e.message, 
+    status("krb_as_status", "The key could not be derived: " + e.message,
         "krb-bad");
     return false;
   }
@@ -471,12 +471,12 @@ async function onRequestWithPreAuth() {
         etype: etype,
         // Key usage 1, and only 1. Any other number produces a well-formed
         // message the KDC reports as a wrong password.
-        cipher: await profile.encrypt(key, 
+        cipher: await profile.encrypt(key,
             kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, stamp)
       })
     }]);
   } catch (e) {
-    status("krb_as_status", "The request could not be built: " + e.message, 
+    status("krb_as_status", "The request could not be built: " + e.message,
         "krb-bad");
     return false;
   }
@@ -517,7 +517,7 @@ async function completeWithReply(replyBytes, clientKey) {
   try {
     response = msgs.readKdcResponse(replyBytes);
   } catch (e) {
-    status("krb_as_status", "The reply could not be read: " + e.message, 
+    status("krb_as_status", "The reply could not be read: " + e.message,
         "krb-bad");
     return;
   }
@@ -543,7 +543,7 @@ async function completeWithReply(replyBytes, clientKey) {
   var part;
   try {
     part = msgs.readEncKdcRepPart(
-      await clientKey.profile.decrypt(clientKey.key, 
+      await clientKey.profile.decrypt(clientKey.key,
           kcrypto.KEY_USAGE.AS_REP_ENCPART,
         rep.encPart.cipher));
   } catch (err) {
@@ -560,7 +560,7 @@ async function completeWithReply(replyBytes, clientKey) {
   // and a page that did not check it would be a page that cannot detect one.
   if (part.nonce !== lastNonce) {
     status("krb_as_status",
-      "THE NONCE DOES NOT MATCH. This reply carries " + part.nonce + 
+      "THE NONCE DOES NOT MATCH. This reply carries " + part.nonce +
           " and the request sent " +
       lastNonce + ", so this is not an answer to the request just made — it " +
           "may be a replay. The " +
@@ -585,12 +585,12 @@ async function completeWithReply(replyBytes, clientKey) {
   saveCache(entry);
   renderCache(entry);
   status("krb_as_status",
-    "A TGT for " + entry.client + " was issued and stored, valid until " + 
+    "A TGT for " + entry.client + " was issued and stored, valid until " +
         entry.endtime + ". " +
     (checked("krb_save_ccache")
       ? "It is in localStorage because you asked for that; the session key " +
           "inside it is a credential."
-      : "It is in sessionStorage only, so it goes when this tab closes."), 
+      : "It is in sessionStorage only, so it goes when this tab closes."),
           "krb-ok");
   log.debug("Leaving completeWithReply(). ticket stored.");
 }
@@ -710,16 +710,11 @@ function reportEnvironment() {
 
   // What the relay will and will not do, fetched so the page can say so before
   // a call fails rather than reporting its own limits as the KDC's fault.
-  fetch(appconfig.apiUrl + 
-      
-          
-              
-                  
-                      
-                          "/krb5/limits").then(function (r) { return r.json(); }).then(function (limits) {
-    var text = "The api will relay to ports " + (limits.allowedPorts || 
+  fetch(appconfig.apiUrl +
+      "/krb5/limits").then(function (r) { return r.json(); }).then(function (limits) {
+    var text = "The api will relay to ports " + (limits.allowedPorts ||
         []).join(", ") +
-      "; its address policy is " + (limits.addressPolicyEnabled ? "ON" : 
+      "; its address policy is " + (limits.addressPolicyEnabled ? "ON" :
           "off") +
       (limits.addressPolicyEnabled
         ? " (so a KDC on a private or loopback address will be refused — the " +
@@ -729,7 +724,7 @@ function reportEnvironment() {
     note.appendChild(make("p", "krb-note", text));
   }).catch(function (e) {
     note.appendChild(make("p", "krb-note krb-bad",
-      "The api at " + appconfig.apiUrl + " did not answer GET /krb5/limits (" + 
+      "The api at " + appconfig.apiUrl + " did not answer GET /krb5/limits (" +
           e.message +
       "), so it may not be running or may be an older build without the " +
           "Kerberos relay."));
@@ -743,10 +738,10 @@ window.onload = function () {
   reportEnvironment();
   renderCache(null);
   var without = el("krb_noreauth_button");
-  if (without) without.addEventListener("click", 
+  if (without) without.addEventListener("click",
       function () { onRequestWithoutPreAuth(); });
   var withPre = el("krb_preauth_button");
-  if (withPre) withPre.addEventListener("click", 
+  if (withPre) withPre.addEventListener("click",
       function () { onRequestWithPreAuth(); });
   var forget = el("krb_forget_button");
   if (forget) forget.addEventListener("click", onForget);

@@ -86,7 +86,7 @@ function createReader(bytes) {
 
   function need(n, what) {
     if (at + n > b.length) {
-      throw new Error("krb5: NDR ran off the end reading " + (what || (n + 
+      throw new Error("krb5: NDR ran off the end reading " + (what || (n +
           " bytes")) + " at offset " +
         at + " (" + (b.length - at) + " byte(s) remain of " + b.length + ")");
     }
@@ -100,7 +100,7 @@ function createReader(bytes) {
 
   function u32() {
     align(4); need(4, "a 32-bit value");
-    var v = ((b[at]) | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 
+    var v = ((b[at]) | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at +
         3] << 24)) >>> 0;
     at += 4;
     return v;
@@ -112,7 +112,7 @@ function createReader(bytes) {
     get remaining() { return b.length - at; },
     seek: function (n) {
       if (n < 0 || n > b.length) {
-        throw new Error("krb5: cannot seek to " + n + " in a " + b.length + 
+        throw new Error("krb5: cannot seek to " + n + " in a " + b.length +
             "-byte NDR stream");
       }
       at = n;
@@ -130,9 +130,9 @@ function createReader(bytes) {
     // KERB_VALIDATION_INFO does not — see rule 3.
     u64: function () {
       align(8); need(8, "a 64-bit value");
-      var lo = ((b[at]) | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at + 
+      var lo = ((b[at]) | (b[at + 1] << 8) | (b[at + 2] << 16) | (b[at +
           3] << 24)) >>> 0;
-      var hi = ((b[at + 4]) | (b[at + 5] << 8) | (b[at + 6] << 16) | (b[at + 
+      var hi = ((b[at + 4]) | (b[at + 5] << 8) | (b[at + 6] << 16) | (b[at +
           7] << 24)) >>> 0;
       at += 8;
       return { low: lo, high: hi, value: hi * 0x100000000 + lo };
@@ -147,14 +147,17 @@ function createReader(bytes) {
     // means NULL. It is NOT an offset, and that distinction is rule 4.
     pointer: function () { return u32() !== 0; },
     arrayCount: function (what) {
+      log.debug("Entering arrayCount().");
       var n = u32();
       if (n > MAX_ARRAY_ELEMENTS) {
-        throw new Error("krb5: an NDR array of " + n + " " + (what || 
+        log.debug("Leaving arrayCount().");
+        throw new Error("krb5: an NDR array of " + n + " " + (what ||
             "element(s)") +
           " is not credible (limit " + MAX_ARRAY_ELEMENTS + "). Check the " +
               "byte order — NDR is " +
           "LITTLE-endian, unlike the rest of Kerberos.");
       }
+      log.debug("Leaving arrayCount().");
       return n;
     }
   };
@@ -192,7 +195,7 @@ function readFileTime(r) {
       date: null
     };
   }
-  var date = new Date((hi * 0x100000000 + 
+  var date = new Date((hi * 0x100000000 +
       lo) / 10000 - FILETIME_EPOCH_DIFFERENCE_MS);
   log.debug("Leaving readFileTime().");
   return {
@@ -213,7 +216,7 @@ function fileTimeFromDate(date) {
     log.debug("Leaving fileTimeFromDate().");
     return { low: 0xffffffff, high: 0x7fffffff };
   }
-  var t = (date instanceof Date ? date.getTime() : Number(date)) + 
+  var t = (date instanceof Date ? date.getTime() : Number(date)) +
       FILETIME_EPOCH_DIFFERENCE_MS;
   var ticks = Math.round(t) * 10000;
   log.debug("Leaving fileTimeFromDate().");
@@ -259,7 +262,7 @@ function readUnicodeStringValue(r, header) {
   }
   if (actualCount > maxCount) {
     log.debug("Leaving readUnicodeStringValue().");
-    throw new Error("krb5: an RPC_UNICODE_STRING claims " + actualCount + 
+    throw new Error("krb5: an RPC_UNICODE_STRING claims " + actualCount +
         " characters in an array " +
       "of at most " + maxCount);
   }
@@ -299,7 +302,7 @@ function readSid(r) {
     revision: revision,
     authority: authority,
     subAuthorities: subAuthorities,
-    text: "S-" + revision + "-" + authority + (subAuthorities.length ? "-" + 
+    text: "S-" + revision + "-" + authority + (subAuthorities.length ? "-" +
         subAuthorities.join("-") : "")
   };
 }
@@ -311,7 +314,7 @@ function readConformantSid(r) {
   var declaredCount = r.arrayCount("SID sub-authorit(ies)");
   var sid = readSid(r);
   if (declaredCount !== sid.subAuthorities.length) {
-    throw new Error("krb5: a SID's conformant count (" + declaredCount + 
+    throw new Error("krb5: a SID's conformant count (" + declaredCount +
         ") does not match its own " +
       "sub-authority count (" + sid.subAuthorities.length + ")");
   }
@@ -381,7 +384,7 @@ function createWriter() {
     },
     u32: function (v) {
       w.align(4);
-      push(new Uint8Array([v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, 
+      push(new Uint8Array([v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff,
           (v >>> 24) & 0xff]));
       return w;
     },
@@ -505,12 +508,12 @@ function readTypeMarshallingHeaders(r) {
   r.u32();                                        // private-header filler
   if (version !== 1) {
     log.debug("Leaving readTypeMarshallingHeaders().");
-    throw new Error("krb5: NDR type-marshalling version " + version + 
+    throw new Error("krb5: NDR type-marshalling version " + version +
         ", expected 1");
   }
   if (endianness !== 0x10) {
     log.debug("Leaving readTypeMarshallingHeaders().");
-    throw new Error("krb5: this NDR stream declares byte order 0x" + 
+    throw new Error("krb5: this NDR stream declares byte order 0x" +
         endianness.toString(16) +
       "; only 0x10 (little-endian, ASCII) is handled. 0x00 would be " +
           "big-endian NDR, which " +
@@ -518,7 +521,7 @@ function readTypeMarshallingHeaders(r) {
   }
   if (commonHeaderLength !== 8) {
     log.debug("Leaving readTypeMarshallingHeaders().");
-    throw new Error("krb5: NDR common header length " + commonHeaderLength + 
+    throw new Error("krb5: NDR common header length " + commonHeaderLength +
         ", expected 8");
   }
   log.debug("Leaving readTypeMarshallingHeaders().");

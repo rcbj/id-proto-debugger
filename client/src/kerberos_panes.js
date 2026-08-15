@@ -77,7 +77,7 @@ var KEYS = {
 
 function el(id) { return document.getElementById(id); }
 function val(id) { var e = el(id); return e ? e.value : ""; }
-function setVal(id, v) { var e = el(id); if (e) e.value = v === null || 
+function setVal(id, v) { var e = el(id); if (e) e.value = v === null ||
     v === undefined ? "" : v; }
 function checked(id) { var e = el(id); return e ? !!e.checked : false; }
 function disable(id, off) { var e = el(id); if (e) e.disabled = !!off; }
@@ -89,7 +89,7 @@ function make(tag, className, text) {
   return node;
 }
 
-function clear(node) { while (node && 
+function clear(node) { while (node &&
     node.firstChild) node.removeChild(node.firstChild); }
 
 function status(id, text, cls) {
@@ -124,10 +124,10 @@ function renderTable(host, rows) {
 function renderSection(host, section, depth) {
   var pane = make("div", "krb-section krb-depth-" + Math.min(depth || 0, 3));
   pane.appendChild(make("h4", "krb-section-title", section.title));
-  if (section.note) pane.appendChild(make("p", "krb-section-note", 
+  if (section.note) pane.appendChild(make("p", "krb-section-note",
       section.note));
   if (section.rows && section.rows.length) renderTable(pane, section.rows);
-  (section.sections || []).forEach(function (child) { renderSection(pane, 
+  (section.sections || []).forEach(function (child) { renderSection(pane,
       child, (depth || 0) + 1); });
   host.appendChild(pane);
 }
@@ -139,7 +139,7 @@ function renderTree(host, nodes, depth) {
     var li = make("li");
     li.appendChild(make("span", "krb-tree-tag", n.tagName));
     li.appendChild(make("span", "krb-tree-meta",
-      " offset " + n.offset + ", " + n.length + " byte" + (n.length === 1 ? 
+      " offset " + n.offset + ", " + n.length + " byte" + (n.length === 1 ?
           "" : "s")));
     if (n.text !== undefined && n.text !== null) {
       li.appendChild(make("div", "krb-mono krb-tree-text", n.text));
@@ -241,7 +241,7 @@ async function post(path, body) {
     // the far end did not deliver. The distinction is worth keeping in the
     // message, because one is a mistake to correct and the other is a fact
     // about the network.
-    var kind = response.status === 400 ? "The api refused to send this" : 
+    var kind = response.status === 400 ? "The api refused to send this" :
         "The far end could not be reached";
     log.debug("Leaving post().");
     throw new Error(kind + ": " + (parsed.error || response.statusText) +
@@ -317,27 +317,33 @@ function cacheStore() {
 }
 
 function writeEntry(key, value) {
+  log.debug("Entering writeEntry().");
   try {
     cacheStore().setItem(key, JSON.stringify(value));
     // Whichever store is not in use must not keep a stale copy.
-    var other = savingToLocalStorage() ? window.sessionStorage : 
+    var other = savingToLocalStorage() ? window.sessionStorage :
         window.localStorage;
     other.removeItem(key);
   } catch (e) {
     log.error("could not store " + key + ": " + e.message);
   }
+  log.debug("Leaving writeEntry().");
 }
 
 function readEntry(key) {
+  log.debug("Entering readEntry().");
   try {
-    var raw = window.sessionStorage.getItem(key) || 
+    var raw = window.sessionStorage.getItem(key) ||
         window.localStorage.getItem(key);
+    log.debug("Leaving readEntry().");
     return raw ? JSON.parse(raw) : null;
   } catch (e) {
     // Unreadable is the same as absent and must not stop a page loading.
     log.warn("could not read " + key + ": " + e.message);
+    log.debug("Leaving readEntry().");
     return null;
   }
+  log.debug("Leaving readEntry().");
 }
 
 function removeEntry(key) {
@@ -480,7 +486,7 @@ async function reportEnvironment(hostId, options) {
       "TCP socket, which a browser cannot open. The Kerberos Decoder page " +
           "does work here — it " +
       "parses bytes you already have."));
-    (opts.disableOnNoBackend || []).forEach(function (id) { disable(id, 
+    (opts.disableOnNoBackend || []).forEach(function (id) { disable(id,
         true); });
     log.debug("Leaving reportEnvironment().");
     return { ok: false, reason: "no api" };
@@ -493,18 +499,18 @@ async function reportEnvironment(hostId, options) {
   }
   try {
     var limits = await relayLimits();
-    var text = "The api relays to KDC ports " + (limits.allowedPorts || 
+    var text = "The api relays to KDC ports " + (limits.allowedPorts ||
         []).join(", ") + "; ";
     if (opts.needsService) {
       text += limits.serviceEnabled
         ? "presenting a ticket to a service is enabled for " +
-          (limits.servicePorts === "any" ? "any port" : "port(s) " + 
+          (limits.servicePorts === "any" ? "any port" : "port(s) " +
               limits.servicePorts.join(", ")) + "; "
         : "presenting a ticket to a service is NOT enabled on this " +
             "deployment — set " +
           "krb5ServicePorts in the api configuration. ";
     }
-    text += "its address policy is " + (limits.addressPolicyEnabled ? "ON" : 
+    text += "its address policy is " + (limits.addressPolicyEnabled ? "ON" :
         "off") +
       (limits.addressPolicyEnabled
         ? " (so a KDC or service on a private or loopback address will be " +
@@ -513,7 +519,7 @@ async function reportEnvironment(hostId, options) {
         : "") + ".";
     note.appendChild(make("p", "krb-note", text));
     if (opts.needsService && !limits.serviceEnabled) {
-      (opts.disableOnNoService || []).forEach(function (id) { disable(id, 
+      (opts.disableOnNoService || []).forEach(function (id) { disable(id,
           true); });
       log.debug("Leaving reportEnvironment().");
       return { ok: false, reason: "service relay disabled", limits: limits };
@@ -522,7 +528,7 @@ async function reportEnvironment(hostId, options) {
     return { ok: true, limits: limits };
   } catch (e) {
     note.appendChild(make("p", "krb-note krb-bad",
-      "The api at " + appconfig.apiUrl + " did not answer GET /krb5/limits (" + 
+      "The api at " + appconfig.apiUrl + " did not answer GET /krb5/limits (" +
           e.message +
       "), so it may not be running, or may be an older build without the " +
           "Kerberos relay."));
@@ -536,12 +542,12 @@ async function reportEnvironment(hostId, options) {
 // TGS page does not ask again for what the AS page was already told.
 function loadKdcFields() {
   log.debug("Entering loadKdcFields().");
-  [KEYS.REALM, KEYS.KDC_HOST, KEYS.KDC_PORT, KEYS.TRANSPORT, KEYS.PRINCIPAL, 
+  [KEYS.REALM, KEYS.KDC_HOST, KEYS.KDC_PORT, KEYS.TRANSPORT, KEYS.PRINCIPAL,
       KEYS.ETYPES]
     .forEach(function (key) {
       try {
         var stored = window.localStorage.getItem(key);
-        if (stored !== null && stored !== undefined && 
+        if (stored !== null && stored !== undefined &&
             stored !== "") setVal(key, stored);
       } catch (e) {
         // No storage: the defaults in the markup stand.
@@ -553,7 +559,7 @@ function loadKdcFields() {
 function saveKdcFields() {
   log.debug("Entering saveKdcFields().");
   try {
-    [KEYS.REALM, KEYS.KDC_HOST, KEYS.KDC_PORT, KEYS.TRANSPORT, KEYS.PRINCIPAL, 
+    [KEYS.REALM, KEYS.KDC_HOST, KEYS.KDC_PORT, KEYS.TRANSPORT, KEYS.PRINCIPAL,
         KEYS.ETYPES]
       .forEach(function (key) {
         var e = el(key);

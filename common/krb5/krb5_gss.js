@@ -57,7 +57,7 @@ var concat = prim.concat;
 // 1.2.840.113554.1.2.2 — the Kerberos v5 mechanism. Written as the DER-encoded
 // OBJECT IDENTIFIER it appears as on the wire, because that is the form every
 // comparison against it uses.
-var KRB5_MECH_OID_DER = new Uint8Array([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 
+var KRB5_MECH_OID_DER = new Uint8Array([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
     0xf7, 0x12, 0x01, 0x02, 0x02]);
 var KRB5_MECH_OID = "1.2.840.113554.1.2.2";
 
@@ -85,11 +85,11 @@ var CHECKSUM_TYPE_GSS = 0x8003;
 
 function le16(n) { return new Uint8Array([n & 0xff, (n >>> 8) & 0xff]); }
 function le32(n) {
-  return new Uint8Array([n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, 
+  return new Uint8Array([n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff,
       (n >>> 24) & 0xff]);
 }
 function readLe32(bytes, at) {
-  return ((bytes[at]) | (bytes[at + 1] << 8) | (bytes[at + 
+  return ((bytes[at]) | (bytes[at + 1] << 8) | (bytes[at +
       2] << 16) | (bytes[at + 3] << 24)) >>> 0;
 }
 function be64(n) {
@@ -106,9 +106,9 @@ function be64(n) {
   ]);
 }
 function readBe64(bytes, at) {
-  var hi = ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at + 
+  var hi = ((bytes[at] << 24) | (bytes[at + 1] << 16) | (bytes[at +
       2] << 8) | bytes[at + 3]) >>> 0;
-  var lo = ((bytes[at + 4] << 24) | (bytes[at + 5] << 16) | (bytes[at + 
+  var lo = ((bytes[at + 4] << 24) | (bytes[at + 5] << 16) | (bytes[at +
       6] << 8) | bytes[at + 7]) >>> 0;
   return hi * 0x100000000 + lo;
 }
@@ -130,7 +130,7 @@ function buildGssChecksum(options) {
   (opts.flags || []).forEach(function (f) { flags |= f; });
   // Sixteen bytes, and zeros when there are no bindings. Not absent: a token
   // without Bnd is malformed, and a hash of nothing is a different token.
-  var bindings = opts.channelBindings ? toBytes(opts.channelBindings) : 
+  var bindings = opts.channelBindings ? toBytes(opts.channelBindings) :
       new Uint8Array(16);
   if (bindings.length !== 16) {
     log.debug("Leaving buildGssChecksum().");
@@ -167,7 +167,7 @@ function parseGssChecksum(bytes) {
     // The commonest symptom of a big-endian encoder: 16 written the other way
     // is 0x10000000, i.e. 268435456.
     log.debug("Leaving parseGssChecksum().");
-    throw new Error("krb5: the 0x8003 checksum declares a bindings length of " + 
+    throw new Error("krb5: the 0x8003 checksum declares a bindings length of " +
         declared +
       " rather than 16" + (declared === 0x10000000
         ? " — 16 written BIG-endian. Every integer in this structure is " +
@@ -179,7 +179,7 @@ function parseGssChecksum(bytes) {
   var out = {
     bindingsLength: declared,
     channelBindings: b.subarray(4, 20),
-    hasChannelBindings: !b.subarray(4, 
+    hasChannelBindings: !b.subarray(4,
         20).every(function (v) { return v === 0; }),
     flags: flags,
     flagNames: Object.keys(GSS_FLAG).filter(function (name) { return flags & GSS_FLAG[name]; }),
@@ -217,7 +217,7 @@ function encodeInitialContextToken(tokId, innerBytes) {
 }
 
 function decodeInitialContextToken(bytes) {
-  log.debug("Entering decodeInitialContextToken(). bytes=" + 
+  log.debug("Entering decodeInitialContextToken(). bytes=" +
       toBytes(bytes).length);
   var b = toBytes(bytes);
   if (!b.length || b[0] !== 0x60) {
@@ -241,7 +241,7 @@ function decodeInitialContextToken(bytes) {
     // Naming what was found is the useful part: the SPNEGO OID here means the
     // caller negotiated rather than using Kerberos directly, which is a
     // different (and not yet implemented) mechanism.
-    var spnego = new Uint8Array([0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05, 
+    var spnego = new Uint8Array([0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05,
         0x02]);
     var isSpnego = value.length >= spnego.length &&
       prim.equalConstantTime(value.subarray(0, spnego.length), spnego);
@@ -249,7 +249,7 @@ function decodeInitialContextToken(bytes) {
       (isSpnego ? "the SPNEGO mechanism (1.3.6.1.5.5.2), which this build " +
           "does not implement — " +
                   "it speaks the Kerberos mechanism directly"
-                : "a mechanism this build does not know (" + prim.toHex(oid) + 
+                : "a mechanism this build does not know (" + prim.toHex(oid) +
                     ")") + ".");
   }
   var rest = value.subarray(KRB5_MECH_OID_DER.length);
@@ -260,7 +260,7 @@ function decodeInitialContextToken(bytes) {
   var name = Object.keys(TOK_ID).filter(function (k) {
     return TOK_ID[k][0] === id[0] && TOK_ID[k][1] === id[1];
   })[0] || null;
-  log.debug("Leaving decodeInitialContextToken(). tokId=" + (name || 
+  log.debug("Leaving decodeInitialContextToken(). tokId=" + (name ||
       prim.toHex(new Uint8Array(id))));
   return {
     tokId: id,
@@ -287,12 +287,12 @@ function usageFor(role, purpose) {
   }
   if (purpose === "sign") {
     log.debug("Leaving usageFor().");
-    return role === "initiator" ? kcrypto.KEY_USAGE.GSS_INITIATOR_SIGN : 
+    return role === "initiator" ? kcrypto.KEY_USAGE.GSS_INITIATOR_SIGN :
         kcrypto.KEY_USAGE.GSS_ACCEPTOR_SIGN;
   }
   if (purpose === "seal") {
     log.debug("Leaving usageFor().");
-    return role === "initiator" ? kcrypto.KEY_USAGE.GSS_INITIATOR_SEAL : 
+    return role === "initiator" ? kcrypto.KEY_USAGE.GSS_INITIATOR_SEAL :
         kcrypto.KEY_USAGE.GSS_ACCEPTOR_SEAL;
   }
   log.debug("Leaving usageFor().");
@@ -303,7 +303,7 @@ function usageFor(role, purpose) {
 // the acceptor, bit 1 that the message is sealed, bit 2 that an acceptor subkey
 // was used.
 function messageFlags(role, sealed, acceptorSubkey) {
-  return (role === "acceptor" ? 0x01 : 0x00) | (sealed ? 0x02 : 
+  return (role === "acceptor" ? 0x01 : 0x00) | (sealed ? 0x02 :
       0x00) | (acceptorSubkey ? 0x04 : 0x00);
 }
 
@@ -315,7 +315,7 @@ async function getMic(options) {
   var header = concat([
     new Uint8Array(TOK_ID.MIC),
     new Uint8Array([messageFlags(opts.role, false, opts.acceptorSubkey)]),
-    new Uint8Array([0xff, 0xff, 0xff, 0xff, 
+    new Uint8Array([0xff, 0xff, 0xff, 0xff,
         0xff]),      // five octets of filler
     be64(opts.sequenceNumber || 0)
   ]);
@@ -332,7 +332,7 @@ async function verifyMic(options) {
   var opts = options || {};
   var token = toBytes(opts.token);
   if (token.length < 16) {
-    throw new Error("krb5: a MIC token is at least 16 bytes, got " + 
+    throw new Error("krb5: a MIC token is at least 16 bytes, got " +
         token.length);
   }
   if (token[0] !== TOK_ID.MIC[0] || token[1] !== TOK_ID.MIC[1]) {
@@ -380,7 +380,7 @@ async function wrap(options) {
     be64(opts.sequenceNumber || 0)
   ]);
   var plaintext = concat([toBytes(opts.message), new Uint8Array(ec), header]);
-  var ciphertext = await profile.encrypt(opts.key, usageFor(opts.role, "seal"), 
+  var ciphertext = await profile.encrypt(opts.key, usageFor(opts.role, "seal"),
       plaintext);
   var rotated = rotateRight(ciphertext, rrc);
   log.debug("Leaving wrap(). bytes=" + (header.length + rotated.length));
@@ -392,7 +392,7 @@ async function unwrap(options) {
   var opts = options || {};
   var token = toBytes(opts.token);
   if (token.length < 16) {
-    throw new Error("krb5: a Wrap token is at least 16 bytes, got " + 
+    throw new Error("krb5: a Wrap token is at least 16 bytes, got " +
         token.length);
   }
   if (token[0] !== TOK_ID.WRAP[0] || token[1] !== TOK_ID.WRAP[1]) {
@@ -411,7 +411,7 @@ async function unwrap(options) {
   var senderRole = (flags & 0x01) ? "acceptor" : "initiator";
   var profile = kcrypto.etypeById(opts.etype);
   var unrotated = rotateLeft(token.subarray(16), rrc);
-  var plaintext = await profile.decrypt(opts.key, usageFor(senderRole, "seal"), 
+  var plaintext = await profile.decrypt(opts.key, usageFor(senderRole, "seal"),
       unrotated);
   if (plaintext.length < 16 + ec) {
     throw new Error("krb5: the unwrapped plaintext is too short to contain " +
@@ -422,7 +422,7 @@ async function unwrap(options) {
   var trailing = plaintext.subarray(plaintext.length - 16);
   // RRC and EC in the trailing copy are zero on the wire per RFC 4121; compare
   // the fields that must match rather than the whole sixteen bytes.
-  var mismatch = trailing[0] !== header[0] || trailing[1] !== header[1] || 
+  var mismatch = trailing[0] !== header[0] || trailing[1] !== header[1] ||
       trailing[2] !== header[2];
   if (mismatch) {
     throw new Error("krb5: the Wrap token's clear header does not match the " +

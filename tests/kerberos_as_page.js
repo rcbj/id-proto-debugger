@@ -38,7 +38,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "kerberos_as_page",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = "http://localhost:3000";
@@ -67,7 +67,7 @@ async function waitForText(driver, id, pattern, timeoutMs, what) {
     }, timeoutMs || 40000);
   } catch (e) {
     log.debug("Leaving waitForText().");
-    throw new Error(what + " (last text in #" + id + ": " + 
+    throw new Error(what + " (last text in #" + id + ": " +
         JSON.stringify(last.slice(0, 300)) + ")");
   }
   log.debug("Leaving waitForText().");
@@ -103,7 +103,7 @@ async function kdcIsReachable() {
         why: "the mock KDC serves realm " + body.realm + ", not " + realm
       };
     }
-    const names = (body.principals || 
+    const names = (body.principals ||
         []).map(function (p) { return p.principal.split("@")[0]; });
     if (names.indexOf(principal) === -1) {
       log.debug("Leaving kdcIsReachable().");
@@ -141,7 +141,7 @@ async function thePageIsWiredAndSaysWhatItNeeds(driver) {
   // The relay's limits, fetched from the api. If this is absent the page cannot
   // have reached the api at all, which on a browser is usually CORS — and CORS
   // fails as a fetch that never resolves rather than as anything naming CORS.
-  const environment = await waitForText(driver, "krb_environment_note", 
+  const environment = await waitForText(driver, "krb_environment_note",
       /relay to ports|did not answer/,
     20000, "the page never reported what the api's relay allows");
   assert.ok(/relay to ports/.test(environment),
@@ -149,7 +149,7 @@ async function thePageIsWiredAndSaysWhatItNeeds(driver) {
     "\nOn a browser this is usually the api's CORS allowlist (uiUrl) not " +
         "matching the origin the " +
     "page is served from — a failure no node test can see.");
-  log.info("the api's relay limits, as the page sees them: " + 
+  log.info("the api's relay limits, as the page sees them: " +
       environment.replace(/\s+/g, " ").slice(0, 160));
   log.debug("Leaving thePageIsWiredAndSaysWhatItNeeds().");
 }
@@ -260,7 +260,7 @@ async function stepTwoGetsATicketAndTreatsItAsACredential(driver) {
   // opt-out.
   await driver.findElement(By.id("krb_save_ccache")).click();
   await driver.findElement(By.id("krb_preauth_button")).click();
-  await waitForText(driver, "krb_as_status", /A TGT for/, 60000, 
+  await waitForText(driver, "krb_as_status", /A TGT for/, 60000,
       "the second exchange produced no ticket");
   assert.strictEqual(await driver.executeScript("return " +
       "!!localStorage.getItem('krb_ccache');"), true,
@@ -343,7 +343,7 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
       assert.ok(pair[1] !== null, pair[0] + "'s button is missing from the " +
           "page");
       assert.ok(pair[1] <= BUDGET,
-        pair[0] + "'s button ends at " + pair[1] + "px, past the " + BUDGET + 
+        pair[0] + "'s button ends at " + pair[1] + "px, past the " + BUDGET +
             "px a real browser " +
         "leaves at 1366x768 — the page cannot be used without scrolling to " +
             "find the control. " +
@@ -351,7 +351,7 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
             "configuration and both buttons " +
         "fit, and that arrangement is the thing to preserve.");
       assert.ok(pair[1] <= m.viewport,
-        pair[0] + "'s button ends at " + pair[1] + "px in a " + m.viewport + 
+        pair[0] + "'s button ends at " + pair[1] + "px in a " + m.viewport +
             "px viewport");
     });
     assert.ok(!m.hScroll, "the page must not scroll horizontally at 1366x768");
@@ -385,9 +385,9 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
           "it), which is correct " +
         "for a static deployment");
     }
-    log.info("[fit] step 1 ends at " + m.step1 + "px and step 2 at " + 
+    log.info("[fit] step 1 ends at " + m.step1 + "px and step 2 at " +
         m.step2 + "px, inside the " +
-      BUDGET + "px budget and the " + m.viewport + "px viewport; defaults: " + 
+      BUDGET + "px budget and the " + m.viewport + "px viewport; defaults: " +
           m.principal + "@" +
       m.realm + " via " + m.host + ":" + m.port);
   } finally {
@@ -398,7 +398,7 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
 
 async function test() {
   log.debug("Entering test().");
-  log.info("Starting Test run. The Kerberos AS exchange page at " + baseUrl + 
+  log.info("Starting Test run. The Kerberos AS exchange page at " + baseUrl +
       ".");
   const reachable = await kdcIsReachable();
   if (!reachable.ok) {
@@ -413,7 +413,7 @@ async function test() {
     return;
   }
   if (reachable.kdcPort && reachable.kdcPort !== String(kdcPort)) {
-    log.warn("the mock STS reports its KDC on port " + reachable.kdcPort + 
+    log.warn("the mock STS reports its KDC on port " + reachable.kdcPort +
         " but this test was told " +
       kdcPort + "; using the reported one.");
     kdcPort = reachable.kdcPort;
@@ -423,9 +423,9 @@ async function test() {
   // --headless=new, never bare --headless: in the image's Chrome 121 the old
   // mode ignores --unsafely-treat-insecure-origin-as-secure, so crypto.subtle
   // stays undefined and the key derivation on this page silently has no crypto.
-  options.addArguments("--headless=new", "--no-sandbox", 
+  options.addArguments("--headless=new", "--no-sandbox",
       "--disable-dev-shm-usage",
-                       "--window-size=1400,1200");
+          "--window-size=1400,1200");
   // This page derives keys with Web Crypto and its fetch reaches the api on a
   // private address; both need these. See tests/browser_flags.js.
   browserFlags.addBrowserAccessFlags(options, baseUrl);
@@ -433,7 +433,7 @@ async function test() {
 
   try {
     await driver.get(baseUrl + "/kerberos.html");
-    await driver.wait(until.elementLocated(By.id("krb_noreauth_button")), 
+    await driver.wait(until.elementLocated(By.id("krb_noreauth_button")),
         20000);
     await theConfigurationAndBothControlsFitOnOneScreen(driver);
     await thePageIsWiredAndSaysWhatItNeeds(driver);
@@ -453,7 +453,7 @@ program
   .name("kerberos_as_page")
   .description("Verify the Kerberos AS exchange page: wiring, CORS, the " +
       "two-step flow, credential handling.")
-  .addOption(new Option("-u, --url <url>", 
+  .addOption(new Option("-u, --url <url>",
       "base url of the site under test").default(baseUrl))
   .parse(process.argv);
 baseUrl = program.opts().url || baseUrl;

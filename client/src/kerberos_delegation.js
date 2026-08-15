@@ -93,7 +93,7 @@ function revive(entry) {
       etype: entry.etype,
       client: entry.client,
       realm: entry.realm,
-      service: entry.service ? msgs.parsePrincipal(entry.service, 
+      service: entry.service ? msgs.parsePrincipal(entry.service,
           msgs.NAME_TYPE.SRV_HST) : null,
       serviceRealm: entry.serviceRealm || entry.realm,
       flags: entry.flags || [],
@@ -183,9 +183,9 @@ function renderHeld() {
     } else {
       panes.renderTicketPane("krb_evidence_pane", panes.readEvidence(),
         "The evidence ticket (from S4U2Self)");
-      var evForwardable = (evidence.flagNames || 
+      var evForwardable = (evidence.flagNames ||
           []).indexOf("forwardable") !== -1;
-      evidenceHost.appendChild(panes.make("p", evForwardable ? "krb-note" : 
+      evidenceHost.appendChild(panes.make("p", evForwardable ? "krb-note" :
           "krb-warn",
         evForwardable
           ? "Forwardable, so it can be used as evidence for either kind of " +
@@ -225,12 +225,12 @@ function tgtKeys() {
 // between them would be a bug visible only by comparing the panes.
 async function exchange(opts) {
   log.debug("Entering exchange().");
-  await panes.renderMessage(opts.requestPane, "Sent", opts.built.request, 
+  await panes.renderMessage(opts.requestPane, "Sent", opts.built.request,
       tgtKeys());
   status(opts.statusId, "Sent. Waiting for the KDC…", "krb-pending");
   var result;
   try {
-    result = await panes.sendToKdc(Object.assign({ message: opts.built.request }, 
+    result = await panes.sendToKdc(Object.assign({ message: opts.built.request },
         kdcTarget()));
   } catch (e) {
     // The request pane keeps what it was showing: the bytes that went out are
@@ -239,7 +239,7 @@ async function exchange(opts) {
     log.debug("Leaving exchange().");
     return null;
   }
-  await panes.renderMessage(opts.replyPane, "Received", result.reply, 
+  await panes.renderMessage(opts.replyPane, "Received", result.reply,
       tgtKeys());
 
   var read;
@@ -288,7 +288,7 @@ async function onS4u2Self() {
   try {
     user = msgs.parsePrincipal(userText, msgs.NAME_TYPE.PRINCIPAL);
   } catch (e) {
-    status("krb_s4u2self_status", "That is not a usable principal name: " + 
+    status("krb_s4u2self_status", "That is not a usable principal name: " +
         e.message, "krb-bad");
     return false;
   }
@@ -300,7 +300,7 @@ async function onS4u2Self() {
   }
 
   status("krb_s4u2self_status",
-    "Building a TGS-REQ for this service itself, with PA-FOR-USER naming " + 
+    "Building a TGS-REQ for this service itself, with PA-FOR-USER naming " +
         userText + "…",
     "krb-pending");
   var built;
@@ -316,7 +316,7 @@ async function onS4u2Self() {
       realm: val("krb_realm").trim() || tgt.realm
     });
   } catch (e) {
-    status("krb_s4u2self_status", "The request could not be built: " + 
+    status("krb_s4u2self_status", "The request could not be built: " +
         e.message, "krb-bad");
     return false;
   }
@@ -329,7 +329,7 @@ async function onS4u2Self() {
     explain: function (error) {
       log.debug("Entering explain().");
       var name = error.error.name;
-      var text = name + " (" + error.errorCode + ")" + (error.eText ? " — " + 
+      var text = name + " (" + error.errorCode + ")" + (error.eText ? " — " +
           error.eText : "");
       if (error.errorCode === 13) {
         text += " KDC_ERR_BADOPTION here usually means the sname was not " +
@@ -397,7 +397,7 @@ async function onS4u2Proxy() {
   try {
     target = msgs.parsePrincipal(targetText, msgs.NAME_TYPE.SRV_HST);
   } catch (e) {
-    status("krb_s4u2proxy_status", "That is not a usable service name: " + 
+    status("krb_s4u2proxy_status", "That is not a usable service name: " +
         e.message, "krb-bad");
     return false;
   }
@@ -411,7 +411,7 @@ async function onS4u2Proxy() {
 
   status("krb_s4u2proxy_status",
     "Building a TGS-REQ with cname-in-addl-tkt and the evidence ticket" +
-    (resourceBased ? ", plus PA-PAC-OPTIONS with the resource-based bit" : 
+    (resourceBased ? ", plus PA-PAC-OPTIONS with the resource-based bit" :
         "") + "…", "krb-pending");
   var built;
   try {
@@ -423,7 +423,7 @@ async function onS4u2Proxy() {
       resourceBased: resourceBased
     });
   } catch (e) {
-    status("krb_s4u2proxy_status", "The request could not be built: " + 
+    status("krb_s4u2proxy_status", "The request could not be built: " +
         e.message, "krb-bad");
     return false;
   }
@@ -451,7 +451,7 @@ async function onS4u2Proxy() {
           "msDS-AllowedToDelegateTo on the requesting service, which is " +
               "classic constrained " +
           "delegation and must list " + targetText + " exactly; " +
-          "msDS-AllowedToActOnBehalfOfOtherIdentity on " + targetText + 
+          "msDS-AllowedToActOnBehalfOfOtherIdentity on " + targetText +
               ", which is " +
           "resource-based and must list the requesting service; and whether " +
               "the evidence " +
@@ -470,9 +470,9 @@ async function onS4u2Proxy() {
   await renderDelegationTrail(read, targetText);
 
   status("krb_s4u2proxy_status",
-    "Got a ticket for " + msgs.principalToString(read.client) + " to " + 
+    "Got a ticket for " + msgs.principalToString(read.client) + " to " +
         targetText +
-    ", authorized by " + (resourceBased ? "resource-based" : "classic") + 
+    ", authorized by " + (resourceBased ? "resource-based" : "classic") +
         " constrained " +
     "delegation. The service that asked for it appears nowhere in the ticket " +
         "— only in the " +
@@ -493,11 +493,11 @@ async function renderDelegationTrail(read, targetText) {
   }
   panes.clear(host);
   host.appendChild(panes.make("p", "krb-note",
-    "The delegated ticket names " + msgs.principalToString(read.client) + 
+    "The delegated ticket names " + msgs.principalToString(read.client) +
         " and nothing else: the " +
     "service that requested it is not in the ticket at all. The one record " +
         "is " +
-    "S4U_DELEGATION_INFO inside the PAC — which is encrypted under " + 
+    "S4U_DELEGATION_INFO inside the PAC — which is encrypted under " +
         targetText + "'s own key, " +
     "so paste that key on the decoder page to read it. This page cannot: it " +
         "is the client here, " +
@@ -524,7 +524,7 @@ async function onRenew() {
     return false;
   }
   panes.saveKdcFields();
-  status("krb_renew_status", "Building a TGS-REQ with the RENEW option…", 
+  status("krb_renew_status", "Building a TGS-REQ with the RENEW option…",
       "krb-pending");
   var built;
   try {
@@ -536,7 +536,7 @@ async function onRenew() {
       till: new Date(tgt.renewTill.getTime() + 24 * 3600 * 1000)
     });
   } catch (e) {
-    status("krb_renew_status", "The request could not be built: " + e.message, 
+    status("krb_renew_status", "The request could not be built: " + e.message,
         "krb-bad");
     return false;
   }
@@ -552,6 +552,7 @@ async function onRenew() {
     replyPane: "krb_renew_reply_pane",
     statusId: "krb_renew_status",
     explain: function (error) {
+      log.debug("Entering explain().");
       var text = error.error.name + " (" + error.errorCode + ")" +
         (error.eText ? " — " + error.eText : "");
       if (error.errorCode === 32) {
@@ -560,6 +561,7 @@ async function onRenew() {
           "up to that instant, which does not move — otherwise it would " +
               "never expire.";
       }
+      log.debug("Leaving explain().");
       return text;
     }
   });
@@ -582,7 +584,7 @@ async function onRenew() {
           "authenticate again, and a " +
         "service reading authtime to judge freshness must not be told " +
             "otherwise."
-      : "WARNING: authtime MOVED, from " + (before.authtime ? 
+      : "WARNING: authtime MOVED, from " + (before.authtime ?
           before.authtime.toISOString() : "?") +
         " to " + read.authtime.toISOString() + ". A renewed ticket must not " +
             "look freshly " +
@@ -593,7 +595,7 @@ async function onRenew() {
         "renewable ticket being immortal."
       : "WARNING: the new endtime is PAST the old renew-till."),
     authtimeHeld && cappedAt ? "krb-good" : "krb-warn");
-  log.debug("Leaving onRenew(). authtimeHeld=" + authtimeHeld + ", capped=" + 
+  log.debug("Leaving onRenew(). authtimeHeld=" + authtimeHeld + ", capped=" +
       cappedAt);
   return true;
 }
@@ -618,7 +620,7 @@ async function onForward() {
       realm: val("krb_realm").trim() || tgt.realm
     });
   } catch (e) {
-    status("krb_forward_status", "The request could not be built: " + 
+    status("krb_forward_status", "The request could not be built: " +
         e.message, "krb-bad");
     return false;
   }
@@ -666,7 +668,7 @@ async function onForward() {
       key: subkey
     });
   } catch (e) {
-    status("krb_forward_status", 
+    status("krb_forward_status",
         "The forwarded ticket could not be wrapped: " + e.message,
       "krb-bad");
     return false;
@@ -686,7 +688,7 @@ async function onForward() {
       "Whoever holds these bytes AND the key below can obtain tickets to " +
           "ANYTHING as " +
       msgs.principalToString(read.client) + " until " +
-      (read.endtime ? read.endtime.toISOString() : "it expires") + 
+      (read.endtime ? read.endtime.toISOString() : "it expires") +
           ", without this KDC being " +
       "asked again. There is no list of permitted targets, because there is " +
           "no constraint — " +
@@ -707,7 +709,7 @@ async function onForward() {
   }
 
   status("krb_forward_status",
-    "Got a forwarded TGT for " + msgs.principalToString(read.client) + 
+    "Got a forwarded TGT for " + msgs.principalToString(read.client) +
         " and wrapped it as a " +
     "KRB-CRED. Its flags are [" + (read.flagNames || []).join(", ") + "]" +
     ((read.flagNames || []).indexOf("forwarded") !== -1
@@ -723,7 +725,7 @@ async function onForward() {
 function onForgetEvidence() {
   panes.forgetEvidence();
   renderHeld();
-  status("krb_s4u2self_status", "The evidence ticket has been discarded.", 
+  status("krb_s4u2self_status", "The evidence ticket has been discarded.",
       "krb-note");
 }
 

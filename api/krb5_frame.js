@@ -28,6 +28,30 @@
 // sets it is refused rather than interpreted.
 // ---------------------------------------------------------------------------
 
+// The module's own logger. bunyan resolves in all three layouts this file is
+// loaded in: the api container (api/node_modules), the tests image (the file is
+// copied FLAT beside tests/node_modules), and a host run, where
+// tests/module_paths.js puts tests/node_modules on the resolution path before
+// requiring it. The level is read from CONFIG_FILE inside a try/catch so a
+// caller without one falls back to "info" rather than failing to load.
+//
+// Note that this file deliberately takes no OTHER dependency — see the header
+// above on why the pre-flight does not import the codec. A logger is not a
+// parser and does not weaken that argument.
+var bunyan = require("bunyan");
+var log = bunyan.createLogger({
+  name: "krb5_frame",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).logLevel ||
+        require(process.env.CONFIG_FILE).LOG_LEVEL || "info";
+    } catch (e) {
+      // No CONFIG_FILE resolvable here — a node caller rather than a service.
+      return "info";
+    }
+  })()
+});
+
 // What a KDC answers, and nothing else. An AP-REQ is deliberately NOT here: it
 // goes to a SERVICE, not to a KDC, and the two have different port policies —
 // see assertServiceRequest below and api/CLAUDE.md.
@@ -49,7 +73,7 @@ const SERVICE_REQUEST_TAGS = {
 // this whole file avoids that codec: this check runs BEFORE a socket opens, on
 // bytes supplied by whoever can reach the api, and a guard should not inherit a
 // large module's bugs.
-const KRB5_MECH_OID_DER = Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 
+const KRB5_MECH_OID_DER = Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
     0xf7, 0x12, 0x01, 0x02, 0x02]);
 
 // A KDC request is a few hundred bytes to a few kilobytes. A PA-FX-FAST armored
@@ -68,8 +92,10 @@ const MIN_MESSAGE_BYTES = 2;
 // rather than DER, and in a message being sent to a KDC it means something is
 // re-encoding the traffic.
 function readOuterTlv(bytes) {
+  log.debug("Entering readOuterTlv().");
   if (!bytes || bytes.length < MIN_MESSAGE_BYTES) {
-    throw new Error('too short to be a Kerberos message (' + (bytes ? 
+    log.debug("Leaving readOuterTlv().");
+    throw new Error('too short to be a Kerberos message (' + (bytes ?
         bytes.length : 0) + ' bytes)');
   }
   const tag = bytes[0];
@@ -80,16 +106,19 @@ function readOuterTlv(bytes) {
     length = lengthByte;
     headerLength = 2;
   } else if (lengthByte === 0x80) {
+    log.debug("Leaving readOuterTlv().");
     throw new Error('the outermost element uses an indefinite length, which ' +
         'is BER; Kerberos is DER');
   } else {
     const count = lengthByte & 0x7f;
     if (count > 4) {
-      throw new Error('the outermost length field is ' + count + 
+      log.debug("Leaving readOuterTlv().");
+      throw new Error('the outermost length field is ' + count +
           ' bytes, which is not a credible ' +
-                      'Kerberos message');
+              'Kerberos message');
     }
     if (bytes.length < 2 + count) {
+      log.debug("Leaving readOuterTlv().");
       throw new Error('truncated: the outermost length field runs past the ' +
           'end of the payload');
     }
@@ -97,6 +126,7 @@ function readOuterTlv(bytes) {
     for (let i = 0; i < count; i++) length = (length * 256) + bytes[2 + i];
     headerLength = 2 + count;
   }
+  log.debug("Leaving readOuterTlv().");
   return {
     tag: tag,
     length: length,
@@ -113,25 +143,31 @@ function readOuterTlv(bytes) {
 // either would put this service's name on a malformed request in somebody
 // else's KDC log.
 function assertSizeAndLength(bytes, name) {
+  log.debug("Entering assertSizeAndLength().");
   if (bytes.length > MAX_REQUEST_BYTES) {
+    log.debug("Leaving assertSizeAndLength().");
     throw new Error('the message is ' + bytes.length + ' bytes; this relay ' +
         'sends at most ' +
-                    MAX_REQUEST_BYTES);
+            MAX_REQUEST_BYTES);
   }
   const outer = readOuterTlv(bytes);
   if (outer.totalLength !== bytes.length) {
-    throw new Error('the ' + name + ' declares ' + outer.length + 
+    log.debug("Leaving assertSizeAndLength().");
+    throw new Error('the ' + name + ' declares ' + outer.length +
         ' bytes of content, so the whole ' +
-      'message should be ' + outer.totalLength + ' bytes, but ' + 
+      'message should be ' + outer.totalLength + ' bytes, but ' +
           bytes.length + ' were supplied. ' +
       'A message this service cannot account for is not one it will relay.');
   }
+  log.debug("Leaving assertSizeAndLength().");
   return outer;
 }
 
 // The pre-flight for POST /krb5/kdc: an AS-REQ or a TGS-REQ, and nothing else.
 function assertKerberosRequest(bytes) {
+  log.debug("Entering assertKerberosRequest().");
   if (!bytes || !bytes.length) {
+    log.debug("Leaving assertKerberosRequest().");
     throw new Error('no message to send');
   }
   const name = KDC_REQUEST_TAGS[bytes[0]];
@@ -140,12 +176,13 @@ function assertKerberosRequest(bytes) {
     // sending base64 that was never decoded, and sending an AP-REQ to a KDC.
     const looksBase64 = bytes[0] >= 0x30 && bytes[0] <= 0x7a;
     const isServiceRequest = SERVICE_REQUEST_TAGS[bytes[0]];
+    log.debug("Leaving assertKerberosRequest().");
     throw new Error('this is not a request a KDC answers: the first byte is ' +
         '0x' +
       bytes[0].toString(16).padStart(2, '0') + ', and it must be 0x6a ' +
           '(AS-REQ) or 0x6c (TGS-REQ)' +
       (isServiceRequest
-        ? '. 0x' + bytes[0].toString(16) + ' is ' + isServiceRequest + 
+        ? '. 0x' + bytes[0].toString(16) + ' is ' + isServiceRequest +
             ', which goes to a SERVICE ' +
           'rather than to a KDC — use POST /krb5/service for that.'
         : looksBase64
@@ -154,6 +191,7 @@ function assertKerberosRequest(bytes) {
           : '.'));
   }
   assertSizeAndLength(bytes, name);
+  log.debug("Leaving assertKerberosRequest().");
   return name;
 }
 
@@ -175,25 +213,29 @@ function assertKerberosRequest(bytes) {
 // defaults to EMPTY (the endpoint refuses everything until configured), because a
 // capability this broad should be switched on deliberately rather than inherited.
 function assertServiceRequest(bytes) {
+  log.debug("Entering assertServiceRequest().");
   if (!bytes || !bytes.length) {
+    log.debug("Leaving assertServiceRequest().");
     throw new Error('no message to send');
   }
   const name = SERVICE_REQUEST_TAGS[bytes[0]];
   if (!name) {
     const isKdcRequest = KDC_REQUEST_TAGS[bytes[0]];
+    log.debug("Leaving assertServiceRequest().");
     throw new Error('this is not something a Kerberos service accepts: the ' +
         'first byte is 0x' +
       bytes[0].toString(16).padStart(2, '0') + ', and it must be 0x60 (a GSS ' +
           'InitialContextToken ' +
       'wrapping an AP-REQ) or 0x6e (a bare AP-REQ)' +
       (isKdcRequest
-        ? '. 0x' + bytes[0].toString(16) + ' is ' + isKdcRequest + 
+        ? '. 0x' + bytes[0].toString(16) + ' is ' + isKdcRequest +
             ', which goes to a KDC — use ' +
           'POST /krb5/kdc for that.'
         : '.'));
   }
   const outer = assertSizeAndLength(bytes, name);
   if (bytes[0] === 0x6e) {
+    log.debug("Leaving assertServiceRequest().");
     return name;
   }
 
@@ -201,26 +243,29 @@ function assertServiceRequest(bytes) {
   // would make this endpoint a tunnel.
   const value = bytes.subarray(outer.headerLength, bytes.length);
   if (value.length < KRB5_MECH_OID_DER.length + 2) {
+    log.debug("Leaving assertServiceRequest().");
     throw new Error('the GSS token is too short to carry a mechanism OID and ' +
         'a token id');
   }
-  if (Buffer.compare(value.subarray(0, KRB5_MECH_OID_DER.length), 
+  if (Buffer.compare(value.subarray(0, KRB5_MECH_OID_DER.length),
       KRB5_MECH_OID_DER) !== 0) {
     // SPNEGO is the OID somebody will actually send here, so it is named.
-    const spnego = Buffer.from([0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05, 
+    const spnego = Buffer.from([0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05,
         0x02]);
     const isSpnego = value.length >= spnego.length &&
       Buffer.compare(value.subarray(0, spnego.length), spnego) === 0;
+    log.debug("Leaving assertServiceRequest().");
     throw new Error('the GSS token does not name the Kerberos v5 mechanism' +
       (isSpnego
         ? ' — it names SPNEGO (1.3.6.1.5.5.2), which this build does not ' +
             'implement'
-        : ' (found ' + value.subarray(0, Math.min(12, 
+        : ' (found ' + value.subarray(0, Math.min(12,
             value.length)).toString('hex') + ')') + '.');
   }
   const rest = value.subarray(KRB5_MECH_OID_DER.length);
   if (rest[0] !== 0x01 || rest[1] !== 0x00) {
-    throw new Error('the GSS token id is ' + rest.subarray(0, 
+    log.debug("Leaving assertServiceRequest().");
+    throw new Error('the GSS token id is ' + rest.subarray(0,
         2).toString('hex') +
       ', not 0100 (AP-REQ). A service is presented with an AP-REQ; 0200 is ' +
           'an AP-REP and 0300 is ' +
@@ -228,18 +273,21 @@ function assertServiceRequest(bytes) {
   }
   const inner = rest.subarray(2);
   if (!inner.length || inner[0] !== 0x6e) {
+    log.debug("Leaving assertServiceRequest().");
     throw new Error('the GSS token wraps something that is not an AP-REQ ' +
         '(its first byte is 0x' +
       (inner.length ? inner[0].toString(16) : 'nothing') + ', expected 0x6e).');
   }
   const innerOuter = readOuterTlv(inner);
   if (innerOuter.totalLength !== inner.length) {
-    throw new Error('the wrapped AP-REQ declares ' + innerOuter.length + 
+    log.debug("Leaving assertServiceRequest().");
+    throw new Error('the wrapped AP-REQ declares ' + innerOuter.length +
         ' bytes of content but ' +
       inner.length + ' bytes follow the token id. A payload this service ' +
           'cannot account for is not ' +
       'one it will relay.');
   }
+  log.debug("Leaving assertServiceRequest().");
   return name;
 }
 
@@ -259,18 +307,22 @@ function frameForTcp(bytes) {
 // this relay will not honour — which is the point: the prefix is the far end's
 // claim about how much memory to set aside.
 function readTcpFrame(buffer, maxBytes) {
+  log.debug("Entering readTcpFrame().");
   if (buffer.length < 4) {
+    log.debug("Leaving readTcpFrame().");
     return { complete: false, need: 4 - buffer.length };
   }
   const declared = buffer.readUInt32BE(0);
   // RFC 4120 reserves the top bit of the length field. A reply that sets it is
   // not a long message; it is something this relay should not be talking to.
   if (declared & 0x80000000) {
+    log.debug("Leaving readTcpFrame().");
     throw new Error('the reply\'s length prefix has its top bit set, which ' +
         'RFC 4120 reserves. ' +
-                    'This is not a Kerberos reply.');
+            'This is not a Kerberos reply.');
   }
   if (declared < MIN_MESSAGE_BYTES) {
+    log.debug("Leaving readTcpFrame().");
     throw new Error('the reply announces ' + declared + ' bytes, which ' +
         'cannot be a Kerberos message');
   }
@@ -278,7 +330,8 @@ function readTcpFrame(buffer, maxBytes) {
     // Refused BEFORE the bytes are read, not measured afterwards. A host that
     // answers promptly and then streams is inside every timeout while this
     // process fills its heap.
-    throw new Error('the reply announces ' + declared + ' bytes, over the ' + 
+    log.debug("Leaving readTcpFrame().");
+    throw new Error('the reply announces ' + declared + ' bytes, over the ' +
         maxBytes +
       '-byte limit for this relay. Raise maxContentLength in the api ' +
           'configuration if a KDC ' +
@@ -286,8 +339,10 @@ function readTcpFrame(buffer, maxBytes) {
           'not this big).');
   }
   if (buffer.length < 4 + declared) {
+    log.debug("Leaving readTcpFrame().");
     return { complete: false, need: (4 + declared) - buffer.length };
   }
+  log.debug("Leaving readTcpFrame().");
   return {
     complete: true,
     message: buffer.subarray(4, 4 + declared),

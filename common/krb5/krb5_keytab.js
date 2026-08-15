@@ -79,14 +79,17 @@ function reader(bytes, bigEndian) {
     },
     u32: function () { return this.i32() >>> 0; },
     countedString: function () {
+      log.debug("Entering countedString().");
       var n = this.u16();
       if (at + n > b.length) {
+        log.debug("Leaving countedString().");
         throw new Error("krb5: keytab string of " + n + " bytes runs past " +
             "the end");
       }
       var s = "";
       for (var i = 0; i < n; i++) s += String.fromCharCode(b[at + i]);
       at += n;
+      log.debug("Leaving countedString().");
       return s;
     },
     countedBytes: function () {
@@ -120,7 +123,7 @@ function parseKeytab(bytes) {
   }
   var version = b[1];
   if (version !== 0x01 && version !== 0x02) {
-    throw new Error("krb5: keytab format version 0x05" + ("0" + 
+    throw new Error("krb5: keytab format version 0x05" + ("0" +
         version.toString(16)).slice(-2) +
       " is not one this reader knows (expected 0x0501 or 0x0502)");
   }
@@ -156,27 +159,27 @@ function parseKeytab(bytes) {
         hint = " — a size that large in a " + b.length + "-byte file almost " +
             "always means the BYTE " +
           "ORDER is wrong. This file declares version 0x05" +
-          ("0" + version.toString(16)).slice(-2) + ", i.e. " + (bigEndian ? 
+          ("0" + version.toString(16)).slice(-2) + ", i.e. " + (bigEndian ?
               "big" : "little") +
           "-endian; read the other way those four bytes are " +
           (bigEndian
-            ? ((b[start + 3] << 24) | (b[start + 2] << 16) | (b[start + 
+            ? ((b[start + 3] << 24) | (b[start + 2] << 16) | (b[start +
                 1] << 8) | b[start]) >>> 0
-            : ((b[start] << 24) | (b[start + 1] << 16) | (b[start + 
+            : ((b[start] << 24) | (b[start + 1] << 16) | (b[start +
                 2] << 8) | b[start + 3]) >>> 0) +
           ".";
       }
-      throw new Error("krb5: keytab entry at offset " + start + " claims " + 
+      throw new Error("krb5: keytab entry at offset " + start + " claims " +
           size +
         " bytes but only " + (b.length - start - 4) + " remain" + hint);
     }
     var numComponents = r.u16();
     if (version === 0x01) numComponents -= 1;      // 0x0501 counts the realm
     if (numComponents < 0 || numComponents > 16) {
-      throw new Error("krb5: keytab entry at offset " + start + " claims " + 
+      throw new Error("krb5: keytab entry at offset " + start + " claims " +
           numComponents +
         " name components, which is not credible — is the byte order right? " +
-        "(this file declares version 0x05" + ("0" + 
+        "(this file declares version 0x05" + ("0" +
             version.toString(16)).slice(-2) + ")");
     }
     var realm = r.countedString();
@@ -206,7 +209,7 @@ function parseKeytab(bytes) {
       key: keyValue
     });
   }
-  log.debug("Leaving parseKeytab(). entries=" + entries.length + 
+  log.debug("Leaving parseKeytab(). entries=" + entries.length +
       ", deleted slots=" + deleted);
   return {
     version: 0x0500 | version,
@@ -218,12 +221,14 @@ function parseKeytab(bytes) {
 
 // The keys from a keytab in the shape the decoder's decryption wants.
 function keysFromKeytab(parsed) {
-  return (parsed.entries || 
+  log.debug("Leaving keysFromKeytab().");
+  log.debug("Entering keysFromKeytab().");
+  return (parsed.entries ||
       []).filter(function (e) { return e.supported; }).map(function (e) {
     return {
       etype: e.etype,
       key: e.key,
-      label: "keytab " + e.principal + " (kvno " + e.kvno + ", " + 
+      label: "keytab " + e.principal + " (kvno " + e.kvno + ", " +
           e.etypeName + ")"
     };
   });

@@ -82,14 +82,17 @@ const DEFAULT_MAX_REPLY_BYTES = 1048576;
 const UDP_RECEIVE_BYTES = 65535;
 
 function resolvePositiveNumber(value, fallback, name, log) {
+  log.debug("Entering resolvePositiveNumber().");
   if (typeof value === 'number' && isFinite(value) && value > 0) {
+    log.debug("Leaving resolvePositiveNumber().");
     return value;
   }
   if (value !== undefined && value !== null) {
-    log.error('krb5_relay: ' + name + ' is not a positive number (' + 
+    log.error('krb5_relay: ' + name + ' is not a positive number (' +
         JSON.stringify(value) +
               '); using ' + fallback + '.');
   }
+  log.debug("Leaving resolvePositiveNumber().");
   return fallback;
 }
 
@@ -113,7 +116,7 @@ function resolveAllowedPorts(value, log) {
   for (const entry of value) {
     const port = typeof entry === 'number' ? entry : parseInt(entry, 10);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      log.error('krb5_relay: ignoring krb5AllowedPorts entry ' + 
+      log.error('krb5_relay: ignoring krb5AllowedPorts entry ' +
           JSON.stringify(entry) +
                 ' — a port must be an integer from 1 to 65535.');
       continue;
@@ -144,17 +147,17 @@ function createRelay(appconfig, guard, log) {
   const serviceAnyPort = appconfig.krb5ServicePorts === 'any';
   const servicePorts = serviceAnyPort
     ? []
-    : (appconfig.krb5ServicePorts === undefined || 
+    : (appconfig.krb5ServicePorts === undefined ||
         appconfig.krb5ServicePorts === null
         ? DEFAULT_SERVICE_PORTS.slice()
         : resolveAllowedPorts(appconfig.krb5ServicePorts, logger));
-  const connectTimeout = resolvePositiveNumber(appconfig.connectionTimeout, 
+  const connectTimeout = resolvePositiveNumber(appconfig.connectionTimeout,
       DEFAULT_CONNECT_TIMEOUT_MS,
     'connectionTimeout', logger);
-  const callTimeout = resolvePositiveNumber(appconfig.callTimeout, 
+  const callTimeout = resolvePositiveNumber(appconfig.callTimeout,
       DEFAULT_CALL_TIMEOUT_MS,
     'callTimeout', logger);
-  const maxReplyBytes = resolvePositiveNumber(appconfig.maxContentLength, 
+  const maxReplyBytes = resolvePositiveNumber(appconfig.maxContentLength,
       DEFAULT_MAX_REPLY_BYTES,
     'maxContentLength', logger);
   // The address policy is the guard's, not a second copy of it. A relay with
@@ -164,11 +167,11 @@ function createRelay(appconfig, guard, log) {
 
   logger.info('krb5_relay: KDC ports ' + (allowedPorts.join(', ') || '(none)') +
     '; service ports ' + (serviceAnyPort ? 'ANY (krb5ServicePorts is "any")'
-                                         : (servicePorts.join(', ') || 
-                                             'NONE — POST /krb5/service ' +
-                                            'will refuse every call until ' +
-                                                'krb5ServicePorts is set')) +
-    '; connect timeout ' + connectTimeout + ' milliseconds; call timeout ' + 
+        : (servicePorts.join(', ') ||
+            'NONE — POST /krb5/service ' +
+                'will refuse every call until ' +
+                    'krb5ServicePorts is set')) +
+    '; connect timeout ' + connectTimeout + ' milliseconds; call timeout ' +
         callTimeout +
     ' milliseconds; reply cap ' + maxReplyBytes + ' bytes; address policy ' +
     (addressPolicyEnabled ? 'ENABLED (shared with ssrf_guard)' : 'disabled'));
@@ -214,7 +217,7 @@ function createRelay(appconfig, guard, log) {
       log.debug("Leaving assertPortAllowed().");
       throw refuse('Refusing to connect to port ' + port + '. This relay ' +
           'carries Kerberos to ' +
-        'Kerberos ports only (' + (allowedPorts.join(', ') || 
+        'Kerberos ports only (' + (allowedPorts.join(', ') ||
             'none configured') + '). It is a raw ' +
         'byte relay, so an unrestricted port would make it a port scanner ' +
             'with a caller-chosen ' +
@@ -236,7 +239,7 @@ function createRelay(appconfig, guard, log) {
       if (literalFamily) {
         const range = addressPolicyEnabled && guard.blockedRangeFor(host);
         if (range) {
-          return reject(refuse('Refusing to open a TCP connection to ' + host + 
+          return reject(refuse('Refusing to open a TCP connection to ' + host +
               ': it is in the ' +
             'blocked range ' + range + '. This service does not connect to ' +
                 'loopback or private ' +
@@ -254,20 +257,20 @@ function createRelay(appconfig, guard, log) {
       }
       dns.lookup(host, { all: true }, function (err, addresses) {
         if (err) {
-          return reject(refuse('Could not resolve ' + host + ': ' + 
+          return reject(refuse('Could not resolve ' + host + ': ' +
               err.message +
             ' (' + err.code + ').', 'EKRB5DNS'));
         }
         const list = Array.isArray(addresses) ? addresses : [addresses];
         for (const entry of list) {
-          const range = addressPolicyEnabled && 
+          const range = addressPolicyEnabled &&
               guard.blockedRangeFor(entry.address);
           if (range) {
-            logger.warn('krb5_relay: refused ' + host + ' -> ' + 
+            logger.warn('krb5_relay: refused ' + host + ' -> ' +
                 entry.address + ' (' + range + ')');
-            return reject(refuse('Refusing to connect to ' + host + 
+            return reject(refuse('Refusing to connect to ' + host +
                 ': it resolves to ' +
-              entry.address + ', which is in the blocked range ' + range + 
+              entry.address + ', which is in the blocked range ' + range +
                   '. Note that a name is ' +
               'judged by what it RESOLVES to, so localtest.me and ' +
                   '127.0.0.1.nip.io are caught by ' +
@@ -303,7 +306,7 @@ function createRelay(appconfig, guard, log) {
             'trying to reach ' +
           target.address + ':' + target.port + '. Nothing accepted a ' +
               'connection — either no KDC is ' +
-          'listening there, or a firewall is dropping the packets silently.', 
+          'listening there, or a firewall is dropping the packets silently.',
               'EKRB5CONNECTTIMEOUT'));
       }, connectTimeout);
       const callTimer = setTimeout(function () {
@@ -345,9 +348,9 @@ function createRelay(appconfig, guard, log) {
         // before the rest is waited for. Also guard the accumulating buffer,
         // for a sender that never sends a prefix at all.
         if (buffer.length > maxReplyBytes + 4) {
-          return finish(refuse('The reply from ' + target.address + ':' + 
+          return finish(refuse('The reply from ' + target.address + ':' +
               target.port + ' passed ' +
-            maxReplyBytes + ' bytes without a complete message. Abandoned.', 
+            maxReplyBytes + ' bytes without a complete message. Abandoned.',
                 'EKRB5REPLYTOOBIG'));
         }
         let read;
@@ -360,7 +363,7 @@ function createRelay(appconfig, guard, log) {
       });
 
       socket.on('error', function (err) {
-        finish(refuse('Could not talk to ' + target.address + ':' + 
+        finish(refuse('Could not talk to ' + target.address + ':' +
             target.port + ': ' +
           err.message + ' (' + err.code + ').', 'EKRB5SOCKET'));
       });
@@ -368,9 +371,9 @@ function createRelay(appconfig, guard, log) {
       socket.on('end', function () {
         // A KDC that closes without a complete reply. Distinguished from a
         // timeout, because it means something answered and then gave up.
-        finish(refuse('The connection to ' + target.address + ':' + 
+        finish(refuse('The connection to ' + target.address + ':' +
             target.port + ' closed after ' +
-          buffer.length + ' byte(s), before a complete reply arrived.', 
+          buffer.length + ' byte(s), before a complete reply arrived.',
               'EKRB5SHORTREPLY'));
       });
 
@@ -389,7 +392,7 @@ function createRelay(appconfig, guard, log) {
       let settled = false;
       const socket = dgram.createSocket(target.family === 6 ? 'udp6' : 'udp4');
       const timer = setTimeout(function () {
-        finish(refuse('No UDP reply from ' + target.address + ':' + 
+        finish(refuse('No UDP reply from ' + target.address + ':' +
             target.port + ' within ' +
           callTimeout + ' milliseconds. UDP is unacknowledged, so this may ' +
               'mean the datagram never ' +
@@ -423,21 +426,21 @@ function createRelay(appconfig, guard, log) {
         timings.connectedAt = timings.connectedAt || Date.now();
         // UDP carries no length prefix: the datagram IS the message.
         if (msg.length > maxReplyBytes) {
-          return finish(refuse('The UDP reply is ' + msg.length + 
+          return finish(refuse('The UDP reply is ' + msg.length +
               ' bytes, over the ' +
             maxReplyBytes + '-byte limit.', 'EKRB5REPLYTOOBIG'));
         }
         finish(null, msg);
       });
       socket.on('error', function (err) {
-        finish(refuse('UDP to ' + target.address + ':' + target.port + 
+        finish(refuse('UDP to ' + target.address + ':' + target.port +
             ' failed: ' + err.message +
           ' (' + err.code + ').', 'EKRB5SOCKET'));
       });
-      socket.send(Buffer.from(payload), target.port, target.address, 
+      socket.send(Buffer.from(payload), target.port, target.address,
           function (err) {
         if (err) {
-          finish(refuse('Could not send the UDP datagram to ' + 
+          finish(refuse('Could not send the UDP datagram to ' +
               target.address + ':' + target.port +
             ': ' + err.message + '.', 'EKRB5SOCKET'));
         }
@@ -451,14 +454,14 @@ function createRelay(appconfig, guard, log) {
     log.debug("Entering send().");
     const opts = options || {};
     const host = String(opts.host || '').trim();
-    const port = typeof opts.port === 'number' ? opts.port : 
+    const port = typeof opts.port === 'number' ? opts.port :
         parseInt(opts.port, 10);
     const transport = (opts.transport === 'udp') ? 'udp' : 'tcp';
-    const payload = Buffer.isBuffer(opts.message) ? opts.message : 
+    const payload = Buffer.isBuffer(opts.message) ? opts.message :
         Buffer.from(opts.message || []);
 
     logger.debug('Entering krb5_relay.send(). host=' + host + ', port=' + port +
-                 ', transport=' + transport + ', purpose=' + (opts.purpose || 
+                 ', transport=' + transport + ', purpose=' + (opts.purpose ||
                      'kdc') +
                  ', bytes=' + payload.length);
 
@@ -468,7 +471,7 @@ function createRelay(appconfig, guard, log) {
     }
     if (!Number.isInteger(port)) {
       log.debug("Leaving send().");
-      throw refuse('The KDC port is not a number: ' + 
+      throw refuse('The KDC port is not a number: ' +
           JSON.stringify(opts.port) + '.', 'EKRB5NOPORT');
     }
 
@@ -483,7 +486,7 @@ function createRelay(appconfig, guard, log) {
         : frame.assertKerberosRequest(payload);
     } catch (e) {
       log.debug("Leaving send().");
-      throw refuse('Refusing to relay this payload: ' + e.message + 
+      throw refuse('Refusing to relay this payload: ' + e.message +
           ' This endpoint carries Kerberos ' +
         (purpose === 'service' ? 'AP-REQs' : 'KDC requests') +
         ', not arbitrary bytes — see api/krb5_frame.js for why that ' +
@@ -502,9 +505,9 @@ function createRelay(appconfig, guard, log) {
     const finishedAt = Date.now();
 
     const replyName = frame.describeReply(reply);
-    logger.info('krb5_relay: ' + messageName + ' (' + payload.length + 
+    logger.info('krb5_relay: ' + messageName + ' (' + payload.length +
         ' bytes) to ' + host +
-      (target.wasLiteral ? '' : ' [' + target.address + ']') + ':' + port + 
+      (target.wasLiteral ? '' : ' [' + target.address + ']') + ':' + port +
           '/' + transport +
       ' -> ' + replyName + ' (' + reply.length + ' bytes) in ' + (
           finishedAt - timings.startedAt) + 'ms');
@@ -524,7 +527,7 @@ function createRelay(appconfig, guard, log) {
       },
       timing: {
         totalMs: finishedAt - timings.startedAt,
-        connectMs: timings.connectedAt ? 
+        connectMs: timings.connectedAt ?
             timings.connectedAt - timings.startedAt : null
       }
     };

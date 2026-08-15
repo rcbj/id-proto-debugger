@@ -212,7 +212,7 @@ var KERB_NON_KERB_CKSUM_SALT = 17;
 function profileForSignatureType(signatureType) {
   var etype = SIGNATURE_TYPE_TO_ETYPE[String(signatureType)];
   if (etype === undefined) {
-    throw new Error("krb5: PAC signature type " + signatureType + 
+    throw new Error("krb5: PAC signature type " + signatureType +
         " is not one this code can compute" +
       " ([MS-PAC] section 2.8 defines -138, 15 and 16)");
   }
@@ -304,7 +304,7 @@ var USER_FLAGS = [
   [0x00000040, "E SUB_AUTH (NTLM only)"],
   [0x00000080, "F MACHINE_ACCOUNT (NTLM only)"],
   [0x00000100, "G DC_NTLM2 (NTLM only)"],
-  [0x00000200, 
+  [0x00000200,
       "H RESOURCE_GROUPS"],                 // ResourceGroupIds is populated
   [0x00000400, "I PROFILE_PATH (NTLM only)"],
   [0x00000800, "J NTLMV2 (NTLM only)"],
@@ -470,20 +470,20 @@ function findPacs(authorizationData) {
         found.push({ bytes: prim.toBytes(ad.data), path: here.join(" → ") });
         return;
       }
-      if (ad.type === AD_TYPE.IF_RELEVANT || 
+      if (ad.type === AD_TYPE.IF_RELEVANT ||
           ad.type === AD_TYPE.MANDATORY_FOR_KDC) {
         // The container's ad-data is itself a DER AuthorizationData.
         try {
           // readAuthorizationData wants a parsed TLV, not the raw OCTET STRING
           // contents — the container's ad-data is a nested DER document.
-          walk(msgs.readAuthorizationData(asn1.readTlv(prim.toBytes(ad.data), 
+          walk(msgs.readAuthorizationData(asn1.readTlv(prim.toBytes(ad.data),
               0, 0)),
             here, depth + 1);
         } catch (e) {
           // A container this code cannot open is not a failure of the ticket:
           // other ad-types legitimately carry things we do not parse. Say so
           // and move on.
-          log.debug("krb5_pac: could not open " + here.join(" → ") + ": " + 
+          log.debug("krb5_pac: could not open " + here.join(" → ") + ": " +
               e.message);
         }
       }
@@ -548,14 +548,14 @@ function parsePac(bytes) {
       error: null
     };
     if (off.high !== 0 || off.value + cbBufferSize > all.length) {
-      entry.error = "This buffer claims " + cbBufferSize + 
+      entry.error = "This buffer claims " + cbBufferSize +
           " bytes at offset " + off.value +
         ", which is outside the " + all.length + "-byte PAC.";
-      problems.push("Buffer " + i + " (" + entry.typeName + "): " + 
+      problems.push("Buffer " + i + " (" + entry.typeName + "): " +
           entry.error);
     } else {
       if (off.value % 8 !== 0) {
-        problems.push("Buffer " + i + " (" + entry.typeName + 
+        problems.push("Buffer " + i + " (" + entry.typeName +
             ") starts at offset " + off.value +
           ", which is not a multiple of 8 — [MS-PAC] section 2.4 requires " +
               "it. Windows will " +
@@ -702,12 +702,12 @@ function parseSignature(bytes) {
     // signature bytes are still worth showing.
     expected = null;
   }
-  var signature = expected === null ? rest : rest.subarray(0, 
+  var signature = expected === null ? rest : rest.subarray(0,
       Math.min(expected, rest.length));
   // A trailing 2 bytes is an RODC identifier — the first 16 bits of the key
   // version number, present only when the issuing KDC is read-only. Anything
   // else trailing is a length that does not match the signature type.
-  var trailing = expected === null ? new Uint8Array(0) : 
+  var trailing = expected === null ? new Uint8Array(0) :
       rest.subarray(signature.length);
   log.debug("Leaving parseSignature().");
   return {
@@ -732,13 +732,13 @@ function parseClientInfo(bytes) {
   var nameLength = r.u16();
   if (nameLength % 2 !== 0) {
     log.debug("Leaving parseClientInfo().");
-    throw new Error("krb5: PAC_CLIENT_INFO NameLength is " + nameLength + 
+    throw new Error("krb5: PAC_CLIENT_INFO NameLength is " + nameLength +
         " bytes, which is odd — " +
       "the name is UTF-16, so it must be even");
   }
   if (nameLength > r.remaining) {
     log.debug("Leaving parseClientInfo().");
-    throw new Error("krb5: PAC_CLIENT_INFO says its name is " + nameLength + 
+    throw new Error("krb5: PAC_CLIENT_INFO says its name is " + nameLength +
         " bytes but only " +
       r.remaining + " remain in the buffer");
   }
@@ -770,17 +770,17 @@ function parseUpnDnsInfo(bytes) {
     }
     if (length % 2 !== 0) {
       log.debug("Leaving utf16At().");
-      throw new Error("krb5: UPN_DNS_INFO's " + what + " length is " + length + 
+      throw new Error("krb5: UPN_DNS_INFO's " + what + " length is " + length +
           ", which is odd");
     }
     if (offset + length > b.length) {
       log.debug("Leaving utf16At().");
-      throw new Error("krb5: UPN_DNS_INFO's " + what + " claims " + length + 
+      throw new Error("krb5: UPN_DNS_INFO's " + what + " claims " + length +
           " bytes at offset " +
         offset + ", past the end of its " + b.length + "-byte buffer");
     }
     var s = "";
-    for (var i = 0; i < length; i += 2) s += String.fromCharCode(b[offset + 
+    for (var i = 0; i < length; i += 2) s += String.fromCharCode(b[offset +
         i] | (b[offset + i + 1] << 8));
     log.debug("Leaving utf16At().");
     return s;
@@ -813,7 +813,7 @@ function parseUpnDnsInfo(bytes) {
     if (sidLength) {
       if (sidOffset + sidLength > b.length) {
         log.debug("Leaving parseUpnDnsInfo().");
-        throw new Error("krb5: UPN_DNS_INFO's SID claims " + sidLength + 
+        throw new Error("krb5: UPN_DNS_INFO's SID claims " + sidLength +
             " bytes at offset " +
           sidOffset + ", past the end of its " + b.length + "-byte buffer");
       }
@@ -875,7 +875,7 @@ function parseRequestorGuid(bytes) {
   for (var i = 8; i < 16; i++) tail += hex(b[i], 2);
   log.debug("Leaving parseRequestorGuid().");
   return {
-    guid: hex(le(0, 4), 8) + "-" + hex(le(4, 2), 4) + "-" + hex(le(6, 2), 4) + 
+    guid: hex(le(0, 4), 8) + "-" + hex(le(4, 2), 4) + "-" + hex(le(6, 2), 4) +
         "-" +
       tail.slice(0, 4) + "-" + tail.slice(4)
   };
@@ -914,7 +914,7 @@ function parseDelegationInfo(bytes) {
     var declared = r.arrayCount("transited service(s)");
     if (declared !== listSize) {
       log.debug("Leaving parseDelegationInfo().");
-      throw new Error("krb5: TransitedListSize is " + listSize + 
+      throw new Error("krb5: TransitedListSize is " + listSize +
           " but the array's own conformant " +
         "count is " + declared);
     }
@@ -959,7 +959,7 @@ function encodeDelegationInfo(spec) {
     w.u32(services.length);
     // Headers for every element first, then every element's characters — see
     // the reader.
-    services.forEach(function (name) { ndr.writeUnicodeStringHeader(w, 
+    services.forEach(function (name) { ndr.writeUnicodeStringHeader(w,
         name); });
     services.forEach(function (name) { ndr.writeUnicodeStringValue(w, name); });
   }
@@ -1096,14 +1096,14 @@ function parseLogonInfo(bytes) {
         "pointer is NULL");
   }
 
-  info.resourceGroupDomainSid = resourceGroupDomainSidPresent ? 
+  info.resourceGroupDomainSid = resourceGroupDomainSidPresent ?
       ndr.readConformantSid(r) : null;
   info.resourceGroups = [];
   if (resourceGroupIdsPresent) {
     var declaredRes = r.arrayCount("resource group(s)");
     if (declaredRes !== resourceGroupCount) {
       log.debug("Leaving parseLogonInfo().");
-      throw new Error("krb5: ResourceGroupCount is " + resourceGroupCount + 
+      throw new Error("krb5: ResourceGroupCount is " + resourceGroupCount +
           " but the array's own " +
         "conformant count is " + declaredRes);
     }
@@ -1128,9 +1128,9 @@ function parseLogonInfo(bytes) {
   info.logonServer = logonServer.value;
   info.logonDomainName = logonDomainName.value;
   info.userFlagNames = flagNames(USER_FLAGS, info.userFlags);
-  info.userAccountControlNames = flagNames(USER_ACCOUNT_CONTROL, 
+  info.userAccountControlNames = flagNames(USER_ACCOUNT_CONTROL,
       info.userAccountControl);
-  info.userSid = info.logonDomainId ? ndr.sidWithRid(info.logonDomainId, 
+  info.userSid = info.logonDomainId ? ndr.sidWithRid(info.logonDomainId,
       info.userId) : null;
   info.primaryGroupSid = info.logonDomainId
     ? ndr.sidWithRid(info.logonDomainId, info.primaryGroupId) : null;
@@ -1160,7 +1160,7 @@ function consistencyNotes(info, sidCount, resourceGroupCount) {
   if ((info.userFlags & USER_FLAG_EXTRA_SIDS) && sidCount === 0) {
     notes.push("The EXTRA_SIDS flag (D) is set but SidCount is 0.");
   }
-  if (resourceGroupCount !== 0 && 
+  if (resourceGroupCount !== 0 &&
       !(info.userFlags & USER_FLAG_RESOURCE_GROUPS)) {
     notes.push("ResourceGroupCount is " + resourceGroupCount + " but the " +
         "RESOURCE_GROUPS flag (H) " +
@@ -1178,13 +1178,13 @@ function consistencyNotes(info, sidCount, resourceGroupCount) {
       "set only by NTLM and MUST be zero for Kerberos.");
   }
   if (info.reserved1[0] !== 0 || info.reserved1[1] !== 0) {
-    notes.push("Reserved1 is not zero (" + info.reserved1.join(", ") + 
+    notes.push("Reserved1 is not zero (" + info.reserved1.join(", ") +
         "); [MS-PAC] requires zero.");
   }
-  var unknownUac = unknownFlagBits(USER_ACCOUNT_CONTROL, 
+  var unknownUac = unknownFlagBits(USER_ACCOUNT_CONTROL,
       info.userAccountControl);
   if (unknownUac) {
-    notes.push("UserAccountControl has undefined bits set (0x" + 
+    notes.push("UserAccountControl has undefined bits set (0x" +
         unknownUac.toString(16) + ").");
   }
   // NDR pads the marshalled object to a multiple of 8, so up to 7 trailing
@@ -1249,7 +1249,7 @@ function signatureCoverage(pac, ticketBytes) {
     {
       type: TYPE.SERVER_CHECKSUM,
       role: "service key",
-      data: pacWithSignaturesZeroed(pac, [TYPE.SERVER_CHECKSUM, 
+      data: pacWithSignaturesZeroed(pac, [TYPE.SERVER_CHECKSUM,
           TYPE.KDC_CHECKSUM]),
       note: "This is the one a SERVICE can check for itself — it is signed " +
           "with the service's " +
@@ -1258,7 +1258,7 @@ function signatureCoverage(pac, ticketBytes) {
     {
       type: TYPE.KDC_CHECKSUM,
       role: "krbtgt key",
-      data: serverEntry && serverEntry.parsed ? serverEntry.parsed.signature : 
+      data: serverEntry && serverEntry.parsed ? serverEntry.parsed.signature :
           null,
       missing: "there is no server signature for it to counter-sign",
       note: "A counter-signature over the server signature ALONE, not over " +
@@ -1315,14 +1315,14 @@ async function verifySignatures(pac, keys) {
       note: note || null
     };
     if (!entry.parsed) {
-      out.note = "This signature buffer did not parse" + (entry.error ? ": " + 
+      out.note = "This signature buffer did not parse" + (entry.error ? ": " +
           entry.error : ".");
       results.push(out);
       log.debug("Leaving check().");
       return;
     }
     if (!key) {
-      out.note = "Not checked: no " + keyLabel + " was supplied. " + (note || 
+      out.note = "Not checked: no " + keyLabel + " was supplied. " + (note ||
           "");
       results.push(out);
       log.debug("Leaving check().");
@@ -1341,16 +1341,16 @@ async function verifySignatures(pac, keys) {
         // A mismatch here is a real diagnostic: it is what a KDC and a service
         // disagreeing about etypes looks like from the outside.
         out.verified = false;
-        out.note = "This signature is " + entry.parsed.signatureTypeName + 
+        out.note = "This signature is " + entry.parsed.signatureTypeName +
             ", which belongs to etype " +
-          profile.id + ", but the " + keyLabel + " supplied is etype " + 
+          profile.id + ", but the " + keyLabel + " supplied is etype " +
               key.etype + ". " +
           "The key cannot verify this signature whatever its value.";
         results.push(out);
         log.debug("Leaving check().");
         return;
       }
-      out.verified = await profile.verifyChecksum(key.key, 
+      out.verified = await profile.verifyChecksum(key.key,
           KERB_NON_KERB_CKSUM_SALT, data,
         entry.parsed.signature);
       out.note = out.verified
@@ -1369,7 +1369,7 @@ async function verifySignatures(pac, keys) {
   var coverage = signatureCoverage(pac, opts.ticketBytes);
   for (var i = 0; i < coverage.length; i++) {
     var c = coverage[i];
-    await check(c.type, c.role, c.role === "service key" ? opts.serverKey : 
+    await check(c.type, c.role, c.role === "service key" ? opts.serverKey :
         opts.kdcKey,
       c.data, c.data === null ? c.missing : c.note);
   }
@@ -1396,7 +1396,7 @@ async function verifySignatures(pac, keys) {
 // decoder page does: the key that decrypted the ticket is the service's key by
 // definition), and a failure against that is a real finding.
 async function verifySignaturesWithAnyKey(pac, keys, opts) {
-  log.debug("Entering verifySignaturesWithAnyKey(). keys=" + (keys || 
+  log.debug("Entering verifySignaturesWithAnyKey(). keys=" + (keys ||
       []).length);
   var pool = keys || [];
   var options = opts || {};
@@ -1422,7 +1422,7 @@ async function verifySignaturesWithAnyKey(pac, keys, opts) {
       note: c.note
     };
     if (!entry.parsed) {
-      out.note = "This signature buffer did not parse" + (entry.error ? ": " + 
+      out.note = "This signature buffer did not parse" + (entry.error ? ": " +
           entry.error : ".");
       results.push(out);
       continue;
@@ -1444,7 +1444,7 @@ async function verifySignaturesWithAnyKey(pac, keys, opts) {
     // A key whose role the caller has asserted gives a definite verdict.
     // Otherwise only keys of the signature's own etype are even worth trying.
     var claimed = asserted[c.role];
-    var eligible = claimed ? [claimed] : 
+    var eligible = claimed ? [claimed] :
         pool.filter(function (k) { return k.etype === profile.id; });
     out.roleAsserted = !!claimed;
 
@@ -1452,29 +1452,29 @@ async function verifySignaturesWithAnyKey(pac, keys, opts) {
       // Worth stating plainly: it is what a KDC and a service disagreeing about
       // encryption types looks like from the outside.
       out.verified = false;
-      out.note = "This signature is " + entry.parsed.signatureTypeName + 
+      out.note = "This signature is " + entry.parsed.signatureTypeName +
           ", which belongs to " +
-        "etype " + profile.id + ", but the " + c.role + " supplied is etype " + 
+        "etype " + profile.id + ", but the " + c.role + " supplied is etype " +
             claimed.etype +
         ". That key cannot verify this signature whatever its value.";
       results.push(out);
       continue;
     }
     if (!eligible.length) {
-      out.note = "Not checked: this is " + entry.parsed.signatureTypeName + 
+      out.note = "Not checked: this is " + entry.parsed.signatureTypeName +
           ", which needs an " +
         "etype " + profile.id + " key, and none was supplied. " + c.note;
       results.push(out);
       continue;
     }
     for (var j = 0; j < eligible.length; j++) {
-      var ok = await profile.verifyChecksum(eligible[j].key, 
+      var ok = await profile.verifyChecksum(eligible[j].key,
           KERB_NON_KERB_CKSUM_SALT, c.data,
         entry.parsed.signature);
       if (ok) {
         out.verified = true;
         out.verifiedBy = eligible[j].label || "a supplied key";
-        out.note = "Verified with " + out.verifiedBy + ", acting as the " + 
+        out.note = "Verified with " + out.verifiedBy + ", acting as the " +
             c.role + ". " + c.note;
         break;
       }
@@ -1487,7 +1487,7 @@ async function verifySignaturesWithAnyKey(pac, keys, opts) {
           "this PAC has been altered since it was signed. " + c.note;
       } else {
         // Left as UNKNOWN on purpose — see this function's header.
-        out.note = "Not confirmed: none of the " + eligible.length + 
+        out.note = "Not confirmed: none of the " + eligible.length +
             " etype " + profile.id +
           " key(s) supplied verifies it, and none of them was identified as " +
               "the " + c.role +
@@ -1499,7 +1499,7 @@ async function verifySignaturesWithAnyKey(pac, keys, opts) {
     results.push(out);
   }
 
-  log.debug("Leaving verifySignaturesWithAnyKey(). " + results.length + 
+  log.debug("Leaving verifySignaturesWithAnyKey(). " + results.length +
       " considered.");
   return results;
 }
@@ -1524,19 +1524,19 @@ function encodeLogonInfo(spec) {
   w.fileTime(spec.kickOffTime === undefined ? "never" : spec.kickOffTime);
   w.fileTime(spec.passwordLastSet || null);
   w.fileTime(spec.passwordCanChange || null);
-  w.fileTime(spec.passwordMustChange === undefined ? "never" : 
+  w.fileTime(spec.passwordMustChange === undefined ? "never" :
       spec.passwordMustChange);
 
   ndr.writeUnicodeStringHeader(w, spec.effectiveName);
-  ndr.writeUnicodeStringHeader(w, spec.fullName === undefined ? null : 
+  ndr.writeUnicodeStringHeader(w, spec.fullName === undefined ? null :
       spec.fullName);
-  ndr.writeUnicodeStringHeader(w, spec.logonScript === undefined ? null : 
+  ndr.writeUnicodeStringHeader(w, spec.logonScript === undefined ? null :
       spec.logonScript);
-  ndr.writeUnicodeStringHeader(w, spec.profilePath === undefined ? null : 
+  ndr.writeUnicodeStringHeader(w, spec.profilePath === undefined ? null :
       spec.profilePath);
-  ndr.writeUnicodeStringHeader(w, spec.homeDirectory === undefined ? null : 
+  ndr.writeUnicodeStringHeader(w, spec.homeDirectory === undefined ? null :
       spec.homeDirectory);
-  ndr.writeUnicodeStringHeader(w, spec.homeDirectoryDrive === undefined ? 
+  ndr.writeUnicodeStringHeader(w, spec.homeDirectoryDrive === undefined ?
       null : spec.homeDirectoryDrive);
 
   w.u16(spec.logonCount || 0);
@@ -1556,18 +1556,18 @@ function encodeLogonInfo(spec) {
   w.u32(spec.userFlags === undefined ? derivedFlags : spec.userFlags);
 
   w.bytes(spec.userSessionKey || new Uint8Array(16));   // zero for Kerberos
-  ndr.writeUnicodeStringHeader(w, spec.logonServer === undefined ? null : 
+  ndr.writeUnicodeStringHeader(w, spec.logonServer === undefined ? null :
       spec.logonServer);
-  ndr.writeUnicodeStringHeader(w, spec.logonDomainName === undefined ? null : 
+  ndr.writeUnicodeStringHeader(w, spec.logonDomainName === undefined ? null :
       spec.logonDomainName);
   w.pointer(!!spec.logonDomainId);
   w.u32(0); w.u32(0);                                  // Reserved1[2]
-  w.u32(spec.userAccountControl === undefined ? 0x00000010 : 
+  w.u32(spec.userAccountControl === undefined ? 0x00000010 :
       spec.userAccountControl);
   w.u32(spec.subAuthStatus || 0);
-  w.fileTime(spec.lastSuccessfulILogon === undefined ? null : 
+  w.fileTime(spec.lastSuccessfulILogon === undefined ? null :
       spec.lastSuccessfulILogon);
-  w.fileTime(spec.lastFailedILogon === undefined ? null : 
+  w.fileTime(spec.lastFailedILogon === undefined ? null :
       spec.lastFailedILogon);
   w.u32(spec.failedILogonCount || 0);
   w.u32(0);                                            // Reserved3
@@ -1579,15 +1579,15 @@ function encodeLogonInfo(spec) {
 
   // The deferred half, in the order the pointers were written.
   ndr.writeUnicodeStringValue(w, spec.effectiveName);
-  ndr.writeUnicodeStringValue(w, spec.fullName === undefined ? null : 
+  ndr.writeUnicodeStringValue(w, spec.fullName === undefined ? null :
       spec.fullName);
-  ndr.writeUnicodeStringValue(w, spec.logonScript === undefined ? null : 
+  ndr.writeUnicodeStringValue(w, spec.logonScript === undefined ? null :
       spec.logonScript);
-  ndr.writeUnicodeStringValue(w, spec.profilePath === undefined ? null : 
+  ndr.writeUnicodeStringValue(w, spec.profilePath === undefined ? null :
       spec.profilePath);
-  ndr.writeUnicodeStringValue(w, spec.homeDirectory === undefined ? null : 
+  ndr.writeUnicodeStringValue(w, spec.homeDirectory === undefined ? null :
       spec.homeDirectory);
-  ndr.writeUnicodeStringValue(w, spec.homeDirectoryDrive === undefined ? null : 
+  ndr.writeUnicodeStringValue(w, spec.homeDirectoryDrive === undefined ? null :
       spec.homeDirectoryDrive);
 
   if (groups.length) {
@@ -1597,9 +1597,9 @@ function encodeLogonInfo(spec) {
       w.u32(g.attributes === undefined ? 0x00000007 : g.attributes);
     });
   }
-  ndr.writeUnicodeStringValue(w, spec.logonServer === undefined ? null : 
+  ndr.writeUnicodeStringValue(w, spec.logonServer === undefined ? null :
       spec.logonServer);
-  ndr.writeUnicodeStringValue(w, spec.logonDomainName === undefined ? null : 
+  ndr.writeUnicodeStringValue(w, spec.logonDomainName === undefined ? null :
       spec.logonDomainName);
   if (spec.logonDomainId) ndr.writeConformantSid(w, spec.logonDomainId);
 
@@ -1612,7 +1612,7 @@ function encodeLogonInfo(spec) {
     // All the referents AFTER all the fixed parts — rule 4.
     extraSids.forEach(function (e) { ndr.writeConformantSid(w, e.sid); });
   }
-  if (spec.resourceGroupDomainSid) ndr.writeConformantSid(w, 
+  if (spec.resourceGroupDomainSid) ndr.writeConformantSid(w,
       spec.resourceGroupDomainSid);
   if (resourceGroups.length) {
     w.u32(resourceGroups.length);
@@ -1708,7 +1708,7 @@ function encodeSignaturePlaceholder(signatureType, length, rodcIdentifier) {
   var w = ndr.createWriter();
   w.u32(signatureType < 0 ? signatureType + 0x100000000 : signatureType);
   w.zeros(length);
-  if (rodcIdentifier !== undefined && 
+  if (rodcIdentifier !== undefined &&
       rodcIdentifier !== null) w.u16(rodcIdentifier);
   return w.build();
 }
@@ -1755,7 +1755,7 @@ function assemblePac(entries) {
 // Doing them in any other order produces a PAC whose signatures do not verify, and
 // the error a Windows service returns for that is indistinguishable from a wrong key.
 async function buildPac(spec) {
-  log.debug("Entering buildPac(). client=" + (spec.clientInfo && 
+  log.debug("Entering buildPac(). client=" + (spec.clientInfo &&
       spec.clientInfo.name));
   var serverProfile = kcrypto.etypeById(spec.serverKey.etype);
   var kdcProfile = kcrypto.etypeById(spec.kdcKey.etype);
@@ -1795,30 +1795,30 @@ async function buildPac(spec) {
   if (spec.includeTicketSignature) {
     entries.push({
       type: TYPE.TICKET_CHECKSUM,
-      bytes: encodeSignaturePlaceholder(kdcSigType, kdcProfile.checksumBytes, 
+      bytes: encodeSignaturePlaceholder(kdcSigType, kdcProfile.checksumBytes,
           spec.rodcIdentifier)
     });
   }
   if (spec.includeExtendedKdcSignature) {
     entries.push({
       type: TYPE.EXTENDED_KDC_CHECKSUM,
-      bytes: encodeSignaturePlaceholder(kdcSigType, kdcProfile.checksumBytes, 
+      bytes: encodeSignaturePlaceholder(kdcSigType, kdcProfile.checksumBytes,
           spec.rodcIdentifier)
     });
   }
   entries.push({
     type: TYPE.SERVER_CHECKSUM,
-    bytes: encodeSignaturePlaceholder(serverSigType, 
+    bytes: encodeSignaturePlaceholder(serverSigType,
         serverProfile.checksumBytes)
   });
   entries.push({
     type: TYPE.KDC_CHECKSUM,
-    bytes: encodeSignaturePlaceholder(kdcSigType, kdcProfile.checksumBytes, 
+    bytes: encodeSignaturePlaceholder(kdcSigType, kdcProfile.checksumBytes,
         spec.rodcIdentifier)
   });
 
   var bytes = await signAssembled(assemblePac(entries), spec);
-  log.debug("Leaving buildPac(). bytes=" + bytes.length + ", buffers=" + 
+  log.debug("Leaving buildPac(). bytes=" + bytes.length + ", buffers=" +
       entries.length);
   return bytes;
 }
@@ -1879,7 +1879,7 @@ async function signAssembled(assembled, spec) {
 
   // 3. The server signature, over the whole PAC — the extended signature is now
   //    populated and is covered; the server and KDC fields are still zero.
-  var serverSig = await serverProfile.checksum(spec.serverKey.key, 
+  var serverSig = await serverProfile.checksum(spec.serverKey.key,
       KERB_NON_KERB_CKSUM_SALT, bytes);
   write(TYPE.SERVER_CHECKSUM, serverSig);
 
@@ -1937,7 +1937,7 @@ async function resignPac(pacBytes, spec) {
   if (spec.includeTicketSignature) {
     entries.push({
       type: TYPE.TICKET_CHECKSUM,
-      bytes: encodeSignaturePlaceholder(kdcProfile.checksumType, 
+      bytes: encodeSignaturePlaceholder(kdcProfile.checksumType,
           kdcProfile.checksumBytes,
         spec.rodcIdentifier)
     });
@@ -1945,25 +1945,25 @@ async function resignPac(pacBytes, spec) {
   if (spec.includeExtendedKdcSignature) {
     entries.push({
       type: TYPE.EXTENDED_KDC_CHECKSUM,
-      bytes: encodeSignaturePlaceholder(kdcProfile.checksumType, 
+      bytes: encodeSignaturePlaceholder(kdcProfile.checksumType,
           kdcProfile.checksumBytes,
         spec.rodcIdentifier)
     });
   }
   entries.push({
     type: TYPE.SERVER_CHECKSUM,
-    bytes: encodeSignaturePlaceholder(serverProfile.checksumType, 
+    bytes: encodeSignaturePlaceholder(serverProfile.checksumType,
         serverProfile.checksumBytes)
   });
   entries.push({
     type: TYPE.KDC_CHECKSUM,
-    bytes: encodeSignaturePlaceholder(kdcProfile.checksumType, 
+    bytes: encodeSignaturePlaceholder(kdcProfile.checksumType,
         kdcProfile.checksumBytes,
       spec.rodcIdentifier)
   });
 
   var bytes = await signAssembled(assemblePac(entries), spec);
-  log.debug("Leaving resignPac(). bytes=" + bytes.length + ", carried " + 
+  log.debug("Leaving resignPac(). bytes=" + bytes.length + ", carried " +
       entries.length +
     " buffer(s) across.");
   return bytes;

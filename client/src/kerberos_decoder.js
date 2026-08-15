@@ -110,7 +110,7 @@ function renderDocument(doc) {
   if (doc.problems && doc.problems.length) {
     var problems = make("div", "krb-problems");
     problems.appendChild(make("h4", "krb-section-title",
-      doc.problems.length + " thing" + (doc.problems.length === 1 ? "" : "s") + 
+      doc.problems.length + " thing" + (doc.problems.length === 1 ? "" : "s") +
           " worth knowing"));
     var ul = make("ul");
     doc.problems.forEach(function (p) { ul.appendChild(make("li", null, p)); });
@@ -153,7 +153,7 @@ async function collectKeys() {
       var bytes = prim.fromHex(rawHex.replace(/[\s:]/g, ""));
       var profile = kcrypto.etypeById(etype);
       if (bytes.length !== profile.keyBytes) {
-        notes.push("The key given is " + bytes.length + " bytes, but " + 
+        notes.push("The key given is " + bytes.length + " bytes, but " +
             profile.name +
           " keys are " + profile.keyBytes + " bytes. It was offered anyway.");
       }
@@ -181,7 +181,7 @@ async function collectKeys() {
             "certainly be wrong.");
     }
     try {
-      keys = keys.concat(await describer.keysFromPassword(password, salt, 
+      keys = keys.concat(await describer.keysFromPassword(password, salt,
           null));
     } catch (e) {
       notes.push("Could not derive keys from the password: " + e.message);
@@ -195,10 +195,10 @@ async function collectKeys() {
       var kt = keytabReader.parseKeytab(parsedInput.bytes);
       var fromKeytab = keytabReader.keysFromKeytab(kt);
       keys = keys.concat(fromKeytab);
-      notes.push("Keytab: version 0x" + kt.version.toString(16) + ", " + 
+      notes.push("Keytab: version 0x" + kt.version.toString(16) + ", " +
           kt.entries.length +
         " entr" + (kt.entries.length === 1 ? "y" : "ies") +
-        (kt.deletedSlots ? " and " + kt.deletedSlots + " deleted slot(s)" : 
+        (kt.deletedSlots ? " and " + kt.deletedSlots + " deleted slot(s)" :
             "") +
         ", " + fromKeytab.length + " usable key(s): " +
         kt.entries.map(function (e) {
@@ -258,7 +258,7 @@ async function onDecode() {
     notesPane.appendChild(make("h4", "krb-section-title", "About the keys " +
         "you supplied"));
     var ul = make("ul");
-    collected.notes.forEach(function (n) { ul.appendChild(make("li", null, 
+    collected.notes.forEach(function (n) { ul.appendChild(make("li", null,
         n)); });
     notesPane.appendChild(ul);
     host.appendChild(notesPane);
@@ -279,13 +279,13 @@ async function onDecode() {
 
 function onClear() {
   log.debug("Entering onClear().");
-  ["krb_input", "krb_key_hex", "krb_password", "krb_salt", 
+  ["krb_input", "krb_key_hex", "krb_password", "krb_salt",
       "krb_keytab"].forEach(function (id) {
     var e = el(id);
     if (e) e.value = "";
   });
   clear(el("krb_output"));
-  status("krb_status", "Cleared. Nothing from this page is stored anywhere.", 
+  status("krb_status", "Cleared. Nothing from this page is stored anywhere.",
       null);
   log.debug("Leaving onClear().");
   return false;
@@ -296,7 +296,7 @@ function onClear() {
 // letting a decryption attempt fail with something that names AES.
 function reportCryptoAvailability() {
   log.debug("Entering reportCryptoAvailability().");
-  var available = !!(typeof globalThis !== "undefined" && globalThis.crypto && 
+  var available = !!(typeof globalThis !== "undefined" && globalThis.crypto &&
       globalThis.crypto.subtle);
   var note = el("krb_crypto_note");
   if (!note) {

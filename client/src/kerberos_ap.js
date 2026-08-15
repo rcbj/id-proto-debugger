@@ -68,7 +68,7 @@ function revive(entry) {
     ticket: msgs.readTicket(panes.b64ToBytes(entry.ticket)),
     sessionKey: prim.fromHex(entry.sessionKey),
     etype: entry.sessionKeyEtype,
-    client: msgs.parsePrincipal(entry.client.split("@")[0], 
+    client: msgs.parsePrincipal(entry.client.split("@")[0],
         msgs.NAME_TYPE.PRINCIPAL),
     realm: entry.realm,
     service: entry.service,
@@ -95,7 +95,7 @@ function renderTicketChoice() {
     return false;
   }
   tickets.forEach(function (entry, index) {
-    var option = panes.make("option", null, entry.service + "  (until " + 
+    var option = panes.make("option", null, entry.service + "  (until " +
         entry.endtime + ")");
     option.value = String(index);
     if (select) select.appendChild(option);
@@ -120,7 +120,7 @@ function onTicketChosen() {
     chosenTicket = revive(entry);
   } catch (e) {
     chosenTicket = null;
-    status("krb_ap_status", "That stored ticket cannot be read back: " + 
+    status("krb_ap_status", "That stored ticket cannot be read back: " +
         e.message, "krb-bad");
     panes.disable("krb_present_button", true);
     log.debug("Leaving onTicketChosen().");
@@ -137,15 +137,15 @@ function onTicketChosen() {
   if (chosenTicket.endtime <= new Date()) {
     panes.disable("krb_present_button", true);
     status("krb_ap_status",
-      "That ticket expired at " + chosenTicket.endtime.toISOString() + 
+      "That ticket expired at " + chosenTicket.endtime.toISOString() +
           ". A service would refuse it " +
-      "with KRB_AP_ERR_TKT_EXPIRED. Buy a fresh one on the TGS exchange page.", 
+      "with KRB_AP_ERR_TKT_EXPIRED. Buy a fresh one on the TGS exchange page.",
           "krb-bad");
     log.debug("Leaving onTicketChosen().");
     return;
   }
   panes.disable("krb_present_button", false);
-  status("krb_ap_status", "Ready to present a ticket for " + entry.service + 
+  status("krb_ap_status", "Ready to present a ticket for " + entry.service +
       ".", null);
   log.debug("Leaving onTicketChosen().");
 }
@@ -220,10 +220,10 @@ function renderGssChecksum(hostId, checksumBytes) {
     {
       name: "Deleg",
       value: parsed.delegation
-        ? "option " + parsed.delegation.option + ", " + 
+        ? "option " + parsed.delegation.option + ", " +
             parsed.delegation.credential.length + " bytes"
         : "(none)",
-      note: parsed.delegation ? "a forwarded TGT travels here, as a KRB-CRED" : 
+      note: parsed.delegation ? "a forwarded TGT travels here, as a KRB-CRED" :
           null
     }
   ]);
@@ -238,7 +238,7 @@ async function onPresent() {
     return false;
   }
   var mutual = panes.checked("krb_flag_mutual");
-  status("krb_ap_status", "Building an AP-REQ and wrapping it as a GSS token…", 
+  status("krb_ap_status", "Building an AP-REQ and wrapping it as a GSS token…",
       "krb-pending");
 
   var built;
@@ -250,7 +250,7 @@ async function onPresent() {
       subkey: panes.checked("krb_send_subkey") ? undefined : null
     });
   } catch (e) {
-    status("krb_ap_status", "The AP-REQ could not be built: " + e.message, 
+    status("krb_ap_status", "The AP-REQ could not be built: " + e.message,
         "krb-bad");
     return false;
   }
@@ -270,7 +270,7 @@ async function onPresent() {
     { name: "outer tag", value: "0x60  ([APPLICATION 0])", note: null },
     {
       name: "mechanism OID",
-      value: gss.KRB5_MECH_OID + "  (" + prim.toHex(gss.KRB5_MECH_OID_DER) + 
+      value: gss.KRB5_MECH_OID + "  (" + prim.toHex(gss.KRB5_MECH_OID_DER) +
           ")",
       note: "Kerberos v5. SPNEGO's 1.3.6.1.5.5.2 would be a negotiation " +
           "wrapper around this one, " +
@@ -280,7 +280,7 @@ async function onPresent() {
     { name: "total size", value: built.token.length + " bytes", note: null }
   ]);
   host.appendChild(wrapperPane);
-  await panes.renderMessage("krb_apreq_pane", "The AP-REQ inside it", 
+  await panes.renderMessage("krb_apreq_pane", "The AP-REQ inside it",
       built.apReq,
     [{
       etype: chosenTicket.etype,
@@ -295,9 +295,9 @@ async function onPresent() {
     var profile = kcrypto.etypeById(chosenTicket.etype);
     var apReq = msgs.readApReq(built.apReq);
     var authenticator = msgs.readAuthenticator(await profile.decrypt(
-      chosenTicket.sessionKey, kcrypto.KEY_USAGE.AP_REQ_AUTH, 
+      chosenTicket.sessionKey, kcrypto.KEY_USAGE.AP_REQ_AUTH,
           apReq.authenticator.cipher));
-    if (authenticator.cksum && 
+    if (authenticator.cksum &&
         authenticator.cksum.type === gss.CHECKSUM_TYPE_GSS) {
       renderGssChecksum("krb_checksum_pane", authenticator.cksum.checksum);
     }
@@ -320,9 +320,9 @@ async function onPresent() {
   }
 
   try {
-    window.localStorage.setItem(panes.KEYS.SERVICE_HOST, 
+    window.localStorage.setItem(panes.KEYS.SERVICE_HOST,
         val("krb_service_host"));
-    window.localStorage.setItem(panes.KEYS.SERVICE_PORT, 
+    window.localStorage.setItem(panes.KEYS.SERVICE_PORT,
         val("krb_service_port"));
   } catch (e) {
     // No storage: the fields simply will not be remembered.
@@ -361,7 +361,7 @@ async function onPresent() {
       sentCusec: built.cusec
     });
   } catch (e) {
-    status("krb_ap_status", "The service's answer could not be read: " + 
+    status("krb_ap_status", "The service's answer could not be read: " +
         e.message, "krb-bad");
     return false;
   }
@@ -384,7 +384,7 @@ async function onPresent() {
       extra = " The Authenticator's checksum was not the 0x8003 structure a " +
           "GSS caller must send.";
     }
-    status("krb_ap_status", e2.error.name + " — " + e2.error.meaning + extra, 
+    status("krb_ap_status", e2.error.name + " — " + e2.error.meaning + extra,
         "krb-bad");
     log.debug("Leaving onPresent(). refused with " + e2.error.name);
     return false;
@@ -393,7 +393,7 @@ async function onPresent() {
   if (!outcome.mutualOk) {
     // The echo did not match. Everything else about the reply may be correct,
     // which is exactly why this has to be checked rather than assumed.
-    status("krb_ap_status", "MUTUAL AUTHENTICATION FAILED. " + outcome.reason, 
+    status("krb_ap_status", "MUTUAL AUTHENTICATION FAILED. " + outcome.reason,
         "krb-bad");
     return false;
   }
@@ -406,7 +406,7 @@ async function onPresent() {
     sequenceNumber: 1
   };
   var keying = client.perMessageKey(context);
-  panes.renderTable(panes.clear(el("krb_context_pane")) || 
+  panes.renderTable(panes.clear(el("krb_context_pane")) ||
       el("krb_context_pane"), [
     {
       name: "mutual authentication",
@@ -445,7 +445,7 @@ async function onPresent() {
   status("krb_ap_status",
     "The service ACCEPTED the ticket and proved itself. A security context " +
         "is established, and the " +
-    "per-message tokens below are now keyed from " + keying.which + ".", 
+    "per-message tokens below are now keyed from " + keying.which + ".",
         "krb-ok");
   log.debug("Leaving onPresent(). context established.");
   return false;
@@ -507,7 +507,7 @@ async function onPerMessage(seal) {
         }
       ]);
       host.appendChild(pane);
-      status("krb_ap_status", "Wrapped and unwrapped " + message.length + 
+      status("krb_ap_status", "Wrapped and unwrapped " + message.length +
           " characters.", "krb-ok");
     } else {
       var mic = await gss.getMic({
@@ -553,12 +553,12 @@ async function onPerMessage(seal) {
         }
       ]);
       host.appendChild(micPane);
-      status("krb_ap_status", "Computed and verified a MIC over " + 
+      status("krb_ap_status", "Computed and verified a MIC over " +
           message.length + " characters.",
         "krb-ok");
     }
   } catch (e) {
-    status("krb_ap_status", "The per-message token failed: " + e.message, 
+    status("krb_ap_status", "The per-message token failed: " + e.message,
         "krb-bad");
   }
   log.debug("Leaving onPerMessage().");
@@ -580,7 +580,7 @@ window.onload = async function () {
   // default. Said on arrival rather than when the button is pressed.
   await panes.reportEnvironment("krb_environment_note", {
     needsService: true,
-    disableOnNoBackend: ["krb_present_button", "krb_mic_button", 
+    disableOnNoBackend: ["krb_present_button", "krb_mic_button",
         "krb_wrap_button"],
     disableOnNoService: ["krb_present_button"]
   });

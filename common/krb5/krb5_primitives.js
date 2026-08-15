@@ -149,7 +149,7 @@ function concat(list) {
   for (i = 0; i < list.length; i++) total += list[i].length;
   var out = new Uint8Array(total);
   var at = 0;
-  for (i = 0; i < list.length; i++) { out.set(list[i], 
+  for (i = 0; i < list.length; i++) { out.set(list[i],
       at); at += list[i].length; }
   return out;
 }
@@ -163,7 +163,7 @@ function xor(a, b) {
 
 function toHex(bytes) {
   var b = toBytes(bytes), s = "";
-  for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") + 
+  for (var i = 0; i < b.length; i++) s += (b[i] < 16 ? "0" : "") +
       b[i].toString(16);
   return s;
 }
@@ -242,9 +242,9 @@ function nfold(input, outBits) {
     var msbit = (((inLen << 3) - 1) +
                  (((inLen << 3) + 13) * Math.floor(i / inLen)) +
                  ((inLen - (i % inLen)) << 3)) % (inLen << 3);
-    byte += (((inBytes[(((inLen - 1) - (msbit >> 3)) % inLen + 
+    byte += (((inBytes[(((inLen - 1) - (msbit >> 3)) % inLen +
         inLen) % inLen] << 8) |
-              (inBytes[((inLen - (msbit >> 3)) % inLen + 
+              (inBytes[((inLen - (msbit >> 3)) % inLen +
                   inLen) % inLen])) >>> ((msbit & 7) + 1)) & 0xff;
     byte += out[i % outLen];
     out[i % outLen] = byte & 0xff;
@@ -303,7 +303,7 @@ function wordsOfBlock(padded, offset) {
   var X = new Array(16);
   for (var i = 0; i < 16; i++) {
     var j = offset + i * 4;
-    X[i] = (padded[j] | (padded[j + 1] << 8) | (padded[j + 
+    X[i] = (padded[j] | (padded[j + 1] << 8) | (padded[j +
         2] << 16) | (padded[j + 3] << 24)) >>> 0;
   }
   return X;
@@ -353,9 +353,9 @@ function md4(input) {
     for (i = 0; i < 16; i += 4) {                                    // round 3
       a = rotl((a + H(b, c, d) + X[MD4_R3_ORDER[i]] + 0x6ed9eba1) >>> 0, 3);
       d = rotl((d + H(a, b, c) + X[MD4_R3_ORDER[i + 1]] + 0x6ed9eba1) >>> 0, 9);
-      c = rotl((c + H(d, a, b) + X[MD4_R3_ORDER[i + 2]] + 0x6ed9eba1) >>> 0, 
+      c = rotl((c + H(d, a, b) + X[MD4_R3_ORDER[i + 2]] + 0x6ed9eba1) >>> 0,
           11);
-      b = rotl((b + H(c, d, a) + X[MD4_R3_ORDER[i + 3]] + 0x6ed9eba1) >>> 0, 
+      b = rotl((b + H(c, d, a) + X[MD4_R3_ORDER[i + 3]] + 0x6ed9eba1) >>> 0,
           15);
     }
     h[0] = (h[0] + a) >>> 0;
@@ -369,7 +369,7 @@ function md4(input) {
 
 var MD5_K = (function () {
   var k = new Array(64);
-  for (var i = 0; i < 64; i++) k[i] = Math.floor(Math.abs(Math.sin(i + 
+  for (var i = 0; i < 64; i++) k[i] = Math.floor(Math.abs(Math.sin(i +
       1)) * 4294967296) >>> 0;
   return k;
 })();
@@ -395,7 +395,7 @@ function md5(input) {
       else { f = c ^ (b | ~d); g = (7 * i) % 16; }
       var tmp = d;
       d = c; c = b;
-      b = (b + rotl((a + (f >>> 0) + MD5_K[i] + X[g]) >>> 0, 
+      b = (b + rotl((a + (f >>> 0) + MD5_K[i] + X[g]) >>> 0,
           MD5_SHIFT[i])) >>> 0;
       a = tmp;
     }

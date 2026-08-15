@@ -66,10 +66,13 @@ var concat = prim.concat;
 // Web Crypto, reached the same way in both runtimes.
 // ---------------------------------------------------------------------------
 function subtle() {
-  if (typeof globalThis !== "undefined" && globalThis.crypto && 
+  log.debug("Entering subtle().");
+  if (typeof globalThis !== "undefined" && globalThis.crypto &&
       globalThis.crypto.subtle) {
+    log.debug("Leaving subtle().");
     return globalThis.crypto.subtle;
   }
+  log.debug("Leaving subtle().");
   throw new Error("krb5: no Web Crypto here. In the browser this means the " +
       "page " +
     "is not a secure context (https or localhost); Kerberos cannot be done " +
@@ -101,7 +104,7 @@ function randomBytes(n) {
 // implementation, which is a much worse trade.
 // ---------------------------------------------------------------------------
 async function importAesKey(keyBytes) {
-  return subtle().importKey("raw", toBytes(keyBytes), { name: "AES-CBC" }, 
+  return subtle().importKey("raw", toBytes(keyBytes), { name: "AES-CBC" },
       false, ["encrypt", "decrypt"]);
 }
 
@@ -133,7 +136,7 @@ async function cbcDecryptRaw(aesKey, iv, data) {
   }
   var last = input.slice(input.length - 16);
   var padBlock = new Uint8Array(16).fill(16);
-  var synthetic = await cbcEncryptRaw(aesKey, new Uint8Array(16), 
+  var synthetic = await cbcEncryptRaw(aesKey, new Uint8Array(16),
       prim.xor(padBlock, last));
   var glued = concat([input, synthetic]);
   var out = new Uint8Array(await subtle().decrypt({
@@ -176,7 +179,7 @@ async function ctsEncrypt(keyBytes, iv, plaintext) {
   // Zero-pad the trailing partial block up to the block size. When m is 16 this
   // is a no-op and the swap below is what makes an exact multiple differ from
   // plain CBC.
-  var c = await cbcEncryptRaw(aesKey, iv, concat([data, 
+  var c = await cbcEncryptRaw(aesKey, iv, concat([data,
       new Uint8Array((16 - m) % 16)]));
   var n = c.length / 16;
   var cLast = c.slice((n - 1) * 16, n * 16);
@@ -230,7 +233,7 @@ async function hmac(hashName, keyBytes, message) {
 
 async function pbkdf2(hashName, password, salt, iterations, outBits) {
   log.debug("Entering pbkdf2().");
-  var key = await subtle().importKey("raw", toBytes(password), "PBKDF2", false, 
+  var key = await subtle().importKey("raw", toBytes(password), "PBKDF2", false,
       ["deriveBits"]);
   var bits = await subtle().deriveBits(
     {
@@ -270,7 +273,7 @@ async function deriveRandom(baseKey, constant, outBytes) {
 // integrity.
 function usageConstant(usage, purposeByte) {
   return new Uint8Array([
-    (usage >>> 24) & 0xff, (usage >>> 16) & 0xff, (usage >>> 8) & 0xff, 
+    (usage >>> 24) & 0xff, (usage >>> 16) & 0xff, (usage >>> 8) & 0xff,
         usage & 0xff,
     purposeByte
   ]);
@@ -291,14 +294,16 @@ async function deriveKeyAes(baseKey, usage, purposeByte, keyBytes) {
 // that are wrong for two of the three purposes.
 // ---------------------------------------------------------------------------
 async function kdfHmacSha2(hashName, key, label, outBits) {
+  log.debug("Entering kdfHmacSha2().");
   var input = concat([
     new Uint8Array([0, 0, 0, 1]),
     toBytes(label),
     new Uint8Array([0]),
-    new Uint8Array([(outBits >>> 24) & 0xff, (outBits >>> 16) & 0xff, 
+    new Uint8Array([(outBits >>> 24) & 0xff, (outBits >>> 16) & 0xff,
         (outBits >>> 8) & 0xff, outBits & 0xff])
   ]);
   var mac = await hmac(hashName, key, input);
+  log.debug("Leaving kdfHmacSha2().");
   return mac.slice(0, outBits / 8);
 }
 
@@ -352,7 +357,7 @@ function aesSha1Profile(id, name, keyBytes) {
     blockBytes: 16,
     confounderBytes: 16,
     checksumBytes: CHECKSUM_BYTES,
-    checksumType: (keyBytes === 16) ? 15 : 
+    checksumType: (keyBytes === 16) ? 15 :
         16,   // hmac-sha1-96-aes128 / -aes256
     defaultIterations: 4096,
     rfc: "RFC 3962",
@@ -374,18 +379,18 @@ function aesSha1Profile(id, name, keyBytes) {
           throw new Error("krb5: s2kparams asks for 2^32 iterations");
         }
       }
-      var tkey = await pbkdf2("SHA-1", prim.utf8(password), toBytes(salt), 
+      var tkey = await pbkdf2("SHA-1", prim.utf8(password), toBytes(salt),
           iterations, keyBytes * 8);
       var key = await deriveRandom(tkey, prim.utf8("kerberos"), keyBytes);
       log.debug("Leaving stringToKey(). iterations=" + iterations);
       return key;
     },
 
-    async encryptionKey(baseKey, usage) { return deriveKeyAes(baseKey, usage, 
+    async encryptionKey(baseKey, usage) { return deriveKeyAes(baseKey, usage,
         0xAA, keyBytes); },
-    async integrityKey(baseKey, usage) { return deriveKeyAes(baseKey, usage, 
+    async integrityKey(baseKey, usage) { return deriveKeyAes(baseKey, usage,
         0x55, keyBytes); },
-    async checksumKey(baseKey, usage) { return deriveKeyAes(baseKey, usage, 
+    async checksumKey(baseKey, usage) { return deriveKeyAes(baseKey, usage,
         0x99, keyBytes); },
 
     // RFC 3961 section 5.3 simplified profile: the MAC is over the PLAINTEXT
@@ -395,7 +400,7 @@ function aesSha1Profile(id, name, keyBytes) {
       log.debug("Entering encrypt(). etype=" + name + ", usage=" + usage);
       var ke = await this.encryptionKey(baseKey, usage);
       var ki = await this.integrityKey(baseKey, usage);
-      var conf = confounderForTest ? toBytes(confounderForTest) : 
+      var conf = confounderForTest ? toBytes(confounderForTest) :
           randomBytes(16);
       var plain = concat([conf, toBytes(plaintext)]);
       var c = await ctsEncrypt(ke, new Uint8Array(16), plain);
@@ -417,7 +422,7 @@ function aesSha1Profile(id, name, keyBytes) {
       var plain = await ctsDecrypt(ke, new Uint8Array(16), c);
       var expect = (await hmac("SHA-1", ki, plain)).slice(0, CHECKSUM_BYTES);
       if (!prim.equalConstantTime(h, expect)) {
-        throw new Error("krb5: integrity check failed (" + name + ", usage " + 
+        throw new Error("krb5: integrity check failed (" + name + ", usage " +
             usage + ")");
       }
       log.debug("Leaving decrypt(). plaintext=" + (plain.length - 16));
@@ -430,7 +435,7 @@ function aesSha1Profile(id, name, keyBytes) {
     },
 
     async verifyChecksum(baseKey, usage, message, given) {
-      return prim.equalConstantTime(await this.checksum(baseKey, usage, 
+      return prim.equalConstantTime(await this.checksum(baseKey, usage,
           message), given);
     }
   };
@@ -447,7 +452,7 @@ function aesSha2Profile(id, name, keyBytes, hashName, macBytes) {
     blockBytes: 16,
     confounderBytes: 16,
     checksumBytes: macBytes,
-    checksumType: (keyBytes === 16) ? 19 : 
+    checksumType: (keyBytes === 16) ? 19 :
         20,   // hmac-sha256-128-aes128 / hmac-sha384-192-aes256
     defaultIterations: 32768,                    // RFC 8009, not 3962's 4096
     rfc: "RFC 8009",
@@ -466,9 +471,9 @@ function aesSha2Profile(id, name, keyBytes, hashName, macBytes) {
       // saltp puts the enctype name in front of the salt, so the same password
       // and salt produce different keys for the two RFC 8009 etypes.
       var saltp = concat([prim.utf8(name), new Uint8Array([0]), toBytes(salt)]);
-      var tkey = await pbkdf2(hashName, prim.utf8(password), saltp, iterations, 
+      var tkey = await pbkdf2(hashName, prim.utf8(password), saltp, iterations,
           keyBytes * 8);
-      var key = await kdfHmacSha2(hashName, tkey, prim.utf8("kerberos"), 
+      var key = await kdfHmacSha2(hashName, tkey, prim.utf8("kerberos"),
           keyBytes * 8);
       log.debug("Leaving stringToKey(). iterations=" + iterations);
       return key;
@@ -478,7 +483,7 @@ function aesSha2Profile(id, name, keyBytes, hashName, macBytes) {
     // aes256-cts-hmac-sha384-192 that means 256 bits against 192, and using one
     // number for all three is wrong for two of them.
     async encryptionKey(baseKey, usage) {
-      return kdfHmacSha2(hashName, baseKey, usageConstant(usage, 0xAA), 
+      return kdfHmacSha2(hashName, baseKey, usageConstant(usage, 0xAA),
           keyBytes * 8);
     },
     async integrityKey(baseKey, usage) {
@@ -495,7 +500,7 @@ function aesSha2Profile(id, name, keyBytes, hashName, macBytes) {
       var ke = await this.encryptionKey(baseKey, usage);
       var ki = await this.integrityKey(baseKey, usage);
       var iv = new Uint8Array(16);
-      var conf = confounderForTest ? toBytes(confounderForTest) : 
+      var conf = confounderForTest ? toBytes(confounderForTest) :
           randomBytes(16);
       var c = await ctsEncrypt(ke, iv, concat([conf, toBytes(plaintext)]));
       var h = (await hmac(hashName, ki, concat([iv, c]))).slice(0, macBytes);
@@ -515,10 +520,10 @@ function aesSha2Profile(id, name, keyBytes, hashName, macBytes) {
       var c = data.slice(0, data.length - macBytes);
       var h = data.slice(data.length - macBytes);
       // Verified BEFORE decrypting, which is what encrypt-then-MAC is for.
-      var expect = (await hmac(hashName, ki, concat([iv, c]))).slice(0, 
+      var expect = (await hmac(hashName, ki, concat([iv, c]))).slice(0,
           macBytes);
       if (!prim.equalConstantTime(h, expect)) {
-        throw new Error("krb5: integrity check failed (" + name + ", usage " + 
+        throw new Error("krb5: integrity check failed (" + name + ", usage " +
             usage + ")");
       }
       var plain = await ctsDecrypt(ke, iv, c);
@@ -532,7 +537,7 @@ function aesSha2Profile(id, name, keyBytes, hashName, macBytes) {
     },
 
     async verifyChecksum(baseKey, usage, message, given) {
-      return prim.equalConstantTime(await this.checksum(baseKey, usage, 
+      return prim.equalConstantTime(await this.checksum(baseKey, usage,
           message), given);
     }
   };
@@ -569,7 +574,7 @@ function translateArcfourUsage(usage) {
 }
 
 function le32(n) {
-  return new Uint8Array([n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, 
+  return new Uint8Array([n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff,
       (n >>> 24) & 0xff]);
 }
 
@@ -618,7 +623,7 @@ var ARCFOUR = {
     var plain = prim.rc4(k3, data.slice(16));
     var expect = await hmac("MD5", k2, plain);
     if (!prim.equalConstantTime(cksum, expect)) {
-      throw new Error("krb5: integrity check failed (arcfour-hmac-md5, usage " + 
+      throw new Error("krb5: integrity check failed (arcfour-hmac-md5, usage " +
           usage + ")");
     }
     log.debug("Leaving decrypt(). plaintext=" + (plain.length - 8));
@@ -628,15 +633,15 @@ var ARCFOUR = {
   // RFC 4757 section 4: a signature key derived from a fixed string, then MD5
   // over the usage and the message, then HMAC of that.
   async checksum(baseKey, usage, message) {
-    var ksign = await hmac("MD5", baseKey, concat([prim.utf8("signaturekey"), 
+    var ksign = await hmac("MD5", baseKey, concat([prim.utf8("signaturekey"),
         new Uint8Array([0])]));
-    var tmp = prim.md5(concat([le32(translateArcfourUsage(usage)), 
+    var tmp = prim.md5(concat([le32(translateArcfourUsage(usage)),
         toBytes(message)]));
     return hmac("MD5", ksign, tmp);
   },
 
   async verifyChecksum(baseKey, usage, message, given) {
-    return prim.equalConstantTime(await this.checksum(baseKey, usage, message), 
+    return prim.equalConstantTime(await this.checksum(baseKey, usage, message),
         given);
   }
 };
@@ -664,14 +669,17 @@ var ETYPE_NAMES_UNSUPPORTED = {
 };
 
 function etypeById(id) {
+  log.debug("Entering etypeById().");
   var e = ETYPES[id];
   if (!e) {
     var known = ETYPE_NAMES_UNSUPPORTED[id];
+    log.debug("Leaving etypeById().");
     throw new Error("krb5: encryption type " + id +
       (known ? " (" + known + ") is not implemented here" : " is unknown") +
       (id >= 1 && id <= 7 ? " — DES was removed from Windows Server 2025 and " +
           "is decode-only here" : ""));
   }
+  log.debug("Leaving etypeById().");
   return e;
 }
 
@@ -701,7 +709,7 @@ module.exports = {
   etypeById: etypeById,
   etypeByName: etypeByName,
   etypeName: etypeName,
-  isSupportedEtype: function (id) { return Object.prototype.hasOwnProperty.call(ETYPES, 
+  isSupportedEtype: function (id) { return Object.prototype.hasOwnProperty.call(ETYPES,
       id); },
   // Exposed for the vector tests, which have to reach the layers individually:
   // a passing end-to-end encryption can hide two compensating errors.

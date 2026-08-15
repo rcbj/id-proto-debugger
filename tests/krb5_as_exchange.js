@@ -40,7 +40,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "krb5_as_exchange",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 function shared(name) {
@@ -54,7 +54,7 @@ const kcrypto = shared("krb5_crypto.js");
 
 function apiModule(name) {
   return paths.requireSharedModule(
-    [path.join(__dirname, "..", "api", name), path.join(__dirname, name)], 
+    [path.join(__dirname, "..", "api", name), path.join(__dirname, name)],
         name);
 }
 const relayMod = apiModule("krb5_relay.js");
@@ -199,7 +199,7 @@ function buildAsReq(fields) {
     msgType: msgs.MSG_TYPE.AS_REQ,
     padata: f.padata || [],
     reqBody: {
-      kdcOptions: f.kdcOptions || [msgs.KDC_OPTION.FORWARDABLE, 
+      kdcOptions: f.kdcOptions || [msgs.KDC_OPTION.FORWARDABLE,
           msgs.KDC_OPTION.RENEWABLE],
       cname: f.cname || { type: msgs.NAME_TYPE.PRINCIPAL, name: ["alice"] },
       realm: f.realm || "EXAMPLE.COM",
@@ -219,7 +219,7 @@ function buildAsReq(fields) {
 async function encTimestampPadata(password, info) {
   log.debug("Entering encTimestampPadata().");
   const profile = kcrypto.etypeById(info.etype);
-  const key = await profile.stringToKey(password, prim.utf8(info.salt || ""), 
+  const key = await profile.stringToKey(password, prim.utf8(info.salt || ""),
       info.s2kparams);
   const stamp = msgs.encPaEncTsEnc(new Date(), 0);
   log.debug("Leaving encTimestampPadata().");
@@ -228,7 +228,7 @@ async function encTimestampPadata(password, info) {
       type: msgs.PA_TYPE.ENC_TIMESTAMP,
       value: msgs.encEncryptedData({
         etype: info.etype,
-        cipher: await profile.encrypt(key, 
+        cipher: await profile.encrypt(key,
             kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, stamp)
       })
     },
@@ -260,7 +260,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
   const info2 = err.eDataPaData.filter(function (pa) { return pa.type === 19; })[0];
   assert.ok(info2, "PA-ETYPE-INFO2 must be present");
   const entries = msgs.readEtypeInfo2(info2.value);
-  assert.ok(entries.length >= 2, "the KDC should offer more than one etype: " + 
+  assert.ok(entries.length >= 2, "the KDC should offer more than one etype: " +
       entries.length);
   const aes256 = entries.filter(function (e) { return e.etype === 18; })[0];
   assert.ok(aes256, "aes256-cts-hmac-sha1-96 must be offered");
@@ -269,7 +269,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
         "sAMAccountName, no separator");
   assert.ok(aes256.s2kparams && prim.toBytes(aes256.s2kparams).length === 4,
     "s2kparams must carry the iteration count");
-  const iterations = prim.toBytes(aes256.s2kparams).reduce(function (a, b) { return a * 256 + 
+  const iterations = prim.toBytes(aes256.s2kparams).reduce(function (a, b) { return a * 256 +
       b; }, 0);
   assert.strictEqual(iterations, 4096, "RFC 3962's default iteration count");
 
@@ -286,7 +286,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
   const pwSalt = err.eDataPaData.filter(function (pa) { return pa.type === 3; })[0];
   assert.ok(pwSalt, "PA-PW-SALT should be sent alongside, as Active " +
       "Directory does");
-  assert.strictEqual(asn1.decLatin1(prim.toBytes(pwSalt.value)), 
+  assert.strictEqual(asn1.decLatin1(prim.toBytes(pwSalt.value)),
       "EXAMPLE.COMalice",
     "and must carry the same salt");
 
@@ -309,7 +309,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
 
   // The client opens its half with its own long-term key.
   const part = msgs.readEncKdcRepPart(
-    await preauth.profile.decrypt(preauth.key, 
+    await preauth.profile.decrypt(preauth.key,
         kcrypto.KEY_USAGE.AS_REP_ENCPART, rep.encPart.cipher));
   assert.strictEqual(part.nonce, 0xcafe1234,
     "THE NONCE MUST COME BACK UNCHANGED. It is the client's only defence " +
@@ -323,10 +323,10 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
 
   const flags = msgs.ticketFlagNames(part.flags);
   assert.ok(flags.indexOf("initial") !== -1,
-    "a ticket from the AS exchange must be flagged initial: " + 
+    "a ticket from the AS exchange must be flagged initial: " +
         flags.join(", "));
   assert.ok(flags.indexOf("pre-authent") !== -1,
-    "and pre-authent, because pre-authentication actually happened: " + 
+    "and pre-authent, because pre-authentication actually happened: " +
         flags.join(", "));
   assert.ok(flags.indexOf("forwardable") !== -1, "forwardable was requested");
   assert.ok(flags.indexOf("renewable") !== -1, "renewable was requested");
@@ -350,7 +350,7 @@ async function theTicketAndTheClientAgreeOnTheSessionKey(context) {
   const rep = reply.decoded.rep;
 
   const clientPart = msgs.readEncKdcRepPart(
-    await preauth.profile.decrypt(preauth.key, 
+    await preauth.profile.decrypt(preauth.key,
         kcrypto.KEY_USAGE.AS_REP_ENCPART, rep.encPart.cipher));
 
   // The krbtgt key, derived the way the KDC derives it. Its password is the
@@ -360,10 +360,10 @@ async function theTicketAndTheClientAgreeOnTheSessionKey(context) {
     process.env.KRB5_KRBTGT_PASSWORD || "krbtgt-mock-password",
     prim.utf8("EXAMPLE.COMkrbtgt"), null);
   const ticketPart = msgs.readEncTicketPart(
-    await preauth.profile.decrypt(krbtgtKey, kcrypto.KEY_USAGE.KDC_REP_TICKET, 
+    await preauth.profile.decrypt(krbtgtKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
         rep.ticket.encPart.cipher));
 
-  assert.strictEqual(prim.toHex(ticketPart.key.key), 
+  assert.strictEqual(prim.toHex(ticketPart.key.key),
       prim.toHex(clientPart.key.key),
     "the session key in the TICKET and the one in the client's enc-part must " +
         "be the SAME BYTES. " +
@@ -392,10 +392,10 @@ async function anAccountWithoutPreAuthGetsATicketStraightAway() {
         "ticket, not an error");
   const rep = reply.decoded.rep;
   const profile = kcrypto.etypeById(rep.encPart.etype);
-  const key = await profile.stringToKey("no-preauth-here", 
+  const key = await profile.stringToKey("no-preauth-here",
       prim.utf8("EXAMPLE.COMnoreauth"), null);
   const part = msgs.readEncKdcRepPart(
-    await profile.decrypt(key, kcrypto.KEY_USAGE.AS_REP_ENCPART, 
+    await profile.decrypt(key, kcrypto.KEY_USAGE.AS_REP_ENCPART,
         rep.encPart.cipher));
   assert.strictEqual(part.nonce, 0x5150, "the nonce comes back unchanged " +
       "here too");
@@ -404,7 +404,7 @@ async function anAccountWithoutPreAuthGetsATicketStraightAway() {
   assert.strictEqual(flags.indexOf("pre-authent"), -1,
     "but NOT pre-authent: no pre-authentication happened, and a service can " +
         "insist on that flag, " +
-    "so setting it would be a lie with security consequences. Flags: " + 
+    "so setting it would be a lie with security consequences. Flags: " +
         flags.join(", "));
   log.debug("Leaving anAccountWithoutPreAuthGetsATicketStraightAway().");
 }
@@ -422,9 +422,9 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
       label + ": expected an error, got " + reply.decoded.kind);
     const e = reply.decoded.error;
     assert.strictEqual(e.errorCode, code,
-      label + ": expected " + msgs.describeError(code).name + " (" + code + 
+      label + ": expected " + msgs.describeError(code).name + " (" + code +
           "), got " +
-      e.error.name + " (" + e.errorCode + ")" + (e.eText ? " — " + e.eText : 
+      e.error.name + " (" + e.errorCode + ")" + (e.eText ? " — " + e.eText :
           ""));
     if (textMatch) {
       assert.ok(textMatch.test(e.eText || ""),
@@ -452,10 +452,13 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
     } }), 7, /no such service/);
 
   await expectError("the wrong realm",
-    buildAsReq({ realm: "OTHER.REALM", sname: {
+    buildAsReq({
+      realm: "OTHER.REALM",
+      sname: {
       type: 2,
       name: ["krbtgt", "OTHER.REALM"]
-    } }),
+    }
+    }),
     68, /serves EXAMPLE.COM/);
 
   await expectError("a locked account",
@@ -488,7 +491,7 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
   // A wrong password. Note what the KDC can and cannot tell: this is
   // indistinguishable to it from a wrong salt or a wrong key usage number,
   // which is exactly why showing the salt matters.
-  const wrongPassword = await encTimestampPadata("not the password", 
+  const wrongPassword = await encTimestampPadata("not the password",
       context.info);
   const failed = await expectError("a wrong password",
     buildAsReq({ padata: [wrongPassword.padata] }), 24, /PREAUTH_FAILED/);
@@ -512,7 +515,7 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
   // A timestamp outside the tolerance. Built by hand rather than by moving any
   // clock: the padata carries the time, so a stale one is just a stale value.
   const profile = kcrypto.etypeById(18);
-  const key = await profile.stringToKey("hunter2", 
+  const key = await profile.stringToKey("hunter2",
       prim.utf8("EXAMPLE.COMalice"), null);
   const stale = msgs.encPaEncTsEnc(new Date(Date.now() - 20 * 60 * 1000), 0);
   const skewed = await expectError("a timestamp twenty minutes old",
@@ -520,7 +523,7 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
       type: msgs.PA_TYPE.ENC_TIMESTAMP,
       value: msgs.encEncryptedData({
         etype: 18,
-        cipher: await profile.encrypt(key, 
+        cipher: await profile.encrypt(key,
             kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, stale)
       })
     }] }), 37, /clock skew/);
@@ -564,7 +567,7 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
   // dropped connection. A bare DER SEQUENCE has no [APPLICATION n] tag, so the
   // KDC cannot even guess what it is.
   const garbage = msgs.readKdcResponse(
-    await kdc.module.handleMessage(Buffer.from([0x30, 0x03, 0x02, 0x01, 
+    await kdc.module.handleMessage(Buffer.from([0x30, 0x03, 0x02, 0x01,
         0x05])));
   assert.strictEqual(garbage.kind, "KRB-ERROR", "garbage must still be " +
       "answered");
@@ -706,7 +709,7 @@ async function theKdcHonoursTheClientsEtypeOrder() {
       etypes: offered,
       padata: [preauth.padata]
     }));
-    assert.strictEqual(done.decoded.kind, "AS-REP", label + 
+    assert.strictEqual(done.decoded.kind, "AS-REP", label +
         ": expected a ticket");
     assert.strictEqual(done.decoded.rep.ticket.encPart.etype, expected,
       label + ": the KDC must choose the FIRST etype the client offered that " +

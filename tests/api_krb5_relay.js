@@ -47,7 +47,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "api_krb5_relay",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 // In a checkout these are under api/; the tests image copies them flat beside
@@ -57,7 +57,7 @@ log.info("Log initialized. logLevel=" + log.level());
 const paths = require("./module_paths.js");
 function apiModule(name) {
   return paths.requireSharedModule(
-    [path.join(__dirname, "..", "api", name), path.join(__dirname, name)], 
+    [path.join(__dirname, "..", "api", name), path.join(__dirname, name)],
         name);
 }
 const relayMod = apiModule("krb5_relay.js");
@@ -74,12 +74,12 @@ function asReq(contentBytes) {
   const content = contentBytes || Buffer.from([0x30, 0x03, 0x02, 0x01, 0x05]);
   return Buffer.concat([Buffer.from([0x6a, content.length]), content]);
 }
-function tgsReq() { const c = Buffer.from([0x30, 0x03, 0x02, 0x01, 
+function tgsReq() { const c = Buffer.from([0x30, 0x03, 0x02, 0x01,
     0x05]); return Buffer.concat([Buffer.from([0x6c, c.length]), c]); }
-function apReq() { const c = Buffer.from([0x30, 0x03, 0x02, 0x01, 
+function apReq() { const c = Buffer.from([0x30, 0x03, 0x02, 0x01,
     0x05]); return Buffer.concat([Buffer.from([0x6e, c.length]), c]); }
 // A KRB-ERROR, which is what a KDC answers with most of the time.
-function krbError() { const c = Buffer.from([0x30, 0x03, 0x02, 0x01, 
+function krbError() { const c = Buffer.from([0x30, 0x03, 0x02, 0x01,
     0x05]); return Buffer.concat([Buffer.from([0x7e, c.length]), c]); }
 
 // The relay as the local and containerized stacks configure it: the address
@@ -104,7 +104,7 @@ function localRelay(overrides) {
 // need a real exchange, rather than the allowlist being widened globally (which
 // would leave the allowlist untested by everything else in this file).
 function relayAllowing(port, overrides) {
-  return localRelay(Object.assign({ krb5AllowedPorts: [88, 464, 749, port] }, 
+  return localRelay(Object.assign({ krb5AllowedPorts: [88, 464, 749, port] },
       overrides || {}));
 }
 
@@ -154,7 +154,7 @@ async function withTcpServer(handler, fn, bindHost) {
 async function withUdpServer(handler, fn) {
   log.debug("Entering withUdpServer().");
   const socket = dgram.createSocket("udp4");
-  await new Promise(function (resolve) { socket.bind(0, "127.0.0.1", 
+  await new Promise(function (resolve) { socket.bind(0, "127.0.0.1",
       resolve); });
   socket.on("message", function (msg, rinfo) { handler(socket, msg, rinfo); });
   const port = socket.address().port;
@@ -178,10 +178,10 @@ async function mustReject(what, promise, code) {
   assert.ok(threw, "expected a refusal: " + what);
   if (code) {
     assert.strictEqual(threw.code, code,
-      what + ": refused with " + threw.code + " rather than " + code + " (" + 
+      what + ": refused with " + threw.code + " rather than " + code + " (" +
           threw.message + ")");
   }
-  log.debug("refused as it should: " + what + " [" + threw.code + "] " + 
+  log.debug("refused as it should: " + what + " [" + threw.code + "] " +
       threw.message);
   log.debug("Leaving mustReject().");
   return threw;
@@ -395,7 +395,7 @@ async function repliesAreCappedBeforeTheyAreRead() {
 
   // A reply exactly at the cap is accepted: an off-by-one here would refuse
   // legitimate traffic, and a KDC reply with a large PAC is genuinely big.
-  const body = Buffer.concat([krbError(), 
+  const body = Buffer.concat([krbError(),
       Buffer.alloc(2048 - krbError().length, 0x41)]);
   const atCap = await withTcpServer(function (socket) {
     socket.on("data", function () {
@@ -425,7 +425,7 @@ async function repliesAreCappedBeforeTheyAreRead() {
           port: port,
           message: asReq()
         }), "EKRB5BADFRAME");
-    assert.ok(/top bit/.test(err.message), "the refusal must say which bit: " + 
+    assert.ok(/top bit/.test(err.message), "the refusal must say which bit: " +
         err.message);
   });
 
@@ -477,7 +477,7 @@ async function onlyKerberosPortsAreReachable() {
         message: asReq()
       }), "EKRB5PORTNOTALLOWED");
     assert.ok(/port scanner/.test(err.message),
-      "the refusal should explain WHY a byte relay restricts ports: " + 
+      "the refusal should explain WHY a byte relay restricts ports: " +
           err.message);
   }
   // And the allowed ones get PAST the port check. What must not happen is
@@ -515,7 +515,7 @@ async function onlyKerberosPortsAreReachable() {
   // and — the important half — an allowlist that ends up empty must refuse
   // everything rather than silently allow everything.
   const noted = [];
-  const messy = relayMod.resolveAllowedPorts([88, "464", -1, 70000, 
+  const messy = relayMod.resolveAllowedPorts([88, "464", -1, 70000,
       "not a port", 88],
     {
       error: function (m) { noted.push(m); },
@@ -526,7 +526,7 @@ async function onlyKerberosPortsAreReachable() {
   assert.deepStrictEqual(messy, [88, 464],
     "valid entries must survive, a string port must be accepted, and " +
         "duplicates collapse");
-  assert.strictEqual(noted.length, 3, "each dropped entry must be logged: " + 
+  assert.strictEqual(noted.length, 3, "each dropped entry must be logged: " +
       noted.join(" | "));
 
   const emptyRelay = relayMod.createRelay(
@@ -568,9 +568,9 @@ async function theAddressPolicyAppliesToRawSockets() {
   // Literals. Node never calls a DNS resolver for one, which is the gap that
   // made the HTTP guard need a createConnection hook as well as a lookup hook —
   // and the same gap exists here.
-  for (const address of ["127.0.0.1", "127.1.2.3", "10.0.0.5", "192.168.1.1", 
+  for (const address of ["127.0.0.1", "127.1.2.3", "10.0.0.5", "192.168.1.1",
       "172.16.0.1",
-                         "169.254.169.254", "::1", "::ffff:127.0.0.1"]) {
+          "169.254.169.254", "::1", "::ffff:127.0.0.1"]) {
     const err = await mustReject("the literal " + address,
       relay.send({
         host: address,
@@ -600,7 +600,7 @@ async function theAddressPolicyAppliesToRawSockets() {
       message: asReq()
     }), "EBLOCKEDADDRESS");
   assert.ok(/resolves to/.test(named.message),
-    "the refusal must say the name was judged by its resolved address: " + 
+    "the refusal must say the name was judged by its resolved address: " +
         named.message);
   assert.ok(/localtest\.me|nip\.io/.test(named.message),
     "and should name the public services that exist to point at loopback, " +
@@ -616,7 +616,7 @@ async function theAddressPolicyAppliesToRawSockets() {
       "blockPrivateNetworkCalls=" + JSON.stringify(value) + " must NOT " +
           "disable the address policy; " +
       "only an explicit boolean false does");
-    await mustReject("loopback with blockPrivateNetworkCalls=" + 
+    await mustReject("loopback with blockPrivateNetworkCalls=" +
         JSON.stringify(value),
       r.send({
         host: "127.0.0.1",
@@ -630,7 +630,7 @@ async function theAddressPolicyAppliesToRawSockets() {
   // guard that could not be turned off would make this feature impossible to
   // develop against.
   const off = { blockPrivateNetworkCalls: false, krb5AllowedPorts: [88] };
-  const openRelay = relayMod.createRelay(off, ssrfGuard.createGuard(off, 
+  const openRelay = relayMod.createRelay(off, ssrfGuard.createGuard(off,
       quiet), quiet);
   assert.strictEqual(openRelay.addressPolicyEnabled, false, "an explicit " +
       "false disables it");
@@ -667,7 +667,7 @@ async function onlyKerberosRequestsAreRelayed() {
     ["plain text", Buffer.from("GET / HTTP/1.1\r\n\r\n")],
     ["base64 that was never decoded", Buffer.from("akYwRKEDAgEF")],
     ["a bare DER SEQUENCE", Buffer.from([0x30, 0x03, 0x02, 0x01, 0x05])],
-    ["an AS-REP (a reply, not a request)", Buffer.from([0x6b, 0x03, 0x02, 0x01, 
+    ["an AS-REP (a reply, not a request)", Buffer.from([0x6b, 0x03, 0x02, 0x01,
         0x05])],
     ["a KRB-ERROR", krbError()],
     // An AP-REQ is a Kerberos request, but not one a KDC answers. The refusal
@@ -675,17 +675,17 @@ async function onlyKerberosRequestsAreRelayed() {
     // who is told "not Kerberos" about a perfectly good AP-REQ will not believe
     // it.
     ["an AP-REQ, which goes to a service", apReq()],
-    ["a GSS-wrapped AP-REQ", Buffer.concat([Buffer.from([0x60, 0x12]), 
+    ["a GSS-wrapped AP-REQ", Buffer.concat([Buffer.from([0x60, 0x12]),
         Buffer.alloc(18)])],
     ["a Ticket", Buffer.from([0x61, 0x03, 0x02, 0x01, 0x05])],
     ["an Authenticator", Buffer.from([0x62, 0x03, 0x02, 0x01, 0x05])],
-    ["a declared length shorter than the payload", Buffer.from([0x6a, 0x02, 
+    ["a declared length shorter than the payload", Buffer.from([0x6a, 0x02,
         0x02, 0x01, 0x05])],
-    ["a declared length longer than the payload", Buffer.from([0x6a, 0x40, 
+    ["a declared length longer than the payload", Buffer.from([0x6a, 0x40,
         0x02, 0x01, 0x05])],
-    ["an indefinite length (BER)", Buffer.from([0x6a, 0x80, 0x02, 0x01, 0x05, 
+    ["an indefinite length (BER)", Buffer.from([0x6a, 0x80, 0x02, 0x01, 0x05,
         0x00, 0x00])],
-    ["a five-byte length field", Buffer.from([0x6a, 0x85, 0x01, 0x00, 0x00, 
+    ["a five-byte length field", Buffer.from([0x6a, 0x85, 0x01, 0x00, 0x00,
         0x00, 0x00])],
     ["one byte", Buffer.from([0x6a])],
     ["a payload over the request cap", Buffer.concat([Buffer.from([0x6a, 0x84]),
@@ -699,7 +699,7 @@ async function onlyKerberosRequestsAreRelayed() {
     }),
       "EKRB5NOTKERBEROS");
     assert.ok(/Kerberos/.test(err.message),
-      label + ": the refusal must say what this endpoint carries: " + 
+      label + ": the refusal must say what this endpoint carries: " +
           err.message);
   }
 
@@ -764,7 +764,7 @@ async function theServiceEndpointIsOffUntilConfigured() {
   log.debug("Entering theServiceEndpointIsOffUntilConfigured().");
   const gssApReq = Buffer.concat([
     Buffer.from([0x60, 0x12]),
-    Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 
+    Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02,
         0x02]),
     Buffer.from([0x01, 0x00]),
     Buffer.from([0x6e, 0x03, 0x30, 0x01, 0x05])
@@ -786,7 +786,7 @@ async function theServiceEndpointIsOffUntilConfigured() {
       purpose: "service"
     }),
     "EKRB5SERVICENOTENABLED");
-  assert.ok(/not enabled/.test(disabled.message) && 
+  assert.ok(/not enabled/.test(disabled.message) &&
       /krb5ServicePorts/.test(disabled.message),
     "the refusal must name the setting that enables it: " + disabled.message);
 
@@ -821,10 +821,10 @@ async function theServiceEndpointIsOffUntilConfigured() {
   } catch (e) {
     allowedOutcome = e.code || e.message;
     assert.notStrictEqual(e.code, "EKRB5PORTNOTALLOWED",
-      "the configured service port must pass the policy, got " + e.code + 
+      "the configured service port must pass the policy, got " + e.code +
           ": " + e.message);
   }
-  log.debug("the configured service port got past the policy (" + 
+  log.debug("the configured service port got past the policy (" +
       allowedOutcome + ")");
 
   // "any": the escape hatch, spelled as a word so it cannot be a typo.
@@ -849,9 +849,9 @@ async function theServiceEndpointIsOffUntilConfigured() {
     ["a KRB-ERROR", krbError()],
     ["an HTTP request", Buffer.from("GET / HTTP/1.1\r\nHost: x\r\n\r\n")],
     ["a Redis command", Buffer.from("*1\r\n$4\r\nPING\r\n")],
-    ["a TLS ClientHello", Buffer.from([0x16, 0x03, 0x01, 0x00, 0x05, 0x01, 
+    ["a TLS ClientHello", Buffer.from([0x16, 0x03, 0x01, 0x00, 0x05, 0x01,
         0x00, 0x00, 0x01, 0x00])],
-    ["0x60 then arbitrary bytes", Buffer.concat([Buffer.from([0x60, 0x05]), 
+    ["0x60 then arbitrary bytes", Buffer.concat([Buffer.from([0x60, 0x05]),
         Buffer.from("hello")])],
     ["a GSS token naming SPNEGO", Buffer.concat([
       Buffer.from([0x60, 0x0d]),
@@ -859,12 +859,12 @@ async function theServiceEndpointIsOffUntilConfigured() {
       Buffer.from([0x01, 0x00]), Buffer.from([0x6e, 0x01, 0x05])])],
     ["a GSS token wrapping an AP-REP", Buffer.concat([
       Buffer.from([0x60, 0x12]),
-      Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 
+      Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02,
           0x02]),
       Buffer.from([0x02, 0x00]), Buffer.from([0x6f, 0x03, 0x30, 0x01, 0x05])])],
     ["a GSS token wrapping something that is not an AP-REQ", Buffer.concat([
       Buffer.from([0x60, 0x12]),
-      Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02, 
+      Buffer.from([0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x12, 0x01, 0x02,
           0x02]),
       Buffer.from([0x01, 0x00]), Buffer.from([0x30, 0x03, 0x02, 0x01, 0x05])])]
   ];
@@ -894,11 +894,11 @@ async function theServiceEndpointIsOffUntilConfigured() {
       }),
       "EKRB5NOTKERBEROS");
     assert.ok(/AP-REQ|Kerberos/.test(err.message),
-      label + ": the refusal must say what this endpoint carries: " + 
+      label + ": the refusal must say what this endpoint carries: " +
           err.message);
     if (expectedReason[label]) {
       assert.ok(expectedReason[label].test(err.message),
-        label + ": expected the refusal to come from the " + 
+        label + ": expected the refusal to come from the " +
             expectedReason[label] +
         " check specifically, so that removing that one check fails this " +
             "test rather than being " +
@@ -908,7 +908,7 @@ async function theServiceEndpointIsOffUntilConfigured() {
 
   // And the two legal shapes get past the payload check.
   for (const [label, payload] of [["a GSS-wrapped AP-REQ", gssApReq],
-                                  ["a bare AP-REQ", apReq()]]) {
+      ["a bare AP-REQ", apReq()]]) {
     const err = await mustReject(label + " passes the payload check",
       anyPort.send({
         host: "127.0.0.1",
@@ -1018,15 +1018,9 @@ async function everyPathSettles() {
   ];
   for (const [label, opts] of attempts) {
     const settled = await Promise.race([
-      relay.send(opts).then(function () { return "resolved"; }, 
+      relay.send(opts).then(function () { return "resolved"; },
           function () { return "rejected"; }),
-      
-          
-              
-                  
-                      
-                          
-                              new Promise(function (resolve) { setTimeout(function () { resolve("HUNG"); }, 
+              new Promise(function (resolve) { setTimeout(function () { resolve("HUNG"); },
           5000); })
     ]);
     assert.notStrictEqual(settled, "HUNG",
@@ -1050,7 +1044,7 @@ function framingHelpersAreExact() {
       "bytes");
   assert.strictEqual(framed.readUInt32BE(0), message.length, "big-endian, " +
       "and the message's length");
-  assert.strictEqual(Buffer.compare(framed.subarray(4), message), 0, 
+  assert.strictEqual(Buffer.compare(framed.subarray(4), message), 0,
       "the message is unchanged");
 
   // Partial reads: a KDC's reply arrives in whatever chunks TCP feels like.
@@ -1072,13 +1066,13 @@ function framingHelpersAreExact() {
   assert.strictEqual(whole.consumed, framed.length, "and reports what it " +
       "consumed");
 
-  assert.strictEqual(frame.describeReply(Buffer.from([0x6b])), "AS-REP", 
+  assert.strictEqual(frame.describeReply(Buffer.from([0x6b])), "AS-REP",
       "reply naming");
-  assert.strictEqual(frame.describeReply(Buffer.from([0x7e])), "KRB-ERROR", 
+  assert.strictEqual(frame.describeReply(Buffer.from([0x7e])), "KRB-ERROR",
       "reply naming");
   assert.ok(/unrecognised/.test(frame.describeReply(Buffer.from([0x41]))),
     "an unrecognised reply must be described as such rather than guessed at");
-  assert.strictEqual(frame.describeReply(Buffer.alloc(0)), null, 
+  assert.strictEqual(frame.describeReply(Buffer.alloc(0)), null,
       "no reply, no name");
   log.debug("Leaving framingHelpersAreExact().");
 }

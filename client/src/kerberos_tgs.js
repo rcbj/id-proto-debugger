@@ -67,7 +67,7 @@ function reviveTgt(entry) {
       ticket: msgs.readTicket(panes.b64ToBytes(entry.ticket)),
       sessionKey: prim.fromHex(entry.sessionKey),
       etype: entry.sessionKeyEtype,
-      client: msgs.parsePrincipal(entry.client.split("@")[0], 
+      client: msgs.parsePrincipal(entry.client.split("@")[0],
           msgs.NAME_TYPE.PRINCIPAL),
       realm: entry.realm,
       endtime: new Date(entry.endtime)
@@ -89,7 +89,7 @@ function renderHeldTgt() {
     "obtain one.");
   if (!entry) {
     panes.disable("krb_tgs_button", true);
-    status("krb_tgs_status", "No TGT held, so there is nothing to spend.", 
+    status("krb_tgs_status", "No TGT held, so there is nothing to spend.",
         "krb-bad");
     log.debug("Leaving renderHeldTgt(). none held.");
     return false;
@@ -186,7 +186,7 @@ async function onRequestServiceTicket() {
   try {
     spn = msgs.parsePrincipal(spnText, msgs.NAME_TYPE.SRV_HST);
   } catch (e) {
-    status("krb_tgs_status", "That is not a usable service name: " + e.message, 
+    status("krb_tgs_status", "That is not a usable service name: " + e.message,
         "krb-bad");
     return false;
   }
@@ -217,7 +217,7 @@ async function onRequestServiceTicket() {
       kdcOptions: [msgs.KDC_OPTION.FORWARDABLE, msgs.KDC_OPTION.RENEWABLE]
     });
   } catch (e) {
-    status("krb_tgs_status", "The request could not be built: " + e.message, 
+    status("krb_tgs_status", "The request could not be built: " + e.message,
         "krb-bad");
     return false;
   }
@@ -269,7 +269,7 @@ async function onRequestServiceTicket() {
       subkey: subkey
     });
   } catch (e) {
-    status("krb_tgs_status", "The reply could not be read: " + e.message, 
+    status("krb_tgs_status", "The reply could not be read: " + e.message,
         "krb-bad");
     return false;
   }
@@ -291,9 +291,9 @@ async function onRequestServiceTicket() {
         "key usage error (it must be 6) or the body being re-encoded after " +
             "it was signed.";
     }
-    status("krb_tgs_status", error.error.name + " — " + error.error.meaning + 
+    status("krb_tgs_status", error.error.name + " — " + error.error.meaning +
         extra, "krb-bad");
-    log.debug("Leaving onRequestServiceTicket(). refused with " + 
+    log.debug("Leaving onRequestServiceTicket(). refused with " +
         error.error.name);
     return false;
   }
@@ -323,7 +323,7 @@ async function onRequestServiceTicket() {
   status("krb_tgs_status",
     "A service ticket for " + entry.service + " was issued and stored, valid " +
         "until " +
-    entry.endtime + ". Its enc-part was opened with " + outcome.openedWith + 
+    entry.endtime + ". Its enc-part was opened with " + outcome.openedWith +
         "." +
     (outcome.flagNames.indexOf("initial") === -1
       ? " Note it is NOT flagged `initial` — only the AS exchange issues an " +
@@ -358,7 +358,7 @@ window.onload = async function () {
   renderHeldTgt();
   renderServiceTickets();
   var button = el("krb_tgs_button");
-  if (button) button.addEventListener("click", 
+  if (button) button.addEventListener("click",
       function () { onRequestServiceTicket(); });
   var forget = el("krb_forget_tickets_button");
   if (forget) forget.addEventListener("click", onForgetTickets);

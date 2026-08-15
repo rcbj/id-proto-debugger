@@ -288,12 +288,14 @@ function describeError(code) {
 // PrincipalName ::= SEQUENCE { name-type [0] Int32, name-string [1] SEQUENCE OF
 // KerberosString }
 function encPrincipalName(principal) {
-  var components = Array.isArray(principal.name) ? principal.name : 
+  log.debug("Entering encPrincipalName().");
+  var components = Array.isArray(principal.name) ? principal.name :
       [principal.name];
+  log.debug("Leaving encPrincipalName().");
   return asn1.encTaggedSequence([
     {
       tag: 0,
-      value: asn1.encInteger(principal.type === undefined ? 
+      value: asn1.encInteger(principal.type === undefined ?
           NAME_TYPE.PRINCIPAL : principal.type)
     },
     { tag: 1, value: asn1.encSequenceOf(components.map(asn1.encGeneralString)) }
@@ -330,7 +332,7 @@ function parsePrincipal(text, defaultType) {
   if (type === undefined) {
     // A guess, and the UI must let it be overridden: a two-part name is
     // conventionally a service, and krbtgt is conventionally an instance.
-    if (parts.length > 1) type = (parts[0] === "krbtgt") ? NAME_TYPE.SRV_INST : 
+    if (parts.length > 1) type = (parts[0] === "krbtgt") ? NAME_TYPE.SRV_INST :
         NAME_TYPE.SRV_HST;
     else type = NAME_TYPE.PRINCIPAL;
   }
@@ -341,11 +343,13 @@ function parsePrincipal(text, defaultType) {
 // EncryptedData ::= SEQUENCE { etype [0] Int32, kvno [1] UInt32 OPTIONAL,
 // cipher [2] OCTET STRING }
 function encEncryptedData(d) {
+  log.debug("Leaving encEncryptedData().");
+  log.debug("Entering encEncryptedData().");
   return asn1.encTaggedSequence([
     { tag: 0, value: asn1.encInteger(d.etype) },
     {
       tag: 1,
-      value: (d.kvno === undefined || d.kvno === null) ? null : 
+      value: (d.kvno === undefined || d.kvno === null) ? null :
           asn1.encInteger(d.kvno)
     },
     { tag: 2, value: asn1.encOctetString(d.cipher) }
@@ -556,23 +560,26 @@ function readEncTicketPart(bytes) {
 function encEncTicketPart(p) {
   log.debug("Leaving encEncTicketPart().");
   log.debug("Entering encEncTicketPart().");
-  return asn1.encApplication(APPLICATION.ENC_TICKET_PART, 
+  return asn1.encApplication(APPLICATION.ENC_TICKET_PART,
       asn1.encTaggedSequence([
     { tag: 0, value: asn1.encFlags(p.flags) },
     { tag: 1, value: encEncryptionKey(p.key) },
     { tag: 2, value: asn1.encGeneralString(p.crealm) },
     { tag: 3, value: encPrincipalName(p.cname) },
-    { tag: 4, value: asn1.encTaggedSequence([
+    {
+      tag: 4,
+      value: asn1.encTaggedSequence([
         {
           tag: 0,
           value: asn1.encInteger((p.transited && p.transited.type) || 0)
         },
         {
           tag: 1,
-          value: asn1.encOctetString((p.transited && p.transited.contents) || 
+          value: asn1.encOctetString((p.transited && p.transited.contents) ||
               new Uint8Array(0))
         }
-      ]) },
+      ])
+    },
     { tag: 5, value: asn1.encKerberosTime(p.authtime) },
     { tag: 6, value: p.starttime ? asn1.encKerberosTime(p.starttime) : null },
     { tag: 7, value: asn1.encKerberosTime(p.endtime) },
@@ -583,7 +590,7 @@ function encEncTicketPart(p) {
     },
     {
       tag: 10,
-      value: p.authorizationData ? encAuthorizationData(p.authorizationData) : 
+      value: p.authorizationData ? encAuthorizationData(p.authorizationData) :
           null
     }
   ]));
@@ -615,7 +622,7 @@ function encKdcReqBody(body) {
     },
     {
       tag: 10,
-      value: body.encAuthorizationData ? 
+      value: body.encAuthorizationData ?
           encEncryptedData(body.encAuthorizationData) : null
     },
     {
@@ -665,7 +672,7 @@ function encKdcReq(req) {
       },
       {
         tag: 4,
-        value: req.reqBody.raw ? toBytes(req.reqBody.raw) : 
+        value: req.reqBody.raw ? toBytes(req.reqBody.raw) :
             encKdcReqBody(req.reqBody)
       }
     ]));
@@ -674,7 +681,7 @@ function encKdcReq(req) {
 function readKdcReq(bytes) {
   log.debug("Entering readKdcReq().");
   var app = asn1.readApplication(bytes);
-  if (app.applicationNumber !== APPLICATION.AS_REQ && 
+  if (app.applicationNumber !== APPLICATION.AS_REQ &&
       app.applicationNumber !== APPLICATION.TGS_REQ) {
     throw new Error("krb5: expected AS-REQ [APPLICATION 10] or TGS-REQ " +
         "[APPLICATION 12], found [APPLICATION " +
@@ -720,7 +727,7 @@ function encKdcRep(rep) {
 function readKdcRep(bytes) {
   log.debug("Entering readKdcRep().");
   var app = asn1.readApplication(bytes);
-  if (app.applicationNumber !== APPLICATION.AS_REP && 
+  if (app.applicationNumber !== APPLICATION.AS_REP &&
       app.applicationNumber !== APPLICATION.TGS_REP) {
     throw new Error("krb5: expected AS-REP [APPLICATION 11] or TGS-REP " +
         "[APPLICATION 13], found [APPLICATION " +
@@ -763,7 +770,7 @@ function readEncKdcRepPart(bytes) {
   return {
     // Which tag actually arrived, so the UI can show that a KDC used the
     // irregular one rather than hiding it.
-    taggedAs: app.applicationNumber === APPLICATION.ENC_AS_REP_PART ? 
+    taggedAs: app.applicationNumber === APPLICATION.ENC_AS_REP_PART ?
         "EncASRepPart" : "EncTGSRepPart",
     key: readEncryptionKey(f[0]),
     lastReq: asn1.decSequenceOf(f[1]).map(function (lr) {
@@ -790,7 +797,7 @@ function readEncKdcRepPart(bytes) {
 function encEncKdcRepPart(p, applicationNumber) {
   log.debug("Leaving encEncKdcRepPart().");
   log.debug("Entering encEncKdcRepPart().");
-  return asn1.encApplication(applicationNumber || APPLICATION.ENC_AS_REP_PART, 
+  return asn1.encApplication(applicationNumber || APPLICATION.ENC_AS_REP_PART,
       asn1.encTaggedSequence([
     { tag: 0, value: encEncryptionKey(p.key) },
     {
@@ -847,7 +854,7 @@ function encAuthenticator(a) {
     },
     {
       tag: 8,
-      value: a.authorizationData ? encAuthorizationData(a.authorizationData) : 
+      value: a.authorizationData ? encAuthorizationData(a.authorizationData) :
           null
     }
   ]));
@@ -916,7 +923,7 @@ function readApRep(bytes) {
 function encEncApRepPart(p) {
   log.debug("Leaving encEncApRepPart().");
   log.debug("Entering encEncApRepPart().");
-  return asn1.encApplication(APPLICATION.ENC_AP_REP_PART, 
+  return asn1.encApplication(APPLICATION.ENC_AP_REP_PART,
       asn1.encTaggedSequence([
     { tag: 0, value: asn1.encKerberosTime(p.ctime) },
     { tag: 1, value: asn1.encInteger(p.cusec || 0) },
@@ -952,7 +959,7 @@ function encKrbError(e) {
     { tag: 2, value: e.ctime ? asn1.encKerberosTime(e.ctime) : null },
     {
       tag: 3,
-      value: (e.cusec === undefined || e.cusec === null) ? null : 
+      value: (e.cusec === undefined || e.cusec === null) ? null :
           asn1.encInteger(e.cusec)
     },
     { tag: 4, value: asn1.encKerberosTime(e.stime) },
@@ -994,15 +1001,15 @@ function readKrbError(bytes) {
   // entirely (a TYPED-DATA, or on AD sometimes nothing useful).
   if (out.eData && out.eData.length) {
     try {
-      out.eDataPaData = asn1.readChildren(asn1.readTlv(out.eData, 
+      out.eDataPaData = asn1.readChildren(asn1.readTlv(out.eData,
           0).value).map(readPaData);
     } catch (err) {
       out.eDataPaData = null;
-      out.eDataNote = "e-data is not a SEQUENCE OF PA-DATA (" + err.message + 
+      out.eDataNote = "e-data is not a SEQUENCE OF PA-DATA (" + err.message +
           ")";
     }
   }
-  log.debug("Leaving readKrbError(). code=" + code + " (" + out.error.name + 
+  log.debug("Leaving readKrbError(). code=" + code + " (" + out.error.name +
       ")");
   return out;
 }
@@ -1018,7 +1025,7 @@ function encPaEncTsEnc(when, usec) {
     { tag: 0, value: asn1.encKerberosTime(when) },
     {
       tag: 1,
-      value: (usec === undefined || usec === null) ? null : 
+      value: (usec === undefined || usec === null) ? null :
           asn1.encInteger(usec)
     }
   ]);
@@ -1060,7 +1067,7 @@ function encEtypeInfo2(entries) {
       { tag: 0, value: asn1.encInteger(e.etype) },
       {
         tag: 1,
-        value: e.salt === null || e.salt === undefined ? null : 
+        value: e.salt === null || e.salt === undefined ? null :
             asn1.encGeneralString(e.salt)
       },
       { tag: 2, value: e.s2kparams ? asn1.encOctetString(e.s2kparams) : null }
@@ -1089,7 +1096,7 @@ function readEtypeInfo(bytes) {
 // to ask for a ticket WITHOUT a PAC and watch a service's behaviour change is
 // one of the more useful things this tool can do.
 function encPaPacRequest(include) {
-  return asn1.encSequence([asn1.encContext(0, asn1.tlv(0x01, 
+  return asn1.encSequence([asn1.encContext(0, asn1.tlv(0x01,
       new Uint8Array([include ? 0xff : 0x00])))]);
 }
 
@@ -1160,7 +1167,7 @@ function encKrbCredInfo(info) {
     { tag: 9, value: info.sname ? encPrincipalName(info.sname) : null },
     {
       tag: 10,
-      value: (info.caddr && info.caddr.length) ? encHostAddresses(info.caddr) : 
+      value: (info.caddr && info.caddr.length) ? encHostAddresses(info.caddr) :
           null
     }
   ]);
@@ -1195,7 +1202,7 @@ function readKrbCredInfo(t) {
 function encEncKrbCredPart(p) {
   log.debug("Leaving encEncKrbCredPart().");
   log.debug("Entering encEncKrbCredPart().");
-  return asn1.encApplication(APPLICATION.ENC_KRB_CRED_PART, 
+  return asn1.encApplication(APPLICATION.ENC_KRB_CRED_PART,
       asn1.encTaggedSequence([
     {
       tag: 0,
@@ -1203,13 +1210,13 @@ function encEncKrbCredPart(p) {
     },
     {
       tag: 1,
-      value: p.nonce === undefined || p.nonce === null ? null : 
+      value: p.nonce === undefined || p.nonce === null ? null :
           asn1.encInteger(p.nonce)
     },
     { tag: 2, value: p.timestamp ? asn1.encKerberosTime(p.timestamp) : null },
     {
       tag: 3,
-      value: p.usec === undefined || p.usec === null ? null : 
+      value: p.usec === undefined || p.usec === null ? null :
           asn1.encInteger(p.usec)
     },
     { tag: 4, value: p.sAddress ? encHostAddress(p.sAddress) : null },
@@ -1370,7 +1377,7 @@ function readKdcResponse(bytes) {
     log.debug("Leaving readKdcResponse().");
     return { kind: "KRB-ERROR", error: readKrbError(bytes) };
   }
-  if (id.applicationNumber === APPLICATION.AS_REP || 
+  if (id.applicationNumber === APPLICATION.AS_REP ||
       id.applicationNumber === APPLICATION.TGS_REP) {
     log.debug("Leaving readKdcResponse().");
     return { kind: id.name, rep: readKdcRep(bytes) };

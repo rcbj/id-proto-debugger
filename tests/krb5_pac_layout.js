@@ -45,35 +45,35 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "krb5_pac",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 var prim = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_primitives.js", __dirname + 
+  [__dirname + "/../common/krb5/krb5_primitives.js", __dirname +
       "/krb5_primitives.js"],
   "krb5_primitives.js");
 var kcrypto = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_crypto.js", __dirname + 
+  [__dirname + "/../common/krb5/krb5_crypto.js", __dirname +
       "/krb5_crypto.js"], "krb5_crypto.js");
 var asn1 = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_asn1.js", __dirname + "/krb5_asn1.js"], 
+  [__dirname + "/../common/krb5/krb5_asn1.js", __dirname + "/krb5_asn1.js"],
       "krb5_asn1.js");
 var msg = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_messages.js", __dirname + 
+  [__dirname + "/../common/krb5/krb5_messages.js", __dirname +
       "/krb5_messages.js"],
   "krb5_messages.js");
 var ndr = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_ndr.js", __dirname + "/krb5_ndr.js"], 
+  [__dirname + "/../common/krb5/krb5_ndr.js", __dirname + "/krb5_ndr.js"],
       "krb5_ndr.js");
 var pac = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_pac.js", __dirname + "/krb5_pac.js"], 
+  [__dirname + "/../common/krb5/krb5_pac.js", __dirname + "/krb5_pac.js"],
       "krb5_pac.js");
 
 const hex = (b) => prim.toHex(b);
 const DOMAIN = "S-1-5-21-1004336348-1177238915-682003330";
 
 function u32At(bytes, offset) {
-  return ((bytes[offset]) | (bytes[offset + 1] << 8) | (bytes[offset + 
+  return ((bytes[offset]) | (bytes[offset + 1] << 8) | (bytes[offset +
       2] << 16) |
     (bytes[offset + 3] << 24)) >>> 0;
 }
@@ -93,7 +93,7 @@ function readAd(bytes) {
 // A key of a given etype, deterministic so a failure is reproducible.
 function keyOf(etype, seed) {
   var profile = kcrypto.etypeById(etype);
-  var k = new Uint8Array(profile.keyBytes === undefined ? 32 : 
+  var k = new Uint8Array(profile.keyBytes === undefined ? 32 :
       profile.keyBytes);
   for (var i = 0; i < k.length; i++) k[i] = (seed + i * 7) & 0xff;
   return { etype: etype, key: k };
@@ -118,7 +118,7 @@ function sampleLogonInfo(overrides) {
     extraSids: [{ sid: "S-1-18-1" }, { sid: "S-1-5-32-544" }],
     userAccountControl: 0x00000010 | 0x00000200
   };
-  Object.keys(overrides || 
+  Object.keys(overrides ||
       {}).forEach(function (k) { base[k] = overrides[k]; });
   log.debug("Leaving sampleLogonInfo().");
   return base;
@@ -158,7 +158,7 @@ async function theHeaderMatchesTheSpecByteForByte() {
 
   var cBuffers = u32At(b, 0);
   assert.strictEqual(u32At(b, 4), 0,
-    "PACTYPE.Version MUST be 0x00000000 ([MS-PAC] section 2.3); it is " + 
+    "PACTYPE.Version MUST be 0x00000000 ([MS-PAC] section 2.3); it is " +
         u32At(b, 4));
   assert.ok(cBuffers >= 7 && cBuffers <= 16,
     "cBuffers should count the buffers actually emitted, got " + cBuffers);
@@ -177,7 +177,7 @@ async function theHeaderMatchesTheSpecByteForByte() {
     assert.strictEqual(offsetHigh, 0, "buffer " + i + "'s offset should not " +
         "need 64 bits");
     assert.strictEqual(offset % 8, 0,
-      "buffer " + i + " (type " + type + ") is at offset " + offset + 
+      "buffer " + i + " (type " + type + ") is at offset " + offset +
           "; [MS-PAC] section 2.4 " +
       "requires a multiple of 8, and Windows rejects a PAC that breaks it");
     assert.ok(offset + size <= b.length,
@@ -193,9 +193,9 @@ async function theHeaderMatchesTheSpecByteForByte() {
 
   var parsed = pac.parsePac(b);
   assert.deepStrictEqual(parsed.problems, [],
-    "a PAC this code built should have nothing to report: " + 
+    "a PAC this code built should have nothing to report: " +
         parsed.problems.join(" | "));
-  log.debug("Leaving theHeaderMatchesTheSpecByteForByte(). " + cBuffers + 
+  log.debug("Leaving theHeaderMatchesTheSpecByteForByte(). " + cBuffers +
       " buffers.");
 }
 
@@ -243,7 +243,7 @@ async function theLogonInfoSitsWhereTheIdlSaysItDoes() {
   // padding at all and these numbers are exact.
   var S = 20;
   assert.strictEqual(u32At(b, S + 100), 1104,
-    "UserId belongs at struct offset 100. Reading " + u32At(b, S + 100) + 
+    "UserId belongs at struct offset 100. Reading " + u32At(b, S + 100) +
         " there means a field " +
     "above it is the wrong size — the usual culprit is treating FILETIME as " +
         "an 8-ALIGNED " +
@@ -303,7 +303,7 @@ async function theReaderRecoversEveryField() {
 
   // Three groups, in order, with the well-known ones named.
   assert.strictEqual(info.groups.length, 3, "all three groups should be read");
-  assert.deepStrictEqual(info.groups.map(function (g) { return g.relativeId; }), 
+  assert.deepStrictEqual(info.groups.map(function (g) { return g.relativeId; }),
       [513, 512, 572],
     "the groups should come back in the order they were written");
   assert.strictEqual(info.groups[1].name, "Domain Admins",
@@ -329,7 +329,7 @@ async function theReaderRecoversEveryField() {
     "whole question in an S4U trace");
   assert.strictEqual(info.extraSids[1].name, "BUILTIN\\Administrators");
 
-  assert.deepStrictEqual(info.userAccountControlNames, ["NORMAL_ACCOUNT", 
+  assert.deepStrictEqual(info.userAccountControlNames, ["NORMAL_ACCOUNT",
       "DONT_EXPIRE_PASSWORD"],
     "UserAccountControl uses [MS-SAMR]'s USER_ACCOUNT codes, where " +
         "NORMAL_ACCOUNT is 0x10 — " +
@@ -338,10 +338,10 @@ async function theReaderRecoversEveryField() {
     "with extra SIDs present and nothing else set, D and only D should be " +
         "reported");
   assert.deepStrictEqual(info.notes, [],
-    "a well-formed PAC should raise no consistency notes: " + 
+    "a well-formed PAC should raise no consistency notes: " +
         info.notes.join(" | "));
 
-  assert.strictEqual(info.logonTime.date.toISOString(), 
+  assert.strictEqual(info.logonTime.date.toISOString(),
       "2026-08-14T12:00:00.000Z",
     "a FILETIME is 100-nanosecond intervals since 1601, and must survive the " +
         "conversion");
@@ -353,7 +353,7 @@ async function theReaderRecoversEveryField() {
   // The simple buffers.
   var client = pac.bufferOfType(parsed, pac.TYPE.CLIENT_INFO).parsed;
   assert.strictEqual(client.name, "alice");
-  assert.strictEqual(client.clientId.date.toISOString(), 
+  assert.strictEqual(client.clientId.date.toISOString(),
       "2026-08-14T12:00:00.000Z");
 
   var upn = pac.bufferOfType(parsed, pac.TYPE.UPN_DNS_INFO).parsed;
@@ -401,7 +401,7 @@ async function resourceGroupsAreReadWithTheirOwnDomainSid() {
       ]
     }
   });
-  var info = pac.bufferOfType(pac.parsePac(built.bytes), 
+  var info = pac.bufferOfType(pac.parsePac(built.bytes),
       pac.TYPE.LOGON_INFO).parsed;
 
   assert.strictEqual(info.resourceGroupDomainSid.text, RESOURCE_DOMAIN,
@@ -432,7 +432,7 @@ async function resourceGroupsAreReadWithTheirOwnDomainSid() {
         "builder should set it " +
     "rather than leaving it to the caller: " + info.userFlagNames.join(", "));
   assert.deepStrictEqual(info.notes, [],
-    "and with H set correctly there should be nothing to report: " + 
+    "and with H set correctly there should be nothing to report: " +
         info.notes.join(" | "));
 
   // 0x10 must NOT be read as SE_GROUP_RESOURCE. Asserting the negative directly
@@ -473,7 +473,7 @@ async function eachSignatureIsCheckedAgainstItsOwnKeyAndItsOwnBytes() {
     serverKey: serverKey,
     kdcKey: kdcKey
   });
-  [pac.TYPE.SERVER_CHECKSUM, pac.TYPE.KDC_CHECKSUM, 
+  [pac.TYPE.SERVER_CHECKSUM, pac.TYPE.KDC_CHECKSUM,
       pac.TYPE.EXTENDED_KDC_CHECKSUM].forEach(
     function (t) {
       var r = byType(all, t);
@@ -486,9 +486,9 @@ async function eachSignatureIsCheckedAgainstItsOwnKeyAndItsOwnBytes() {
   // A service holds only its own key. It must be able to check the server
   // signature and must be TOLD, by name, that it cannot check the others — not
   // shown a failure.
-  var serviceOnly = await pac.verifySignatures(parsed, 
+  var serviceOnly = await pac.verifySignatures(parsed,
       { serverKey: serverKey });
-  assert.strictEqual(byType(serviceOnly, pac.TYPE.SERVER_CHECKSUM).verified, 
+  assert.strictEqual(byType(serviceOnly, pac.TYPE.SERVER_CHECKSUM).verified,
       true,
     "a service can verify the server signature with its own long-term key — " +
         "that is the point of it");
@@ -496,7 +496,7 @@ async function eachSignatureIsCheckedAgainstItsOwnKeyAndItsOwnBytes() {
     "without the krbtgt key the KDC signature is UNKNOWN, not failed. " +
         "Reporting it as failed " +
     "would tell a service its ticket was forged every single time");
-  assert.ok(/no krbtgt key was supplied/.test(byType(serviceOnly, 
+  assert.ok(/no krbtgt key was supplied/.test(byType(serviceOnly,
       pac.TYPE.KDC_CHECKSUM).note),
     "and the reason should say which key was missing, got: " +
     byType(serviceOnly, pac.TYPE.KDC_CHECKSUM).note);
@@ -510,7 +510,7 @@ async function eachSignatureIsCheckedAgainstItsOwnKeyAndItsOwnBytes() {
   assert.strictEqual(byType(after, pac.TYPE.SERVER_CHECKSUM).verified, false,
     "altering the PAC must break the server signature, which covers the " +
         "whole structure");
-  assert.strictEqual(byType(after, pac.TYPE.EXTENDED_KDC_CHECKSUM).verified, 
+  assert.strictEqual(byType(after, pac.TYPE.EXTENDED_KDC_CHECKSUM).verified,
       false,
     "and the extended KDC signature, which also covers the whole structure");
   assert.strictEqual(byType(after, pac.TYPE.KDC_CHECKSUM).verified, true,
@@ -611,7 +611,7 @@ async function theTicketSignatureBindsThePacToOneTicket() {
   var moved = await pac.verifySignatures(parsed,
     { serverKey: serverKey, kdcKey: kdcKey, ticketBytes: otherTicket });
   assert.strictEqual(
-    moved.filter(function (r) { return r.type === pac.TYPE.TICKET_CHECKSUM; })[0].verified, 
+    moved.filter(function (r) { return r.type === pac.TYPE.TICKET_CHECKSUM; })[0].verified,
         false,
     "the same PAC lifted into a ticket with a different endtime must fail " +
         "its ticket signature — " +
@@ -724,7 +724,7 @@ async function malformedPacsAreRefusedOrReported() {
     }
     assert.ok(caught, what + " should have been refused, but parsed");
     assert.ok(pattern.test(caught),
-      what + " should be refused with a message naming the problem; got: " + 
+      what + " should be refused with a message naming the problem; got: " +
           caught);
     log.debug("Leaving throwsWith().");
   }
@@ -741,7 +741,7 @@ async function malformedPacsAreRefusedOrReported() {
   // reading.
   var wrongVersion = pac.parsePac(corrupt(function (b) { setU32(b, 4, 1); }));
   assert.ok(wrongVersion.problems.some(function (p) { return /Version is 1/.test(p); }),
-    "a PACTYPE Version other than 0 should be reported: " + 
+    "a PACTYPE Version other than 0 should be reported: " +
         wrongVersion.problems.join(" | "));
   assert.ok(pac.bufferOfType(wrongVersion, pac.TYPE.LOGON_INFO).parsed,
     "and the buffers should still be parsed — a debugger is for looking at " +
@@ -762,12 +762,12 @@ async function malformedPacsAreRefusedOrReported() {
   // with the others still parsed. One bad buffer must not cost the reader the
   // other six.
   var overrun = pac.parsePac(corrupt(function (b) {
-    setU32(b, 8 + 4, 
+    setU32(b, 8 + 4,
         0xffff);                       // the first entry's cbBufferSize
   }));
   var bad = pac.bufferOfType(overrun, pac.TYPE.LOGON_INFO);
   assert.ok(bad.error && /outside the/.test(bad.error),
-    "a buffer running past the end should be recorded against it: " + 
+    "a buffer running past the end should be recorded against it: " +
         bad.error);
   assert.ok(pac.bufferOfType(overrun, pac.TYPE.CLIENT_INFO).parsed,
     "and the other buffers must still be parsed");
@@ -775,13 +775,13 @@ async function malformedPacsAreRefusedOrReported() {
   // The required-buffer rules, checked by removing one from the table.
   var noClientInfo = pac.parsePac(corrupt(function (b) {
     for (var i = 0; i < u32At(b, 0); i++) {
-      if (u32At(b, 8 + i * 16) === pac.TYPE.CLIENT_INFO) setU32(b, 8 + i * 16, 
+      if (u32At(b, 8 + i * 16) === pac.TYPE.CLIENT_INFO) setU32(b, 8 + i * 16,
           0x777);
     }
   }));
   assert.ok(noClientInfo.problems.some(function (p) {
     return /no Client name and ticket information buffer/.test(p);
-  }), "a missing PAC_CLIENT_INFO should be reported: " + 
+  }), "a missing PAC_CLIENT_INFO should be reported: " +
       noClientInfo.problems.join(" | "));
 
   // A duplicated logon-information buffer. [MS-PAC] says ignore the second,
@@ -796,7 +796,7 @@ async function malformedPacsAreRefusedOrReported() {
     }
   }));
   assert.ok(doubled.problems.some(function (p) { return /There are 2 Logon information/.test(p); }),
-    "two logon-information buffers should be reported: " + 
+    "two logon-information buffers should be reported: " +
         doubled.problems.join(" | "));
 
   log.debug("Leaving malformedPacsAreRefusedOrReported().");
@@ -811,12 +811,12 @@ async function theConsistencyRulesAreReported() {
   // Extra SIDs present, D flag deliberately cleared — a real service ignores
   // them.
   var noDFlag = await buildSample({ logonInfo: { userFlags: 0 } });
-  var info = pac.bufferOfType(pac.parsePac(noDFlag.bytes), 
+  var info = pac.bufferOfType(pac.parsePac(noDFlag.bytes),
       pac.TYPE.LOGON_INFO).parsed;
   assert.ok(info.notes.some(function (n) { return /EXTRA_SIDS flag \(D\) is not set/.test(n); }),
     "extra SIDs with the D flag clear should be reported — the SIDs are " +
         "there and every real " +
-    "service will ignore them, which reads as a KDC that never added them: " + 
+    "service will ignore them, which reads as a KDC that never added them: " +
         info.notes.join(" | "));
   assert.strictEqual(info.extraSids.length, 2,
     "and the SIDs themselves should still be listed, since that is the " +
@@ -826,16 +826,16 @@ async function theConsistencyRulesAreReported() {
   var ntlmFlag = await buildSample({
     logonInfo: { userFlags: pac.USER_FLAG_EXTRA_SIDS | 0x00000001 }
   });
-  var ntlmInfo = pac.bufferOfType(pac.parsePac(ntlmFlag.bytes), 
+  var ntlmInfo = pac.bufferOfType(pac.parsePac(ntlmFlag.bytes),
       pac.TYPE.LOGON_INFO).parsed;
   assert.ok(ntlmInfo.notes.some(function (n) { return /set only by NTLM/.test(n); }),
-    "an NTLM-only UserFlags bit should be reported on a Kerberos PAC: " + 
+    "an NTLM-only UserFlags bit should be reported on a Kerberos PAC: " +
         ntlmInfo.notes.join(" | "));
 
   // UserId 0 changes where the account's own SID comes from — silently, if
   // unreported.
   var zeroUser = await buildSample({ logonInfo: { userId: 0 } });
-  var zeroInfo = pac.bufferOfType(pac.parsePac(zeroUser.bytes), 
+  var zeroInfo = pac.bufferOfType(pac.parsePac(zeroUser.bytes),
       pac.TYPE.LOGON_INFO).parsed;
   assert.ok(zeroInfo.notes.some(function (n) { return /UserId is 0/.test(n); }),
     "UserId 0 means the first ExtraSids entry IS the account, and must be " +
@@ -849,13 +849,13 @@ async function theConsistencyRulesAreReported() {
       attributes: 0x00000007 | 0x00000010
     }] }
   });
-  var denyInfo = pac.bufferOfType(pac.parsePac(denyOnly.bytes), 
+  var denyInfo = pac.bufferOfType(pac.parsePac(denyOnly.bytes),
       pac.TYPE.LOGON_INFO).parsed;
   assert.ok(denyInfo.groups[0].attributeNames.some(function (n) {
     return /USE_FOR_DENY_ONLY.*not permitted in a PAC/.test(n);
   }), "SE_GROUP_USE_FOR_DENY_ONLY is a real access-token flag that [MS-PAC] " +
       "forbids here, so it " +
-     "should be named AND marked as not permitted: " + 
+     "should be named AND marked as not permitted: " +
          denyInfo.groups[0].attributeNames.join(", "));
 
   // A conformant count that disagrees with the field count must be refused, not
@@ -885,6 +885,7 @@ function theNdrReaderRefusesHostileInput() {
   log.debug("Entering theNdrReaderRefusesHostileInput().");
 
   function throwsWith(fn, pattern, what) {
+    log.debug("Entering throwsWith().");
     var caught = null;
     try {
       fn();
@@ -892,8 +893,9 @@ function theNdrReaderRefusesHostileInput() {
       caught = e.message;
     }
     assert.ok(caught, what + " should have thrown");
-    assert.ok(pattern.test(caught), what + " should name the problem; got: " + 
+    assert.ok(pattern.test(caught), what + " should name the problem; got: " +
         caught);
+    log.debug("Leaving throwsWith().");
   }
 
   throwsWith(function () {
@@ -919,7 +921,7 @@ function theNdrReaderRefusesHostileInput() {
 
   throwsWith(function () {
     ndr.readTypeMarshallingHeaders(ndr.createReader(
-      new Uint8Array([1, 0x00, 8, 0, 0xcc, 0xcc, 0xcc, 0xcc, 0, 0, 0, 0, 0, 0, 
+      new Uint8Array([1, 0x00, 8, 0, 0xcc, 0xcc, 0xcc, 0xcc, 0, 0, 0, 0, 0, 0,
           0, 0])));
   }, /0x00 would be big-endian/, "big-endian NDR");
 
@@ -988,7 +990,7 @@ async function everySignatureEtypeWorks() {
       kdcKey: key
     });
     results.forEach(function (r) {
-      if (r.type === pac.TYPE.SERVER_CHECKSUM || 
+      if (r.type === pac.TYPE.SERVER_CHECKSUM ||
           r.type === pac.TYPE.KDC_CHECKSUM) {
         assert.strictEqual(r.verified, true,
           "etype " + etype + "'s " + r.name + " should verify: " + r.note);
@@ -1014,10 +1016,10 @@ async function everySignatureEtypeWorks() {
   // A signature type nothing here can compute must be reported, not thrown
   // away.
   var unknown = new Uint8Array(rc4Pac);
-  unknown[at] = 0x55; unknown[at + 1] = 0x00; unknown[at + 
+  unknown[at] = 0x55; unknown[at + 1] = 0x00; unknown[at +
       2] = 0x00; unknown[at + 3] = 0x00;
   var unknownParsed = pac.parsePac(unknown);
-  var unknownSig = pac.bufferOfType(unknownParsed, 
+  var unknownSig = pac.bufferOfType(unknownParsed,
       pac.TYPE.SERVER_CHECKSUM).parsed;
   assert.strictEqual(unknownSig.signatureType, 0x55,
     "an unrecognised signature type should still be reported as a number");

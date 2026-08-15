@@ -38,22 +38,22 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "krb5_codec",
-                                level: appconfig.LOG_LEVEL || "info" });
+    level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
 var prim = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_primitives.js", __dirname + 
+  [__dirname + "/../common/krb5/krb5_primitives.js", __dirname +
       "/krb5_primitives.js"],
   "krb5_primitives.js");
 var asn1 = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_asn1.js", __dirname + "/krb5_asn1.js"], 
+  [__dirname + "/../common/krb5/krb5_asn1.js", __dirname + "/krb5_asn1.js"],
       "krb5_asn1.js");
 var msg = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_messages.js", __dirname + 
+  [__dirname + "/../common/krb5/krb5_messages.js", __dirname +
       "/krb5_messages.js"],
   "krb5_messages.js");
 var kcrypto = paths.requireSharedModule(
-  [__dirname + "/../common/krb5/krb5_crypto.js", __dirname + 
+  [__dirname + "/../common/krb5/krb5_crypto.js", __dirname +
       "/krb5_crypto.js"], "krb5_crypto.js");
 
 const hex = (b) => prim.toHex(b);
@@ -79,7 +79,7 @@ function eq(label, got, want) {
 function seq(...partsHex) {
   const body = partsHex.join("").replace(/\s/g, "");
   const len = body.length / 2;
-  assert.ok(len < 128, "seq() helper only covers the short form; got " + len + 
+  assert.ok(len < 128, "seq() helper only covers the short form; got " + len +
       " bytes");
   return "30" + (len < 16 ? "0" : "") + len.toString(16) + body;
 }
@@ -95,7 +95,7 @@ function mustThrow(what, fn, matching) {
   assert.ok(threw, "expected a refusal: " + what);
   if (matching) {
     assert.ok(matching.test(threw.message),
-      what + ": refused, but the message does not say why (" + threw.message + 
+      what + ": refused, but the message does not say why (" + threw.message +
           ")");
   }
   log.debug("refused as it should: " + what + " (" + threw.message + ")");
@@ -127,7 +127,7 @@ function derEncodesMinimally() {
   eq("INTEGER 255", asn1.encInteger(255), "020200ff");
   eq("INTEGER 65536", asn1.encInteger(65536), "0203010000");
   // A nonce is a UInt32 and routinely has its top bit set.
-  eq("INTEGER 4294967295 (a nonce)", asn1.encInteger(4294967295), 
+  eq("INTEGER 4294967295 (a nonce)", asn1.encInteger(4294967295),
       "020500ffffffff");
 
   // NEGATIVE integers are not hypothetical: -138 is the HMAC-MD5 checksum type,
@@ -138,7 +138,7 @@ function derEncodesMinimally() {
   eq("INTEGER -129 (two bytes)", asn1.encInteger(-129), "0202ff7f");
   eq("INTEGER -138 (cksumtype HMAC-MD5)", asn1.encInteger(-138), "0202ff76");
   // And back.
-  [0, 1, 5, 127, 128, 255, 65536, 4294967295, -1, -128, -129, -138, 
+  [0, 1, 5, 127, 128, 255, 65536, 4294967295, -1, -128, -129, -138,
       -32768].forEach(function (n) {
     const back = asn1.decInteger(asn1.readTlv(asn1.encInteger(n), 0));
     assert.strictEqual(back, n, "INTEGER round trip for " + n);
@@ -147,17 +147,17 @@ function derEncodesMinimally() {
   // KerberosFlags: bit 0 is the MOST significant bit of the FIRST octet, so
   // forwardable (bit 1) is 0x40 of byte 0. Reversed, a request asks for a
   // different set of options and the KDC answers it correctly and uselessly.
-  eq("flags: forwardable (bit 1)", asn1.encFlags([msg.KDC_OPTION.FORWARDABLE]), 
+  eq("flags: forwardable (bit 1)", asn1.encFlags([msg.KDC_OPTION.FORWARDABLE]),
       "0305 00 40000000");
-  eq("flags: renewable (bit 8)", asn1.encFlags([msg.KDC_OPTION.RENEWABLE]), 
+  eq("flags: renewable (bit 8)", asn1.encFlags([msg.KDC_OPTION.RENEWABLE]),
       "0305 00 00800000");
-  eq("flags: canonicalize (bit 15)", 
+  eq("flags: canonicalize (bit 15)",
       asn1.encFlags([msg.KDC_OPTION.CANONICALIZE]), "0305 00 00010000");
-  eq("flags: renew (bit 30)", asn1.encFlags([msg.KDC_OPTION.RENEW]), 
+  eq("flags: renew (bit 30)", asn1.encFlags([msg.KDC_OPTION.RENEW]),
       "0305 00 00000002");
   eq("flags: forwardable+renewable+canonicalize",
      asn1.encFlags([1, 8, 15]), "0305 00 40810000");
-  assert.deepStrictEqual(asn1.bitsFromFlags(asn1.flagsFromBits([1, 8, 15])), 
+  assert.deepStrictEqual(asn1.bitsFromFlags(asn1.flagsFromBits([1, 8, 15])),
       [1, 8, 15],
     "flag bits must round trip");
 
@@ -166,7 +166,7 @@ function derEncodesMinimally() {
   const when = new Date(Date.UTC(2026, 7, 13, 9, 5, 7, 456));
   assert.strictEqual(asn1.formatKerberosTime(when), "20260813090507Z",
     "KerberosTime must have no fractional seconds");
-  eq("GeneralizedTime encoding", asn1.encKerberosTime(when), "180f" + 
+  eq("GeneralizedTime encoding", asn1.encKerberosTime(when), "180f" +
       hex(prim.utf8("20260813090507Z")));
   assert.strictEqual(asn1.parseKerberosTime("20260813090507Z").getTime(),
     Date.UTC(2026, 7, 13, 9, 5, 7, 0), "KerberosTime must parse back to the " +
@@ -200,7 +200,7 @@ function structuresEncodeToTheExpectedBytes() {
   });
   const readBack = msg.readPrincipalName(asn1.readTlv(krbtgt, 0));
   assert.strictEqual(readBack.type, 2, "krbtgt must be NT-SRV-INST (2)");
-  assert.deepStrictEqual(readBack.name, ["krbtgt", "EXAMPLE.COM"], 
+  assert.deepStrictEqual(readBack.name, ["krbtgt", "EXAMPLE.COM"],
       "both components must survive");
 
   // EncryptedData ::= SEQUENCE { etype [0], kvno [1] OPTIONAL, cipher [2] }
@@ -264,7 +264,7 @@ function kdcRequestsRoundTrip() {
       value: msg.encPaPacRequest(true)
     }],
     reqBody: {
-      kdcOptions: [msg.KDC_OPTION.FORWARDABLE, msg.KDC_OPTION.RENEWABLE, 
+      kdcOptions: [msg.KDC_OPTION.FORWARDABLE, msg.KDC_OPTION.RENEWABLE,
           msg.KDC_OPTION.CANONICALIZE],
       cname: { type: msg.NAME_TYPE.PRINCIPAL, name: ["alice"] },
       realm: "EXAMPLE.COM",
@@ -302,31 +302,31 @@ function kdcRequestsRoundTrip() {
   assert.strictEqual(back.msgType, msg.MSG_TYPE.AS_REQ, "msg-type");
   assert.strictEqual(back.padata.length, 1, "padata count");
   assert.strictEqual(back.padata[0].type, 128, "PA-PAC-REQUEST type");
-  assert.strictEqual(msg.readPaPacRequest(back.padata[0].value).includePac, 
+  assert.strictEqual(msg.readPaPacRequest(back.padata[0].value).includePac,
       true,
     "the PAC request must decode as true");
-  assert.deepStrictEqual(back.reqBody.kdcOptions, [1, 8, 15], 
+  assert.deepStrictEqual(back.reqBody.kdcOptions, [1, 8, 15],
       "kdc-options bits");
   assert.deepStrictEqual(msg.kdcOptionNames(back.reqBody.kdcOptions),
     ["forwardable", "renewable", "canonicalize"], "kdc-options must render " +
         "by name");
   assert.strictEqual(back.reqBody.realm, "EXAMPLE.COM", "realm, unfolded");
   assert.deepStrictEqual(back.reqBody.cname.name, ["alice"], "cname");
-  assert.deepStrictEqual(back.reqBody.sname.name, ["krbtgt", "EXAMPLE.COM"], 
+  assert.deepStrictEqual(back.reqBody.sname.name, ["krbtgt", "EXAMPLE.COM"],
       "sname");
   assert.strictEqual(back.reqBody.nonce, 3735928559, "a nonce with its top " +
       "bit set");
-  assert.deepStrictEqual(back.reqBody.etypes, kcrypto.DEFAULT_ETYPE_PREFERENCE, 
+  assert.deepStrictEqual(back.reqBody.etypes, kcrypto.DEFAULT_ETYPE_PREFERENCE,
       "etype list and ORDER");
   // Each field is asserted PRESENT before it is dereferenced, so a reader that
   // drops one fails with the field's name rather than with "cannot read
   // properties of null" twenty lines into a stack trace.
-  ["from", "till", "rtime", "addresses", "encAuthorizationData", 
+  ["from", "till", "rtime", "addresses", "encAuthorizationData",
       "additionalTickets"]
     .forEach(function (field) {
-      assert.ok(back.reqBody[field] !== null && 
+      assert.ok(back.reqBody[field] !== null &&
           back.reqBody[field] !== undefined,
-        "the KDC-REQ-BODY reader dropped the OPTIONAL field '" + field + 
+        "the KDC-REQ-BODY reader dropped the OPTIONAL field '" + field +
             "', which was present on the wire");
     });
   assert.strictEqual(back.reqBody.till.getTime(), till.getTime(), "till");
@@ -334,11 +334,11 @@ function kdcRequestsRoundTrip() {
   assert.strictEqual(back.reqBody.rtime.getTime(), rtime.getTime(), "rtime");
   assert.strictEqual(back.reqBody.addresses.length, 1, "addresses");
   eq("the address survives", back.reqBody.addresses[0].address, "0a000001");
-  eq("enc-authorization-data survives", 
+  eq("enc-authorization-data survives",
       back.reqBody.encAuthorizationData.cipher, "0badc0de");
-  assert.strictEqual(back.reqBody.additionalTickets.length, 1, 
+  assert.strictEqual(back.reqBody.additionalTickets.length, 1,
       "additional-tickets");
-  assert.deepStrictEqual(back.reqBody.additionalTickets[0].sname.name, ["HTTP", 
+  assert.deepStrictEqual(back.reqBody.additionalTickets[0].sname.name, ["HTTP",
       "web.example.com"],
     "the additional ticket's SPN — this is the S4U2Proxy evidence-ticket slot");
 
@@ -399,9 +399,9 @@ function kdcRequestsRoundTrip() {
 async function kdcRepliesRoundTripAndTolerateTheIrregularTag() {
   log.debug("Entering kdcRepliesRoundTripAndTolerateTheIrregularTag().");
   const e = kcrypto.etypeById(18);
-  const clientKey = await e.stringToKey("hunter2", 
+  const clientKey = await e.stringToKey("hunter2",
       prim.utf8("EXAMPLE.COMalice"), null);
-  const serviceKey = await e.stringToKey("servicepw", 
+  const serviceKey = await e.stringToKey("servicepw",
       prim.utf8("EXAMPLE.COMkrbtgt"), null);
   const now = new Date(Date.UTC(2026, 7, 13, 12, 0, 0));
   const end = new Date(Date.UTC(2026, 7, 13, 22, 0, 0));
@@ -410,7 +410,7 @@ async function kdcRepliesRoundTripAndTolerateTheIrregularTag() {
   // A ticket whose enc-part really is encrypted, so the whole path is
   // exercised.
   const encTicketPart = msg.encEncTicketPart({
-    flags: [msg.TICKET_FLAG.FORWARDABLE, msg.TICKET_FLAG.INITIAL, 
+    flags: [msg.TICKET_FLAG.FORWARDABLE, msg.TICKET_FLAG.INITIAL,
         msg.TICKET_FLAG.PRE_AUTHENT],
     key: { etype: 18, key: sessionKey },
     crealm: "EXAMPLE.COM",
@@ -423,7 +423,7 @@ async function kdcRepliesRoundTripAndTolerateTheIrregularTag() {
     sname: { type: msg.NAME_TYPE.SRV_INST, name: ["krbtgt", "EXAMPLE.COM"] },
     encPart: {
       etype: 18,
-      cipher: await e.encrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET, 
+      cipher: await e.encrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
           encTicketPart)
     }
   };
@@ -432,7 +432,7 @@ async function kdcRepliesRoundTripAndTolerateTheIrregularTag() {
     key: { etype: 18, key: sessionKey },
     lastReq: [{ type: 0, value: now }],
     nonce: 3735928559,
-    flags: [msg.TICKET_FLAG.FORWARDABLE, msg.TICKET_FLAG.INITIAL, 
+    flags: [msg.TICKET_FLAG.FORWARDABLE, msg.TICKET_FLAG.INITIAL,
         msg.TICKET_FLAG.PRE_AUTHENT],
     authtime: now,
     endtime: end,
@@ -463,7 +463,7 @@ async function kdcRepliesRoundTripAndTolerateTheIrregularTag() {
   assert.strictEqual(rep.ticket.encPart.etypeName, "aes256-cts-hmac-sha1-96",
     "the ticket's etype must be named, not just numbered");
 
-  const plain = await e.decrypt(clientKey, kcrypto.KEY_USAGE.AS_REP_ENCPART, 
+  const plain = await e.decrypt(clientKey, kcrypto.KEY_USAGE.AS_REP_ENCPART,
       rep.encPart.cipher);
   const part = msg.readEncKdcRepPart(plain);
   assert.strictEqual(part.taggedAs, "EncASRepPart", "the normal tag must be " +
@@ -477,7 +477,7 @@ async function kdcRepliesRoundTripAndTolerateTheIrregularTag() {
 
   // The service side reads its own ticket with its own key.
   const tp = msg.readEncTicketPart(
-    await e.decrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET, 
+    await e.decrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
         rep.ticket.encPart.cipher));
   eq("the ticket carries the same session key", tp.key.key, hex(sessionKey));
   assert.deepStrictEqual(tp.cname.name, ["alice"], "the ticket names the " +
@@ -487,14 +487,14 @@ async function kdcRepliesRoundTripAndTolerateTheIrregularTag() {
   // tag an AS-REP's enc-part as EncTGSRepPart. A client that insists on
   // [APPLICATION 25] passes every test against its own mock and then fails in
   // the field with "cannot decode", which reads as a crypto problem.
-  const irregular = msg.encEncKdcRepPart(repPartFields, 
+  const irregular = msg.encEncKdcRepPart(repPartFields,
       msg.APPLICATION.ENC_TGS_REP_PART);
   assert.strictEqual(irregular[0], 0x7a, "EncTGSRepPart must be tagged " +
       "[APPLICATION 26] (0x7a)");
   const irregularPart = msg.readEncKdcRepPart(irregular);
   assert.strictEqual(irregularPart.taggedAs, "EncTGSRepPart",
     "the irregular tag must be ACCEPTED and REPORTED, not silently normalised");
-  eq("the same fields come back from the irregular tag", irregularPart.key.key, 
+  eq("the same fields come back from the irregular tag", irregularPart.key.key,
       hex(sessionKey));
 
   log.debug("Leaving kdcRepliesRoundTripAndTolerateTheIrregularTag().");
@@ -515,14 +515,20 @@ function relayedTicketsAreByteExact() {
   const inner = asn1.encTaggedSequence([
     { tag: 0, value: asn1.encInteger(5) },
     { tag: 1, value: asn1.encGeneralString("EXAMPLE.COM") },
-    { tag: 2, value: msg.encPrincipalName({
+    {
+      tag: 2,
+      value: msg.encPrincipalName({
       type: 2,
       name: ["krbtgt", "EXAMPLE.COM"]
-    }) },
-    { tag: 3, value: msg.encEncryptedData({
+    })
+    },
+    {
+      tag: 3,
+      value: msg.encEncryptedData({
       etype: 18,
       cipher: kcrypto.randomBytes(40)
-    }) }
+    })
+    }
   ]);
   // A long-form length where the short form would do: legal to parse, and
   // exactly what a re-encoding codec would quietly "fix".
@@ -532,7 +538,7 @@ function relayedTicketsAreByteExact() {
   const t = msg.readTicket(nonMinimal);
   eq("a ticket's raw bytes are the ORIGINAL bytes, non-minimal header included",
      t.raw, hex(nonMinimal));
-  eq("re-encoding a read ticket reproduces it exactly", msg.encTicket(t), 
+  eq("re-encoding a read ticket reproduces it exactly", msg.encTicket(t),
       hex(nonMinimal));
   assert.notStrictEqual(hex(msg.encTicket({
     realm: t.realm,
@@ -561,7 +567,8 @@ function krbErrorsCarryTheSalt() {
     { etype: 23, salt: null, s2kparams: null }        // arcfour is unsalted
   ]);
   const err = msg.encKrbError({
-    stime: stime, susec: 123456,
+    stime: stime,
+    susec: 123456,
     errorCode: 25,
     realm: "EXAMPLE.COM",
     sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
@@ -596,7 +603,7 @@ function krbErrorsCarryTheSalt() {
   const info = msg.readEtypeInfo2(e.eDataPaData[0].value);
   assert.strictEqual(info.length, 2, "both ETYPE-INFO2 entries");
   assert.strictEqual(info[0].etype, 18, "first entry's etype");
-  assert.strictEqual(info[0].etypeName, "aes256-cts-hmac-sha1-96", 
+  assert.strictEqual(info[0].etypeName, "aes256-cts-hmac-sha1-96",
       "named etype");
   assert.strictEqual(info[0].salt, "EXAMPLE.COMalice", "THE SALT — not " +
       "guessable, must come from here");
@@ -633,7 +640,7 @@ async function preAuthTimestampUsesTheSaltAndItsOwnKeyUsage() {
   log.debug("Entering preAuthTimestampUsesTheSaltAndItsOwnKeyUsage().");
   const e = kcrypto.etypeById(18);
   const salt = "EXAMPLE.COMalice";
-  const key = await e.stringToKey("hunter2", prim.utf8(salt), 
+  const key = await e.stringToKey("hunter2", prim.utf8(salt),
       unhex("00001000"));
   const when = new Date(Date.UTC(2026, 7, 13, 12, 0, 5));
 
@@ -645,7 +652,7 @@ async function preAuthTimestampUsesTheSaltAndItsOwnKeyUsage() {
       // Key usage 1, and ONLY key usage 1: the KDC decrypts with that number
       // and any other produces an integrity failure it reports as
       // PREAUTH_FAILED — i.e. as a wrong password.
-      cipher: await e.encrypt(key, kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, 
+      cipher: await e.encrypt(key, kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP,
           tsEnc)
     })
   };
@@ -653,7 +660,7 @@ async function preAuthTimestampUsesTheSaltAndItsOwnKeyUsage() {
   // The KDC's side.
   const seen = msg.readPaData(asn1.readTlv(msg.encPaData(padata), 0));
   const enc = msg.readEncryptedData(asn1.readTlv(seen.value, 0));
-  const decrypted = await e.decrypt(key, 
+  const decrypted = await e.decrypt(key,
       kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, enc.cipher);
   const ts = msg.readPaEncTsEnc(decrypted);
   assert.strictEqual(ts.patimestamp.getTime(), when.getTime(), "the " +
@@ -668,10 +675,10 @@ async function preAuthTimestampUsesTheSaltAndItsOwnKeyUsage() {
 
   // And the salt matters: the same password with the wrong salt is a different
   // key.
-  const wrongSaltKey = await e.stringToKey("hunter2", 
+  const wrongSaltKey = await e.stringToKey("hunter2",
       prim.utf8("EXAMPLE.COMAlice"), unhex("00001000"));
   await assert.rejects(
-    () => e.decrypt(wrongSaltKey, kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, 
+    () => e.decrypt(wrongSaltKey, kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP,
         enc.cipher),
     /integrity check failed/,
     "a salt differing only in case must produce a different key — AD's salt " +
@@ -700,11 +707,14 @@ async function apExchangeRoundTrips() {
   });
   const apReq = msg.encApReq({
     apOptions: [msg.AP_OPTION.MUTUAL_REQUIRED],
-    ticket: { realm: "EXAMPLE.COM", sname: {
+    ticket: {
+      realm: "EXAMPLE.COM",
+      sname: {
       type: 3,
       name: ["HTTP", "web.example.com"]
     },
-              encPart: { etype: 18, cipher: kcrypto.randomBytes(64) } },
+      encPart: { etype: 18, cipher: kcrypto.randomBytes(64) }
+    },
     authenticator: {
       etype: 18,
       cipher: await e.encrypt(sessionKey, kcrypto.KEY_USAGE.AP_REQ_AUTH, auth)
@@ -716,32 +726,35 @@ async function apExchangeRoundTrips() {
   const back = msg.readApReq(apReq);
   assert.deepStrictEqual(msg.apOptionNames(back.apOptions), ["mutual-required"],
     "ap-options must render by name");
-  assert.deepStrictEqual(back.ticket.sname.name, ["HTTP", "web.example.com"], 
+  assert.deepStrictEqual(back.ticket.sname.name, ["HTTP", "web.example.com"],
       "the SPN");
   const readAuth = msg.readAuthenticator(
-    await e.decrypt(sessionKey, kcrypto.KEY_USAGE.AP_REQ_AUTH, 
+    await e.decrypt(sessionKey, kcrypto.KEY_USAGE.AP_REQ_AUTH,
         back.authenticator.cipher));
   assert.strictEqual(readAuth.cksum.type, -138,
     "a negative checksum type must survive the whole round trip");
   assert.strictEqual(readAuth.ctime.getTime(), ctime.getTime(), "ctime");
   assert.strictEqual(readAuth.seqNumber, 1234567890, "seq-number");
-  assert.ok(readAuth.subkey && readAuth.subkey.key.length === 32, 
+  assert.ok(readAuth.subkey && readAuth.subkey.key.length === 32,
       "the subkey must survive");
 
   // The mutual-authentication reply.
   const apRep = msg.encApRep({
-    encPart: { etype: 18, cipher: await e.encrypt(sessionKey, 
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(sessionKey,
         kcrypto.KEY_USAGE.AP_REP_ENCPART,
       msg.encEncApRepPart({
         ctime: ctime,
         cusec: 12345,
         seqNumber: 987654321
-      })) }
+      }))
+    }
   });
   assert.strictEqual(apRep[0], 0x6f, "an AP-REP must be tagged [APPLICATION " +
       "15] (0x6f)");
   const repPart = msg.readEncApRepPart(
-    await e.decrypt(sessionKey, kcrypto.KEY_USAGE.AP_REP_ENCPART, 
+    await e.decrypt(sessionKey, kcrypto.KEY_USAGE.AP_REP_ENCPART,
         msg.readApRep(apRep).encPart.cipher));
   assert.strictEqual(repPart.ctime.getTime(), ctime.getTime(),
     "the AP-REP echoes the authenticator's ctime — that echo IS the mutual " +
@@ -787,7 +800,7 @@ function theTreeViewDescribesUnknownBytes() {
   assert.strictEqual(nodes[0].children.length, 2, "two context-tagged fields");
   assert.strictEqual(nodes[0].children[0].tagName, "[0]", "the first field's " +
       "tag is shown as [0]");
-  assert.strictEqual(nodes[0].children[0].children[0].text, "1", 
+  assert.strictEqual(nodes[0].children[0].children[0].text, "1",
       "and its INTEGER is rendered");
   const names = nodes[0].children[1].children[0].children.map(function (c) { return c.text; });
   assert.deepStrictEqual(names, ["alice", "admin"], "the name components are " +
@@ -814,12 +827,12 @@ function theTreeViewDescribesUnknownBytes() {
 function refusesMalformedAndHostileInput() {
   log.debug("Entering refusesMalformedAndHostileInput().");
 
-  mustThrow("empty input", () => asn1.readTlv(new Uint8Array(0), 0), 
+  mustThrow("empty input", () => asn1.readTlv(new Uint8Array(0), 0),
       /truncated/);
-  mustThrow("a tag with no length", () => asn1.readTlv(unhex("30"), 0), 
+  mustThrow("a tag with no length", () => asn1.readTlv(unhex("30"), 0),
       /truncated/);
   mustThrow("a length claiming more than is present",
-    () => asn1.readTlv(unhex("300a0102"), 0), 
+    () => asn1.readTlv(unhex("300a0102"), 0),
         /claims 10 bytes but only 2 remain/);
   mustThrow("an indefinite length (BER, not DER)",
     () => asn1.readTlv(unhex("3080020101 0000"), 0), /indefinite/);
@@ -848,34 +861,31 @@ function refusesMalformedAndHostileInput() {
   const v4 = asn1.encApplication(10, asn1.encTaggedSequence([
     { tag: 1, value: asn1.encInteger(4) },
     { tag: 2, value: asn1.encInteger(10) },
-    { tag: 4, value: msg.encKdcReqBody({
+    {
+      tag: 4,
+      value: msg.encKdcReqBody({
       kdcOptions: [],
       realm: "X",
       till: new Date(),
       nonce: 1,
       etypes: [18]
-    }) }
+    })
+    }
   ]));
   mustThrow("pvno 4", () => msg.readKdcReq(v4), /protocol version 4/);
 
   // A context tag wrapping more than one element is malformed and must not be
   // silently reduced to its first element.
-  const doubled = asn1.encSequence([asn1.encContext(0, 
+  const doubled = asn1.encSequence([asn1.encContext(0,
       prim.concat([asn1.encInteger(1), asn1.encInteger(2)]))]);
   mustThrow("a context tag wrapping two elements",
-    () => asn1.readTaggedSequence(asn1.readTlv(doubled, 0).value), 
+    () => asn1.readTaggedSequence(asn1.readTlv(doubled, 0).value),
         /wraps 2 elements/);
 
   // A SEQUENCE whose members are not context-tagged is not one of these
   // structures.
   mustThrow("an untagged SEQUENCE where a tagged one belongs",
-    
-        
-            
-                
-                    
-                        
-                            () => asn1.readTaggedSequence(asn1.readTlv(asn1.encSequence([asn1.encInteger(1)]), 
+      () => asn1.readTaggedSequence(asn1.readTlv(asn1.encSequence([asn1.encInteger(1)]),
         0).value),
     /expected a context tag/);
 
@@ -895,10 +905,10 @@ function refusesMalformedAndHostileInput() {
   // attacker-controlled allocation, and the decoder page parses whatever is
   // pasted into it.
   mustThrow("an input over the size limit",
-    () => asn1.readApplication(new Uint8Array(asn1.MAX_INPUT_BYTES + 1)), 
+    () => asn1.readApplication(new Uint8Array(asn1.MAX_INPUT_BYTES + 1)),
         /refusing to parse/);
   mustThrow("a tree over the size limit",
-    () => asn1.tree(new Uint8Array(asn1.MAX_INPUT_BYTES + 1)), 
+    () => asn1.tree(new Uint8Array(asn1.MAX_INPUT_BYTES + 1)),
         /refusing to parse/);
 
   // Deeply nested input must hit the depth limit rather than the stack — and
@@ -911,7 +921,7 @@ function refusesMalformedAndHostileInput() {
   var deep = asn1.tree(nested);
   var node = deep[0], levels = 0;
   while (node && node.children) { node = node.children[0]; levels++; }
-  assert.ok(levels > 8, "the tree must expand a good way down, got " + levels + 
+  assert.ok(levels > 8, "the tree must expand a good way down, got " + levels +
       " levels");
   assert.strictEqual(node.depthLimited, true,
     "the deepest rendered node must be MARKED as depth-limited, not left " +
@@ -922,17 +932,17 @@ function refusesMalformedAndHostileInput() {
   // The reading path, unlike the tree, DOES refuse: a message nested past the
   // limit is malformed rather than merely awkward to display.
   mustThrow("a tagged sequence nested past the depth limit",
-    () => asn1.readTaggedSequence(asn1.readTlv(nested, 0).value, 
+    () => asn1.readTaggedSequence(asn1.readTlv(nested, 0).value,
         asn1.MAX_DEPTH),
     /nested deeper than|expected a context tag/);
 
   // A non-integer where an INTEGER belongs, caught on the WRITE side: a float
   // reaching the encoder would otherwise be truncated silently.
-  mustThrow("a non-integer INTEGER", () => asn1.encInteger(1.5), 
+  mustThrow("a non-integer INTEGER", () => asn1.encInteger(1.5),
       /whole number/);
-  mustThrow("a flag bit out of range", () => asn1.encFlags([32]), 
+  mustThrow("a flag bit out of range", () => asn1.encFlags([32]),
       /out of range/);
-  mustThrow("an unparseable principal", () => msg.parsePrincipal("///"), 
+  mustThrow("an unparseable principal", () => msg.parsePrincipal("///"),
       /empty principal/);
 
   log.debug("Leaving refusesMalformedAndHostileInput().");
@@ -946,13 +956,13 @@ function principalsParseWithTheRightNameTypes() {
   const cases = [
     ["alice", msg.NAME_TYPE.PRINCIPAL, ["alice"], null],
     ["alice@EXAMPLE.COM", msg.NAME_TYPE.PRINCIPAL, ["alice"], "EXAMPLE.COM"],
-    ["krbtgt/EXAMPLE.COM", msg.NAME_TYPE.SRV_INST, ["krbtgt", "EXAMPLE.COM"], 
+    ["krbtgt/EXAMPLE.COM", msg.NAME_TYPE.SRV_INST, ["krbtgt", "EXAMPLE.COM"],
         null],
-    ["krbtgt/EXAMPLE.COM@EXAMPLE.COM", msg.NAME_TYPE.SRV_INST, ["krbtgt", 
+    ["krbtgt/EXAMPLE.COM@EXAMPLE.COM", msg.NAME_TYPE.SRV_INST, ["krbtgt",
         "EXAMPLE.COM"], "EXAMPLE.COM"],
-    ["HTTP/web.example.com", msg.NAME_TYPE.SRV_HST, ["HTTP", 
+    ["HTTP/web.example.com", msg.NAME_TYPE.SRV_HST, ["HTTP",
         "web.example.com"], null],
-    ["MSSQLSvc/db.example.com:1433", msg.NAME_TYPE.SRV_HST, ["MSSQLSvc", 
+    ["MSSQLSvc/db.example.com:1433", msg.NAME_TYPE.SRV_HST, ["MSSQLSvc",
         "db.example.com:1433"], null]
   ];
   cases.forEach(function (c) {
@@ -963,10 +973,10 @@ function principalsParseWithTheRightNameTypes() {
   });
   // The realm is NOT folded to upper case: a lower-case realm is the commonest
   // configuration error there is, and hiding it would be the wrong kindness.
-  assert.strictEqual(msg.parsePrincipal("alice@example.com").realm, 
+  assert.strictEqual(msg.parsePrincipal("alice@example.com").realm,
       "example.com",
     "the realm must be left exactly as typed");
-  assert.strictEqual(msg.principalToString({ name: ["HTTP", 
+  assert.strictEqual(msg.principalToString({ name: ["HTTP",
       "web.example.com"] }, "EXAMPLE.COM"),
     "HTTP/web.example.com@EXAMPLE.COM", "display form");
   log.debug("Leaving principalsParseWithTheRightNameTypes().");
