@@ -30,9 +30,9 @@ The project is split into two independent Node.js services:
 - **`/client/`** — Express frontend (port 3000). Serves static HTML/JS pages and handles the OAuth2 redirect callback at `/callback`, forwarding query params to `debugger2.html`. Every protocol implementation that runs in the browser is here; see `client/CLAUDE.md`.
 - **`/common/data.js`** — Shared `convertToOAuth2Format()` function used by both services to normalize grant parameters (including PKCE and custom params).
 - **`/common/krb5/`** — the **Kerberos v5** codec and crypto, shared by the browser bundles, the api's frame checks and the test suite, because one wire codec must not exist twice. It is the only protocol implementation here that is not under `client/src/`, and five of its modules are additionally **vendored** into the `sts/` submodule (a Docker build cannot COPY from outside its context) with `tests/krb5_codec_sync.js` keeping the copies honest. See `docs/kerberos.md`.
-- **`/sts/`** — A mock Security Token Service used by the test suite (OAuth2 AS, OIDC OP, WS-Trust, OID4VCI issuer, OID4VP verifier, DID publisher). **Its code is no longer in this repository** — it is the [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts) submodule, so `git submodule update --init sts` is required once per checkout and an edit under `sts/` is an edit to somebody else's checkout. See `docs/mock-sts.md`.
+- **`/sts/`** — A mock Security Token Service used by the test suite (OAuth2 AS, OIDC OP, WS-Trust, **WS-Federation IdP**, OID4VCI issuer, OID4VP verifier, DID publisher). **Its code is no longer in this repository** — it is the [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts) submodule, so `git submodule update --init sts` is required once per checkout and an edit under `sts/` is an edit to somebody else's checkout. See `docs/mock-sts.md`.
 - **`/waltid/`** — walt.id's own `issuer-api2` and `verifier-api2` containers, behind CORS proxies, for interoperability testing. See `waltid/CLAUDE.md`.
-- **`/keycloak-wsfed/`** — A dedicated Keycloak 8.0.1 side-car carrying the cloudtrust `keycloak-wsfed` extension, because the main stack's Keycloak 26.x has no WS-Federation support at all. See `keycloak-wsfed/CLAUDE.md`.
+- **`/keycloak-wsfed/`** — A dedicated Keycloak 8.0.1 side-car carrying the cloudtrust `keycloak-wsfed` extension, because the main stack's Keycloak 26.x has no WS-Federation support at all. Since 2026-08 the mock STS answers that profile too and **every WS-Federation case runs against both**; they are complementary, not redundant — the side-car is somebody else's implementation, and the mock is the one that reads what the debugger sends. See `keycloak-wsfed/CLAUDE.md` and `docs/wsfed.md`.
 - **`/extension/`** — a **read-only** browser extension that observes `navigator.credentials` on one origin you arm it for and hands the artifacts to the WebAuthn pages. It never alters a ceremony and never starts one, and it will not name an RP ID it does not own — an extension that could would be a working defeat of WebAuthn's phishing resistance. The builds are generated (`extension/build.js`, called by the launchers), not committed. See `docs/webauthn.md`.
 - **`/infra/`** — Terraform and the Lambda@Edge handlers for the static deployments, which is how two protocols get an IdP's **POST** back to a site with no backend. See `infra/CLAUDE.md`.
 ## Running the App
@@ -69,8 +69,10 @@ Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automat
 # The containerized stack again, under Istanbul/c8 instrumentation
 ./run-coverage.sh
 
-# Just the WS-Federation test, with only api + client + the side-car
-./local-run-tests.sh --wsfed-only
+# Just the WS-Federation test, against BOTH its identity providers, with only
+# api + client + the mock STS + the Keycloak side-car. `=sts` or `=keycloak`
+# narrows it to one; `=sts` skips the twenty-second WildFly boot entirely.
+./local-run-tests.sh --wsfed-only[=keycloak|sts|both]
 ```
 
 `tests/CLAUDE.md` describes what each test file covers, what gates or skips it, and the environment hazards every browser test has to handle — Web Crypto's secure-context requirement, `--headless=new`, waiting on content rather than elements, and the rest. **Read it before writing or changing a test**; each of those hazards has already cost a run, and each fails in a way that names something other than itself.

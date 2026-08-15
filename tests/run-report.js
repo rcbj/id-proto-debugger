@@ -1659,19 +1659,36 @@ function buildJobs() {
     },
   });
 
-  // WS-Federation Passive Requestor Profile SSO against the dedicated Keycloak
-  // 8.0.1 + cloudtrust keycloak-wsfed side-car (the 26.x Keycloak has no WS-Fed
-  // support). Gated on WSFED_METADATA_URL, which common.sh's
-  // configureKeycloakWsfed exports only when the side-car is provisioned — so
-  // this SKIPS (not fails) on runs without it (remote/live, or a static
-  // deployment).
+  // WS-Federation Passive Requestor Profile SSO, run twice: against the
+  // dedicated Keycloak 8.0.1 + cloudtrust keycloak-wsfed side-car (the 26.x
+  // Keycloak has no WS-Fed support) and against the mock STS, which grew this
+  // profile in 2026-08. Every combination below is pushed once per IdP.
+  //
+  // Two IdPs rather than one because they fail differently, and each covers what
+  // the other cannot:
+  //
+  //   * **Keycloak is somebody else's implementation.** An EOL server carrying a
+  //     third-party extension, provisioned through its admin API, with a real
+  //     session cookie and a real login form. It is the only thing here that can
+  //     tell us the debugger interoperates with software this project did not
+  //     write — which is the entire point of the side-car and the reason it is
+  //     kept alive at 8.0.1.
+  //   * **The mock STS READS what the debugger sends.** Keycloak's extension
+  //     ignores wreq, accepts any wauth and never states a token type, so nine
+  //     of these jobs prove only that a request was built and a round trip
+  //     completed. The mock refuses a wauth it cannot perform, a token type it
+  //     does not offer and a wreqptr outright, each with a reason — so a request
+  //     that is well-formed but wrong fails there and passes at Keycloak. It is
+  //     also the only WS-Fed IdP available where the side-car is not: it runs in
+  //     every stack the suite starts, including the host and live-site runs.
+  //
+  // Each is gated on its own metadata URL, so an environment with one and not
+  // the other runs half of these and skips the other half naming which.
   {
-    // Compute the skip reason ONCE — it gates every WS-Fed job below
-    // identically.
-    let wsfedSkip = null;
-    if (!env.WSFED_METADATA_URL) {
-      wsfedSkip = "WS-Federation side-car (Keycloak 8.0.1 + wsfed) not provisioned (WSFED_METADATA_URL unset).";
-    } else if (env.WSFED_LANDING_AVAILABLE === "false") {
+    // The landing gate is shared: it is about the TARGET (does anything at
+    // <base>/wsfed answer the IdP's POST), not about which IdP sent it.
+    let landingSkip = null;
+    if (env.WSFED_LANDING_AVAILABLE === "false") {
       // The other end of the round trip. The Passive Requestor Profile has ONE
       // way to return the token — the IdP auto-POSTs the wresult to wreply —
       // and no redirect alternative to fall back to the way SAML has. So the
@@ -1686,7 +1703,7 @@ function buildJobs() {
       // POST and sets this. Unset (the containerized and local runs) means "not
       // probed", and the job runs against the api backend's landing as it
       // always has.
-      wsfedSkip = "the target has no WS-Federation landing at " +
+      landingSkip = "the target has no WS-Federation landing at " +
         (env.WSFED_LANDING_URL || "<base>/wsfed") +
          " to receive the IdP's wresult POST " +
         "(the profile has no redirect binding). On a static deployment, " +
@@ -1695,17 +1712,77 @@ function buildJobs() {
             "exists, and build the " +
         "site with wsfedEdgeLanding: true.";
     }
-    const wsfedBaseEnv = {
-      WSFED_METADATA_URL: env.WSFED_METADATA_URL,
-      WSFED_REALM: env.WSFED_REALM,
-      WSFED_USER: env.WSFED_USER,
-    };
+
+    // The two IdPs. `env` per IdP is everything wsfed_sso.js needs to know
+    // about it — the rest of the job list below is identical for both, which is
+    // the property worth keeping: a case added for one is added for the other.
+    const wsfedIdps = [
+      {
+        key: "keycloak",
+        label: "Keycloak",
+        // common.sh's configureKeycloakWsfed exports this only once the
+        // side-car has provisioned AND served its descriptor, so an unset value
+        // means the IdP is genuinely absent rather than merely unconfigured.
+        skip: env.WSFED_METADATA_URL ? null :
+          "WS-Federation side-car (Keycloak 8.0.1 + wsfed) not provisioned (WSFED_METADATA_URL unset).",
+        env: {
+          WSFED_IDP: "keycloak",
+          WSFED_METADATA_URL: env.WSFED_METADATA_URL,
+          WSFED_REALM: env.WSFED_REALM,
+          WSFED_USER: env.WSFED_USER,
+        },
+      },
+      {
+        key: "sts",
+        label: "mock STS",
+        skip: env.WSFED_STS_METADATA_URL ? null :
+          "the mock STS is not reachable by the browser for WS-Federation (WSFED_STS_METADATA_URL unset). " +
+          "The launchers set it wherever the STS is reachable — the containerized stack by compose DNS " +
+          "name, the host and live-site runs over loopback.",
+        env: {
+          WSFED_IDP: "sts",
+          WSFED_METADATA_URL: env.WSFED_STS_METADATA_URL,
+          // The mock registers no relying parties, so the wtrealm is any string
+          // and becomes the assertion's audience. It is given one that says
+          // where it came from rather than reusing Keycloak's provisioned
+          // client id, so an audience seen in a log names its own test.
+          WSFED_REALM: env.WSFED_STS_REALM || "urn:wsfed:sts:rp",
+          // It authenticates nobody: the username becomes the subject and the
+          // only password refused is the literal "invalid".
+          WSFED_USER: env.WSFED_STS_USER || "wsfed",
+          // Its passive endpoint does not sit under its metadata path the way
+          // Keycloak's does. deriveEndpoint() knows the AD FS shape, but this
+          // is only a fallback for a failed parse either way, so it is passed
+          // explicitly where it is known.
+          WSFED_SIGNIN_ENDPOINT: env.WSFED_STS_ENDPOINT ||
+            (env.WSFED_STS_METADATA_URL || "").replace(
+              /\/FederationMetadata\/[^/]+\/FederationMetadata\.xml.*$/i,
+              "/wsfed"),
+          // And it READS the inline wreq, refusing a token type it does not
+          // offer — so the jobs that send one ask for an assertion type it
+          // advertises. See the note on WREQ_TOKEN_TYPE in wsfed_sso.js.
+          WSFED_WREQ_TOKEN_TYPE: "urn:oasis:names:tc:SAML:2.0:assertion",
+        },
+      },
+    ];
+
+    // One push per IdP. The name carries the IdP because both appear in the
+    // same report and a failure that does not say which one it was sends
+    // somebody to the wrong service.
     const pushWsfed = (name, extraEnv) => {
       log.debug("Entering pushWsfed().");
-      const job = { name, script: "wsfed_sso.js", env: Object.assign({},
-          wsfedBaseEnv, extraEnv) };
-      if (wsfedSkip) { job.skip = wsfedSkip; }
-      jobs.push(job);
+      for (const idp of wsfedIdps) {
+        const job = {
+          name: name + " [" + idp.label + "]",
+          script: "wsfed_sso.js",
+          env: Object.assign({}, idp.env, extraEnv),
+        };
+        // The IdP's own absence is the more specific reason, so it wins over
+        // the landing's when both apply.
+        if (idp.skip) { job.skip = idp.skip; }
+        else if (landingSkip) { job.skip = landingSkip; }
+        jobs.push(job);
+      }
       log.debug("Leaving pushWsfed().");
     };
 
@@ -1737,8 +1814,11 @@ function buildJobs() {
     }
 
     // Optional passthrough request parameters (wctx/wct/wfresh/wauth/wp),
-    // exercised together once — the IdP largely ignores them; this proves the
-    // debugger emits them without breaking the round trip.
+    // exercised together once. Keycloak largely ignores them, so there this
+    // proves the debugger emits them without breaking the round trip; the mock
+    // STS reads all five and REFUSES a wauth naming a method it cannot perform
+    // or a wfresh that is not a number of minutes, so the same job additionally
+    // proves the values are ones an IdP that checks will accept.
     pushWsfed(
       "WS-Federation Sign-in (optional params: wctx/wct/wfresh/wauth/wp)",
       { WSFED_MODE: "signin", WSFED_INITIATE: "back", WSFED_OPT_PARAMS: "true" }

@@ -17,7 +17,9 @@ var waitTime = appconfig.waitTime;
 // WS-Federation Passive Requestor Profile SSO test. Mirrors saml_sso.js, but:
 //   - the sign-in request is a top-level browser navigation (wa=wsignin1.0) and
 //     is NOT signed (no SP key to load — passive profile);
-//   - the IdP is the dedicated Keycloak 8.0.1 + cloudtrust wsfed side-car;
+//   - the IdP is either the dedicated Keycloak 8.0.1 + cloudtrust wsfed
+//     side-car or the mock STS (WSFED_IDP; see the IDP: notes below), and the
+//     same combinations run against both;
 //   - the IdP POSTs a wresult (WS-Trust RSTR carrying a SAML assertion) to a
 //     landing at the debugger's /wsfed, which hands it to wsfed_response.html
 //     where the token is rendered.
@@ -41,9 +43,11 @@ var waitTime = appconfig.waitTime;
 // Sign-out returns no token, so what is asserted is the wa the IdP was actually
 // sent (read back off the landing's redirect) and that the session is really
 // gone: signing in again must require credentials rather than silently issuing
-// a second token off a surviving SSO cookie. Env: WSFED_METADATA_URL (the
-// side-car descriptor), WSFED_REALM (the wtrealm == the provisioned client id),
-// WSFED_USER (login user; password == username).
+// a second token off a surviving SSO cookie. Env: WSFED_METADATA_URL (the IdP's
+// descriptor), WSFED_REALM (the wtrealm — the provisioned client id at
+// Keycloak, any string at the mock STS), WSFED_USER (login user; password ==
+// username), WSFED_IDP ("keycloak" | "sts"), and two overrides the mock needs
+// and Keycloak does not: WSFED_SIGNIN_ENDPOINT and WSFED_WREQ_TOKEN_TYPE.
 
 async function waitForValue(driver, locator, predicate, message, timeout) {
   log.debug("Entering waitForValue().");
@@ -150,14 +154,94 @@ async function assertOperationSuccess(driver, operationLabel, timeout) {
   log.debug("Leaving assertOperationSuccess().");
 }
 
-// The passive sign-in endpoint is the descriptor URL without the trailing
-// "/descriptor" (Keycloak serves both under /protocol/wsfed). Deriving it makes
-// the test robust to any metadata-parsing quirk in the (EOL) extension's
-// descriptor format, while metadata loading is still exercised below.
+// ---------------------------------------------------------------------------
+// WHICH IDENTITY PROVIDER this run drives. Two of them answer this profile here
+// and the same combinations are run against both (see run-report.js):
+//
+//   keycloak  the dedicated Keycloak 8.0.1 + cloudtrust wsfed side-car. An EOL
+//             server carrying a third-party extension — the closest thing to a
+//             production WS-Federation IdP this suite can start.
+//   sts       the mock STS (sts/wsfed.js). Deliberately strict where Keycloak
+//             is permissive: it refuses a wauth it cannot perform, a token type
+//             it does not offer and a wreq it cannot read, so a request the
+//             debugger builds sloppily fails HERE and passes there.
+//
+// Everything below marked "IDP:" is a place the two genuinely differ. There are
+// four, and none of them is a difference in the protocol — they are the submit
+// button's id, where the sign-in endpoint sits relative to the metadata, which
+// token types the wreq may ask for, and whether sign-out returns the browser by
+// redirect or by a link. Anything else that diverges is a finding rather than a
+// case to special-case, which is the point of running both.
+// ---------------------------------------------------------------------------
+var IDP = (process.env.WSFED_IDP || "keycloak").toLowerCase();
+
+// IDP: the passive endpoint's address relative to the metadata document's.
+// Only a fallback — both IdPs publish a PassiveRequestorEndpoint and the parse
+// above normally fills the field — but it is what keeps the run going when the
+// descriptor has a format quirk, so it has to know both shapes:
+//
+//   keycloak  .../protocol/wsfed/descriptor          -> .../protocol/wsfed
+//   sts       <base>/FederationMetadata/2007-06/FederationMetadata.xml
+//                                                    -> <base>/wsfed
+//
+// WSFED_SIGNIN_ENDPOINT overrides both, for an IdP that publishes its metadata
+// somewhere unrelated to its endpoint.
 function deriveEndpoint(metadataUrl) {
   log.debug("Entering deriveEndpoint().");
+  if (process.env.WSFED_SIGNIN_ENDPOINT) {
+    log.debug("Leaving deriveEndpoint(). From the environment.");
+    return process.env.WSFED_SIGNIN_ENDPOINT;
+  }
+  var url = String(metadataUrl || "");
+  if (/FederationMetadata\/[^/]+\/FederationMetadata\.xml/i.test(url)) {
+    log.debug("Leaving deriveEndpoint(). AD FS-style metadata path.");
+    return url.replace(
+        /\/FederationMetadata\/[^/]+\/FederationMetadata\.xml.*$/i, "/wsfed");
+  }
   log.debug("Leaving deriveEndpoint().");
-  return String(metadataUrl || "").replace(/\/descriptor\/?(\?.*)?$/, "");
+  return url.replace(/\/descriptor\/?(\?.*)?$/, "");
+}
+
+// IDP: the sign-in screen. Both IdPs use #username / #password — the mock STS
+// copies Keycloak's field ids on purpose, so a test does not need to know which
+// screen it is looking at to fill it in — but the submit buttons differ
+// (#kc-login vs #wsfed-login). Waiting for whichever arrives is better than
+// branching on WSFED_IDP: if a third IdP turns up with the same fields and a
+// third button, the failure names the button rather than the environment.
+//
+// The password is the username on both: Keycloak's test user is provisioned
+// that way (common.sh) and the mock checks no password at all, refusing only
+// the literal "invalid" so a negative test has something to fail on.
+var LOGIN_BUTTONS = ["kc-login", "wsfed-login"];
+
+async function loginAtIdp(driver, user, timeout) {
+  log.debug("Entering loginAtIdp().");
+  var username = By.id("username");
+  await driver.wait(until.elementLocated(username), timeout,
+    "the IdP never showed its sign-in screen (no #username field).");
+  await driver.wait(until.elementIsVisible(driver.findElement(username)),
+                    timeout);
+  await driver.findElement(username).clear();
+  await driver.findElement(username).sendKeys(user);
+  await driver.findElement(By.id("password")).clear();
+  await driver.findElement(By.id("password")).sendKeys(user);
+
+  var clicked = null;
+  for (var i = 0; i < LOGIN_BUTTONS.length; i++) {
+    var found = await driver.findElements(By.id(LOGIN_BUTTONS[i]));
+    if (found.length) {
+      clicked = LOGIN_BUTTONS[i];
+      await found[0].click();
+      break;
+    }
+  }
+  assert(clicked,
+    "the IdP's sign-in screen has none of the submit buttons this suite " +
+    "knows (" + LOGIN_BUTTONS.join(", ") + "). The username field was there, " +
+    "so this is a sign-in screen whose submit control has been renamed — add " +
+    "its id above rather than working around it.");
+  log.info("Signed in as " + user + " (submit button #" + clicked + ").");
+  log.debug("Leaving loginAtIdp().");
 }
 
 // ---------------------------------------------------------------------------
@@ -210,13 +294,26 @@ function comboLabel(combo) {
 // A minimal, valid WS-Trust RequestSecurityToken to place in wreq — enough for
 // the enveloped-signature path to have real XML to sign, and for the
 // inline-wreq path to carry a token-type request.
+//
+// IDP: the token type it asks for is configurable, because the two IdPs treat
+// this element very differently and both are right. Keycloak's extension does
+// not read the wreq at all, so the URI is inert there and the historical value
+// — the WSS SAML token profile's `#SAMLV2.0` — stays the default. The mock STS
+// DOES read it, and answers a type it does not offer with a 400 naming its
+// fed:TokenTypesOffered, so its jobs pass the assertion URN it advertises. That
+// refusal is the mock earning its place beside Keycloak rather than an
+// incompatibility to paper over: it is the only thing in this suite that checks
+// the debugger's wreq is more than well-formed.
+var WREQ_TOKEN_TYPE = process.env.WSFED_WREQ_TOKEN_TYPE ||
+    "http://docs.oasis-open.org/wss/oasis-wss-saml-token-profile-1.1#SAMLV2.0";
+
 function sampleWreqXml() {
   log.debug("Entering sampleWreqXml().");
   log.debug("Leaving sampleWreqXml().");
   return '<wst:RequestSecurityToken ' +
       'xmlns:wst="http://docs.oasis-open.org/ws-sx/ws-trust/200512">' +
     '<wst:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</wst:RequestType>' +
-    '<wst:TokenType>http://docs.oasis-open.org/wss/oasis-wss-saml-token-profile-1.1#SAMLV2.0</wst:TokenType>' +
+    '<wst:TokenType>' + WREQ_TOKEN_TYPE + '</wst:TokenType>' +
     '</wst:RequestSecurityToken>';
 }
 
@@ -324,7 +421,7 @@ async function assertSignatureGenerated(driver, combo, timeout) {
 async function wsfedActivities(driver, metadataUrl, realm, user, combo) {
   log.debug("Entering wsfedActivities().");
   combo = combo || combinationFromEnv();
-  // Keycloak's login page + the WS-Fed round-trip need a generous timeout.
+  // The IdP's login page + the WS-Fed round-trip need a generous timeout.
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Load the WS-Federation Test Tools page.");
@@ -391,19 +488,9 @@ async function wsfedActivities(driver, metadataUrl, realm, user, combo) {
   log.info("Call IdP (Sign In). wtrealm=" + realm);
   await clickByValue(driver, "Call IdP (Sign In)");
 
-  // Keycloak login (same login form as the other tests; user == password).
-  log.info("Log in at Keycloak.");
-  var username = By.id("username");
-  var password = By.id("password");
-  var kcLogin = By.id("kc-login");
-  await driver.wait(until.elementLocated(username), loginWait);
-  await driver.wait(until.elementIsVisible(driver.findElement(username)),
-                    loginWait);
-  await driver.findElement(username).clear();
-  await driver.findElement(username).sendKeys(user);
-  await driver.findElement(password).clear();
-  await driver.findElement(password).sendKeys(user);
-  await driver.findElement(kcLogin).click();
+  // Log in at whichever IdP this run is driving.
+  log.info("Log in at the IdP (" + IDP + ").");
+  await loginAtIdp(driver, user, loginWait);
 
   // Land on the response page. The landing at /wsfed got there first and handed
   // the wresult over — the api one by stashing it and passing ?id=, the edge
@@ -469,13 +556,63 @@ async function wsfedActivities(driver, metadataUrl, realm, user, combo) {
 //      not ours — see the assertion below.
 //   2. the IdP session is really gone. This is the assertion that matters and
 //      the one a redirect alone does not make: signing in again must land on
-//      Keycloak's login form rather than silently minting a second token off a
+//      the IdP's login form rather than silently minting a second token off a
 //      surviving SSO cookie.
 //
 // The page's own Sign Out button is used, with the endpoint falling back to the
 // sign-in endpoint exactly as buildSignOutUrl() does — Keycloak advertises both
-// under /protocol/wsfed.
+// under /protocol/wsfed, and the mock STS dispatches both on `wa` at its one
+// passive endpoint.
 // ---------------------------------------------------------------------------
+// IDP: how the browser gets back to wreply after wa=wsignout1.0, which is the
+// one leg where the two IdPs behave differently — and section 13.2.4 permits
+// both, because it says the IdP MAY return the browser to wreply and does not
+// say how.
+//
+//   keycloak  redirects. The browser arrives at the landing on its own and this
+//             helper has nothing to do.
+//   sts       renders a "Signed out" page carrying a LINK to wreply, and does
+//             so deliberately: that page also fires the front-channel cleanup
+//             pings (one 1x1 image per relying party the session signed into),
+//             and a 302 would abandon them before they were sent. So the user
+//             clicks, and so does this.
+//
+// Waiting for either — rather than branching on WSFED_IDP — keeps one path
+// through the assertions that follow, which are about what the LANDING did and
+// are the same for both. A third IdP that neither redirects nor offers the link
+// fails here naming both possibilities.
+async function returnFromSignOut(driver, reply, timeout) {
+  log.debug("Entering returnFromSignOut().");
+  // The link's href is wreply EXACTLY. Matching on it rather than on "a link
+  // containing /wsfed" matters: the cleanup pings on that same page are the
+  // same URL with ?wa=wsignoutcleanup1.0 on the end, and following one of those
+  // would test the cleanup leg while claiming to test the return.
+  var returnLink = By.css('a[href="' + reply + '"]');
+  var arrived = await driver.wait(async function () {
+    var here = await driver.getCurrentUrl();
+    if (here.indexOf("wsfed_response.html") >= 0) return "redirect";
+    if ((await driver.findElements(returnLink)).length) return "link";
+    return null;
+  }, timeout,
+    "after wa=wsignout1.0 the IdP neither returned the browser to the wreply " +
+    "landing nor offered a link back to it (" + reply + "). Both are allowed " +
+    "by 13.2.4 and this suite drives an IdP of each kind, so neither " +
+    "happening means the sign-out did not complete at all.");
+
+  if (arrived === "link") {
+    log.info("The IdP rendered a signed-out page with a link back to " + reply +
+             " (rather than redirecting); following it.");
+    await driver.findElement(returnLink).click();
+    await driver.wait(until.urlContains("wsfed_response.html"), timeout,
+      "the link back to wreply did not reach the response page. The landing " +
+      "at " + reply + " has to answer a GET as well as the POST that carries " +
+      "a token — this leg carries none.");
+  } else {
+    log.info("The IdP redirected the browser back to the wreply landing.");
+  }
+  log.debug("Leaving returnFromSignOut().");
+}
+
 async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   log.debug("Entering wsfedSignOutActivities().");
   var loginWait = Math.max(waitTime, 15000);
@@ -515,26 +652,34 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   await clickByValue(driver, "Sign Out");
 
   // Back on the response page, with the sign-out flag the landing passed on.
-  // Both landings redirect to ?signout=<wa or 1>, so this leg is identical on
-  // either.
-  await driver.wait(until.urlContains("wsfed_response.html"), loginWait,
-    "the IdP did not return the browser to the wreply landing after sign-out.");
+  // Both LANDINGS (Express and the edge Lambda) redirect to ?signout=<wa or 1>,
+  // so that half is identical either way — but how the browser GETS to the
+  // landing is the one place the two IdPs part company. See below.
+  await returnFromSignOut(driver, pre.reply, loginWait);
   var url = await driver.getCurrentUrl();
   assert(url.indexOf("signout=") >= 0,
     "the sign-out landing should carry the signout flag rather than a token " +
         "id. Got: " + url);
-  // Which flag value arrives is decided by the extension, not by us, and it is
-  // deliberately not asserted to be "wsignout1.0" — that would be wrong.
-  // Reading WSFedService.handleLogoutRequest and WSFedLoginProtocol at tag
-  // 8.0.1-1.0: the sign-out request stashes wreply, marks this client's session
-  // LOGGED_OUT and calls browserLogout; the browser then comes back through
-  // finishLogout, which builds the redirect with the wctx and NO wa at all. So
-  // the landing sees no wa and falls back to signout=1 (both implementations
-  // do; that fallback is one of the things the edge Lambda copies from the
-  // Express route deliberately). A run where another client is still in the
-  // session instead passes through frontchannelLogout, which does send
-  // wa=wsignoutcleanup1.0. Both are correct WS-Federation behaviour, so all
-  // three values are accepted and the one that arrived is logged.
+  // Which flag value arrives is decided by the IdP, not by us, and it is
+  // deliberately not asserted to be "wsignout1.0" — that would be wrong for
+  // both of them, for different reasons.
+  //
+  // Keycloak: reading WSFedService.handleLogoutRequest and WSFedLoginProtocol
+  // at tag 8.0.1-1.0, the sign-out request stashes wreply, marks this client's
+  // session LOGGED_OUT and calls browserLogout; the browser then comes back
+  // through finishLogout, which builds the redirect with the wctx and NO wa at
+  // all. A run where another client is still in the session instead passes
+  // through frontchannelLogout, which does send wa=wsignoutcleanup1.0.
+  //
+  // The mock STS: the return LINK it renders is wreply verbatim, also with no
+  // wa — the wa=wsignoutcleanup1.0 it does emit goes on the front-channel
+  // cleanup pings to each relying party, which is where 13.2.4 puts it, not on
+  // the browser's way home.
+  //
+  // So the landing usually sees no wa and falls back to signout=1 (both
+  // landings do; that fallback is one of the things the edge Lambda copies from
+  // the Express route deliberately). All three values are correct WS-Federation
+  // behaviour, so all three are accepted and the one that arrived is logged.
   var flag = decodeURIComponent((url.match(/[?&]signout=([^&]*)/) || [])[1] ||
       "");
   assert(["1", "wsignout1.0", "wsignoutcleanup1.0"].indexOf(flag) >= 0,
@@ -543,7 +688,8 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
     "api's fallback when it sends none. Got: '" + flag + "' from " + url);
   log.info("Sign-out landed with signout=" + flag +
            (flag === "1" ?
-            " (finishLogout sends no wa — see the comment above)." : "."));
+            " (the IdP sent no wa on the way home — see the comment above)." :
+            "."));
   await waitForValue(driver, By.id("wsfed_resp_status"),
     function (v) { return /[Ss]igned out/.test(v); },
     "the response page did not report the sign-out.", loginWait);
@@ -567,7 +713,7 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   // The real check: the IdP session is gone, so signing in again has to
   // re-authenticate. If the SSO cookie survived, this navigation goes straight
   // back to the response page with a fresh token and never shows a login form.
-  log.info("Sign in again — Keycloak must now ask for credentials.");
+  log.info("Sign in again — the IdP must now ask for credentials.");
   await driver.get(baseUrl + "/wsfed_request.html");
   await driver.wait(until.elementLocated(By.id("wsfed_signin_endpoint")),
                     waitTime);
@@ -594,7 +740,7 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   assert.strictEqual(outcome, "login",
     "after wa=wsignout1.0 the IdP session must be gone, so the second " +
         "sign-in should have shown " +
-    "Keycloak's login form. Instead it issued a token without asking — the " +
+    "the IdP's login form. Instead it issued a token without asking — the " +
         "sign-out did not end the " +
     "session at the IdP.");
 
@@ -607,7 +753,15 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
-  if (headless) { options.addArguments("--headless"); }
+  // `=new`, never bare `--headless`: on the tests image's pinned Chrome 121 the
+  // bare flag selects the OLD headless implementation, and there
+  // --unsafely-treat-insecure-origin-as-secure (added by
+  // addBrowserAccessFlags() below) has no effect — so on the containerized
+  // stack's http://client:3000 origin window.crypto.subtle stays undefined.
+  // That is what the Validate Signature step needs, and because that step is
+  // best-effort it did not FAIL there, it merely logged a warning and checked
+  // nothing, on every run, for both IdPs. See tests/CLAUDE.md.
+  if (headless) { options.addArguments("--headless=new"); }
   options.addArguments("--no-sandbox");
   options.addArguments("--disable-dev-shm-usage");
   // Private Network Access (the IdP side-car is on this host's loopback while

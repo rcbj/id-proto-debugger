@@ -8,20 +8,30 @@ set -x
 #                provision Keycloak with SAML AuthnRequest signature validation
 #                DISABLED, then leave the stack running WITHOUT running the tests
 #                (for manual SAML testing with a browser-generated SP key).
-#   --wsfed-only Bring up ONLY what the WS-Federation test needs (api, client and
-#                the Keycloak 8.0.1 + wsfed side-car), provision it, and run that
-#                one test. A ~2-minute loop instead of the whole suite, and it
-#                prints why the side-car is unusable when it is.
+#   --wsfed-only[=IDP]
+#                Bring up ONLY what the WS-Federation test needs (api, client,
+#                the mock STS and the Keycloak 8.0.1 + wsfed side-car),
+#                provision it, and run that one test against BOTH identity
+#                providers — the same pair run-report.js drives. A ~2-minute
+#                loop instead of the whole suite, and it prints why an IdP is
+#                unusable when it is. IDP may be "keycloak", "sts" or "both"
+#                (the default): the mock alone starts in seconds where the
+#                WildFly side-car needs twenty, so --wsfed-only=sts is the
+#                fastest loop of all.
 #   -h|--help    Show usage.
 #
 SKIP_TESTS=0
 WSFED_ONLY=0
+# Which identity provider(s) --wsfed-only drives. See docs/wsfed.md for why
+# there are two and what each covers that the other cannot.
+WSFED_ONLY_IDP=both
 SAML_SIG_VALIDATION=true
 
 usage()
 {
   cat <<USAGE
-Usage: $(basename "$0") [--saml-dev] [--wsfed-only] [-h|--help]
+Usage: $(basename "$0") [--saml-dev] [--wsfed-only[=keycloak|sts|both]]
+                        [-h|--help]
 
   (default)    Build + start the stack, provision Keycloak (SAML AuthnRequest
                signature validation ENABLED), and run the full test suite.
@@ -30,10 +40,14 @@ Usage: $(basename "$0") [--saml-dev] [--wsfed-only] [-h|--help]
                Keycloak with SAML AuthnRequest signature validation DISABLED, and
                leave the stack running WITHOUT running the tests.
 
-  --wsfed-only Build + start only api, client and the WS-Federation Keycloak
-               side-car, provision the wsfed realm/client/user, and run just
-               tests/wsfed_sso.js. Use this to work on the WS-Federation test
-               without waiting for the full suite.
+  --wsfed-only[=IDP]
+               Build + start only api, client, the mock STS and the WS-Fed
+               Keycloak side-car, provision the wsfed realm/client/user, and run
+               just tests/wsfed_sso.js against BOTH identity providers. Use this
+               to work on the WS-Federation test without waiting for the full
+               suite. IDP is "keycloak", "sts" or "both" (default) — the mock
+               starts in seconds and the WildFly side-car does not, so
+               --wsfed-only=sts is the fastest loop.
 USAGE
 }
 
@@ -41,11 +55,17 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --saml-dev) SKIP_TESTS=1; SAML_SIG_VALIDATION=false ;;
     --wsfed-only) WSFED_ONLY=1 ;;
+    --wsfed-only=*) WSFED_ONLY=1; WSFED_ONLY_IDP="${1#*=}" ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
   shift
 done
+case "${WSFED_ONLY_IDP}" in
+  keycloak|sts|both) ;;
+  *) echo "Unknown --wsfed-only identity provider: ${WSFED_ONLY_IDP}" >&2
+     usage; exit 1 ;;
+esac
 export SAML_SIG_VALIDATION
 
 init()
@@ -60,6 +80,12 @@ init()
   # the client bundle's baked wstrustStsUrlDefault (local.js).
   WSTRUST_STS_URL=http://localhost:8081/sts
   export WSTRUST_STS_URL
+  # The same mock STS also answers WS-FEDERATION, so the WS-Fed jobs run against
+  # it as well as against the Keycloak side-car below. Kept separate from
+  # WSTRUST_STS_URL, which may be pointed at a real Apache CXF STS that has no
+  # passive endpoint at all.
+  WSFED_STS_METADATA_URL=http://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml
+  export WSFED_STS_METADATA_URL
   # walt.id's issuer-api2 (local-tests.yml, host networking) — the real
   # OpenID4VCI issuer the interoperability job runs against.
   WALTID_ISSUER_URL=http://localhost:7005
@@ -201,45 +227,140 @@ runReport()
 }
 
 # ---------------------------------------------------------------------------
-# --wsfed-only: the WS-Federation test on its own.
+# --wsfed-only: the WS-Federation test on its own, against both identity
+# providers.
 #
 # The full run takes about ten minutes, which is a poor loop for one test — and
 # this test is the one most often skipped, because it depends on a side-car that
 # `docker compose up -d` will happily report as started whether or not it stayed
-# up. So bring up only what it needs, say plainly whether the side-car is usable,
+# up. So bring up only what it needs, say plainly whether each IdP is usable,
 # and run it.
+#
+# TWO IdPs, because the suite runs every WS-Federation case twice and a loop
+# that drives only one of them is a loop that green-lights a change the real run
+# then fails. They fail differently: Keycloak is somebody else's implementation
+# and the only interoperability evidence here, while the mock STS actually READS
+# the request — it refuses a wauth it cannot perform, a token type it does not
+# offer and a wreqptr outright. See docs/wsfed.md. The mock also starts in
+# seconds where the WildFly side-car needs twenty, so --wsfed-only=sts is worth
+# having on its own.
 # ---------------------------------------------------------------------------
-runWsfedOnly()
+
+# Run tests/wsfed_sso.js once, against the IdP described by the environment the
+# caller sets. Invoked exactly as tests/run-report.js does it: from the
+# repository root, with CONFIG_FILE relative to the test file (require()
+# resolves against the module's own directory, not the working directory).
+runWsfedAgainst()
 {
-  echo "Entering runWsfedOnly()."
-  # compose starts each service's dependencies too, so this pulls in postgres and
-  # the main Keycloak only if api/client actually declare them.
-  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml build api client keycloak-wsfed
-  check_return_code $?
-  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml up -d api client keycloak-wsfed
-  check_return_code $?
-  echo "Waiting for the WS-Federation side-car (Keycloak 8.0.1 on WildFly boots slowly) ..."
-  sleep 20
-  CONFIG_FILE=./env/local.js verifyComposeServicesRunning local-tests.yml
-  # Fatal here for the same reason as in startDocker(): there is no point
-  # provisioning, or running the test, against a container that is not there.
-  CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml keycloak-wsfed
-  check_return_code $?
-  configureKeycloakWsfed local-tests.yml
-  check_return_code $?
-  if [ -z "${WSFED_METADATA_URL:-}" ];
-  then
-    echo "The WS-Federation side-car could not be provisioned — see the reason above. Not running the test." >&2
-    exit 1
-  fi
-  echo "WSFED_METADATA_URL=${WSFED_METADATA_URL}"
+  local label="$1"
+  echo "Entering runWsfedAgainst(). label=${label}"
+  echo "=== WS-Federation against ${label} ==="
+  echo "WSFED_IDP=${WSFED_IDP}  WSFED_METADATA_URL=${WSFED_METADATA_URL}"
   echo "WSFED_REALM=${WSFED_REALM}  WSFED_USER=${WSFED_USER}"
-  # Invoked exactly as tests/run-report.js does it: from the repository root, with
-  # CONFIG_FILE relative to the test file (require() resolves against the module's
-  # own directory, not the working directory).
-  export DEBUGGER_BASE_URL CONFIG_FILE KEYCLOAK_BASE_URL
   node "${NODEJS_BASE_DIR}/wsfed_sso.js" --url "${DEBUGGER_BASE_URL}"
   local rc=$?
+  echo "Leaving runWsfedAgainst(). label=${label} rc=${rc}"
+  return ${rc}
+}
+
+runWsfedOnly()
+{
+  echo "Entering runWsfedOnly(). idp=${WSFED_ONLY_IDP}"
+  # Which services this loop needs. The mock STS is a second IdP, not a
+  # dependency of the first, so a keycloak-only loop does not pay for it and an
+  # sts-only loop does not wait on WildFly.
+  local services="api client"
+  case "${WSFED_ONLY_IDP}" in
+    keycloak) services="${services} keycloak-wsfed" ;;
+    sts)      services="${services} sts" ;;
+    both)     services="${services} sts keycloak-wsfed" ;;
+  esac
+  # compose starts each service's dependencies too, so this pulls in postgres and
+  # the main Keycloak only if api/client actually declare them.
+  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml build ${services}
+  check_return_code $?
+  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml up -d ${services}
+  check_return_code $?
+  if [ "${WSFED_ONLY_IDP}" != "sts" ];
+  then
+    echo "Waiting for the WS-Federation side-car (Keycloak 8.0.1 on WildFly boots slowly) ..."
+    sleep 20
+  else
+    echo "Waiting for the mock STS ..."
+    sleep 5
+  fi
+  CONFIG_FILE=./env/local.js verifyComposeServicesRunning local-tests.yml
+
+  # Provision the side-car only when this loop is driving it. Fatal for the same
+  # reason as in startDocker(): there is no point provisioning, or running the
+  # test, against a container that is not there.
+  if [ "${WSFED_ONLY_IDP}" != "sts" ];
+  then
+    CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml keycloak-wsfed
+    check_return_code $?
+    configureKeycloakWsfed local-tests.yml
+    check_return_code $?
+    if [ -z "${WSFED_METADATA_URL:-}" ];
+    then
+      echo "The WS-Federation side-car could not be provisioned — see the" >&2
+      echo "reason above. Not running its half of the test." >&2
+      exit 1
+    fi
+  fi
+  if [ "${WSFED_ONLY_IDP}" != "keycloak" ];
+  then
+    CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml sts
+    check_return_code $?
+  fi
+
+  export DEBUGGER_BASE_URL CONFIG_FILE KEYCLOAK_BASE_URL
+  local rc=0
+  local failures=""
+
+  # Each run happens in a SUBSHELL, and the exports are written out rather than
+  # prefixed onto the call. `VAR=x somefunc` is the trap here: whether those
+  # assignments survive the function is bash's posix-mode question, not a
+  # settled one, so the second IdP could inherit the first one's metadata URL
+  # and "fail" as a mismatched audience three pages later.
+  if [ "${WSFED_ONLY_IDP}" != "sts" ];
+  then
+    (
+      # The side-car's own provisioned values, exported by
+      # configureKeycloakWsfed. The two overrides the mock needs are unset here:
+      # Keycloak's endpoint IS derivable from its descriptor URL, and its
+      # extension does not read the wreq at all.
+      export WSFED_IDP=keycloak
+      unset WSFED_SIGNIN_ENDPOINT WSFED_WREQ_TOKEN_TYPE
+      export WSFED_METADATA_URL WSFED_REALM WSFED_USER
+      runWsfedAgainst "the Keycloak 8.0.1 side-car"
+    )
+    if [ $? -ne 0 ]; then rc=1; failures="${failures} Keycloak"; fi
+  fi
+
+  if [ "${WSFED_ONLY_IDP}" != "keycloak" ];
+  then
+    (
+      # The same values run-report.js gives the mock's jobs, and for the same
+      # reasons: it registers no relying parties so the wtrealm is any string
+      # and becomes the audience; it authenticates nobody so the username
+      # becomes the subject; its passive endpoint does not sit under its
+      # metadata path the way Keycloak's does; and it READS the inline wreq,
+      # refusing a token type its fed:TokenTypesOffered does not list.
+      export WSFED_IDP=sts
+      export WSFED_METADATA_URL="${WSFED_STS_METADATA_URL}"
+      export WSFED_REALM="${WSFED_STS_REALM:-urn:wsfed:sts:rp}"
+      export WSFED_USER="${WSFED_STS_USER:-wsfed}"
+      export WSFED_SIGNIN_ENDPOINT="${WSFED_STS_ENDPOINT:-http://localhost:8081/wsfed}"
+      export WSFED_WREQ_TOKEN_TYPE="urn:oasis:names:tc:SAML:2.0:assertion"
+      runWsfedAgainst "the mock STS"
+    )
+    if [ $? -ne 0 ]; then rc=1; failures="${failures} mock-STS"; fi
+  fi
+
+  if [ ${rc} -ne 0 ];
+  then
+    echo "WS-Federation failed against:${failures}" >&2
+  fi
   echo "Leaving runWsfedOnly(). rc=${rc}"
   return ${rc}
 }
@@ -252,7 +373,7 @@ if [ "${WSFED_ONLY}" = "1" ];
 then
   runWsfedOnly
   check_return_code $?
-  echo "WS-Federation test passed."
+  echo "WS-Federation test passed (idp=${WSFED_ONLY_IDP})."
   exit 0
 fi
 startDocker

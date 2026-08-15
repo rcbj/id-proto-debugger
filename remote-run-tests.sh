@@ -144,6 +144,17 @@ init()
   then
     export WSTRUST_STS_URL
   fi
+  # The mock STS answers WS-FEDERATION too, and it is the only WS-Fed IdP a
+  # live-site run has: the Keycloak side-car is not started here, so without
+  # this every WS-Fed job would skip on a deployed target. Same host-run service
+  # over loopback as WSTRUST_STS_URL above — the BROWSER navigates to it, and
+  # Chrome treats http://localhost as potentially trustworthy even from an https
+  # page, which a bridge name would not be. Set it empty to skip these jobs.
+  WSFED_STS_METADATA_URL="${WSFED_STS_METADATA_URL-http://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml}"
+  if [ -n "${WSFED_STS_METADATA_URL:-}" ];
+  then
+    export WSFED_STS_METADATA_URL
+  fi
 
   # ---------------------------------------------------------------------------
   # The SD-JWT VC and WS-Federation side-cars, all on this host's loopback.
