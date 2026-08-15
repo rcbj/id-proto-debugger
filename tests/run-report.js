@@ -85,6 +85,23 @@ function buildJobs() {
     env: {},
   });
 
+  // What the STATIC deployments leave out (client/static_site.js). Kerberos is
+  // DER over port 88, so every page of it goes through the api's relay and
+  // idptools.com has no api: the static build drops those pages and greys their
+  // landing card. Every part of that fails silently when it drifts — an
+  // exclusion naming a renamed file removes nothing, a card that stops matching
+  // its marker stays a live link to a page the build just deleted, and a
+  // surviving page linking to a dropped one is a 404 no test clicks. This is
+  // also the only check that the exclusion has NOT escaped into
+  // client/Dockerfile, which must still build all five for the container.
+  // Node only — no browser, no services — so it never skips.
+  jobs.push({
+    name: "Static deployment exclusions (the dropped pages, the greyed " +
+        "landing card, no dead links)",
+    script: "static_site_exclusions.js",
+    env: {},
+  });
+
   jobs.push({
     name: "OAuth2 Client Credentials",
     script: "oauth2_client_credentials.js",
@@ -854,14 +871,37 @@ function buildJobs() {
   //    password, a keytab, a session key out of a decrypted ticket — is a
   //    credential.
   //
-  // Needs only the site: this page talks to no KDC and has no back end, which is
-  // why it is the one part of the Kerberos workflow that ships to the static
-  // deployments.
-  jobs.push({
-    name: "Kerberos Decoder page (wiring, hostile input as text, in-browser decryption)",
-    script: "kerberos_decoder_page.js",
-    env: {},
-  });
+  // Needs only the site: this page talks to no KDC and has no back end. That is
+  // not enough to put it on the deployed static sites, though — see below.
+  //
+  // NONE of the Kerberos PAGES exist on a static deployment. Kerberos is DER
+  // over port 88, so the workflow needs the api's relay and idptools.com has no
+  // api; client/static_site.js drops all five pages from that build and greys
+  // out their landing card, the decoder included (it needs no network, but it
+  // has no card of its own and the only route to it is a link on kerberos.html,
+  // which is not there either). Without this gate those jobs run against a 404
+  // and fail naming an element on a page that was never deployed. The three
+  // KDC-backed ones already skip when the KDC is unreachable — this reason is
+  // the accurate one for a static target, and it reaches the decoder job, which
+  // has nothing else to skip on. remote-run-tests.sh sets the variable per
+  // target; unset (every containerized and local run) means they are there.
+  const kerberosPagesSkip = env.KERBEROS_PAGES_AVAILABLE === "false"
+    ? "the Kerberos pages are not on this deployment: the workflow needs the " +
+      "api's port-88 relay, which a static site has not got, so " +
+      "client/static_site.js leaves all five pages out of the build and " +
+      "greys out the landing card. Run them against the containerized stack " +
+      "(./docker-run-tests.sh) or a local dev server."
+    : null;
+
+  {
+    const decoderJob = {
+      name: "Kerberos Decoder page (wiring, hostile input as text, in-browser decryption)",
+      script: "kerberos_decoder_page.js",
+      env: {},
+    };
+    if (kerberosPagesSkip) decoderJob.skip = kerberosPagesSkip;
+    jobs.push(decoderJob);
+  }
 
   // The Kerberos relay (api/krb5_relay.js, api/krb5_frame.js) behind POST
   // /krb5/kdc. This is the most important test in phase 2, for a specific reason:
@@ -1053,7 +1093,7 @@ function buildJobs() {
   // cache always going to localStorage, the salt field left unfilled, and the purge
   // removed — the last needing BOTH purge paths removed to fail, which is the
   // belt-and-braces arrangement CLAUDE.md prescribes for key material.
-  jobs.push({
+  const asPageJob = {
     name: "Kerberos AS exchange page (wiring, CORS, the two-step flow, credential handling)",
     script: "kerberos_as_page.js",
     env: {
@@ -1066,7 +1106,9 @@ function buildJobs() {
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
     },
-  });
+  };
+  if (kerberosPagesSkip) asPageJob.skip = kerberosPagesSkip;
+  jobs.push(asPageJob);
 
   // The TGS and AP exchange pages, and — the part nothing else covers — the CREDENTIAL
   // HANDOFF between all three. The AS page produces a TGT, the TGS page spends it, the
@@ -1091,7 +1133,7 @@ function buildJobs() {
   // krb5ServicePorts set — POST /krb5/service is off by default. It skips with a named
   // reason for each of those, because a disabled capability is a configuration fact
   // rather than a defect.
-  jobs.push({
+  const tgsApPageJob = {
     name: "Kerberos TGS + AP pages (the credential handoff, 0x8003, mutual auth, per-message tokens)",
     script: "kerberos_tgs_ap_page.js",
     env: {
@@ -1102,7 +1144,9 @@ function buildJobs() {
       KRB5_SERVICE_HOST: env.KRB5_SERVICE_HOST || "sts",
       KRB5_SERVICE_PORT: env.KRB5_SERVICE_PORT || "8888",
     },
-  });
+  };
+  if (kerberosPagesSkip) tgsApPageJob.skip = kerberosPagesSkip;
+  jobs.push(tgsApPageJob);
 
   // The DELEGATION page: S4U2Self, S4U2Proxy with both authorization routes, forwarding
   // and renewal. tests/krb5_tgs_ap.js already drives every one of those exchanges with no
@@ -1129,11 +1173,13 @@ function buildJobs() {
   // is a request a SERVICE makes and that is the commonest misunderstanding about it.
   // Needs the client, the api's relay and the mock KDC; without them it SKIPS naming what
   // was absent, since an environment capability is not a defect.
-  jobs.push({
+  const delegationPageJob = {
     name: "Kerberos delegation page (S4U2Self, S4U2Proxy, RBCD, forwarding, renewal)",
     script: "kerberos_delegation_page.js",
     env: {},
-  });
+  };
+  if (kerberosPagesSkip) delegationPageJob.skip = kerberosPagesSkip;
+  jobs.push(delegationPageJob);
 
   // The api's outbound address policy (api/ssrf_guard.js): the service fetches
   // URLs its caller supplies, so it must refuse loopback and private

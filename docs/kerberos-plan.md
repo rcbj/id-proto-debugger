@@ -15,7 +15,7 @@ The motivating case is the one that is hardest to debug from anything else: *get
 **This is not an HTTP protocol.** Every other workflow in this repository runs in the browser and talks to the network through the browser, which is why the deployed static sites work at all. Kerberos speaks DER-encoded messages over TCP and UDP port 88 to a KDC that is usually not on the public internet, and a browser cannot open a TCP socket. So:
 
 * **The feature exists only where `api/` exists.** It is absent from `idptools.com` and every other static deployment, and the landing page must say so on the card rather than letting a visitor discover it by clicking through to a page whose buttons all fail. This is the first workflow with that property; `infra/CLAUDE.md`'s Lambda@Edge trick rescued WS-Federation and SAML from the same problem, and it cannot rescue this one — there is no HTTP request to catch.
-* **The one exception is the decoder.** Parsing a pasted ticket is arithmetic over bytes and needs no network at all, so `kerberos_decoder.html` ships to the static sites like the analyzer and the encoding tools do. Building it first also means the rest of the feature has a working microscope from day one.
+* **The decoder was to be the one exception, and in the end it is not.** Parsing a pasted ticket is arithmetic over bytes and needs no network at all, so the plan was for `kerberos_decoder.html` to ship to the static sites like the analyzer and the encoding tools do. Shipping it there turned out to mean shipping an unreachable page: the decoder has no landing card of its own — the Kerberos card, now greyed out, is the workflow's only entry — and the only link to it is on `kerberos.html`, which is not deployed either. So **all five pages** are excluded (`client/static_site.js`, 2026-08-15). Giving the decoder a card of its own would make it shippable again. Building it first still gave the rest of the feature a working microscope from day one.
 
 **SPNEGO is out of scope for this plan** and is deliberately the next thing after it. It is easier, because the transport is HTTP and the browser can do most of it; it is a wrapper (RFC 4178 negotiation token) around the AP-REQ that phase 3 already produces. The only obligation this plan carries is to keep that seam clean: the GSS layer must be a separate module from the HTTP-facing code on both the client and the acceptor sides, so SPNEGO is a wrapper rather than a rewrite.
 
@@ -163,7 +163,7 @@ Two frictions specific to this repository's layout, both of which need deciding 
 
 Following the `wstrust_tools` / `saml_*` multi-page shape, with panes that update in place, show a pending state and log failures rather than navigating away:
 
-* **`kerberos_decoder.html`** — paste base64 or hex of a KRB message, a ticket, a GSS token, a keytab or a PAC and get the field tree, with the encrypted parts decrypted if a key is supplied. **Built first**, ships to the static sites, and is the microscope for everything else.
+* **`kerberos_decoder.html`** — paste base64 or hex of a KRB message, a ticket, a GSS token, a keytab or a PAC and get the field tree, with the encrypted parts decrypted if a key is supplied. **Built first** and the microscope for everything else. (It was to ship to the static sites; it does not — see above.)
 * **`kerberos.html`** — realm, KDC address, transport (TCP / UDP / KKDCP), principal, credentials, etype preference; the AS exchange with the pre-auth refusal and the accepted request as two panes side by side.
 * **`kerberos_tgs.html`** — the `klist`-shaped credential cache, an SPN entry field, the TGS exchange, referral chasing.
 * **`kerberos_ap.html`** — the AP-REQ against the mock service or a real one, the authenticator, the mutual-authentication AP-REP, and `Wrap`/`GetMIC` over the established context.
@@ -194,7 +194,7 @@ Each row's **Deliverable** is what was planned. Where a phase has landed, what i
 | Phase | Deliverable | Rough effort |
 |---|---|---|
 | **0 — Spike** | ~600 throwaway lines: n-fold, AES-CTS and string-to-key passing the RFC vectors, and a TGT out of an MIT krb5 container. Settles the `asn1js`-versus-hand-rolled question. Confirms or kills the whole approach for the price of two days. | 1–2 days |
-| **1 — Codec** | `common/krb5/` — DER, messages, RFC 3961 framework, etypes 17/18 (and 23 if in scope); `kerberos_decoder.html`, which ships static | 1–2 weeks |
+| **1 — Codec** | `common/krb5/` — DER, messages, RFC 3961 framework, etypes 17/18 (and 23 if in scope); `kerberos_decoder.html` (which was to ship static and does not — see above) | 1–2 weeks |
 | **2 — Walking skeleton** | The relay endpoint and all of its security work; the mock KDC's AS exchange; `kerberos.html`; the pre-auth round trip end to end; KKDCP | 1–2 weeks |
 | **3 — TGS and AP** | Service tickets, GSS framing and the 0x8003 checksum, the mock protected TCP service, mutual auth, the ccache pages | 1–2 weeks |
 | **4 — Windows realism** | PAC decode, referrals, skew detection, the error catalogue, the etype-negotiation display, RFC 8009 etypes, the Samba AD oracle | 1.5–2.5 weeks |

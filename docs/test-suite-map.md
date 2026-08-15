@@ -91,6 +91,7 @@ Jobs, in the same directory, carrying no entry above:
 - `kerberos_decoder_page.js`
 - `kerberos_as_page.js`
 - `kerberos_tgs_ap_page.js`
+- `static_site_exclusions.js` (**what the static deployments leave out** — `client/static_site.js`. Kerberos is DER over port 88, so the whole workflow goes through the api's relay and `idptools.com` has no api: all five pages are dropped from `dist/` and their landing card is greyed out. Every part of that fails silently when it drifts, which is why this is a job rather than a comment — `fs.rmSync` on a renamed path SUCCEEDS, so an exclusion can quietly stop excluding; a card whose `data-not-on-static` marker stopped matching stays a live link to a page the build just deleted; and a surviving page linking to a dropped one is a 404 nothing clicks. It also checks the two halves of the card's description swap rather than stack (a row is as tall as its tallest card) and, in the other direction, that `client/Dockerfile` still browserifies all five — the exclusion is static-only and the container is where the workflow runs. Six mutations, all caught. Node only, no services; the two directory-wide checks say in the log when `client/public` is absent, which is the tests image, where `client/build.js` runs the same two over `dist/` on every deploy)
 - `url_safety_schemes.js`
 - `wstrust.js`
 - `wstrust_operation_history.js`

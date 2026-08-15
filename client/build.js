@@ -12,12 +12,18 @@
 //      server.js normally handles at request time
 //   4. writes a small dist/callback/ shim so the OAuth2 redirect_uri
 //      (/callback) still forwards to debugger2.html without a server
+//   5. leaves out the pages a backendless deployment cannot serve, and greys
+//      out their landing card (client/static_site.js — Kerberos, today)
 //
 // CONFIG_FILE selects which env config is baked in (default ./env/prod.js).
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+// Which pages this build does NOT carry, and what the landing page says about
+// them. Kerberos needs the api's port-88 relay, which a static site has not
+// got — see client/static_site.js for the whole of the reasoning.
+const staticSite = require('./static_site.js');
 
 // The Entering/Leaving logging convention (see the repo-root CLAUDE.md)
 // wants a `log` here, and bunyan is not reachable from this file:
@@ -72,6 +78,12 @@ const MINIFY = process.env.MINIFY !== 'false';
 const GA_MEASUREMENT_ID = process.env.GA_MEASUREMENT_ID || '';
 
 // [ source basename, browserify --standalone name ] — matches client/Dockerfile
+//
+// The Kerberos entries stay in this list although this build does not produce
+// them: client/static_site.js filters them out below, and a list that still
+// names them is what makes the exclusion visible to somebody reading either
+// file. Deleting them here instead would make a static-only omission look like
+// a page nobody ever registered — the failure client/CLAUDE.md warns about.
 const BUNDLES = [
   ['jwks', 'jwks'],
   ['debugger', 'debug'],
@@ -173,6 +185,36 @@ appversion.checkManifests().filter(function (m) { return !m.ok; })
 log.info('copying public/ -> dist/');
 fs.cpSync(PUBLIC, DIST, { recursive: true });
 
+// 2a. Drop the pages this deployment cannot serve, and kill their landing card.
+//
+//     Each removal is asserted rather than attempted: an rmSync on a path that
+//     is not there succeeds, so a renamed page would turn the whole exclusion
+//     into a no-op and ship a Kerberos workflow whose every button fails at the
+//     network. Same for the card — a marker that stopped matching leaves a live
+//     link to a page this build just deleted.
+staticSite.excludedFiles().forEach(function (rel) {
+  const full = path.join(DIST, rel);
+  if (!fs.existsSync(full)) {
+    throw new Error('client/static_site.js excludes ' + rel + ', which is ' +
+        'not in client/public — renamed or already gone? An exclusion that ' +
+        'matches nothing silently ships the thing it names.');
+  }
+  fs.rmSync(full);
+  log.info('excluded from the static build: ' + rel);
+});
+
+const landingPage = path.join(DIST, 'index.html');
+const disabled = staticSite.disableUnavailableCards(
+    fs.readFileSync(landingPage, 'utf8'));
+if (disabled.count === 0) {
+  throw new Error('no landing card carries ' + staticSite.CARD_MARKER +
+      ' — client/public/index.html must mark the cards whose pages this ' +
+      'build drops, or they stay live and link to a 404.');
+}
+fs.writeFileSync(landingPage, disabled.html);
+log.info('disabled ' + disabled.count + ' landing card(s) not on this ' +
+    'deployment');
+
 // 2b. Ship the IANA JWT claim registry as a static object at /claimdescription.
 //     On api-backed deployments Express serves GET /claimdescription from
 //     api/jwt.xml; the static site has no backend, so the client's fetch of
@@ -200,10 +242,27 @@ fs.copyFileSync(CLAIM_XML_SRC, path.join(DIST, 'claimdescription'));
 //    `require("crypto")` there would put `elliptic` into this bundle). And the
 //    staging is removed in the `finally` below, so a failed build does not leave
 //    copies behind for the next one to bundle silently.
+//
+//    The staging is conditional on a bundle that needs it actually being built:
+//    with every Kerberos page excluded from this deployment, nothing here reads
+//    common/krb5, and copying ten modules into client/src for no bundle to
+//    require is how a stale copy gets left in a working tree.
+const BUILT_BUNDLES = BUNDLES.filter(function (entry) {
+  return !staticSite.bundleIsExcluded(entry[0]);
+});
+BUNDLES.filter(function (entry) {
+  return staticSite.bundleIsExcluded(entry[0]);
+}).forEach(function (entry) {
+  log.info('not bundling ' + entry[0] + ' — its page is not on this ' +
+      'deployment');
+});
 const stagedData = path.join(SRC, 'data.js');
 fs.copyFileSync(COMMON_DATA, stagedData);
 const KRB5_DIR = path.join(CLIENT_DIR, '..', 'common', 'krb5');
-const stagedKrb5 = fs.existsSync(KRB5_DIR)
+const needsKrb5 = BUILT_BUNDLES.some(function (entry) {
+  return entry[0].indexOf('kerberos') === 0;
+});
+const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
   ? fs.readdirSync(KRB5_DIR).filter((f) => f.endsWith('.js')).map((f) => {
       const dest = path.join(SRC, f);
       log.info('staging common/krb5/' + f + ' -> src/' + f);
@@ -212,7 +271,7 @@ const stagedKrb5 = fs.existsSync(KRB5_DIR)
     })
   : [];
 try {
-  for (const [name, standalone] of BUNDLES) {
+  for (const [name, standalone] of BUILT_BUNDLES) {
     const out = path.join(DIST, 'js', name + '.js');
     log.info('browserify src/' + name + '.js -> dist/js/' + name +
         '.js (CONFIG_FILE=' + CONFIG_FILE + ')');
@@ -264,6 +323,34 @@ function resolveIncludes(dir) {
   log.debug("Leaving resolveIncludes().");
 }
 resolveIncludes(DIST);
+
+// 4a. Nothing that ships may link to something that did not. Run AFTER the
+//     includes are resolved, since a header or footer partial is where a link
+//     to every page tends to live, and before the minifier rewrites quoting.
+//     A dead link on a deployed site is a 404 no test sees until a user clicks
+//     it, so this fails the build and names both ends.
+function assertNoLinksToExcluded(dir) {
+  log.debug("Entering assertNoLinksToExcluded().");
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      assertNoLinksToExcluded(full);
+      continue;
+    }
+    if (!entry.name.endsWith('.html')) continue;
+    const dead = staticSite.linksToExcludedFiles(
+        fs.readFileSync(full, 'utf8'));
+    if (dead.length) {
+      log.debug("Leaving assertNoLinksToExcluded().");
+      throw new Error(path.relative(DIST, full) + ' links to ' +
+          dead.join(', ') + ', which this deployment does not carry. Either ' +
+          'that page ships too (client/static_site.js) or the link goes.');
+    }
+  }
+  log.debug("Leaving assertNoLinksToExcluded().");
+}
+log.info('checking for links to pages this deployment does not carry');
+assertNoLinksToExcluded(DIST);
 
 // 4b. Stamp the current year and the M.N.O version into every page. The
 //     {{YEAR}} / {{VERSION}} / {{BUILD_INFO}} placeholders ship in the footer

@@ -72,6 +72,23 @@ RUN npm -v
 
 # Bundle app source
 COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js ./
+# What the static deployments leave out. The test reads the list itself
+# (client/static_site.js), the landing page it greys a card on, the stylesheet
+# that greys it, and client/Dockerfile — which must still build the excluded
+# pages, because the exclusion is static-only and the container is where the
+# Kerberos workflow runs. The Dockerfile comes in RENAMED: this directory is
+# flat and already has one of its own.
+#
+# client/public itself is not copied, so the two directory-wide checks (that
+# every excluded file exists, and that no surviving page links to a dropped
+# one) say in the log that they skipped. client/build.js runs both over dist/
+# on every deploy, and a checkout run does them here.
+COPY tests/static_site_exclusions.js ./
+COPY client/static_site.js ./
+COPY client/public/index.html ./
+COPY client/public/css/landing.css ./
+COPY client/Dockerfile ./client_Dockerfile
+
 # The XML Signature/Encryption interop test drives the frontend crypto module
 # directly (no browser); copy it next to the test so it can require('./xmldsig.js')
 # and resolve its deps (node-forge, etc.) from this image's node_modules. The

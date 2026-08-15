@@ -157,7 +157,14 @@
       <span class="landing-card-title">WebAuthn</span>
       <span class="landing-card-desc">Run a ceremony against a security key, or decode and verify the artifacts of somebody else's: client data, authenticator data, attestation, COSE key.</span>
     </a>
-    <a class="landing-card" href="/kerberos.html">
+    <!-- The only card that is not on the deployed static sites. Kerberos is DER
+         over port 88, so every page of it but the decoder goes through the api's
+         relay, and there is no api there — see client/static_site.js, which
+         drops these pages from dist/ and, keyed off the data-not-on-static
+         attribute below, turns this card into a dead one. The second
+         description is the one that card shows; it is display:none here and on
+         every api-backed deployment. -->
+    <a class="landing-card" href="/kerberos.html" data-not-on-static>
       <span class="landing-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M14.5 4.5a4.5 4.5 0 1 0-3.2 7.7L4 19.5V21h1.5l1-1h1.5v-1.5h1.5v-1.5h1.3l1.9-1.9a4.5 4.5 0 0 0 2.8-8.6z"/>
@@ -166,6 +173,7 @@
       </span>
       <span class="landing-card-title">Kerberos</span>
       <span class="landing-card-desc">Get a TGT from a real KDC and watch both messages, or decode a v5 message, ticket or keytab: every field named, encrypted parts opened when you have the key.</span>
+      <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: Kerberos is DER over port 88, which a browser cannot open and no edge function can catch. Run the debugger locally for it.</span>
     </a>
   </div>
 </div>

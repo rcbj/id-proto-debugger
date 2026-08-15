@@ -4,9 +4,13 @@ Read this before changing anything under `common/krb5/`, `client/src/kerberos*`,
 
 **This is the only workflow here that cannot run on the deployed static sites**, and the reason is not a policy: Kerberos speaks DER over TCP and UDP port 88, and a browser cannot open a socket. Everything except the decoder needs `api/`. The Lambda@Edge trick that rescued WS-Federation and SAML (`infra/CLAUDE.md`) cannot rescue this one — there is no HTTP request to catch.
 
+**So none of these five pages is IN a static build**, decoder included, and the landing page's Kerberos card is greyed out and unclickable there. The list is `client/static_site.js`; `client/build.js` deletes those pages (and `css/kerberos.css`) from `dist/`, skips their bundles, strips the card's `href` and fails the build if a page that still ships links to one that does not. `tests/static_site_exclusions.js` checks the whole arrangement with no browser, including that `client/Dockerfile` still builds all five — the exclusion is static-only, and the container is where the workflow runs. The decoder goes with them although it needs no network: it has no card of its own, and the only route to it is the link on `kerberos.html`. Give it a landing card and it can ship on its own; until then, shipping it would be shipping an unreachable page.
+
+Against a deployed static target `remote-run-tests.sh` sets `KERBEROS_PAGES_AVAILABLE=false` and `run-report.js` skips all four page jobs naming that, rather than failing on a 404.
+
 | Page | Does | Needs |
 |---|---|---|
-| `kerberos_decoder.html` | Decodes pasted bytes — messages, tickets, GSS tokens, keytabs, the PAC, a KRB-CRED — and opens the encrypted parts when you supply a key. | nothing. Ships static. |
+| `kerberos_decoder.html` | Decodes pasted bytes — messages, tickets, GSS tokens, keytabs, the PAC, a KRB-CRED — and opens the encrypted parts when you supply a key. | nothing at runtime, but see above: it is not on the static sites either. |
 | `kerberos.html` | The AS exchange: turn a password into a TGT, watching both messages of the two-message dance. | api + a KDC |
 | `kerberos_tgs.html` | The TGS exchange: spend the TGT on a service ticket. | api + a KDC |
 | `kerberos_ap.html` | The AP exchange: present the ticket to a service, with mutual authentication and per-message tokens. | api + a service |

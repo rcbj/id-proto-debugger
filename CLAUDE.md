@@ -20,7 +20,7 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 
 OAuth2/OIDC Debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust, WS-Federation, SD-JWT VC (issuance and presentation), WebAuthn and **Kerberos v5** flows against real identity providers, issuers, verifiers, key distribution centers and security keys. Supports Authorization Code, Implicit, Client Credentials, Resource Owner Password, and Refresh grants, plus all three OIDC authentication flows (Authorization Code, Implicit, Hybrid).
 
-**Kerberos is the exception to "two-service web application", and to almost everything else here.** It is not an HTTP protocol: it speaks DER over TCP and UDP port 88, so a browser cannot reach a KDC and the api acts as a guarded byte relay rather than a proxy of anything HTTP-shaped. That makes it the one workflow absent from the deployed static sites — except its decoder, which needs no network. See `docs/kerberos.md`.
+**Kerberos is the exception to "two-service web application", and to almost everything else here.** It is not an HTTP protocol: it speaks DER over TCP and UDP port 88, so a browser cannot reach a KDC and the api acts as a guarded byte relay rather than a proxy of anything HTTP-shaped. That makes it the one workflow absent from the deployed static sites — **all five of its pages**, the decoder included: it needs no network, but it has no landing card of its own and the only route to it is a link on `kerberos.html`, which is not there either. `client/static_site.js` holds the list, `client/build.js` acts on it, and the landing page's Kerberos card is greyed out and unclickable on those sites. See `docs/kerberos.md`.
 
 ## Architecture
 
@@ -112,8 +112,10 @@ code you write **as you write it**, not as a later sweep.
   bundles a handler with no dependencies), `common/sp_keypair.js` (`common/` is
   outside the reach of `tests/node_modules` — see the note in `common/tests.js`),
   the build scripts `client/version.js`, `client/build.js`,
-  `extension/build.js` plus `waltid/cors-proxy.js`, which run before or outside
-  an install, and **`client/src/coverage_beacon.js`**, which looks like an
+  `client/static_site.js`, `extension/build.js` plus `waltid/cors-proxy.js`,
+  which run before or outside an install (`static_site.js` is additionally read
+  by `tests/static_site_exclusions.js`, which must not need
+  `client/node_modules` either), and **`client/src/coverage_beacon.js`**, which looks like an
   ordinary client module and is not one: `client/Dockerfile`'s coverage step
   *appends* it to each finished bundle (`cat src/coverage_beacon.js >>
   public/js/${src_name}.js`), so browserify and envify never see it and neither

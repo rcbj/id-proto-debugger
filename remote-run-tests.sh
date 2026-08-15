@@ -98,6 +98,9 @@ init()
       API_BASE_URL="${API_BASE_URL:-http://localhost:4000}"
       SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://localhost:3000/saml/sp}"
       SAML_BACKEND_AVAILABLE="${SAML_BACKEND_AVAILABLE:-true}"
+      # A local dev server is served by client/Dockerfile's build, which carries
+      # every page — the Kerberos ones included.
+      KERBEROS_PAGES_AVAILABLE="${KERBEROS_PAGES_AVAILABLE:-true}"
       # WS-Trust STS (mock) started on the host (keycloak-tests.yml). A local dev
       # site has the api backend, so the WS-Trust jobs can run here.
       WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://localhost:8081/sts}"
@@ -106,6 +109,13 @@ init()
       API_BASE_URL="${API_BASE_URL:-${DEBUGGER_BASE_URL}}"
       SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-${DEBUGGER_BASE_URL}/saml/sp}"
       SAML_BACKEND_AVAILABLE="${SAML_BACKEND_AVAILABLE:-false}"
+      # The Kerberos pages are not in a static build AT ALL — not merely
+      # backendless. Kerberos is DER over port 88, so the whole workflow goes
+      # through the api's relay, and client/static_site.js leaves all five pages
+      # out of dist/ and greys out the landing card. Their jobs would otherwise
+      # run against a 404 and report a missing element on a page nobody
+      # deployed. Set this to true for a remote target that IS api-backed.
+      KERBEROS_PAGES_AVAILABLE="${KERBEROS_PAGES_AVAILABLE:-false}"
       # SAML_ACS_URL / SAML_SLO_URL are NOT decided here. Where the IdP should
       # return its response depends on whether this target has the edge landings
       # deployed, which probeEdgeLandings() finds out with a real POST before
@@ -123,6 +133,7 @@ init()
 
   export DEBUGGER_BASE_URL KEYCLOAK_BASE_URL KEYCLOAK_LOCALHOST_BASE_URL CONFIG_FILE
   export API_BASE_URL SAML_SP_ENTITY_ID SAML_BACKEND_AVAILABLE
+  export KERBEROS_PAGES_AVAILABLE
   # Only exported when set (backendless targets); otherwise common.sh derives them.
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL
