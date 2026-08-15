@@ -62,7 +62,17 @@ var config = {
   // Default RFC 8414 (OAuth 2.0 Authorization Server Metadata) endpoint for
   // the Metadata Retrieval panes. No mock STS on a hosted deployment: the
   // user supplies the URL.
-  rfc8414MetadataUrlDefault: ""
+  rfc8414MetadataUrlDefault: "",
+
+  // Kerberos. Empty on a build with no api behind it: the relay is what reaches a
+  // KDC, and `backendAvailable` is false here, so the workflow cannot run at all and
+  // a default would only be a value that fails. See local.js for why the working
+  // value is a compose service name rather than localhost.
+  krb5RealmDefault: "",
+  krb5KdcHostDefault: "",
+  krb5KdcPortDefault: "88",
+  krb5PrincipalDefault: "",
+  krb5PasswordDefault: ""
 };
 
 module.exports = config;

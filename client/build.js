@@ -206,7 +206,7 @@ const KRB5_DIR = path.join(CLIENT_DIR, '..', 'common', 'krb5');
 const stagedKrb5 = fs.existsSync(KRB5_DIR)
   ? fs.readdirSync(KRB5_DIR).filter((f) => f.endsWith('.js')).map((f) => {
       const dest = path.join(SRC, f);
-      log('staging common/krb5/' + f + ' -> src/' + f);
+      log.info('staging common/krb5/' + f + ' -> src/' + f);
       fs.copyFileSync(path.join(KRB5_DIR, f), dest);
       return dest;
     })

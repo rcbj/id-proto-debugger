@@ -16,12 +16,14 @@
  * docs/sd-jwt-vc-issuance.md, which cost a debugging round to learn.
  */
 
-.krb-return { margin-top: 10px; }
-.krb-title { margin-bottom: 10px; }
+.krb-return { margin: 0 0 4px; font-size: 0.95em; }
+/* h3 inherits bootstrap's generous heading margins; this page needs the first
+   control above the fold more than it needs the whitespace. */
+.krb-title { margin-bottom: 6px; margin-top: 2px; line-height: 1.25; }
 
 .krb-intro {
   max-width: 900px;
-  margin-bottom: 10px;
+  margin-bottom: 6px;
 }
 
 .krb-boundary {
@@ -30,8 +32,8 @@
 }
 
 .krb-pane {
-  margin-bottom: 16px;
-  padding: 10px 12px;
+  margin-bottom: 10px;
+  padding: 8px 12px;
 }
 
 .krb-pane > legend {
@@ -41,6 +43,12 @@
   padding: 0 6px;
   margin-bottom: 6px;
   border: 0;
+  /* Bootstrap sets `legend { line-height: 40px }` for its own 21px legends. This rule
+     overrode the font-size and not the line-height, so every pane title on every
+     Kerberos page was a 15px word in a 40px box — about 19px of wasted height per pane,
+     which on a page with three stacked panes is most of the reason the first control sat
+     below the fold. */
+  line-height: 1.4;
 }
 
 .krb-input,
@@ -58,13 +66,13 @@
 .krb-field {
   width: 100%;
   box-sizing: border-box;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .krb-keys label {
   display: block;
   font-weight: bold;
-  margin-top: 6px;
+  margin-top: 3px;
 }
 
 /* A checkbox and its explanation on one line. This class was used by kerberos.html,
@@ -73,6 +81,82 @@
    three the first time that job ran against a stack, for a reason that reads as the page
    linking the wrong sheet. The label inherits `display: block` and `font-weight: bold`
    from the rule above, and neither is right for a sentence beside a checkbox. */
+/* ---------------------------------------------------------------------------
+   Fitting the actionable part of the page on one screen.
+
+   The configuration used to be one field per line — nine rows plus a paragraph —
+   and the two step panes were stacked, so the button that starts the exchange sat
+   below the fold on a 1366x768 screen. Nothing was broken; it just could not be
+   used without scrolling past the explanation to find the control.
+
+   Three columns rather than a fixed count: `auto-fit` with a minimum collapses to
+   two and then one as the container narrows, so the same markup works on a phone
+   without a media query. The minimum is 240px because the KDC-host and etype
+   fields are the widest things here and a narrower column truncates their
+   placeholders.
+   --------------------------------------------------------------------------- */
+/* Options on one line rather than four. Wrapping is deliberate: at one column the
+   labels stack again, which is what a phone needs. */
+.krb-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+}
+
+.krb-opts .krb-check {
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+.krb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0 24px;
+  align-items: start;
+}
+
+/* The same grid inside a HALF-width pane. 240px only fits twice in the 561px a
+   side-by-side step pane gets, so the fields wrapped to a second row and the pane grew
+   by 70px — the layout looked deliberate and was simply the auto-fit minimum biting.
+   150px fits three, and these three inputs are short. */
+.krb-grid-tight {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0 12px;
+}
+
+/* The two halves of the exchange, side by side: they are one action each and
+   reading them in parallel is the point — step 2 is only reachable once step 1 has
+   supplied the salt. Collapses to one column below 900px, where side-by-side would
+   make both unreadable rather than compact. */
+.krb-steps {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .krb-steps { grid-template-columns: 1fr; }
+}
+
+/* Prose that earns its place but not its vertical space. The explanations are the
+   reason this workflow is worth using, so they are kept verbatim and folded rather
+   than cut — a debugger that omits why a thing fails is the thing nobody needed. */
+.krb-more {
+  margin: 8px 0;
+}
+
+.krb-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 0.95em;
+  padding: 2px 0;
+}
+
+.krb-more > summary:hover {
+  text-decoration: underline;
+}
+
 .krb-check {
   display: block;
   font-weight: normal;

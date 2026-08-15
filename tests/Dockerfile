@@ -71,7 +71,7 @@ RUN node -v
 RUN npm -v
 
 # Bundle app source
-COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop.js tests/sts_dpop.js tests/dpop_workflow.js ./
+COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js ./
 # The XML Signature/Encryption interop test drives the frontend crypto module
 # directly (no browser); copy it next to the test so it can require('./xmldsig.js')
 # and resolve its deps (node-forge, etc.) from this image's node_modules. The
@@ -91,7 +91,7 @@ COPY client/src/xmldsig.js client/src/wstrust_msg.js client/src/jose_jwe.js clie
 # build since. Same trap as metadata_schema.js, same remedy: give the test a name
 # no module will land on. cose.js requires ./jwk_pem, so the MODULE keeps its name.
 COPY client/src/jwk_pem.js ./
-# The scheme allowlist, tested directly by tests/url_safety.js.
+# The scheme allowlist, tested directly by tests/url_safety_schemes.js.
 COPY client/src/url_safety.js ./
 # The metadata schema checker, loaded directly by
 # tests/metadata_schema_validation.js. That test is named _validation for a
@@ -126,7 +126,7 @@ COPY client/src/contexts ./contexts
 # directly — they are what these two require at load time, and a missing one is
 # a MODULE_NOT_FOUND at require, i.e. a hard failure rather than a silent skip.
 COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
-# DPoP (RFC 9449), loaded directly by tests/dpop.js so the thumbprint, htu, ath and
+# DPoP (RFC 9449), loaded directly by tests/dpop_vectors.js so the thumbprint, htu, ath and
 # proof can be checked against the RFCs' own published vectors without a browser.
 # Omit this COPY and that test vanishes from the image rather than failing, which is
 # the silent outcome this file's other comments warn about.
@@ -154,7 +154,7 @@ COPY common/krb5/krb5_gss.js common/krb5/krb5_client.js ./
 COPY common/krb5/krb5_ndr.js common/krb5/krb5_pac.js ./
 COPY tests/krb5_crypto_vectors.js tests/krb5_codec.js tests/krb5_describe_output.js tests/kerberos_decoder_page.js tests/krb5_codec_sync.js tests/kerberos_as_page.js ./
 COPY tests/kerberos_tgs_ap_page.js ./
-COPY tests/krb5_tgs_ap.js tests/krb5_pac.js ./
+COPY tests/krb5_as_exchange.js tests/krb5_tgs_ap.js tests/krb5_pac_layout.js ./
 COPY tests/kerberos_delegation_page.js ./
 # The mock KDC and the ticket-protected service, out of the sts/ SUBMODULE, so that
 # krb5_as_exchange.js and krb5_tgs_ap.js can start them in-process and drive the real

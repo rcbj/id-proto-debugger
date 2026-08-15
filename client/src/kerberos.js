@@ -97,8 +97,36 @@ function saveConfiguration() {
   }
 }
 
+// The build's own defaults, applied BEFORE anything stored so a value the user has
+// typed still wins. They come from the config rather than from the markup because the
+// right answer differs per build: the relay reaches the KDC from inside the API
+// container, so the working host is the compose service name `sts` — `localhost` there
+// is the api itself — while a deployed build has no api at all and defaults to nothing.
+// Writing the working value into the HTML would be right in one environment and wrong
+// in the two others, with the failure reading as a connection refused to an address the
+// user can reach from their own shell.
+function applyBuildDefaults() {
+  log.debug("Entering applyBuildDefaults().");
+  var defaults = [
+    ["krb_realm", appconfig.krb5RealmDefault],
+    ["krb_kdc_host", appconfig.krb5KdcHostDefault],
+    ["krb_kdc_port", appconfig.krb5KdcPortDefault],
+    ["krb_principal", appconfig.krb5PrincipalDefault],
+    ["krb_password", appconfig.krb5PasswordDefault]
+  ];
+  var applied = 0;
+  defaults.forEach(function (pair) {
+    if (!pair[1]) return;                       // absent or "" on a build with no api
+    setVal(pair[0], pair[1]);
+    applied++;
+  });
+  log.debug("Leaving applyBuildDefaults(). applied=" + applied);
+  return applied;
+}
+
 function loadConfiguration() {
   log.debug("Entering loadConfiguration().");
+  applyBuildDefaults();
   if (!window.localStorage) return;
   var stored = {
     krb_realm: localStorage.getItem(KEYS.REALM),

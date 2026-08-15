@@ -482,7 +482,7 @@ function buildJobs() {
   // services — node's Web Crypto is enough — so it is never skipped.
   jobs.push({
     name: "JOSE JWE module (RFC 7516/7518: RSA-OAEP, ECDH-ES, Concat KDF)",
-    script: "jose_jwe.js",
+    script: "jose_jwe_encryption.js",
     env: {},
   });
 
@@ -524,7 +524,7 @@ function buildJobs() {
   // skipped.
   jobs.push({
     name: "URL safety (only http/https reaches a navigation sink)",
-    script: "url_safety.js",
+    script: "url_safety_schemes.js",
     env: {},
   });
 
@@ -697,7 +697,7 @@ function buildJobs() {
   jobs.push({
     name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own " +
         "vectors, htu/ath/jti)",
-    script: "dpop.js",
+    script: "dpop_vectors.js",
     env: {},
   });
 
@@ -729,7 +729,7 @@ function buildJobs() {
   jobs.push({
     name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own " +
         "vectors, htu/ath/jti)",
-    script: "dpop.js",
+    script: "dpop_vectors.js",
     env: {},
   });
 
@@ -761,7 +761,7 @@ function buildJobs() {
   jobs.push({
     name: "DPoP arithmetic (RFC 7638 thumbprints against the RFCs' own " +
         "vectors, htu/ath/jti)",
-    script: "dpop.js",
+    script: "dpop_vectors.js",
     env: {},
   });
 
@@ -1031,7 +1031,7 @@ function buildJobs() {
   // assigned. Node only, never skipped.
   jobs.push({
     name: "Kerberos PAC (MS-PAC: the NDR layout at hand-derived offsets, and all four signatures)",
-    script: "krb5_pac.js",
+    script: "krb5_pac_layout.js",
     env: {},
   });
 
@@ -1058,7 +1058,12 @@ function buildJobs() {
     script: "kerberos_as_page.js",
     env: {
       STS_URL: env.STS_URL || "http://localhost:8081",
-      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "localhost",
+      // "sts", not "localhost": this value is TYPED INTO THE PAGE and the address is
+      // resolved by the API's relay, which runs in the api container — where localhost is
+      // the api itself, listening on nothing. The mock KDC's port 88 is not published to
+      // the host by any compose file, so the compose service name is the only address
+      // that reaches it.
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
     },
   });
@@ -1092,9 +1097,9 @@ function buildJobs() {
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
       STS_URL: env.STS_URL || "http://localhost:8081",
-      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "localhost",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
-      KRB5_SERVICE_HOST: env.KRB5_SERVICE_HOST || "localhost",
+      KRB5_SERVICE_HOST: env.KRB5_SERVICE_HOST || "sts",
       KRB5_SERVICE_PORT: env.KRB5_SERVICE_PORT || "8888",
     },
   });

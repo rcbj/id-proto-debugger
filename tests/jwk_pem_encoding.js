@@ -680,6 +680,109 @@ function appendedBeaconNeedsNoModuleSystem() {
 }
 
 
+// ---------------------------------------------------------------------------
+// No two files may land on the same path in the tests image.
+//
+// tests/Dockerfile copies test scripts AND the modules they exercise FLAT into one
+// directory. Two files sharing a basename therefore overwrite each other, and which one
+// survives depends only on which COPY ran last. Both outcomes are bad and one of them is
+// silent:
+//
+//   * the MODULE wins  — `node <name>.js` loads a module, prints nothing, exits 0, and
+//     run-report records a PASS. The test has not run. This is the dangerous one, and it
+//     had happened three times over: dpop.js, jose_jwe.js and url_safety.js were each
+//     reporting green in ~30ms while executing a module. Renamed, they take 231ms, 709ms
+//     and 46ms and assert thousands of things.
+//   * the TEST wins    — the module is replaced by a test script, so everything that
+//     requires it gets a file with no exports. krb5_pac.js did this and took five other
+//     Kerberos jobs down with it, because krb5_describe.js requires it.
+//
+// The convention that avoids it is to give the TEST a distinguishing name — the module
+// keeps its own, since other code imports it: jwk_pem.js is tested by jwk_pem_encoding.js,
+// krb5_crypto.js by krb5_crypto_vectors.js, krb5_pac.js by krb5_pac_layout.js. The
+// Dockerfile has said so in a comment for a long time; a comment is not a check, and this
+// is the check.
+//
+// Runs in a checkout, where tests/Dockerfile is readable; skipped with a reason in the
+// image, where it is not.
+// ---------------------------------------------------------------------------
+function testsImageHasNoCollidingFilenames() {
+  log.debug("Entering testsImageHasNoCollidingFilenames().");
+  const dockerfile = path.join(__dirname, "Dockerfile");
+  if (!fs.existsSync(dockerfile)) {
+    log.info("[collisions] skipped: tests/Dockerfile is not present, so this is the tests image " +
+      "rather than a checkout.");
+    log.debug("Leaving testsImageHasNoCollidingFilenames().");
+    return;
+  }
+  const flat = {};
+  fs.readFileSync(dockerfile, "utf8").split("\n").forEach(function (line) {
+    const text = line.trim();
+    if (text.indexOf("COPY ") !== 0) return;
+    const parts = text.slice(5).split(/\s+/).filter(Boolean);
+    if (parts.length < 2) return;
+    const dest = parts[parts.length - 1];
+    // Only the flat destination collides; "./sts/" and "./contexts" are directories of
+    // their own and a basename may legitimately repeat across them.
+    if (dest !== "./" && dest !== ".") return;
+    parts.slice(0, -1).forEach(function (src) {
+      if (!/\.js$/.test(src)) return;
+      const base = src.split("/").pop();
+      if (!flat[base]) flat[base] = [];
+      flat[base].push(src);
+    });
+  });
+
+  const collisions = Object.keys(flat).filter(function (base) { return flat[base].length > 1; })
+    .map(function (base) { return base + " <- " + flat[base].join(" and "); });
+  assert.deepStrictEqual(collisions, [],
+    "these files are copied FLAT into the tests image under the same name, so the last COPY " +
+    "silently overwrites the earlier one: " + collisions.join(" | ") +
+    ". Give the TEST a distinguishing name (jwk_pem.js is tested by jwk_pem_encoding.js, " +
+    "krb5_crypto.js by krb5_crypto_vectors.js) — the module keeps its own name because other " +
+    "code requires it. If the module wins, the test silently passes in ~30ms without running; " +
+    "if the test wins, everything requiring that module breaks.");
+
+  // ...and every script run-report names must actually REACH the image. A job whose
+  // script was never COPYd fails with MODULE_NOT_FOUND in 0.0s, which reads as a broken
+  // test rather than a missing line in a Dockerfile — krb5_as_exchange.js was in the
+  // suite for four phases and in the image for none of them, passing on every host run.
+  const report = path.join(__dirname, "run-report.js");
+  if (fs.existsSync(report)) {
+    const copied = {};
+    Object.keys(flat).forEach(function (base) { copied[base] = true; });
+    // The image also copies whole globs (tests/oauth2_*, tests/oidc_*); expand them the
+    // same way Docker does, by prefix.
+    const globs = [];
+    fs.readFileSync(dockerfile, "utf8").replace(/COPY\s+([^\n]+)/g, function (_, rest) {
+      rest.split(/\s+/).forEach(function (src) {
+        if (src.indexOf("tests/") === 0 && src.indexOf("*") !== -1) {
+          globs.push(src.slice("tests/".length).replace("*", ""));
+        }
+      });
+      return _;
+    });
+    const scripts = [];
+    fs.readFileSync(report, "utf8").replace(/script:\s*"([^"]+)"/g, function (_, name) {
+      if (scripts.indexOf(name) === -1) scripts.push(name);
+      return _;
+    });
+    const absent = scripts.filter(function (name) {
+      if (copied[name]) return false;
+      return !globs.some(function (prefix) { return name.indexOf(prefix) === 0; });
+    });
+    assert.deepStrictEqual(absent, [],
+      "run-report.js schedules these scripts and tests/Dockerfile never copies them into the " +
+      "image, so each fails there with MODULE_NOT_FOUND in 0.0s while passing on every host " +
+      "run: " + absent.join(", "));
+  }
+
+  const total = Object.keys(flat).length;
+  log.info("[collisions] OK — " + total + " files are copied flat into the tests image, every " +
+    "one has a unique name, and every script run-report schedules is among them.");
+  log.debug("Leaving testsImageHasNoCollidingFilenames().");
+}
+
 async function test() {
   log.debug("Entering test().");
   rsaKeys();
@@ -692,6 +795,7 @@ async function test() {
   ellipticStaysOutOfTheBundles();
   bigIntLiteralsStayOutOfTheBundles();
   appendedBeaconNeedsNoModuleSystem();
+  testsImageHasNoCollidingFilenames();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

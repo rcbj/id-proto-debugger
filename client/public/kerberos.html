@@ -28,100 +28,126 @@
 
 <h3 class="krb-title">Kerberos &mdash; the AS exchange: get a TGT from a KDC</h3>
 
-<p class="krb-intro">Ask a real Key Distribution Center for a ticket-granting ticket and watch every field
-of both messages. Works against a Windows domain controller, an MIT or Heimdal KDC, or this project's
-mock KDC. <a href="/kerberos_decoder.html">The Kerberos Decoder</a> is next door for bytes you already
-have. With a ticket in hand: <a href="/kerberos_tgs.html">buy a service ticket</a>,
-<a href="/kerberos_ap.html">present one to a service</a>, or
-<a href="/kerberos_delegation.html">delegate</a>.</p>
-
-<p class="krb-intro krb-boundary"><strong>Everything protocol-shaped happens in this browser.</strong> The
-password is turned into a key here, the messages are built here, and the api is a guarded byte relay that
-carries them to port 88 &mdash; because Kerberos is not an HTTP protocol and a browser cannot open a TCP
-socket. That relay is why this page needs a back end at all, and why it is the one workflow here that
-cannot run on the deployed static site.</p>
+<p class="krb-intro">A ticket-granting ticket from a real KDC, every field shown. Defaults target the
+mock KDC. <a href="/kerberos_decoder.html">Decoder</a> &middot;
+<a href="/kerberos_tgs.html">TGS</a> &middot;
+<a href="/kerberos_ap.html">AP</a> &middot;
+<a href="/kerberos_delegation.html">Delegation</a></p>
 
 <div id="krb_environment_note"></div>
 
 <fieldset class="krb-pane">
-  <legend>The KDC and the principal</legend>
-  <div class="krb-keys">
-    <label for="krb_realm">Realm <strong>(case-sensitive, conventionally UPPER CASE)</strong></label>
-    <input type="text" id="krb_realm" class="krb-field" value="EXAMPLE.COM" spellcheck="false">
+  <legend>Configuration Parameters</legend>
+  <div class="krb-grid">
+    <div class="krb-keys">
+      <label for="krb_realm">Realm</label>
+      <input type="text" id="krb_realm" class="krb-field" value="EXAMPLE.COM" spellcheck="false">
 
-    <label for="krb_principal">Client principal</label>
-    <input type="text" id="krb_principal" class="krb-field" value="alice" spellcheck="false"
-           placeholder="alice, or host/ws01.example.com for a computer account">
+      <label for="krb_principal">Client principal</label>
+      <input type="text" id="krb_principal" class="krb-field" value="alice" spellcheck="false"
+             placeholder="alice, or host/ws01.example.com">
+    </div>
 
-    <label for="krb_kdc_host">KDC host or address</label>
-    <input type="text" id="krb_kdc_host" class="krb-field" value="127.0.0.1" spellcheck="false">
+    <div class="krb-keys">
+      <label for="krb_kdc_host">KDC host</label>
+      <input type="text" id="krb_kdc_host" class="krb-field" value="sts" spellcheck="false">
 
-    <label for="krb_kdc_port">Port</label>
-    <input type="text" id="krb_kdc_port" class="krb-field" value="88">
+      <label for="krb_kdc_port">Port</label>
+      <input type="text" id="krb_kdc_port" class="krb-field" value="88">
+    </div>
 
-    <label for="krb_transport">Transport</label>
-    <select id="krb_transport" class="krb-field">
-      <option value="tcp" selected="selected">TCP &mdash; what a client uses in practice</option>
-      <option value="udp">UDP &mdash; a KDC answers KRB_ERR_RESPONSE_TOO_BIG when the reply will not fit</option>
-    </select>
+    <div class="krb-keys">
+      <label for="krb_transport">Transport</label>
+      <select id="krb_transport" class="krb-field">
+        <option value="tcp" selected="selected">TCP</option>
+        <option value="udp">UDP</option>
+      </select>
 
-    <label for="krb_etypes">Encryption types offered, in preference order</label>
-    <input type="text" id="krb_etypes" class="krb-field" value="18 17 20 19 23" spellcheck="false">
-    <p class="krb-note">The KDC picks the <em>first</em> of these that the account supports, so the
+      <label for="krb_lifetime">Lifetime (hours)</label>
+      <input type="text" id="krb_lifetime" class="krb-field" value="10">
+    </div>
+
+    <div class="krb-keys">
+      <label for="krb_etypes">Encryption types</label>
+      <input type="text" id="krb_etypes" class="krb-field" value="18 17 20 19 23" spellcheck="false">
+
+      <div class="krb-opts">
+        <label class="krb-check"><input type="checkbox" id="krb_opt_forwardable" checked="checked">
+          forwardable</label>
+        <label class="krb-check"><input type="checkbox" id="krb_opt_renewable" checked="checked">
+          renewable</label>
+        <label class="krb-check"><input type="checkbox" id="krb_opt_canonicalize">
+          canonicalize</label>
+        <label class="krb-check"><input type="checkbox" id="krb_opt_pac" checked="checked">
+          request a PAC</label>
+      </div>
+    </div>
+  </div>
+
+  <details class="krb-more">
+    <summary>What these choices actually decide</summary>
+    <p class="krb-note">The <strong>KDC host is resolved by the api</strong>, which is where the relay
+    runs &mdash; on the containerized stack that makes it the compose service name <code>sts</code>;
+    <code>localhost</code> there is the api container, which listens on nothing.</p>
+    <p class="krb-note">The KDC picks the <em>first</em> encryption type the account supports, so the
     <strong>order is the negotiation</strong>. 18 and 17 are AES-SHA1 (what Active Directory uses), 20 and
     19 are RFC 8009's AES-SHA2, and 23 is arcfour-hmac-md5 &mdash; legacy, disabled by the Windows Server
     2025 security baseline, and still the reason a lot of Kerberos breaks in 2026. Offering only 23 to a
     current domain controller earns <code>KDC_ERR_ETYPE_NOSUPP</code>.</p>
-
-    <label for="krb_lifetime">Requested lifetime (hours)</label>
-    <input type="text" id="krb_lifetime" class="krb-field" value="10">
-
-    <label class="krb-check"><input type="checkbox" id="krb_opt_forwardable" checked="checked">
-      forwardable &mdash; the ticket may be delegated</label>
-    <label class="krb-check"><input type="checkbox" id="krb_opt_renewable" checked="checked">
-      renewable</label>
-    <label class="krb-check"><input type="checkbox" id="krb_opt_canonicalize">
-      canonicalize &mdash; let the KDC correct the name; what AD uses for UPN logon</label>
-    <label class="krb-check"><input type="checkbox" id="krb_opt_pac" checked="checked">
-      request a PAC (PA-PAC-REQUEST) &mdash; unticking it sends an explicit <code>include-pac=FALSE</code>,
-      and the ticket comes back with no PAC at all, which is how a Windows service behaves when it has no
-      group memberships to read</label>
-  </div>
+    <p class="krb-note"><strong>canonicalize</strong> lets the KDC correct the name, which is what AD uses
+    for UPN logon. <strong>request a PAC</strong> sends PA-PAC-REQUEST; unticking it sends an explicit
+    <code>include-pac=FALSE</code> and the ticket comes back with no PAC at all, which is how a Windows
+    service behaves when it has no group memberships to read. <strong>forwardable</strong> is what makes a
+    ticket delegable &mdash; an account flagged <code>NOT_DELEGATED</code> is refused it whatever is asked
+    for.</p>
+  </details>
 </fieldset>
 
+<div class="krb-steps">
 <fieldset class="krb-pane">
-  <legend>Step 1 &mdash; ask with no pre-authentication</legend>
-  <p class="krb-note">A first request carrying no pre-authentication is <strong>expected to be
-  refused</strong>, and the refusal is the useful part: <code>KDC_ERR_PREAUTH_REQUIRED</code> carries
-  <code>PA-ETYPE-INFO2</code>, which is where the <strong>salt</strong> comes from. The salt is not
-  guessable &mdash; Active Directory uses the realm followed by the sAMAccountName for a user, but a
-  <em>host</em>-shaped string for a computer account &mdash; so this step is how a client learns what to
-  hash the password with. An account that answers with a ticket instead has pre-authentication disabled,
-  which is worth knowing about for its own reasons.</p>
+  <legend>Step 1 &mdash; no pre-authentication</legend>
+  <p class="krb-note">Expected to be <strong>refused</strong>: the refusal carries
+  <code>PA-ETYPE-INFO2</code>, which is where the <strong>salt</strong> comes from.</p>
   <input type="button" id="krb_noreauth_button" class="btn2" value="Send AS-REQ without pre-authentication">
+  <details class="krb-more">
+    <summary>Why the salt has to be asked for</summary>
+    <p class="krb-note">The salt is not guessable &mdash; Active Directory uses the realm followed by the
+    sAMAccountName for a user, but a <em>host</em>-shaped string for a computer account &mdash; so this
+    step is how a client learns what to hash the password with. An account that answers with a ticket
+    instead has pre-authentication disabled, which is worth knowing about for its own reasons.</p>
+  </details>
   <div id="krb_discovered_pane"></div>
 </fieldset>
 
 <fieldset class="krb-pane">
-  <legend>Step 2 &mdash; ask again with PA-ENC-TIMESTAMP</legend>
-  <div class="krb-keys">
-    <label for="krb_password">Password &mdash; used here in the browser, never sent to the api</label>
-    <input type="password" id="krb_password" class="krb-field" autocomplete="off">
-
-    <label for="krb_preauth_etype">Encryption type (filled from what the KDC offered)</label>
-    <select id="krb_preauth_etype" class="krb-field"></select>
-
-    <label for="krb_salt">Salt (filled from PA-ETYPE-INFO2; correct it if you know better)</label>
-    <input type="text" id="krb_salt" class="krb-field" spellcheck="false">
+  <legend>Step 2 &mdash; PA-ENC-TIMESTAMP</legend>
+  <div class="krb-grid krb-grid-tight">
+    <div class="krb-keys">
+      <label for="krb_password">Password</label>
+      <input type="password" id="krb_password" class="krb-field" autocomplete="off">
+    </div>
+    <div class="krb-keys">
+      <label for="krb_preauth_etype">Encryption type</label>
+      <select id="krb_preauth_etype" class="krb-field"></select>
+    </div>
+    <div class="krb-keys">
+      <label for="krb_salt">Salt</label>
+      <input type="text" id="krb_salt" class="krb-field" spellcheck="false">
+    </div>
   </div>
-  <p class="krb-note">The timestamp is encrypted under the long-term key at <strong>key usage 1</strong>.
-  Any other usage number produces a perfectly well-formed message that the KDC reports as a wrong
-  password &mdash; which is also what a wrong <em>salt</em> looks like, and why the salt is shown above
-  rather than hidden.</p>
+  <p class="krb-note">Turned into a key <strong>here</strong>; never sent to the api.</p>
   <input type="button" id="krb_preauth_button" class="btn2" value="Send AS-REQ with pre-authentication"
          disabled="disabled">
+  <details class="krb-more">
+    <summary>Why a wrong salt looks exactly like a wrong password</summary>
+    <p class="krb-note">The timestamp is encrypted under the long-term key at <strong>key usage 1</strong>.
+    Any other usage number produces a perfectly well-formed message that the KDC reports as a wrong
+    password &mdash; which is also what a wrong <em>salt</em> looks like, and why the salt is shown above
+    rather than hidden.</p>
+  </details>
   <div id="krb_as_status" class="krb-status"></div>
 </fieldset>
+</div>
 
 <fieldset class="krb-pane">
   <legend>What went out</legend>
@@ -145,12 +171,11 @@ cannot run on the deployed static site.</p>
   <input type="button" id="krb_forget_button" class="btn2" value="Forget the ticket" disabled="disabled">
 </fieldset>
 
-<p class="krb-intro"><strong>What this page cannot tell you.</strong> That a ticket was issued says nothing
-about whether a <em>service</em> will accept it: that depends on the service's own key version, its clock,
-and &mdash; on Windows &mdash; on the PAC inside the ticket, which is where the group memberships live.
-Presenting the ticket is the AP exchange and is not built yet; nor is the TGS exchange that turns this TGT
-into a service ticket. Both are the next phase, and this paragraph says so rather than leaving a reader to
-conclude the ticket is unusable for some subtler reason.</p>
+<p class="krb-intro"><strong>What this page cannot tell you.</strong> That a ticket was issued says
+nothing about whether a <em>service</em> will accept it: that depends on the service's own key version, its
+clock, and &mdash; on Windows &mdash; on the PAC inside the ticket, which is where the group memberships
+live. <a href="/kerberos_tgs.html">Turn this TGT into a service ticket</a>, then
+<a href="/kerberos_ap.html">present it</a>, to find out.</p>
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">

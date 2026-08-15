@@ -44,7 +44,10 @@ log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000";
 // Where the KDC is, and who to ask for. The mock KDC's realm and passwords are its
 // own (see the submodule's krb5_principals.js); the defaults here match it.
-var kdcHost = process.env.KRB5_KDC_HOST || "localhost";
+// Left NULL by default on purpose: with nothing to type, the page's own built-in
+// defaults are what get used, which is the only way this test covers them. Set
+// KRB5_KDC_HOST to point at something else.
+var kdcHost = process.env.KRB5_KDC_HOST || null;
 var kdcPort = process.env.KRB5_KDC_PORT || "88";
 var stsUrl = process.env.STS_URL || "http://localhost:8081";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
@@ -132,7 +135,7 @@ async function stepOneDiscoversTheSalt(driver) {
   log.debug("Entering stepOneDiscoversTheSalt().");
   await setField(driver, "krb_realm", realm);
   await setField(driver, "krb_principal", principal);
-  await setField(driver, "krb_kdc_host", kdcHost);
+  if (kdcHost) await setField(driver, "krb_kdc_host", kdcHost);
   await setField(driver, "krb_kdc_port", kdcPort);
   await driver.findElement(By.id("krb_noreauth_button")).click();
 
@@ -233,6 +236,80 @@ async function aWrongPasswordIsDiagnosedAndStoresNothing(driver) {
   log.debug("Leaving aWrongPasswordIsDiagnosedAndStoresNothing().");
 }
 
+// The page has to be USABLE without scrolling, and its defaults have to work against the
+// mock KDC without anything being typed. Both drift silently — a paragraph grows, a field
+// is added — so both are asserted, the way tests/navigation.js protects the landing page.
+//
+// The budget is 640px at 1366x768, the same number and for the same reason
+// (CARD_HEIGHT_BUDGET in navigation.js): headless Chrome has no toolbar, so its viewport
+// is more generous than a real browser's and measuring only against innerHeight would
+// pass a page that a real user has to scroll. Both are checked.
+async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
+  log.debug("Entering theConfigurationAndBothControlsFitOnOneScreen().");
+  const BUDGET = 640;
+  const was = await driver.manage().window().getRect();
+  await driver.manage().window().setRect({ width: 1366, height: 768 });
+  await driver.get(baseUrl + "/kerberos.html");
+  await driver.wait(until.elementLocated(By.id("krb_preauth_button")), 15000);
+
+  const m = await driver.executeScript(
+    "var b = function (id) { var e = document.getElementById(id);" +
+    "  return e ? Math.round(e.getBoundingClientRect().bottom) : null; };" +
+    "var v = function (id) { var e = document.getElementById(id); return e ? e.value : null; };" +
+    "return { viewport: window.innerHeight," +
+    "         step1: b('krb_noreauth_button')," +
+    "         step2: b('krb_preauth_button')," +
+    "         hScroll: document.documentElement.scrollWidth > window.innerWidth + 1," +
+    "         legend: (document.querySelector('fieldset.krb-pane > legend') || {}).textContent," +
+    "         realm: v('krb_realm'), principal: v('krb_principal')," +
+    "         host: v('krb_kdc_host'), port: v('krb_kdc_port')," +
+    "         password: v('krb_password') ? 'set' : '' };");
+
+  try {
+    // Both controls, against both limits.
+    [["step 1", m.step1], ["step 2", m.step2]].forEach(function (pair) {
+      assert.ok(pair[1] !== null, pair[0] + "'s button is missing from the page");
+      assert.ok(pair[1] <= BUDGET,
+        pair[0] + "'s button ends at " + pair[1] + "px, past the " + BUDGET + "px a real browser " +
+        "leaves at 1366x768 — the page cannot be used without scrolling to find the control. " +
+        "Something above it grew; the panes are arranged so the configuration and both buttons " +
+        "fit, and that arrangement is the thing to preserve.");
+      assert.ok(pair[1] <= m.viewport,
+        pair[0] + "'s button ends at " + pair[1] + "px in a " + m.viewport + "px viewport");
+    });
+    assert.ok(!m.hScroll, "the page must not scroll horizontally at 1366x768");
+
+    // The pane's name, which the other workflows share.
+    assert.ok(/Configuration Parameters/.test(m.legend || ""),
+      "the first pane is the configuration one and is named for it across the workflows, got: " +
+      m.legend);
+
+    // And the defaults, which are the other half of being usable on arrival. They come
+    // from the build's config (client/src/env/*.js), so a build with no api behind it
+    // correctly has none — hence the check is "either all set, or deliberately empty".
+    if (m.host) {
+      assert.strictEqual(m.realm, "EXAMPLE.COM", "the realm should default to the mock KDC's");
+      assert.strictEqual(m.principal, "alice", "and the principal to an account it knows");
+      assert.strictEqual(m.port, "88", "and the port");
+      assert.strictEqual(m.password, "set",
+        "and the password, or the workflow cannot be run without knowing a credential that is " +
+        "published in the mock's principal table anyway");
+      assert.notStrictEqual(m.host, "localhost",
+        "the KDC host must NOT default to localhost: the api's relay resolves it, and localhost " +
+        "there is the api container itself. It is " + m.host + ".");
+    } else {
+      log.info("[fit] this build ships no Kerberos defaults (no api behind it), which is correct " +
+        "for a static deployment");
+    }
+    log.info("[fit] step 1 ends at " + m.step1 + "px and step 2 at " + m.step2 + "px, inside the " +
+      BUDGET + "px budget and the " + m.viewport + "px viewport; defaults: " + m.principal + "@" +
+      m.realm + " via " + m.host + ":" + m.port);
+  } finally {
+    await driver.manage().window().setRect(was);
+  }
+  log.debug("Leaving theConfigurationAndBothControlsFitOnOneScreen().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. The Kerberos AS exchange page at " + baseUrl + ".");
@@ -266,6 +343,7 @@ async function test() {
   try {
     await driver.get(baseUrl + "/kerberos.html");
     await driver.wait(until.elementLocated(By.id("krb_noreauth_button")), 20000);
+    await theConfigurationAndBothControlsFitOnOneScreen(driver);
     await thePageIsWiredAndSaysWhatItNeeds(driver);
     await stepTwoIsGatedOnStepOne(driver);
     await stepOneDiscoversTheSalt(driver);

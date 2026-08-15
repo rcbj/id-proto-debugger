@@ -112,7 +112,15 @@ function relayAllowing(port, overrides) {
 // listener because the relay destroys its side of the connection, which can
 // arrive as ECONNRESET: an `error` with no listener on a socket is an uncaught
 // exception, i.e. a crash in the test rather than in the code under test.
-async function withTcpServer(handler, fn) {
+//
+// `bindHost` exists for ONE case: the test that connects by NAME. Binding 127.0.0.1 and
+// then asking the relay for "localhost" assumes that name resolves to IPv4 — true on a
+// developer's host and FALSE in the tests container, where it resolves to ::1 first, so
+// the relay dutifully connected to an address this server had never bound and the failure
+// was ECONNREFUSED on ::1. Binding the same name the client will resolve makes the two
+// ends agree however the resolver is configured, which is the property the test actually
+// needs; everything else stays pinned to the literal.
+async function withTcpServer(handler, fn, bindHost) {
   const sockets = new Set();
   const server = net.createServer(function (socket) {
     sockets.add(socket);
@@ -120,7 +128,9 @@ async function withTcpServer(handler, fn) {
     socket.on("close", function () { sockets.delete(socket); });
     handler(socket);
   });
-  await new Promise(function (resolve) { server.listen(0, "127.0.0.1", resolve); });
+  await new Promise(function (resolve) {
+    server.listen(0, bindHost || "127.0.0.1", resolve);
+  });
   const port = server.address().port;
   try {
     return await fn(port);
@@ -236,7 +246,7 @@ async function relaysAKerberosExchangeOverTcp() {
     });
   }, function (port) {
     return relayAllowing(port).send({ host: "localhost", port: port, message: asReq() });
-  });
+  }, "localhost");
   assert.strictEqual(named.target.resolved, true, "a hostname must be reported as resolved");
   assert.ok(net.isIP(named.target.address),
     "and the address actually connected to must be reported as a literal, because that is what " +
