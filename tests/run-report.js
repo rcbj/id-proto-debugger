@@ -885,7 +885,13 @@ function buildJobs() {
   // the accurate one for a static target, and it reaches the decoder job, which
   // has nothing else to skip on. remote-run-tests.sh sets the variable per
   // target; unset (every containerized and local run) means they are there.
-  const kerberosPagesSkip = env.KERBEROS_PAGES_AVAILABLE === "false"
+  // KERBEROS_AVAILABLE is the current name; KERBEROS_PAGES_AVAILABLE is the
+  // one it replaced and is still honoured, because it may be set in a CI
+  // environment or a shell that predates the rename. See the sweep at the end
+  // of this function for why the name had to change.
+  const kerberosOff =
+    (env.KERBEROS_AVAILABLE || env.KERBEROS_PAGES_AVAILABLE) === "false";
+  const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
       "api's port-88 relay, which a static site has not got, so " +
       "client/static_site.js leaves all five pages out of the build and " +
@@ -1044,6 +1050,67 @@ function buildJobs() {
     script: "krb5_codec_sync.js",
     env: {},
   });
+
+  // What a real Windows KDC sent, asserted offline. This is the job that keeps
+  // the expensive one's evidence alive: tests/krb5_real_dc.js needs a domain
+  // controller on EC2 and therefore runs almost never, so its exchange was
+  // recorded once (tests/captures/windows-server-2025.json) and is re-checked
+  // here on every run with no AWS, no network and no services.
+  //
+  // It has already earned its place. The capture showed that Windows Server
+  // 2025 sends NO s2kparams in ETYPE-INFO2 — it relies on the RFC 3962 default
+  // — while the mock KDC always sends one and krb5_as_exchange.js asserts it is
+  // there. A client that required the field would pass this whole suite and
+  // fail against every real domain, reporting a wrong password. Never skipped:
+  // the capture is committed.
+  jobs.push({
+    name: "Kerberos vectors from a REAL Windows KDC (recorded; salt, refusals, keytab, PAC)",
+    script: "krb5_windows_vectors.js",
+    env: {},
+  });
+
+  // The one Kerberos job that talks to software this project did not write.
+  //
+  // Every other job in this section — the codec, the crypto vectors, the PAC
+  // layout, the AS and TGS exchanges — runs against the mock KDC in the
+  // rcbj/mock-sts submodule. The mock was written from the same reading of RFC
+  // 4120 and [MS-PAC] as the client it checks, so the two agree by construction
+  // and a shared misreading is invisible to all of them. This job is the answer
+  // to that, and it is the open risk docs/kerberos.md names.
+  //
+  // It needs a real Windows Server domain controller, which is what
+  // infra/terraform-krb5 stands up and infra/krb5-test.sh drives:
+  // apply -> wait for the forest -> run this -> destroy, with the teardown on an
+  // EXIT trap so a failed test still removes the instance. The stack is NOT free
+  // tier and is not left running, so nothing here starts it — the job is skipped
+  // unless KRB5_DC_HOST names one that already exists.
+  //
+  // The skip names the script rather than the variable, because the variable on
+  // its own reads as something a launcher forgot to export, and it is not: no
+  // launcher sets it, on purpose.
+  {
+    const realDcSkip = env.KRB5_DC_HOST ? null :
+      "no real Windows KDC to test against (KRB5_DC_HOST unset). This one " +
+      "job drives a domain controller on EC2, which costs money and is not " +
+      "free tier, so no launcher starts it. Run ./infra/krb5-test.sh, which " +
+      "applies infra/terraform-krb5, runs this test and tears the stack down " +
+      "again whatever the result.";
+    const job = {
+      name: "Kerberos against a REAL Windows KDC (AS-REQ, TGS-REQ, ktpass keytab, PAC, AP-REQ)",
+      script: "krb5_real_dc.js",
+      env: {
+        KRB5_DC_HOST: env.KRB5_DC_HOST,
+        KRB5_DC_PORT: env.KRB5_DC_PORT,
+        KRB5_REALM: env.KRB5_REALM,
+        KRB5_USER: env.KRB5_USER,
+        KRB5_PASSWORD: env.KRB5_PASSWORD,
+        KRB5_SPN: env.KRB5_SPN,
+        KRB5_KEYTAB_B64: env.KRB5_KEYTAB_B64,
+      },
+    };
+    if (realDcSkip) { job.skip = realDcSkip; }
+    jobs.push(job);
+  }
 
   // The Windows PAC (common/krb5/krb5_pac.js and krb5_ndr.js), which is the structure
   // a Windows service actually authorizes on: a Kerberos ticket proves who you are and
@@ -1960,6 +2027,54 @@ function buildJobs() {
     script: "wstrust_schema_validate.js",
     env: {},
   });
+
+  // ---------------------------------------------------------------------------
+  // Kerberos is either present on this target or it is not, and when it is not
+  // NONE of its jobs belong in the run — not just the four page ones.
+  //
+  // The gate used to be called KERBEROS_PAGES_AVAILABLE and was applied only to
+  // the pages, which was right as far as it went and left ten jobs behind: the
+  // codec, the crypto vectors, the PAC layout, the decoder output, the codec
+  // sync, the relay, the two mock-KDC exchanges and the two Windows ones. Those
+  // are node-only, so nothing stopped them, and they duly ran against
+  // https://test.idptools.com — a deployment that has no Kerberos at all.
+  //
+  // They should not have. They exercise LOCAL code and say nothing whatever
+  // about the deployed site, so on that target they are noise at best. At worst
+  // they are misleading, which is what happened on 2026-08-15 and 2026-08-16:
+  // remote-run-tests.sh sets CONFIG_FILE=./env/test-idptools-com.js, and
+  // sts/helpers.js resolves a relative CONFIG_FILE against sts/ rather than
+  // tests/ — where no such file exists, the submodule shipping only local.js,
+  // docker-tests.js and test.js. Both mock-KDC jobs died with "Cannot find
+  // module './env/test-idptools-com.js'", naming a config file, on a run whose
+  // target has nothing to do with the mock. Two red tests, twice, for a
+  // protocol that is switched off there.
+  //
+  // Doing it as a sweep rather than at each push site is deliberate: a Kerberos
+  // test added later inherits the gate without anyone remembering to add it,
+  // which is exactly how the original ten came to be missed.
+  if (kerberosOff) {
+    const kerberosSkip =
+      "Kerberos is not part of this target. The workflow needs the api's " +
+      "port-88 relay, which a static deployment has not got, so " +
+      "client/static_site.js leaves all five pages out of the build and the " +
+      "landing card is greyed out. The codec and mock-KDC jobs are skipped " +
+      "here too: they exercise local code and report nothing about the " +
+      "deployed site, so running them adds noise and, when the run's " +
+      "CONFIG_FILE does not resolve inside the sts/ submodule, spurious " +
+      "failures. Run them against the containerized stack " +
+      "(./docker-run-tests.sh) or a local dev server. Set " +
+      "KERBEROS_AVAILABLE=true for a remote target that IS api-backed.";
+    let swept = 0;
+    for (const job of jobs) {
+      if (!/^(krb5_|kerberos_|api_krb5_)/.test(job.script)) { continue; }
+      if (job.skip) { continue; }        // a more specific reason already won
+      job.skip = kerberosSkip;
+      swept += 1;
+    }
+    log.info("Kerberos is off for this target: skipped " + swept +
+      " further job(s) beyond the pages.");
+  }
 
   log.debug("Leaving buildJobs().");
   return jobs;

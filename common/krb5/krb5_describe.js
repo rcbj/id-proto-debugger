@@ -1053,19 +1053,54 @@ function describeKrbError(e, problems) {
       if (pa.type === msgs.PA_TYPE.ETYPE_INFO2) {
         try {
           msgs.readEtypeInfo2(pa.value).forEach(function (info) {
+            // The iteration count, and — the part that used to be silent —
+            // where it came from. s2kparams is OPTIONAL, and a real Active
+            // Directory OMITS it: a capture from Windows Server 2025 carries
+            // no s2kparams at all, so the client has to fall back to the
+            // etype's own default. Showing nothing in that case left the
+            // reader unable to tell "the KDC asked for the default" from "the
+            // decoder did not look", which for a tool whose whole job is to
+            // explain bytes is the wrong silence.
             var iterations = null;
+            var iterationsFrom = null;
             if (info.s2kparams && prim.toBytes(info.s2kparams).length === 4) {
               var p = prim.toBytes(info.s2kparams);
               iterations = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+              iterationsFrom = "s2kparams";
+            } else if (info.s2kparams === null ||
+                info.s2kparams === undefined) {
+              var prof = null;
+              try {
+                prof = kcrypto.etypeById(info.etype);
+              } catch (ignored) {
+                // An etype this build does not implement. There is nothing to
+                // say about its default, and saying nothing is correct here.
+                prof = null;
+              }
+              if (prof && prof.defaultIterations) {
+                iterations = prof.defaultIterations;
+                iterationsFrom = "default";
+              }
+            }
+            var iterationText = "";
+            if (iterationsFrom === "s2kparams") {
+              iterationText = ", iterations: " + iterations + " (from " +
+                  "s2kparams)";
+            } else if (iterationsFrom === "default") {
+              iterationText = ", iterations: " + iterations + " (RFC 3962 " +
+                  "default — no s2kparams sent)";
             }
             rows.push(row("  etype " + info.etype + " " + info.etypeName,
               "salt: " + (info.salt === null ? "(none — arcfour is unsalted)" :
-                  JSON.stringify(info.salt)) +
-              (iterations !== null ? ", iterations: " + iterations : ""),
+                  JSON.stringify(info.salt)) + iterationText,
               "THIS is the salt to use for string-to-key. It is not " +
                   "guessable: AD uses the realm plus " +
               "the sAMAccountName for a user, but a host-shaped string for a " +
-                  "computer account."));
+                  "computer account." +
+              (iterationsFrom === "default" ? " No s2kparams was sent, which " +
+                "is what Active Directory does — apply the etype's default " +
+                "iteration count rather than treating the field as required." :
+                "")));
           });
         } catch (err) {
           rows.push(row("  ETYPE-INFO2", "does not decode: " + err.message));

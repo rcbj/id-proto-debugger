@@ -322,9 +322,22 @@ function readTcpFrame(buffer, maxBytes) {
             'This is not a Kerberos reply.');
   }
   if (declared < MIN_MESSAGE_BYTES) {
+    // A ZERO-LENGTH frame is not a malformed reply; it is a KDC declining to
+    // answer, and saying only "0 bytes" sends the reader to look for a bug in
+    // this relay. Observed against Windows Server 2025 on 2026-08-16: a
+    // TGS-REQ naming an SPN nobody has registered is answered with an empty
+    // frame and a closed connection, where the profile would allow
+    // KDC_ERR_S_PRINCIPAL_UNKNOWN. The recording is in
+    // tests/captures/windows-server-2025.json and the behaviour is asserted by
+    // tests/krb5_windows_vectors.js, so this sentence is evidence rather than
+    // a guess.
     log.debug("Leaving readTcpFrame().");
-    throw new Error('the reply announces ' + declared + ' bytes, which ' +
-        'cannot be a Kerberos message');
+    throw new Error('the KDC answered with ' + declared + ' bytes, which ' +
+        'cannot be a Kerberos message. An EMPTY reply is usually a refusal ' +
+        'rather than a fault: a Windows KDC closes the connection without a ' +
+        'KRB-ERROR when it will not issue the ticket asked for — most often ' +
+        'an SPN that is not registered to any account, so check the service ' +
+        'principal name before suspecting the network.');
   }
   if (declared > maxBytes) {
     // Refused BEFORE the bytes are read, not measured afterwards. A host that

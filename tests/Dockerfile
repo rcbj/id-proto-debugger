@@ -173,6 +173,15 @@ COPY tests/krb5_crypto_vectors.js tests/krb5_codec.js tests/krb5_describe_output
 COPY tests/kerberos_tgs_ap_page.js ./
 COPY tests/krb5_as_exchange.js tests/krb5_tgs_ap.js tests/krb5_pac_layout.js ./
 COPY tests/kerberos_delegation_page.js ./
+# The two Windows-interop jobs. krb5_windows_vectors.js needs its CAPTURE as
+# well as its script — it asserts a recorded exchange from a real Windows KDC
+# and has nothing to do without it — and krb5_real_dc.js is scheduled by
+# run-report.js even though it skips unless KRB5_DC_HOST names a live domain
+# controller. A scheduled script that is not in the image fails with
+# MODULE_NOT_FOUND in 0.0s while passing on every host run, which is the trap
+# jwk_pem_encoding.js checks for; it caught exactly this pair.
+COPY tests/krb5_windows_vectors.js tests/krb5_real_dc.js ./
+COPY tests/captures ./captures
 # The mock KDC and the ticket-protected service, out of the sts/ SUBMODULE, so that
 # krb5_as_exchange.js and krb5_tgs_ap.js can start them in-process and drive the real
 # exchanges with no docker and no running service.

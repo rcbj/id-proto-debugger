@@ -267,11 +267,47 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
   assert.strictEqual(aes256.salt, "EXAMPLE.COMalice",
     "the salt must be Active Directory's shape for a user — realm + " +
         "sAMAccountName, no separator");
-  assert.ok(aes256.s2kparams && prim.toBytes(aes256.s2kparams).length === 4,
-    "s2kparams must carry the iteration count");
-  const iterations = prim.toBytes(aes256.s2kparams).reduce(function (a, b) { return a * 256 +
-      b; }, 0);
-  assert.strictEqual(iterations, 4096, "RFC 3962's default iteration count");
+  // -------------------------------------------------------------------------
+  // s2kparams, which is OPTIONAL and whose absence is the realistic case.
+  //
+  // This used to assert the field was present, because the mock always sent
+  // it. A capture from Windows Server 2025 on 2026-08-16
+  // (tests/captures/windows-server-2025.json) shows real Active Directory
+  // omitting it entirely and relying on the RFC 3962 section 4 default of
+  // 4096 -- so the old assertion encoded a belief about AD that is false, and
+  // in the dangerous direction: a client that REQUIRED the field passed here
+  // and would fail against every real domain, reporting a wrong password.
+  //
+  // The mock now defaults to AD's behaviour and takes KRB5_S2KPARAMS=send for
+  // the other one, so BOTH are covered. Whichever mode this run is in, the
+  // effective iteration count must be 4096 and the key derived from it must
+  // open the reply -- which is what the rest of this function proves.
+  // -------------------------------------------------------------------------
+  const sendsS2k = (process.env.KRB5_S2KPARAMS || "omit").toLowerCase() ===
+      "send";
+  if (sendsS2k) {
+    assert.ok(aes256.s2kparams && prim.toBytes(aes256.s2kparams).length === 4,
+      "KRB5_S2KPARAMS=send, so s2kparams must carry the iteration count");
+    const iterations = prim.toBytes(aes256.s2kparams).reduce(function (a, b) {
+      return a * 256 + b;
+    }, 0);
+    assert.strictEqual(iterations, 4096, "RFC 3962's default iteration count");
+    log.info("s2kparams sent explicitly: " + iterations + " iterations");
+  } else {
+    assert.strictEqual(aes256.s2kparams, null,
+      "the mock should omit s2kparams by default, as Active Directory does, " +
+      "but this one sent " + JSON.stringify(aes256.s2kparams) + ".\n\n" +
+      "IF YOU HAVE JUST PULLED, this is almost certainly the submodule and " +
+      "not a regression: the change that made omitting the default lives in " +
+      "rcbj/mock-sts, and until that is pushed and this repository's sts/ " +
+      "gitlink is bumped, the KDC under test is the older one that always " +
+      "sent the field. Confirm with:\n" +
+      "  MOCK_STS_DIR=../mock-sts node krb5_as_exchange.js\n" +
+      "which runs the sibling working copy. If THAT passes, bump the " +
+      "gitlink; if it fails too, the mock really did regress against " +
+      "tests/captures/windows-server-2025.json.");
+    log.info("s2kparams omitted, as AD does; the RFC 3962 default applies");
+  }
 
   // arcfour's entry must carry NO salt, and that absence is meaningful: its
   // string-to-key ignores the salt entirely.

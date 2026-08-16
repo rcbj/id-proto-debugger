@@ -37,3 +37,14 @@ client/public/version.json
 # committed. buildBrowserExtension() in common/common.sh writes it before
 # compose builds, and tests/Dockerfile COPYs extension/dist/ci.
 extension/dist/
+
+# Terraform working directories. `terraform init` downloads provider plugins
+# into these — about 700MB for the aws provider alone — and they are rebuilt by
+# the next init. State is remote (S3, see infra/bootstrap-state.sh) and must
+# never be on disk; the *.tfstate patterns are here so a stray local backend
+# cannot be committed by accident.
+infra/**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
