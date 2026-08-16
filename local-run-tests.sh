@@ -18,6 +18,16 @@ set -x
 #                (the default): the mock alone starts in seconds where the
 #                WildFly side-car needs twenty, so --wsfed-only=sts is the
 #                fastest loop of all.
+#   --krb5-real-dc[=WHAT]
+#                Spin up a real Windows Server 2025 domain controller on AWS,
+#                run the Kerberos interoperability work against it, and tear it
+#                ALL down again. Needs working AWS credentials and nothing else
+#                — no docker, no local stack: the test loads the api's relay
+#                modules in-process and talks to the DC directly.
+#                WHAT may be "test" (default, tests/krb5_real_dc.js), "capture"
+#                (refresh tests/captures/windows-server-2025.json) or "both".
+#                NOT free tier, and it is the only thing here that creates
+#                billable infrastructure — see infra/terraform-krb5/README.md.
 #   -h|--help    Show usage.
 #
 SKIP_TESTS=0
@@ -25,13 +35,16 @@ WSFED_ONLY=0
 # Which identity provider(s) --wsfed-only drives. See docs/wsfed.md for why
 # there are two and what each covers that the other cannot.
 WSFED_ONLY_IDP=both
+# --krb5-real-dc: 0 = off, else the work to run against the live DC.
+KRB5_REAL_DC=0
+KRB5_REAL_DC_WHAT=test
 SAML_SIG_VALIDATION=true
 
 usage()
 {
   cat <<USAGE
 Usage: $(basename "$0") [--saml-dev] [--wsfed-only[=keycloak|sts|both]]
-                        [-h|--help]
+                        [--krb5-real-dc[=test|capture|both]] [-h|--help]
 
   (default)    Build + start the stack, provision Keycloak (SAML AuthnRequest
                signature validation ENABLED), and run the full test suite.
@@ -48,6 +61,24 @@ Usage: $(basename "$0") [--saml-dev] [--wsfed-only[=keycloak|sts|both]]
                suite. IDP is "keycloak", "sts" or "both" (default) — the mock
                starts in seconds and the WildFly side-car does not, so
                --wsfed-only=sts is the fastest loop.
+
+  --krb5-real-dc[=WHAT]
+               Create a Windows Server 2025 domain controller on AWS, run the
+               Kerberos interoperability work against it, then destroy every
+               resource it made. Requires AWS credentials already in place;
+               requires no docker and starts no local stack, because the test
+               speaks to the DC directly through the api's relay modules loaded
+               in-process. WHAT is one of:
+                 test     (default) tests/krb5_real_dc.js
+                 capture  refresh tests/captures/windows-server-2025.json,
+                          the recording that krb5_windows_vectors.js asserts
+                          offline on every ordinary run
+                 both     the test, then the capture
+               THIS COSTS MONEY. It is not free tier — a forest promotion needs
+               more than 1 GiB — and it is the only option here that creates
+               billable infrastructure. Teardown is on an EXIT trap, so it runs
+               even when the test fails; KRB5_KEEP=1 keeps the box for
+               debugging and tells you how to remove it.
 USAGE
 }
 
@@ -56,6 +87,8 @@ while [ $# -gt 0 ]; do
     --saml-dev) SKIP_TESTS=1; SAML_SIG_VALIDATION=false ;;
     --wsfed-only) WSFED_ONLY=1 ;;
     --wsfed-only=*) WSFED_ONLY=1; WSFED_ONLY_IDP="${1#*=}" ;;
+    --krb5-real-dc) KRB5_REAL_DC=1 ;;
+    --krb5-real-dc=*) KRB5_REAL_DC=1; KRB5_REAL_DC_WHAT="${1#*=}" ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
@@ -66,6 +99,16 @@ case "${WSFED_ONLY_IDP}" in
   *) echo "Unknown --wsfed-only identity provider: ${WSFED_ONLY_IDP}" >&2
      usage; exit 1 ;;
 esac
+case "${KRB5_REAL_DC_WHAT}" in
+  test|capture|both) ;;
+  *) echo "Unknown --krb5-real-dc value: ${KRB5_REAL_DC_WHAT}" >&2
+     usage; exit 1 ;;
+esac
+if [ "${KRB5_REAL_DC}" = "1" ] && [ "${WSFED_ONLY}" = "1" ];
+then
+  echo "--krb5-real-dc and --wsfed-only each run one thing; pick one." >&2
+  exit 1
+fi
 export SAML_SIG_VALIDATION
 
 init()
@@ -365,10 +408,79 @@ runWsfedOnly()
   return ${rc}
 }
 
+# ---------------------------------------------------------------------------
+# --krb5-real-dc: the Kerberos interoperability work, against AWS.
+#
+# This is the one option here that creates billable infrastructure, and the only
+# one that needs no docker at all. tests/krb5_real_dc.js loads the api's relay
+# and SSRF guard as MODULES and opens the socket itself, so there is no api
+# service, no client, no Keycloak and no mock STS in this path — just node and a
+# domain controller in us-west-2.
+#
+# The apply / wait-for-the-forest / teardown logic is NOT duplicated here. It
+# lives once, in infra/krb5-test.sh, because the teardown is the only thing
+# standing between a failed run and a Windows instance billing until somebody
+# notices, and two copies of that would be one too many. All this function does
+# is decide which scripts run against the live DC and hand them over.
+# ---------------------------------------------------------------------------
+runKrb5RealDc()
+{
+  echo "Entering runKrb5RealDc(). what=${KRB5_REAL_DC_WHAT}"
+  local scripts=""
+  case "${KRB5_REAL_DC_WHAT}" in
+    test)    scripts="krb5_real_dc.js" ;;
+    capture) scripts="krb5_capture_real_dc.js" ;;
+    # The test first: if the client cannot complete the exchange there is no
+    # point recording it, and a capture taken from a broken run is worse than
+    # none because krb5_windows_vectors.js would then assert the breakage.
+    both)    scripts="krb5_real_dc.js krb5_capture_real_dc.js" ;;
+  esac
+
+  command -v aws >/dev/null 2>&1 || {
+    echo "ERROR: --krb5-real-dc needs the AWS CLI on PATH." >&2
+    exit 1
+  }
+  if ! aws sts get-caller-identity >/dev/null 2>&1;
+  then
+    echo "ERROR: --krb5-real-dc needs working AWS credentials; none resolved." >&2
+    echo "       Sign in, then re-run. Nothing has been created." >&2
+    exit 1
+  fi
+  echo "AWS account: $(aws sts get-caller-identity --query Account --output text 2>/dev/null)"
+
+  cat <<'WARNING'
+============================================================================
+This creates a Windows Server 2025 domain controller on AWS. It is NOT free
+tier (a forest promotion needs more than the 1 GiB a t3.micro has), it costs
+a few cents an hour, and everything it makes is destroyed at the end by an
+EXIT trap that runs even if the test fails.
+
+Set KRB5_KEEP=1 to keep the instance for debugging instead.
+============================================================================
+WARNING
+
+  # CONFIG_FILE is passed through as the tests' own config, which is what the
+  # relay and the logger read. infra/krb5-test.sh substitutes an sts-resolvable
+  # one only where the mock STS is involved, and it is not involved here.
+  KRB5_TEST_SCRIPTS="${scripts}" \
+    CONFIG_FILE="${CONFIG_FILE}" \
+    "${CURRENT_DIR}/infra/krb5-test.sh"
+  local rc=$?
+  echo "Leaving runKrb5RealDc(). rc=${rc}"
+  return ${rc}
+}
+
 init
 check_return_code $?
 prepTestEnv
 check_return_code $?
+if [ "${KRB5_REAL_DC}" = "1" ];
+then
+  runKrb5RealDc
+  check_return_code $?
+  echo "Kerberos real-DC work passed (${KRB5_REAL_DC_WHAT})."
+  exit 0
+fi
 if [ "${WSFED_ONLY}" = "1" ];
 then
   runWsfedOnly

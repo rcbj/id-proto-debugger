@@ -15,6 +15,10 @@
 #
 # Set KRB5_KEEP=1 to skip the teardown and leave the stack up for debugging. It
 # prints what to run to remove it by hand; nothing else will.
+#
+# KRB5_TEST_SCRIPTS chooses what runs against the live DC (default
+# krb5_real_dc.js). ./local-run-tests.sh --krb5-real-dc uses it to offer the
+# capture refresh as well as the test.
 # ---------------------------------------------------------------------------
 #
 # Usage:
@@ -246,28 +250,61 @@ KEYTAB_B64="$(node -e 'process.stdout.write(require("/tmp/krb5-dc.json").keytab_
 # ---------------------------------------------------------------------------
 # Run the test.
 # ---------------------------------------------------------------------------
-say "running tests/krb5_real_dc.js"
-set +e
-(
-  cd "${REPO_ROOT}/tests" && \
-  CONFIG_FILE="${CONFIG_FILE}" \
-  KRB5_DC_HOST="${KDC_HOST}" \
-  KRB5_DC_PORT="${KDC_PORT}" \
-  KRB5_REALM="${REALM}" \
-  KRB5_USER="${USER_NAME}" \
-  KRB5_PASSWORD="${USER_PW}" \
-  KRB5_SPN="${SPN}" \
-  KRB5_KEYTAB_B64="${KEYTAB_B64}" \
-  node krb5_real_dc.js
-)
-TEST_RC=$?
-set -e
+# ---------------------------------------------------------------------------
+# Run whatever was asked for against the live DC.
+#
+# KRB5_TEST_SCRIPTS is a space-separated list of scripts under tests/, and it
+# exists so that ./local-run-tests.sh --krb5-real-dc can choose between running
+# the test and REFRESHING THE CAPTURE without a second copy of the apply / wait
+# / teardown logic above. There must be exactly one implementation of the
+# teardown: it is the only thing that stops a Windows instance running until
+# somebody reads a bill, and two copies of it would be one too many.
+#
+# Every script gets the same environment. A non-zero from any of them is the
+# script's own exit status, and the trap still tears the stack down.
+# ---------------------------------------------------------------------------
+: "${KRB5_TEST_SCRIPTS:=krb5_real_dc.js}"
+TEST_RC=0
+FAILED=""
+for script in ${KRB5_TEST_SCRIPTS};
+do
+  if [ ! -f "${REPO_ROOT}/tests/${script}" ];
+  then
+    say "no such script: tests/${script}"
+    TEST_RC=1
+    FAILED="${FAILED} ${script}"
+    continue
+  fi
+  say "running tests/${script}"
+  set +e
+  (
+    cd "${REPO_ROOT}/tests" && \
+    CONFIG_FILE="${CONFIG_FILE}" \
+    KRB5_DC_HOST="${KDC_HOST}" \
+    KRB5_DC_PORT="${KDC_PORT}" \
+    KRB5_REALM="${REALM}" \
+    KRB5_USER="${USER_NAME}" \
+    KRB5_PASSWORD="${USER_PW}" \
+    KRB5_SPN="${SPN}" \
+    KRB5_KEYTAB_B64="${KEYTAB_B64}" \
+    KRB5_DC_AMI="${KRB5_DC_AMI:-}" \
+    node "${script}"
+  )
+  rc=$?
+  set -e
+  if [ ${rc} -eq 0 ];
+  then
+    say "${script} PASSED against a real Windows KDC"
+  else
+    say "${script} FAILED (exit ${rc})"
+    TEST_RC=${rc}
+    FAILED="${FAILED} ${script}"
+  fi
+done
 
-if [ ${TEST_RC} -eq 0 ];
+if [ -n "${FAILED}" ];
 then
-  say "krb5_real_dc.js PASSED against a real Windows KDC"
-else
-  say "krb5_real_dc.js FAILED (exit ${TEST_RC})"
+  say "failed:${FAILED}"
 fi
 
 # The EXIT trap tears the stack down and exits with this status.

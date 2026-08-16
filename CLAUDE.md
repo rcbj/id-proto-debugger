@@ -73,6 +73,17 @@ Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automat
 # api + client + the mock STS + the Keycloak side-car. `=sts` or `=keycloak`
 # narrows it to one; `=sts` skips the twenty-second WildFly boot entirely.
 ./local-run-tests.sh --wsfed-only[=keycloak|sts|both]
+
+# Kerberos against a REAL Windows Server 2025 domain controller, spun up on AWS
+# and destroyed afterwards. Needs AWS credentials and NOTHING else — no docker,
+# no local stack, because the test loads the api's relay modules in-process and
+# opens the socket itself. `=capture` refreshes the recorded exchange that
+# tests/krb5_windows_vectors.js asserts offline on every ordinary run; `=both`
+# does the test then the capture. THIS IS THE ONE COMMAND HERE THAT COSTS
+# MONEY — it is not free tier, because a forest promotion needs more than the
+# 1 GiB a t3.micro has. Teardown is on an EXIT trap and runs even when the test
+# fails. See infra/terraform-krb5/README.md.
+./local-run-tests.sh --krb5-real-dc[=test|capture|both]
 ```
 
 `tests/CLAUDE.md` describes what each test file covers, what gates or skips it, and the environment hazards every browser test has to handle — Web Crypto's secure-context requirement, `--headless=new`, waiting on content rather than elements, and the rest. **Read it before writing or changing a test**; each of those hazards has already cost a run, and each fails in a way that names something other than itself.
