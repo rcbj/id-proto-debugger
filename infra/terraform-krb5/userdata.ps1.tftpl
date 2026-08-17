@@ -1,0 +1,369 @@
+<powershell>
+# ===========================================================================
+# Bootstrap a single-DC Kerberos forest, then hand the test what it needs.
+#
+# Runs once, as SYSTEM, from EC2Launch v2 UserData. Promoting a forest REBOOTS
+# the machine, and UserData does not run again after a reboot — so this script
+# does only what has to happen before the reboot and leaves a scheduled task to
+# do the rest. Everything after the reboot is in stage2.ps1 below.
+#
+# NOTE ON TERRAFORM TEMPLATING: this file is rendered by templatefile(), which
+# consumes $${...} and %%{...}. PowerShell's $${name} form is therefore avoided
+# throughout in favour of plain $name, and there are no % { } pipelines.
+# ===========================================================================
+$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Force -Path C:\krb5 | Out-Null
+Start-Transcript -Path C:\krb5\stage1.log -Append | Out-Null
+
+# ---------------------------------------------------------------------------
+# stage2: everything that can only happen once this box is a domain controller.
+# Written to disk now and run by a scheduled task after the reboot.
+# ---------------------------------------------------------------------------
+$stage2 = @'
+$ErrorActionPreference = 'Stop'
+Start-Transcript -Path C:\krb5\stage2.log -Append | Out-Null
+$bucket = "${artifacts_bucket}"
+$region = "${aws_region}"
+
+# ---------------------------------------------------------------------------
+# FIND aws.exe. Do not assume it is on PATH, and do not assume it EXISTS.
+#
+# The Windows Server 2025 base AMI does not ship the AWS CLI at all -- the
+# machine PATH carries only cfn-bootstrap -- so `aws s3 cp` is a
+# CommandNotFoundException. That is what broke the first two runs of this
+# stack, and it broke them invisibly: the failure path uploads its diagnosis
+# with the same command, so the one situation the reporting exists for is the
+# one in which it says nothing. status.json was absent rather than "failed".
+#
+# So: look for the CLI, and install it if it is not there. The upload is the
+# only channel this instance has, and it has to work before anything else is
+# attempted.
+# ---------------------------------------------------------------------------
+$script:AwsExe = $null
+function Resolve-Aws {
+  $candidates = @(
+    "C:\Program Files\Amazon\AWSCLIV2\aws.exe",
+    "C:\Program Files (x86)\Amazon\AWSCLIV2\aws.exe",
+    "$env:ProgramData\chocolatey\bin\aws.exe"
+  )
+  foreach ($c in $candidates) {
+    if (Test-Path $c) { return $c }
+  }
+  $cmd = Get-Command aws.exe -ErrorAction SilentlyContinue
+  if ($cmd) { return $cmd.Source }
+  return $null
+}
+$script:AwsExe = Resolve-Aws
+if (-not $script:AwsExe) {
+  # No CLI on the image. Install it; this is a 30-second MSI and it runs
+  # before the DC promotion has had a chance to disturb anything.
+  try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri "https://awscli.amazonaws.com/AWSCLIV2.msi" `
+      -OutFile "C:\krb5\awscli.msi" -UseBasicParsing
+    Start-Process msiexec.exe -Wait -ArgumentList "/i C:\krb5\awscli.msi /qn /norestart"
+    $script:AwsExe = Resolve-Aws
+  } catch {
+    # Nothing to do but record it locally; the upload cannot work.
+    Set-Content -Path C:\krb5\no-aws-cli.txt -Encoding ascii -Value "$_"
+  }
+}
+
+function Publish($key, $file) {
+  if (-not $script:AwsExe) { return }
+  & $script:AwsExe s3 cp $file "s3://$bucket/bootstrap/$key" --region $region --only-show-errors
+}
+
+function Fail($stage, $err) {
+  Set-Content -Path C:\krb5\status.json -Encoding ascii -Value (@{
+    status = "failed"; stage = $stage; error = "$err"
+  } | ConvertTo-Json)
+  Publish "status.json" C:\krb5\status.json
+  if (Test-Path C:\krb5\stage2.log) { Publish "stage2.log" C:\krb5\stage2.log }
+  Stop-Transcript | Out-Null
+  exit 1
+}
+
+try {
+  # -----------------------------------------------------------------------
+  # DNS FIRST, and this is the step whose absence breaks everything else in a
+  # way that looks like nothing.
+  #
+  # Promoting a DC repoints the machine's resolver at itself. It is then
+  # authoritative for the forest and knows nothing about the outside, so
+  # ssm.<region>.amazonaws.com and s3.<region>.amazonaws.com stop resolving --
+  # the SSM agent goes offline, the S3 upload below fails, and the instance
+  # becomes unreachable by every channel this stack has. Forwarding to the VPC
+  # resolver restores external resolution without giving up authority for the
+  # forest zone.
+  # -----------------------------------------------------------------------
+  $i = 0
+  while ($i -lt 60) {
+    try { Get-Service ADWS, NTDS, DNS -ErrorAction Stop | Out-Null; break }
+    catch { Start-Sleep -Seconds 10; $i = $i + 1 }
+  }
+  Import-Module ActiveDirectory -ErrorAction Stop
+  Import-Module DnsServer -ErrorAction Stop
+  try {
+    Add-DnsServerForwarder -IPAddress ${vpc_dns} -PassThru -ErrorAction Stop | Out-Null
+  } catch {
+    Set-DnsServerForwarder -IPAddress ${vpc_dns} -ErrorAction Stop
+  }
+
+  # Wait for the directory to actually answer, not merely for its services to
+  # exist. A DC that has started is not a DC that will accept a New-ADUser.
+  $i = 0
+  while ($i -lt 60) {
+    try { Get-ADDomain -ErrorAction Stop | Out-Null; break }
+    catch { Start-Sleep -Seconds 10; $i = $i + 1 }
+  }
+  Get-ADDomain -ErrorAction Stop | Out-Null
+
+  # -----------------------------------------------------------------------
+  # The NON-ADMIN user the test authenticates as.
+  #
+  # Domain Users and nothing else. A test that authenticates as an
+  # administrator proves less: privileged accounts get a different PAC and can
+  # mask an authorization-data bug. PasswordNeverExpires and
+  # CannotChangePassword keep the account's key stable for the run, and
+  # AES256 is forced so the AS-REQ negotiates etype 18 rather than falling
+  # back to RC4 and testing the weaker path by accident.
+  # -----------------------------------------------------------------------
+  $userPw = ConvertTo-SecureString "${test_user_password}" -AsPlainText -Force
+  New-ADUser -Name "${test_user}" -SamAccountName "${test_user}" `
+    -UserPrincipalName "${test_user}@${domain_name}" `
+    -AccountPassword $userPw -Enabled $true `
+    -PasswordNeverExpires $true -CannotChangePassword $true `
+    -ChangePasswordAtLogon $false
+  Set-ADUser -Identity "${test_user}" -KerberosEncryptionType AES256
+
+  # -----------------------------------------------------------------------
+  # The target service.
+  #
+  # ktpass does three things in one call: it sets the account password, maps
+  # the SPN to the account, and writes a keytab holding the derived long-term
+  # key. Deriving that key here rather than in the test matters -- the AES
+  # salt for a mapped service principal is not something to guess, and the
+  # keytab is also a real Microsoft-generated file for krb5_keytab.js to
+  # parse, which is a second thing the test gets for free.
+  # -----------------------------------------------------------------------
+  $svcPw = ConvertTo-SecureString "${service_password}" -AsPlainText -Force
+  New-ADUser -Name "${service_account}" -SamAccountName "${service_account}" `
+    -UserPrincipalName "${service_account}@${domain_name}" `
+    -AccountPassword $svcPw -Enabled $true `
+    -PasswordNeverExpires $true -CannotChangePassword $true `
+    -ChangePasswordAtLogon $false
+  Set-ADUser -Identity "${service_account}" -KerberosEncryptionType AES256
+
+  & ktpass.exe -princ ${spn}@${realm} `
+    -mapuser ${netbios_name}\${service_account} `
+    -pass "${service_password}" -crypto AES256-SHA1 `
+    -ptype KRB5_NT_PRINCIPAL -mapop set `
+    -out C:\krb5\service.keytab
+  if ($LASTEXITCODE -ne 0) { throw "ktpass exited $LASTEXITCODE" }
+  if (-not (Test-Path C:\krb5\service.keytab)) { throw "ktpass wrote no keytab" }
+
+  # setspn is idempotent and ktpass -mapop set should already have done this;
+  # asserted rather than assumed, because a TGS-REQ for an unmapped SPN fails
+  # with S_PRINCIPAL_UNKNOWN, which reads as a client bug.
+  & setspn.exe -L ${service_account} | Out-String | Write-Output
+  $spnList = (& setspn.exe -L ${service_account} | Out-String)
+  if ($spnList -notmatch [regex]::Escape("${spn}")) {
+    throw "SPN ${spn} is not mapped to ${service_account}"
+  }
+
+  # -----------------------------------------------------------------------
+  # THE DELEGATION FIXTURE.
+  #
+  # Four accounts mirroring the mock KDC's four (sts/krb5_principals.js), so one
+  # test drives either KDC. Each gets ktpass -- which sets the password, maps the
+  # SPN and writes a keytab in one call -- and then the attribute that gives it
+  # its role.
+  #
+  # THREE THINGS HERE ARE EASY TO GET WRONG AND SILENT WHEN WRONG:
+  #
+  #  1. msDS-AllowedToDelegateTo names a SERVICE, exactly, as a string. A typo
+  #     is not an error; it is a KDC_ERR_BADOPTION later, from the other side of
+  #     the exchange, mentioning nothing about the attribute.
+  #  2. TrustedToAuthForDelegation is the PROTOCOL-TRANSITION half and it is
+  #     separate from the delegate-to list. Without it S4U2Self still succeeds
+  #     and hands back a ticket that simply is not FORWARDABLE, and classic
+  #     S4U2Proxy then fails a step later complaining about the evidence. That
+  #     is why svc-notrusted exists: same list, flag absent, so the flag can be
+  #     shown to be the cause.
+  #  3. RBCD's permission lives on the TARGET, as
+  #     msDS-AllowedToActOnBehalfOfOtherIdentity, and it is a SECURITY
+  #     DESCRIPTOR rather than a name. Set-ADUser's
+  #     -PrincipalsAllowedToDelegateToAccount writes it correctly; hand-building
+  #     an SDDL string here would be a second way to be wrong.
+  # -----------------------------------------------------------------------
+  $delegation = @{}
+%{ if provision_delegation ~}
+  $roles = @(
+    @{ role = 'frontend';  account = '${delegation_frontend_account}';  spn = '${delegation_frontend_spn}' },
+    @{ role = 'backend';   account = '${delegation_backend_account}';   spn = '${delegation_backend_spn}' },
+    @{ role = 'notrusted'; account = '${delegation_notrusted_account}'; spn = '${delegation_notrusted_spn}' },
+    @{ role = 'rbcd';      account = '${delegation_rbcd_account}';      spn = '${delegation_rbcd_spn}' }
+  )
+  $delPw = '${delegation_password}'
+  foreach ($r in $roles) {
+    $sec = ConvertTo-SecureString $delPw -AsPlainText -Force
+    New-ADUser -Name $r.account -SamAccountName $r.account `
+      -UserPrincipalName ($r.account + '@${domain_name}') `
+      -AccountPassword $sec -Enabled $true `
+      -PasswordNeverExpires $true -CannotChangePassword $true `
+      -ChangePasswordAtLogon $false
+    Set-ADUser -Identity $r.account -KerberosEncryptionType AES256
+    & ktpass.exe -princ ($r.spn + '@${realm}') `
+      -mapuser ('${netbios_name}\' + $r.account) `
+      -pass $delPw -crypto AES256-SHA1 `
+      -ptype KRB5_NT_PRINCIPAL -mapop set `
+      -out ('C:\krb5\' + $r.role + '.keytab')
+    if ($LASTEXITCODE -ne 0) { throw ('ktpass failed for ' + $r.account) }
+  }
+
+  # frontend: classic constrained delegation TO the back-end, plus protocol
+  # transition so its S4U2Self ticket is forwardable.
+  Set-ADUser -Identity '${delegation_frontend_account}' `
+    -Add @{ 'msDS-AllowedToDelegateTo' = '${delegation_backend_spn}' }
+  Set-ADAccountControl -Identity '${delegation_frontend_account}' `
+    -TrustedToAuthForDelegation $true
+
+  # notrusted: the SAME list, and deliberately NOT trusted for protocol
+  # transition. One attribute apart from the account above.
+  Set-ADUser -Identity '${delegation_notrusted_account}' `
+    -Add @{ 'msDS-AllowedToDelegateTo' = '${delegation_backend_spn}' }
+  Set-ADAccountControl -Identity '${delegation_notrusted_account}' `
+    -TrustedToAuthForDelegation $false
+
+  # rbcd: the target names who may act on ITS behalf. Note the direction.
+  $fe = Get-ADUser -Identity '${delegation_frontend_account}'
+  Set-ADUser -Identity '${delegation_rbcd_account}' `
+    -PrincipalsAllowedToDelegateToAccount $fe
+
+  # Assert rather than assume. A delegate-to list that did not take, or a
+  # security descriptor that did not write, is invisible until the exchange
+  # fails from the far side.
+  $feList = (Get-ADUser -Identity '${delegation_frontend_account}' `
+    -Properties 'msDS-AllowedToDelegateTo').'msDS-AllowedToDelegateTo'
+  if ($feList -notcontains '${delegation_backend_spn}') {
+    throw 'msDS-AllowedToDelegateTo did not take on the front end'
+  }
+  $rbcdSd = (Get-ADUser -Identity '${delegation_rbcd_account}' `
+    -Properties 'msDS-AllowedToActOnBehalfOfOtherIdentity').'msDS-AllowedToActOnBehalfOfOtherIdentity'
+  if (-not $rbcdSd) {
+    throw 'msDS-AllowedToActOnBehalfOfOtherIdentity did not take on the rbcd target'
+  }
+  $feUac = (Get-ADUser -Identity '${delegation_frontend_account}' `
+    -Properties userAccountControl).userAccountControl
+  if (-not ($feUac -band 0x00040000)) {
+    throw 'TrustedToAuthForDelegation did not take on the front end'
+  }
+  $ntUac = (Get-ADUser -Identity '${delegation_notrusted_account}' `
+    -Properties userAccountControl).userAccountControl
+  if ($ntUac -band 0x00040000) {
+    throw 'svc-notrusted must NOT be trusted for protocol transition'
+  }
+
+  foreach ($r in $roles) {
+    $kt = 'C:\krb5\' + $r.role + '.keytab'
+    $delegation[$r.role] = @{
+      account    = $r.account
+      spn        = $r.spn
+      password   = $delPw
+      keytab_b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($kt))
+    }
+  }
+%{ endif ~}
+
+  # -----------------------------------------------------------------------
+  # Hand it all back. The keytab is base64'd because it is binary and this
+  # goes through a JSON document the test reads directly.
+  # -----------------------------------------------------------------------
+  $keytabB64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\krb5\service.keytab'))
+  $meta = @{
+    status       = "ok"
+    realm        = "${realm}"
+    domain       = "${domain_name}"
+    netbios      = "${netbios_name}"
+    kdc_port     = 88
+    test_user    = "${test_user}"
+    test_user_upn = "${test_user}@${domain_name}"
+    service_account = "${service_account}"
+    spn          = "${spn}"
+    keytab_b64   = $keytabB64
+    os           = (Get-CimInstance Win32_OperatingSystem).Caption
+    delegation   = $delegation
+    completed_at = (Get-Date).ToUniversalTime().ToString("o")
+  }
+  Set-Content -Path C:\krb5\dc.json -Encoding ascii -Value ($meta | ConvertTo-Json -Depth 4)
+  Publish "dc.json" C:\krb5\dc.json
+
+  Set-Content -Path C:\krb5\status.json -Encoding ascii -Value (@{
+    status = "ok"; completed_at = $meta.completed_at
+  } | ConvertTo-Json)
+  Publish "status.json" C:\krb5\status.json
+  Publish "stage2.log" C:\krb5\stage2.log
+
+  # Do not run again on the next boot.
+  Unregister-ScheduledTask -TaskName "krb5-stage2" -Confirm:$false
+  Stop-Transcript | Out-Null
+} catch {
+  Fail "stage2" $_.Exception.Message
+}
+'@
+
+Set-Content -Path C:\krb5\stage2.ps1 -Value $stage2 -Encoding ascii
+
+# Register stage2 BEFORE promoting, because the promotion is what reboots us.
+$action  = New-ScheduledTaskAction -Execute 'powershell.exe' `
+  -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\krb5\stage2.ps1'
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -RunLevel Highest
+$settings  = New-ScheduledTaskSettingsSet -StartWhenAvailable `
+  -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+Register-ScheduledTask -TaskName 'krb5-stage2' -Action $action -Trigger $trigger `
+  -Principal $principal -Settings $settings -Force | Out-Null
+
+try {
+  # The Administrator password becomes the domain administrator's on promotion.
+  $net = "net"
+  & $net user Administrator "${admin_password}"
+
+  Install-WindowsFeature -Name AD-Domain-Services -IncludeManagementTools
+  Import-Module ADDSDeployment
+
+  $safe = ConvertTo-SecureString "${admin_password}" -AsPlainText -Force
+  Install-ADDSForest `
+    -DomainName "${domain_name}" `
+    -DomainNetbiosName "${netbios_name}" `
+    -SafeModeAdministratorPassword $safe `
+    -InstallDns:$true `
+    -NoRebootOnCompletion:$false `
+    -Force:$true
+} catch {
+  Set-Content -Path C:\krb5\status.json -Encoding ascii -Value (@{
+    status = "failed"; stage = "stage1"; error = "$($_.Exception.Message)"
+  } | ConvertTo-Json)
+  # Same caveat as stage2's Publish: the CLI may not be on this image at all,
+  # so resolve it rather than assuming, and stay silent rather than throwing a
+  # second error on top of the first.
+  $exe = @("C:\Program Files\Amazon\AWSCLIV2\aws.exe",
+           "C:\Program Files (x86)\Amazon\AWSCLIV2\aws.exe") |
+    Where-Object { Test-Path $_ } | Select-Object -First 1
+  if (-not $exe) {
+    $c = Get-Command aws.exe -ErrorAction SilentlyContinue
+    if ($c) { $exe = $c.Source }
+  }
+  if ($exe) {
+    & $exe s3 cp C:\krb5\status.json "s3://${artifacts_bucket}/bootstrap/status.json" --region ${aws_region} --only-show-errors
+    if (Test-Path C:\krb5\stage1.log) {
+      & $exe s3 cp C:\krb5\stage1.log "s3://${artifacts_bucket}/bootstrap/stage1.log" --region ${aws_region} --only-show-errors
+    }
+  }
+  Stop-Transcript | Out-Null
+  exit 1
+}
+Stop-Transcript | Out-Null
+</powershell>
+<persist>true</persist>

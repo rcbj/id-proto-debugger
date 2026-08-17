@@ -98,6 +98,9 @@ init()
       API_BASE_URL="${API_BASE_URL:-http://localhost:4000}"
       SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://localhost:3000/saml/sp}"
       SAML_BACKEND_AVAILABLE="${SAML_BACKEND_AVAILABLE:-true}"
+      # A local dev server is served by client/Dockerfile's build, which carries
+      # every page — the Kerberos ones included.
+      KERBEROS_AVAILABLE="${KERBEROS_AVAILABLE:-${KERBEROS_PAGES_AVAILABLE:-true}}"
       # WS-Trust STS (mock) started on the host (keycloak-tests.yml). A local dev
       # site has the api backend, so the WS-Trust jobs can run here.
       WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://localhost:8081/sts}"
@@ -106,6 +109,26 @@ init()
       API_BASE_URL="${API_BASE_URL:-${DEBUGGER_BASE_URL}}"
       SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-${DEBUGGER_BASE_URL}/saml/sp}"
       SAML_BACKEND_AVAILABLE="${SAML_BACKEND_AVAILABLE:-false}"
+      # Kerberos is not in a static build AT ALL — not merely backendless. It is
+      # DER over port 88, so the whole workflow goes through the api's relay, and
+      # client/static_site.js leaves all five pages out of dist/ and greys out
+      # the landing card. Their jobs would otherwise run against a 404 and report
+      # a missing element on a page nobody deployed.
+      #
+      # This switches off EVERY Kerberos job, not only the page ones. The codec,
+      # the crypto vectors, the PAC layout, the mock-KDC exchanges and the rest
+      # are node-only and would happily run here — but they exercise local code
+      # and say nothing about the deployed site, so on this target they are
+      # noise. They were also actively misleading: this branch sets CONFIG_FILE
+      # to ./env/test-idptools-com.js, and the mock STS resolves a relative
+      # CONFIG_FILE against sts/, where that file does not exist, so both
+      # mock-KDC jobs failed here naming a config file. Run them against the
+      # containerized stack or a local dev server instead.
+      #
+      # Set this to true for a remote target that IS api-backed. The former name
+      # KERBEROS_PAGES_AVAILABLE is still read, by this script and by
+      # run-report.js, so an existing environment keeps working.
+      KERBEROS_AVAILABLE="${KERBEROS_AVAILABLE:-${KERBEROS_PAGES_AVAILABLE:-false}}"
       # SAML_ACS_URL / SAML_SLO_URL are NOT decided here. Where the IdP should
       # return its response depends on whether this target has the edge landings
       # deployed, which probeEdgeLandings() finds out with a real POST before
@@ -123,6 +146,10 @@ init()
 
   export DEBUGGER_BASE_URL KEYCLOAK_BASE_URL KEYCLOAK_LOCALHOST_BASE_URL CONFIG_FILE
   export API_BASE_URL SAML_SP_ENTITY_ID SAML_BACKEND_AVAILABLE
+  # Both names are exported: the new one is what run-report.js prefers, the
+  # old one keeps anything that still reads it consistent with it.
+  KERBEROS_PAGES_AVAILABLE="${KERBEROS_AVAILABLE}"
+  export KERBEROS_AVAILABLE KERBEROS_PAGES_AVAILABLE
   # Only exported when set (backendless targets); otherwise common.sh derives them.
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL
@@ -132,6 +159,17 @@ init()
   if [ -n "${WSTRUST_STS_URL:-}" ];
   then
     export WSTRUST_STS_URL
+  fi
+  # The mock STS answers WS-FEDERATION too, and it is the only WS-Fed IdP a
+  # live-site run has: the Keycloak side-car is not started here, so without
+  # this every WS-Fed job would skip on a deployed target. Same host-run service
+  # over loopback as WSTRUST_STS_URL above — the BROWSER navigates to it, and
+  # Chrome treats http://localhost as potentially trustworthy even from an https
+  # page, which a bridge name would not be. Set it empty to skip these jobs.
+  WSFED_STS_METADATA_URL="${WSFED_STS_METADATA_URL-http://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml}"
+  if [ -n "${WSFED_STS_METADATA_URL:-}" ];
+  then
+    export WSFED_STS_METADATA_URL
   fi
 
   # ---------------------------------------------------------------------------

@@ -1,0 +1,64 @@
+<!-- The Kerberos workflow's Operations History pane, included at the bottom of
+     all five pages.
+
+     ONE PANE, FIVE PAGES, ONE LOG. A Kerberos exchange is a chain across the
+     pages — the AS page's TGT is what the TGS page spends, and that page's
+     service ticket is what the AP page presents — so the useful question is
+     never "what did this page do" but "what happened, in order". The same list
+     therefore appears on every page, which is why this is a partial: five
+     copies of a table would drift, and the one that drifted would be whichever
+     page was edited least.
+
+     The ids here are wired by kerberos_history.js's mount(), which every page's
+     onload calls with exactly these two strings. Nothing else reads them.
+
+     This pane holds NO KEY MATERIAL — operation names, principals, targets and
+     statuses — which is why it does not obey the ccache checkbox the way the
+     Ticket History pane does. Purging the audit log when somebody stops saving
+     session keys would remove the record exactly when they most want it. -->
+<div class="dbg-pane">
+  <legend class="dbg-legend" id="op_history_expand_button">Operations History</legend>
+  <fieldset name="op_history_fieldset" id="op_history_fieldset"
+            style="display: block;">
+  <p class="krb-note">Every action this debugger has taken in the Kerberos
+  workflow, newest first &mdash; from <em>every</em> page, not just this one.</p>
+
+  <!-- And the four paragraphs saying what each column means, folded: on all six
+       pages this sat above the log itself. Kept verbatim. -->
+  <details class="krb-more">
+    <summary>What <em>Call made</em> and <em>Result</em> mean, and what is not recorded</summary>
+    <p class="krb-note"><strong>Call made</strong> names the exchange as the wire names it
+    (<code>AS-REQ</code>, <code>TGS-REQ</code>, <code>AP-REQ</code>), so a row
+    here lines up with a packet capture taken beside it.</p>
+    <p class="krb-note"><strong>Result</strong> is one of:
+    <span class="krb-bad">Failure</span>, the call never left the browser (a name
+    that would not parse, no ticket held, a refused relay) or the far end refused
+    it; <span class="krb-pending">Sent</span>, it went out and nothing has come
+    back &mdash; a row that stays <em>Sent</em> means no answer ever reached this
+    debugger, so look at the KDC's own log rather than at this page;
+    <span class="krb-ok">Success</span>, the far end answered and the answer says
+    the call worked. A KDC refusing a request it understood is a
+    <em>Failure</em> here and is named by its <code>KRB-ERROR</code> code, because
+    <code>KDC_ERR_PREAUTH_REQUIRED</code> and <code>KDC_ERR_C_PRINCIPAL_UNKNOWN</code>
+    are entirely different problems and the status line above says so in prose.</p>
+    <p class="krb-note">The local actions that change what the workflow holds
+    &mdash; making a stored ticket active, discarding one &mdash; are recorded
+    too, and that is the point of interleaving them: a TGS-REQ that suddenly
+    starts working is explained by the row above it. Kept in this browser's local
+    storage, capped at 1,000, and it survives a reload. Unlike the Ticket History
+    pane it holds no session keys, so it is not affected by the credential-cache
+    checkbox.</p>
+    <p class="krb-note">The <a href="/kerberos_decoder.html">Decoder</a> page
+    shows this list and <strong>never adds to it</strong>. That page's one
+    guarantee is that nothing you hand it persists &mdash; it is where a captured
+    message gets pasted together with the long-term key that opens it &mdash; and
+    this log lives in local storage, so recording even <em>that</em> a decode
+    happened would break the promise for the sake of the least informative row in
+    the workflow.</p>
+  </details>
+
+  <div id="krb_operation_history"></div>
+  <input type="button" id="krb_clear_operations_button" class="btn2"
+         value="Clear operations history">
+</fieldset>
+</div>

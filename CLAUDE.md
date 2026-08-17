@@ -13,11 +13,15 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | the walt.id issuer/verifier containers and their configuration | `waltid/CLAUDE.md` |
 | the WS-Federation Keycloak 8.0.1 side-car | `keycloak-wsfed/CLAUDE.md` |
 | the WebAuthn workflow, its decoder, or the read-only browser extension | `docs/webauthn.md` |
+| the Kerberos workflow, its six pages, `common/krb5/`, the PAC, delegation, or the mock KDC | `docs/kerberos.md` |
+| **SPNEGO** — Kerberos over HTTP: `spnego.html`, `krb5_spnego.js`, `POST /krb5/spnego`, the mock's protected page | `docs/spnego.md` |
 | the mock STS — **a submodule**, so its notes cannot live under `sts/` | `docs/mock-sts.md` |
 
 ## Overview
 
-OAuth2/OIDC Debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust and SD-JWT VC (issuance and presentation) flows against real identity providers, issuers and verifiers. Supports Authorization Code, Implicit, Client Credentials, Resource Owner Password, and Refresh grants, plus all three OIDC authentication flows (Authorization Code, Implicit, Hybrid).
+OAuth2/OIDC Debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust, WS-Federation, SD-JWT VC (issuance and presentation), WebAuthn and **Kerberos v5** flows against real identity providers, issuers, verifiers, key distribution centers and security keys. Supports Authorization Code, Implicit, Client Credentials, Resource Owner Password, and Refresh grants, plus all three OIDC authentication flows (Authorization Code, Implicit, Hybrid).
+
+**Kerberos is the exception to "two-service web application", and to almost everything else here.** It is not an HTTP protocol: it speaks DER over TCP and UDP port 88, so a browser cannot reach a KDC and the api acts as a guarded byte relay rather than a proxy of anything HTTP-shaped. That makes it the one workflow absent from the deployed static sites — **all six of its pages**, the decoder included: it needs no network, but it has no landing card of its own and the only route to it is a link on `kerberos.html`, which is not there either. **SPNEGO goes with them and looks like it should not**: its own exchange is ordinary HTTP, but the ticket it carries comes from a KDC on port 88 and the two pages that obtain one are not deployed, so it would be a page whose only button says "no service ticket held" for ever. `client/static_site.js` holds the list, `client/build.js` acts on it, and the landing page's two cards for this workflow — Kerberos and SPNEGO — are greyed out and unclickable on those sites. See `docs/kerberos.md` and `docs/spnego.md`.
 
 ## Architecture
 
@@ -26,9 +30,10 @@ The project is split into two independent Node.js services:
 - **`/api/`** — Express backend (port 4000). Proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It fetches URLs its **caller** chooses, so its outbound calls are governed by an address policy and six settings in `api/env/*.js` — none of which may be dropped from a new call site. See `api/CLAUDE.md` before touching `api/server.js`.
 - **`/client/`** — Express frontend (port 3000). Serves static HTML/JS pages and handles the OAuth2 redirect callback at `/callback`, forwarding query params to `debugger2.html`. Every protocol implementation that runs in the browser is here; see `client/CLAUDE.md`.
 - **`/common/data.js`** — Shared `convertToOAuth2Format()` function used by both services to normalize grant parameters (including PKCE and custom params).
-- **`/sts/`** — A mock Security Token Service used by the test suite (OAuth2 AS, OIDC OP, WS-Trust, OID4VCI issuer, OID4VP verifier, DID publisher). **Its code is no longer in this repository** — it is the [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts) submodule, so `git submodule update --init sts` is required once per checkout and an edit under `sts/` is an edit to somebody else's checkout. See `docs/mock-sts.md`.
+- **`/common/krb5/`** — the **Kerberos v5** codec and crypto, shared by the browser bundles, the api's frame checks and the test suite, because one wire codec must not exist twice. It is the only protocol implementation here that is not under `client/src/`, and eight of its modules are additionally **vendored** into the `sts/` submodule (a Docker build cannot COPY from outside its context) with `tests/krb5_codec_sync.js` keeping the copies honest. `krb5_spnego.js` (RFC 4178) is the newest of them and the one with most to lose from drift — the browser encodes what the mock decodes and the mock encodes what the browser decodes, so every field crosses between the two copies in both directions. See `docs/kerberos.md` and `docs/spnego.md`.
+- **`/sts/`** — A mock Security Token Service used by the test suite (OAuth2 AS, OIDC OP, WS-Trust, **WS-Federation IdP**, OID4VCI issuer, OID4VP verifier, DID publisher). **Its code is no longer in this repository** — it is the [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts) submodule, so `git submodule update --init sts` is required once per checkout and an edit under `sts/` is an edit to somebody else's checkout. See `docs/mock-sts.md`.
 - **`/waltid/`** — walt.id's own `issuer-api2` and `verifier-api2` containers, behind CORS proxies, for interoperability testing. See `waltid/CLAUDE.md`.
-- **`/keycloak-wsfed/`** — A dedicated Keycloak 8.0.1 side-car carrying the cloudtrust `keycloak-wsfed` extension, because the main stack's Keycloak 26.x has no WS-Federation support at all. See `keycloak-wsfed/CLAUDE.md`.
+- **`/keycloak-wsfed/`** — A dedicated Keycloak 8.0.1 side-car carrying the cloudtrust `keycloak-wsfed` extension, because the main stack's Keycloak 26.x has no WS-Federation support at all. Since 2026-08 the mock STS answers that profile too and **every WS-Federation case runs against both**; they are complementary, not redundant — the side-car is somebody else's implementation, and the mock is the one that reads what the debugger sends. See `keycloak-wsfed/CLAUDE.md` and `docs/wsfed.md`.
 - **`/extension/`** — a **read-only** browser extension that observes `navigator.credentials` on one origin you arm it for and hands the artifacts to the WebAuthn pages. It never alters a ceremony and never starts one, and it will not name an RP ID it does not own — an extension that could would be a working defeat of WebAuthn's phishing resistance. The builds are generated (`extension/build.js`, called by the launchers), not committed. See `docs/webauthn.md`.
 - **`/infra/`** — Terraform and the Lambda@Edge handlers for the static deployments, which is how two protocols get an IdP's **POST** back to a site with no backend. See `infra/CLAUDE.md`.
 ## Running the App
@@ -65,8 +70,21 @@ Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automat
 # The containerized stack again, under Istanbul/c8 instrumentation
 ./run-coverage.sh
 
-# Just the WS-Federation test, with only api + client + the side-car
-./local-run-tests.sh --wsfed-only
+# Just the WS-Federation test, against BOTH its identity providers, with only
+# api + client + the mock STS + the Keycloak side-car. `=sts` or `=keycloak`
+# narrows it to one; `=sts` skips the twenty-second WildFly boot entirely.
+./local-run-tests.sh --wsfed-only[=keycloak|sts|both]
+
+# Kerberos against a REAL Windows Server 2025 domain controller, spun up on AWS
+# and destroyed afterwards. Needs AWS credentials and NOTHING else — no docker,
+# no local stack, because the test loads the api's relay modules in-process and
+# opens the socket itself. `=capture` refreshes the recorded exchange that
+# tests/krb5_windows_vectors.js asserts offline on every ordinary run; `=both`
+# does the test then the capture. THIS IS THE ONE COMMAND HERE THAT COSTS
+# MONEY — it is not free tier, because a forest promotion needs more than the
+# 1 GiB a t3.micro has. Teardown is on an EXIT trap and runs even when the test
+# fails. See infra/terraform-krb5/README.md.
+./local-run-tests.sh --krb5-real-dc[=test|capture|both]
 ```
 
 `tests/CLAUDE.md` describes what each test file covers, what gates or skips it, and the environment hazards every browser test has to handle — Web Crypto's secure-context requirement, `--headless=new`, waiting on content rather than elements, and the rest. **Read it before writing or changing a test**; each of those hazards has already cost a run, and each fails in a way that names something other than itself.
@@ -108,8 +126,10 @@ code you write **as you write it**, not as a later sweep.
   bundles a handler with no dependencies), `common/sp_keypair.js` (`common/` is
   outside the reach of `tests/node_modules` — see the note in `common/tests.js`),
   the build scripts `client/version.js`, `client/build.js`,
-  `extension/build.js` plus `waltid/cors-proxy.js`, which run before or outside
-  an install, and **`client/src/coverage_beacon.js`**, which looks like an
+  `client/static_site.js`, `extension/build.js` plus `waltid/cors-proxy.js`,
+  which run before or outside an install (`static_site.js` is additionally read
+  by `tests/static_site_exclusions.js`, which must not need
+  `client/node_modules` either), and **`client/src/coverage_beacon.js`**, which looks like an
   ordinary client module and is not one: `client/Dockerfile`'s coverage step
   *appends* it to each finished bundle (`cat src/coverage_beacon.js >>
   public/js/${src_name}.js`), so browserify and envify never see it and neither

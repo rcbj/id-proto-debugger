@@ -67,6 +67,19 @@ services:
     hostname: api
     image: rcbj/api
     network_mode: "host"
+    # `sts` is the address the KERBEROS pages hand to the api's relay — the KDC is
+    # not HTTP, so the browser cannot reach it and the api resolves the name (see
+    # client/src/env/local.js, which bakes it in as krb5KdcHostDefault). On the
+    # bridge stack (docker-compose.yml) Docker's DNS answers it. HERE there is no
+    # Docker DNS at all, because every service uses host networking, so the name
+    # resolved to nothing and every AS-REQ came back EKRB5DNS, "Could not resolve
+    # sts" — from a KDC the user can reach perfectly well from their own shell.
+    # Under host networking 127.0.0.1 IS the host, which is where the mock STS's
+    # KDC listens (88, TCP and UDP) along with its ticket-protected service
+    # (8888), so this entry makes the one baked-in address work on both stacks.
+    # Only the api needs it: it is the only process that resolves the KDC's name.
+    extra_hosts:
+      - "sts:127.0.0.1"
     environment:
       - CONFIG_FILE=./env/local.js
     build:

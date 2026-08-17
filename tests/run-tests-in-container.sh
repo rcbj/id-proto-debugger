@@ -46,6 +46,21 @@ init()
   # Exporting an unset variable passes nothing to children, so run-report.js sees
   # WSTRUST_STS_URL as undefined on non-containerized targets and skips.
   export WSTRUST_STS_URL
+  # The same mock STS answers WS-FEDERATION as well as WS-Trust (its /wsfed
+  # passive endpoint and the AD FS-style metadata path below), so the WS-Fed
+  # jobs run against it in addition to the Keycloak side-car. Same DNS rule as
+  # WSTRUST_STS_URL and for the same reason — this is a BROWSER-facing URL: the
+  # page navigates to the IdP, so the name has to resolve in the browser, and
+  # the compose name only does so on this stack. It is a separate variable from
+  # WSTRUST_STS_URL rather than derived from it because that one may legitimately
+  # point at a real Apache CXF STS, which has no WS-Federation endpoint at all;
+  # deriving would turn "not this protocol" into a run of failing jobs.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      WSFED_STS_METADATA_URL="${WSFED_STS_METADATA_URL:-http://sts:8081/FederationMetadata/2007-06/FederationMetadata.xml}"
+      ;;
+  esac
+  export WSFED_STS_METADATA_URL
   # walt.id's issuer-api2 — the real OpenID4VCI issuer the interoperability job
   # runs against. Same reasoning as the STS above: the compose DNS name is only
   # valid on the containerized stack, and the BROWSER has to reach it, because

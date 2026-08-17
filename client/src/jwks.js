@@ -117,22 +117,28 @@ function buildJWKSInfoTable(discoveryInfo) {
                                       '<th style="max-width: 50px; ' +
                                           'word-wrap: break-word;">Value</th>' +
                                     "</tr>";
+     // Both halves are escaped, and the NAME as well as the value: a JWKS is a
+     // JSON object whose member names this page did not choose, so `key` is as
+     // much someone else's string as what it points at. The textarea branch is
+     // not the safer one for being a textarea — a value containing
+     // "</textarea>" closes the element early and everything after it is parsed
+     // as markup, which is the case that reaches the DOM as HTML.
      Object.keys(discoveryInfo.keys[i]).forEach( (key) => {
        if ( key == 'n') {
          discovery_info_table_html = discovery_info_table_html +
                                  "<tr>" +
-                                   "<td>" + key + "</td>" +
+                                   "<td>" + escapeHtmlText(key) + "</td>" +
                                    '<td><textarea id="jwks-' + i +
                                        '" name="jwks-' + i + '" rows="10" ' +
                                        'cols="70" readonly="true">' +
-                                       discoveryInfo.keys[i][key] +
+                                       escapeHtmlText(discoveryInfo.keys[i][key]) +
                                        "</textarea></td>" +
                                  "</tr>";
        } else {
         discovery_info_table_html = discovery_info_table_html +
                                  "<tr>" +
-                                   "<td>" + key + "</td>" +
-                                   "<td>" + discoveryInfo.keys[i][key] +
+                                   "<td>" + escapeHtmlText(key) + "</td>" +
+                                   "<td>" + escapeHtmlText(discoveryInfo.keys[i][key]) +
                                        "</td>" +
                                  "</tr>";
        }
@@ -145,14 +151,16 @@ function buildJWKSInfoTable(discoveryInfo) {
      // OKP key, say. `jwk-to-pem` threw on those as well, and the throw escaped
      // to the caller and left the whole JWKS table unrendered. Report the one
      // key that could not be encoded and carry on with the others. The message
-     // quotes a value from a fetched document, so it is escaped before it goes
-     // anywhere near the markup.
+     // quotes a value from a fetched document, so it cannot go into the markup
+     // raw — but it is escaped at the interpolation below rather than here, so
+     // that both branches are escaped exactly once. Escaping into `pem` instead
+     // left the success path unescaped and the log line pre-mangled.
      var pem;
      try {
        pem = jwkToPem(discoveryInfo.keys[i]);
      } catch (e) {
        log.warn('Could not encode key ' + i + ' as a PEM: ' + e.message);
-       pem = 'No PEM available for this key: ' + escapeHtmlText(e.message);
+       pem = 'No PEM available for this key: ' + e.message;
      }
      log.debug('cert: ' + pem);
      discovery_info_table_html = discovery_info_table_html +
@@ -160,7 +168,7 @@ function buildJWKSInfoTable(discoveryInfo) {
                                  '<textarea id="x509-' + i + '" name="x509-' +
                                      i +
                                      '" rows="10" cols="70" readonly="true">' +
-                                     pem + '</textarea>' +
+                                     escapeHtmlText(pem) + '</textarea>' +
                                  "</fieldset>";
 
     discovery_info_table_html = discovery_info_table_html +

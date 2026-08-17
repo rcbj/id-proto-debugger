@@ -12,10 +12,10 @@
 
 .landing {
   text-align: center;
-  padding: 16px 12px 24px;
+  padding: 10px 12px 18px;
 }
-.landing-title { font-size: 1.45em; margin: 2px 0 4px; color: #333; }
-.landing-sub { font-size: .9em; color: #666; margin: 0 0 16px; }
+.landing-title { font-size: 1.35em; margin: 0 0 3px; color: #333; }
+.landing-sub { font-size: .85em; color: #666; margin: 0 0 10px; }
 
 /* Four across on a full-width container, three when it narrows to Bootstrap's
    724px, one on a phone — auto-fit does all of it without a media query per
@@ -41,8 +41,24 @@
    * 180px did, and the only symptom was the height. Widening the container
    * instead is not available: this grid sits inside bootstrap's 940px
    * .container, so a bigger max-width here would do nothing. */
-  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
-  gap: 16px;
+  /*
+   * SIX across as of the eleventh card (SPNEGO), and the arithmetic is the
+   * same one the note above describes, run again: n columns fit when
+   * n*min + (n-1)*gap <= 940, so six need min <= 143.3 (6*143 + 5*16 = 938).
+   * At 175px eleven cards become 5+5+1 — three rows, and the third is below
+   * the fold on a 768px screen exactly as two columns were at six cards and
+   * four were at nine. This is the fourth time the column count has had to
+   * grow for that reason.
+   *
+   * 143px is the WIDEST value that works, and picking anything larger fails
+   * SILENTLY: the grid simply stays at five and the only symptom is the
+   * height. Measure with landingFitsOnOneScreen() in tests/navigation.js
+   * rather than by looking, and note that the containerized run and a host run
+   * differ by a few pixels because fonts-liberation gives different metrics
+   * from a host's Arial.
+   */
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 10px;
   align-items: stretch;
   max-width: 940px;
   margin: 0 auto;
@@ -53,7 +69,7 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 16px 12px 18px;
+  padding: 12px 9px 14px;
   border: 1px solid #ccc;
   border-radius: 12px;
   background: #fafafa;
@@ -87,7 +103,7 @@
    where fonts-liberation gives different metrics from a host's Arial. 40px
    leaves ~16px of headroom instead of none. Measured at each step, not
    estimated. */
-.landing-icon svg { width: 40px; height: 40px; }
+.landing-icon svg { width: 34px; height: 34px; }
 .landing-card:nth-child(1) .landing-icon { color: #2680eb; }
 .landing-card:nth-child(2) .landing-icon { color: #5a2a8f; }
 .landing-card:nth-child(3) .landing-icon { color: #0a7d63; }
@@ -97,13 +113,67 @@
 .landing-card:nth-child(7) .landing-icon { color: #7a5c00; }
 .landing-card:nth-child(8) .landing-icon { color: #167a8a; }
 .landing-card:nth-child(9) .landing-icon { color: #6b3fa0; }
+.landing-card:nth-child(10) .landing-icon { color: #8a4b2a; }
+.landing-card:nth-child(11) .landing-icon { color: #0f6b7a; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 
 .landing-card-title { font-size: .98em; font-weight: 700; margin-bottom: 6px; }
-.landing-card-desc { font-size: .74em; color: #666; line-height: 1.38; }
+.landing-card-desc { font-size: .72em; color: #666; line-height: 1.3; }
 .landing-card:hover .landing-card-desc,
 .landing-card:focus .landing-card-desc { color: inherit; }
+
+/* A protocol the STATIC deployments do not carry. client/build.js strips the
+   href from any card marked data-not-on-static and adds .landing-card-disabled;
+   nothing here fires on an api-backed deployment, where the card is an ordinary
+   link. See client/static_site.js for why Kerberos is the one that is.
+
+   The card stays an <a> — with no href it is neither focusable nor clickable,
+   and every selector that reads this page (the accent rules above,
+   landingFitsOnOneScreen() in tests/navigation.js) is written against
+   `a.landing-card`. These rules come AFTER the :hover/:focus ones deliberately:
+   same specificity, so order is what cancels the lift.
+
+   The two descriptions swap rather than stack. A card's height is a whole grid
+   ROW's height, and this page's one hard requirement is that every card is
+   visible without scrolling — so the unavailable text is written no longer than
+   the one it replaces, and an appended note (which would have added a line to
+   the second row) is not what this does. */
+.landing-card-unavailable { display: none; }
+/* :not() rather than a later override — the unavailable span carries BOTH
+   classes, so a bare `.landing-card-disabled .landing-card-desc
+   { display:none }` hides it too and only source order brings it back. */
+.landing-card-disabled .landing-card-desc:not(.landing-card-unavailable) {
+  display: none;
+}
+.landing-card-disabled .landing-card-unavailable { display: block; }
+.landing-card-disabled,
+.landing-card-disabled:hover,
+.landing-card-disabled:focus {
+  cursor: default;
+  background: #f2f2f2;
+  border-color: #ddd;
+  color: #8a8a8a;
+  box-shadow: none;
+  transform: none;
+}
+/* Greyed, but NOT the #333 body colour: landingFitsOnOneScreen() reads every
+   card's icon colour and fails a card whose icon has no accent of its own, so
+   an icon that greys to exactly the text colour reads as a missing nth-child
+   rule. This is a distinct grey and says so.
+
+   Doubled class, because the accent rules above are
+   `.landing-card:nth-child(N) .landing-icon` — a class plus a pseudo-class plus
+   a class, which outranks a two-class selector however far down the file it
+   sits. `.landing-card.landing-card-disabled` matches that weight and wins on
+   order. Without the doubling the card greys and its icon stays brown, which is
+   what the first cut of this did. */
+.landing-card.landing-card-disabled .landing-icon,
+.landing-card.landing-card-disabled:hover .landing-icon,
+.landing-card.landing-card-disabled:focus .landing-icon { color: #9b9b9b; }
+.landing-card-disabled .landing-card-unavailable,
+.landing-card-disabled:hover .landing-card-unavailable,
+.landing-card-disabled:focus .landing-card-unavailable { color: #8a8a8a; }
 
 /* A phone gets one card per row and the full description; there is nothing to fit
    on one screen there, so the compaction above is relaxed rather than doubled. */

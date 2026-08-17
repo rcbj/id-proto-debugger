@@ -51,6 +51,31 @@ var log = bunyan.createLogger({ name: "jwk_pem",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
+// The two source sweeps below read the WHOLE of client/src, so "that directory
+// exists" is not the question they need answered — "is this a checkout" is. The
+// tests image stages most borrowed modules FLAT beside these scripts, but it
+// also mirrors eleven Kerberos bundles into /usr/src/client/src, because the
+// two Kerberos pane tests resolve their files as ../client/src (see
+// tests/Dockerfile). A guard on the directory therefore stopped skipping the
+// moment that mirror appeared, and the elliptic sweep ran over eleven files it
+// had never been meant to judge before dying on client/package.json, which no
+// mirror carries — a failure naming a manifest for what is really a layout.
+//
+// That manifest is the discriminator precisely because it sits OUTSIDE
+// client/src: no mirror of that directory can ever contain it, and a checkout
+// cannot lack it. Returns the directory to sweep, or undefined in the image.
+function checkoutSrcDir() {
+  log.debug("Entering checkoutSrcDir().");
+  const manifest = path.join(__dirname, "..", "client", "package.json");
+  if (!fs.existsSync(manifest)) {
+    log.debug("Leaving checkoutSrcDir(). No " + manifest + ".");
+    return undefined;
+  }
+  const dir = path.join(__dirname, "..", "client", "src");
+  log.debug("Leaving checkoutSrcDir(). " + dir);
+  return dir;
+}
+
 // In a checkout the module is at client/src/jwk_pem.js; the tests image copies
 // it flat next to the test scripts (see tests/Dockerfile).
 var jwkToPem = paths.requireSharedModule(
@@ -415,15 +440,27 @@ function ellipticStaysOutOfTheBundles() {
   log.debug("Entering ellipticStaysOutOfTheBundles().");
   log.info("[bundles] Reading client/src for the requires that pull " +
            "`elliptic` into a bundle.");
-  const srcDir = path.join(__dirname, "..", "client", "src");
-  if (!fs.existsSync(srcDir)) {
-    // The tests image copies individual modules flat and has no client/src, so
-    // there is nothing to read. Say so rather than reporting a silent pass.
-    log.info("[bundles] SKIPPED — no client/src in this layout (running from " +
-             "the tests image).");
+  const srcDir = checkoutSrcDir();
+  if (!srcDir) {
+    // The tests image copies individual modules flat and carries only a partial
+    // mirror of client/src, so there is nothing here worth reading. Say so
+    // rather than reporting a pass over eleven Kerberos bundles.
+    log.info("[bundles] SKIPPED — no client/package.json in this layout, so " +
+             "this is the tests image (which carries only a partial mirror " +
+             "of client/src) rather than a checkout.");
     log.debug("Leaving ellipticStaysOutOfTheBundles().");
     return;
   }
+  // common/krb5 is scanned as well, and for exactly the same reason: those
+  // modules are STAGED INTO client/src at build time (the way common/data.js
+  // already is, see client/Dockerfile and client/build.js), so browserify treats
+  // them as bundle source even though they do not live under client/src. A
+  // `require("crypto")` there would put `elliptic` into the Kerberos bundle with
+  // nothing in this repository noticing — the Kerberos crypto reaches Web Crypto
+  // through globalThis specifically to avoid it, and this is what holds it to
+  // that.
+  const extraDirs = [path.join(__dirname, "..", "common", "krb5")]
+    .filter(function (d) { return fs.existsSync(d); });
   const banned = [
     { pattern: /require\(\s*['"]jwk-to-pem['"]\s*\)/, name: "jwk-to-pem",
       why: "builds its EC point through elliptic; use ./jwk_pem instead" },
@@ -442,19 +479,36 @@ function ellipticStaysOutOfTheBundles() {
   // Recursive: client/src has subdirectories (env, vendor_claims), and a bundle
   // reaches whatever any of its requires reach, at any depth.
   const files = [];
-  (function walk(dir) {
+  (function walk(dir, label) {
     fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        walk(full);
+        walk(full, label);
       } else if (/\.js$/.test(entry.name)) {
-        files.push(path.relative(srcDir, full));
+        files.push({ path: full, label: label + "/" + path.relative(dir, full) });
       }
     });
-  })(srcDir);
+  })(srcDir, "client/src");
+  extraDirs.forEach(function (dir) {
+    walkExtra(dir, path.relative(path.join(__dirname, ".."), dir));
+  });
+  function walkExtra(dir, label) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walkExtra(full, label + "/" + entry.name);
+      else if (/\.js$/.test(entry.name)) files.push({ path: full, label: label + "/" + entry.name });
+    });
+  }
   assert.ok(files.length > 0, "found no .js files in client/src");
+  // The staged directories must actually have been read, or this check reports a
+  // pass over files it never opened — the silent-no-op failure mode.
+  extraDirs.forEach(function (dir) {
+    const rel = path.relative(path.join(__dirname, ".."), dir);
+    assert.ok(files.some(function (f) { return f.label.indexOf(rel) === 0; }),
+      "found no .js files under " + rel + ", which is staged into a bundle and must be scanned");
+  });
   files.forEach(function (file) {
-    const text = fs.readFileSync(path.join(srcDir, file), "utf8");
+    const text = fs.readFileSync(file.path, "utf8");
     text.split("\n").forEach(function (line, index) {
       // Comments in these files discuss the banned requires on purpose (that is
       // where the reasoning lives), so a commented line is not an offence.
@@ -486,12 +540,14 @@ function ellipticStaysOutOfTheBundles() {
       "deliberately and nothing in client/src requires it");
   });
   assert.ok(declared["create-hash"],
-    "client/package.json must declare create-hash — debugger.js requires it " +
-        "for the PKCE " +
-    "code_challenge, and it is currently only present as a transitive " +
-        "dependency of browserify");
-  log.info("[bundles] OK — " + files.length +
-           " files in client/src, none requiring a package that " +
+    "client/package.json must declare create-hash — debugger.js requires it" +
+            "for the PKCE " +
+    "code_challenge, and it is currently only present as a transitive dependency" +
+            "of browserify");
+  log.info("[bundles] OK — " + files.length + " files in client/src plus the staged" +
+           "directories (" +
+    extraDirs.map(function (d) { return path.relative(path.join(__dirname, ".."), d); }).join(", ") +
+    "), none requiring a package that " +
            "reaches elliptic, and none of those packages declared.");
   log.debug("Leaving ellipticStaysOutOfTheBundles().");
 }
@@ -523,10 +579,11 @@ function bigIntLiteralsStayOutOfTheBundles() {
   log.debug("Entering bigIntLiteralsStayOutOfTheBundles().");
   log.info("[bigint] Reading client/src for BigInt literals, which envify's " +
            "esprima cannot parse.");
-  const srcDir = path.join(__dirname, "..", "client", "src");
-  if (!fs.existsSync(srcDir)) {
-    log.info("[bigint] SKIPPED — no client/src in this layout (running from " +
-             "the tests image).");
+  const srcDir = checkoutSrcDir();
+  if (!srcDir) {
+    log.info("[bigint] SKIPPED — no client/package.json in this layout, so " +
+             "this is the tests image (which carries only a partial mirror " +
+             "of client/src) rather than a checkout.");
     log.debug("Leaving bigIntLiteralsStayOutOfTheBundles().");
     return;
   }
@@ -651,6 +708,109 @@ function appendedBeaconNeedsNoModuleSystem() {
 }
 
 
+// ---------------------------------------------------------------------------
+// No two files may land on the same path in the tests image.
+//
+// tests/Dockerfile copies test scripts AND the modules they exercise FLAT into one
+// directory. Two files sharing a basename therefore overwrite each other, and which one
+// survives depends only on which COPY ran last. Both outcomes are bad and one of them is
+// silent:
+//
+//   * the MODULE wins  — `node <name>.js` loads a module, prints nothing, exits 0, and
+//     run-report records a PASS. The test has not run. This is the dangerous one, and it
+//     had happened three times over: dpop.js, jose_jwe.js and url_safety.js were each
+//     reporting green in ~30ms while executing a module. Renamed, they take 231ms, 709ms
+//     and 46ms and assert thousands of things.
+//   * the TEST wins    — the module is replaced by a test script, so everything that
+//     requires it gets a file with no exports. krb5_pac.js did this and took five other
+//     Kerberos jobs down with it, because krb5_describe.js requires it.
+//
+// The convention that avoids it is to give the TEST a distinguishing name — the module
+// keeps its own, since other code imports it: jwk_pem.js is tested by jwk_pem_encoding.js,
+// krb5_crypto.js by krb5_crypto_vectors.js, krb5_pac.js by krb5_pac_layout.js. The
+// Dockerfile has said so in a comment for a long time; a comment is not a check, and this
+// is the check.
+//
+// Runs in a checkout, where tests/Dockerfile is readable; skipped with a reason in the
+// image, where it is not.
+// ---------------------------------------------------------------------------
+function testsImageHasNoCollidingFilenames() {
+  log.debug("Entering testsImageHasNoCollidingFilenames().");
+  const dockerfile = path.join(__dirname, "Dockerfile");
+  if (!fs.existsSync(dockerfile)) {
+    log.info("[collisions] skipped: tests/Dockerfile is not present, so this is the tests image " +
+      "rather than a checkout.");
+    log.debug("Leaving testsImageHasNoCollidingFilenames().");
+    return;
+  }
+  const flat = {};
+  fs.readFileSync(dockerfile, "utf8").split("\n").forEach(function (line) {
+    const text = line.trim();
+    if (text.indexOf("COPY ") !== 0) return;
+    const parts = text.slice(5).split(/\s+/).filter(Boolean);
+    if (parts.length < 2) return;
+    const dest = parts[parts.length - 1];
+    // Only the flat destination collides; "./sts/" and "./contexts" are directories of
+    // their own and a basename may legitimately repeat across them.
+    if (dest !== "./" && dest !== ".") return;
+    parts.slice(0, -1).forEach(function (src) {
+      if (!/\.js$/.test(src)) return;
+      const base = src.split("/").pop();
+      if (!flat[base]) flat[base] = [];
+      flat[base].push(src);
+    });
+  });
+
+  const collisions = Object.keys(flat).filter(function (base) { return flat[base].length > 1; })
+    .map(function (base) { return base + " <- " + flat[base].join(" and "); });
+  assert.deepStrictEqual(collisions, [],
+    "these files are copied FLAT into the tests image under the same name, so the last COPY " +
+    "silently overwrites the earlier one: " + collisions.join(" | ") +
+    ". Give the TEST a distinguishing name (jwk_pem.js is tested by jwk_pem_encoding.js, " +
+    "krb5_crypto.js by krb5_crypto_vectors.js) — the module keeps its own name because other " +
+    "code requires it. If the module wins, the test silently passes in ~30ms without running; " +
+    "if the test wins, everything requiring that module breaks.");
+
+  // ...and every script run-report names must actually REACH the image. A job whose
+  // script was never COPYd fails with MODULE_NOT_FOUND in 0.0s, which reads as a broken
+  // test rather than a missing line in a Dockerfile — krb5_as_exchange.js was in the
+  // suite for four phases and in the image for none of them, passing on every host run.
+  const report = path.join(__dirname, "run-report.js");
+  if (fs.existsSync(report)) {
+    const copied = {};
+    Object.keys(flat).forEach(function (base) { copied[base] = true; });
+    // The image also copies whole globs (tests/oauth2_*, tests/oidc_*); expand them the
+    // same way Docker does, by prefix.
+    const globs = [];
+    fs.readFileSync(dockerfile, "utf8").replace(/COPY\s+([^\n]+)/g, function (_, rest) {
+      rest.split(/\s+/).forEach(function (src) {
+        if (src.indexOf("tests/") === 0 && src.indexOf("*") !== -1) {
+          globs.push(src.slice("tests/".length).replace("*", ""));
+        }
+      });
+      return _;
+    });
+    const scripts = [];
+    fs.readFileSync(report, "utf8").replace(/script:\s*"([^"]+)"/g, function (_, name) {
+      if (scripts.indexOf(name) === -1) scripts.push(name);
+      return _;
+    });
+    const absent = scripts.filter(function (name) {
+      if (copied[name]) return false;
+      return !globs.some(function (prefix) { return name.indexOf(prefix) === 0; });
+    });
+    assert.deepStrictEqual(absent, [],
+      "run-report.js schedules these scripts and tests/Dockerfile never copies them into the " +
+      "image, so each fails there with MODULE_NOT_FOUND in 0.0s while passing on every host " +
+      "run: " + absent.join(", "));
+  }
+
+  const total = Object.keys(flat).length;
+  log.info("[collisions] OK — " + total + " files are copied flat into the tests image, every " +
+    "one has a unique name, and every script run-report schedules is among them.");
+  log.debug("Leaving testsImageHasNoCollidingFilenames().");
+}
+
 async function test() {
   log.debug("Entering test().");
   rsaKeys();
@@ -663,6 +823,7 @@ async function test() {
   ellipticStaysOutOfTheBundles();
   bigIntLiteralsStayOutOfTheBundles();
   appendedBeaconNeedsNoModuleSystem();
+  testsImageHasNoCollidingFilenames();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

@@ -62,7 +62,15 @@ function base58Encode(bytes) {
   // what the encoding defines. Dropping them silently changes the key.
   var zeros = 0;
   while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
-  var digits = [0];
+  // Empty, not [0]: the leading "1"s below already account for every zero byte,
+  // so a seeded digit is an EXTRA one. It is invisible on any input with a
+  // non-zero byte in it — the seed is simply the top digit the arithmetic then
+  // overwrites — and wrong on an all-zero input, where the arithmetic never
+  // runs: [0] encoded as "11" and decoded back to three zero bytes. Every
+  // did:key here carries a multicodec prefix, which is never zero, so this only
+  // ever showed in tests/did_document.js's random round trip, at the 1-in-256
+  // rate at which crypto.randomBytes(1) is 0x00.
+  var digits = [];
   for (var i = zeros; i < bytes.length; i++) {
     var carry = bytes[i];
     for (var j = 0; j < digits.length; j++) {
@@ -91,7 +99,10 @@ function base58Decode(str) {
   }
   var zeros = 0;
   while (zeros < s.length && s.charAt(zeros) === B58.charAt(0)) zeros++;
-  var bytes = [0];
+  // Empty for the same reason the encoder's digits are: the leading "1"s are
+  // already counted into `zeros` and re-emitted below, so a seeded byte is an
+  // extra one on a string that is nothing but "1"s.
+  var bytes = [];
   for (var i = zeros; i < s.length; i++) {
     var value = B58.indexOf(s.charAt(i));
     if (value < 0) throw new Error('"' + s.charAt(i) +

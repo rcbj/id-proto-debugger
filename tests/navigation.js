@@ -91,13 +91,13 @@ async function checkFooterVersion(driver, where) {
 //      class they use is defined in the shared `saml_common.css`. The link
 //      resolved, so nothing 404'd; the page simply rendered unstyled.
 //
-// The second is caught by a naming convention rather than a list: a class with
-// a `saml-` / `wst-` / `wsfed-` / `wa-` / `vc-` prefix is a styling class by
-// definition, so if a page uses one that none of its stylesheets defines, that
-// page is missing a stylesheet. Classes without those prefixes are left alone —
-// the older debugger pages use plenty of them as pure JavaScript selectors.
+// The second is caught by a naming convention rather than a list: a class with a
+// `saml-` / `wst-` / `wsfed-` / `wa-` / `vc-` / `krb-` prefix is a styling class by definition, so
+// if a page uses one that none of its stylesheets defines, that page is missing a
+// stylesheet. Classes without those prefixes are left alone — the older debugger
+// pages use plenty of them as pure JavaScript selectors.
 // ---------------------------------------------------------------------------
-var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl)-/;
+var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb)-/;
 
 async function checkStylesheetsLoaded(driver, where) {
   log.debug("Entering checkStylesheetsLoaded(). where=" + where);

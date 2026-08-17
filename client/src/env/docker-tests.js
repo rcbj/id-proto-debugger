@@ -33,7 +33,49 @@ var config = {
   // Default RFC 8414 (OAuth 2.0 Authorization Server Metadata) endpoint for
   // the Metadata Retrieval panes. The mock authorization server metadata the
   // STS service publishes.
-  rfc8414MetadataUrlDefault: "http://sts:8081/.well-known/oauth-authorization-server"
+  rfc8414MetadataUrlDefault: "http://sts:8081/.well-known/oauth-authorization-server",
+
+  // ---------------------------------------------------------------------------
+  // Kerberos. These fill kerberos.html so the workflow runs against this project's
+  // mock KDC without anything being typed.
+  //
+  // **The host is `sts`, not localhost, and that is not a typo.** The relay runs in
+  // the API container, so the KDC address is resolved from THERE — and the mock
+  // KDC's port 88 is not published to the host by any compose file, only reachable
+  // on the compose network. `127.0.0.1` in this field means the api container
+  // itself, which listens on nothing, and the failure is a connection refused that
+  // names an address the user can reach perfectly well from their own shell.
+  //
+  // The password is a published test credential from the mock's principal table,
+  // not a secret. It is set here and EMPTY in prod.js / test-idptools-com.js, which
+  // is also where `backendAvailable` is false and the workflow cannot run at all.
+  // ---------------------------------------------------------------------------
+  krb5RealmDefault: "EXAMPLE.COM",
+  krb5KdcHostDefault: "sts",
+  krb5KdcPortDefault: "88",
+  krb5PrincipalDefault: "alice",
+  krb5PasswordDefault: "password!",
+  // ---------------------------------------------------------------------------
+  // SPNEGO's two fields, and why one of them is deliberately EMPTY.
+  //
+  // The URL is fetched by the **api**, not by the browser, so it follows the same
+  // rule as krb5KdcHostDefault above: the compose service name where the api runs
+  // in a container, loopback for a host run, and nothing at all on a build with no
+  // api behind it. It was hard-coded as `http://localhost:8081/...` in
+  // spnego.html, which is right for exactly one of those three.
+  //
+  // The SPN is empty ON PURPOSE, and must stay that way unless a deployment
+  // genuinely knows better. A client derives it from the URL's host — `HTTP/<host>`,
+  // which is what RFC 4559 clients and every browser do — and that derivation is
+  // the thing the page exists to make visible: nothing in SPNEGO carries the SPN,
+  // so when it is wrong the failure is a KDC error naming nothing about HTTP.
+  // Pre-filling a value here would hide the guess behind a default and teach
+  // nobody. Set it only for a service whose SPN does not match its URL host, which
+  // is the case that needs saying out loud anyway.
+  // ---------------------------------------------------------------------------
+  krb5SpnegoUrlDefault: "http://sts:8081/spnego/protected",
+  krb5SpnegoSpnDefault: ""
+
 };
 
 module.exports = config;

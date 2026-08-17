@@ -63,7 +63,38 @@ var config = {
   // Default RFC 8414 (OAuth 2.0 Authorization Server Metadata) endpoint for
   // the Metadata Retrieval panes. No mock STS on a hosted deployment: the
   // user supplies the URL.
-  rfc8414MetadataUrlDefault: ""
+  rfc8414MetadataUrlDefault: "",
+
+  // Kerberos. Empty on a build with no api behind it: the relay is what reaches a
+  // KDC, and `backendAvailable` is false here, so the workflow cannot run at all and
+  // a default would only be a value that fails. See local.js for why the working
+  // value is a compose service name rather than localhost.
+  krb5RealmDefault: "",
+  krb5KdcHostDefault: "",
+  krb5KdcPortDefault: "88",
+  krb5PrincipalDefault: "",
+  krb5PasswordDefault: "",
+  // ---------------------------------------------------------------------------
+  // SPNEGO's two fields, and why one of them is deliberately EMPTY.
+  //
+  // The URL is fetched by the **api**, not by the browser, so it follows the same
+  // rule as krb5KdcHostDefault above: the compose service name where the api runs
+  // in a container, loopback for a host run, and nothing at all on a build with no
+  // api behind it. It was hard-coded as `http://localhost:8081/...` in
+  // spnego.html, which is right for exactly one of those three.
+  //
+  // The SPN is empty ON PURPOSE, and must stay that way unless a deployment
+  // genuinely knows better. A client derives it from the URL's host — `HTTP/<host>`,
+  // which is what RFC 4559 clients and every browser do — and that derivation is
+  // the thing the page exists to make visible: nothing in SPNEGO carries the SPN,
+  // so when it is wrong the failure is a KDC error naming nothing about HTTP.
+  // Pre-filling a value here would hide the guess behind a default and teach
+  // nobody. Set it only for a service whose SPN does not match its URL host, which
+  // is the case that needs saying out loud anyway.
+  // ---------------------------------------------------------------------------
+  krb5SpnegoUrlDefault: "",
+  krb5SpnegoSpnDefault: ""
+
 };
 
 module.exports = config;

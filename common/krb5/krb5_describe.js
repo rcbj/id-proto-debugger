@@ -1,0 +1,2118 @@
+// File: krb5_describe.js
+//
+// ---------------------------------------------------------------------------
+// "Here are these bytes, explained" — the decoder page's whole content, with no
+// DOM in it.
+//
+// The split follows webauthn.js / webauthn_panes.js: every fact about Kerberos
+// lives here and is checkable by a node test with no browser, and the page is a
+// renderer that knows nothing about the protocol. A pane that disagreed with the
+// protocol would then be a rendering bug rather than a protocol bug, which is a
+// much cheaper thing to find.
+//
+// Output is a plain document:
+//
+//   { kind, summary, sections: [ { title, note, rows: [ {name, value, note} ],
+//                                 sections: [...] } ], problems: [...] }
+//
+// Three design points worth stating, because each is a decision the obvious
+// implementation gets wrong:
+//
+//  * **Every value is a STRING here, already formatted.** The renderer never
+//    formats and never interprets. That is what stops a hex dump becoming a
+//    number somewhere, and it is why the page can put everything through
+//    textContent — this page renders bytes a stranger pasted in, and every value
+//    in it is hostile by default.
+//  * **A failure to decrypt is CONTENT, not an error.** Most of the interesting
+//    parts of a Kerberos message are encrypted under keys the person reading it
+//    does not have. "Encrypted under the service's key, which you have not
+//    supplied" is the most useful sentence on the screen, so it is a row rather
+//    than an exception.
+//  * **`problems` is for things that are WRONG, not things that are absent.**
+//    A missing optional field is normal. A pvno of 4, an etype the KDC should not
+//    still be offering, a KerberosTime far from now — those are findings, and
+//    they are what somebody opened this page to be told.
+// ---------------------------------------------------------------------------
+
+var prim = require("./krb5_primitives.js");
+var asn1 = require("./krb5_asn1.js");
+var msgs = require("./krb5_messages.js");
+var kcrypto = require("./krb5_crypto.js");
+var kpac = require("./krb5_pac.js");
+var gss = require("./krb5_gss.js");
+var spnego = require("./krb5_spnego.js");
+var bunyan = require("bunyan");
+var log = bunyan.createLogger({
+  name: "krb5_describe",
+  level: (function () {
+    try {
+      return require(process.env.CONFIG_FILE).logLevel || "info";
+    } catch (e) {
+      // No CONFIG_FILE resolvable here — a node caller rather than a bundle.
+      return "info";
+    }
+  })()
+});
+
+// ---------------------------------------------------------------------------
+// Getting the bytes out of whatever was pasted.
+//
+// A capture arrives in more shapes than people expect, and guessing wrong gives
+// a parse error that names ASN.1 rather than the paste. Each accepted form is
+// reported, so the page can say what it decided.
+// ---------------------------------------------------------------------------
+function parseInput(text) {
+  log.debug("Entering parseInput().");
+  var raw = String(text === null || text === undefined ? "" : text).trim();
+  if (!raw) {
+    throw new Error("Nothing to decode — paste a Kerberos message first.");
+  }
+
+  // Wireshark's "Copy as a hex stream", a C array, or a colon-separated dump:
+  // strip the punctuation that is obviously not data.
+  var cleaned = raw.replace(/0x/gi, "").replace(/[\s,:;]+/g, "");
+  var how;
+  var bytes;
+
+  if (/^[0-9a-f]+$/i.test(cleaned) && cleaned.length % 2 === 0 &&
+      cleaned.length >= 4) {
+    bytes = prim.fromHex(cleaned);
+    how = "hex";
+  } else {
+    // base64 or base64url. Padding is optional in the wild.
+    var b64 = raw.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+    var pad = b64.length % 4;
+    if (pad === 1) {
+      throw new Error("This is not valid base64 (its length cannot be right) " +
+          "and not hex either.");
+    }
+    if (pad) b64 += "====".slice(pad);
+    var decoded;
+    try {
+      decoded = base64ToBytes(b64);
+    } catch (e) {
+      throw new Error("Could not read this as hex or as base64: " + e.message);
+    }
+    bytes = decoded;
+    how = /[-_]/.test(raw) ? "base64url" : "base64";
+  }
+
+  // The TCP framing. Kerberos over TCP puts a four-byte big-endian length in
+  // front of every message, and a capture very often includes it. Left in place
+  // the ASN.1 parse fails on the first byte, which names the wrong thing
+  // entirely — so it is detected and stripped, and SAID.
+  var framing = null;
+  if (bytes.length > 4 && (bytes[0] & 0x80) === 0) {
+    var declared = ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0;
+    if (declared === bytes.length - 4 &&
+        asn1.peekApplicationNumber(bytes.subarray(4)) !== null) {
+      framing = "TCP length prefix (" + declared + " bytes) stripped";
+      bytes = bytes.subarray(4);
+    }
+  }
+
+  log.debug("Leaving parseInput(). " + how + ", " + bytes.length + " bytes");
+  return { bytes: bytes, encoding: how, framing: framing };
+}
+
+function base64ToBytes(b64) {
+  if (typeof atob === "function") {
+    var s = atob(b64);
+    var out = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+    return out;
+  }
+  // node
+  return new Uint8Array(Buffer.from(b64, "base64"));
+}
+
+// ---------------------------------------------------------------------------
+// Formatting helpers. Everything the renderer receives is already a string.
+// ---------------------------------------------------------------------------
+function hexOf(bytes, limit) {
+  var h = prim.toHex(bytes);
+  var cap = limit || 96;
+  return h.length > cap * 2 ? h.slice(0, cap * 2) + "… (" +
+      prim.toBytes(bytes).length + " bytes)" : h;
+}
+
+function timeOf(date) {
+  if (!date) {
+    return "(absent)";
+  }
+  return asn1.formatKerberosTime(date) + "  (" + date.toISOString() + ")";
+}
+
+function principalOf(p, realm) {
+  log.debug("Entering principalOf().");
+  if (!p) {
+    log.debug("Leaving principalOf().");
+    return "(absent)";
+  }
+  var nameTypeName = null;
+  Object.keys(msgs.NAME_TYPE).forEach(function (k) {
+    if (msgs.NAME_TYPE[k] === p.type) nameTypeName = k;
+  });
+  log.debug("Leaving principalOf().");
+  return msgs.principalToString(p, realm) +
+    "   [name-type " + p.type + (nameTypeName ? " NT-" +
+        nameTypeName.replace(/_/g, "-") : "") + "]";
+}
+
+function row(name, value, note) {
+  return {
+    name: name,
+    value: value === undefined || value === null ? "(absent)" : String(value),
+    note: note || null
+  };
+}
+
+function etypeListOf(ids) {
+  return (ids || []).map(function (id) {
+    return id + " " + kcrypto.etypeName(id) + (kcrypto.isSupportedEtype(id) ?
+        "" : " (not performed here)");
+  }).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Decryption, when the reader has a key.
+//
+// The caller supplies candidate keys; each encrypted part is tried with the keys
+// whose etype matches, at the key usage that part is defined to use. Trying every
+// usage would be worse than useless: it would sometimes succeed with the wrong
+// one and present a confident wrong answer.
+// ---------------------------------------------------------------------------
+async function tryDecrypt(encPart, usage, keys, what) {
+  log.debug("Entering tryDecrypt().");
+  var candidates = (keys ||
+      []).filter(function (k) { return k.etype === encPart.etype; });
+  if (!candidates.length) {
+    var haveOther = (keys || []).length > 0;
+    log.debug("Leaving tryDecrypt().");
+    return {
+      ok: false,
+      tried: 0,
+      note: haveOther
+        ? "Encrypted with " + encPart.etypeName + " (etype " + encPart.etype +
+            "), and none of the keys " +
+          "supplied is of that type. " + what
+        : "Encrypted with " + encPart.etypeName + ". " + what
+    };
+  }
+  var e;
+  try {
+    e = kcrypto.etypeById(encPart.etype);
+  } catch (err) {
+    log.debug("Leaving tryDecrypt().");
+    return {
+      ok: false,
+      tried: 0,
+      note: "This build cannot decrypt " + encPart.etypeName + ": " +
+          err.message
+    };
+  }
+  for (var i = 0; i < candidates.length; i++) {
+    try {
+      var plain = await e.decrypt(candidates[i].key, usage, encPart.cipher);
+      log.debug("Leaving tryDecrypt().");
+      return {
+        ok: true,
+        tried: candidates.length,
+        plain: plain,
+        usedKey: candidates[i],
+        usage: usage
+      };
+    } catch (err) {
+      // Wrong key of the right type: keep trying the others. Reported below if
+      // none works, because "the key you gave is not this key" is a real
+      // answer.
+      log.debug("key " + (candidates[i].label || i) + " did not decrypt: " +
+          err.message);
+    }
+  }
+  // The guidance goes in HERE as well as in the branch above, and that is the
+  // whole point of this note rather than a tidy-up. Every page that renders a
+  // message hands the describer whatever keys it happens to hold — a client key
+  // on the AS page, a session key on the TGS and AP pages — so a ticket's
+  // enc-part almost always has a key of the RIGHT ETYPE to try and fail with,
+  // and this is the branch a reader actually sees. Without `what` it said only
+  // that some unnamed key did not work, which reads as a broken key rather than
+  // as the wrong one, and left nothing on screen saying which key would work.
+  log.debug("Leaving tryDecrypt().");
+  return {
+    ok: false,
+    tried: candidates.length,
+    note: candidates.length + " key(s) of the right type were tried at key " +
+        "usage " + usage + " (" +
+      candidates.map(function (k, n) {
+        return k.label || "an unlabelled key " + (n + 1);
+      }).join("; ") +
+      ") and none decrypted this, so the key that opens it is not among " +
+      "them. " + what +
+      " A key of the right type that does not work is either a different " +
+      "principal's or a stale kvno."
+  };
+}
+
+// The `decryption` row a failed attempt leaves behind, in one place because
+// five callers write it and they must not disagree about what "no" means.
+//
+// The old value on all of them was "not attempted or not possible", which
+// conflates the three states a reader has to tell apart: nothing to try with,
+// something tried and failed, and this build cannot do that etype at all. The
+// first is an instruction (supply a key), the second is a finding (that key is
+// the wrong one), and reading the second as the first sends somebody off to
+// find a key they already have.
+function decryptionRow(attempt, whose, reported) {
+  // With the contents shown below from the KDC's own report, this row is
+  // context rather than a refusal, and it says so: "not opened" alone at the
+  // end of a pane reads as the dead end it used to be, three lines above the
+  // answer.
+  if (reported) {
+    return row("decryption",
+      "not opened — the contents are below, on the KDC's word",
+      attempt.note);
+  }
+  return row("decryption",
+    attempt.tried
+      ? "not opened — " + attempt.tried + " key(s) of the right type tried " +
+          "and none worked"
+      : "not opened — no key supplied" + (whose ? " for " + whose : ""),
+    attempt.note);
+}
+
+// ---------------------------------------------------------------------------
+// The per-message describers.
+// ---------------------------------------------------------------------------
+
+function describeEncryptedData(d, label) {
+  log.debug("Leaving describeEncryptedData().");
+  log.debug("Entering describeEncryptedData().");
+  return {
+    title: label,
+    rows: [
+      row("etype", d.etype + " " + d.etypeName),
+      row("kvno", d.kvno === null ? "(absent)" : d.kvno,
+          d.kvno === null ? null : "the key version — a stale one is " +
+              "KRB_AP_ERR_BADKEYVER"),
+      row("cipher", hexOf(d.cipher), prim.toBytes(d.cipher).length + " bytes")
+    ]
+  };
+}
+
+// What it takes to open THIS ticket, in one sentence that names the account.
+//
+// "Supply the service's key" was true and unusable: on a TGT the reader is
+// looking at `krbtgt/EXAMPLE.COM` and there is no service in sight, and on a
+// service ticket they still have to work out that the account they need is the
+// one in `sname` rather than the one they authenticated as. So the sentence
+// names the principal and says which key that is on a ticket-granting ticket.
+// The word "service" stays in it because `sname` is a service principal
+// whatever the ticket is for.
+//
+// It names NO PANE and no other page. Where a key can be supplied differs per
+// page, and a sentence that sends the reader somewhere else is the thing this
+// whole change exists to remove — when `reported` is present the contents are
+// already on screen and nothing needs supplying at all.
+function ticketKeyGuidance(ticket, reported) {
+  log.debug("Entering ticketKeyGuidance().");
+  var whose = msgs.principalToString(ticket.sname, ticket.realm);
+  var isTgt = !!(ticket.sname && ticket.sname.name &&
+      ticket.sname.name[0] === "krbtgt");
+  log.debug("Leaving ticketKeyGuidance().");
+  return "Only the service principal " + whose + "'s own long-term key opens " +
+    "this ciphertext, at key usage 2" +
+    (ticket.encPart.kvno === null ? "" : " and kvno " + ticket.encPart.kvno) +
+    " — " +
+    (isTgt
+      ? "and on a ticket-granting ticket that is the KDC's own krbtgt key, " +
+        "which no client ever holds."
+      : "and a client never holds the key of a service it presents a ticket " +
+        "to.") +
+    (reported
+      ? " Which is why the KDC repeats the ticket's contents to the client " +
+        "in the reply, and those are decrypted and shown below — everything " +
+        "the ticket says except its authorization-data."
+      : " Supply that key, its password and salt, or a keytab holding it to " +
+        "read the session key, the client name and the PAC.");
+}
+
+// ---------------------------------------------------------------------------
+// The ticket's contents WITHOUT the ticket's key, which is the normal case and
+// was being reported as a dead end.
+//
+// A client cannot decrypt a ticket it holds — that is the point of a ticket —
+// but it is not left ignorant of what is inside one, because the KDC tells it:
+// `EncKDCRepPart` repeats the ticket's flags, session key, times and `sname`
+// into the part of the reply encrypted under the CLIENT's own key, which the
+// page has already opened. So the fields a reader wants are available with no
+// key, no keytab and nothing to type, and the only honest thing missing is the
+// **authorization-data** — the PAC — which the KDC does not repeat.
+//
+// Two things about this are load-bearing rather than decoration:
+//
+//  * **It is labelled as a statement rather than as a decryption.** The
+//    values
+//    come from the KDC's word, not from the ciphertext above: a KDC that put
+//    different flags in the ticket than it reported would be invisible to any
+//    client, and a debugger that printed the two indistinguishably would be
+//    hiding exactly the discrepancy somebody comes here to find. The section
+//    title, the note and `source` all say where the values came from.
+//  * **It does not suppress the decryption attempt.** If a key that opens the
+//    ticket IS available the real `EncTicketPart` is shown instead — actual
+//    plaintext beats a report of it, and that is also the only way the PAC can
+//    ever appear.
+//
+// `reported` is deliberately made of primitives (strings, Dates, a hex string)
+// rather than a decoded structure: the callers have the values in different
+// shapes — a decrypted `EncKDCRepPart` in `describeKdcRep()`, a stored
+// credential-cache entry everywhere else — and normalising at the call site
+// keeps one renderer instead of three.
+//
+// It is reached for EVERY ticket on every page now, not only the one a reply
+// just issued: `kerberos_panes.js` hands the whole credential cache to
+// `describe()` and `reportedFor()` matches each ticket to its own record. So a
+// TGT presented inside a TGS-REQ, and a service ticket presented inside a
+// SPNEGO mechToken, read the same as one arriving in a reply — which is the
+// point, because those are the two places a reader was previously told to go
+// and find a key.
+// ---------------------------------------------------------------------------
+function describeReportedTicketContents(reported) {
+  log.debug("Entering describeReportedTicketContents().");
+  var rows = [
+    row("flags", (reported.flagNames || []).join(", ") || "(none)"),
+    row("key", (reported.sessionKey && reported.sessionKey.etypeName
+        ? reported.sessionKey.etypeName + ", " : "") +
+      ((reported.sessionKey && reported.sessionKey.hex) || "(absent)"),
+      "the SESSION key — a credential in itself, and the one field here the " +
+      "client needs rather than merely wants: it is what signs the next " +
+      "request"),
+    row("crealm", reported.crealm),
+    row("cname", reported.cname),
+    row("authtime", timeOf(reported.authtime)),
+    row("starttime", timeOf(reported.starttime)),
+    row("endtime", timeOf(reported.endtime)),
+    row("renew-till", timeOf(reported.renewTill)),
+    row("srealm", reported.srealm),
+    row("sname", reported.sname),
+    row("authorization-data", "(not repeated in the reply)",
+      "The one field the KDC does not tell the client about, and on Active " +
+      "Directory it is the PAC — the SIDs and group memberships a Windows " +
+      "service authorizes on. It exists only inside the ciphertext above, so " +
+      "reading it needs that service's own key; nothing a client holds will " +
+      "do.")
+  ];
+  log.debug("Leaving describeReportedTicketContents().");
+  return {
+    title: "EncTicketPart — as the KDC reported it",
+    note: reported.source + " These are the ticket's contents on the KDC's " +
+      "word rather than out of the ciphertext above, which is the most a " +
+      "client can have: the two agree unless the KDC is lying, and only " +
+      "something holding " + (reported.sname || "the service") + "'s key can " +
+      "tell the difference.",
+    rows: rows
+  };
+}
+
+// ---------------------------------------------------------------------------
+// WHICH report belongs to THIS ticket, out of what the caller knows.
+//
+// `reported` arrives in two shapes and both are legitimate:
+//
+//   * a SINGLE record — the KDC reply's own account of the ticket it has just
+//     issued (describeKdcRep), or a page's stored copy of one for a ticket it
+//     is showing on its own (the bare-Ticket path in describe()). It is about
+//     the ticket in hand and needs no matching.
+//   * a LIST — what a PAGE knows about every ticket the workflow holds. A
+//     message routinely carries a ticket the caller was not thinking of: the
+//     TGT inside a TGS-REQ's PA-TGS-REQ, the service ticket inside an AP-REQ
+//     inside a SPNEGO mechToken. So a list has to be matched against the
+//     ticket rather than assumed to be about it.
+//
+// **The match is on the ticket's own DER and on nothing else.** Two tickets
+// for the same principal are not the same ticket — a re-issued one has a
+// different session key and different times — so matching by `sname` would
+// print one ticket's contents under another's ciphertext, which is precisely
+// the mistake this whole report exists not to make. A ticket goes on the wire
+// byte-for-byte and is stored byte-for-byte, so the comparison is exact
+// wherever the workflow has a record at all, and where it has none the ticket
+// is described as unopened rather than approximately.
+// ---------------------------------------------------------------------------
+function reportedFor(reported, ticket) {
+  log.debug("Entering reportedFor().");
+  if (!reported) {
+    log.debug("Leaving reportedFor(). Nothing known.");
+    return null;
+  }
+  if (!Array.isArray(reported)) {
+    log.debug("Leaving reportedFor(). A single record.");
+    return reported;
+  }
+  var hex = null;
+  try {
+    hex = prim.toHex(prim.toBytes(ticket.raw));
+  } catch (e) {
+    // A ticket this reader built rather than read may carry no raw bytes.
+    // Nothing can be matched then, which is a miss and not an error.
+    log.warn("this ticket carries no raw bytes to match on: " + e.message);
+    hex = null;
+  }
+  for (var i = 0; hex && i < reported.length; i++) {
+    if (reported[i] && reported[i].ticketHex === hex) {
+      log.debug("Leaving reportedFor(). Matched record " + i + ".");
+      return reported[i];
+    }
+  }
+  log.debug("Leaving reportedFor(). No record of this ticket.");
+  return null;
+}
+
+async function describeTicket(ticket, keys, problems, known) {
+  log.debug("Entering describeTicket().");
+  var reported = reportedFor(known, ticket);
+  var whose = msgs.principalToString(ticket.sname, ticket.realm);
+  var section = {
+    title: "Ticket",
+    note: "Encrypted under the SERVICE principal " + whose + "'s own " +
+        "long-term key, so its holder cannot read it" +
+        (reported
+          ? " — the contents below are the KDC's own account of what is in it."
+          : ". Supply that key, its password and salt, or a keytab holding " +
+            "it to see inside."),
+    rows: [
+      row("tkt-vno", ticket.tktVno),
+      row("realm", ticket.realm),
+      row("sname", principalOf(ticket.sname, ticket.realm))
+    ],
+    sections: [describeEncryptedData(ticket.encPart, "Ticket enc-part " +
+        "(EncTicketPart)")]
+  };
+  if (ticket.tktVno !== 5) {
+    problems.push("The ticket's tkt-vno is " + ticket.tktVno + ", not 5.");
+  }
+  var attempt = await tryDecrypt(ticket.encPart,
+      kcrypto.KEY_USAGE.KDC_REP_TICKET, keys,
+      ticketKeyGuidance(ticket, reported));
+  if (attempt.ok) {
+    try {
+      var part = msgs.readEncTicketPart(attempt.plain);
+      section.sections.push(await describeEncTicketPart(part, attempt.usedKey,
+          problems, keys));
+    } catch (e) {
+      section.sections.push({
+        title: "EncTicketPart",
+        rows: [row("decrypted, but", e.message)]
+      });
+    }
+  } else {
+    section.sections[0].rows.push(decryptionRow(attempt, whose, reported));
+    // The contents anyway, from the KDC's own report of them. Pushed as a
+    // SIBLING of the enc-part rather than inside it, because it is not what
+    // came out of that ciphertext and must not read as though it were.
+    if (reported) {
+      section.sections.push(describeReportedTicketContents(reported));
+    }
+  }
+  log.debug("Leaving describeTicket().");
+  return section;
+}
+
+async function describeEncTicketPart(p, usedKey, problems, keys) {
+  log.debug("Entering describeEncTicketPart().");
+  var rows = [
+    row("flags", msgs.ticketFlagNames(p.flags).join(", ") || "(none)",
+        "bits " + p.flags.join(", ")),
+    row("key", p.key.etypeName + ", " + hexOf(p.key.key), "the SESSION key — " +
+        "a credential in itself"),
+    row("crealm", p.crealm),
+    row("cname", principalOf(p.cname, p.crealm)),
+    row("authtime", timeOf(p.authtime)),
+    row("starttime", timeOf(p.starttime)),
+    row("endtime", timeOf(p.endtime)),
+    row("renew-till", timeOf(p.renewTill))
+  ];
+  if (p.caddr) {
+    rows.push(row("caddr", p.caddr.map(function (a) {
+      return "type " + a.type + " " + prim.toHex(a.address);
+    }).join(", "), "an address-restricted ticket; AD issues addressless ones"));
+  }
+  var pacSections = [];
+  if (p.authorizationData) {
+    rows.push(row("authorization-data", p.authorizationData.map(function (ad) {
+      return kpac.adTypeName(ad.type) + " (" + prim.toBytes(ad.data).length +
+          " bytes)";
+    }).join(", "), "the top-level elements only; the PAC is nested inside " +
+        "AD-IF-RELEVANT"));
+
+    var found = kpac.findPacs(p.authorizationData);
+    if (!found.length) {
+      rows.push(row("PAC", "none",
+        "no AD-WIN2K-PAC in here. A ticket from Active Directory carries one " +
+            "unless the account " +
+        "has USER_NO_AUTH_DATA_REQUIRED set or the client asked for none — " +
+            "and a service that " +
+        "authorizes on groups has nothing to read without it"));
+    } else if (found.length > 1) {
+      problems.push("This ticket carries " + found.length + " PACs. A ticket " +
+          "has one; the extra " +
+        "ones are a place to hide a different set of groups.");
+    }
+    // The key that opened this ticket IS the service's long-term key by
+    // definition, so it is exactly the key the server signature is made with —
+    // which is why the PAC's signatures can be checked at all here without
+    // asking for anything more.
+    var pool = (keys || []).slice();
+    if (usedKey && pool.indexOf(usedKey) === -1) pool.push(usedKey);
+    for (var i = 0; i < found.length; i++) {
+      // usedKey is passed as the ASSERTED service key, not merely thrown into
+      // the pool: a server signature that fails against the key which just
+      // decrypted this ticket is a real finding, while the KDC signature
+      // failing against a pool of unlabelled keys is only ever "you do not have
+      // the krbtgt key".
+      pacSections.push(await describePac(found[i], pool, problems, usedKey));
+    }
+  }
+  if (p.flags.indexOf(msgs.TICKET_FLAG.OK_AS_DELEGATE) !== -1) {
+    rows.push(row("note", "ok-as-delegate is set",
+      "the KDC is telling the client this service may be trusted with " +
+          "delegated credentials"));
+  }
+  log.debug("Leaving describeEncTicketPart().");
+  return {
+    title: "EncTicketPart (decrypted)",
+    note: usedKey ? "Decrypted with " + (usedKey.label || "a supplied key") +
+        "." : null,
+    rows: rows,
+    sections: pacSections
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The PAC.
+//
+// Presented as its own nest of sections rather than a row of hex, because this is the
+// structure that decides what the ticket's holder can DO — a service authorizes on the
+// groups in here, not on the ticket's cname. See krb5_pac.js's header for the wire
+// format and for why the four signatures are not interchangeable.
+//
+// The rule from this file's header applies throughout: `problems` is for what is
+// WRONG. An undecoded buffer is not a problem, an absent one usually is not either,
+// and a group list a real service would ignore very much is.
+// ---------------------------------------------------------------------------
+async function describePac(found, keys, problems, serviceKey) {
+  log.debug("Entering describePac(). bytes=" + found.bytes.length);
+  var parsed;
+  try {
+    parsed = kpac.parsePac(found.bytes);
+  } catch (e) {
+    // A PAC that will not parse at all is content, not an exception: the reader
+    // wants to know that, and to see how big the thing was.
+    return {
+      title: "PAC (does not parse)",
+      note: "Found at " + found.path + ", " + found.bytes.length + " bytes.",
+      rows: [row("error", e.message)]
+    };
+  }
+
+  parsed.problems.forEach(function (p) { problems.push("PAC: " + p); });
+
+  var section = {
+    title: "PAC (Privilege Attribute Certificate)",
+    note: "Found at " + found.path + ". " + found.bytes.length + " bytes in " +
+        parsed.cBuffers +
+      " buffer(s). This is what a Windows service reads to decide what the " +
+          "holder may do — " +
+      "everything from here down is little-endian C structures and NDR, not " +
+          "DER.",
+    rows: [
+      row("buffers", parsed.buffers.map(function (b) {
+        return b.type + " " + b.typeName + " — " + b.size +
+            " bytes at offset " + b.offset;
+      }).join("\n")),
+      row("PACTYPE Version", parsed.version, parsed.version === 0 ? null :
+          "[MS-PAC] requires 0")
+    ],
+    sections: []
+  };
+
+  var logon = kpac.bufferOfType(parsed, kpac.TYPE.LOGON_INFO);
+  if (logon &&
+      logon.parsed) section.sections.push(describeLogonInfo(logon.parsed,
+      problems));
+  else if (logon) {
+    section.sections.push({
+      title: "Logon information (KERB_VALIDATION_INFO)",
+      rows: [row("does not parse", logon.error || "(no reason recorded)")]
+    });
+  }
+
+  var client = kpac.bufferOfType(parsed, kpac.TYPE.CLIENT_INFO);
+  if (client && client.parsed) {
+    section.sections.push({
+      title: "Client name and ticket information",
+      note: "Used to check the PAC belongs to this ticket's client rather " +
+          "than to another one.",
+      rows: [
+        row("name", client.parsed.name),
+        row("ClientId", client.parsed.clientId.text,
+          "the INITIAL TGT's authentication time, which is the same across " +
+              "every service " +
+          "ticket derived from it — not this ticket's authtime")
+      ]
+    });
+  }
+
+  var upn = kpac.bufferOfType(parsed, kpac.TYPE.UPN_DNS_INFO);
+  if (upn && upn.parsed) {
+    var u = upn.parsed;
+    section.sections.push({
+      title: "UPN and DNS information",
+      rows: [
+        row("UPN", u.upn),
+        row("DNS domain name", u.dnsDomainName),
+        row("SAM name", u.samName, u.extended ? null : "only present when " +
+            "the S flag is set"),
+        row("SID", u.sid ? u.sid.text : null),
+        row("flags", u.flagNames.join("\n") || "(none set)")
+      ]
+    });
+  }
+
+  var attrs = kpac.bufferOfType(parsed, kpac.TYPE.ATTRIBUTES_INFO);
+  if (attrs && attrs.parsed) {
+    section.sections.push({
+      title: "PAC attributes",
+      rows: [
+        row("flags", attrs.parsed.flagNames.join(", ") || "(none set)",
+          attrs.parsed.flagNames.indexOf("PAC_WAS_GIVEN_IMPLICITLY") !== -1
+            ? "the client neither asked for nor declined a PAC" : null),
+        row("FlagsLength", attrs.parsed.flagsLength + " bits")
+      ]
+    });
+  }
+
+  var requestor = kpac.bufferOfType(parsed, kpac.TYPE.REQUESTOR_SID);
+  if (requestor && requestor.parsed) {
+    section.sections.push({
+      title: "PAC requestor",
+      note: "The SID of the account that ASKED for this ticket. In a " +
+          "delegation flow that is " +
+        "not the account the ticket is for, which is the whole point of the " +
+            "buffer.",
+      rows: [row("SID", requestor.parsed.sid.text +
+        (requestor.parsed.name ? "  (" + requestor.parsed.name + ")" : ""))]
+    });
+  }
+
+  // Anything present that this codec does not decode, listed rather than
+  // dropped.
+  var undecoded = parsed.buffers.filter(function (b) {
+    return b.parsed === null && !b.error && !kpac.isSignatureBuffer(b.type);
+  });
+  if (undecoded.length) {
+    section.sections.push({
+      title: "Buffers not decoded here",
+      note: "Present in the PAC and not read by this codec. Listed rather " +
+          "than dropped, because " +
+        "'present but not decoded' is a different fact from 'absent'.",
+      rows: undecoded.map(function (b) {
+        return row(b.typeName, b.size + " bytes", hexOf(b.bytes, 32));
+      })
+    });
+  }
+
+  section.sections.push(await describePacSignatures(parsed, keys, problems,
+      serviceKey));
+  log.debug("Leaving describePac().");
+  return section;
+}
+
+function describeLogonInfo(info, problems) {
+  log.debug("Entering describeLogonInfo().");
+  var rows = [
+    row("account", info.effectiveName, info.fullName ? "full name: " +
+        info.fullName : null),
+    row("account SID", info.userSid,
+      "assembled from LogonDomainId + UserId (" + info.userId + ") — a PAC " +
+          "never carries it whole"),
+    row("primary group SID", info.primaryGroupSid, "RID " +
+        info.primaryGroupId +
+      (kpac.ridName(info.primaryGroupId) ? ", " +
+          kpac.ridName(info.primaryGroupId) : "")),
+    row("logon domain", info.logonDomainName +
+      (info.logonDomainId ? "  (" + info.logonDomainId.text + ")" : "")),
+    row("logon server", info.logonServer, "the DC that issued the initial TGT"),
+    row("UserAccountControl", info.userAccountControlNames.join("\n") ||
+        "(none set)",
+      "[MS-SAMR]'s USER_ACCOUNT codes, not the LDAP userAccountControl bits"),
+    row("UserFlags", info.userFlagNames.join("\n") || "(none set)"),
+    row("logon count", info.logonCount),
+    row("bad password count", info.badPasswordCount),
+    row("logon time", info.logonTime.text),
+    row("logoff time", info.logoffTime.text),
+    row("kickoff time", info.kickOffTime.text),
+    row("password last set", info.passwordLastSet.text),
+    row("password must change", info.passwordMustChange.text),
+    row("groups (" + info.groups.length + ")", info.groups.length
+      ? info.groups.map(function (g) {
+        return (info.logonDomainId ? info.logonDomainId.text + "-" : "RID ") +
+            g.relativeId +
+          (g.name ? "  (" + g.name + ")" : "") + "   [" +
+              g.attributeNames.join(", ") + "]";
+      }).join("\n")
+      : "(none)",
+      "groups in the ACCOUNT's domain, given as RIDs — the SID is the domain " +
+          "SID plus the RID")
+  ];
+
+  if (info.extraSids.length) {
+    rows.push(row("extra SIDs (" + info.extraSids.length + ")",
+      info.extraSids.map(function (e) {
+        return e.text + (e.name ? "  (" + e.name + ")" : "") + "   [" +
+          e.attributeNames.join(", ") + "]";
+      }).join("\n"),
+      "SIDs from outside the account's domain, and the well-known ones that " +
+          "record HOW the " +
+      "identity was established"));
+  }
+  if (info.resourceGroups.length) {
+    rows.push(row("resource groups (" + info.resourceGroups.length + ")",
+      info.resourceGroups.map(function (g) {
+        return (info.resourceGroupDomainSid ?
+            info.resourceGroupDomainSid.text + "-" : "RID ") +
+          g.relativeId + (g.name ? "  (" + g.name + ")" : "") + "   [" +
+          g.attributeNames.join(", ") + "]";
+      }).join("\n"),
+      "domain-local groups in the RESOURCE's domain, which is a different " +
+          "domain SID from the " +
+      "account's"));
+  }
+  if (info.userSessionKey &&
+      !prim.toBytes(info.userSessionKey).every(function (b) { return b === 0; })) {
+    rows.push(row("UserSessionKey", hexOf(info.userSessionKey),
+      "[MS-PAC] requires this to be zero for Kerberos — it is an NTLM field"));
+    problems.push("The PAC's UserSessionKey is not zero. [MS-PAC] section " +
+        "2.5 requires zero for " +
+      "anything other than NTLM.");
+  }
+
+  // Each of these parses fine and changes how a real service behaves, which is
+  // the definition of a finding here rather than a note.
+  info.notes.forEach(function (n) { problems.push("PAC logon information: " +
+      n); });
+
+  log.debug("Leaving describeLogonInfo().");
+  return {
+    title: "Logon information (KERB_VALIDATION_INFO)",
+    note: "NDR-encoded ([MS-RPCE] section 2.2.6), which is why this one " +
+        "buffer starts with " +
+      "01 10 08 00 cc cc cc cc. These groups are what a Windows service " +
+          "authorizes on.",
+    rows: rows
+  };
+}
+
+async function describePacSignatures(parsed, keys, problems, serviceKey) {
+  log.debug("Entering describePacSignatures().");
+  var results = await kpac.verifySignaturesWithAnyKey(parsed, keys || [],
+    { serverKey: serviceKey || null });
+  var rows = results.map(function (r) {
+    var state = r.verified === true ? "verified" : r.verified === false ?
+        "DOES NOT VERIFY"
+      : "not checked";
+    return row(r.name, state + " — " + r.signatureTypeName, r.note);
+  });
+  if (!results.length) {
+    rows.push(row("signatures", "none present",
+      "a PAC inside a ticket always carries at least the server and KDC " +
+          "signatures"));
+  }
+  // A signature that failed against a key we KNOW is the right one is a
+  // finding. One that no unlabelled key in the pool happened to verify is not —
+  // the reader has simply not supplied the krbtgt key, which on a service
+  // ticket they cannot have, and reporting that as tampering would cry wolf on
+  // every paste.
+  //
+  // Keyed off `roleAsserted` rather than off the wording of the note: matching
+  // prose is how this check silently stopped firing once the note was reworded.
+  results.forEach(function (r) {
+    if (r.verified === false && r.roleAsserted) {
+      problems.push("The PAC's " + r.name + " does not verify against the " +
+          r.role +
+        " — the very key that decrypted this ticket. Either the PAC has been " +
+            "altered since it " +
+        "was signed, or it was not signed for this service.");
+    }
+  });
+  log.debug("Leaving describePacSignatures().");
+  return {
+    title: "PAC signatures",
+    note: "Four signatures over four DIFFERENT things, with two different " +
+        "keys. A service holds " +
+      "only its own key, so it can check the server signature and nothing " +
+          "else — and altering " +
+      "the PAC's contents leaves the KDC signature intact, because that one " +
+          "covers only the " +
+      "server signature's bytes. That is why the extended KDC signature " +
+          "exists.",
+    rows: rows
+  };
+}
+
+async function describeKdcReq(req, input, keys, problems, known) {
+  log.debug("Entering describeKdcReq().");
+  var isTgs = req.msgType === msgs.MSG_TYPE.TGS_REQ;
+  var body = req.reqBody;
+  var doc = {
+    kind: isTgs ? "TGS-REQ" : "AS-REQ",
+    summary: (isTgs ? "A ticket-granting request" : "An " +
+        "authentication-service request") +
+      " for " + msgs.principalToString(body.sname || { name: ["(no sname)"] },
+          body.realm) +
+      (body.cname ? " by " + msgs.principalToString(body.cname) : ""),
+    sections: []
+  };
+  doc.sections.push({
+    title: "Message",
+    rows: [
+      row("pvno", req.pvno),
+      row("msg-type", req.msgType + " (" + doc.kind + ")")
+    ]
+  });
+
+  var padataRows = [];
+  req.padata.forEach(function (pa) {
+    padataRows.push(row(pa.typeName + " (" + pa.type + ")",
+        prim.toBytes(pa.value).length + " bytes"));
+  });
+  doc.sections.push({
+    title: "Pre-authentication (padata)",
+    note: req.padata.length ? null
+      : (isTgs
+          ? "A TGS-REQ with no PA-TGS-REQ cannot be answered — the TGT " +
+              "travels in the padata."
+          : "None. An AS-REQ without PA-ENC-TIMESTAMP is what a KDC answers " +
+              "with " +
+            "KDC_ERR_PREAUTH_REQUIRED, and that answer is where the salt " +
+                "comes from."),
+    rows: padataRows.length ? padataRows : [row("padata", "(none)")]
+  });
+  if (isTgs &&
+      !req.padata.some(function (p) { return p.type === msgs.PA_TYPE.TGS_REQ; })) {
+    problems.push("This TGS-REQ carries no PA-TGS-REQ, so it has no TGT and " +
+        "no KDC can answer it.");
+  }
+
+  // The padata worth expanding.
+  //
+  // A `for` loop rather than a forEach because two of these entries are now
+  // OPENED rather than merely measured, and decryption is async:
+  // PA-ENC-TIMESTAMP under the client's own key, and the AP-REQ inside
+  // PA-TGS-REQ — which carries a whole ticket of its own and is the one
+  // structure in this protocol that is routinely three envelopes deep.
+  for (var pi = 0; pi < req.padata.length; pi++) {
+    var pa = req.padata[pi];
+    if (pa.type === msgs.PA_TYPE.ENC_TIMESTAMP) {
+      try {
+        var enc = msgs.readEncryptedData(asn1.readTlv(pa.value, 0));
+        var stampSection = describeEncryptedData(enc, "PA-ENC-TIMESTAMP " +
+            "(encrypted with the client's key)");
+        doc.sections.push(stampSection);
+        // Key usage 1, and only 1. A reader who has the client's key — which on
+        // the AS page is the page that just derived it — can see the timestamp
+        // the KDC is about to compare against its own clock, and that is the
+        // whole content of a pre-authentication failure.
+        var stampAttempt = await tryDecrypt(enc,
+            kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, keys,
+          "Supply the client's key, or its password and salt, to read the " +
+          "timestamp inside. Unlike a ticket's key this is one a client HAS — " +
+          "whatever built this field derived it from the password — so \"not " +
+          "opened\" here is a key that does not match rather than a key " +
+          "nobody could have.");
+        if (stampAttempt.ok) {
+          try {
+            var stamp = msgs.readPaEncTsEnc(stampAttempt.plain);
+            doc.sections.push({
+              title: "PA-ENC-TS-ENC (decrypted)",
+              note: "Decrypted with " + (stampAttempt.usedKey.label ||
+                  "a supplied key") + " at key usage 1.",
+              rows: [
+                row("patimestamp", timeOf(stamp.patimestamp),
+                  "compared against the KDC's own clock — five minutes on " +
+                  "Active Directory, and KRB_AP_ERR_SKEW outside it"),
+                row("pausec", stamp.pausec)
+              ]
+            });
+          } catch (e) {
+            doc.sections.push({
+              title: "PA-ENC-TS-ENC",
+              rows: [row("decrypted, but does not parse", e.message)]
+            });
+          }
+        } else {
+          stampSection.rows.push(decryptionRow(stampAttempt,
+              "the client's key"));
+        }
+      } catch (e) {
+        problems.push("PA-ENC-TIMESTAMP does not decode as EncryptedData: " +
+            e.message);
+      }
+    }
+    if (pa.type === msgs.PA_TYPE.TGS_REQ) {
+      // The TGT travels HERE, wrapped in an AP-REQ, and until this block
+      // existed the pane said "PA-TGS-REQ (1) — 1174 bytes" and stopped. That
+      // is the one place a TGS-REQ hides everything interesting about itself:
+      // the ticket it spends, the Authenticator that proves the client holds
+      // its session key, and the 0x8003-shaped checksum over the request body.
+      // Described with the same reader the outer message uses, so the ticket
+      // inside opens on exactly the same terms as any other.
+      try {
+        var inner = msgs.readApReq(prim.toBytes(pa.value));
+        // `known` goes in with it: the ticket three envelopes down is the TGT
+        // this page holds, and its contents are what the KDC reported when it
+        // issued it. Without this the one message that hides the most says
+        // least.
+        var innerDoc = await describeApReq(inner, keys, problems,
+            { authUsage: kcrypto.KEY_USAGE.TGS_REQ_AUTH, reported: known });
+        doc.sections.push({
+          title: "PA-TGS-REQ — the AP-REQ that carries the TGT",
+          note: "A TGS request authenticates by PRESENTING a ticket, so an " +
+            "entire AP-REQ travels in the padata: " + innerDoc.summary + ".",
+          rows: [row("bytes", prim.toBytes(pa.value).length + " bytes")],
+          sections: innerDoc.sections
+        });
+      } catch (e) {
+        problems.push("PA-TGS-REQ does not decode as an AP-REQ: " + e.message);
+      }
+    }
+    if (pa.type === msgs.PA_TYPE.PAC_REQUEST) {
+      try {
+        doc.sections.push({
+          title: "PA-PAC-REQUEST",
+          rows: [row("include-pac",
+              String(msgs.readPaPacRequest(pa.value).includePac),
+            "asking a Windows KDC to omit the PAC is a legitimate diagnostic")]
+        });
+      } catch (e) {
+        problems.push("PA-PAC-REQUEST does not decode: " + e.message);
+      }
+    }
+    if (pa.type === msgs.PA_TYPE.FOR_USER) {
+      try {
+        var fu = msgs.readPaForUser(pa.value);
+        doc.sections.push({
+          title: "PA-FOR-USER (S4U2Self)",
+          note: "This request asks the KDC for a ticket to ITSELF on behalf " +
+              "of another user — " +
+                "protocol transition.",
+          rows: [
+            row("userName", principalOf(fu.userName, fu.userRealm)),
+            row("userRealm", fu.userRealm),
+            row("cksum", "type " + fu.cksum.type + ", " +
+                hexOf(fu.cksum.checksum),
+              fu.cksum.type === -138 ? "KERB_CHECKSUM_HMAC_MD5, as MS-SFU " +
+                  "requires" : null),
+            row("auth-package", fu.authPackage)
+          ]
+        });
+      } catch (e) {
+        problems.push("PA-FOR-USER does not decode: " + e.message);
+      }
+    }
+  }
+
+  var optionNames = msgs.kdcOptionNames(body.kdcOptions);
+  var bodyRows = [
+    row("kdc-options", optionNames.join(", ") || "(none)", "bits " +
+        body.kdcOptions.join(", ")),
+    row("cname", principalOf(body.cname, null)),
+    row("realm", body.realm, "case-sensitive, and conventionally UPPER CASE"),
+    row("sname", principalOf(body.sname, body.realm)),
+    row("from", timeOf(body.from)),
+    row("till", timeOf(body.till)),
+    row("rtime", timeOf(body.rtime)),
+    row("nonce", body.nonce, "must come back unchanged in the reply"),
+    row("etype", etypeListOf(body.etypes), "in preference order — the KDC " +
+        "picks from this list")
+  ];
+  if (body.addresses) {
+    bodyRows.push(row("addresses", body.addresses.map(function (a) {
+      return "type " + a.type + " " + prim.toHex(a.address);
+    }).join(", ")));
+  }
+  if (body.additionalTickets) {
+    bodyRows.push(row("additional-tickets", body.additionalTickets.length +
+        " ticket(s)",
+      optionNames.indexOf("cname-in-addl-tkt") !== -1
+        ? "with cname-in-addl-tkt set this is S4U2Proxy: the evidence ticket " +
+            "being presented"
+        : "used by user-to-user and by constrained delegation"));
+  }
+  doc.sections.push({ title: "KDC-REQ-BODY", rows: bodyRows });
+
+  if (body.realm && body.realm !== body.realm.toUpperCase()) {
+    problems.push("The realm \"" + body.realm + "\" is not upper case. " +
+        "Realms are case-sensitive on the " +
+      "wire and almost every deployment uses upper case; this is the " +
+          "commonest configuration error there is.");
+  }
+  if (body.etypes && body.etypes.length &&
+      body.etypes.every(function (id) { return id === 23; })) {
+    problems.push("The only encryption type offered is arcfour-hmac-md5 " +
+        "(RC4). The Windows Server 2025 " +
+      "security baseline disables it, so this request will be refused with " +
+          "KDC_ERR_ETYPE_NOSUPP on a " +
+      "current domain controller.");
+  }
+  (body.etypes || []).forEach(function (id) {
+    if (id >= 1 && id <= 7) {
+      problems.push("Encryption type " + id + " (" + kcrypto.etypeName(id) +
+          ") is a DES type. DES was " +
+        "removed from Windows Server 2025 entirely.");
+    }
+  });
+  if (body.till && body.from && body.till <= body.from) {
+    problems.push("till is not after from, so the requested validity window " +
+        "is empty " +
+      "(KDC_ERR_NEVER_VALID).");
+  }
+  log.debug("Leaving describeKdcReq().");
+  return doc;
+}
+
+async function describeKdcRep(rep, keys, problems, known) {
+  log.debug("Entering describeKdcRep().");
+  var isTgs = rep.msgType === msgs.MSG_TYPE.TGS_REP;
+  // `kind` is computed before the document literal rather than inside it. The
+  // first version read `doc.kind` from within the literal that was defining
+  // `doc`, which is undefined at that point — and because describe() catches
+  // reader exceptions and falls back to a structural view, the symptom was an
+  // AS-REP reported as "does not parse". A parse failure blamed on the message
+  // when the fault is in the describer is the worst outcome this page can have.
+  var kind = isTgs ? "TGS-REP" : "AS-REP";
+  var doc = {
+    kind: kind,
+    summary: "A ticket for " + msgs.principalToString(rep.ticket.sname,
+        rep.ticket.realm) +
+             " issued to " + msgs.principalToString(rep.cname, rep.crealm),
+    sections: [{
+      title: "Message",
+      rows: [
+        row("pvno", rep.pvno),
+        row("msg-type", rep.msgType + " (" + kind + ")"),
+        row("crealm", rep.crealm),
+        row("cname", principalOf(rep.cname, rep.crealm))
+      ]
+    }]
+  };
+  if (rep.padata.length) {
+    doc.sections.push({
+      title: "padata",
+      rows: rep.padata.map(function (pa) {
+        return row(pa.typeName + " (" + pa.type + ")",
+            prim.toBytes(pa.value).length + " bytes");
+      })
+    });
+  }
+  // ORDER OF WORK, which is not the order of display.
+  //
+  // The enc-part is opened FIRST and the ticket is described afterwards,
+  // because what comes out of the enc-part is what makes the ticket legible:
+  // the KDC repeats the ticket's flags, session key, times and sname in there,
+  // under the client's own key, precisely because the client cannot read the
+  // ticket. So describeTicket() is handed those values and shows the ticket's
+  // contents with no service key anywhere — see
+  // describeReportedTicketContents(). The pushes below still happen in reading
+  // order (ticket, envelope, plaintext).
+  //
+  // The enc-part is under the CLIENT's key for an AS-REP and under the TGT
+  // session key (or the Authenticator's subkey) for a TGS-REP. Both usages are
+  // tried for a TGS-REP because which one applies depends on whether the
+  // request carried a subkey, and the reader of a capture does not necessarily
+  // know.
+  var encSection = describeEncryptedData(rep.encPart,
+    isTgs ? "enc-part (EncTGSRepPart, under the TGT session key or the subkey)"
+          : "enc-part (EncASRepPart, under the client's long-term key)");
+
+  var usages = isTgs
+    ? [kcrypto.KEY_USAGE.TGS_REP_ENCPART_SESSKEY,
+        kcrypto.KEY_USAGE.TGS_REP_ENCPART_SUBKEY]
+    : [kcrypto.KEY_USAGE.AS_REP_ENCPART];
+  var got = null;
+  for (var i = 0; i < usages.length && !got; i++) {
+    var attempt = await tryDecrypt(rep.encPart, usages[i], keys,
+      isTgs ? "Supply the TGT's session key." : "Supply the client's key, or " +
+          "its password and salt.");
+    if (attempt.ok) got = attempt;
+    else encSection.rows.push(row("decryption at key usage " + usages[i], "no",
+        attempt.note));
+  }
+  // Read before the ticket is described, and kept for the section further down
+  // so the bytes are parsed once.
+  var part = null;
+  var partError = null;
+  if (got) {
+    try {
+      part = msgs.readEncKdcRepPart(got.plain);
+    } catch (e) {
+      partError = e;
+    }
+  }
+  doc.sections.push(await describeTicket(rep.ticket, keys, problems,
+      part ? {
+        source: "From this reply's own enc-part (" + part.taggedAs + "), " +
+          "decrypted at key usage " + got.usage + " with " +
+          (got.usedKey.label || "a supplied key") + ".",
+        flagNames: msgs.ticketFlagNames(part.flags),
+        sessionKey: {
+          etypeName: part.key.etypeName,
+          hex: hexOf(part.key.key)
+        },
+        // The client is the reply's own cname: the KDC puts the same principal
+        // in the ticket, and it is the one field here a client could check for
+        // itself if it could read the ticket at all.
+        crealm: rep.crealm,
+        cname: principalOf(rep.cname, rep.crealm),
+        authtime: part.authtime,
+        starttime: part.starttime,
+        endtime: part.endtime,
+        renewTill: part.renewTill,
+        srealm: part.srealm,
+        sname: principalOf(part.sname, part.srealm)
+      // With no enc-part opened this reply says nothing about its own ticket,
+      // and the caller's pool is the next best thing: a reply re-read after the
+      // ticket was stored — a page reloaded, a pane replayed — still shows the
+      // contents, because the workflow kept them when the reply first opened.
+      } : (known || null)));
+  doc.sections.push(encSection);
+
+  if (part) {
+    try {
+      var rows = [
+        row("tagged as", part.taggedAs,
+          part.taggedAs === "EncTGSRepPart" && !isTgs
+            ? "An AS-REP whose enc-part is tagged EncTGSRepPart. RFC 4120 " +
+                "section 5.4.2 records this and " +
+              "requires a client to accept it — this one does."
+            : null),
+        row("key", part.key.etypeName + ", " + hexOf(part.key.key),
+            "the session key"),
+        row("nonce", part.nonce, "must equal the request's"),
+        row("flags", msgs.ticketFlagNames(part.flags).join(", ") || "(none)"),
+        row("authtime", timeOf(part.authtime)),
+        row("starttime", timeOf(part.starttime)),
+        row("endtime", timeOf(part.endtime)),
+        row("renew-till", timeOf(part.renewTill)),
+        row("key-expiration", timeOf(part.keyExpiration),
+          part.keyExpiration ? "the password expiry the KDC is reporting" :
+              null),
+        row("srealm", part.srealm),
+        row("sname", principalOf(part.sname, part.srealm))
+      ];
+      doc.sections.push({
+        title: "Enc" + (isTgs ? "TGS" : "AS") + "RepPart (decrypted)",
+        note: "Decrypted with " + (got.usedKey.label || "a supplied key") +
+            " at key usage " + got.usage + ".",
+        rows: rows
+      });
+      if (part.sname && rep.ticket.sname &&
+          part.sname.name.join("/") !== rep.ticket.sname.name.join("/")) {
+        problems.push("The sname in the enc-part (" +
+            part.sname.name.join("/") + ") does not match the " +
+          "ticket's (" + rep.ticket.sname.name.join("/") + "). With " +
+              "canonicalize set this can be a " +
+          "referral; otherwise it is wrong.");
+      }
+    } catch (e) {
+      doc.sections.push({
+        title: "enc-part",
+        rows: [row("describing the enc-part failed", e.message)]
+      });
+    }
+  } else if (partError) {
+    // Opened and then unreadable, which is a different finding from not
+    // opening: the key was right and the bytes are not what they should be.
+    // Reported here and NOT as a ticket-side problem, since the ticket is
+    // intact either way.
+    doc.sections.push({
+      title: "enc-part",
+      rows: [row("decrypted, but does not parse", partError.message)]
+    });
+  }
+  log.debug("Leaving describeKdcRep().");
+  return doc;
+}
+
+// options.authUsage — WHICH KEY USAGE the Authenticator is at, and it is not
+// always 11.
+//
+// An AP-REQ presented to a service seals its Authenticator at 11; the same
+// structure travelling in a TGS-REQ's PA-TGS-REQ seals it at **7**. Nothing in
+// the bytes distinguishes them — the difference is who the message is addressed
+// to — so the caller has to say, and a describer that guessed would report the
+// TGS page's own Authenticator as undecryptable while holding the key that
+// opens it. That is exactly the failure this whole change is about, one layer
+// in.
+//
+// options.reported — what the caller knows about the tickets in play, for the
+// ticket this AP-REQ presents. See reportedFor(): an AP-REQ is where a ticket
+// most often appears without a reply beside it to explain it, so this is the
+// path that makes a presented ticket legible.
+async function describeApReq(r, keys, problems, options) {
+  log.debug("Entering describeApReq().");
+  var opts = options || {};
+  var authUsage = opts.authUsage === undefined
+      ? kcrypto.KEY_USAGE.AP_REQ_AUTH : opts.authUsage;
+  var doc = {
+    kind: "AP-REQ",
+    summary: "A client presenting a ticket for " +
+        msgs.principalToString(r.ticket.sname, r.ticket.realm),
+    sections: [{
+      title: "Message",
+      rows: [
+        row("pvno", r.pvno),
+        row("msg-type", r.msgType + " (AP-REQ)"),
+        row("ap-options", msgs.apOptionNames(r.apOptions).join(", ") ||
+            "(none)",
+          r.apOptions.indexOf(msgs.AP_OPTION.MUTUAL_REQUIRED) !== -1
+            ? "mutual-required: the client expects an AP-REP back"
+            : "without mutual-required the service never proves its own " +
+                "identity")
+      ]
+    }]
+  };
+  doc.sections.push(await describeTicket(r.ticket, keys, problems,
+      opts.reported || null));
+  var encSection = describeEncryptedData(r.authenticator,
+    "Authenticator (encrypted under the ticket's SESSION key, at key usage " +
+        authUsage + ")");
+  doc.sections.push(encSection);
+  var attempt = await tryDecrypt(r.authenticator, authUsage, keys,
+    authUsage === kcrypto.KEY_USAGE.TGS_REQ_AUTH
+      ? "This one is at key usage 7 rather than 11, because it is addressed " +
+        "to a KDC rather than to a service. Supply the ticket's session key " +
+        "— for a TGS request that is the TGT's, which the client holds."
+      : "Supply the session key from the ticket, which the service gets by " +
+        "decrypting the ticket itself.");
+  if (attempt.ok) {
+    try {
+      var a = msgs.readAuthenticator(attempt.plain);
+      var rows = [
+        row("crealm", a.crealm),
+        row("cname", principalOf(a.cname, a.crealm),
+          "must match the ticket's cname or the service answers " +
+              "KRB_AP_ERR_BADMATCH"),
+        row("ctime", timeOf(a.ctime), "checked against the service's clock — " +
+            "five minutes on AD"),
+        row("cusec", a.cusec),
+        row("seq-number", a.seqNumber),
+        row("subkey", a.subkey ? a.subkey.etypeName + ", " +
+            hexOf(a.subkey.key) : "(absent)",
+          a.subkey ? "the client proposing a per-context key" : null)
+      ];
+      if (a.cksum) {
+        rows.push(row("cksum", "type " + a.cksum.type + ", " +
+            hexOf(a.cksum.checksum),
+          a.cksum.type === 0x8003
+            ? "checksum type 0x8003 — the GSS-API channel-binding-and-flags " +
+                "structure of RFC 4121, " +
+              "not a checksum over the message at all"
+            : null));
+      }
+      doc.sections.push({
+        title: "Authenticator (decrypted)",
+        note: "Decrypted with " + (attempt.usedKey.label || "a supplied key") +
+            ".",
+        rows: rows
+      });
+    } catch (e) {
+      doc.sections.push({
+        title: "Authenticator",
+        rows: [row("decrypted, but does not parse", e.message)]
+      });
+    }
+  } else {
+    encSection.rows.push(decryptionRow(attempt, "the ticket's session key"));
+  }
+  log.debug("Leaving describeApReq().");
+  return doc;
+}
+
+async function describeApRep(r, keys) {
+  log.debug("Entering describeApRep().");
+  var doc = {
+    kind: "AP-REP",
+    summary: "A service proving its identity back to the client (mutual " +
+        "authentication)",
+    sections: [
+      {
+        title: "Message",
+        rows: [row("pvno", r.pvno), row("msg-type", r.msgType + " (AP-REP)")]
+      },
+      describeEncryptedData(r.encPart, "enc-part (under the ticket's session " +
+          "key)")
+    ]
+  };
+  var attempt = await tryDecrypt(r.encPart, kcrypto.KEY_USAGE.AP_REP_ENCPART,
+      keys,
+    "Supply the session key.");
+  if (attempt.ok) {
+    var p = msgs.readEncApRepPart(attempt.plain);
+    doc.sections.push({
+      title: "EncAPRepPart (decrypted)",
+      rows: [
+        row("ctime", timeOf(p.ctime), "echoes the Authenticator's ctime — " +
+            "that echo IS the proof"),
+        row("cusec", p.cusec),
+        row("subkey", p.subkey ? p.subkey.etypeName + ", " +
+            hexOf(p.subkey.key) : "(absent)",
+          p.subkey ? "the acceptor's subkey, which per-message tokens are " +
+              "then keyed from" : null),
+        row("seq-number", p.seqNumber)
+      ]
+    });
+  } else {
+    doc.sections[1].rows.push(decryptionRow(attempt,
+        "the ticket's session key"));
+  }
+  log.debug("Leaving describeApRep().");
+  return doc;
+}
+
+function describeKrbError(e, problems) {
+  log.debug("Entering describeKrbError().");
+  var doc = {
+    kind: "KRB-ERROR",
+    summary: e.error.name + " (" + e.errorCode + ") from " +
+             msgs.principalToString(e.sname, e.realm),
+    sections: [{
+      title: "Error",
+      rows: [
+        row("error-code", e.errorCode + " " + e.error.name),
+        row("meaning", e.error.meaning),
+        row("e-text", e.eText),
+        row("realm", e.realm),
+        row("sname", principalOf(e.sname, e.realm)),
+        row("crealm", e.crealm),
+        row("cname", principalOf(e.cname, e.crealm)),
+        row("stime", timeOf(e.stime), "the KDC's own clock, which is how " +
+            "skew is measured"),
+        row("susec", e.susec),
+        row("ctime", timeOf(e.ctime))
+      ]
+    }]
+  };
+
+  // Clock skew is measurable rather than guessable, and this is the one message
+  // that carries the other side's clock.
+  if (e.stime) {
+    var skewSeconds = Math.round((Date.now() - e.stime.getTime()) / 1000);
+    var absSkew = Math.abs(skewSeconds);
+    doc.sections[0].rows.push(row("skew against this browser",
+      (skewSeconds >= 0 ? "+" : "") + skewSeconds + " s",
+      absSkew > 300
+        ? "MORE THAN FIVE MINUTES. That alone will produce KRB_AP_ERR_SKEW " +
+            "on a default AD configuration."
+        : "within AD's default five-minute tolerance"));
+    if (e.errorCode === 37 || absSkew > 300) {
+      problems.push("The clock difference between this browser and the KDC " +
+          "is " + skewSeconds +
+        " seconds. AD's default tolerance is 300.");
+    }
+  }
+
+  if (e.eDataPaData) {
+    var rows = [];
+    e.eDataPaData.forEach(function (pa) {
+      rows.push(row(pa.typeName + " (" + pa.type + ")",
+          prim.toBytes(pa.value).length + " bytes"));
+      if (pa.type === msgs.PA_TYPE.ETYPE_INFO2) {
+        try {
+          msgs.readEtypeInfo2(pa.value).forEach(function (info) {
+            // The iteration count, and — the part that used to be silent —
+            // where it came from. s2kparams is OPTIONAL, and a real Active
+            // Directory OMITS it: a capture from Windows Server 2025 carries
+            // no s2kparams at all, so the client has to fall back to the
+            // etype's own default. Showing nothing in that case left the
+            // reader unable to tell "the KDC asked for the default" from "the
+            // decoder did not look", which for a tool whose whole job is to
+            // explain bytes is the wrong silence.
+            var iterations = null;
+            var iterationsFrom = null;
+            if (info.s2kparams && prim.toBytes(info.s2kparams).length === 4) {
+              var p = prim.toBytes(info.s2kparams);
+              iterations = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+              iterationsFrom = "s2kparams";
+            } else if (info.s2kparams === null ||
+                info.s2kparams === undefined) {
+              var prof = null;
+              try {
+                prof = kcrypto.etypeById(info.etype);
+              } catch (ignored) {
+                // An etype this build does not implement. There is nothing to
+                // say about its default, and saying nothing is correct here.
+                prof = null;
+              }
+              if (prof && prof.defaultIterations) {
+                iterations = prof.defaultIterations;
+                iterationsFrom = "default";
+              }
+            }
+            var iterationText = "";
+            if (iterationsFrom === "s2kparams") {
+              iterationText = ", iterations: " + iterations + " (from " +
+                  "s2kparams)";
+            } else if (iterationsFrom === "default") {
+              iterationText = ", iterations: " + iterations + " (RFC 3962 " +
+                  "default — no s2kparams sent)";
+            }
+            rows.push(row("  etype " + info.etype + " " + info.etypeName,
+              "salt: " + (info.salt === null ? "(none — arcfour is unsalted)" :
+                  JSON.stringify(info.salt)) + iterationText,
+              "THIS is the salt to use for string-to-key. It is not " +
+                  "guessable: AD uses the realm plus " +
+              "the sAMAccountName for a user, but a host-shaped string for a " +
+                  "computer account." +
+              (iterationsFrom === "default" ? " No s2kparams was sent, which " +
+                "is what Active Directory does — apply the etype's default " +
+                "iteration count rather than treating the field as required." :
+                "")));
+          });
+        } catch (err) {
+          rows.push(row("  ETYPE-INFO2", "does not decode: " + err.message));
+        }
+      }
+    });
+    doc.sections.push({
+      title: "e-data",
+      note: e.errorCode === 25
+        ? "On KDC_ERR_PREAUTH_REQUIRED this is not an error report — it is " +
+            "the information needed to " +
+          "build the real request."
+        : null,
+      rows: rows
+    });
+  } else if (e.eData) {
+    doc.sections.push({
+      title: "e-data",
+      rows: [row("bytes", hexOf(e.eData), e.eDataNote || null)]
+    });
+  }
+
+  if (e.errorCode !== 25) {
+    problems.push(e.error.name + ": " + e.error.meaning);
+  }
+  log.debug("Leaving describeKrbError().");
+  return doc;
+}
+
+// ---------------------------------------------------------------------------
+// The entry point.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// A GSS or SPNEGO token, which is what somebody pastes when they have copied an
+// `Authorization: Negotiate` or `WWW-Authenticate: Negotiate` header.
+//
+// This is the ONE branch of this module that is not a Kerberos message, and it
+// is here rather than on the SPNEGO page for the reason everything else in this
+// file is: the decoder page takes bytes from anywhere, and a header value is
+// where most people first meet a Kerberos token. Before this, such a paste
+// reported "[APPLICATION 0] — this build does not decode that message yet",
+// which is true, unhelpful, and names the wrong layer.
+//
+// The recursion is deliberate: the mechToken inside a NegTokenInit is an
+// ordinary InitialContextToken, and the AP-REQ inside THAT is an ordinary
+// AP-REQ, so both are handed to the functions that already describe them
+// (including their decryption attempts against whatever keys the reader
+// supplied). One implementation of "explain an AP-REQ", reached three ways.
+// ---------------------------------------------------------------------------
+function looksLikeGssToken(bytes) {
+  log.debug("Entering looksLikeGssToken().");
+  var b = prim.toBytes(bytes);
+  // 0xa1 is a bare NegTokenResp and cannot be anything else here — no Kerberos
+  // message begins with it. 0x60 is [APPLICATION 0], which the Kerberos
+  // grammar never uses (its lowest is 1, Ticket), so it is always a GSS
+  // InitialContextToken.
+  var yes = b.length > 1 && (b[0] === 0x60 || b[0] === 0xa1);
+  log.debug("Leaving looksLikeGssToken(). " + yes);
+  return yes;
+}
+
+// The mechanism token inside a mechToken/responseToken: an InitialContextToken
+// wrapping an AP-REQ, an AP-REP or a KRB-ERROR.
+async function describeMechToken(bytes, keys, problems, label, known) {
+  log.debug("Entering describeMechToken(). " + label);
+  var section = {
+    title: label,
+    note: null,
+    rows: [],
+    sections: []
+  };
+  var inner;
+  try {
+    inner = gss.decodeInitialContextToken(bytes);
+  } catch (e) {
+    // Not a wrapped token. RFC 4121 section 4.1 wraps only the FIRST token of a
+    // mechanism's exchange, so a bare AP-REP here is correct rather than
+    // broken — try it as a plain message before reporting anything.
+    section.rows.push(row("wrapper", "none",
+        "Only a mechanism's FIRST token carries the RFC 2743 0x60 wrapper. " +
+        "This one has none, so it is read as a bare message: " + e.message));
+    var bare = null;
+    try {
+      bare = msgs.identify(bytes);
+    } catch (e2) {
+      // identify() only peeks at a tag; a throw here means the bytes are not
+      // ASN.1 at all, which the tree below reports better than a row would.
+      bare = null;
+    }
+    if (bare) {
+      section.sections.push(await describeKerberosInside(bytes, keys,
+          problems, known));
+    } else {
+      section.rows.push(row("contents", hexOf(bytes),
+          "Not a Kerberos message and not a GSS wrapper."));
+    }
+    log.debug("Leaving describeMechToken(). Unwrapped.");
+    return section;
+  }
+  section.rows.push(row("mechanism OID", inner.mechOid + "  (" +
+      spnego.mechName(inner.mechOid) + ")", null));
+  section.rows.push(row("token id",
+      prim.toHex(new Uint8Array(inner.tokId)) + "  (" +
+      (inner.tokIdName || "unrecognised") + ")",
+      "RFC 4121 section 4.1: 01 00 is an AP-REQ, 02 00 an AP-REP, 03 00 a " +
+      "KRB-ERROR."));
+  section.sections.push(await describeKerberosInside(inner.inner, keys,
+      problems, known));
+  log.debug("Leaving describeMechToken().");
+  return section;
+}
+
+// One Kerberos message, as a nested section. Shares every describer above, so
+// the decryption attempts and the notes are the ones the top-level view gives.
+async function describeKerberosInside(bytes, keys, problems, known) {
+  log.debug("Entering describeKerberosInside().");
+  var id = msgs.identify(bytes);
+  var A = msgs.APPLICATION;
+  try {
+    return await describeKerberosMessage(bytes, keys, problems, id, A, known);
+  } catch (e) {
+    // A message that announces itself and then does not parse is CONTENT here,
+    // not an exception — the same rule the top level follows. Letting it
+    // propagate would lose the whole document, including the negotiation
+    // around it, which is very often the part that explains why the inner
+    // bytes are wrong: a token truncated by a proxy still has a perfectly
+    // readable mechTypes list in front of it.
+    problems.push("The " + (id ? id.name : "mechanism token") +
+        " inside this token does not parse: " + e.message);
+    log.debug("Leaving describeKerberosInside(). Does not parse.");
+    return {
+      title: (id ? id.name : "Mechanism token") + " (does not parse)",
+      rows: [
+        row("error", e.message),
+        row("bytes", hexOf(bytes))
+      ]
+    };
+  }
+}
+
+async function describeKerberosMessage(bytes, keys, problems, id, A, known) {
+  log.debug("Entering describeKerberosMessage().");
+  if (id && id.applicationNumber === A.AP_REQ) {
+    var reqDoc = await describeApReq(msgs.readApReq(bytes), keys, problems,
+        { reported: known });
+    log.debug("Leaving describeKerberosMessage(). AP-REQ.");
+    return { title: "AP-REQ", note: reqDoc.summary, sections: reqDoc.sections };
+  }
+  if (id && id.applicationNumber === A.AP_REP) {
+    var repDoc = await describeApRep(msgs.readApRep(bytes), keys);
+    log.debug("Leaving describeKerberosMessage(). AP-REP.");
+    return { title: "AP-REP", note: repDoc.summary, sections: repDoc.sections };
+  }
+  if (id && id.applicationNumber === A.KRB_ERROR) {
+    var errDoc = describeKrbError(msgs.readKrbError(bytes), problems);
+    log.debug("Leaving describeKerberosMessage(). KRB-ERROR.");
+    return {
+      title: "KRB-ERROR",
+      note: errDoc.summary,
+      sections: errDoc.sections
+    };
+  }
+  log.debug("Leaving describeKerberosMessage(). Unrecognised.");
+  return {
+    title: "Mechanism token",
+    rows: [row("contents", hexOf(bytes),
+        id ? "A " + id.name + ", which is not one of the three messages a " +
+            "GSS context exchange carries." : "Not a Kerberos message.")]
+  };
+}
+
+async function describeSpnego(bytes, keys, problems, known) {
+  log.debug("Entering describeSpnego().");
+  var parsed;
+  try {
+    parsed = spnego.decodeNegotiationToken(bytes);
+  } catch (e) {
+    var fallback = {
+      kind: "GSS token (unrecognised)",
+      summary: e.message,
+      sections: [],
+      tree: null,
+      problems: [e.message]
+    };
+    try {
+      fallback.tree = asn1.tree(bytes);
+    } catch (e2) {
+      // Neither a negotiation token nor parseable ASN.1. Both facts are worth
+      // saying: the first names the layer, the second says why nothing below
+      // it can be shown.
+      fallback.problems.push("The ASN.1 structure could not be shown " +
+          "either: " + e2.message);
+    }
+    log.debug("Leaving describeSpnego(). Not a negotiation token.");
+    return fallback;
+  }
+
+  if (parsed.kind === "RawKerberos") {
+    var raw = {
+      kind: "GSS InitialContextToken (Kerberos, not SPNEGO)",
+      summary: "A bare Kerberos GSS token — no negotiation around it",
+      sections: [{
+        title: "What this is",
+        note: parsed.note,
+        rows: [
+          row("mechanism OID", parsed.mechOid + "  (Kerberos v5)",
+              "SPNEGO's own OID is " + spnego.SPNEGO_OID + ", and it is not " +
+              "here — so nothing was negotiated."),
+          row("total size", prim.toBytes(bytes).length + " bytes")
+        ]
+      }],
+      problems: []
+    };
+    raw.sections.push(await describeMechToken(bytes, keys, problems,
+        "The Kerberos token", known));
+    log.debug("Leaving describeSpnego(). Raw Kerberos.");
+    return raw;
+  }
+
+  if (parsed.kind === "NegTokenResp") {
+    var respDoc = {
+      kind: "SPNEGO NegTokenResp",
+      summary: "The acceptor's answer" +
+        (parsed.negStateName ? " — " + parsed.negStateName : ""),
+      sections: [{
+        title: "NegTokenResp",
+        note: "Every SPNEGO token after the initiator's first one is a BARE " +
+          "NegTokenResp: no 0x60 wrapper and no OID, just [1] and the " +
+          "SEQUENCE (RFC 4178 section 4.2).",
+        rows: [
+          row("negState", parsed.negState === null ? null :
+              parsed.negState + "  (" + parsed.negStateName + ")",
+              parsed.negStateMeaning),
+          row("supportedMech", parsed.supportedMech
+            ? parsed.supportedMech + "  (" + parsed.supportedMechName + ")"
+            : null,
+            parsed.supportedMech
+              ? "The mechanism the acceptor chose. Legal only in its FIRST " +
+                "reply; on a later one it is telling the initiator to start " +
+                "again."
+              : null),
+          row("responseToken", parsed.responseToken ?
+              hexOf(parsed.responseToken) : null,
+              parsed.responseToken ? "the selected mechanism's own token" :
+                  null),
+          row("mechListMIC", parsed.mechListMic ?
+              hexOf(parsed.mechListMic) : null,
+              parsed.mechListMic
+                ? "An RFC 4121 MIC over the DER of the MechTypeList — the " +
+                  "SEQUENCE, NOT the [0] wrapper it sits behind in the " +
+                  "NegTokenInit (RFC 4178 section 5). Two bytes, and it is " +
+                  "the commonest reason a MIC does not verify."
+                : null)
+        ]
+      }],
+      problems: parsed.problems || []
+    };
+    if (parsed.responseToken) {
+      respDoc.sections.push(await describeMechToken(parsed.responseToken, keys,
+          problems, "Inside responseToken", known));
+    }
+    log.debug("Leaving describeSpnego(). NegTokenResp.");
+    return respDoc;
+  }
+
+  var mechRows = parsed.mechTypes.map(function (oid, i) {
+    var mech = spnego.mechByOid(oid);
+    return row("mechTypes[" + i + "]", oid + "  (" +
+        parsed.mechTypeNames[i] + ")",
+      (i === 0 ? "The initiator's FIRST preference. RFC 4178 section 5 makes " +
+          "the mechListMIC exchange optional only when the acceptor selects " +
+          "this one. " : "") + (mech ? mech.note : ""));
+  });
+  var initDoc = {
+    kind: "SPNEGO " + parsed.kind,
+    summary: "An initiator offering " + parsed.mechTypes.length +
+      " mechanism(s)" + (parsed.mechToken ? " with an optimistic token" : ""),
+    sections: [{
+      title: parsed.kind,
+      note: parsed.kind === "NegTokenInit2"
+        ? "[MS-SPNG]'s extended initial token, which a Windows ACCEPTOR " +
+          "sends when it speaks first. Its negHints takes tag [3], which is " +
+          "mechListMIC's tag in RFC 4178 — so the two are told apart by what " +
+          "is inside (a SEQUENCE against an OCTET STRING), never by the " +
+          "direction of travel."
+        : "The initiator's first token, and the only one wrapped in an RFC " +
+          "2743 InitialContextToken carrying SPNEGO's own OID (" +
+          spnego.SPNEGO_OID + ").",
+      rows: mechRows.concat([
+        row("reqFlags", parsed.reqFlags ? hexOf(parsed.reqFlags) : null,
+            parsed.reqFlags
+              ? "Deprecated by RFC 4178 section 4.2.1 — receivers MUST " +
+                "ignore it. The flags a service reads are in the 0x8003 " +
+                "checksum inside the AP-REQ."
+              : null),
+        row("mechToken", parsed.mechToken ? hexOf(parsed.mechToken) : null,
+            parsed.mechToken
+              ? "The OPTIMISTIC token: the initiator's first token for its " +
+                "preferred mechanism, sent before knowing whether the " +
+                "acceptor will choose that mechanism. It is what lets " +
+                "Kerberos ride on the very first HTTP request."
+              : "No optimistic token, so the acceptor must answer with " +
+                "accept-incomplete and ask for one — an extra round trip."),
+        row("mechListMIC", parsed.mechListMic ?
+            hexOf(parsed.mechListMic) : null,
+            parsed.mechListMic
+              ? "Computed over the DER of the MechTypeList — the SEQUENCE, " +
+                "not the [0] wrapper (RFC 4178 section 5)."
+              : null),
+        row("negHints.hintName", parsed.negHints ?
+            parsed.negHints.hintName : null,
+            parsed.negHints
+              ? "Every Windows server sends the literal " +
+                "\"not_defined_in_RFC4178@please_ignore\" here. It looks " +
+                "like a defect and is not."
+              : null)
+      ])
+    }],
+    problems: parsed.problems || []
+  };
+  if (parsed.mechListDer) {
+    initDoc.sections[0].rows.push(row("MechTypeList bytes",
+        hexOf(parsed.mechListDer),
+        "These exact bytes are the input to GSS_GetMIC for the mechListMIC. " +
+        "They are sliced out of what arrived rather than re-encoded, because " +
+        "a re-encoding that is legal and different verifies against nothing."));
+  }
+  if (parsed.mechToken) {
+    initDoc.sections.push(await describeMechToken(parsed.mechToken, keys,
+        problems, "Inside mechToken", known));
+  }
+  log.debug("Leaving describeSpnego(). " + parsed.kind + ".");
+  return initDoc;
+}
+
+// ---------------------------------------------------------------------------
+// options.keys      the keys to try against every encrypted part.
+// options.reported  what the caller already knows about the tickets these bytes
+//                   carry — either ONE record (this ticket's contents, as the
+//                   AS page's Ticket pane supplies) or a LIST of them keyed by
+//                   `ticketHex` (what every exchange page supplies, out of the
+//                   workflow's own credential cache). It reaches every ticket
+//                   in the message however deep it is nested: an AP-REQ inside
+//                   a mechToken inside a NegTokenInit is three envelopes down
+//                   and is exactly where a reader wants it. See reportedFor().
+// ---------------------------------------------------------------------------
+async function describe(input, options) {
+  log.debug("Entering describe().");
+  var opts = options || {};
+  var parsed = (input instanceof Uint8Array) ? {
+    bytes: input,
+    encoding: "bytes",
+    framing: null
+  }
+      : parseInput(input);
+  var bytes = parsed.bytes;
+  var problems = [];
+  var keys = opts.keys || [];
+
+  var id = msgs.identify(bytes);
+  var doc;
+  if (looksLikeGssToken(bytes)) {
+    // Asked BEFORE identify(), and the order is the whole point. A GSS token
+    // begins 0x60 — [APPLICATION 0] — so identify() answers "[APPLICATION 0]"
+    // and the message falls through to "this build does not decode that
+    // message yet". True of the Kerberos grammar, and the wrong layer: what
+    // was pasted is a `Negotiate` header value, and the Kerberos message is
+    // two wrappers inside it.
+    doc = await describeSpnego(bytes, keys, problems, opts.reported || null);
+  } else if (!id) {
+    // Not a Kerberos message. Show the ASN.1 structure rather than refusing: a
+    // structural tree is far more useful than "could not parse", and it is how
+    // a codec bug in THIS tool becomes visible.
+    doc = {
+      kind: "unrecognised",
+      summary: "These bytes do not begin with a Kerberos [APPLICATION n] " +
+          "tag. Showing their ASN.1 " +
+               "structure instead.",
+      sections: [],
+      tree: null
+    };
+    try {
+      doc.tree = asn1.tree(bytes);
+    } catch (e) {
+      doc.summary = "These bytes are neither a Kerberos message nor " +
+          "parseable as ASN.1: " + e.message;
+      problems.push(e.message);
+    }
+  } else {
+    var n = id.applicationNumber;
+    var A = msgs.APPLICATION;
+    try {
+      if (n === A.AS_REQ || n === A.TGS_REQ) {
+        doc = await describeKdcReq(msgs.readKdcReq(bytes), parsed, keys,
+            problems, opts.reported || null);
+      } else if (n === A.AS_REP || n === A.TGS_REP) {
+        doc = await describeKdcRep(msgs.readKdcRep(bytes), keys, problems,
+            opts.reported || null);
+      } else if (n === A.AP_REQ) {
+        doc = await describeApReq(msgs.readApReq(bytes), keys, problems,
+            { reported: opts.reported || null });
+      } else if (n === A.AP_REP) {
+        doc = await describeApRep(msgs.readApRep(bytes), keys);
+      } else if (n === A.KRB_ERROR) {
+        doc = describeKrbError(msgs.readKrbError(bytes), problems);
+      } else if (n === A.TICKET) {
+        doc = {
+          kind: "Ticket",
+          summary: "A bare Ticket, outside any message",
+          // options.reported reaches HERE as well as through a KDC reply, and
+          // this is the path the AS page's Ticket pane takes: it holds the
+          // ticket's bytes on their own, plus the contents the KDC reported for
+          // it, which it kept when the reply was read. Same renderer either
+          // way, and either shape — one record about this ticket, or the
+          // page's whole pool of them for reportedFor() to match.
+          sections: [await describeTicket(msgs.readTicket(bytes), keys,
+              problems, opts.reported || null)]
+        };
+      } else if (n === A.KRB_CRED) {
+        // Somebody has pasted a DELEGATED CREDENTIAL. Worth saying plainly what
+        // that is, because it is the one structure here that is a capability
+        // rather than a claim: a ticket-granting ticket someone handed to a
+        // service so it could act as them.
+        var cred = msgs.readKrbCred(bytes);
+        doc = {
+          kind: "KRB-CRED",
+          summary: "A delegated credential carrying " + cred.tickets.length +
+              " forwarded " +
+            "ticket(s) — unconstrained delegation",
+          sections: [{
+            title: "KRB-CRED",
+            note: "This is how a client hands its own ticket-granting ticket " +
+                "to a service so " +
+                  "that the service can obtain tickets to ANYTHING as that " +
+                      "client, for as long " +
+                  "as the ticket lives, without the KDC being asked again. " +
+                      "It normally travels " +
+                  "inside an AP-REQ Authenticator's 0x8003 checksum rather " +
+                      "than on its own.",
+            rows: [
+              row("pvno", cred.pvno),
+              row("msg-type", cred.msgType + " (KRB-CRED)"),
+              row("tickets", cred.tickets.map(function (t) {
+                return principalOf(t.sname, t.realm);
+              }).join("\n"), "each one's SESSION KEY is in the encrypted " +
+                  "part below — a ticket " +
+                "without its key is opaque, and that separation is what " +
+                    "makes this safe to put " +
+                "in a checksum field")
+            ],
+            sections: [describeEncryptedData(cred.encPart, "KRB-CRED " +
+                "enc-part (EncKrbCredPart)")]
+          }]
+        };
+        // The enc-part is at key usage 14 under the AP exchange's subkey, or
+        // the ticket's session key when no subkey was sent — not under any
+        // long-term key, so a reader usually cannot open it and saying which
+        // key is needed is the useful part.
+        var credAttempt = await tryDecrypt(cred.encPart,
+            kcrypto.KEY_USAGE.KRB_CRED_ENCPART, keys,
+          "Encrypted at key usage 14 under the AP exchange's SUBKEY, or the " +
+              "presented ticket's " +
+          "session key when none was sent. Supply that to see the forwarded " +
+              "ticket's own key.");
+        if (credAttempt.ok) {
+          try {
+            var credPart = msgs.readEncKrbCredPart(credAttempt.plain);
+            doc.sections[0].sections.push({
+              title: "EncKrbCredPart (decrypted)",
+              rows: [
+                row("timestamp", timeOf(credPart.timestamp)),
+                row("nonce", credPart.nonce),
+                row("s-address", credPart.sAddress
+                  ? "type " + credPart.sAddress.type + " " +
+                      prim.toHex(credPart.sAddress.address)
+                  : null),
+                row("r-address", credPart.rAddress
+                  ? "type " + credPart.rAddress.type + " " +
+                      prim.toHex(credPart.rAddress.address)
+                  : null)
+              ],
+              sections: credPart.ticketInfo.map(function (info, i) {
+                return {
+                  title: "Forwarded credential " + (i + 1),
+                  rows: [
+                    row("client", principalOf(info.pname, info.prealm)),
+                    row("service", principalOf(info.sname, info.srealm)),
+                    row("key", info.key.etypeName + ", " + hexOf(info.key.key),
+                        "the forwarded ticket's session key — holding this " +
+                            "and the ticket IS " +
+                        "being that client"),
+                    row("flags", info.flags ?
+                        msgs.ticketFlagNames(info.flags).join(", ") : null,
+                        info.flags &&
+                            info.flags.indexOf(msgs.TICKET_FLAG.FORWARDED) !== -1
+                          ? "flagged `forwarded`, which is the record a " +
+                              "receiving service has " +
+                            "that these credentials were handed over rather " +
+                                "than presented by " +
+                            "their owner"
+                          : null),
+                    row("authtime", timeOf(info.authtime)),
+                    row("starttime", timeOf(info.starttime)),
+                    row("endtime", timeOf(info.endtime)),
+                    row("renew-till", timeOf(info.renewTill))
+                  ]
+                };
+              })
+            });
+          } catch (e) {
+            doc.sections[0].sections.push({
+              title: "EncKrbCredPart",
+              rows: [row("decrypted, but", e.message)]
+            });
+          }
+        } else {
+          doc.sections[0].sections[0].rows.push(
+            decryptionRow(credAttempt, "this KRB-CRED"));
+        }
+      } else if (n === A.AUTHENTICATOR) {
+        var a = msgs.readAuthenticator(bytes);
+        doc = {
+          kind: "Authenticator",
+          summary: "A decrypted Authenticator for " +
+              msgs.principalToString(a.cname, a.crealm),
+          sections: [{
+            title: "Authenticator",
+            rows: [
+              row("crealm", a.crealm), row("cname", principalOf(a.cname,
+                  a.crealm)),
+              row("ctime", timeOf(a.ctime)), row("cusec", a.cusec),
+              row("seq-number", a.seqNumber),
+              row("cksum", a.cksum ? "type " + a.cksum.type + ", " +
+                  hexOf(a.cksum.checksum) : "(absent)")
+            ]
+          }]
+        };
+      } else if (n === A.ENC_TICKET_PART) {
+        doc = {
+          kind: "EncTicketPart",
+          summary: "A decrypted EncTicketPart",
+          sections: [await describeEncTicketPart(msgs.readEncTicketPart(bytes),
+              null,
+            problems, keys)]
+        };
+      } else if (n === A.ENC_AS_REP_PART || n === A.ENC_TGS_REP_PART) {
+        var p = msgs.readEncKdcRepPart(bytes);
+        doc = {
+          kind: p.taggedAs,
+          summary: "A decrypted " + p.taggedAs + " for " +
+              msgs.principalToString(p.sname, p.srealm),
+          sections: [{
+            title: p.taggedAs,
+            rows: [
+              row("tagged as", p.taggedAs),
+              row("key", p.key.etypeName + ", " + hexOf(p.key.key)),
+              row("nonce", p.nonce),
+              row("flags", msgs.ticketFlagNames(p.flags).join(", ") ||
+                  "(none)"),
+              row("authtime", timeOf(p.authtime)), row("endtime",
+                  timeOf(p.endtime)),
+              row("srealm", p.srealm), row("sname", principalOf(p.sname,
+                  p.srealm))
+            ]
+          }]
+        };
+      } else {
+        doc = {
+          kind: id.name,
+          summary: "A " + id.name + ". This build does not decode that " +
+              "message yet; its ASN.1 " +
+                   "structure is below.",
+          sections: [],
+          tree: asn1.tree(bytes)
+        };
+      }
+    } catch (e) {
+      // A message that identifies itself and then fails to parse is the most
+      // interesting case there is: it is either malformed or this codec is
+      // wrong. Both deserve the structure alongside the error.
+      doc = {
+        kind: id.name + " (does not parse)",
+        summary: "These bytes announce themselves as a " + id.name +
+            " but do not parse: " + e.message,
+        sections: [],
+        tree: null
+      };
+      problems.push(e.message);
+      try {
+        doc.tree = asn1.tree(bytes);
+      } catch (e2) {
+        problems.push("The ASN.1 structure could not be shown either: " +
+            e2.message);
+      }
+    }
+  }
+
+  doc.input = {
+    encoding: parsed.encoding,
+    framing: parsed.framing,
+    byteLength: bytes.length,
+    hex: hexOf(bytes, 64)
+  };
+  doc.problems = (doc.problems || []).concat(problems);
+  log.debug("Leaving describe(). kind=" + doc.kind + ", problems=" +
+      doc.problems.length);
+  return doc;
+}
+
+// A key list from a password, for the AS-REP case where that is all a reader
+// has. Every supported etype is derived, because the reader usually does not
+// know which one the KDC chose — and the salt is the part they will get wrong,
+// so it is a required argument rather than something guessed here.
+async function keysFromPassword(password, salt, etypes) {
+  log.debug("Entering keysFromPassword().");
+  var out = [];
+  var ids = etypes && etypes.length ? etypes : kcrypto.DEFAULT_ETYPE_PREFERENCE;
+  for (var i = 0; i < ids.length; i++) {
+    var e = kcrypto.etypeById(ids[i]);
+    out.push({
+      etype: e.id,
+      key: await e.stringToKey(password, prim.utf8(salt || ""), null),
+      label: "the password with salt " + JSON.stringify(salt || "") + " as " +
+          e.name
+    });
+  }
+  log.debug("Leaving keysFromPassword().");
+  return out;
+}
+
+module.exports = {
+  describe: describe,
+  parseInput: parseInput,
+  keysFromPassword: keysFromPassword,
+  // exposed for the tests, which check the formatting rules directly
+  hexOf: hexOf,
+  timeOf: timeOf,
+  principalOf: principalOf
+};

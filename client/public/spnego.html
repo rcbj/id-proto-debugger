@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — SPNEGO: Kerberos over HTTP</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/kerberos.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/spnego.js">
+</script>
+
+<p class="krb-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<h3 class="krb-title">SPNEGO &mdash; Kerberos over HTTP</h3>
+
+<p class="krb-intro">A Kerberos ticket in an HTTP header &mdash; both round trips, both halves,
+and the SPN this page derived from the URL.</p>
+
+<!-- Folded, as on the other five pages: the two round trips are what the reader
+     came for, and they start below this. Kept verbatim. -->
+<details class="krb-more">
+  <summary>The four layers, and why a failed SPNEGO leaves no evidence on the wire</summary>
+  <p class="krb-intro">The protocol that puts a Kerberos ticket in an HTTP header, and the reason a corporate
+intranet site signs you in without asking for anything. Four layers, of which HTTP shows you one:
+<strong><a href="https://www.rfc-editor.org/rfc/rfc4559" target="_blank" rel="noopener noreferrer">RFC
+4559</a></strong> carries <strong><a href="https://www.rfc-editor.org/info/rfc4178/" target="_blank"
+rel="noopener noreferrer">RFC 4178</a></strong> (SPNEGO, the negotiation) which carries <strong>RFC
+4121</strong> (the GSS-API Kerberos mechanism) which carries the <strong>AP-REQ</strong> the
+<a href="/kerberos_ap.html">AP exchange page</a> builds.</p>
+
+<p class="krb-intro krb-boundary"><strong>The first 401 carries no token, and that is the whole
+problem.</strong> A server answers <code>WWW-Authenticate: Negotiate</code> and nothing else: it does not
+say which realm, which KDC, or which service principal name. The client derives the SPN from the URL's host
+name and finds the KDC from its own configuration &mdash; so when SPNEGO fails, it usually fails over a DNS
+name or an SPN registration that leaves <em>no evidence on the wire at all</em>. This page shows you both
+halves of both round trips, and names the SPN it derived, so that the guess is visible rather than
+implicit.</p>
+</details>
+
+<div id="krb_environment_note"></div>
+
+<!--#include file="/partials/krb_steps.html"-->
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane on this page.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<div class="dbg-pane" id="pane_config">
+  <legend class="dbg-legend" id="config_expand_button">Configuration Parameters</legend>
+  <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
+  <div class="krb-grid">
+    <div class="krb-keys">
+      <div class="krb-group">The protected resource</div>
+      <div class="tooltip"><label for="krb_spnego_url">URL</label><span class="tooltiptext">The SPNEGO-protected page to fetch. The request goes through the api rather than from this page directly, because a cross-origin fetch cannot read the WWW-Authenticate header and a browser will not tell you what it sent.</span></div>
+      <!-- No value here: the api fetches this URL, so the working default differs
+           per build (the compose name inside a container, loopback on a host run,
+           nothing where there is no api) and the markup can only be right about
+           one of the three. krb5SpnegoUrlDefault in client/src/env/*.js is the
+           value; spnego.js's applyBuildDefaults() applies it before anything
+           stored, exactly as the AS page does with the KDC host. -->
+      <input type="text" id="krb_spnego_url" class="krb-field" spellcheck="false"
+             placeholder="http://localhost:8081/spnego/protected">
+
+      <div class="tooltip"><label for="krb_spnego_spn">Service principal name</label><span class="tooltiptext">The SPN the service ticket must name. Derived from the URL's host as HTTP/&lt;host&gt;, which is a GUESS: an SPN's host component and the host in the URL are not required to agree, and on a load-balanced or CNAMEd service they routinely do not.</span></div>
+      <input type="text" id="krb_spnego_spn" class="krb-field" spellcheck="false">
+      <div id="krb_spn_note"></div>
+    </div>
+
+    <div class="krb-keys">
+      <div class="krb-group">What to offer &mdash; the mechanism list</div>
+      <div class="krb-checks">
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_mech_krb5" checked="checked">
+        Kerberos v5 &mdash; 1.2.840.113554.1.2.2</label><span class="tooltiptext">The real Kerberos mechanism OID. Untick it to watch the negotiation fail with no mechanism in common.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_mech_ms" checked="checked">
+        Kerberos v5, Microsoft's OID &mdash; 1.2.840.48018.1.2.2</label><span class="tooltiptext">Microsoft's mis-typed Kerberos OID (48018 where 113554 was meant). Every Windows client offers both; an acceptor that knows only one still interoperates, which is why the typo survived.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_mech_ntlm">
+        NTLMSSP &mdash; 1.3.6.1.4.1.311.2.2.10</label><span class="tooltiptext">Offered by Windows as the fallback when no ticket can be obtained. This build cannot perform NTLM — offering it only shows what the list looks like and what an acceptor does with it.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_send_mic" checked="checked">
+        include a mechListMIC</label><span class="tooltiptext">Sign the mechanism list with GSS_GetMIC, over the DER of MechTypeList and NOT the [0]-tagged form it sits behind in the token. It is what makes the list unforgeable.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_flag_mutual" checked="checked">
+        MUTUAL &mdash; require the server to prove itself</label><span class="tooltiptext">Ask the server to prove itself back with an AP-REP in the WWW-Authenticate header of the 200. Without it you have authenticated to something you cannot identify.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <details class="krb-more">
+    <summary>What these choices actually decide</summary>
+    <p class="krb-note">The mechanism list is <strong>ordered</strong>, and the order is not cosmetic:
+    RFC 4178 section 5 lets the <code>mechListMIC</code> exchange be skipped only when the acceptor selects
+    the mechanism the initiator listed <em>first</em>. Select anything else and the MIC becomes mandatory
+    &mdash; because an attacker who struck the preferred mechanism out of the list on the wire would
+    otherwise be indistinguishable from an acceptor that does not support it.</p>
+    <p class="krb-note">The MIC is signed with the <strong>subkey from this client's own
+    Authenticator</strong>, because at the moment the <code>NegTokenInit</code> is built that is the only
+    context key in existence. The server's own MIC comes back signed with the <em>acceptor's</em> subkey,
+    which RFC 4121 makes the context key once it has been offered. Two MICs, two keys, and the asymmetry
+    is forced by <em>when</em> each one is computed rather than chosen.</p>
+    <p class="krb-note">This page never sends a password anywhere and never asks for one: it spends a
+    ticket that the <a href="/kerberos.html">AS</a> and <a href="/kerberos_tgs.html">TGS</a> pages
+    obtained.</p>
+  </details>
+
+  <input type="button" id="krb_probe_button" class="btn2"
+         value="1. Send the unauthenticated request">
+  <input type="button" id="krb_authenticate_button" class="btn2"
+         value="2. Authenticate with SPNEGO" disabled="disabled">
+  <div id="krb_spnego_status" class="krb-status"></div>
+</fieldset>
+</div>
+
+<div class="dbg-pane" id="pane_credentials">
+  <legend class="dbg-legend" id="credentials_expand_button">The ticket this needs, and where to get
+  one</legend>
+  <fieldset name="credentials_fieldset" id="credentials_fieldset" style="display: block;">
+  <div id="krb_credentials_pane"></div>
+  <p class="krb-note">SPNEGO obtains nothing. It <em>spends</em> a service ticket for the SPN above, which
+  is what the AS exchange and then the TGS exchange produce &mdash; so those pages are where you go, and
+  each of them will offer you a link back here once you have what this page needs. Nothing about the
+  Kerberos half changes because HTTP is carrying it.</p>
+</fieldset>
+</div>
+
+<div class="dbg-pane" id="pane_http_probe">
+  <legend class="dbg-legend" id="http_probe_expand_button">Round trip 1 &mdash; the unauthenticated
+  request</legend>
+  <fieldset name="http_probe_fieldset" id="http_probe_fieldset" style="display: block;">
+  <div id="krb_probe_pane"></div>
+  <p class="krb-note">The challenge is the bare word <code>Negotiate</code> with <strong>nothing after
+  it</strong> (RFC 4559 section 4). A token there is not a harmless extra: a client that reads it as the
+  acceptor's first negotiation token has nothing to answer with.</p>
+</fieldset>
+</div>
+
+<div class="dbg-pane" id="pane_sent">
+  <legend class="dbg-legend" id="sent_expand_button">Round trip 2 &mdash; what this browser sends</legend>
+  <fieldset name="sent_fieldset" id="sent_fieldset" style="display: block;">
+  <div id="krb_request_headers_pane"></div>
+  <div class="krb-tabs" data-krb-tabs="sent">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="spnego">SPNEGO</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="apreq">The AP-REQ inside</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="sent" data-krb-tab="spnego">
+    <div id="krb_negtokeninit_pane"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="sent"
+       data-krb-tab="apreq">
+    <div id="krb_apreq_pane"></div>
+    <div id="krb_checksum_pane"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="sent"
+       data-krb-tab="hex">
+    <div id="krb_sent_hex"></div>
+  </div>
+</fieldset>
+</div>
+
+<div class="dbg-pane" id="pane_received">
+  <legend class="dbg-legend" id="received_expand_button">Round trip 2 &mdash; what the server sends
+  back</legend>
+  <fieldset name="received_fieldset" id="received_fieldset" style="display: block;">
+  <div id="krb_response_headers_pane"></div>
+  <div class="krb-tabs" data-krb-tabs="received">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="spnego">SPNEGO</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="aprep">The AP-REP inside</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="body">Body</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="received" data-krb-tab="spnego">
+    <div id="krb_negtokenresp_pane"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="received"
+       data-krb-tab="aprep">
+    <div id="krb_aprep_pane"></div>
+    <div id="krb_context_pane"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="received"
+       data-krb-tab="hex">
+    <div id="krb_received_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="received"
+       data-krb-tab="body">
+    <div id="krb_body_pane"></div>
+  </div>
+</fieldset>
+</div>
+
+<div class="dbg-pane" id="pane_ticket">
+  <legend class="dbg-legend" id="ticket_expand_button">The ticket that was sent</legend>
+  <fieldset name="ticket_fieldset" id="ticket_fieldset" style="display: block;">
+  <p class="krb-note">The ticket travels <em>inside</em> the AP-REQ, and it is encrypted under the
+  <strong>service's</strong> long-term key &mdash; not under anything this browser holds. Its contents are
+  shown below anyway: the KDC repeated them to the client when it issued the ticket on the
+  <a href="/kerberos_tgs.html">TGS exchange</a> page, and the workflow kept them, so the flags, the session
+  key, both principals and all four times are there with nothing to fill in. They are labelled as the KDC's
+  report rather than as the ticket's plaintext, because that is what they are.</p>
+  <div class="krb-tabs" data-krb-tabs="ticket">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="ticket" data-krb-tab="decoded">
+    <div id="krb_ticket_pane"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="ticket"
+       data-krb-tab="hex">
+    <div id="krb_ticket_hex"></div>
+  </div>
+
+  <p class="krb-note">The one field the KDC does not repeat is the ticket's <code>authorization-data</code>
+  &mdash; on Active Directory the <strong>PAC</strong>, which is what the service actually authorizes on.
+  That exists only inside the ciphertext, so reading it needs the service account's own key. This is the
+  one page in the workflow where that key is plausibly at hand (on a real deployment you would take it from
+  the account's keytab), so the fields for it are here, beside the ticket they open. Supply one and this
+  pane opens in place; supply none and everything above still stands.</p>
+
+  <!-- These fields were the workflow's ONLY key-entry pane until 2026-08-17, when
+       they were moved out into a shared partial included on five pages. That was
+       wrong twice: it put a key pane on four pages whose readers hold no such key
+       and did not need one, and it moved these ones away from the ticket they
+       open. They are back in this pane. What is different is that they are no
+       longer the only way to see anything — kerberos_panes.js hands every
+       message pane the KDC's own report of every ticket this workflow holds, so
+       a reader with no service key still sees everything a client can know, and
+       these fields buy exactly one thing more: the PAC. Which is why they sit
+       BELOW the decoded ticket rather than above it, as they did when nothing
+       was visible without them: what somebody came for is now on screen first,
+       and this is the optional step after it.
+
+       The ids stay krb_deckey_* (they were krb_service_* before the move) because
+       kerberos_keys.js is the one implementation of the three routes to a key,
+       shared with the decoder page, and its FIELDS map names these. Nothing typed
+       here is stored, in either store. -->
+  <details class="krb-more">
+    <summary>The three different keys, and which part each one opens</summary>
+    <p class="krb-note">A <strong>ticket</strong> is sealed with the <strong>service principal's</strong>
+    own long-term key, an AS-REP's enc-part with the <strong>client's</strong>, and an Authenticator with
+    the <strong>session</strong> key from inside the ticket. This page already holds the last of those
+    &mdash; it came with the ticket &mdash; which is why the AP-REQ's Authenticator is open above without
+    anything being asked. What it does not hold, and no client ever does, is the first: the long-term key
+    of the principal named in the ticket's <code>sname</code>.</p>
+  </details>
+
+  <div class="krb-grid">
+    <div class="krb-keys">
+      <div class="tooltip"><label for="krb_deckey_hex">A raw key, in hex</label><span class="tooltiptext">A raw key as hex — from a keytab read elsewhere, or derived by hand. This is what opens a ticket: the long-term key of the principal in its sname.</span></div>
+      <input type="text" id="krb_deckey_hex" class="krb-field" spellcheck="false"
+             placeholder="e.g. a 32-byte aes256 key as 64 hex characters">
+      <div class="tooltip"><label for="krb_deckey_etype">&hellip;of encryption type</label><span class="tooltiptext">Which encryption type the raw key above belongs to. A key of the wrong etype is not tried at all, and one of the right etype that is the wrong key fails integrity — which looks identical unless the pane says which happened.</span></div>
+      <select id="krb_deckey_etype" class="krb-field">
+        <option value="18" selected="selected">18 &mdash; aes256-cts-hmac-sha1-96</option>
+        <option value="17">17 &mdash; aes128-cts-hmac-sha1-96</option>
+        <option value="20">20 &mdash; aes256-cts-hmac-sha384-192</option>
+        <option value="19">19 &mdash; aes128-cts-hmac-sha256-128</option>
+        <option value="23">23 &mdash; arcfour-hmac-md5 (legacy)</option>
+      </select>
+    </div>
+
+    <div class="krb-keys">
+      <div class="tooltip"><label for="krb_deckey_password">&hellip;or that principal's password</label><span class="tooltiptext">The password of the service account whose key you need. Never sent anywhere: it is turned into a key here, in the browser.</span></div>
+      <input type="password" id="krb_deckey_password" class="krb-field" autocomplete="off">
+      <div class="tooltip"><label for="krb_deckey_salt">&hellip;with its salt <strong>(not guessable)</strong></label><span class="tooltiptext">The string mixed into string-to-key. Active Directory uses the realm plus the sAMAccountName for a user but a host-shaped string for a computer account, so it cannot be computed from the principal name — the KDC publishes it in PA-ETYPE-INFO2 and nowhere else. Left blank, this page assumes the realm followed by the SPN and says so.</span></div>
+      <input type="text" id="krb_deckey_salt" class="krb-field" spellcheck="false"
+             placeholder="e.g. EXAMPLE.COMHTTP/web.example.com">
+    </div>
+
+    <div class="krb-keys">
+      <div class="tooltip"><label for="krb_deckey_keytab">&hellip;or a keytab (base64 or hex)</label><span class="tooltiptext">A keytab, base64 or hex. Every usable key in it is offered, which is the quickest route when you do not know which etype the ticket used.</span></div>
+      <textarea id="krb_deckey_keytab" class="krb-raw" rows="3" spellcheck="false"
+                placeholder="the contents of a krb5.keytab, base64-encoded"></textarea>
+    </div>
+  </div>
+
+  <div class="krb-buttons">
+    <input type="button" id="krb_deckey_button" class="btn2"
+           value="Open the ticket with these keys">
+  </div>
+  <div id="krb_deckey_status" class="krb-status"></div>
+  <div id="krb_deckey_notes"></div>
+</fieldset>
+</div>
+
+<p class="krb-intro"><strong>Why your browser will not do this for you.</strong> Chrome and Firefox perform
+Negotiate only for hosts on an explicit allow-list (<code>AuthServerAllowlist</code>,
+<code>network.negotiate-auth.trusted-uris</code>), and send a Kerberos ticket to nobody else &mdash; which
+is a defence rather than an inconvenience, since a ticket handed to the wrong host is a credential handed
+to the wrong host. That is also why this page performs the handshake by hand: it is the only way to see
+what a browser would have sent.</p>
+
+<p class="krb-intro"><strong>What SPNEGO does not carry.</strong> No realm, no KDC, no SPN, and
+&mdash; on a rejection &mdash; no reason. <code>negState</code> has four values and none of them is an
+error message, so the only diagnosis available is the mechanism's own error token: a
+<code>KRB-ERROR</code> inside <code>responseToken</code>. When one arrives this page decodes it, because a
+<code>reject</code> with nothing inside it cannot be told from a wrong password.</p>
+
+<!--#include file="/partials/krb_tickets.html"-->
+
+<!--#include file="/partials/krb_history.html"-->
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>
