@@ -1,0 +1,262 @@
+/* ldap.css — the LDAP Protocol Debugger's look.
+ *
+ * Every class here is prefixed `ldap-`, and tests/navigation.js's
+ * checkStylesheetsLoaded() knows that prefix: a page using an `ldap-` class this
+ * sheet does not define fails that test. That guard exists because the
+ * WS-Federation pages once linked the wrong stylesheet after a rename and
+ * rendered completely unstyled — the link resolved, so nothing 404'd and nothing
+ * noticed.
+ *
+ * THIS PAGE DOES NOT LINK css/saml_common.css, and that is why the classes here
+ * duplicate a few of that sheet's. The alternative — linking it and using
+ * `saml-*` names on a page that has nothing to do with SAML — is what the
+ * Kerberos pages deliberately did not do, and the guard above is written to
+ * catch the halfway state where a page uses one family's classes and loads the
+ * other's sheet.
+ *
+ * The one layout constraint worth stating, and it is the same one the Kerberos
+ * sheet records: this page renders values whose length it does not control. A
+ * distinguished name is a long unbroken string with no spaces after the commas,
+ * a base64 photo attribute is longer still, and bootstrap's
+ * `code { white-space: nowrap }` plus an auto-layout table sized to min-content
+ * is exactly how such a value pushes a pane past the edge of the viewport. So
+ * the DN and value cells are capped and wrap on any character.
+ */
+
+.ldap-return {
+  float: right;
+  margin: 4px 0 0;
+  font-size: 0.95em;
+}
+
+.ldap-title { margin-bottom: 6px; margin-top: 2px; line-height: 1.25; }
+
+.ldap-intro {
+  max-width: 900px;
+  margin-bottom: 10px;
+}
+
+.ldap-pane {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px 14px 14px;
+  margin-bottom: 14px;
+  background: #fcfcfd;
+}
+
+.ldap-pane > legend {
+  width: auto;
+  border: 0;
+  margin-bottom: 4px;
+  padding: 0 6px;
+  font-size: 15px;
+  font-weight: bold;
+  color: #12107c;
+  line-height: 1.2;
+}
+
+.ldap-sub {
+  border-top: 1px solid #e6e6ea;
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.ldap-sub-title {
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+/* THE ELEMENT-AND-ATTRIBUTE SELECTOR OUTRANKS A BARE CLASS, so the class has to
+   name the element too. Bootstrap's `input[type="text"], select, textarea
+   { margin-bottom: 10px }` is (0,1,1) and a bare `.ldap-field` is (0,1,0) — the
+   4px asked for here would lose to 10px on every text input on the page, which
+   looks like generous spacing rather than a rule that is not applying. The
+   Kerberos sheet records the same trap; it is not specific to that workflow. */
+.ldap-field {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+}
+
+input.ldap-field,
+select.ldap-field,
+textarea.ldap-field {
+  margin-bottom: 4px;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.ldap-label {
+  display: block;
+  font-weight: bold;
+  margin-top: 6px;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+/* A label with a Copy button sitting on the same line as its text. */
+.ldap-has-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ldap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0 14px;
+}
+
+.ldap-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  flex-wrap: wrap;
+}
+
+.ldap-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+
+.ldap-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: #f4f4f8;
+  cursor: pointer;
+}
+
+.ldap-btn:hover { background: #ececf4; }
+
+.ldap-status {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.ldap-grow { flex: 1 1 320px; min-width: 220px; }
+
+.ldap-ok { color: #2e7d32; }
+.ldap-bad { color: #b00; }
+.ldap-pending { color: #8a6d00; }
+
+.ldap-note {
+  font-size: 12px;
+  color: #555;
+  margin: 4px 0 6px;
+  max-width: 900px;
+}
+
+.ldap-limits {
+  font-size: 12px;
+  color: #444;
+  background: #f6f6fa;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 6px 0;
+}
+
+.ldap-dn-preview {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #12107c;
+  word-break: break-all;
+}
+
+.ldap-result {
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+  margin: 6px 0;
+  word-break: break-word;
+}
+
+.ldap-count {
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+}
+
+.ldap-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.ldap-table th,
+.ldap-table td {
+  border: 1px solid #e0e0e6;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ldap-table th { background: #f0f0f5; }
+
+/* A DN has no spaces in it worth breaking at, so it has to be allowed to break
+   anywhere or one entry widens the whole table past the container. */
+.ldap-entries td:first-child { width: 3em; }
+.ldap-entries td:nth-child(2) { width: 34%; }
+
+.ldap-entry-dn,
+.ldap-history-dn,
+.ldap-history-uri {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.ldap-attr-name {
+  font-weight: bold;
+  font-family: Menlo, Consolas, monospace;
+}
+
+.ldap-attr-value {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.ldap-raw {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* The Operations History pane. op_history.js emits `<prefix>-history-scroll`,
+   `<prefix>-table`, `<prefix>-history`, `<prefix>-history-time` and
+   `<prefix>-history-empty` with the prefix this workflow passes it (`ldap`), so
+   all five have to be defined here or checkStylesheetsLoaded() fails the page —
+   which is exactly the mistake the Kerberos pages made when they first reused
+   that module. */
+.ldap-history-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+.ldap-history { margin: 0; }
+
+.ldap-history-time {
+  white-space: nowrap;
+  color: #666;
+  width: 6.5em;
+}
+
+.ldap-history-empty {
+  font-size: 12px;
+  color: #666;
+  margin: 6px 0;
+}

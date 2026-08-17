@@ -93,7 +93,31 @@ var config = {
   // is the case that needs saying out loud anyway.
   // ---------------------------------------------------------------------------
   krb5SpnegoUrlDefault: "",
-  krb5SpnegoSpnDefault: ""
+  krb5SpnegoSpnDefault: "",
+
+  // ---------------------------------------------------------------------------
+  // LDAP. These fill ldap.html so the workflow runs against this project's mock
+  // directory without anything being typed.
+  //
+  // **The host follows the same rule as krb5KdcHostDefault above, and for the
+  // same reason.** LDAP is BER over a TCP socket, so the connection is opened by
+  // the **api**, and the address is therefore resolved from THERE: the compose
+  // service name where the api runs in a container, loopback for a host run, and
+  // nothing at all on a build with no api behind it. `localhost` in this field
+  // means the api container itself, which listens on no LDAP port, and the
+  // failure is a connection refused naming an address the user can reach
+  // perfectly well from their own shell.
+  //
+  // The bind DN and password are a published test credential — this directory
+  // accepts EVERY bind, whatever is typed — not a secret. They are set here and
+  // EMPTY in prod.js / test-idptools-com.js, which is also where
+  // `backendAvailable` is false and the workflow cannot run at all.
+  // ---------------------------------------------------------------------------
+  ldapUrlDefault: "",
+  ldapBaseDnDefault: "",
+  ldapBindDnDefault: "",
+  ldapPasswordDefault: "",
+
 
 };
 

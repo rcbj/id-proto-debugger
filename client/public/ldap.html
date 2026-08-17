@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Identity Protocol Debugger — LDAP</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/ldap.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/ldap.js">
+</script>
+
+<p class="ldap-return"><a href="/index.html">&larr; All protocols</a></p>
+<h3 class="ldap-title">LDAP Protocol Debugger</h3>
+
+<p class="ldap-intro">LDAP v3 (<strong>RFC 4511</strong>) is BER over a TCP
+socket, so a browser cannot speak it: there is no <code>fetch</code>, no XHR and
+no WebSocket that produces an <code>LDAPMessage</code>. Every operation on this
+page is therefore performed by the debugger&rsquo;s <strong>api</strong>, which
+opens the socket, and the <em>Exchange</em> pane at the foot shows both halves of
+what was asked of it. The URL below is resolved <strong>by the api</strong> and
+not by this browser &mdash; <code>localhost</code> there means the machine the
+api runs on.</p>
+
+<!-- ===================== Connection & Bind ===================== -->
+<fieldset class="ldap-pane" id="pane_connection">
+  <legend>Connection &amp; Bind</legend>
+  <p class="ldap-note">The <strong>bind</strong> is an LDAP operation in its own
+  right (RFC 4511 section 4.2), and it is the only one whose failure is about
+  credentials &mdash; result code <code>49</code>,
+  <code>invalidCredentials</code>. It has a button of its own here rather than
+  being a side effect of the first search, so that &ldquo;my credentials are
+  wrong&rdquo; and &ldquo;my filter is wrong&rdquo; never look alike. Every
+  other pane binds with these same fields before it does anything.</p>
+  <div class="ldap-grid">
+    <div>
+      <label class="ldap-label" for="ldap_url">Directory URL</label>
+      <input class="ldap-field" type="text" id="ldap_url" name="ldap_url"
+             placeholder="ldap://sts:389"
+             title="ldap:// or ldaps://, with the port. Resolved by the api, not by this browser.">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_base_dn">Base DN</label>
+      <input class="ldap-field" type="text" id="ldap_base_dn"
+             name="ldap_base_dn" placeholder="dc=example,dc=com"
+             title="The naming context. The Users and Groups panes build their DNs under ou=users and ou=groups below this.">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_bind_dn">Bind DN</label>
+      <input class="ldap-field" type="text" id="ldap_bind_dn"
+             name="ldap_bind_dn" placeholder="cn=admin,dc=example,dc=com"
+             title="Leave empty for an anonymous bind.">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_password">Password</label>
+      <input class="ldap-field" type="password" id="ldap_password"
+             name="ldap_password"
+             title="Never written to localStorage. Seeded from this build's configuration on every load.">
+    </div>
+  </div>
+  <p class="ldap-note">The password is <strong>not</strong> saved in
+  <code>localStorage</code> &mdash; every other field on this page is. Against
+  this project&rsquo;s mock directory, <em>any</em> password is accepted except
+  the literal string <code>invalid</code>, which is refused with a 49 so that a
+  negative test has something to fail on.</p>
+  <div class="ldap-row">
+    <input type="button" class="ldap-btn" id="btn_ldap_bind" value="Bind"
+           onclick="return ldap.testBind();"
+           title="Connect, perform a simple bind with the DN and password above, and unbind.">
+    <input class="ldap-status ldap-grow" type="text" id="ldap_bind_status"
+           readonly>
+  </div>
+  <p class="ldap-limits" id="ldap_limits">Asking the api what it will do&hellip;</p>
+</fieldset>
+
+<!-- ===================== Search ===================== -->
+<fieldset class="ldap-pane" id="pane_search">
+  <legend>Search</legend>
+  <p class="ldap-note">The four buttons below <strong>fill these fields and then
+  run</strong>, rather than running a hidden query &mdash; the filter is the
+  thing worth reading. The last one is the one nobody guesses: there is no
+  attribute on a user that lists their groups (<code>memberOf</code> is a
+  Microsoft extension, and OpenLDAP has it only behind an overlay), so
+  &ldquo;which groups is this user in&rdquo; is answered from the other end, by
+  searching the <em>groups</em> for a <code>member</code> value that is the
+  user&rsquo;s DN.</p>
+  <div class="ldap-buttons">
+    <input type="button" class="ldap-btn" id="btn_ldap_preset_users"
+           value="All users" onclick="return ldap.presetUsers();"
+           title="(objectClass=inetOrgPerson) under ou=users, subtree scope.">
+    <input type="button" class="ldap-btn" id="btn_ldap_preset_groups"
+           value="All groups" onclick="return ldap.presetGroups();"
+           title="(objectClass=groupOfNames) under ou=groups, subtree scope.">
+    <input type="button" class="ldap-btn" id="btn_ldap_preset_group_members"
+           value="Users in the group below"
+           onclick="return ldap.presetGroupMembers();"
+           title="A base-scoped read of the group entry itself, asking only for `member`. The membership lives on the group.">
+    <input type="button" class="ldap-btn" id="btn_ldap_preset_user_groups"
+           value="Groups the user below is in"
+           onclick="return ldap.presetUserGroups();"
+           title="A subtree search of the groups for (member=&lt;the user's DN&gt;).">
+  </div>
+  <div class="ldap-grid">
+    <div>
+      <label class="ldap-label" for="ldap_search_base">Search base</label>
+      <input class="ldap-field" type="text" id="ldap_search_base"
+             name="ldap_search_base" placeholder="dc=example,dc=com">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_search_scope">Scope</label>
+      <select class="ldap-field" id="ldap_search_scope"
+              name="ldap_search_scope"
+              title="RFC 4511 section 4.5.1.2: base is the entry itself, one is its immediate children, sub is the whole subtree.">
+        <option value="base">base — the base entry only</option>
+        <option value="one">one — its immediate children</option>
+        <option value="sub" selected>sub — the whole subtree</option>
+      </select>
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_search_filter">Filter (RFC 4515)</label>
+      <input class="ldap-field" type="text" id="ldap_search_filter"
+             name="ldap_search_filter" placeholder="(objectClass=*)">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_search_attributes">Attributes</label>
+      <input class="ldap-field" type="text" id="ldap_search_attributes"
+             name="ldap_search_attributes"
+             placeholder="cn sn mail — empty means all user attributes"
+             title="Space- or comma-separated. Empty means all USER attributes, which per RFC 4511 section 4.5.1.8 does not include operational ones such as createTimestamp.">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_search_size_limit">Size limit</label>
+      <input class="ldap-field" type="text" id="ldap_search_size_limit"
+             name="ldap_search_size_limit" placeholder="100"
+             title="The client's own cap, sent in the request. The api applies its own on top and will not exceed it.">
+    </div>
+  </div>
+  <div class="ldap-row">
+    <input type="button" class="ldap-btn" id="btn_ldap_search" value="Search"
+           onclick="return ldap.runSearch();">
+    <input class="ldap-status ldap-grow" type="text" id="ldap_search_status"
+           readonly>
+  </div>
+  <p class="ldap-count" id="ldap_search_count">&nbsp;</p>
+  <div id="ldap_search_results"></div>
+</fieldset>
+
+<!-- ===================== Users ===================== -->
+<fieldset class="ldap-pane" id="pane_users">
+  <legend>Users</legend>
+  <p class="ldap-note">Shorthand for the operations in the <em>Entry</em> pane
+  below, in the vocabulary of the object rather than of the protocol. The DN is
+  built as <code>uid=&lt;uid&gt;,ou=users,&lt;base DN&gt;</code> and shown here
+  so nothing about it is a hidden convention.</p>
+  <div class="ldap-grid">
+    <div>
+      <label class="ldap-label" for="ldap_user_uid">uid</label>
+      <input class="ldap-field" type="text" id="ldap_user_uid"
+             name="ldap_user_uid">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_user_cn">cn</label>
+      <input class="ldap-field" type="text" id="ldap_user_cn"
+             name="ldap_user_cn">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_user_sn">sn</label>
+      <input class="ldap-field" type="text" id="ldap_user_sn"
+             name="ldap_user_sn">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_user_given_name">givenName</label>
+      <input class="ldap-field" type="text" id="ldap_user_given_name"
+             name="ldap_user_given_name">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_user_mail">mail</label>
+      <input class="ldap-field" type="text" id="ldap_user_mail"
+             name="ldap_user_mail">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_user_title">title</label>
+      <input class="ldap-field" type="text" id="ldap_user_title"
+             name="ldap_user_title">
+    </div>
+  </div>
+  <p class="ldap-note">DN: <span class="ldap-dn-preview"
+     id="ldap_user_dn_preview"></span></p>
+  <div class="ldap-buttons">
+    <input type="button" class="ldap-btn" id="btn_ldap_create_user"
+           value="Create user" onclick="return ldap.createUser();"
+           title="An LDAP add of an inetOrgPerson. Empty optional fields are omitted rather than sent empty — an LDAP attribute always has at least one value.">
+    <input type="button" class="ldap-btn" id="btn_ldap_update_user"
+           value="Update attributes" onclick="return ldap.updateUser();"
+           title="An LDAP modify with one `replace` change per filled field. `replace` and not `add`: add would leave the old value beside the new one.">
+    <input type="button" class="ldap-btn" id="btn_ldap_delete_user"
+           value="Delete user" onclick="return ldap.deleteUser();"
+           title="An LDAP delete. Groups that list this DN as a member will still list it — see the Groups pane.">
+    <input type="button" class="ldap-btn" id="btn_ldap_fill_entry_user"
+           value="Show as a raw operation"
+           onclick="return ldap.fillEntryFromUser();"
+           title="Fill the Entry pane below with what these buttons send.">
+  </div>
+  <div class="ldap-row">
+    <input class="ldap-status ldap-grow" type="text" id="ldap_user_status"
+           readonly>
+  </div>
+</fieldset>
+
+<!-- ===================== Groups ===================== -->
+<fieldset class="ldap-pane" id="pane_groups">
+  <legend>Groups</legend>
+  <p class="ldap-note"><strong>There is no &ldquo;add user to group&rdquo;
+  operation in LDAP.</strong> A <code>groupOfNames</code> keeps its membership
+  in a multi-valued <code>member</code> attribute whose values are DNs, so
+  adding a member is a <code>modify</code> carrying one <code>add</code> change
+  and removing one is a <code>modify</code> carrying one <code>delete</code>
+  change with the value. The two buttons below do exactly that, against the
+  <em>group</em>, using the uid from the Users pane as the member; the
+  <em>Exchange</em> pane shows the change list they built.</p>
+  <div class="ldap-grid">
+    <div>
+      <label class="ldap-label" for="ldap_group_cn">cn</label>
+      <input class="ldap-field" type="text" id="ldap_group_cn"
+             name="ldap_group_cn">
+    </div>
+    <div>
+      <label class="ldap-label" for="ldap_group_description">description</label>
+      <input class="ldap-field" type="text" id="ldap_group_description"
+             name="ldap_group_description">
+    </div>
+  </div>
+  <p class="ldap-note">DN: <span class="ldap-dn-preview"
+     id="ldap_group_dn_preview"></span></p>
+  <div class="ldap-buttons">
+    <input type="button" class="ldap-btn" id="btn_ldap_create_group"
+           value="Create group" onclick="return ldap.createGroup();"
+           title="An LDAP add of a groupOfNames, seeded with the user from the pane above — RFC 4519 makes `member` a MUST attribute, so an empty groupOfNames is not expressible.">
+    <input type="button" class="ldap-btn" id="btn_ldap_add_member"
+           value="Add user to group" onclick="return ldap.addMember();"
+           title="A modify on the GROUP: add member = the user's DN.">
+    <input type="button" class="ldap-btn" id="btn_ldap_remove_member"
+           value="Remove user from group" onclick="return ldap.removeMember();"
+           title="A modify on the GROUP: delete member = the user's DN.">
+    <input type="button" class="ldap-btn" id="btn_ldap_delete_group"
+           value="Delete group" onclick="return ldap.deleteGroup();">
+    <input type="button" class="ldap-btn" id="btn_ldap_fill_entry_group"
+           value="Show as a raw operation"
+           onclick="return ldap.fillEntryFromGroup();">
+  </div>
+  <div class="ldap-row">
+    <input class="ldap-status ldap-grow" type="text" id="ldap_group_status"
+           readonly>
+  </div>
+  <p class="ldap-note">Delete a user and then read this group again: its
+  <code>member</code> still names the DN that is gone. That is correct
+  &mdash; <strong>referential integrity is a directory feature, not a protocol
+  rule</strong>. OpenLDAP needs an overlay for it and Active Directory does it in
+  the DSA; nothing in RFC 4511 requires it, and a debugger that tidied the
+  dangling value away would be hiding the thing worth seeing.</p>
+</fieldset>
+
+<!-- ===================== Entry ===================== -->
+<fieldset class="ldap-pane" id="pane_entry">
+  <legend>Entry &mdash; the operations themselves</legend>
+  <p class="ldap-note">The same five write operations against any DN at all, in
+  the protocol&rsquo;s own vocabulary. This is what the two panes above are
+  shorthand for.</p>
+  <label class="ldap-label" for="ldap_entry_dn">DN</label>
+  <input class="ldap-field" type="text" id="ldap_entry_dn" name="ldap_entry_dn"
+         placeholder="uid=dave,ou=users,dc=example,dc=com">
+  <div class="ldap-sub">
+    <div class="ldap-sub-title">Add</div>
+    <label class="ldap-label" for="ldap_entry_attributes">Attributes &mdash; a
+    JSON object of attribute name to a value or an array of values</label>
+    <textarea class="ldap-field ldap-raw" rows="7" id="ldap_entry_attributes"
+              name="ldap_entry_attributes"></textarea>
+    <div class="ldap-buttons">
+      <input type="button" class="ldap-btn" id="btn_ldap_entry_add"
+             value="Add entry" onclick="return ldap.entryAdd();">
+    </div>
+  </div>
+  <div class="ldap-sub">
+    <div class="ldap-sub-title">Modify</div>
+    <label class="ldap-label" for="ldap_entry_changes">Changes &mdash; a JSON
+    array of <code>{operation, type, values}</code>, where operation is
+    <code>add</code>, <code>delete</code> or <code>replace</code> (RFC 4511
+    section 4.6)</label>
+    <textarea class="ldap-field ldap-raw" rows="7" id="ldap_entry_changes"
+              name="ldap_entry_changes"></textarea>
+    <div class="ldap-buttons">
+      <input type="button" class="ldap-btn" id="btn_ldap_entry_modify"
+             value="Modify entry" onclick="return ldap.entryModify();">
+    </div>
+    <p class="ldap-note">The changes are applied in order and the whole
+    operation is atomic: either every change or none of them. A
+    <code>delete</code> naming an attribute that is not there is
+    <code>16</code>, <code>noSuchAttribute</code>, and deleting the last value
+    of an attribute deletes the attribute &mdash; an LDAP attribute always has
+    at least one value.</p>
+  </div>
+  <div class="ldap-sub">
+    <div class="ldap-sub-title">Delete, compare and rename</div>
+    <div class="ldap-grid">
+      <div>
+        <label class="ldap-label" for="ldap_entry_attribute">Attribute to
+        compare</label>
+        <input class="ldap-field" type="text" id="ldap_entry_attribute"
+               name="ldap_entry_attribute">
+      </div>
+      <div>
+        <label class="ldap-label" for="ldap_entry_value">Value to compare
+        against</label>
+        <input class="ldap-field" type="text" id="ldap_entry_value"
+               name="ldap_entry_value">
+      </div>
+      <div>
+        <label class="ldap-label" for="ldap_entry_new_rdn">New RDN</label>
+        <input class="ldap-field" type="text" id="ldap_entry_new_rdn"
+               name="ldap_entry_new_rdn" placeholder="uid=dave2">
+      </div>
+    </div>
+    <div class="ldap-buttons">
+      <input type="button" class="ldap-btn" id="btn_ldap_entry_delete"
+             value="Delete entry" onclick="return ldap.entryDelete();"
+             title="An entry with children is 66, notAllowedOnNonLeaf.">
+      <input type="button" class="ldap-btn" id="btn_ldap_entry_compare"
+             value="Compare" onclick="return ldap.entryCompare();"
+             title="Answers compareTrue (6) or compareFalse (5). Neither of those is success (0).">
+      <input type="button" class="ldap-btn" id="btn_ldap_entry_rename"
+             value="Rename (modifyDN)" onclick="return ldap.entryRename();">
+    </div>
+  </div>
+  <div class="ldap-row">
+    <input class="ldap-status ldap-grow" type="text" id="ldap_entry_status"
+           readonly>
+  </div>
+</fieldset>
+
+<!-- ===================== Exchange ===================== -->
+<fieldset class="ldap-pane" id="pane_exchange">
+  <legend>Exchange</legend>
+  <p class="ldap-note">What this page asked the api to do, and what it said
+  back. The password is the one thing redacted, and its length is kept &mdash;
+  &ldquo;did the field reach the api at all&rdquo; is a real question when a
+  bind fails.</p>
+  <p class="ldap-result" id="ldap_result_summary">&nbsp;</p>
+  <label class="ldap-label ldap-has-copy" for="ldap_request_json">Request
+  <button type="button" class="ldap-btn"
+          onclick="return ldap.copyField('ldap_request_json');">Copy</button>
+  </label>
+  <textarea class="ldap-field ldap-raw" rows="12" id="ldap_request_json"
+            name="ldap_request_json" readonly></textarea>
+  <label class="ldap-label ldap-has-copy" for="ldap_response_json">Response
+  <button type="button" class="ldap-btn"
+          onclick="return ldap.copyField('ldap_response_json');">Copy</button>
+  </label>
+  <textarea class="ldap-field ldap-raw" rows="16" id="ldap_response_json"
+            name="ldap_response_json" readonly></textarea>
+</fieldset>
+
+<!-- ===================== Operations History ===================== -->
+<fieldset class="ldap-pane" id="pane_history">
+  <legend>Operations History</legend>
+  <p class="ldap-note">Every operation this page has asked for, newest first. A
+  row that stays <span class="ldap-pending">Sent</span> means the api never
+  answered at all &mdash; which is a different thing from
+  <span class="ldap-bad">Failure</span>, which here means the round trip worked
+  and the directory said no.</p>
+  <div class="ldap-row">
+    <input type="button" class="ldap-btn" id="btn_ldap_clear_history"
+           value="Clear History"
+           onclick="return ldap.clearOperationHistory();">
+  </div>
+  <div id="ldap_operation_history"></div>
+</fieldset>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

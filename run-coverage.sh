@@ -81,6 +81,13 @@ check_return_code $?
 # checked here rather than left to the build. This run uses --abort-on-container-
 # exit, so a service that cannot be built or started takes the whole run down.
 requireMockStsCheckout "${CURRENT_DIR}"
+# The api needs node-ldapjs too — the same library on the client side of
+# the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
+# the mock's, because npm resolves a `file:` dependency's own requires from
+# where the real directory lives, so a copy outside api/ never reaches
+# api/node_modules. Uninitialised, the image builds fine and the service
+# dies at startup with `Cannot find module 'ldapjs'`.
+requireApiLdapjsCheckout "${CURRENT_DIR}"
 check_return_code $?
 
 mkdir -p coverage/frontend/.nyc_output coverage/api

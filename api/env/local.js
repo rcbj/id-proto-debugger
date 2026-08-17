@@ -113,6 +113,40 @@ var config = {
   // it is unmistakable rather than a plausible typo.
   // Here it is the mock STS's protected service (HTTP/web.example.com).
   krb5ServicePorts: [8888],
+  // The ports the LDAP client (api/ldap_client.js) may connect to.
+  //
+  // The four assigned ones: 389 (LDAP), 636 (LDAPS), 3268 and 3269 (the Active
+  // Directory global catalogue, plain and over TLS). 1389 and 1636 are here as
+  // well because port 389 is privileged, so a directory run outside a container
+  // — which is how somebody debugging their own OpenLDAP usually has it — nearly
+  // always lands on 1389.
+  //
+  // This is a NARROWER capability than the Kerberos relay's krb5AllowedPorts and
+  // the allowlist is correspondingly a convenience rather than the only control:
+  // POST /ldap/* takes an operation described in JSON and encodes the bytes
+  // itself, so a caller cannot choose what is sent the way it can with a byte
+  // relay. What still applies unchanged is the ADDRESS policy below, which this
+  // client enforces itself because the SSRF guard is installed on axios and a
+  // raw socket walks straight past it.
+  //
+  // A malformed entry is dropped with its reason logged; an allowlist that ends
+  // up empty refuses every call. Set it to the string "any" if a deployment
+  // genuinely needs arbitrary ports — a word rather than an empty list, so that
+  // widening it cannot be a plausible typo. Omit the setting entirely to get the
+  // four assigned ports and nothing else.
+  ldapAllowedPorts: [389, 636, 1389, 1636, 3268, 3269],
+  // How many entries this service will accumulate from ONE search before it
+  // stops and says so. A NUMBER.
+  //
+  // It is a second cap beside maxContentLength above, and both are needed: a
+  // million one-attribute entries fits inside a megabyte of values and is still
+  // a million objects to build, while a single entry carrying a jpegPhoto is one
+  // object and is still megabytes. A search with no filter against a real
+  // directory reaches one or the other immediately, which is exactly when a
+  // debugger should say "there was more" rather than run out of heap. The
+  // client's own protocol-level sizeLimit may ask for fewer; it may not ask for
+  // more. Omit it for the code default of 1000.
+  ldapMaxEntries: 1000,
   // SAML Service Provider identity (this debugger acting as an SP).
   spEntityId: "http://localhost:3000/saml/sp",
   acsUrl: "http://localhost:4000/samlacs",

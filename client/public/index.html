@@ -194,6 +194,23 @@
       <span class="landing-card-desc">Kerberos over HTTP (RFC 4559/4178): watch the Negotiate challenge, the token a browser would send, the mechanism list and its MIC, and the ticket inside.</span>
       <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: the ticket SPNEGO carries comes from a KDC on port 88, which a browser cannot reach. Run the debugger locally for it.</span>
     </a>
+    <!-- The third card that is not on the deployed static sites, and the only
+         one of the three with no ambiguity about it at all: RFC 4511 is BER
+         over a TCP socket, so every single operation on that page is a call to
+         the api and the page has no offline half the way Kerberos has its
+         decoder. Same marker, same greying, same second description. -->
+    <a class="landing-card" href="/ldap.html" data-not-on-static>
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <ellipse cx="12" cy="5" rx="7.5" ry="2.8"/>
+          <path d="M4.5 5v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V5"/>
+          <path d="M4.5 11v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">LDAP</span>
+      <span class="landing-card-desc">LDAP v3 (RFC 4511) against a real directory: bind, search by filter and scope, create and delete users and groups, change membership, read every result code.</span>
+      <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: LDAP is BER over port 389, which a browser cannot open. Run the debugger locally for it.</span>
+    </a>
   </div>
 </div>
 

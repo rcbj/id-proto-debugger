@@ -908,6 +908,40 @@ function buildJobs() {
   // of this function for why the name had to change.
   const kerberosOff =
     (env.KERBEROS_AVAILABLE || env.KERBEROS_PAGES_AVAILABLE) === "false";
+
+  // The same gate for LDAP, and it is a SEPARATE variable rather than a reuse
+  // of the one above. The two protocols are absent from a static deployment for
+  // the same underlying reason — both are binary over a raw TCP socket, so both
+  // need the api and a static site has none — but they are absent
+  // independently: a remote target could perfectly well be api-backed with an
+  // LDAP directory reachable and no KDC, or the reverse. Deriving one from the
+  // other would turn "not this protocol" into a set of skipped or failing jobs
+  // about a protocol that is there.
+  //
+  // Unset — which is every containerized and every local run — means the page
+  // is there. remote-run-tests.sh sets it false per target, because
+  // client/static_site.js leaves ldap.html, its bundle and css/ldap.css out of
+  // dist/ and greys the landing card; without the gate the page job runs
+  // against a 404 and fails naming an element on a page nobody deployed.
+  //
+  // Note which job it reaches and which it does not. `ldap_page.js` is gated
+  // here. `api_ldap.js` is NOT: it needs the api and the mock rather than the
+  // site, and it already skips with its own named reason when either is
+  // missing — "the api answered 404 for GET /ldap/limits" says considerably
+  // more than a blanket "LDAP is off for this target" would. That is the
+  // opposite of the choice the Kerberos sweep makes below, and deliberately so:
+  // those jobs load code out of the sts/ submodule and so acquire a spurious
+  // failure on a remote target, while this one speaks only HTTP.
+  const ldapOff = env.LDAP_AVAILABLE === "false";
+  const ldapPagesSkip = ldapOff
+    ? "the LDAP page is not on this deployment: RFC 4511 is BER over a TCP " +
+      "socket, so every button on that page is a call to the api and a " +
+      "static site has none — client/static_site.js leaves the page, its " +
+      "bundle and css/ldap.css out of the build and greys out the landing " +
+      "card. Run it against the containerized stack (./docker-run-tests.sh) " +
+      "or a local dev server, or set LDAP_AVAILABLE=true for a remote target " +
+      "that IS api-backed."
+    : null;
   const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
       "api's port-88 relay, which a static site has not got, so " +
@@ -1446,6 +1480,96 @@ function buildJobs() {
   };
   if (kerberosPagesSkip) spnegoPageJob.skip = kerberosPagesSkip;
   jobs.push(spnegoPageJob);
+
+  // ---------------------------------------------------------------------------
+  // LDAP. Two jobs, and the split between them is the same one the Kerberos
+  // family has: the protocol has no browser in it, and the page has no protocol
+  // in it.
+  //
+  // `api_ldap.js` drives the eight POST /ldap/* endpoints against the mock's
+  // embedded directory over a real TCP socket, with no browser. It covers the
+  // ten operations the workflow exists for and, more usefully, the three things
+  // a happy-path test would pass without: that an LDAP RESULT CODE IS NOT AN
+  // HTTP ERROR (a noSuchObject is a completed round trip whose answer was no,
+  // and answering 500 for it would put the most useful half of this workflow
+  // behind an error page); that a one-level search is not silently answered as
+  // a subtree one (a wrong scope returns a SUPERSET, so every assertion about
+  // the contents still holds and only the count differs — it has already
+  // happened once in the mock, where ldapjs spells the scopes `single` and
+  // `subtree` rather than `one` and `sub`); and that membership is a modify on
+  // the GROUP, asserted from both ends, because an implementation that got one
+  // direction right and the other backwards looks correct until somebody asks
+  // the other question.
+  //
+  // It also checks the two properties of the mock directory that the debugger
+  // teaches: a bind succeeds with any password except the literal `invalid`, so
+  // result code 49 stays reachable; and deleting a user does NOT remove it from
+  // the groups that list it, because referential integrity is a directory
+  // feature and not a protocol rule. And the auto-created user: authenticating
+  // to the mock through ANY protocol grows an entry under ou=users, which is one
+  // hook on admin_stats.recordAuthentication() and therefore cheap to break.
+  //
+  // Every name it creates is unique per run — the mock's directory lives for the
+  // life of its process, so a fixed uid would be entryAlreadyExists on the
+  // second run and the test would only pass against a freshly started service.
+  //
+  // Needs the api and the mock STS. No browser. LDAP_URL is the API's view of
+  // the directory rather than this test's or the browser's, which on the
+  // containerized stack are three different names — it is its own variable for
+  // the same reason KRB5_SPNEGO_URL is.
+  jobs.push({
+    name: "LDAP protocol (bind, add, modify, delete, search, compare, and " +
+        "what a result code is)",
+    script: "api_ldap.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      LDAP_URL: env.LDAP_URL || "ldap://sts:389",
+      LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
+      LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
+      LDAP_PASSWORD: env.LDAP_PASSWORD || "password!",
+    },
+  });
+
+  // The PAGE, which covers the four things that only exist in a browser and
+  // every one of which is a way for this workflow to be broken while the
+  // protocol is perfect:
+  //
+  //  * the DNs the shorthand panes BUILD from four fields. Nothing in the
+  //    protocol notices a wrong composition — the operation simply happens
+  //    somewhere else and succeeds — so the page previews both and the test
+  //    reads the preview as well as the outcome.
+  //  * that membership is a modify on the GROUP, asserted against the request
+  //    the page built rather than only against the result. Putting the change
+  //    on the user looks right until somebody reads the group.
+  //  * that the four search presets FILL THE FIELDS rather than running a
+  //    hidden query. The filter is the thing worth reading, especially the one
+  //    nobody guesses: the groups a user is in are found by searching the
+  //    GROUPS for a `member` value naming the user, because there is no
+  //    attribute on the user to read.
+  //  * that a refusal is shown as a RESULT and logged as a Failure, while a
+  //    row that stays `Sent` means the api never answered — the two states
+  //    people most often confuse.
+  //
+  // Plus the one credential rule nothing else can see: the password is never
+  // written to localStorage, while every other field on the page is. And the
+  // stylesheet check tests/navigation.js makes for the pages it walks, repeated
+  // here because it cannot walk to this one (see the gate below).
+  const ldapPageJob = {
+    name: "LDAP page (the DNs it builds, the presets, the modify that is " +
+        "membership, and what it remembers)",
+    script: "ldap_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      LDAP_URL: env.LDAP_URL || "ldap://sts:389",
+      LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
+      LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
+      LDAP_PASSWORD: env.LDAP_PASSWORD || "password!",
+    },
+  };
+  if (ldapPagesSkip) ldapPageJob.skip = ldapPagesSkip;
+  jobs.push(ldapPageJob);
 
   // The DELEGATION page: S4U2Self, S4U2Proxy with both authorization routes, forwarding
   // and renewal. tests/krb5_tgs_ap.js already drives every one of those exchanges with no
