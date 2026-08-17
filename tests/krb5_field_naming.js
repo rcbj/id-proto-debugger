@@ -584,12 +584,17 @@ function everyHexPaneIsReachableAndFilled() {
   log.debug("Entering everyHexPaneIsReachableAndFilled().");
   let panels = 0;
   const pages = kerberosPages();
-  assert.ok(pages.length >= 5,
+  assert.ok(pages.length >= 6,
     "found " + pages.length + " page(s) linking css/kerberos.css under " +
-    PUBLIC_DIR + ". There are five Kerberos pages at the least, so a count " +
-    "below that means the pages are not where this check looks and every " +
-    "assertion below it passed by having nothing to read. In the tests image " +
-    "they arrive through the client/public COPY lines in tests/Dockerfile.");
+    PUBLIC_DIR + ": " + pages.map(function (p) {
+      return p.page;
+    }).join(", ") + ". There are six pages in this workflow at the least — " +
+    "the five kerberos*.html and spnego.html — so a count below that means " +
+    "the pages are not where this check looks and every assertion below it " +
+    "passed by having one less page to read. In the tests image they arrive " +
+    "through the client/public COPY lines in tests/Dockerfile, and spnego " +
+    "is the one that gets left out of them, because it is the only page of " +
+    "the six whose name does not begin with `kerberos`.");
   pages.forEach(function (entry) {
     const html = entry.html;
     assert.ok(entry.bundle, entry.page + " loads no /js/*.js bundle, so " +

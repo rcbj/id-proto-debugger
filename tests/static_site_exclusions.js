@@ -39,8 +39,9 @@
 //
 // No browser and no services: node only, so it never skips as a whole. The two
 // directory-wide checks need client/public, which the tests image does not
-// carry, and say so in the log when it is absent — the four files they can be
-// run against ARE copied there (tests/Dockerfile), so the image runs the rest.
+// carry whole, and say so in the log when it is not there — the four files the
+// rest can be run against ARE copied (tests/Dockerfile), so the image runs
+// those.
 // ---------------------------------------------------------------------------
 const assert = require("assert");
 const fs = require("fs");
@@ -83,8 +84,35 @@ const LANDING_CSS_PATH = locate([
 const CLIENT_DOCKERFILE_PATH = locate([
   path.join(__dirname, "client_Dockerfile"),
   path.join(__dirname, "..", "client", "Dockerfile")]);
-const PUBLIC_DIR = locate([
-  path.join(__dirname, "..", "client", "public")]);
+// The two directory-wide checks read the WHOLE of client/public, so "that
+// directory exists" is not the question they need answered — "is this a
+// checkout" is. The tests image carries a PARTIAL client/public: the five
+// kerberos*.html pages, two of the three Kerberos partials and one stylesheet,
+// copied there for krb5_ticket_history.js and krb5_operation_history.js, which
+// resolve their files as ../client/public (tests/Dockerfile). A `locate()` on
+// the directory alone therefore found that mirror and took it for the real
+// thing, and both checks quietly changed what they were about: the existence
+// check below failed the image naming spnego.html and partials/krb_steps.html,
+// both of which are in the repository and neither of which is in the mirror,
+// and the dead-link sweep would have swept five files it had already excluded
+// and reported a clean site it never read.
+//
+// index.html is what separates the two. It is the landing page this whole test
+// is about, so a checkout cannot lack it, and the image copies it FLAT beside
+// the test (never into the mirror) because that is the one file the other
+// checks here need. Identify the checkout by that file, not by the directory.
+function checkoutPublicDir() {
+  log.debug("Entering checkoutPublicDir().");
+  const dir = path.join(__dirname, "..", "client", "public");
+  if (!fs.existsSync(path.join(dir, "index.html"))) {
+    log.debug("Leaving checkoutPublicDir(). No index.html under " + dir + ".");
+    return undefined;
+  }
+  log.debug("Leaving checkoutPublicDir(). " + dir);
+  return dir;
+}
+
+const PUBLIC_DIR = checkoutPublicDir();
 
 // ---------------------------------------------------------------------------
 // What is excluded still exists. An exclusion naming a file nobody has is not
@@ -93,9 +121,11 @@ const PUBLIC_DIR = locate([
 function everyExclusionNamesSomethingThatExists(staticSite) {
   log.debug("Entering everyExclusionNamesSomethingThatExists().");
   if (!PUBLIC_DIR) {
-    log.info("[exclusions] skipped the existence check: client/public is not " +
-      "here, so this is the tests image rather than a checkout. The build " +
-      "throws on the same condition (client/build.js step 2a).");
+    log.info("[exclusions] skipped the existence check: there is no " +
+      "client/public/index.html here, so this is the tests image (which " +
+      "carries only a partial mirror of client/public) rather than a " +
+      "checkout. The build throws on the same condition (client/build.js " +
+      "step 2a).");
     log.debug("Leaving everyExclusionNamesSomethingThatExists().");
     return;
   }
@@ -261,9 +291,12 @@ function theGreyedCardSaysWhy(staticSite, index, css) {
 function nothingThatShipsLinksToADroppedPage(staticSite) {
   log.debug("Entering nothingThatShipsLinksToADroppedPage().");
   if (!PUBLIC_DIR) {
-    log.info("[exclusions] skipped the dead-link sweep: client/public is not " +
-      "here, so this is the tests image rather than a checkout. " +
-      "client/build.js runs the same sweep over dist/ on every deploy.");
+    log.info("[exclusions] skipped the dead-link sweep: there is no " +
+      "client/public/index.html here, so this is the tests image (which " +
+      "carries only a partial mirror of client/public) rather than a " +
+      "checkout. Sweeping that mirror would report a clean site having read " +
+      "five Kerberos pages. client/build.js runs the same sweep over dist/ " +
+      "on every deploy.");
     log.debug("Leaving nothingThatShipsLinksToADroppedPage().");
     return;
   }

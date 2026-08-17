@@ -255,6 +255,15 @@ COPY client/public/kerberos.html client/public/kerberos_tgs.html client/public/k
 COPY client/public/kerberos_delegation.html client/public/kerberos_decoder.html /usr/src/client/public/
 COPY client/public/partials/krb_history.html client/public/partials/krb_tickets.html /usr/src/client/public/partials/
 COPY client/public/css/kerberos.css /usr/src/client/public/css/
+# The SIXTH page of the workflow, and the one nothing above names, because it is
+# the one whose file name does not begin with `kerberos`. Both pane tests list
+# spnego.js/spnego.html among the pages they read as TEXT, so without these two
+# lines they fail in the image with "spnego.js is missing from client/src" —
+# and krb5_field_naming.js, which discovers the pages by the stylesheet they
+# load rather than by a list, does not fail at all: it finds five instead of six
+# and every assertion below simply has one less page to make.
+COPY client/src/spnego.js /usr/src/client/src/
+COPY client/public/spnego.html /usr/src/client/public/
 COPY tests/captures ./captures
 # The mock KDC and the ticket-protected service, out of the sts/ SUBMODULE, so that
 # krb5_as_exchange.js and krb5_tgs_ap.js can start them in-process and drive the real
