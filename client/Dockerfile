@@ -117,6 +117,7 @@ RUN browserify src/kerberos_delegation.js -o public/js/kerberos_delegation.js --
 # "Cannot find module './krb5_spnego.js'" naming a file that exists two
 # directories away.
 RUN browserify src/spnego.js -o public/js/spnego.js --debug --standalone spnego -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/pki.js -o public/js/pki.js --debug --standalone pki -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----

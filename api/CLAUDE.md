@@ -4,7 +4,7 @@ Scope: everything under `api/`. Cross-cutting matters — versioning, `CONFIG_FI
 
 It proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata.
 
-## Outbound calls: the address policy and the eight settings
+## Outbound calls: the address policy and the nine settings
 
 It fetches URLs its **caller** chooses (token, introspection, revocation, device-authorization and userinfo endpoints, the SAML ArtifactResolve back-channel, the WS-Trust STS, the generic proxy), so `api/ssrf_guard.js` refuses outbound calls to loopback and private networks — otherwise anyone who can reach the api can use it to probe `127.0.0.1`, the deployment's private neighbours, or `169.254.169.254` (cloud metadata, which hands out credentials). It is installed **once** on the shared axios instance in `server.js`, so every call site present and future is covered, and it works in two layers: a request interceptor for a readable error, plus the http/https **agents** — which is what catches **redirects** (axios follows them, so a public host answering `302 → http://127.0.0.1` walks past a URL-only check) and closes most of the DNS-rebinding window. The agent needs **two** hooks, not one: a custom DNS `lookup` for hosts given as names, and a wrapped `createConnection` for hosts given as literal addresses — Node never calls `lookup` for a literal, and a redirect `Location` usually is one. That gap was real and is what `tests/api_ssrf_guard.js` caught on its first run. Hostnames are judged by what they RESOLVE to, so `localtest.me` and `127.0.0.1.nip.io` are caught by the same rule, and IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is reduced to its IPv4 form because that is the address the socket reaches.
 
@@ -68,6 +68,113 @@ One thing the Kerberos service endpoint must not report as a failure: a service 
 A note on how the layered pre-flight is tested, because it produced a false negative. The OID check, the token-id check and the inner-message check each catch most of what the others catch, so removing any one of them leaves a test that only asserts *that* a payload was refused entirely green. `tests/api_krb5_relay.js` therefore asserts **which** check fired for each hostile payload; without that, two of the four mutations against this pre-flight passed silently.
 
 **If an api is ever deployed to the public internet, read this paragraph.** An endpoint that will send an AS-REQ to any KDC its caller names is, when hosted, a pre-authentication guessing relay running from somebody else's IP address. Today that is hypothetical — the static deployments have no api at all — and the mitigation is cheap: a per-source and per-target-realm rate limit, off where `blockPrivateNetworkCalls` is off and on wherever it is on. It is **not implemented yet**, and this is the note that says so rather than leaving it to be discovered.
+
+## The TLS probe: a second raw socket, and the ninth setting
+
+`POST /tls/connect` (`api/tls_probe.js`) opens a TLS — or **mutual** TLS —
+connection to a caller-named host and reports both sides of the handshake. It
+exists for the PKI page (`client/public/pki.html`, `docs/pki.md`), and it exists
+**because a browser cannot do this and is not close**:
+
+* the **client certificate** is chosen by the browser's own UI from the browser's
+  own store, so a page cannot present the certificate it issued thirty seconds
+  ago, and cannot choose to present none;
+* the **truststore** is the platform's, so "does this chain verify against THIS
+  root and no other" — the entire question a private CA raises — is unaskable;
+* the negotiated **version, cipher, ALPN protocol and the server's chain** are
+  not exposed to script at all;
+* and a failed handshake reaches script as a generic network error with the
+  **alert discarded**, which is the one informative thing in it.
+
+So the page has no in-browser option for this and never will; `tests/pki_page.js`
+asserts the pane contains no radio button, so it cannot be "fixed" by mistake.
+
+**`api/ssrf_guard.js` does not cover it, for the same reason it does not cover
+the Kerberos relay**: the guard is installed on the shared axios instance, and
+`tls.connect` is a raw socket with no axios in the path and no agent to hook. So
+this is a third enforcement of the same policy, and it reuses the guard's
+**decision** (`blockedRangeFor`) rather than its own copy of the ranges. A name
+is judged by what it RESOLVES to; a literal is checked directly, because node
+never calls a resolver for one.
+
+**A ninth setting, `tlsAllowedPorts`.** This endpoint is broader than the
+Kerberos relay in one specific way, and it is the way that matters: **there is
+no payload shape to bound it with**. `/krb5/kdc` can insist the bytes are an
+AS-REQ; a ClientHello sent to port 22 is a perfectly well-formed ClientHello, so
+"it must look like the protocol" rules nothing out here and the port allowlist
+does all of that work. The default is the ports TLS is commonly spoken on (443,
+636, 989, 990, 993, 995, 1433, 4443, 5061, 5432, 5671, 6697, 8443, 8843, 9443,
+10443, 8883); `"any"` is accepted and is spelled as a word so that enabling it
+cannot be a plausible typo. `local.js` and `docker-tests.js` set it, and say why.
+
+The three deadlines are the existing ones and the reasoning transfers unchanged,
+**including the one the Kerberos relay learned from a flaky run**: the name
+lookup gets `connectionTimeout` of its own, because until a name is an address
+neither of the other budgets has started and an unbounded lookup is an unbounded
+request. A call is bounded by `connectionTimeout` (resolve) + `connectionTimeout`
+(connect) + `callTimeout` (handshake), and `tests/api_tls_probe.js` asserts that
+a server which **connects and then says nothing** survives well past the connect
+budget and fails only at the call budget — the assertion that fails against an
+implementation expressing both with one timer. `maxContentLength` caps the
+certificate chain that comes back.
+
+**The handshake is always made with `rejectUnauthorized: false`, and the verdict
+is reported rather than enforced.** That looks like the wrong default and is the
+only useful one here: the question is what the server presents and whether it
+verifies against the truststore the caller chose, and aborting on a verification
+failure throws away the chain that would explain it. Node computes
+`socket.authorized` and `socket.authorizationError` either way, so nothing is
+lost by not aborting — the caller gets the certificate, the alert AND the
+verdict, and the response says `authorized: false` in as many words. Note also
+that supplying trust anchors does **not** quietly add the platform roots: a
+chain that verifies for a reason the caller did not ask about is not an answer.
+
+**A COMPLETED HANDSHAKE IS NOT AN ACCEPTED CLIENT CERTIFICATE, and this is the
+sharpest thing in the file.** Under TLS 1.2 a server refuses a client
+certificate during the handshake. Under TLS 1.3 the client sends its Certificate
+and Finished LAST — the handshake is complete from its point of view the instant
+it has written them — and the server's verdict arrives afterwards, either as a
+post-handshake alert or as a bare **hang-up** (which is what node's own TLS
+server does when `rejectUnauthorized` refuses one: the socket closes with no
+alert at all). An implementation that resolves on `secureConnect` therefore
+reports a happy mutual-authentication connection to a server that rejected the
+certificate a millisecond later, and answers "client authentication not
+required" for every TLS 1.3 server on earth. The socket is read for
+`POST_HANDSHAKE_GRACE_MS` (750 ms) after the handshake; an alert, a close or the
+server's first bytes all end the wait. `handshakeUsable()` is what every verdict
+is computed from, and it is not `connected`.
+
+**A client certificate is sent with its CHAIN, and the failure when it is not
+looks like something else entirely.** A server verifying a client certificate
+builds a path from what the client SENT to an anchor it holds, so a leaf issued
+by an intermediate and presented alone is unverifiable to a server holding only
+the root — and node's TLS server answers that by **resetting the connection with
+no alert**, which reads as "the server refused my certificate" when what it
+could not do was find the issuer. `connectOptions.cert` takes concatenated PEM;
+the page sends the leaf and its intermediates (not the root, which a server that
+does not already hold it will not trust because we sent it). Found by driving
+the page end to end against a real server, and asserted from both sides in
+`tests/api_tls_probe.js`.
+
+Related, and the reason it went unnoticed for an afternoon: **`usable` is
+computed here, once, and every caller reads it.** "Did this connection work" is
+not `connected` — see the paragraph above — and a caller left to re-derive it
+gets the TLS 1.3 case wrong, which is exactly what the page did.
+
+**Whether a server REQUIRES a client certificate cannot be read off a node TLS
+socket** — there is no event, no property, and the CertificateRequest is consumed
+inside OpenSSL — so `mutualAuthProbe` measures it: one handshake with the
+certificate, one without, reported side by side, with five verdicts (`required`,
+`not-required`, `certificate-rejected`, `required-and-rejected`, `unknown`). The
+fourth is the case an operator hits most and the one a single connection cannot
+tell from the first.
+
+`GET /tls/limits` publishes the ports, the budgets, the caps and the platform
+root count, so the page can say what this service will do before a call fails
+rather than reporting its own limits as somebody else's fault. And **the
+no-response branch must answer**, as everywhere else here: a refusal by policy is
+a 400, a network failure is a 502, and a failed HANDSHAKE is neither — it
+resolves with a report, because the alert is the answer. See `docs/pki.md`.
 
 ## Dependency overrides
 

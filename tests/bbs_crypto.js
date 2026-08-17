@@ -25,6 +25,19 @@
 // not merely accept each other's signatures, they produce the same bytes.
 // Anything less than that would mean one of them is doing something the other
 // tolerates.
+//
+// SINCE 2026-08-17 THERE IS A SECOND ORACLE, and it is the stronger one: the
+// draft's own published test vectors, vendored as tests/bbs_vectors.json. They
+// are here because the module grew what the Digital Signature page's BBS pane
+// needed — KeyGen, and the second ciphersuite, BLS12-381-SHAKE-256 — and the
+// independent implementation cannot settle either one. It has no exported
+// KeyGen taking key_info and key_dst, and at 3.1.0 it does not reproduce the
+// draft's SHAKE-256 vectors at all (its @noble/curves 2.x hashes to G1
+// differently under XOF), while this module reproduces them byte for byte. So
+// each oracle is used for what it can actually settle, and the disagreement is
+// re-checked on every run rather than written in as an expectation: if a later
+// release starts matching the draft, the cross-implementation check for that
+// suite starts running by itself.
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -49,10 +62,23 @@ const hex = function (u8) {
   return Buffer.from(u8).toString("hex");
 };
 
-async function test() {
-  log.debug("Entering test().");
-  // ESM-only, so it is imported dynamically from this CommonJS test.
-  const theirs = await import("@digitalbazaar/bbs-signatures");
+// The draft's own published test vectors, vendored beside this file. They are
+// the oracle for anything the independent implementation cannot answer for —
+// which since 2026-08-17 includes the whole BLS12-381-SHAKE-256 ciphersuite:
+// @digitalbazaar/bbs-signatures 3.1.0 does not reproduce the draft's SHAKE
+// vectors (its @noble/curves 2.x hashes to G1 differently under XOF), while
+// this repository's module reproduces them byte for byte. So the two oracles
+// are used for what each can actually settle, and the disagreement is checked
+// rather than assumed — see independentImplementationOnShake() below.
+const VECTORS = require("./bbs_vectors.json");
+const bytes = function (hexText) {
+  log.debug("Entering bytes().");
+  log.debug("Leaving bytes().");
+  return Uint8Array.from(Buffer.from(hexText, "hex"));
+};
+
+async function crossCheckSha256(theirs) {
+  log.debug("Entering crossCheckSha256().");
   const suite = theirs.CIPHERSUITES.BLS12381_SHA256;
 
   log.info("=== Key derivation ===");
@@ -202,7 +228,219 @@ async function test() {
     "the defects and not about the verifier.");
   log.info("[proof-negative] OK — substituted disclosure and replay both " +
            "refused; control verifies.");
+  log.debug("Leaving crossCheckSha256().");
+}
 
+// Both ciphersuites, against the draft's fixtures. KeyGen first, because the
+// fixtures hand it every input the algorithm takes — key material, key info
+// and an explicit key DST — which is the only way to pin a derivation that is
+// otherwise reproducible only against itself.
+async function draftTestVectors() {
+  log.debug("Entering draftTestVectors().");
+  log.info("=== The draft's own test vectors, both ciphersuites ===");
+  const names = Object.keys(VECTORS.suites);
+  assert.strictEqual(names.length, 2,
+    "tests/bbs_vectors.json must carry both ciphersuites; found: " +
+        names.join(", "));
+  for (const name of names) {
+    const suite = VECTORS.suites[name];
+    const kp = suite.keypair;
+    const sk = bbs.keyGen(bytes(kp.keyMaterial), bytes(kp.keyInfo),
+        bytes(kp.keyDst), name);
+    assert.strictEqual(hex(bbs.i2osp(sk, bbs.OCTET_SCALAR_LENGTH)),
+        kp.secretKey,
+      name + ": KeyGen did not reproduce the draft's secret key. Three " +
+          "things diverge silently here: the default DST is built from the " +
+          "BARE ciphersuite id, key_info is length-prefixed with two " +
+          "octets, and the expansion differs per suite.");
+    assert.strictEqual(hex(bbs.secretKeyToPublicKey(sk)), kp.publicKey,
+      name + ": the draft's public key was not derived from its secret key.");
+    log.info("[" + name + " KeyGen] OK — the draft's key pair, derived.");
+
+    for (const v of suite.signatures) {
+      const messages = v.messages.map(bytes);
+      assert.strictEqual(
+        bbs.verify(bytes(v.publicKey), bytes(v.signature), bytes(v.header),
+                   messages, name),
+        v.valid,
+        name + " / " + v.name + ": " + v.caseName + " — expected " +
+            (v.valid ? "valid" : "invalid" + " (" + v.reason + ")") + ".");
+      if (!v.valid) continue;
+      assert.strictEqual(
+        hex(bbs.sign(BigInt("0x" + v.secretKey), bytes(v.publicKey),
+                     bytes(v.header), messages, name)),
+        v.signature,
+        name + " / " + v.name + ": BBS signing is deterministic, so this " +
+            "must be the draft's exact bytes rather than merely something " +
+            "the draft's verifier accepts.");
+    }
+    log.info("[" + name + " signatures] OK — " + suite.signatures.length +
+             " vectors, valid ones byte-identical.");
+
+    for (const p of suite.proofs) {
+      const disclosed = p.disclosedIndexes.map(function (i) {
+        return bytes(p.messages[i]);
+      });
+      assert.strictEqual(
+        bbs.proofVerify(bytes(p.publicKey), bytes(p.proof), bytes(p.header),
+                        bytes(p.presentationHeader), disclosed,
+                        p.disclosedIndexes, name),
+        p.valid,
+        name + " / " + p.name + ": " + p.caseName + " did not get the " +
+            "draft's verdict.");
+    }
+    log.info("[" + name + " proofs] OK — " + suite.proofs.length +
+             " derived-proof vectors.");
+  }
+  log.debug("Leaving draftTestVectors().");
+}
+
+// The SHAKE-256 suite end to end in this implementation: sign, verify, refuse
+// a tampered list, derive proofs, refuse a replay, and stay unlinkable. The
+// vectors above prove the constants; this proves the operations compose.
+async function shakeSuiteRoundTrip() {
+  log.debug("Entering shakeSuiteRoundTrip().");
+  const name = "BLS12-381-SHAKE-256";
+  log.info("=== " + name + " round trip ===");
+  const sk = bbs.keyGen(bytes("00".repeat(32)), bbs.te("digital signature " +
+      "page"), undefined, name);
+  const pk = bbs.secretKeyToPublicKey(sk);
+  const messages = ["given_name:Alice", "family_name:Smith",
+      "birthdate:1980-01-01", "country:US"].map(function (m) {
+    return bbs.te(m);
+  });
+  const header = bbs.te("BBS test header");
+  const ph = bbs.te("verifier nonce 12345");
+  const disclosed = [0, 2];
+  const disclosedMessages = disclosed.map(function (i) { return messages[i]; });
+
+  const sig = bbs.sign(sk, pk, header, messages, name);
+  assert.strictEqual(sig.length, 80,
+                     "a BBS signature is 80 bytes in either ciphersuite.");
+  assert.strictEqual(bbs.verify(pk, sig, header, messages, name), true,
+                     name + ": the signature must verify.");
+  assert.strictEqual(
+    bbs.verify(pk, sig, header, [bbs.te("given_name:Mallory")].concat(
+        messages.slice(1)), name), false,
+    name + ": a changed message must be refused.");
+  assert.strictEqual(bbs.verify(pk, sig, bbs.te("other"), messages, name),
+                     false, name + ": the header is bound into the signature.");
+
+  const proof = bbs.proofGen(pk, sig, header, ph, messages, disclosed, name);
+  assert.strictEqual(
+    bbs.proofVerify(pk, proof, header, ph, disclosedMessages, disclosed, name),
+    true, name + ": the derived proof must verify.");
+  assert.strictEqual(
+    bbs.proofVerify(pk, proof, header, bbs.te("another nonce"),
+                    disclosedMessages, disclosed, name),
+    false, name + ": a proof replayed into another session must be refused.");
+  const second = bbs.proofGen(pk, sig, header, ph, messages, disclosed, name);
+  assert.notStrictEqual(hex(second), hex(proof),
+    name + ": two derivations of one signature must differ — otherwise the " +
+        "presentations are linkable and BBS buys nothing over an SD-JWT.");
+  assert.strictEqual(
+    bbs.proofVerify(pk, second, header, ph, disclosedMessages, disclosed,
+                    name), true, name + ": and both must verify.");
+  log.info("[" + name + "] OK — sign/verify, proofs, replay refused, " +
+           "unlinkable.");
+  log.debug("Leaving shakeSuiteRoundTrip().");
+}
+
+// A key or a signature belongs to ONE ciphersuite, and nothing in either byte
+// string says which. So the separation has to be checked: each suite's own
+// generators, domain and P1 must make the other's signature unverifiable
+// rather than merely unlikely to verify.
+async function ciphersuiteSeparation() {
+  log.debug("Entering ciphersuiteSeparation().");
+  log.info("=== The two ciphersuites do not interoperate ===");
+  const material = bytes("11".repeat(32));
+  const messages = [bbs.te("a"), bbs.te("b")];
+  const header = bbs.te("h");
+  const both = ["BLS12-381-SHA-256", "BLS12-381-SHAKE-256"];
+  for (const name of both) {
+    const other = both[1 - both.indexOf(name)];
+    const sk = bbs.keyGen(material, undefined, undefined, name);
+    const pk = bbs.secretKeyToPublicKey(sk);
+    const sig = bbs.sign(sk, pk, header, messages, name);
+    assert.strictEqual(bbs.verify(pk, sig, header, messages, name), true,
+                       name + ": the control must verify under its own suite.");
+    let accepted;
+    try {
+      accepted = bbs.verify(pk, sig, header, messages, other);
+    } catch (e) {
+      accepted = false;
+    }
+    assert.strictEqual(accepted, false,
+      "a " + name + " signature verified under " + other + ".");
+    const otherSk = bbs.keyGen(material, undefined, undefined, other);
+    assert.notStrictEqual(otherSk.toString(16), sk.toString(16),
+      "the same key material gave the same key in both suites — KeyGen's " +
+          "DST is suite-specific and must differ.");
+  }
+  log.info("[separation] OK — neither suite accepts the other's signature, " +
+           "and KeyGen differs per suite.");
+  log.debug("Leaving ciphersuiteSeparation().");
+}
+
+// What the independent implementation says about the SHAKE-256 suite. It is
+// checked, not assumed: today @digitalbazaar/bbs-signatures 3.1.0 disagrees
+// with the draft's own vectors here (ours agrees), so its verdict is reported
+// rather than asserted. If a later release starts reproducing the vectors, the
+// full byte-identity cross-check runs automatically — which is the point of
+// deciding this at run time instead of writing the disagreement in as an
+// expectation nobody revisits.
+async function independentImplementationOnShake(theirs) {
+  log.debug("Entering independentImplementationOnShake().");
+  const name = "BLS12-381-SHAKE-256";
+  const suite = theirs.CIPHERSUITES.BLS12381_SHAKE256;
+  const v = VECTORS.suites[name].signatures.find(function (s) {
+    return s.valid;
+  });
+  const messages = v.messages.map(bytes);
+  let theirSig = null;
+  try {
+    theirSig = await theirs.sign({ secretKey: bytes(v.secretKey),
+      publicKey: bytes(v.publicKey), header: bytes(v.header), messages,
+      ciphersuite: suite });
+  } catch (e) {
+    log.warn("[shake cross-impl] the independent implementation could not " +
+             "sign under " + name + ": " + e.message);
+    log.debug("Leaving independentImplementationOnShake(). Could not sign.");
+    return;
+  }
+  if (hex(theirSig) !== v.signature) {
+    log.warn("[shake cross-impl] @digitalbazaar/bbs-signatures does not " +
+             "reproduce the draft's " + name + " vector, so it is not an " +
+             "oracle for this suite; tests/bbs_vectors.json is. Ours " +
+             "matches the draft, which draftTestVectors() asserts.");
+    log.debug("Leaving independentImplementationOnShake(). They diverge.");
+    return;
+  }
+  assert.strictEqual(
+    hex(bbs.sign(BigInt("0x" + v.secretKey), bytes(v.publicKey),
+                 bytes(v.header), messages, name)),
+    hex(theirSig),
+    name + ": both implementations now reproduce the draft, so their bytes " +
+        "must be identical.");
+  assert.strictEqual(await theirs.verifySignature({
+    publicKey: bytes(v.publicKey), signature: bytes(v.signature),
+    header: bytes(v.header), messages, ciphersuite: suite }), true,
+    name + ": the independent implementation must accept the draft's own " +
+        "signature.");
+  log.info("[shake cross-impl] OK — the independent implementation now " +
+           "agrees with the draft on " + name + " too.");
+  log.debug("Leaving independentImplementationOnShake().");
+}
+
+async function test() {
+  log.debug("Entering test().");
+  // ESM-only, so it is imported dynamically from this CommonJS test.
+  const theirs = await import("@digitalbazaar/bbs-signatures");
+  await crossCheckSha256(theirs);
+  await draftTestVectors();
+  await shakeSuiteRoundTrip();
+  await ciphersuiteSeparation();
+  await independentImplementationOnShake(theirs);
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

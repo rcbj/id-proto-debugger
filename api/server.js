@@ -16,6 +16,7 @@ const {
 const ssrfGuard = require('./ssrf_guard.js');
 const connectTimeout = require('./connect_timeout.js');
 const krb5Relay = require('./krb5_relay.js');
+const tlsProbeModule = require('./tls_probe.js');
 
 // Constants
 const PORT = appconfig.port || 4000;
@@ -451,6 +452,11 @@ guard.install(axios);
 // INSTALLATION, because that is hooks on the axios agents and this transport is a
 // raw socket with no axios in the path.
 const krb5 = krb5Relay.createRelay(appconfig, guard, log);
+// The TLS probe is in exactly the same position and for the same reason:
+// `tls.connect` is a raw socket, so the guard's axios installation never sees
+// it, and it therefore reuses the DECISION (blockedRangeFor) and not the
+// installation. See api/tls_probe.js.
+const tlsProbe = tlsProbeModule.createProbe(appconfig, guard, log);
 
 // ---------------------------------------------------------------------------
 // The agents every outbound call uses: the SSRF guard's hooks, the
@@ -2369,6 +2375,103 @@ app.get('/krb5/limits', function (req, res) {
     spnegoBodyChars: SPNEGO_BODY_CHARS,
     limits: krb5.limits
   });
+});
+
+// ---------------------------------------------------------------------------
+// TLS / mutual TLS — POST /tls/connect, GET /tls/limits
+//
+// The PKI page (client/public/pki.html) issues certificates in the browser and
+// then has to find out whether anything accepts them. It cannot: a page cannot
+// choose which client certificate to present, cannot choose a truststore,
+// cannot read the negotiated version, cipher or the server's chain, and gets a
+// failed handshake as a generic network error with the alert thrown away. So
+// there is deliberately NO in-browser option for this — the page always asks
+// here, and api/tls_probe.js is where the socket is opened. See that file's
+// header for what bounds it and why the handshake is never aborted on a
+// verification failure.
+// ---------------------------------------------------------------------------
+
+/**
+ * Open a TLS connection and report both sides of the handshake.
+ * @route POST /tls/connect
+ * @param {string} host.body.required - the server's host name or address
+ * @param {integer} port.body.required - the server's port
+ * @param {string} servername.body - SNI / hostname to verify; defaults to host
+ * @param {string} minVersion.body - TLSv1 | TLSv1.1 | TLSv1.2 | TLSv1.3
+ * @param {string} maxVersion.body - TLSv1 | TLSv1.1 | TLSv1.2 | TLSv1.3
+ * @param {string} ciphers.body - an OpenSSL cipher list
+ * @param {array} alpnProtocols.body - ALPN protocols to offer
+ * @param {array} trustCertificates.body - the truststore, PEM
+ * @param {boolean} includeSystemRoots.body - add the platform roots as well
+ * @param {string} clientCertificatePem.body - client certificate, PEM
+ * @param {string} clientKeyPem.body - its private key, PEM
+ * @param {boolean} mutualAuthProbe.body - also connect without the client
+ *     certificate, to find out whether the server requires one
+ * @returns {object} 200 - the handshake report (including a failed handshake)
+ * @returns {object} 400 - the request was refused (see the reason)
+ * @returns {object} 502 - the server could not be reached
+ */
+app.post('/tls/connect', function (req, res) {
+  log.debug('Entering POST /tls/connect.');
+  var b = req.body || {};
+  if (!b.host || b.port === undefined || b.port === null || b.port === '') {
+    log.debug('Leaving POST /tls/connect. Missing host or port.');
+    return res.status(STATUS_400).json({
+      error: 'host and port are required.' });
+  }
+  tlsProbe.connect({
+    host: b.host,
+    port: b.port,
+    servername: b.servername,
+    minVersion: b.minVersion,
+    maxVersion: b.maxVersion,
+    ciphers: b.ciphers,
+    alpnProtocols: Array.isArray(b.alpnProtocols) ? b.alpnProtocols : [],
+    trustCertificates: Array.isArray(b.trustCertificates)
+      ? b.trustCertificates
+      : (b.trustCertificates ? [b.trustCertificates] : []),
+    includeSystemRoots: b.includeSystemRoots,
+    clientCertificatePem: b.clientCertificatePem,
+    clientKeyPem: b.clientKeyPem,
+    clientKeyPassphrase: b.clientKeyPassphrase,
+    mutualAuthProbe: b.mutualAuthProbe === true
+  })
+    .then(function (report) {
+      log.debug('Leaving POST /tls/connect. connected=' +
+          report.result.connected);
+      return res.status(STATUS_200).json(report);
+    })
+    .catch(function (error) {
+      // THE NO-RESPONSE BRANCH MUST ANSWER — the same rule the Kerberos relay
+      // records above, and it matters here for the same reason: aiming this at
+      // a host that may not be there is the point of it. A refusal by policy is
+      // a 400 (the caller asked for something this service will not do); a
+      // network failure is a 502 (the far end did not deliver). Note that a
+      // failed HANDSHAKE is neither — it resolves with a report, because the
+      // alert is the answer.
+      var refusedByPolicy = ['ETLSPORTNOTALLOWED', 'EBLOCKEDADDRESS',
+                             'ETLSNOHOST', 'ETLSBADPORT', 'ETLSBADVERSION',
+                             'ETLSNOCLIENTKEY', 'ETLSCLIENTMATERIAL',
+                             'ETLSTRUSTTOOLARGE'].indexOf(error.code) !== -1;
+      var status = refusedByPolicy ? STATUS_400 : 502;
+      log.warn('POST /tls/connect failed [' + error.code + ']: ' +
+          error.message);
+      log.debug('Leaving POST /tls/connect. status=' + status);
+      return res.status(status).json({ error: error.message,
+                                      code: error.code });
+    });
+});
+
+/**
+ * What the TLS probe will and will not do, so the page can say so before a call
+ * fails rather than reporting its own limits as somebody else's fault.
+ * @route GET /tls/limits
+ * @returns {object} 200 - the ports, timeouts and caps in force
+ */
+app.get('/tls/limits', function (req, res) {
+  log.debug('Entering GET /tls/limits.');
+  log.debug('Leaving GET /tls/limits.');
+  return res.status(STATUS_200).json(tlsProbe.limits());
 });
 
 expressSwagger(options)

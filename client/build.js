@@ -121,6 +121,7 @@ const BUNDLES = [
   ['kerberos_ap', 'kerberos_ap'],
   ['kerberos_delegation', 'kerberos_delegation'],
   ['spnego', 'spnego'],
+  ['pki', 'pki'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>

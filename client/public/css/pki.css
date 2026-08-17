@@ -1,0 +1,80 @@
+/* File: pki.css
+ *
+ * The PKI page's own classes. Everything structural — the panes, the fields,
+ * the tables, the buttons, the collapse toggle — comes from css/saml_common.css,
+ * which this page links for the same reason the WS-Trust and WS-Federation
+ * pages do: the look is shared, and only the extras belong in a page-specific
+ * sheet beside it.
+ *
+ * Note that this file has to define every `pki-` class the page uses AND
+ * anything else the page names that saml_common.css does not have —
+ * checkStylesheetsLoaded() in tests/navigation.js fails a page that uses a
+ * prefixed class defined in no stylesheet it actually loaded, which is how the
+ * WS-Federation pages once shipped completely unstyled with nothing 404ing.
+ */
+
+/* The primary action on each pane. saml_common.css has .saml-btn and no
+ * emphasis variant, so this is the one button style that lives here. */
+.pki-btn-primary {
+  font-weight: bold;
+}
+
+/* One extension: a heading row carrying its "present" and "critical" boxes,
+ * then whatever fields it has. The left border is what makes twenty of them
+ * scannable as a list rather than reading as one continuous form. */
+.pki-ext {
+  border-left: 3px solid #d8d8d8;
+  padding: 6px 0 6px 10px;
+  margin: 0 0 10px 0;
+}
+
+.pki-ext-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 4px;
+}
+
+/* A checkbox and its label on one line, which the flag grids below are made of.
+ * `nowrap` keeps "keyEncipherment" from breaking away from its box. */
+.pki-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-weight: normal;
+  margin: 0;
+}
+
+.pki-flag input {
+  margin: 0;
+}
+
+/* The keyUsage / extendedKeyUsage / Netscape grids. Fixed columns rather than
+ * an inline flow: these are lists to be read down, and a flow reorders them
+ * every time the pane's width changes. */
+.pki-flags {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 4px 16px;
+  margin: 4px 0 8px 0;
+}
+
+/* The store table. Its own class rather than a bare .saml-table so the row
+ * highlight below cannot leak into the certificate-detail tables beside it. */
+.pki-store td,
+.pki-store th {
+  vertical-align: top;
+}
+
+.pki-row-selected {
+  background-color: #f4f4ec;
+}
+
+.pki-trust-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: flex-start;
+}
