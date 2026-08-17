@@ -473,9 +473,16 @@ async function theTicketIsOpaqueUntilTheServiceKeyIsSupplied(driver) {
     log.debug("Leaving theTicketIsOpaqueUntilTheServiceKeyIsSupplied().");
     return;
   }
-  await setField(driver, "krb_service_password", servicePassword);
-  await setField(driver, "krb_service_salt", serviceSalt);
-  await driver.findElement(By.id("krb_decrypt_button")).click();
+  // The fields are the SHARED Decryption keys pane's (partials/krb_keys.html),
+  // not this page's own any more: since 2026-08-17 every exchange page carries
+  // that pane, and this page's bespoke one was the only place in the workflow a
+  // ticket could be opened — on the one page that cannot obtain a ticket in the
+  // first place. The ids moved with it (krb_deckey_*), and the pane it repaints
+  // is still this one, because it registers itself with kerberos_panes.js rather
+  // than knowing which panes exist.
+  await setField(driver, "krb_deckey_password", servicePassword);
+  await setField(driver, "krb_deckey_salt", serviceSalt);
+  await driver.findElement(By.id("krb_deckey_button")).click();
   const opened = await driver.wait(async function () {
     const text = await driver.findElement(By.id("krb_ticket_pane")).getText();
     return /session key/i.test(text) ? text : false;

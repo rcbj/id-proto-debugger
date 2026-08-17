@@ -73,7 +73,11 @@ those would be a worse place to leave a keytab than the file it came from.</p>
 </div>
 
 <div class="dbg-pane" id="pane_keys_see_inside_encrypted_pa">
-  <legend class="dbg-legend" id="keys_see_inside_encrypted_pa_expand_button">Keys, to see inside the encrypted parts (optional)</legend>
+  <!-- Called "Keys, to see inside the encrypted parts" until 2026-08-17. The
+       five exchange pages now carry a pane of their own (partials/krb_keys.html)
+       and the describer's own prose names it, so the two go by one name; the ids
+       are unchanged, since they are what the pane toggle pairs by. -->
+  <legend class="dbg-legend" id="keys_see_inside_encrypted_pa_expand_button">Decryption keys &mdash; to see inside the encrypted parts (optional)</legend>
   <fieldset name="keys_see_inside_encrypted_pa_fieldset" id="keys_see_inside_encrypted_pa_fieldset" style="display: block;">
   <p class="krb-note">Most of what is interesting in a Kerberos message is encrypted, and under three different
   keys: a ticket is sealed with the <strong>service's</strong> long-term key, an AS-REP's enc-part with the

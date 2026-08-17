@@ -252,11 +252,27 @@ token and over the ticket.
 **The ticket is opaque, and the page says so.** It travels inside the AP-REQ
 encrypted under the *service's* long-term key, which this browser does not hold
 — that is the honest state of a client, and it never holds the key its own
-ticket is sealed with. Supply the service key (hex) or its password and salt and
-the pane opens the `EncTicketPart`: the client name, the flags, the session key
-and the **PAC**, which is what a Windows service authorizes on. Nothing typed
-there is stored or sent anywhere; the derivation happens in the browser through
-`krb5_describe.js`'s `keysFromPassword()`, the same path the decoder page uses.
+ticket is sealed with. Supply the service key (hex), its password and salt, or
+its **keytab** and the pane opens the `EncTicketPart`: the client name, the
+flags, the session key and the **PAC**, which is what a Windows service
+authorizes on. Nothing typed there is stored or sent anywhere; the derivation
+happens in the browser through `krb5_describe.js`'s `keysFromPassword()`.
+
+**Those fields are no longer this page's own, and that is the point.** They were
+— `krb_service_key_hex`, `krb_service_password`, `krb_service_salt` and an *Open
+the ticket* button, in the ticket pane — which made this the only page in the
+workflow where a ticket could be opened, and it is the one page that cannot
+*obtain* one. Since 2026-08-17 they are `partials/krb_keys.html` plus
+`client/src/kerberos_keys.js`, included at the foot of all five exchange pages;
+the ids are `krb_deckey_*` and the button is *Open the encrypted parts with these
+keys*. Three things came with the move: the pane registers itself with
+`kerberos_panes.js` (`setExtraKeys`), so every message pane here — the
+negotiation tokens, the AP-REQ, the ticket inside it — is re-read with the keys
+supplied rather than the ticket pane alone; the keytab route this page never had
+came for free; and the *default salt* stayed page-specific, passed to `mount()`
+as `assumedServiceSalt()`, because this is the only page that knows the SPN it
+just used and so the only one that can offer realm + principal as an assumption.
+It says which salt it assumed rather than assuming quietly. See `docs/kerberos.md`.
 
 The salt field matters more than it looks: a salt is **not derivable from a
 principal name** (Active Directory salts a computer account as realm + `host` +

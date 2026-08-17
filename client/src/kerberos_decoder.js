@@ -40,10 +40,12 @@ var log = bunyan.createLogger({
 });
 log.info("Log initialized. logLevel=" + log.level());
 
-var prim = require("./krb5_primitives.js");
-var kcrypto = require("./krb5_crypto.js");
 var describer = require("./krb5_describe.js");
-var keytabReader = require("./krb5_keytab.js");
+// The key-assembly half of the shared Decryption keys pane, used here with this
+// page's own field ids — see collectKeys(). Only collectFrom() is called: this
+// page passes its keys to describe() explicitly and must not register itself as
+// a supplier with kerberos_panes.js, which is what mount() does.
+var deckeys = require("./kerberos_keys.js");
 // The shared DOM half, so this page and the three exchange pages cannot
 // disagree about how a message renders. Requiring it is safe on the STATIC
 // deployments: it has no side effects at load, and the only thing in it that
@@ -148,78 +150,33 @@ function renderDocument(doc) {
 // Three routes, because a reader is in one of three situations: they know a
 // password (and, critically, the salt — which is not guessable and comes from the
 // KDC's own ETYPE-INFO2), they have a raw key in hex, or they have a keytab.
+//
+// The implementation is kerberos_keys.js's, driven with THIS page's field ids.
+// It used to be a second copy of the same three routes, and the copies had
+// already begun to disagree about the wording of the same failures — which
+// matters here more than it looks, because that wording is the entire product
+// when a key does not work. What stays local is only the id map: this page's
+// password field is called `krb_password` because it IS the keys pane, while on
+// kerberos.html that id is the client's own credential and the shared pane
+// therefore uses `krb_deckey_*`.
+//
+// No default salt is offered. This page has no exchange behind it and so no
+// realm and no principal to build one from, and a guessed salt looks exactly
+// like a wrong password.
 // ---------------------------------------------------------------------------
+var DECODER_KEY_FIELDS = {
+  hex: "krb_key_hex",
+  etype: "krb_key_etype",
+  password: "krb_password",
+  salt: "krb_salt",
+  keytab: "krb_keytab"
+};
+
 async function collectKeys() {
   log.debug("Entering collectKeys().");
-  var keys = [];
-  var notes = [];
-
-  var rawHex = (el("krb_key_hex").value || "").trim();
-  if (rawHex) {
-    var etype = parseInt(el("krb_key_etype").value, 10);
-    try {
-      var bytes = prim.fromHex(rawHex.replace(/[\s:]/g, ""));
-      var profile = kcrypto.etypeById(etype);
-      if (bytes.length !== profile.keyBytes) {
-        notes.push("The key given is " + bytes.length + " bytes, but " +
-            profile.name +
-          " keys are " + profile.keyBytes + " bytes. It was offered anyway.");
-      }
-      keys.push({
-        etype: etype,
-        key: bytes,
-        label: "the key you pasted (" + profile.name + ")"
-      });
-    } catch (e) {
-      notes.push("The pasted key could not be read: " + e.message);
-    }
-  }
-
-  var password = el("krb_password").value || "";
-  var salt = (el("krb_salt").value || "").trim();
-  if (password) {
-    if (!salt) {
-      notes.push("A password was given with no salt. The salt is NOT " +
-          "guessable — take it from the " +
-        "KDC's ETYPE-INFO2, which arrives in the KDC_ERR_PREAUTH_REQUIRED " +
-            "error. Active Directory " +
-        "uses the realm plus the sAMAccountName for a user, but a " +
-            "host-shaped string for a computer " +
-        "account. Keys were derived with an empty salt, which will almost " +
-            "certainly be wrong.");
-    }
-    try {
-      keys = keys.concat(await describer.keysFromPassword(password, salt,
-          null));
-    } catch (e) {
-      notes.push("Could not derive keys from the password: " + e.message);
-    }
-  }
-
-  var keytabText = (el("krb_keytab").value || "").trim();
-  if (keytabText) {
-    try {
-      var parsedInput = describer.parseInput(keytabText);
-      var kt = keytabReader.parseKeytab(parsedInput.bytes);
-      var fromKeytab = keytabReader.keysFromKeytab(kt);
-      keys = keys.concat(fromKeytab);
-      notes.push("Keytab: version 0x" + kt.version.toString(16) + ", " +
-          kt.entries.length +
-        " entr" + (kt.entries.length === 1 ? "y" : "ies") +
-        (kt.deletedSlots ? " and " + kt.deletedSlots + " deleted slot(s)" :
-            "") +
-        ", " + fromKeytab.length + " usable key(s): " +
-        kt.entries.map(function (e) {
-          return e.principal + " kvno " + e.kvno + " " + e.etypeName +
-                 (e.supported ? "" : " (not performed here)");
-        }).join("; "));
-    } catch (e) {
-      notes.push("Keytab could not be read: " + e.message);
-    }
-  }
-
-  log.debug("Leaving collectKeys(). keys=" + keys.length);
-  return { keys: keys, notes: notes };
+  var gathered = await deckeys.collectFrom(DECODER_KEY_FIELDS, {});
+  log.debug("Leaving collectKeys(). keys=" + gathered.keys.length);
+  return gathered;
 }
 
 // ---------------------------------------------------------------------------

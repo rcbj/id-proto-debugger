@@ -301,6 +301,219 @@ function aRowIsOpenedSentAndClosedByItsStatusLine(history) {
 }
 
 // ---------------------------------------------------------------------------
+// The User / principal column, given a PARSED principal.
+//
+// This is the defect this section exists for, reported 2026-08-17 off a real
+// row:
+//
+//   AP-REQ (presented to a service)   [object Object]   HTTP/web.example.com@…
+//
+// Every page here revives a cached credential before spending it, and revive()
+// turns the stored `client` string into `{ type, name: ["alice"], realm }`
+// because the builders read `.name`. Four pages then handed that object to the
+// log, which renders with `textContent`. Nothing errors — `[object Object]` is
+// what JavaScript is required to produce — and the row is otherwise complete,
+// so the pane looks like it is working while the one question this column
+// answers goes unanswered.
+//
+// The call sites now pass text (with the realm, which the parsed name has lost
+// by then), and the log normalizes what it is given as a backstop for the next
+// one. This checks the backstop, because that is the half that covers a page
+// nobody has written yet.
+// ---------------------------------------------------------------------------
+function aParsedPrincipalIsRenderedAsAName(history) {
+  log.debug("Entering aParsedPrincipalIsRenderedAsAName().");
+  history.clear();
+
+  // read() is in the order the rows were recorded — the pane reverses it for
+  // display — so the row just made is the LAST one, not the first. Reading
+  // rows[0] instead compares every later case against the first case's answer,
+  // which passes for the wrong reason once and then fails confusingly.
+  function latest() {
+    const rows = history.read();
+    return rows[rows.length - 1];
+  }
+
+  // Exactly the shape krb5_messages.js's parsePrincipal() returns, and exactly
+  // what revive() leaves in `tgt.client` — the realm split off into its own
+  // field on the credential, so a parsed name usually carries realm: null.
+  history.begin({
+    operation: history.OPS.AP,
+    principal: { type: 1, name: ["alice"], realm: "EXAMPLE.COM" },
+    target: "HTTP/web.example.com@EXAMPLE.COM at 127.0.0.1:8888",
+    statusId: "krb_ap_status"
+  });
+  assert.strictEqual(latest().principal, "alice@EXAMPLE.COM",
+    "a parsed principal must be rendered as its NAME. The row says " +
+    JSON.stringify(latest().principal) + " — and if that is \"[object " +
+    "Object]\", this is the reported defect: kerberos_history.js is no longer" +
+    " normalizing what it is handed, so every page that revives a credential " +
+    "logs its user as the stringification of an object.");
+
+  // A service principal, and no realm on the object: two components joined
+  // with "/", nothing appended. Same rendering as principalToString().
+  history.begin({
+    operation: history.OPS.TGS,
+    principal: { type: 3, name: ["HTTP", "web.example.com"], realm: null },
+    target: "a KDC",
+    statusId: "krb_tgs_status"
+  });
+  assert.strictEqual(latest().principal, "HTTP/web.example.com",
+    "a multi-component name joins with \"/\", and a null realm appends " +
+    "nothing: " + JSON.stringify(latest().principal));
+
+  // Text passes through untouched — including text that is not a principal at
+  // all, which several call sites use deliberately ("(no TGT held)").
+  history.begin({
+    operation: history.OPS.RENEW,
+    principal: "(no TGT held)",
+    target: "a KDC",
+    statusId: "krb_renew_status"
+  });
+  assert.strictEqual(latest().principal, "(no TGT held)",
+    "text must not be reformatted");
+
+  // note() takes the same path: the ticket-cache rows go through it, and they
+  // are the rows that explain why the exchange above them behaved differently.
+  history.note({
+    operation: history.OPS.ACTIVATE,
+    principal: { type: 1, name: ["bob"], realm: "PARTNER.COM" },
+    detail: "put back in the TGT slot"
+  });
+  assert.strictEqual(latest().principal, "bob@PARTNER.COM",
+    "note() does not normalize its principal, so the ticket-cache rows still " +
+    "log an object: " + JSON.stringify(latest().principal));
+
+  // Absent stays empty rather than becoming "null" or "undefined" as text.
+  history.note({ operation: history.OPS.CLEAR_TICKETS, detail: "cleared" });
+  assert.strictEqual(latest().principal, "",
+    "a missing principal must be an empty cell, not the word " +
+    JSON.stringify(latest().principal));
+
+  // And the property the whole section is about, over every row it just made.
+  history.read().forEach(function (row) {
+    assert.ok(!/\[object /.test(row.principal),
+      "a row's principal renders as " + row.principal + ". That is the " +
+      "reported defect, and it means principalText() is not being applied on " +
+      "one of the two paths (begin() or note()).");
+  });
+
+  // Something that is NEITHER is passed through rather than blanked, because a
+  // blank cell hides the defect while a visibly wrong one gets reported — which
+  // is how this was found. The warning beside it names the operation.
+  history.note({
+    operation: history.OPS.FORGET_TGT,
+    principal: { unexpected: true },
+    detail: "an object that is not a principal"
+  });
+  assert.ok(latest().principal.length > 0,
+    "an unrecognised value must not be silently dropped: the cell is empty, " +
+    "which reads as an operation with no user rather than as a bug");
+
+  assert.strictEqual(typeof history.principalText, "function",
+    "kerberos_history.js no longer exports principalText(), which the " +
+    "delegation page uses for the one string a log-side normalization cannot " +
+    "reach — the `detail` it builds by concatenation");
+  assert.strictEqual(
+    history.principalText({ name: ["alice"], realm: "EXAMPLE.COM" }),
+    "alice@EXAMPLE.COM", "the exported principalText() disagrees with the " +
+    "rendering above, so a page's detail string and its principal column " +
+    "would spell the same user two ways");
+  log.info("a parsed principal renders as its name in both begin() and note()");
+  log.debug("Leaving aParsedPrincipalIsRenderedAsAName().");
+}
+
+// ---------------------------------------------------------------------------
+// And no page may hand one over in the first place.
+//
+// The normalization above is a backstop, not the fix: a page that passes the
+// parsed object loses the REALM with it, because revive() has already split the
+// realm into its own field by then — so the cell reads `alice` where the row
+// beside it says `EXAMPLE.COM`, which is a quieter version of the same problem.
+//
+// The variables to look at are DISCOVERED rather than listed: whatever a page
+// assigns from revive() holds a parsed principal, and `tgt`, `evidence` and
+// `chosenTicket` are only today's names. A `.client` read off the STORE is text
+// and must not be flagged, which is why this cannot simply look for `.client`.
+// ---------------------------------------------------------------------------
+function noPageHandsTheLogAParsedPrincipal() {
+  log.debug("Entering noPageHandsTheLogAParsedPrincipal().");
+  let checked = 0;
+  let revivers = 0;
+  PAGES.forEach(function (entry) {
+    const source = readBundle(entry.bundle);
+    // `tgt = revive(...)`, `chosenTicket = revive(entry)` — and
+    // `tgt = reviveTgt(entry)`, which is what the TGS page calls its own. The
+    // name of the reviver is not fixed either, so match any `reviveX(`:
+    // matching only `revive(` left the TGS page's one row unchecked, and
+    // mutation-testing is what showed it: the check passed with the defect
+    // put back.
+    const names = {};
+    (source.match(/([A-Za-z_$][\w$]*)\s*=\s*revive[A-Za-z]*\(/g) || [])
+      .forEach(function (m) {
+        names[m.replace(/\s*=\s*revive[A-Za-z]*\($/, "").trim()] = true;
+      });
+    const revived = Object.keys(names);
+    if (!revived.length) {
+      log.info(entry.bundle + ": nothing revived, nothing to check");
+      return;
+    }
+    revivers += 1;
+    statements(source).forEach(function (statement) {
+      // WHICH STATEMENTS REACH THE LOG, and it is not only the object literals.
+      // The delegation page calls its own beginDelegationOperation(op,
+      // statusId, principal, detail) with POSITIONAL arguments, so four of the
+      // eleven rows in this workflow contain no `principal:` text at all — a
+      // filter looking only for the property name examined every page except
+      // the one the report came from. Mutation-tested: putting `"As " +
+      // tgt.client` back into that call is caught now and was not before.
+      if (!/\bprincipal:|\bdetail:|ophistory\.(begin|note)\(|Operation\(/
+          .test(statement)) {
+        return;
+      }
+      // Whatever is already inside a principalToString()/principalText() call —
+      // or a helper whose name says it returns text — is exactly what this is
+      // asking for, so it comes out before the search. Repeated until stable so
+      // one level of nesting does not hide a call.
+      // A `.client` used as a GUARD is not a value and must not be flagged:
+      // spnego.js writes `(chosenTicket && chosenTicket.client &&
+      // msgs.principalToString(chosenTicket.client, chosenTicket.realm))`,
+      // where the middle term only asks whether there is a name to render. Only
+      // a `.client` that survives as a value is the defect.
+      let stripped = statement.replace(/\.client\s*&&/g, ".«guard» &&");
+      for (let i = 0; i < 4; i++) {
+        const next = stripped.replace(
+          /(?:principalToString|principalText|[A-Za-z]*ClientText)\([^()]*\)/g,
+          "«text»");
+        if (next === stripped) {
+          break;
+        }
+        stripped = next;
+      }
+      revived.forEach(function (name) {
+        checked += 1;
+        assert.ok(stripped.indexOf(name + ".client") === -1,
+          entry.bundle + " hands the Operations History a PARSED principal: `" +
+          name + ".client` comes from revive() and is an object, so the row " +
+          "renders it as \"[object Object]\" (or, through the log's " +
+          "normalization, as a name with no realm). Wrap it in " +
+          "msgs.principalToString(" + name + ".client, " + name + ".realm). " +
+          "The statement is:\n  " + statement.slice(0, 220));
+      });
+    });
+  });
+  assert.ok(revivers >= 3,
+    "only " + revivers + " of the " + PAGES.length + " bundles were found to " +
+    "revive a credential. The AP, TGS and delegation pages all do, so a " +
+    "count below three means the pattern this check discovers has been " +
+    "renamed and it is now looking for nothing.");
+  assert.ok(checked > 0, "no principal:/detail: statement was examined");
+  log.info("no page hands the log a parsed principal (" + checked +
+    " check(s) across " + revivers + " bundle(s) that revive credentials)");
+  log.debug("Leaving noPageHandsTheLogAParsedPrincipal().");
+}
+
+// ---------------------------------------------------------------------------
 // Four operations, four lines, in flight together — the delegation page.
 // ---------------------------------------------------------------------------
 function operationsOnDifferentLinesSettleIndependently(history) {
@@ -733,6 +946,8 @@ async function test() {
     theStorageShimActuallyStores(history);
     everyStatusClassMapsToTheRightResult(history);
     aRowIsOpenedSentAndClosedByItsStatusLine(history);
+    aParsedPrincipalIsRenderedAsAName(history);
+    noPageHandsTheLogAParsedPrincipal();
     operationsOnDifferentLinesSettleIndependently(history);
     anUnansweredRowIsSupersededRatherThanLost(history);
     noteNeverLeavesARowOpen(history);

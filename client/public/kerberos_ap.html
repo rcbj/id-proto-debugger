@@ -62,8 +62,8 @@ rather than showing you a hex blob.</p>
   <select id="krb_ticket_select" class="krb-field"></select>
   <div id="krb_ticket_pane"></div>
   <p class="krb-note">A TGT will not do: it is a ticket to <code>krbtgt</code>, and a service refuses it
-  with <code>KRB_AP_ERR_NOT_US</code>. That refusal is worth seeing once, and the decoder page will show
-  you the ticket's <code>sname</code> if you want to know why.</p>
+  with <code>KRB_AP_ERR_NOT_US</code>. That refusal is worth seeing once, and the request pane below names
+  the ticket's <code>sname</code> &mdash; which is the whole of the reason why.</p>
 </fieldset>
 </div>
 
@@ -218,6 +218,8 @@ hold the <code>krbtgt</code> key at all.</p>
 S4U2Proxy and resource-based constrained delegation &mdash; and cross-realm referrals. A ticket this build
 produces carries a PAC a Windows service can read, but nothing here yet asks a KDC to obtain one
 <em>on behalf of</em> somebody else.</p>
+
+<!--#include file="/partials/krb_keys.html"-->
 
 <!--#include file="/partials/krb_tickets.html"-->
 

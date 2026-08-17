@@ -72,6 +72,14 @@ const names = shared("krb5_field_names.js");
 const CLIENT_SRC = path.join(__dirname, "..", "client", "src");
 const PUBLIC_DIR = path.join(__dirname, "..", "client", "public");
 
+// The three hex views a KDC reply has besides its own bytes, named off the
+// reply pane's id by kerberos_panes.js's renderReplyPartsHex(). Written out
+// here
+// rather than required from that module — it is a browser module that reaches
+// for `document` and a CONFIG_FILE — and theReplyPartConventionIsWired() checks
+// this list against the table there, so the copy cannot drift silently.
+const REPLY_PART_SUFFIXES = ["_ticket_hex", "_encpart_hex", "_encreppart_hex"];
+
 // The principal, realm and service used throughout, so an assertion can name
 // the string it expects to find in the bytes rather than a magic number.
 const CLIENT_NAME = "alice";
@@ -510,6 +518,57 @@ function kerberosPages() {
   return out;
 }
 
+// A module out of common/krb5 read as TEXT, from either place it can be. The
+// tests image copies those FLAT beside this file (see the krb5 block in
+// tests/Dockerfile) while a host run has them two directories up, which is the
+// same pair paths.requireSharedModule() tries for the ones that are required.
+// Getting this wrong does not fail here — it fails only in the image, which is
+// the shape of mistake this file's own header is about.
+function readSharedText(name) {
+  log.debug("Entering readSharedText(). " + name);
+  const candidates = [path.join(__dirname, "..", "common", "krb5", name),
+      path.join(__dirname, name)];
+  for (let i = 0; i < candidates.length; i++) {
+    if (fs.existsSync(candidates[i])) {
+      log.debug("Leaving readSharedText(). " + candidates[i]);
+      return fs.readFileSync(candidates[i], "utf8");
+    }
+  }
+  assert.fail(name + " is in neither common/krb5 nor beside this test (" +
+    candidates.join(", ") + "), so the checks that read it are asserting " +
+    "nothing.");
+}
+
+// ---------------------------------------------------------------------------
+// The same text with its COMMENTS removed, for every check below that asks
+// whether a call is present.
+//
+// These files explain themselves at length and the explanations name the calls:
+// the note above exchange() in kerberos_delegation.js says
+// "panes.renderReplyPartsHex()" in prose, and the note above
+// renderCompanionHex() quotes the require it is warning about. So a check for
+// `renderReplyPartsHex(` is satisfied by the paragraph describing it, and
+// commenting the call OUT leaves the check passing — which is not a theoretical
+// hazard: mutation-testing this file found exactly that for two of its
+// assertions, and one of them was the `panes.wireTabs()` check whose whole
+// purpose is to catch a missing call.
+//
+// WHOLE-LINE `//` COMMENTS ONLY, deliberately. Stripping to the first `//`
+// anywhere would eat the tail of every line containing an `https://` in a
+// string, and there are plenty; a comment that begins mid-line after real code
+// cannot hide a missing call anyway.
+// ---------------------------------------------------------------------------
+function codeOf(text) {
+  log.debug("Entering codeOf().");
+  log.debug("Leaving codeOf().");
+  return text.replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter(function (line) {
+        return !/^\s*\/\//.test(line);
+      })
+      .join("\n");
+}
+
 function readClientFile(where, name) {
   log.debug("Entering readClientFile(). " + name);
   const file = path.join(where, name);
@@ -540,14 +599,64 @@ function everyHexPaneIsReachableAndFilled() {
     // checks below still run, which is what caught the SPNEGO page's hex tabs
     // before that page had any code at all.
     const bundlePath = path.join(CLIENT_SRC, entry.bundle);
+    // Comments stripped: every check on this text asks whether a CALL is there,
+    // and these bundles describe their calls in prose. See codeOf().
     const bundle = fs.existsSync(bundlePath)
-      ? fs.readFileSync(bundlePath, "utf8") : null;
+      ? codeOf(fs.readFileSync(bundlePath, "utf8")) : null;
     if (!bundle) {
       log.warn(entry.page + ": client/src/" + entry.bundle + " does not " +
         "exist yet, so this page's WIRING is unchecked. Its markup is " +
         "checked below. If that file was renamed rather than not-yet-" +
         "written, this check has quietly stopped covering a live page.");
     }
+    // ---------------------------------------------------------------------
+    // TAB NAMES ARE UNIQUE WITHIN A GROUP, and every button has a panel.
+    //
+    // selectTab() shows EVERY panel in the group whose data-krb-tab matches the
+    // name clicked, and lights every button that does. That is what makes a
+    // strip with five buttons work at all, and it is also what makes a repeated
+    // name silent: two panels called "hex" in one group open together, stacked,
+    // one above the other, with both buttons lit — which looks like a rendering
+    // bug in the pane rather than like two attributes with the same value. A
+    // button with no panel is the mirror image: it lights, and nothing appears.
+    // Neither can be seen in the markup by reading it, which is why it is
+    // counted here.
+    // ---------------------------------------------------------------------
+    const seenTabs = {};
+    const panelRe = new RegExp('class="krb-tabpanel[^"]*"\\s+' +
+        'data-krb-tabs="([a-z0-9_]+)"\\s+data-krb-tab="([a-z0-9_]+)"', "g");
+    let pm;
+    while ((pm = panelRe.exec(html)) !== null) {
+      const key = pm[1] + "/" + pm[2];
+      assert.ok(!seenTabs[key],
+        entry.page + ': tab group "' + pm[1] + '" has more than one panel ' +
+        'named "' + pm[2] + '". Selecting that tab shows both of them at ' +
+        "once, stacked, and lights both buttons.");
+      seenTabs[key] = true;
+    }
+    const buttonRe =
+      /<button[^>]*class="krb-tab[^"]*"[^>]*data-krb-tab="([a-z0-9_]+)"/g;
+    let bm;
+    const strips = html.split('class="krb-tabs" data-krb-tabs="');
+    strips.slice(1).forEach(function (chunk) {
+      const groupName = chunk.slice(0, chunk.indexOf('"'));
+      const stripHtml = chunk.slice(0, chunk.indexOf("</div>"));
+      buttonRe.lastIndex = 0;
+      while ((bm = buttonRe.exec(stripHtml)) !== null) {
+        assert.ok(seenTabs[groupName + "/" + bm[1]],
+          entry.page + ': the strip for group "' + groupName + '" has a ' +
+          'button named "' + bm[1] + '" and the page has no krb-tabpanel in ' +
+          "that group with that name. Clicking it lights the button and " +
+          "shows nothing.");
+      }
+    });
+    // Logged so that "no duplicates" cannot be a result of having read no
+    // panels: a regex that stopped matching would report the same silence as a
+    // page whose tabs are all correct.
+    log.info(entry.page + ": " + Object.keys(seenTabs).length +
+      " tab panel(s) across " + (strips.length - 1) + " group(s), each named " +
+      "once in its group and each button pointing at one");
+
     // `<div id=...>` specifically, not any id ending in _hex: the decoder page
     // has an INPUT called krb_key_hex — a place to paste a raw key — and a
     // check that treated it as a pane demanded a tab strip around a text box.
@@ -568,23 +677,46 @@ function everyHexPaneIsReachableAndFilled() {
     hexIds.forEach(function (id) {
       panels += 1;
       // Reachable: the div is inside a tab panel, and that panel's group has a
-      // button pointing at it.
+      // button pointing at it BY NAME.
+      //
+      // The tab name is `hex` or `hex_something`, not `hex` alone: a pane may
+      // hold more than one hex view, and the delegation page's reply panes hold
+      // four — the whole message, its Ticket, its enc-part and the plaintext.
+      // They cannot share a name, because selectTab() shows every panel in the
+      // group whose name matches and would show all four at once.
       const panel = new RegExp('data-krb-tabs="([a-z0-9_]+)"[^>]*' +
-          'data-krb-tab="hex"[^>]*>\\s*<div id="' + id + '"');
+          'data-krb-tab="(hex[a-z0-9_]*)"[^>]*>\\s*<div id="' + id + '"');
       const match = html.match(panel);
       assert.ok(match, entry.page + ": " + id + " is not inside a " +
-        'krb-tabpanel with data-krb-tab="hex". Nothing would ever show it.');
+        'krb-tabpanel whose data-krb-tab starts with "hex". Nothing would ' +
+        "ever show it.");
       const group = match[1];
-      assert.ok(new RegExp('class="krb-tabs" data-krb-tabs="' + group + '"')
-          .test(html),
+      const tab = match[2];
+      // THE STRIP FOR THIS GROUP, isolated before anything is looked for inside
+      // it. Searching the whole page instead is what made the original version
+      // of this check hollow: with three exchange panes carrying the same tab
+      // names, deleting one pane's `hex_encpart` button left the other two to
+      // satisfy a page-wide regex, and the panel behind the deleted button
+      // became unreachable markup — present, correct, and impossible to see.
+      // Mutation-tested by deleting exactly one button.
+      const strip = html.match(new RegExp('class="krb-tabs" data-krb-tabs="' +
+          group + '"[\\s\\S]*?</div>'));
+      assert.ok(strip,
         entry.page + ": " + id + ' is in tab group "' + group + '" and the ' +
         "page has no krb-tabs strip for that group, so there is no button " +
         "to select it.");
-      assert.ok(new RegExp('data-krb-tab="hex"[^>]*>Hex<').test(html),
-        entry.page + ": the strip for " + id + " has no Hex button");
+      const button = new RegExp('<button[^>]*data-krb-tab="' + tab +
+          '"[^>]*>\\s*Hex');
+      assert.ok(button.test(strip[0]),
+        entry.page + ": " + id + ' is in the panel named "' + tab + '" of ' +
+        'group "' + group + '", and that group\'s strip has no button with ' +
+        'that data-krb-tab whose label begins "Hex". The panel is ' +
+        "`display: none` and there is nothing to click. The strip reads:\n" +
+        strip[0]);
 
-      // Filled: either by the `_pane` → `_hex` convention that
-      // renderMessage() applies, or by an explicit call naming this id.
+      // Filled: by the `_pane` → `_hex` convention that renderMessage()
+      // applies, by the reply-part convention one step down from it, or by an
+      // explicit call naming this id.
       const companion = id.replace(/_hex$/, "_pane");
       const byConvention = bundle &&
         html.indexOf('id="' + companion + '"') !== -1 &&
@@ -592,10 +724,41 @@ function everyHexPaneIsReachableAndFilled() {
       const byHand = bundle &&
         new RegExp('(renderCompanionHex|render)\\(\\s*"' +
           '(' + id + '|' + companion + ')"').test(bundle);
-      assert.ok(!bundle || byConvention || byHand,
+      // Or the pane id reaches renderMessage() as a NAMED OPTION rather than as
+      // a literal argument, which is how a page with four exchanges avoids four
+      // copies of the same handler: kerberos_delegation.js has one exchange()
+      // and each caller passes its own requestPane/replyPane. The check has to
+      // see both halves — the literal id in the options and the call that
+      // renders whatever those options carry — or it degenerates into "this
+      // string appears somewhere in the bundle".
+      const byOption = bundle &&
+        new RegExp('(requestPane|replyPane|pane):\\s*"' + companion + '"')
+            .test(bundle) &&
+        /renderMessage\(\s*[a-z]+\.(requestPane|replyPane|pane)/.test(bundle);
+      // A reply PART — krb_x_ticket_hex / _encpart_hex / _encreppart_hex beside
+      // a krb_x_reply_pane. These three cannot be filled on the way past like
+      // every other hex view, because their bytes only exist once the reply has
+      // been decrypted; the page therefore calls renderReplyPartsHex() with the
+      // reply pane's id, which derives all three. Recognised as a convention
+      // rather than demanding three literal ids per exchange, for the same
+      // reason renderMessage() pairs `_pane` with `_hex` rather than every page
+      // naming both: a page with three exchanges would otherwise carry nine
+      // near-identical calls, and the ninth is the one that gets forgotten.
+      // theReplyPartConventionIsWired() below checks the convention itself.
+      const partSuffix = REPLY_PART_SUFFIXES.filter(function (suffix) {
+        return id.slice(-suffix.length) === suffix;
+      })[0];
+      const byPartConvention = bundle && partSuffix &&
+        html.indexOf('id="' + id.slice(0, -partSuffix.length) +
+            '_reply_pane"') !== -1 &&
+        /renderReplyPartsHex\(/.test(bundle);
+      assert.ok(!bundle || byConvention || byHand || byOption ||
+          byPartConvention,
         entry.page + ": nothing fills " + id + ". renderMessage() pairs " +
         companion + " with it automatically, but this page has no such " +
-        "call and no explicit render either — so the tab is there and stays " +
+        "call, does not pass that id as a requestPane/replyPane option to " +
+        "one, has no renderReplyPartsHex() beside a matching _reply_pane, " +
+        "and no explicit render either — so the tab is there and stays " +
         "empty, which is indistinguishable from an exchange that has not " +
         "run yet.");
     });
@@ -664,6 +827,141 @@ function theCompanionConventionIsWired() {
   log.debug("Leaving theCompanionConventionIsWired().");
 }
 
+// ---------------------------------------------------------------------------
+// The reply-part convention, which everyHexPaneIsReachableAndFilled() accepts
+// on trust and which nothing else here checks.
+//
+// Three of the delegation page's five views per exchange are reached by it, and
+// if renderReplyPartsHex() stops deriving those ids — a renamed suffix, a
+// dropped entry, the `_reply_pane` test tightened — all nine of them go empty
+// while every check above still passes, because each page's markup and each
+// page's call are exactly where they were. Same argument as
+// theCompanionConventionIsWired(), one step further down.
+// ---------------------------------------------------------------------------
+function theReplyPartConventionIsWired() {
+  log.debug("Entering theReplyPartConventionIsWired().");
+  const src = readClientFile(CLIENT_SRC, "kerberos_panes.js");
+  const table = src.slice(src.indexOf("var REPLY_PART_HEX = ["),
+      src.indexOf("function renderReplyPartsHex("));
+  assert.ok(table.length > 40,
+    "kerberos_panes.js has no REPLY_PART_HEX table before " +
+    "renderReplyPartsHex(). The suffixes this file lists as " +
+    "REPLY_PART_SUFFIXES are then checked against nothing, and the pane " +
+    "check above accepts ids no code derives.");
+  REPLY_PART_SUFFIXES.forEach(function (suffix) {
+    assert.ok(table.indexOf('"' + suffix + '"') !== -1,
+      "kerberos_panes.js's REPLY_PART_HEX no longer carries the suffix " +
+      suffix + ", which this file and client/public/kerberos_delegation.html " +
+      "both spell out. The pane behind it would render its heading and stay " +
+      "empty — the failure mode of a hex tab nobody fills.");
+  });
+  // The keys have to match what krb5_client.js's readTgsRep() returns, since
+  // that is where the bytes come from. A renamed key is three empty panes and
+  // no error anywhere: renderReplyPartsHex() reads `bytes[part.key]`, undefined
+  // renders as "nothing yet", and "nothing yet" is what an exchange that has
+  // not run looks like.
+  const client = readSharedText("krb5_client.js");
+  ["ticket", "encPart", "encPartPlain"].forEach(function (key) {
+    assert.ok(new RegExp('"' + key + '"').test(table),
+      "REPLY_PART_HEX has no entry keyed " + key);
+    assert.ok(new RegExp("^\\s*" + key + ":", "m").test(client),
+      "krb5_client.js no longer returns `" + key + "` among a reply's bytes, " +
+      "so the pane keyed on it renders as though the exchange had not run. " +
+      "See replyBytes() there.");
+  });
+  const body = codeOf(bodyOf(src, "function renderReplyPartsHex("));
+  assert.ok(/_reply_pane\$?\/?,\s*""\)|replace\(\/_reply_pane\$\/, ""\)/
+      .test(body.replace(/\s+/g, " ")),
+    "renderReplyPartsHex() no longer derives the stem from a `_reply_pane` " +
+    "id, so the ids it renders into are not the ones the pages carry");
+  assert.ok(/require\("\.\/kerberos_hex\.js"\)/.test(body),
+    "renderReplyPartsHex() must require the hex module INSIDE the function, " +
+    "for the cycle reason renderCompanionHex() explains");
+  log.info("the reply-part hex convention is wired, and its keys match " +
+      "krb5_client.js");
+  log.debug("Leaving theReplyPartConventionIsWired().");
+}
+
+// ---------------------------------------------------------------------------
+// The one thing about this view that a stylesheet can silently switch off.
+//
+// The hover and pinned highlight is `krb-hex-on`, and every byte inside a
+// top-level section also carries a resting tint, `krb-hex-s0`..`s5`. Those are
+// the SAME specificity, so whichever is written last owns the `background` —
+// and when the tints were added below the hover rule they took it, leaving the
+// hovered bytes with `color: #fff` over a pale tint. Nothing errors, no class
+// is missing, and `tests/navigation.js`'s stylesheet audit is perfectly happy:
+// every class used is defined. What breaks is the only thing the view is for.
+// The bytes under the pointer turn white-on-white as it crosses them, and since
+// the strip above is then the sole thing still responding, the view reads as
+// "hovering does nothing — you have to click", which is exactly how it was
+// reported.
+//
+// So this asserts the OUTCOME rather than the text of a rule: the selector that
+// paints the highlight must beat a bare tint class, either by carrying two
+// classes or by being written after every tint. Mutation-tested both ways —
+// undouble the selector and move it back above `.krb-hex-s0`, and this fails.
+// ---------------------------------------------------------------------------
+function theHoverHighlightWinsOverTheTints() {
+  log.debug("Entering theHoverHighlightWinsOverTheTints().");
+  // COMMENTS STRIPPED FIRST, and that is not tidying. This stylesheet explains
+  // itself at length and those comments name the very classes being looked for
+  // — the note above the rule below says `.krb-hex-on` and `.krb-hex-s*` in
+  // prose. Left in, they become part of whatever selector follows them, which
+  // both mis-attributes rules and (because the prose contains commas) splits
+  // into "selectors" carrying no class at all. The first version of this check
+  // passed for the wrong reason on exactly that. Offsets are into the stripped
+  // text, which is all the comparison below needs.
+  const css = readClientFile(path.join(PUBLIC_DIR, "css"), "kerberos.css")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+  // Every rule with its selector, its body and where it sits.
+  const rules = [];
+  const re = /([^{}]+)\{([^}]*)\}/g;
+  let m;
+  while ((m = re.exec(css)) !== null) {
+    rules.push({ selector: m[1].trim(), body: m[2], at: m.index });
+  }
+  const tints = rules.filter(function (r) {
+    return /\.krb-hex-s\d/.test(r.selector) && /background/.test(r.body);
+  });
+  assert.ok(tints.length >= 2,
+    "found " + tints.length + " resting tint rules (.krb-hex-s0..s5) that " +
+    "set a background in css/kerberos.css. There are six, so a count below " +
+    "two means this check is reading something other than the stylesheet and " +
+    "the assertion below it cannot fail.");
+  const highlights = rules.filter(function (r) {
+    return /\.krb-hex-on/.test(r.selector) && /background/.test(r.body);
+  });
+  assert.strictEqual(highlights.length, 1,
+    "expected exactly one rule to give .krb-hex-on a background in " +
+    "css/kerberos.css, found " + highlights.length + ". More than one and " +
+    "which of them wins is a question this check cannot answer.");
+  const hl = highlights[0];
+  // Two classes on the same element beat one, whatever the order. Counted per
+  // comma-separated selector, because `.krb-hex-b.krb-hex-on, .krb-hex-a…` is
+  // only as strong as its weakest half.
+  const doubled = hl.selector.split(",").every(function (part) {
+    return (part.match(/\.[a-z0-9-]+/g) || []).length >= 2;
+  });
+  const lastTint = Math.max.apply(null, tints.map(function (r) {
+    return r.at;
+  }));
+  assert.ok(doubled || hl.at > lastTint,
+    "the rule that gives .krb-hex-on its background is `" + hl.selector +
+    "` at byte " + hl.at + ", which is a single class and sits ABOVE the " +
+    "resting tints (the last is at byte " + lastTint + "). Equal " +
+    "specificity, later wins: every byte in a top-level section would keep " +
+    "its pale tint and take `color: #fff` on top, so the field under the " +
+    "pointer renders white on pale — an invisible highlight, which is how " +
+    "this was reported the first time. Either double the class (as " +
+    "`.krb-hex-b.krb-hex-on` does) or keep the rule below every .krb-hex-s " +
+    "rule; the doubling is preferred because appending the next tint cannot " +
+    "then take it back.");
+  log.info("the hover highlight beats the resting tints (" +
+    (doubled ? "doubled selector" : "declared after them") + ")");
+  log.debug("Leaving theHoverHighlightWinsOverTheTints().");
+}
+
 // The renderer's own two claims, read off its source: that the gutter is built
 // from per-byte cells carrying a range, and that the strip leads with the
 // field name. Neither is visible without a browser, and both are what this
@@ -682,8 +980,12 @@ function theRendererHighlightsBothHalves() {
   // against the ARGUMENT rather than an assignment, so wrapping this call at 80
   // columns or moving it behind a helper does not silence the check. Every
   // source-reading test in this suite has been broken once by a reformat that
-  // changed nothing about the property.
-  assert.ok(/(line\(fieldLine, |fieldLine\.textContent = )r\.fieldPath/
+  // changed nothing about the property. `s.fieldLine` is accepted beside the
+  // bare name because the render's state moved into an object when the
+  // listeners stopped being re-attached per render; what is asserted is that
+  // the FIELD line is the one given `r.fieldPath`.
+  assert.ok(
+    /(line\((s\.)?fieldLine, |(s\.)?fieldLine\.textContent = )r\.fieldPath/
       .test(flat),
     "the strip no longer leads with the field's name — the whole point of " +
     "the name table is that `AS-REQ → req-body → cname` is the first thing " +
@@ -692,6 +994,28 @@ function theRendererHighlightsBothHalves() {
     "the strip's lines are clipped to one line each so the dump below them " +
     "cannot move; without a title carrying the full text, a long ASN.1 path " +
     "is simply lost");
+  // HOVER, not click, is what names a field. The view is read by sweeping the
+  // pointer along the bytes; the pin is the affordance that lets the pointer
+  // LEAVE. A renderer that had only the click handler would satisfy every other
+  // assertion in this file — the names would be right, the ranges would be
+  // right, both halves would light up — and would have to be operated one byte
+  // at a time with a mouse button, which is how the invisible-highlight bug was
+  // experienced and reported.
+  assert.ok(/addEventListener\("mouseover"/.test(flat),
+    "kerberos_hex.js wires no mouseover handler, so nothing names a field as " +
+    "the pointer crosses it and the view can only be read by clicking each " +
+    "element in turn");
+  assert.ok(/addEventListener\("mouseleave"/.test(flat),
+    "kerberos_hex.js wires no mouseleave handler, so the last field the " +
+    "pointer touched stays named and lit after it has gone");
+  // And the sweep has to stay cheap, because it repaints once per byte crossed.
+  // The version that scanned every cell in the message per mouse move was
+  // O(message) — 3,000 cells for a TGS-REP carrying a PAC — and a highlight
+  // that trails the pointer is indistinguishable from one that is not there.
+  assert.ok(/byRange\[/.test(flat),
+    "paint() no longer looks up a range's cells, which means it is scanning " +
+    "them: that is O(message) on every mouse move, and this view is read by " +
+    "moving the mouse");
   const css = readClientFile(path.join(PUBLIC_DIR, "css"), "kerberos.css");
   [".krb-hex-a", ".krb-hex-field", ".krb-hex-meta"].forEach(function (cls) {
     assert.ok(css.indexOf(cls) !== -1,
@@ -715,6 +1039,8 @@ async function test() {
     removingAFieldIsCaught();
     everyHexPaneIsReachableAndFilled();
     theCompanionConventionIsWired();
+    theReplyPartConventionIsWired();
+    theHoverHighlightWinsOverTheTints();
     theRendererHighlightsBothHalves();
     log.info("Test completed successfully.");
   } catch (error) {

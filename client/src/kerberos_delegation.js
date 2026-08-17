@@ -70,6 +70,11 @@ var kpac = require("./krb5_pac.js");
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
 var tickets = require("./kerberos_tickets.js");
+// The Decryption keys pane. S4U_DELEGATION_INFO — the only record IN a ticket
+// that a delegation happened — lives in the PAC of a ticket encrypted under
+// the TARGET service's key, so this pane is what makes the audit trail
+// readable on this page instead of on another one.
+var deckeys = require("./kerberos_keys.js");
 
 var el = panes.el;
 var val = panes.val;
@@ -264,6 +269,30 @@ function kdcTarget() {
   };
 }
 
+// Whose TGT this page is spending, AS TEXT.
+//
+// `revive()` hands back a PARSED principal — the builders need `.name`, and a
+// string there encodes as a one-component name containing nothing — so the
+// obvious `tgt.client` is an OBJECT. Four of this page's history rows passed it
+// straight to the Operations History pane, which renders with `textContent`,
+// and every one of them recorded its user as `[object Object]`. The realm is
+// added back because revive() split it off: the column is asked which user
+// acted, and `alice` alone does not say in which realm.
+//
+// kerberos_history.js normalizes a parsed principal too, as a backstop for the
+// next call site; this exists because it can also supply the realm, and because
+// the "As …" detail below is a string concatenation that no normalization
+// inside the log could reach.
+function heldClientText() {
+  log.debug("Entering heldClientText().");
+  if (!tgt || !tgt.client) {
+    log.debug("Leaving heldClientText(). No TGT held.");
+    return "(no TGT held)";
+  }
+  log.debug("Leaving heldClientText().");
+  return msgs.principalToString(tgt.client, tgt.realm);
+}
+
 function tgtKeys() {
   return [{
     etype: tgt.etype,
@@ -276,10 +305,26 @@ function tgtKeys() {
 // differs only in how the request was built and what to do with the reply — so
 // it is one function rather than five, and a pane that behaved differently
 // between them would be a bug visible only by comparing the panes.
+//
+// THE HEX TABS COME OUT OF THIS FUNCTION TOO, which is why there are five of
+// them per exchange and not two. The request's and the reply's own bytes are
+// filled by renderMessage() on the way past, by the `krb_x_pane` → `krb_x_hex`
+// convention; the Ticket, the enc-part and the decrypted EncTGSRepPart are
+// filled from the opened reply, by the convention one step down in
+// panes.renderReplyPartsHex(). Doing it here rather than in each of the four
+// handlers is the same argument as the rest of this function: three of them
+// would have had the same three calls, and the fourth would have been the one
+// somebody forgot.
 async function exchange(opts) {
   log.debug("Entering exchange().");
   await panes.renderMessage(opts.requestPane, "Sent", opts.built.request,
       tgtKeys());
+  // Emptied before the send, not filled after it. These three come from a reply
+  // that has not arrived, and the previous attempt's are still in them — so on
+  // any of the four paths out of this function that never opens a reply, they
+  // would go on showing an earlier exchange's ticket beside a pane reporting
+  // this one's refusal.
+  panes.renderReplyPartsHex(opts.replyPane, null);
   status(opts.statusId, "Sent. Waiting for the KDC…", "krb-pending");
   var result;
   try {
@@ -310,10 +355,13 @@ async function exchange(opts) {
     return null;
   }
   if (!read.ok) {
+    // A KRB-ERROR is a reply and its bytes are in the reply hex tab; it has no
+    // ticket, no enc-part and no plaintext, so those three stay empty.
     status(opts.statusId, opts.explain(read.error), "krb-bad");
     log.debug("Leaving exchange().");
     return null;
   }
+  panes.renderReplyPartsHex(opts.replyPane, read.bytes);
   log.debug("Leaving exchange().");
   return read;
 }
@@ -329,7 +377,7 @@ async function onS4u2Self() {
   // service is in the detail.
   beginDelegationOperation(ophistory.OPS.S4U2SELF, "krb_s4u2self_status",
       val("krb_impersonate").trim(),
-      "As " + ((tgt && tgt.client) || "(no TGT held)") + ".");
+      "As " + heldClientText() + ".");
   if (!tgt) {
     status("krb_s4u2self_status", "No usable TGT is held.", "krb-bad");
     return false;
@@ -451,7 +499,8 @@ async function onS4u2Self() {
 async function onS4u2Proxy() {
   log.debug("Entering onS4u2Proxy().");
   beginDelegationOperation(ophistory.OPS.S4U2PROXY, "krb_s4u2proxy_status",
-      (evidence && evidence.client) || val("krb_impersonate").trim(),
+      (evidence && msgs.principalToString(evidence.client,
+          evidence.realm)) || val("krb_impersonate").trim(),
       "To " + (val("krb_deleg_target").trim() || "(no target named)") +
       (panes.checked("krb_resource_based") ? ", resource-based." :
           ", classic."));
@@ -563,13 +612,22 @@ async function onS4u2Proxy() {
 // The audit trail, which is the only record IN the ticket that a delegation
 // happened. Reading it needs the target service's key, so this pane says so
 // when it has none rather than showing an empty box.
+// The last delegation this page produced, so the note below can be repainted
+// when a key arrives. Held for the same reason kerberos_panes.js remembers what
+// each message pane rendered: the key that makes this readable is typed AFTER
+// the exchange, and re-running an S4U2Proxy request to read a trail you already
+// have is not an answer.
+var lastDelegation = null;
+
 async function renderDelegationTrail(read, targetText) {
   log.debug("Entering renderDelegationTrail().");
+  lastDelegation = { read: read, targetText: targetText };
   var host = el("krb_trail_pane");
   if (!host) {
-    log.debug("Leaving renderDelegationTrail().");
+    log.debug("Leaving renderDelegationTrail(). No pane.");
     return;
   }
+  var supplied = await panes.extraKeys();
   panes.clear(host);
   host.appendChild(panes.make("p", "krb-note",
     "The delegated ticket names " + msgs.principalToString(read.client) +
@@ -578,10 +636,43 @@ async function renderDelegationTrail(read, targetText) {
         "is " +
     "S4U_DELEGATION_INFO inside the PAC — which is encrypted under " +
         targetText + "'s own key, " +
-    "so paste that key on the decoder page to read it. This page cannot: it " +
-        "is the client here, " +
-    "and a client never holds the service's key."));
-  log.debug("Leaving renderDelegationTrail().");
+    "and a client never holds that: this page is the client here."));
+  // Which of the two states the reader is in, said explicitly. "Supply the key"
+  // read as an instruction that had nowhere to be carried out until the
+  // Decryption keys pane existed on this page, and once a key HAS been supplied
+  // the same sentence reads as though nothing happened.
+  host.appendChild(panes.make("p", "krb-note", supplied.length
+    ? "You have supplied " + supplied.length + " key(s), so the S4U2Proxy " +
+      "reply pane above was re-read with them: if one of them is " +
+      targetText + "'s, the ticket's EncTicketPart is open there and the " +
+      "trail is inside its PAC. If it says the keys were tried and none " +
+      "worked, the key is a different principal's or a stale kvno."
+    : "Supply that key in the Decryption keys pane at the foot of this page " +
+      "— as a raw key, as " + targetText + "'s password and salt, or as its " +
+      "keytab — and the S4U2Proxy reply pane above opens where it stands, " +
+      "PAC and trail included. Nothing typed there is stored or sent " +
+      "anywhere."));
+  log.debug("Leaving renderDelegationTrail(). supplied=" + supplied.length);
+}
+
+// The Decryption keys pane's onApply hook. The message panes replay themselves;
+// this one is prose about them and has to be told.
+function refreshDelegationTrail() {
+  log.debug("Entering refreshDelegationTrail().");
+  if (!lastDelegation) {
+    log.debug("Leaving refreshDelegationTrail(). No delegation yet.");
+    return false;
+  }
+  Promise.resolve()
+    .then(function () {
+      return renderDelegationTrail(lastDelegation.read,
+          lastDelegation.targetText);
+    })
+    .catch(function (e) {
+      log.error("the delegation trail could not be repainted: " + e.message);
+    });
+  log.debug("Leaving refreshDelegationTrail().");
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -590,7 +681,7 @@ async function renderDelegationTrail(read, targetText) {
 async function onRenew() {
   log.debug("Entering onRenew().");
   beginDelegationOperation(ophistory.OPS.RENEW, "krb_renew_status",
-      (tgt && tgt.client) || "(no TGT held)", "");
+      heldClientText(), "");
   if (!tgt) {
     status("krb_renew_status", "No usable TGT is held.", "krb-bad");
     return false;
@@ -693,7 +784,7 @@ async function onRenew() {
 async function onForward() {
   log.debug("Entering onForward().");
   beginDelegationOperation(ophistory.OPS.FORWARD, "krb_forward_status",
-      (tgt && tgt.client) || "(no TGT held)", "");
+      heldClientText(), "");
   if (!tgt) {
     status("krb_forward_status", "No usable TGT is held.", "krb-bad");
     return false;
@@ -743,8 +834,10 @@ async function onForward() {
 
   // Wrap it for one service. The key is that AP exchange's subkey in a real
   // flow; here a fresh one is generated and SHOWN, because the point of the
-  // pane is the structure and the reader needs the key to decode it on the
-  // decoder page.
+  // pane is the structure — and it is passed to the pane's own render below, so
+  // the EncKrbCredPart opens where it stands rather than needing to be carried
+  // anywhere. It is shown as well as used: the same bytes pasted into the
+  // decoder page later must still be readable.
   var profile = kcrypto.etypeById(read.etype);
   var subkey = {
     etype: read.etype,
@@ -834,6 +927,11 @@ function wire() {
   // clickable without anything being registered for it.
   panes.markCurrentStep("krb_step_delegation");
   panes.wirePanes();
+  // Without this the Hex buttons render, do nothing when clicked, and every
+  // panel behind them stays `display: none` — which reads as a page that has no
+  // hex view rather than as a missing call. Sixteen panels on this page, across
+  // the S4U2Self, S4U2Proxy and forwarding panes.
+  panes.wireTabs();
   var toggleAll = el("dbg_toggle_all");
   if (toggleAll) {
     toggleAll.addEventListener("change", function () {
@@ -858,6 +956,10 @@ function wire() {
     }
   });
   ophistory.mount("krb_operation_history", "krb_clear_operations_button");
+  // The Decryption keys pane, from partials/krb_keys.html. onApply re-renders
+  // the delegation trail note as well, because that pane is not a message
+  // pane and so is not replayed by panes.rerenderMessages().
+  deckeys.mount({ onApply: refreshDelegationTrail });
 
   var wiring = [
     ["krb_s4u2self_button", onS4u2Self],

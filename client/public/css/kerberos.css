@@ -529,13 +529,6 @@ ol.krb-trail li.krb-step-tool {
 /* The tag and length bytes of whichever element owns this byte. Underlined
    rather than coloured so it composes with the section tint underneath. */
 .krb-hex-hdr { text-decoration: underline dotted #999; }
-/* The hovered or pinned element. Strong, because it is the answer to the
-   question the view was opened to ask. */
-.krb-hex-on {
-  background: #12107c;
-  color: #fff;
-}
-.krb-hex-on.krb-hex-hdr { text-decoration-color: #ccc; }
 
 /* Six resting tints for the top-level sections. Pale, distinguishable, and
    chosen to stay legible with black text on them. */
@@ -545,6 +538,32 @@ ol.krb-trail li.krb-step-tool {
 .krb-hex-s3 { background: #f6eef8; }
 .krb-hex-s4 { background: #eef8f7; }
 .krb-hex-s5 { background: #f9f7e8; }
+
+/* ---------------------------------------------------------------------------
+   The hovered or pinned element. Strong, because it is the answer to the
+   question the view was opened to ask.
+
+   TWO CLASSES ON PURPOSE, and this rule has to stay below the tints above.
+   Every byte in a top-level section already carries a `krb-hex-s*` class, and
+   a single-class `.krb-hex-on` has exactly the same specificity as those — so
+   whichever is written LAST wins the `background`. The tints were added after
+   this rule and silently took it: the hovered bytes kept `color: #fff` and
+   lost their dark background, which renders white text on a pale tint. That is
+   not a subtle degradation, it is an invisible highlight — the bytes appear to
+   blank out as the pointer crosses them — and it reads as "hovering does
+   nothing, you have to click", because the strip's text was the only thing
+   still changing. Doubling the class (0,2,0 against the tints' 0,1,0) makes
+   the outcome independent of source order, so appending another tint or
+   another state class cannot take it back.
+   `theHoverHighlightWinsOverTheTints()` in tests/krb5_field_naming.js fails if
+   either half of that is undone.
+   ------------------------------------------------------------------------ */
+.krb-hex-b.krb-hex-on,
+.krb-hex-a.krb-hex-on {
+  background: #12107c;
+  color: #fff;
+}
+.krb-hex-on.krb-hex-hdr { text-decoration-color: #ccc; }
 
 /* ---------------------------------------------------------------------------
    Ticket Cache & History.

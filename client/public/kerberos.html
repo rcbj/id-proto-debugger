@@ -218,6 +218,15 @@ mock KDC.</p>
   the ticket. So the cache lives in <code>sessionStorage</code> and goes when this tab closes. Tick the box
   to keep it in <code>localStorage</code> instead &mdash; unticking it purges what was already stored, on
   the spot. The password is never persisted either way.</p>
+  <p class="krb-note">Below the summary is <strong>the ticket decoded, with its contents filled in</strong>
+  &mdash; flags, session key, both principals and all four times. A client cannot decrypt a ticket it holds
+  (this one is sealed with the KDC's <code>krbtgt</code> key), so those values come from the
+  <strong>KDC's own copy of them</strong> in the reply's enc-part, which this page decrypted with your
+  password. They are labelled as such: the two agree unless the KDC is lying, and nothing a client holds
+  can tell the difference. The single field the KDC does not repeat is the ticket's
+  <code>authorization-data</code> &mdash; on Active Directory that is the <strong>PAC</strong>, which lives
+  only inside the ciphertext and needs that account's own key, so the
+  <a href="/kerberos_decoder.html">Decoder</a> is where it becomes visible if you have one.</p>
   <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_save_ccache">
     keep the credential cache in localStorage across visits</label><span class="tooltiptext">Whether the ticket and its session key may be written to this browser's localStorage. It has to be kept for the TGS and delegation pages to find it; turn it off and the credential lives only until this page is closed.</span></div>
   <div class="krb-tabs" data-krb-tabs="ticket">

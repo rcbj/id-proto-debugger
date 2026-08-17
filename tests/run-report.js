@@ -570,6 +570,23 @@ function buildJobs() {
     env: {},
   });
 
+  // Every test in this suite that builds a Selenium driver must start Chrome
+  // headless, and must do so BY DEFAULT rather than when asked. A test written
+  // by copying a neighbour easily picks up browser_flags.js — which handles the
+  // secure-context and private-network hazards and says nothing about headless
+  // mode — while missing the flag itself; kerberos_delegation_page.js did
+  // exactly that and opened a window on every run. On a desktop that steals
+  // focus for the length of the run; on a CI runner or in a container there is
+  // no display at all, so the session fails to start and names the page the
+  // test was about to visit. Reads this directory's sources: node only, no
+  // browser, never skipped.
+  jobs.push({
+    name: "Browser tests are headless (every driver-building test, by " +
+        "default)",
+    script: "browser_tests_headless.js",
+    env: {},
+  });
+
   // The WebAuthn decoder (client/src/cbor.js, cose.js, webauthn.js) against
   // REAL ceremonies — ES256 and RS256, registration and assertion — produced by
   // the WebDriver virtual authenticator and committed as

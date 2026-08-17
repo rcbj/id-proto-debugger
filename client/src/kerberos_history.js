@@ -137,6 +137,73 @@ var open = {};
 // records without mounting (none today) simply logs with nothing to show.
 var hostId = null;
 
+// ---------------------------------------------------------------------------
+// A principal as TEXT, whether the caller had it as text or as a parsed one.
+//
+// WHY THIS EXISTS. Every page in this workflow revives a cached credential
+// before it can spend it, and `revive()` turns the stored `client` string into
+// a PARSED principal — `{ type, name: ["alice"], realm }` — because that is
+// what the builders need (`buildTgsReq()` reads `.name`; a string there encodes
+// as a one-component name containing nothing). The pages then hand that same
+// object to this log, which renders its columns with `textContent`, and the row
+// reads
+//
+//   AP-REQ (presented to a service)   [object Object]   HTTP/web.example.com…
+//
+// on the AP, TGS and delegation pages. Nothing errors — `[object Object]` is
+// what JavaScript is contractually required to produce — and the row is
+// otherwise complete and correct, so the log looks like it is working. Which
+// user the operation acted as is the one thing this column exists to answer.
+//
+// FIXED IN ONE PLACE ON PURPOSE. The call sites are fixed too (they can supply
+// the REALM, which a parsed name does not carry once `revive()` has split it
+// off, so they render `alice@EXAMPLE.COM` where this can only render `alice`),
+// but a normalization here is what makes the next call site safe: there are
+// eleven of them across six bundles today, each written months apart, and the
+// failure is invisible to every automated check that does not look at this one
+// cell.
+//
+// NO `require` OF krb5_messages.js, deliberately, although
+// `principalToString()` there does the same join. This module is loaded
+// directly by tests/krb5_operation_history.js out of `client/src`, where a
+// relative require of a `common/krb5` module does not resolve — the tests image
+// copies those flat beside the tests instead. Adding one would fail that test
+// with `Cannot find module`, naming this file, before it asserted anything; the
+// same shape as the `edge_landing.js` breakage in tests/CLAUDE.md. Four
+// lines of join is the cheaper half of that trade.
+//
+// Anything that is neither a string nor a principal is passed through as
+// `String(value)` and WARNED about rather than blanked: an empty cell hides the
+// defect, and the log line names the operation so the next one is findable.
+// ---------------------------------------------------------------------------
+function principalText(value, operation) {
+  log.debug("Entering principalText().");
+  if (value === null || value === undefined || value === "") {
+    log.debug("Leaving principalText(). Empty.");
+    return "";
+  }
+  if (typeof value === "string") {
+    log.debug("Leaving principalText(). Already text.");
+    return value;
+  }
+  if (Array.isArray(value.name)) {
+    // The same rendering as krb5_messages.js's principalToString(): components
+    // joined with "/", the realm appended after "@" when there is one.
+    var text = value.name.join("/");
+    if (value.realm) {
+      text += "@" + value.realm;
+    }
+    log.debug("Leaving principalText(). Parsed principal.");
+    return text;
+  }
+  log.warn("the Operations History pane was given a " + typeof value +
+      " as the principal of " + (operation || "an operation") +
+      ", which is neither text nor a parsed principal, so the row shows " +
+      "whatever it stringifies to");
+  log.debug("Leaving principalText(). Not a principal.");
+  return String(value);
+}
+
 function clip(text) {
   log.debug("Entering clip().");
   var s = String(text == null ? "" : text).replace(/\s+/g, " ").trim();
@@ -184,9 +251,10 @@ function begin(entry) {
         "operation") + " before an answer was recorded.");
     delete open[entry.statusId];
   }
+  var who = principalText(entry.principal, entry.operation);
   var id = history.record({
     operation: entry.operation || "(unnamed)",
-    principal: entry.principal || "",
+    principal: who,
     target: entry.target || "",
     result: history.SENT,
     detail: entry.detail || ""
@@ -196,7 +264,7 @@ function begin(entry) {
   }
   refresh();
   log.info("kerberos operation started: " + (entry.operation || "(unnamed)") +
-      " principal=" + (entry.principal || "-"));
+      " principal=" + (who || "-"));
   log.debug("Leaving begin().");
   return id;
 }
@@ -282,7 +350,7 @@ function note(entry) {
   entry = entry || {};
   history.record({
     operation: entry.operation || "(unnamed)",
-    principal: entry.principal || "",
+    principal: principalText(entry.principal, entry.operation),
     // These actions have no far end — they move a ticket between this page's
     // slots — so the Target column says where they happened rather than being
     // left blank. An empty cell in a column every other row fills reads as a
@@ -353,6 +421,11 @@ module.exports = {
   STORE_KEY: history.STORE_KEY,
   DETAIL_LIMIT: DETAIL_LIMIT,
   begin: begin,
+  // Exported for the two callers that cannot go through begin(): a page
+  // building a `detail` string by concatenation (the delegation page's "As …"),
+  // and tests/krb5_operation_history.js, which checks the parsed-principal case
+  // directly rather than through a rendered row.
+  principalText: principalText,
   settle: settle,
   finish: finish,
   note: note,

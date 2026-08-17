@@ -524,7 +524,14 @@ async function onRequestWithPreAuth() {
     return false;
   }
   saveConfiguration();
-  await renderMessage("krb_request_pane", "Sent", request);
+  // The client's key goes to the REQUEST pane as well as to the reply's, and it
+  // is not decoration: PA-ENC-TIMESTAMP is encrypted under exactly this key at
+  // key usage 1, so with it the pane shows the timestamp the KDC is about to
+  // compare against its own clock. Without it the padata was a byte count, and
+  // a page that had just derived the key and did not use it was hiding the one
+  // field a pre-authentication failure is about.
+  await renderMessage("krb_request_pane", "Sent", request,
+      clientKeyList({ etype: etype, key: key, salt: salt }));
 
   var result;
   try {
@@ -543,18 +550,33 @@ async function onRequestWithPreAuth() {
   return false;
 }
 
+// The one key this page derives, in the shape the describer wants it.
+//
+// It opens two things and NOT a third, which is the distinction the Decryption
+// keys pane at the foot of the page exists for: PA-ENC-TIMESTAMP on the way out
+// and the AS-REP's enc-part on the way back are both under the client's
+// long-term key, while the TICKET inside that reply is under krbtgt's and no
+// password typed here will ever open it.
+function clientKeyList(clientKey) {
+  log.debug("Entering clientKeyList().");
+  if (!clientKey) {
+    log.debug("Leaving clientKeyList(). No key derived yet.");
+    return [];
+  }
+  log.debug("Leaving clientKeyList().");
+  return [{
+    etype: clientKey.etype,
+    key: clientKey.key,
+    label: "the password with salt " + JSON.stringify(clientKey.salt)
+  }];
+}
+
 // Read a reply, and if it is a ticket, open it with the client key and store
 // it.
 async function completeWithReply(replyBytes, clientKey) {
   log.debug("Entering completeWithReply().");
-  var keys = clientKey
-    ? [{
-      etype: clientKey.etype,
-      key: clientKey.key,
-      label: "the password with salt " + JSON.stringify(clientKey.salt)
-    }]
-    : [];
-  await renderMessage("krb_reply_pane", "Received", replyBytes, keys);
+  await renderMessage("krb_reply_pane", "Received", replyBytes,
+      clientKeyList(clientKey));
 
   var response;
   try {
@@ -612,6 +634,14 @@ async function completeWithReply(replyBytes, clientKey) {
     return;
   }
 
+  // What is kept about the ticket, and it is deliberately EVERYTHING the KDC
+  // reported about it rather than only what this page's summary table shows.
+  // Those values are the ticket's own contents — the KDC repeats them in the
+  // enc-part because the client cannot read the ticket — so keeping them is
+  // what lets the Ticket pane show the inside of a TGT with no service key
+  // anywhere. See renderTicketDetail(). `starttime` and the etype's NAME are
+  // here for that reason and for no other; a reader who has to translate "18"
+  // is a reader the page has failed.
   var entry = {
     realm: rep.crealm,
     client: msgs.principalToString(rep.cname, rep.crealm),
@@ -619,8 +649,10 @@ async function completeWithReply(replyBytes, clientKey) {
     ticket: bytesToB64(rep.ticket.raw),
     sessionKey: prim.toHex(part.key.key),
     sessionKeyEtype: part.key.etype,
+    sessionKeyEtypeName: kcrypto.etypeName(part.key.etype),
     flags: msgs.ticketFlagNames(part.flags),
     authtime: part.authtime.toISOString(),
+    starttime: part.starttime ? part.starttime.toISOString() : null,
     endtime: part.endtime.toISOString(),
     renewTill: part.renewTill ? part.renewTill.toISOString() : null,
     storedAt: new Date().toISOString()
@@ -701,9 +733,8 @@ function renderCache(entry) {
     ["valid until", current.endtime, null],
     ["renewable until", current.renewTill || "(not renewable)", null],
     ["ticket", (current.ticket || "").slice(0, 96) + "…",
-      "Opaque here: it is encrypted under the service's key. Paste it into " +
-          "the Kerberos Decoder " +
-      "with that key or its keytab to see inside."]
+      "The bytes exactly as the KDC sent them. Decoded field by field below, " +
+          "and byte by byte on the Hex tab."]
   ].forEach(function (row) {
     renderRow(table, { name: row[0], value: row[1], note: row[2] });
   });
@@ -711,7 +742,108 @@ function renderCache(entry) {
   host.appendChild(pane);
   var forget = el("krb_forget_button");
   if (forget) forget.disabled = false;
+  // The decode goes on below, asynchronously, and its failures are its own: a
+  // credential cache that renders and a decode that does not is far better than
+  // a pane that shows neither because one of them threw.
+  renderTicketDetail(current).catch(function (e) {
+    log.error("the held ticket could not be decoded: " +
+        (e.stack || e.message));
+  });
   log.debug("Leaving renderCache().");
+}
+
+// ---------------------------------------------------------------------------
+// THE TICKET, DECODED, WITH ITS CONTENTS FILLED IN — and with nothing to click.
+//
+// The key that opens a TGT is `krbtgt`'s, and no client has ever held it: that
+// is what a ticket IS. What every client does hold is the KDC's own copy of the
+// ticket's contents, which arrives in the reply's enc-part under the client's
+// own key — the part this page decrypts with the password on the way in. So the
+// flags, the session key, both realms, both principals and all four times are
+// available with no key, no keytab and no second step, and they are stored on
+// the cache entry for exactly this. The one field genuinely missing is the
+// ticket's
+// **authorization-data** (the PAC), which the KDC does not repeat to the
+// client;
+// the section says so rather than leaving a gap the reader has to notice.
+//
+// `krb5_describe.js` renders it and labels where the values came from, which is
+// not decoration — see describeReportedTicketContents() there. The provenance
+// is the difference between "here is the plaintext of that ciphertext" and
+// "here is what the KDC says the plaintext is", and only the second is true
+// here.
+//
+// Fed from the STORED entry rather than from the live exchange, so it is
+// identical after a reload and after *Make active* on a row from the history —
+// two paths that have no reply in hand at all.
+// ---------------------------------------------------------------------------
+function reportedTicketContents(entry) {
+  log.debug("Entering reportedTicketContents().");
+  function when(text) {
+    return text ? new Date(text) : null;
+  }
+  // "alice@EXAMPLE.COM" / "krbtgt/EXAMPLE.COM@EXAMPLE.COM": the realm is behind
+  // the LAST @, and a service principal has slashes but never a second @.
+  var serviceRealm = String(entry.service || "").split("@").slice(1).join("@");
+  log.debug("Leaving reportedTicketContents().");
+  return {
+    source: "From the AS-REP's own enc-part (EncASRepPart), decrypted here " +
+      "with the key this page derived from the password.",
+    flagNames: entry.flags || [],
+    sessionKey: {
+      etypeName: entry.sessionKeyEtypeName ||
+          kcrypto.etypeName(entry.sessionKeyEtype),
+      hex: entry.sessionKey
+    },
+    crealm: entry.realm,
+    cname: entry.client,
+    authtime: when(entry.authtime),
+    starttime: when(entry.starttime),
+    endtime: when(entry.endtime),
+    renewTill: when(entry.renewTill),
+    srealm: serviceRealm || entry.realm,
+    sname: entry.service
+  };
+}
+
+async function renderTicketDetail(entry) {
+  log.debug("Entering renderTicketDetail().");
+  var host = el("krb_cache_pane");
+  if (!host || !entry || !entry.ticket) {
+    log.debug("Leaving renderTicketDetail(). Nothing to decode.");
+    return false;
+  }
+  var doc;
+  try {
+    doc = await describer.describe(panes.b64ToBytes(entry.ticket),
+        { reported: reportedTicketContents(entry) });
+  } catch (e) {
+    // Said out loud in the pane. A ticket this page issued and stored that will
+    // not decode is a finding about the codec, and the quietest way to lose it
+    // would be an empty space under the table.
+    host.appendChild(make("p", "krb-note krb-bad",
+      "The stored ticket did not decode: " + e.message));
+    log.debug("Leaving renderTicketDetail(). Did not decode.");
+    return false;
+  }
+  // Appended rather than replacing: the table above is what this page HOLDS and
+  // this is what is INSIDE it, and the pane answers both questions at once.
+  (doc.sections || []).forEach(function (section) {
+    renderSection(host, section, 0);
+  });
+  if (doc.problems && doc.problems.length) {
+    var problems = make("div", "krb-problems");
+    problems.appendChild(make("h4", "krb-section-title", "Worth knowing"));
+    var list = make("ul");
+    doc.problems.forEach(function (text) {
+      list.appendChild(make("li", null, text));
+    });
+    problems.appendChild(list);
+    host.appendChild(problems);
+  }
+  log.debug("Leaving renderTicketDetail(). sections=" +
+      (doc.sections || []).length);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -60,11 +60,18 @@ var kcrypto = require("./krb5_crypto.js");
 var gss = require("./krb5_gss.js");
 var negotiate = require("./krb5_spnego.js");
 var client = require("./krb5_client.js");
-var describer = require("./krb5_describe.js");
+// NOT a require of krb5_describe.js: this page reaches the describer only
+// through panes.renderMessage(), and the string-to-key it used to call directly
+// is now kerberos_keys.js's job. A require left behind here would put the whole
+// describer in this bundle twice over in the reader's mind and nowhere in the
+// code — the pane below is the only key-derivation path on this page.
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
 var tickets = require("./kerberos_tickets.js");
 var hexview = require("./kerberos_hex.js");
+// The shared Decryption keys pane. It is what opens the ticket inside the
+// AP-REQ, which is the one thing on this page a client cannot read for itself.
+var deckeys = require("./kerberos_keys.js");
 
 var el = panes.el;
 var val = panes.val;
@@ -1068,54 +1075,29 @@ async function confirmContext(parsed, built, init, result) {
 
 // ---------------------------------------------------------------------------
 // The ticket that was sent — and what it takes to see inside it.
+//
+// The key fields and the "Open the ticket" button that used to be HERE are now
+// the shared Decryption keys pane (partials/krb_keys.html, kerberos_keys.js),
+// which every exchange page carries. Three things came out of that seam:
+// kerberos_panes.js adds the supplied keys to every message render, so this
+// pane passes none of its own; the button there replays this pane along with
+// all the others; and the KEYTAB route this page never had comes for free — a
+// service account's keys arrive in a keytab far more often than as hex.
+//
+// The default salt is the one thing that stays page-specific, and it is passed
+// to mount() rather than moved into the shared module: this page is the only
+// one that knows the SPN it just used, so it is the only one that can offer
+// realm + principal as an assumption. What it must never do is offer it
+// silently — a computer account is salted REALM + "host" + short name + DNS
+// domain, and a wrong salt is indistinguishable from a wrong password.
+// kerberos_keys.js says which it assumed, in the pane, for exactly that reason.
 // ---------------------------------------------------------------------------
-async function gatherServiceKeys() {
-  log.debug("Entering gatherServiceKeys().");
-  var keys = [];
-  var notes = [];
-  var hexKey = val("krb_service_key_hex").trim();
-  if (hexKey) {
-    try {
-      var etype = parseInt(val("krb_service_key_etype"), 10);
-      var bytes = prim.fromHex(hexKey.replace(/[\s:]/g, ""));
-      var profile = kcrypto.etypeById(etype);
-      if (bytes.length !== profile.keyBytes) {
-        notes.push("The key given is " + bytes.length + " bytes and " +
-          profile.name + " keys are " + profile.keyBytes + ". Offered " +
-          "anyway.");
-      }
-      keys.push({
-        etype: etype,
-        key: bytes,
-        label: "the service key you pasted (" + profile.name + ")"
-      });
-    } catch (e) {
-      notes.push("The pasted key could not be read: " + e.message);
-    }
-  }
-  var password = val("krb_service_password");
-  if (password) {
-    var salt = val("krb_service_salt").trim();
-    if (!salt) {
-      // The default form, and the note is the point: on Active Directory a
-      // computer account's salt is REALM + "host" + short name + DNS domain,
-      // which no amount of guessing from the principal name will produce.
-      salt = (chosenTicket ? chosenTicket.realm : "") +
-        String(val("krb_spnego_spn")).split("@")[0];
-      notes.push("No salt given, so " + JSON.stringify(salt) + " was assumed " +
-        "— the realm followed by the principal name. Active Directory salts " +
-        "a COMPUTER account differently (realm + \"host\" + short name + DNS " +
-        "domain), and a wrong salt looks exactly like a wrong password.");
-    }
-    try {
-      keys = keys.concat(await describer.keysFromPassword(password, salt,
-          null));
-    } catch (e) {
-      notes.push("Could not derive keys from the password: " + e.message);
-    }
-  }
-  log.debug("Leaving gatherServiceKeys(). " + keys.length + " key(s).");
-  return { keys: keys, notes: notes };
+function assumedServiceSalt() {
+  log.debug("Entering assumedServiceSalt().");
+  var salt = (chosenTicket ? chosenTicket.realm : "") +
+    String(val("krb_spnego_spn")).split("@")[0];
+  log.debug("Leaving assumedServiceSalt(). " + JSON.stringify(salt));
+  return salt;
 }
 
 async function renderTicket() {
@@ -1124,41 +1106,22 @@ async function renderTicket() {
     log.debug("Leaving renderTicket(). Nothing sent yet.");
     return;
   }
-  var gathered = await gatherServiceKeys();
+  // No keys passed: this page holds none that open a ticket, and the ones the
+  // reader supplied are added by renderMessage() itself.
   await panes.renderMessage("krb_ticket_pane", "The ticket inside the AP-REQ",
-      lastTicketBytes, gathered.keys);
+      lastTicketBytes);
   var host = el("krb_ticket_pane");
-  if (host && gathered.notes.length) {
-    var note = make("div", "krb-section");
-    gathered.notes.forEach(function (text) {
-      note.appendChild(make("p", "krb-note", text));
-    });
-    host.appendChild(note);
-  }
-  if (host && !gathered.keys.length) {
+  var supplied = await panes.extraKeys();
+  if (host && !supplied.length) {
     host.appendChild(make("p", "krb-note",
       "No service key supplied, so the encrypted part above is opaque — " +
       "which is the honest state of a CLIENT: it never holds the key its own " +
       "ticket is sealed with, and cannot read the PAC it is carrying. Supply " +
-      "the service account's key or password to open it."));
+      "the service account's key, its password and salt, or its keytab in " +
+      "the Decryption keys pane below, and this pane opens where it stands."));
   }
   hexview.render("krb_ticket_hex", lastTicketBytes, "The ticket");
-  panes.disable("krb_decrypt_button", false);
   log.debug("Leaving renderTicket().");
-}
-
-async function onDecrypt() {
-  log.debug("Entering onDecrypt().");
-  if (!lastTicketBytes) {
-    status("krb_spnego_status", "No ticket has been sent yet.", "krb-bad");
-    log.debug("Leaving onDecrypt(). Nothing to open.");
-    return false;
-  }
-  await renderTicket();
-  status("krb_spnego_status", "Re-read the ticket with the keys supplied. " +
-    "Nothing typed there is stored or sent anywhere.", null);
-  log.debug("Leaving onDecrypt().");
-  return false;
 }
 
 function rememberFields() {
@@ -1225,6 +1188,12 @@ window.onload = async function () {
     }
   });
   ophistory.mount("krb_operation_history", "krb_clear_operations_button");
+  // The Decryption keys pane, from partials/krb_keys.html. It registers itself
+  // with kerberos_panes.js, so the keys it collects reach every message pane on
+  // this page — the negotiation tokens, the AP-REQ and the ticket inside it —
+  // without any of the render calls above knowing about it. The salt callback
+  // is this page's own: see assumedServiceSalt().
+  deckeys.mount({ defaultSalt: assumedServiceSalt });
 
   var url = el("krb_spnego_url");
   if (url) {
@@ -1246,17 +1215,13 @@ window.onload = async function () {
   if (authenticate) {
     authenticate.addEventListener("click", function () { onAuthenticate(); });
   }
-  var decrypt = el("krb_decrypt_button");
-  if (decrypt) {
-    decrypt.addEventListener("click", function () { onDecrypt(); });
-  }
   log.debug("Leaving onload().");
 };
 
 module.exports = {
   onProbe: onProbe,
   onAuthenticate: onAuthenticate,
-  onDecrypt: onDecrypt,
+  assumedServiceSalt: assumedServiceSalt,
   derivedSpn: derivedSpn,
   selectedMechs: selectedMechs
 };

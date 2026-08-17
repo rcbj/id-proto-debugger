@@ -44,6 +44,11 @@ var client = require("./krb5_client.js");
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
 var tickets = require("./kerberos_tickets.js");
+// The Decryption keys pane. The service ticket this page is issued is sealed
+// with the SERVICE account's key, and the TGT it spends with krbtgt's —
+// neither of which a client holds, so both stay opaque until the reader
+// supplies one here.
+var deckeys = require("./kerberos_keys.js");
 
 var el = panes.el;
 var val = panes.val;
@@ -213,7 +218,10 @@ async function onRequestServiceTicket() {
   // that is the only place this page can learn it.
   ophistory.begin({
     operation: ophistory.OPS.TGS,
-    principal: (tgt && tgt.client) || "(no TGT held)",
+    // As text, with the realm: revive() hands back a PARSED principal for the
+    // builders' sake and the pane renders "[object Object]" if it is given one.
+    principal: (tgt && msgs.principalToString(tgt.client, tgt.realm)) ||
+        "(no TGT held)",
     target: val("krb_spn").trim() + " via " + val("krb_kdc_host").trim() +
         ":" + (val("krb_kdc_port") || "88"),
     statusId: "krb_tgs_status"
@@ -465,6 +473,10 @@ window.onload = async function () {
     }
   });
   ophistory.mount("krb_operation_history", "krb_clear_operations_button");
+  // The Decryption keys pane, from partials/krb_keys.html. It opens the
+  // EncTicketPart of BOTH tickets on this page: the TGT travelling inside the
+  // request's PA-TGS-REQ, and the service ticket that comes back.
+  deckeys.mount({});
   var button = el("krb_tgs_button");
   if (button) button.addEventListener("click",
       function () { onRequestServiceTicket(); });

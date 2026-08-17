@@ -37,6 +37,27 @@
 // Everything finer than that is on demand: hovering a byte lights the exact
 // element that owns it and names it in the strip above, and clicking pins that
 // so the mouse can leave.
+//
+// HOVER IS THE PRIMARY GESTURE AND THE CLICK IS THE OPTIONAL ONE. The view is
+// read by sweeping a pointer along the bytes and watching the name change; the
+// pin exists only so the pointer can then be taken away — to scroll, to copy,
+// or to reach the strip's tooltip for a path too long to fit on its line. Two
+// things have to hold for that sweep to work at all, and each has failed once:
+//
+//   * The highlight has to be VISIBLE. It is drawn by adding `krb-hex-on`, and
+//     every byte in a top-level section already carries a `krb-hex-s*` tint of
+//     the same specificity — so the tints, being written later in
+//     css/kerberos.css, took the background and left `color: #fff` behind.
+//     White on a pale tint is not a weak highlight, it is an invisible one, and
+//     with only the strip's text still changing the whole view reads as
+//     "hovering does nothing, you have to click it". The rule is doubled-class
+//     now so source order cannot decide it again; see the note beside it.
+//   * The repaint has to be CHEAP, because it happens once per byte the pointer
+//     crosses. Scanning every cell to find the two ranges involved is
+//     O(message) per mouse move — 3,000 cells and 6,000 string rewrites for a
+//     PAC-bearing TGS-REP — and a highlight that lags the pointer reads as one
+//     that is not there. The cells of each range are indexed once at render
+//     time instead, so a move turns off one field and turns on another.
 // ---------------------------------------------------------------------------
 var panes = require("./kerberos_panes.js");
 var prim = require("./krb5_primitives.js");
@@ -167,7 +188,11 @@ function render(hostId, bytes, label) {
   host.appendChild(strip);
 
   var dump = make("div", "krb-hex-dump");
-  var cells = [];
+  // Both halves' cells, and the same cells indexed BY RANGE. The index is what
+  // makes the sweep smooth: paint() has to light one element and unlight
+  // another, and looking them up beats scanning every cell in the message on
+  // every byte the pointer crosses.
+  var byRange = {};
   var row;
   var gutter;
   for (var i = 0; i < b.length; i++) {
@@ -201,8 +226,11 @@ function render(hostId, bytes, label) {
     ascii.setAttribute("data-krb-at", String(i));
     row.appendChild(cell);
     gutter.appendChild(ascii);
-    cells.push(cell);
-    cells.push(ascii);
+    if (!byRange[idx]) {
+      byRange[idx] = [];
+    }
+    byRange[idx].push(cell);
+    byRange[idx].push(ascii);
     if (i % BYTES_PER_ROW === BYTES_PER_ROW - 1 || i === b.length - 1) {
       // Pad so the gutter lines up on a short final row. The padding carries no
       // range: it stands for no byte, so it must never light up.
@@ -216,7 +244,14 @@ function render(hostId, bytes, label) {
   }
   host.appendChild(dump);
 
-  wireHighlighting(host, fieldLine, metaLine, cells, byIndex, label, b.length);
+  wireHighlighting(host, {
+    fieldLine: fieldLine,
+    metaLine: metaLine,
+    byRange: byRange,
+    byIndex: byIndex,
+    label: label,
+    total: b.length
+  });
   log.info("hex view for " + hostId + ": " + b.length + " bytes, " +
       mapped.ranges.length + " element(s)");
   log.debug("Leaving render().");
@@ -239,117 +274,174 @@ function render(hostId, bytes, label) {
 // message is 3,000 cells, and 6,000 listeners on a pane rebuilt on every
 // exchange is how a page starts leaking. Delegation also means the cells can be
 // replaced without rewiring.
+//
+// AND ONCE PER HOST, NOT ONCE PER RENDER, which is the second half of that.
+// These panes are re-rendered on every exchange — four of them on the
+// delegation page, each of which can be run again without reloading — and the
+// host div survives, so adding a listener per render stacked them up: after
+// three S4U2Self attempts a single mouse move ran three handlers, two of them
+// closed over cells that had been thrown away and writing into a detached
+// strip. Nothing looked wrong, which is why it is worth saying: the listeners
+// are attached the first time this host is rendered into and read the CURRENT
+// render's state out of `host.__krbHex` from then on. The pin lives in that
+// state too, so a new message arrives unpinned — a pin points at a range index
+// in the message it was made in, and keeping it across a re-render would light
+// bytes of the new message that belong to something else.
 // ---------------------------------------------------------------------------
-function wireHighlighting(host, fieldLine, metaLine, cells, byIndex, label,
-    total) {
+function wireHighlighting(host, state) {
   log.debug("Entering wireHighlighting().");
-  var pinned = -1;
+  var already = !!host.__krbHex;
+  state.pinned = -1;
+  state.lit = -1;
+  host.__krbHex = state;
+  if (!already) {
+    // event.target is a cell, the gutter, a row or the strip. Only a cell
+    // carries a range, and anything else is left alone deliberately: the gaps
+    // between cells — the offset column, the 6px every eighth byte, the padding
+    // on a short final row — are crossed constantly during a sweep, and
+    // clearing the highlight there would make the whole thing flicker.
+    host.addEventListener("mouseover", function (event) {
+      var s = host.__krbHex;
+      if (!s || s.pinned >= 0) { return; }
+      var idx = rangeAt(event.target);
+      if (idx === null) { return; }
+      var r = s.byIndex[idx];
+      if (!r) { return; }
+      paint(s, idx);
+      show(s, r, false);
+    });
 
-  // Set a line's text and its tooltip together. The lines are clipped to one
-  // line each so the dump below them cannot move (see css/kerberos.css), which
-  // means the `title` is where a long ASN.1 path actually goes.
-  function line(node, text) {
-    log.debug("Entering line().");
-    node.textContent = text;
-    node.title = text;
-    log.debug("Leaving line().");
-  }
+    // On the HOST rather than the dump, so that moving the pointer up to the
+    // strip — which is where a path too long for its line is read, off the
+    // `title` — does not throw away the highlight that names it.
+    host.addEventListener("mouseleave", function () {
+      var s = host.__krbHex;
+      if (!s || s.pinned >= 0) { return; }
+      paint(s, -1);
+      rest(s);
+    });
 
-  function rest() {
-    log.debug("Entering rest().");
-    // The resting name is the MESSAGE's own — the outermost element's field
-    // name, which for anything this workflow sends or receives is what it is
-    // called: AS-REQ, KRB-ERROR, Ticket. Falling back to the caller's label
-    // keeps a pasted blob that maps to nothing from saying nothing.
-    var root = byIndex[0];
-    var name = (root && root.fieldPath) || label || "Bytes";
-    line(fieldLine, name);
-    line(metaLine, total + " byte" + (total === 1 ? "" : "s") +
-        " — hover a byte to name its field, click to pin it. The readable " +
-        "column on the right is the same bytes.");
-    log.debug("Leaving rest().");
-  }
-
-  function show(r, pinnedNow) {
-    log.debug("Entering show().");
-    var length = r.end - r.start;
-    // The RFC's name for it, which is the whole reason this line exists. An
-    // element the field table does not recognise keeps the encoding's own path
-    // rather than being left blank — blank reads as a bug in the view.
-    line(fieldLine, r.fieldPath || r.path);
-    line(metaLine,
-        (r.structure ? r.structure + " — " : "") +
-        r.tagName +
-        " — offset " + r.start + " (0x" + hex4(r.start) + "), " +
-        length + " byte" + (length === 1 ? "" : "s") +
-        (r.headerEnd > r.start ? ", of which " + (r.headerEnd - r.start) +
-            " are tag and length" : "") +
-        (r.path !== r.fieldPath && r.fieldPath ? "   ·   " + r.path : "") +
-        (r.note ? "   ·   " + r.note : "") +
-        (pinnedNow ? "   ·   pinned; click it again to release" : ""));
-    log.debug("Leaving show().");
-  }
-
-  function paint(index) {
-    log.debug("Entering paint(). index=" + index);
-    for (var i = 0; i < cells.length; i++) {
-      var mine = cells[i].getAttribute("data-krb-range") === String(index);
-      var on = cells[i].className.indexOf(" krb-hex-on") >= 0;
-      if (mine && !on) {
-        cells[i].className += " krb-hex-on";
-      } else if (!mine && on) {
-        cells[i].className = cells[i].className.replace(/ krb-hex-on/g, "");
+    host.addEventListener("click", function (event) {
+      var s = host.__krbHex;
+      if (!s) { return; }
+      var idx = rangeAt(event.target);
+      if (idx === null) { return; }
+      if (s.pinned === idx) {
+        // Clicking the pinned field again releases it, which is the way back to
+        // sweeping without reloading. The field stays lit and named, minus the
+        // "pinned" note: the pointer is still on it, so clearing to the resting
+        // caption here would say the pointer is nowhere.
+        s.pinned = -1;
+        if (s.byIndex[idx]) {
+          show(s, s.byIndex[idx], false);
+        } else {
+          rest(s);
+        }
+        log.debug("unpinned");
+        return;
       }
-    }
-    log.debug("Leaving paint().");
+      s.pinned = idx;
+      paint(s, idx);
+      var r = s.byIndex[idx];
+      if (r) {
+        show(s, r, true);
+      } else {
+        rest(s);
+      }
+      log.debug("pinned range " + idx);
+    });
   }
 
-  host.addEventListener("mouseover", function (event) {
-    var cell = event.target;
-    if (!cell || !cell.getAttribute) { return; }
-    var idx = cell.getAttribute("data-krb-range");
-    if (idx === null) { return; }
-    if (pinned >= 0) { return; }
-    var r = byIndex[Number(idx)];
-    if (!r) { return; }
-    paint(Number(idx));
-    show(r, false);
-  });
+  rest(state);
+  log.debug("Leaving wireHighlighting(). listeners " +
+      (already ? "already attached" : "attached") + ".");
+}
 
-  host.addEventListener("mouseleave", function () {
-    if (pinned >= 0) { return; }
-    paint(-1);
-    rest();
-  });
+// Which range the pointer is over, or null for anything that is not a cell.
+// No log pair, and this is the FIRST of the three exceptions in this file: it
+// runs once per byte the pointer crosses, so a pair here is not a trace of the
+// sweep, it is the whole log — the case the hot-path note in the repo-root
+// CLAUDE.md is about, measured there at ~15µs a record with logLevel "debug",
+// which both test stacks set. The handlers above log what they DO instead.
+function rangeAt(node) {
+  if (!node || !node.getAttribute) {
+    return null;
+  }
+  var idx = node.getAttribute("data-krb-range");
+  if (idx === null) {
+    return null;
+  }
+  return Number(idx);
+}
 
-  host.addEventListener("click", function (event) {
-    var cell = event.target;
-    if (!cell || !cell.getAttribute) { return; }
-    var idx = cell.getAttribute("data-krb-range");
-    if (idx === null) { return; }
-    var n = Number(idx);
-    if (pinned === n) {
-      // Clicking the pinned field again releases it, which is the only way back
-      // to hovering without reloading.
-      pinned = -1;
-      paint(-1);
-      rest();
-      log.debug("unpinned");
-      return;
-    }
-    pinned = n;
-    paint(n);
-    var r = byIndex[n];
-    if (r) {
-      show(r, true);
-    } else {
-      rest();
-    }
-    log.debug("pinned range " + n);
-  });
+// Set a line's text and its tooltip together. The lines are clipped to one
+// line each so the dump below them cannot move (see css/kerberos.css), which
+// means the `title` is where a long ASN.1 path actually goes.
+//
+// No log pair: called four times per byte the pointer crosses. See rangeAt().
+function line(node, text) {
+  node.textContent = text;
+  node.title = text;
+}
 
-  rest();
-  log.debug("Leaving wireHighlighting().");
+function rest(s) {
+  log.debug("Entering rest().");
+  // The resting name is the MESSAGE's own — the outermost element's field
+  // name, which for anything this workflow sends or receives is what it is
+  // called: AS-REQ, KRB-ERROR, Ticket. Falling back to the caller's label
+  // keeps a pasted blob that maps to nothing from saying nothing.
+  var root = s.byIndex[0];
+  var name = (root && root.fieldPath) || s.label || "Bytes";
+  line(s.fieldLine, name);
+  line(s.metaLine, s.total + " byte" + (s.total === 1 ? "" : "s") +
+      " — move the pointer along the bytes and this names the field each one " +
+      "belongs to; click to pin one so the pointer can leave. The readable " +
+      "column on the right is the same bytes.");
+  log.debug("Leaving rest().");
+}
+
+// No log pair: once per byte the pointer crosses. See rangeAt().
+function show(s, r, pinnedNow) {
+  var length = r.end - r.start;
+  // The RFC's name for it, which is the whole reason this line exists. An
+  // element the field table does not recognise keeps the encoding's own path
+  // rather than being left blank — blank reads as a bug in the view.
+  line(s.fieldLine, r.fieldPath || r.path);
+  line(s.metaLine,
+      (r.structure ? r.structure + " — " : "") +
+      r.tagName +
+      " — offset " + r.start + " (0x" + hex4(r.start) + "), " +
+      length + " byte" + (length === 1 ? "" : "s") +
+      (r.headerEnd > r.start ? ", of which " + (r.headerEnd - r.start) +
+          " are tag and length" : "") +
+      (r.path !== r.fieldPath && r.fieldPath ? "   ·   " + r.path : "") +
+      (r.note ? "   ·   " + r.note : "") +
+      (pinnedNow ? "   ·   pinned; click it again to release" : ""));
+}
+
+// Light one element's cells and unlight whatever was lit before.
+//
+// TOUCHES TWO FIELDS' CELLS RATHER THAN THE WHOLE MESSAGE, because this is the
+// function a sweep calls once per byte crossed. The version that scanned every
+// cell and rewrote `className` on each was O(message) per mouse move — 3,000
+// cells for a TGS-REP carrying a PAC — and a highlight that arrives late reads
+// as one that is not there at all.
+//
+// No log pair: same reason. See rangeAt().
+function paint(s, index) {
+  var i;
+  if (s.lit === index) {
+    return;
+  }
+  var off = s.byRange[s.lit];
+  for (i = 0; off && i < off.length; i++) {
+    off[i].classList.remove("krb-hex-on");
+  }
+  var on = s.byRange[index];
+  for (i = 0; on && i < on.length; i++) {
+    on[i].classList.add("krb-hex-on");
+  }
+  s.lit = on ? index : -1;
 }
 
 module.exports = {

@@ -56,6 +56,9 @@ function shared(name) {
     [__dirname + "/../common/krb5/" + name, __dirname + "/" + name], name);
 }
 const prim = shared("krb5_primitives.js");
+// Read directly by theReplysPartsComeBackAsBytes(), which has to open an
+// EncryptedData that arrived on its own rather than as a field of a reply.
+const asn1 = shared("krb5_asn1.js");
 const msgs = shared("krb5_messages.js");
 const kcrypto = shared("krb5_crypto.js");
 const gss = shared("krb5_gss.js");
@@ -261,9 +264,12 @@ async function theTgsExchangeIssuesAServiceTicket(tgt) {
     sname: { type: msgs.NAME_TYPE.SRV_HST, name: SERVICE },
     subkey: null
   });
+  // The reply is kept rather than passed inline, because the section below
+  // compares the bytes readTgsRep() hands back against the ones that arrived.
+  const reply = await sendFramed(kdcPort, built.request);
   const result = await client.readTgsRep({
     tgt: tgt,
-    reply: await sendFramed(kdcPort, built.request),
+    reply: reply,
     nonce: built.nonce,
     subkey: null
   });
@@ -327,11 +333,104 @@ async function theTgsExchangeIssuesAServiceTicket(tgt) {
     "with a subkey the reply must be at key usage 9, got: " +
         withSubkey.openedWith);
 
+  await theReplysPartsComeBackAsBytes(tgt, reply, result);
+
   log.info("the TGS exchange issued a ticket for " + SERVICE.join("/") + " (" +
     kcrypto.etypeName(result.etype) + ", flags [" +
         result.flagNames.join(", ") + "])");
   log.debug("Leaving theTgsExchangeIssuesAServiceTicket().");
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// The three byte strings readTgsRep() hands back beside the parsed reply, which
+// the delegation page's per-part hex tabs render.
+//
+// WHY THIS IS WORTH A SECTION. A hex view is believed: somebody reads a value
+// off it and acts on it, which is the same reason tests/krb5_field_naming.js
+// asserts name-to-bytes rather than "every element has a name". Bytes that are
+// merely PLAUSIBLE are the failure to guard against here — a ticket re-encoded
+// from its parse instead of relayed, an enc-part envelope whose ciphertext is
+// one field over, a plaintext with the cipher's padding still on it and two
+// invented ASN.1 elements at the bottom of the dump. None of those throws and
+// each looks exactly like a correct dump.
+//
+// So each is checked against something independent: the ticket against what
+// the reply itself carries, the envelope against the ciphertext that was
+// decrypted, and the plaintext against the values the parse produced — plus the
+// one thing the trim exists for, that it ends where its DER ends.
+// ---------------------------------------------------------------------------
+async function theReplysPartsComeBackAsBytes(tgt, reply, result) {
+  log.debug("Entering theReplysPartsComeBackAsBytes().");
+  assert.ok(result.bytes, "readTgsRep() returned no `bytes`. The delegation " +
+    "page's Ticket, enc-part and EncTGSRepPart hex tabs are rendered from " +
+    "it, and with it absent all three show \"nothing yet\" — which is what " +
+    "an exchange nobody has run looks like.");
+
+  // The ticket, against the one in the reply. Not against a re-encode: the
+  // point of the assertion is that these are the WIRE's bytes, and comparing
+  // two re-encodes of the same parse would pass however wrong they were.
+  const rep = msgs.readKdcRep(reply);
+  assert.strictEqual(prim.toHex(result.bytes.ticket),
+      prim.toHex(rep.ticket.raw),
+    "the Ticket bytes are not the ones in the reply. A ticket is opaque to " +
+    "this client and has to be relayed byte for byte — see the note on `raw` " +
+    "in krb5_messages.js — so a hex view showing a re-encode is showing " +
+    "something no KDC sent.");
+
+  // The enc-part envelope. Its ciphertext is the wire's own either way, so that
+  // is what is compared: an envelope built around the wrong field, or around a
+  // truncated cipher, is the mistake worth catching.
+  const envelope = msgs.readEncryptedData(
+      asn1.readTlv(result.bytes.encPart, 0, 0));
+  assert.strictEqual(prim.toHex(envelope.cipher),
+      prim.toHex(rep.encPart.cipher),
+    "the enc-part hex view does not carry the reply's ciphertext");
+  assert.strictEqual(envelope.etype, rep.encPart.etype,
+    "nor its etype");
+
+  // The plaintext. Two independent things: it parses as the EncTGSRepPart the
+  // reply was read as, agreeing on the session key that came out of it; and it
+  // is exactly as long as that element, which is what the trim in replyBytes()
+  // is for. Left untrimmed, a block-cipher etype's padding shows up in the dump
+  // as `universal 0` elements and an unparsed tail — two fields that do not
+  // exist, on a message that reads as malformed.
+  const part = msgs.readEncKdcRepPart(result.bytes.encPartPlain);
+  assert.strictEqual(prim.toHex(part.key.key), prim.toHex(result.sessionKey),
+    "the EncTGSRepPart hex view is not the plaintext this reply was opened " +
+    "with: the session key in it differs from the one readTgsRep() returned.");
+  assert.strictEqual(part.nonce, result.encPart.nonce, "nor is its nonce");
+  assert.strictEqual(
+      asn1.readTlv(result.bytes.encPartPlain, 0, 0).end,
+      prim.toBytes(result.bytes.encPartPlain).length,
+    "the EncTGSRepPart plaintext is longer than the DER element it begins " +
+    "with, so replyBytes() is not trimming it and the hex view has bytes " +
+    "after the message that will be read as fields.");
+
+  // AND THE TRIM ITSELF, which the assertion above cannot reach. Neither KDC in
+  // this suite pads: the AES CTS profiles and RC4 return a plaintext exactly as
+  // long as the message, so that check is satisfied whether replyBytes() trims
+  // or not, and deleting the trim would leave it green. This is the assertion
+  // that fails — replyBytes() is exported for it — and what it protects is a
+  // dump that ends in two `universal 0` elements and an unparsed tail, which
+  // reads as a malformed message rather than as a block cipher's padding.
+  const plain = prim.toBytes(result.bytes.encPartPlain);
+  const padded = new Uint8Array(plain.length + 5);
+  padded.set(plain, 0);
+  const trimmed = client.replyBytes(rep, padded).encPartPlain;
+  assert.strictEqual(prim.toBytes(trimmed).length, plain.length,
+    "replyBytes() left " + (prim.toBytes(trimmed).length - plain.length) +
+    " byte(s) of padding on the end of a plaintext. RFC 3961 allows a " +
+    "block-cipher etype to return them and they are not part of the " +
+    "EncTGSRepPart; in the hex view they parse as elements that do not exist.");
+  assert.strictEqual(prim.toHex(trimmed), prim.toHex(plain),
+    "and what it trimmed to is not the message that went in");
+
+  log.info("the reply's parts come back as bytes: ticket " +
+    prim.toBytes(result.bytes.ticket).length + " (wire-identical), enc-part " +
+    prim.toBytes(result.bytes.encPart).length + ", plaintext " +
+    prim.toBytes(result.bytes.encPartPlain).length + " (trimmed to its DER)");
+  log.debug("Leaving theReplysPartsComeBackAsBytes().");
 }
 
 // The PAC the LIVE KDC minted, in both kinds of ticket.

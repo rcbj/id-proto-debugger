@@ -52,6 +52,11 @@ var client = require("./krb5_client.js");
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
 var tickets = require("./kerberos_tickets.js");
+// The Decryption keys pane. This page's prose has always said "supply the
+// service key below and the pane will decode it" — the PAC, the group SIDs
+// and the four signatures — and until that pane existed there was no field
+// on the page to supply it in.
+var deckeys = require("./kerberos_keys.js");
 
 var el = panes.el;
 var val = panes.val;
@@ -241,7 +246,14 @@ async function onPresent() {
   // the one exchange on these five pages that does not go to a KDC at all.
   ophistory.begin({
     operation: ophistory.OPS.AP,
-    principal: (chosenTicket && chosenTicket.client) || "(no ticket chosen)",
+    // principalToString(), not the parsed principal itself: revive() above
+    // splits the realm off the stored name and hands back
+    // `{ type, name: ["alice"] }`, which renders as "[object Object]" in the
+    // pane's User / principal column. The realm is passed back in here because
+    // it is what makes the cell answer the question it is asked — "alice"
+    // alone does not say which realm authenticated them.
+    principal: (chosenTicket && msgs.principalToString(chosenTicket.client,
+        chosenTicket.realm)) || "(no ticket chosen)",
     target: ((chosenTicket && chosenTicket.service) || "?") + " at " +
         val("krb_service_host").trim() + ":" + val("krb_service_port"),
     statusId: "krb_ap_status"
@@ -485,7 +497,8 @@ async function onPerMessage(seal) {
     operation: seal ? ophistory.OPS.WRAP : ophistory.OPS.MIC,
     // The context object carries keys and a sequence number, not a name, so
     // the principal comes from the ticket the context was built from.
-    principal: (chosenTicket && chosenTicket.client) || "",
+    principal: (chosenTicket && msgs.principalToString(chosenTicket.client,
+        chosenTicket.realm)) || "",
     target: "in-browser (no network)",
     statusId: "krb_ap_status"
   });
@@ -648,6 +661,10 @@ window.onload = async function () {
     }
   });
   ophistory.mount("krb_operation_history", "krb_clear_operations_button");
+  // The Decryption keys pane, from partials/krb_keys.html. With the service
+  // account's key here the ticket inside the AP-REQ opens exactly as it does
+  // for the service receiving it, PAC and server signature included.
+  deckeys.mount({});
   var select = el("krb_ticket_select");
   if (select) select.addEventListener("change", onTicketChosen);
   var present = el("krb_present_button");

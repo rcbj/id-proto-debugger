@@ -283,6 +283,138 @@ async function stepTwoGetsATicketAndTreatsItAsACredential(driver) {
   log.debug("Leaving stepTwoGetsATicketAndTreatsItAsACredential().");
 }
 
+// ---------------------------------------------------------------------------
+// THE TICKET'S CONTENTS, ON THE TICKET PANE, WITH NOTHING TYPED AND NOTHING
+// CLICKED. This is the section the whole page exists to satisfy.
+//
+// An AS-REP carries two encrypted parts under two different keys: the enc-part,
+// under the key this page derived from the password, and the TICKET, under
+// `krbtgt`'s — which no client has ever held, because that is what a ticket is.
+// So the ticket's ciphertext cannot be opened here and never will be. What the
+// page CAN do, and now does, is show the ticket's contents: the KDC repeats
+// them (flags, session key, both principals, all four times) in the part of the
+// reply encrypted under the client's own key, precisely because the client
+// cannot read the ticket.
+//
+// Four things are asserted, and each is a way the previous versions of this
+// pane went wrong:
+//
+//   * the contents are there after the exchange, with **no further action** —
+//     there is no button in the pane to press and nothing to fill in;
+//   * they are LABELLED as the KDC's report rather than as the ticket's
+//     plaintext, because a KDC whose ticket disagreed with its reply would be
+//     invisible to any client and this pane must not hide that;
+//   * the one field the KDC does not repeat — the ticket's authorization-data,
+//     the PAC — is named as absent instead of silently missing;
+//   * nothing on the page sends the reader to another page to see any of it.
+// ---------------------------------------------------------------------------
+async function theTicketPaneShowsWhatIsInsideTheTicket(driver) {
+  log.debug("Entering theTicketPaneShowsWhatIsInsideTheTicket().");
+  // A fresh exchange of this section's own: the sections before it tick boxes,
+  // forget the ticket and try a wrong password, and a pane worth asserting
+  // against is one whose contents this section put there.
+  await setField(driver, "krb_password", password);
+  await driver.findElement(By.id("krb_preauth_button")).click();
+  await waitForText(driver, "krb_as_status", /A TGT for/, 60000,
+      "the exchange this section needs produced no ticket");
+
+  const pane = await waitForText(driver, "krb_cache_pane", /EncTicketPart/,
+      20000, "the Ticket pane never showed the ticket's contents");
+
+  // NOTHING TO PRESS. The check is deliberately about the absence of a control
+  // rather than about not having pressed one: a pane that needs a click is the
+  // thing this replaced, and it would pass every assertion below if the test
+  // happened to click it.
+  const controls = await driver.findElements(
+      By.css("#krb_cache_pane input, #krb_cache_pane button, " +
+          "#krb_cache_pane select, #krb_cache_pane textarea"));
+  assert.strictEqual(controls.length, 0,
+    "the Ticket pane must show the ticket's contents with no control of its " +
+    "own to operate, and it has " + controls.length);
+  const keyFields = await driver.findElements(By.id("krb_deckey_button"));
+  assert.strictEqual(keyFields.length, 0,
+    "and this page must carry no key-entry pane at all — the key that would " +
+    "open the ciphertext is krbtgt's and nobody using this page has it");
+
+  assert.ok(/EncTicketPart — as the KDC reported it/.test(pane),
+    "the contents must be titled as the KDC's REPORT of them, not as the " +
+    "ticket's plaintext: " + JSON.stringify(pane.slice(0, 600)));
+  assert.ok(/EncASRepPart/.test(pane),
+    "and must say where they came from — the reply's own enc-part: " +
+        JSON.stringify(pane.slice(0, 900)));
+  assert.ok(/pre-authent/.test(pane),
+    "the ticket's flags must be readable, and pre-authent must be among them " +
+    "because pre-authentication actually happened: " +
+        JSON.stringify(pane.slice(0, 900)));
+  assert.ok(/the SESSION key/.test(pane),
+    "the session key must be shown and flagged as the credential it is");
+  assert.ok(pane.indexOf(principal + "@" + realm) !== -1,
+    "the client the ticket names must be there");
+  assert.ok(/krbtgt\//.test(pane),
+      "and the service, which for a TGT is krbtgt");
+  ["authtime", "starttime", "endtime", "renew-till"].forEach(function (field) {
+    assert.ok(pane.indexOf(field) !== -1,
+      "all four of the ticket's times must be shown, and " + field +
+      " is missing");
+  });
+  assert.ok(/authorization-data/.test(pane) && /PAC/.test(pane),
+    "the one field the KDC does not repeat must be NAMED as absent rather " +
+    "than left as a gap the reader has to notice: " +
+        JSON.stringify(pane.slice(0, 900)));
+  assert.ok(!/Paste it into/.test(pane),
+    "and nothing in the pane may send the reader to another page to see what " +
+    "it is already showing: " + JSON.stringify(pane.slice(0, 900)));
+
+  // The reply pane, which is where a reader looks first and where the old
+  // message dead-ended.
+  const reply = await driver.findElement(By.id("krb_reply_pane")).getText();
+  assert.ok(/EncTicketPart — as the KDC reported it/.test(reply),
+    "the reply pane must carry the same contents, since that is the message " +
+    "they arrived in: " + JSON.stringify(reply.slice(0, 400)));
+  assert.ok(/contents are below/.test(reply),
+    "and its decryption row must point at them rather than reporting only a " +
+    "failure to open the ciphertext: " + JSON.stringify(reply.slice(0, 900)));
+  assert.ok(!/Decryption keys pane/.test(reply) && !/decoder page/i.test(reply),
+    "and must name no pane and no other page: " +
+        JSON.stringify(reply.slice(0, 900)));
+
+  // Fed from STORAGE rather than from the exchange, so a reload — and equally a
+  // ticket made active from the history — shows the same thing. This is the
+  // case a version built off the live reply gets wrong.
+  await driver.get(baseUrl + "/kerberos.html");
+  await driver.wait(until.elementLocated(By.id("krb_cache_pane")), 15000);
+  const reloaded = await waitForText(driver, "krb_cache_pane",
+      /EncTicketPart|No ticket held/, 20000,
+      "the Ticket pane rendered nothing after a reload");
+  assert.ok(/EncTicketPart — as the KDC reported it/.test(reloaded),
+    "the contents must survive a reload, because they are stored with the " +
+    "ticket rather than recomputed from a reply this page no longer has: " +
+        JSON.stringify(reloaded.slice(0, 400)));
+  assert.ok(/the SESSION key/.test(reloaded),
+    "including the session key");
+
+  // PUT THE PAGE BACK. The reload above is a fresh load, which means step 2's
+  // button is disabled again (it is gated on step 1 having learned the salt)
+  // and a ticket is now held that the next section asserts is absent. Leaving
+  // either behind fails the section AFTER this one — on a wrong password that
+  // was never sent, and on a stored ticket this section stored — which is the
+  // most expensive kind of test failure to read: it names the wrong page.
+  await driver.findElement(By.id("krb_noreauth_button")).click();
+  await waitForText(driver, "krb_as_status", /PREAUTH_REQUIRED|salt|TGT/i,
+      60000, "step 1 did not run again after the reload, so step 2 is still " +
+      "disabled");
+  await driver.findElement(By.id("krb_forget_button")).click();
+  assert.strictEqual(await driver.executeScript(
+    "return !!(localStorage.getItem('krb_ccache') || " +
+        "sessionStorage.getItem('krb_ccache'));"), false,
+    "and the ticket this section obtained must be forgotten again before the " +
+    "next one runs");
+  log.info("the Ticket pane shows what is inside the ticket, with nothing " +
+      "typed and nothing clicked");
+  log.debug("Leaving theTicketPaneShowsWhatIsInsideTheTicket().");
+}
+
+
 async function aWrongPasswordIsDiagnosedAndStoresNothing(driver) {
   log.debug("Entering aWrongPasswordIsDiagnosedAndStoresNothing().");
   await setField(driver, "krb_password", password + "-wrong");
@@ -473,6 +605,7 @@ async function test() {
     await stepTwoIsGatedOnStepOne(driver);
     await stepOneDiscoversTheSalt(driver);
     await stepTwoGetsATicketAndTreatsItAsACredential(driver);
+    await theTicketPaneShowsWhatIsInsideTheTicket(driver);
     await aWrongPasswordIsDiagnosedAndStoresNothing(driver);
     log.info("Test completed successfully.");
   } finally {

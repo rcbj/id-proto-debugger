@@ -217,6 +217,129 @@ function renderCompanionHex(hostId, bytes, label) {
   return hexview.render(hexId, bytes, label);
 }
 
+// ---------------------------------------------------------------------------
+// The hex views of a reply's PARTS, found by the same convention one step down.
+//
+// A KDC reply has three byte strings inside it that a reader wants to see on
+// their own, and the decoded pane already shows all three as sections: the
+// **Ticket** (opaque to this client — sealed with the service's key), the
+// **enc-part** envelope, and the **EncTGSRepPart** that comes out of it. The
+// last of those is the interesting one: it is the only view in the workflow of
+// plaintext that never crossed the wire in the clear, named field by field.
+//
+// The ids come off the reply pane's own, so a page opts in with markup alone
+// exactly as it does for the reply's own hex tab:
+//
+//   krb_s4u2self_reply_pane  →  krb_s4u2self_ticket_hex
+//                               krb_s4u2self_encpart_hex
+//                               krb_s4u2self_encreppart_hex
+//
+// CALLED WITH NULL ON EVERY FAILURE PATH, and that is not defensive noise.
+// These three panes are filled from a reply the caller has already opened, so
+// they
+// cannot be filled by renderMessage() on the way past — which means that unlike
+// every other hex tab here they can go STALE: a second S4U2Self attempt the
+// KDC refuses would leave the first attempt's ticket sitting under a tab beside
+// a decoded pane showing KDC_ERR_BADOPTION. Two panes disagreeing about what
+// just happened is the failure renderCompanionHex() exists to prevent, and this
+// is the one place it has to be prevented by hand.
+// ---------------------------------------------------------------------------
+var REPLY_PART_HEX = [
+  { suffix: "_ticket_hex", key: "ticket", label: "Ticket" },
+  { suffix: "_encpart_hex", key: "encPart", label: "enc-part" },
+  { suffix: "_encreppart_hex", key: "encPartPlain", label: "EncTGSRepPart" }
+];
+
+function renderReplyPartsHex(replyPaneId, bytes) {
+  log.debug("Entering renderReplyPartsHex(). pane=" + replyPaneId);
+  if (!/_reply_pane$/.test(replyPaneId)) {
+    log.debug("Leaving renderReplyPartsHex(). Not a _reply_pane id.");
+    return 0;
+  }
+  var stem = replyPaneId.replace(/_reply_pane$/, "");
+  var hexview = require("./kerberos_hex.js");
+  var filled = 0;
+  REPLY_PART_HEX.forEach(function (part) {
+    var id = stem + part.suffix;
+    if (!el(id)) {
+      return;
+    }
+    hexview.render(id, (bytes && bytes[part.key]) || null, part.label);
+    filled += 1;
+  });
+  log.debug("Leaving renderReplyPartsHex(). " + filled + " pane(s).");
+  return filled;
+}
+
+// ---------------------------------------------------------------------------
+// THE KEYS A READER SUPPLIED, and why they are held here rather than passed in.
+//
+// Every page in this workflow hands renderMessage() the keys IT holds — the
+// client key on the AS page, the TGT's session key on the TGS page, the
+// ticket's on the AP page — and none of them holds the one key that opens the
+// part people most want to see: a ticket's EncTicketPart is sealed with the
+// SERVICE's own long-term key, which a client never has. That key can only come
+// from the reader, so `kerberos_keys.js` mounts a pane that collects it and
+// registers itself here. renderMessage() then adds those keys to whatever the
+// caller passed, which means no page had to be changed for its message panes to
+// start opening tickets — and a page that does not mount the pane is
+// unaffected, because the supplier stays null.
+//
+// The rendered messages are REMEMBERED for the same reason: a key pasted after
+// an exchange has already run must open the panes already on screen, and
+// re-running the exchange to see inside a ticket you already have is exactly
+// the friction that sends somebody to a different tool. rerenderMessages()
+// replays the bytes each pane last rendered, through the same path, so nothing
+// can drift between the first render and the second.
+//
+// Nothing here is stored. The supplier reads the fields on every call, so the
+// keys live in the DOM for as long as the page is open and go no further.
+// ---------------------------------------------------------------------------
+var extraKeySupplier = null;
+var lastRendered = {};
+
+function setExtraKeys(supplier) {
+  log.debug("Entering setExtraKeys().");
+  extraKeySupplier = typeof supplier === "function" ? supplier : null;
+  log.debug("Leaving setExtraKeys(). registered=" + !!extraKeySupplier);
+}
+
+async function extraKeys() {
+  log.debug("Entering extraKeys().");
+  if (!extraKeySupplier) {
+    log.debug("Leaving extraKeys(). No supplier.");
+    return [];
+  }
+  try {
+    var supplied = await extraKeySupplier();
+    log.debug("Leaving extraKeys(). " + (supplied || []).length + " key(s).");
+    return supplied || [];
+  } catch (e) {
+    // A key the reader typed wrongly must never cost them the decode: the
+    // structure is the useful part and it needs no key at all. The pane itself
+    // reports what it could not read.
+    log.error("the supplied keys could not be assembled: " + e.message);
+    log.debug("Leaving extraKeys(). Failed.");
+    return [];
+  }
+}
+
+// Every message pane this page has rendered, replayed with whatever keys are
+// available now. Awaited in order rather than in parallel: string-to-key is the
+// expensive part and it is already done by the time this runs, and a page with
+// nine panes repainting in a deterministic order is a page whose screen does
+// not jump about while it fills.
+async function rerenderMessages() {
+  log.debug("Entering rerenderMessages().");
+  var ids = Object.keys(lastRendered);
+  for (var i = 0; i < ids.length; i++) {
+    var record = lastRendered[ids[i]];
+    await renderMessage(ids[i], record.label, record.bytes, record.keys);
+  }
+  log.debug("Leaving rerenderMessages(). " + ids.length + " pane(s).");
+  return ids.length;
+}
+
 // One message, described by common/krb5/krb5_describe.js and rendered here.
 //
 // The pane is replaced in place and is NOT cleared before the new content is
@@ -232,9 +355,18 @@ async function renderMessage(hostId, label, bytes, keys) {
   // exactly the bytes somebody wants to look at one at a time, so the hex view
   // must survive a message the describer refuses.
   renderCompanionHex(hostId, bytes, label);
+  // Remembered before the decode, not after it, so bytes that do not decode can
+  // still be retried when a key arrives — and remembered with the CALLER's keys
+  // only, since the supplied ones are read fresh on every render.
+  lastRendered[hostId] = {
+    label: label,
+    bytes: bytes,
+    keys: (keys || []).slice()
+  };
   var doc;
   try {
-    doc = await describer.describe(prim.toBytes(bytes), { keys: keys || [] });
+    doc = await describer.describe(prim.toBytes(bytes),
+        { keys: (keys || []).concat(await extraKeys()) });
   } catch (e) {
     clear(host);
     host.appendChild(make("p", "krb-note krb-bad", label + " could not be " +
@@ -1223,7 +1355,12 @@ module.exports = {
   renderSection: renderSection,
   renderTree: renderTree,
   renderMessage: renderMessage,
+  setExtraKeys: setExtraKeys,
+  extraKeys: extraKeys,
+  rerenderMessages: rerenderMessages,
   renderCompanionHex: renderCompanionHex,
+  renderReplyPartsHex: renderReplyPartsHex,
+  REPLY_PART_HEX: REPLY_PART_HEX,
   bytesToB64: bytesToB64,
   b64ToBytes: b64ToBytes,
   sendToKdc: sendToKdc,

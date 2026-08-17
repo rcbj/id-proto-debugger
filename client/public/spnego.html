@@ -205,32 +205,17 @@ implicit.</p>
   <strong>service's</strong> long-term key &mdash; not under anything this browser holds. So the fields
   below are the ones a client can see, and everything that matters to the service (the client's name, the
   ticket flags, the session key and the <strong>PAC</strong>) is opaque here until you supply that key. On
-  a real deployment you would take it from the service account's keytab; the
-  <a href="/kerberos_decoder.html">decoder page</a> reads a keytab directly.</p>
-  <div class="krb-grid krb-grid-tight">
-    <div class="krb-keys">
-      <div class="tooltip"><label for="krb_service_key_hex">Service key (hex)</label><span class="tooltiptext">The service account's long-term key, as hex. This is what the ticket is encrypted with, at key usage 2. Never sent anywhere: the decryption happens in this browser.</span></div>
-      <input type="text" id="krb_service_key_hex" class="krb-field" spellcheck="false">
-
-      <div class="tooltip"><label for="krb_service_key_etype">Encryption type</label><span class="tooltiptext">Which etype the pasted key is for. The ticket names the etype it was encrypted with; a key of the wrong type is not tried.</span></div>
-      <select id="krb_service_key_etype" class="krb-field">
-        <option value="18" selected="selected">18 — aes256-cts-hmac-sha1-96</option>
-        <option value="17">17 — aes128-cts-hmac-sha1-96</option>
-        <option value="20">20 — aes256-cts-hmac-sha384-192</option>
-        <option value="19">19 — aes128-cts-hmac-sha256-128</option>
-        <option value="23">23 — arcfour-hmac-md5</option>
-      </select>
-    </div>
-    <div class="krb-keys">
-      <div class="tooltip"><label for="krb_service_password">…or the service account's password</label><span class="tooltiptext">Derived to a key with string-to-key. Never stored and never sent: it is used in this browser and discarded.</span></div>
-      <input type="password" id="krb_service_password" class="krb-field" autocomplete="off">
-
-      <div class="tooltip"><label for="krb_service_salt">Salt</label><span class="tooltiptext">The salt string-to-key uses. It is NOT derivable from the principal name: Active Directory salts a computer account as REALM + "host" + short name + DNS domain. Leave it blank for the default REALM+principal form.</span></div>
-      <input type="text" id="krb_service_salt" class="krb-field" spellcheck="false">
-    </div>
-  </div>
-  <input type="button" id="krb_decrypt_button" class="btn2" value="Open the ticket"
-         disabled="disabled">
+  a real deployment you would take it from the service account's keytab. Supply it in
+  <strong>Decryption keys</strong> below &mdash; as a raw key, as the service account's password and salt,
+  or as the keytab itself &mdash; and this pane opens in place.</p>
+  <!-- The key fields that used to be HERE are now partials/krb_keys.html, at the
+       foot of this page and of the four other exchange pages. This page had the
+       only such pane in the workflow, which meant a ticket could be opened on
+       the one page that cannot obtain one — and the collection logic existed
+       twice (here and on the decoder page) with different wording for the same
+       three routes. kerberos_keys.js is that logic, once; kerberos_panes.js adds
+       whatever it yields to every message pane, so this pane needs no key
+       argument and no button of its own. -->
   <div class="krb-tabs" data-krb-tabs="ticket">
     <button type="button" class="krb-tab krb-tab-on" role="tab"
             aria-selected="true" data-krb-tab="decoded">Decoded</button>
@@ -259,6 +244,8 @@ what a browser would have sent.</p>
 error message, so the only diagnosis available is the mechanism's own error token: a
 <code>KRB-ERROR</code> inside <code>responseToken</code>. When one arrives this page decodes it, because a
 <code>reject</code> with nothing inside it cannot be told from a wrong password.</p>
+
+<!--#include file="/partials/krb_keys.html"-->
 
 <!--#include file="/partials/krb_tickets.html"-->
 

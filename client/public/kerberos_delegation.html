@@ -87,8 +87,67 @@ this service as anybody&rdquo;.</p>
     </div>
     <div id="krb_s4u2self_status" class="krb-status"></div>
   </div>
-  <div id="krb_s4u2self_request_pane" class="krb-output"></div>
-  <div id="krb_s4u2self_reply_pane" class="krb-output"></div>
+  <!-- The exchange, five ways. Two tab strips, laid out exactly as
+       kerberos.html's are: a group name shared between the strip and its panels
+       (kerberos_panes.js wireTabs/selectTab pair them by that name, so there is
+       one string to get right rather than a pair of ids), and the panels hidden
+       by a class rather than by inline display, so collapsing the pane above
+       them does not fight with whichever tab is showing.
+
+       The REPLY strip carries five buttons rather than two, because a TGS-REP
+       has three byte strings inside it that the decoded pane already shows as
+       sections and that are worth looking at on their own: the Ticket, which
+       this client cannot read at all (it is sealed with the back-end service's
+       key), the enc-part envelope, and the EncTGSRepPart out of it — the only
+       view in this workflow of plaintext that never crossed the wire in the
+       clear. Their ids come off the reply pane's own; see
+       panes.renderReplyPartsHex(). -->
+  <div class="krb-tabs" data-krb-tabs="s4u2self_request">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="s4u2self_request"
+       data-krb-tab="decoded">
+    <div id="krb_s4u2self_request_pane" class="krb-output"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2self_request"
+       data-krb-tab="hex">
+    <div id="krb_s4u2self_request_hex"></div>
+  </div>
+  <div class="krb-tabs" data-krb-tabs="s4u2self_reply">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_ticket">Hex: Ticket</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_encpart">Hex: enc-part</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_encreppart">Hex: EncTGSRepPart</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="s4u2self_reply"
+       data-krb-tab="decoded">
+    <div id="krb_s4u2self_reply_pane" class="krb-output"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2self_reply"
+       data-krb-tab="hex">
+    <div id="krb_s4u2self_reply_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2self_reply"
+       data-krb-tab="hex_ticket">
+    <div id="krb_s4u2self_ticket_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2self_reply"
+       data-krb-tab="hex_encpart">
+    <div id="krb_s4u2self_encpart_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2self_reply"
+       data-krb-tab="hex_encreppart">
+    <div id="krb_s4u2self_encreppart_hex"></div>
+  </div>
 </fieldset>
 </div>
 
@@ -130,8 +189,58 @@ this service as anybody&rdquo;.</p>
     <div id="krb_s4u2proxy_status" class="krb-status"></div>
   </div>
   <div id="krb_trail_pane" class="krb-output"></div>
-  <div id="krb_s4u2proxy_request_pane" class="krb-output"></div>
-  <div id="krb_s4u2proxy_reply_pane" class="krb-output"></div>
+  <!-- The same five views as the S4U2Self pane above; the note there explains
+       why the reply strip has three extra. The Ticket tab is worth more here
+       than anywhere else on the page: this is the ticket that names the
+       IMPERSONATED user and not the service that asked for it, and the only
+       record of the delegation is inside its PAC, encrypted under the back
+       end's key — so these bytes are exactly as far as this page can see. -->
+  <div class="krb-tabs" data-krb-tabs="s4u2proxy_request">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="s4u2proxy_request"
+       data-krb-tab="decoded">
+    <div id="krb_s4u2proxy_request_pane" class="krb-output"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2proxy_request"
+       data-krb-tab="hex">
+    <div id="krb_s4u2proxy_request_hex"></div>
+  </div>
+  <div class="krb-tabs" data-krb-tabs="s4u2proxy_reply">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_ticket">Hex: Ticket</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_encpart">Hex: enc-part</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_encreppart">Hex: EncTGSRepPart</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="s4u2proxy_reply"
+       data-krb-tab="decoded">
+    <div id="krb_s4u2proxy_reply_pane" class="krb-output"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2proxy_reply"
+       data-krb-tab="hex">
+    <div id="krb_s4u2proxy_reply_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2proxy_reply"
+       data-krb-tab="hex_ticket">
+    <div id="krb_s4u2proxy_ticket_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2proxy_reply"
+       data-krb-tab="hex_encpart">
+    <div id="krb_s4u2proxy_encpart_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="s4u2proxy_reply"
+       data-krb-tab="hex_encreppart">
+    <div id="krb_s4u2proxy_encreppart_hex"></div>
+  </div>
 </fieldset>
 </div>
 
@@ -154,9 +263,78 @@ this service as anybody&rdquo;.</p>
            value="Get a forwarded TGT and wrap it as a KRB-CRED">
   </div>
   <div id="krb_forward_status" class="krb-status"></div>
-  <div id="krb_krbcred_pane" class="krb-output"></div>
-  <div id="krb_forward_request_pane" class="krb-output"></div>
-  <div id="krb_forward_reply_pane" class="krb-output"></div>
+  <!-- SIX views here rather than five, and the extra one is the point of the
+       pane. The KRB-CRED is the artifact of unconstrained delegation: the
+       forwarded ticket-granting ticket wrapped for somebody else to spend, with
+       its session key sealed inside under the subkey printed below it. Those
+       bytes are the ones that would travel in a real flow — inside an AP-REQ
+       Authenticator's 0x8003 checksum rather than on their own — and they are
+       what to paste into the decoder page along with that subkey. -->
+  <div class="krb-tabs" data-krb-tabs="forward_krbcred">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="forward_krbcred"
+       data-krb-tab="decoded">
+    <div id="krb_krbcred_pane" class="krb-output"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="forward_krbcred"
+       data-krb-tab="hex">
+    <div id="krb_krbcred_hex"></div>
+  </div>
+  <!-- And the exchange that produced it, the same five ways as the two panes
+       above. The reply here is a TGS-REP like theirs: its Ticket is the second
+       ticket-granting ticket, which is why the flags in its EncTGSRepPart are
+       worth reading byte by byte — `forwarded` is the whole difference between
+       this and an ordinary renewal. -->
+  <div class="krb-tabs" data-krb-tabs="forward_request">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="forward_request"
+       data-krb-tab="decoded">
+    <div id="krb_forward_request_pane" class="krb-output"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="forward_request"
+       data-krb-tab="hex">
+    <div id="krb_forward_request_hex"></div>
+  </div>
+  <div class="krb-tabs" data-krb-tabs="forward_reply">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_ticket">Hex: Ticket</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_encpart">Hex: enc-part</button>
+    <button type="button" class="krb-tab" role="tab" aria-selected="false"
+            data-krb-tab="hex_encreppart">Hex: EncTGSRepPart</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="forward_reply"
+       data-krb-tab="decoded">
+    <div id="krb_forward_reply_pane" class="krb-output"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="forward_reply"
+       data-krb-tab="hex">
+    <div id="krb_forward_reply_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="forward_reply"
+       data-krb-tab="hex_ticket">
+    <div id="krb_forward_ticket_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="forward_reply"
+       data-krb-tab="hex_encpart">
+    <div id="krb_forward_encpart_hex"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="forward_reply"
+       data-krb-tab="hex_encreppart">
+    <div id="krb_forward_encreppart_hex"></div>
+  </div>
 </fieldset>
 </div>
 
@@ -199,6 +377,8 @@ this service as anybody&rdquo;.</p>
   </div>
 </fieldset>
 </div>
+
+<!--#include file="/partials/krb_keys.html"-->
 
 <!--#include file="/partials/krb_tickets.html"-->
 

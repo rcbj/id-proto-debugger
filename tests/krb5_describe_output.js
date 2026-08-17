@@ -63,6 +63,7 @@ var keytab = shared("krb5_keytab.js");
 var kpac = shared("krb5_pac.js");
 var gss = shared("krb5_gss.js");
 var spnego = shared("krb5_spnego.js");
+var client = shared("krb5_client.js");
 
 const hex = (b) => prim.toHex(b);
 const unhex = (s) => prim.fromHex(s);
@@ -1255,6 +1256,393 @@ async function aNegotiateHeaderIsExplainedLayerByLayer() {
   log.debug("Leaving aNegotiateHeaderIsExplainedLayerByLayer().");
 }
 
+// ---------------------------------------------------------------------------
+// WHAT AN UNOPENED ENCRYPTED PART HAS TO SAY, which is the whole of this
+// section.
+//
+// Every exchange page hands the describer the keys it holds, so a ticket's
+// enc-part nearly always has a key of the RIGHT ETYPE to try and fail with —
+// the client key on the AS page, a session key on the others. That is the
+// branch a reader actually sees, and until 2026-08-17 it said only that some
+// unnamed key did not decrypt this and that a kvno might be stale: no statement
+// of WHICH key would work, and nowhere on the page to put it. Three things are
+// asserted here because each was a separate half of that defect:
+//
+//   * the note names the principal whose key opens the ticket, and says what
+//     that account is on a ticket-granting ticket (the KDC's own krbtgt);
+//   * it names the pane on the page rather than sending the reader to the
+//     decoder page — which was the only route before, and which loses the
+//     exchange on screen;
+//   * "no key supplied" and "keys tried and none worked" are DIFFERENT values,
+//     because the first is an instruction and the second is a finding, and
+//     reading the second as the first sends somebody off to find a key they are
+//     already holding.
+// ---------------------------------------------------------------------------
+async function anUnopenedTicketSaysWhoseKeyOpensItAndWhereToPutIt() {
+  log.debug("Entering anUnopenedTicketSaysWhoseKeyOpensItAndWhereToPutIt().");
+  const e = kcrypto.etypeById(18);
+  const serviceKey = await e.stringToKey("krbtgtpw",
+      prim.utf8("EXAMPLE.COMkrbtgt"), null);
+  const ticket = msgs.encTicket({
+    realm: "EXAMPLE.COM",
+    sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
+        msgs.encEncTicketPart({
+          flags: [msgs.TICKET_FLAG.INITIAL],
+          key: { etype: 18, key: kcrypto.randomBytes(32) },
+          crealm: "EXAMPLE.COM",
+          cname: { type: 1, name: ["alice"] },
+          authtime: new Date(Date.UTC(2026, 7, 17, 9, 0, 0)),
+          endtime: new Date(Date.UTC(2026, 7, 17, 19, 0, 0))
+        }))
+    }
+  });
+
+  // No keys at all: the instruction case.
+  const blind = await describe.describe(b64(ticket));
+  const blindRow = rowNamed(blind, /^decryption$/);
+  assert.ok(/no key supplied/.test(blindRow.value),
+    "with nothing to try, the row must say no key was supplied rather than " +
+    "the ambiguous \"not attempted or not possible\": " + blindRow.value);
+  assert.ok(/krbtgt\/EXAMPLE\.COM/.test(blindRow.note || ""),
+    "and the note must NAME the principal whose key opens it: " +
+        blindRow.note);
+  assert.ok(/Supply that key, its password and salt, or a keytab/
+      .test(blindRow.note || ""),
+    "and say what would open it, in terms of what a reader might have: " +
+        blindRow.note);
+  assert.ok(!/decoder page/i.test(blindRow.note || "") &&
+      !/pane on this page/i.test(blindRow.note || ""),
+    "and it must name NO page and NO pane — where a key can be supplied " +
+    "differs per page, and a describer that names one is wrong on the " +
+        "others: " + blindRow.note);
+  assert.ok(/krbtgt/.test(blindRow.note || "") &&
+      /no client ever holds/.test(blindRow.note || ""),
+    "on a TGT it must say the key is the KDC's own and that no client holds " +
+    "it, which is why the reader has to supply one: " + blindRow.note);
+
+  // A key of the right etype that is the WRONG key: the finding case. This is
+  // what every exchange page produces, because each of them holds a key of the
+  // ticket's own etype and none of them holds the SERVICE's.
+  const wrong = await describe.describe(b64(ticket), {
+    keys: [{
+      etype: 18,
+      key: kcrypto.randomBytes(32),
+      label: "the password with salt \"EXAMPLE.COMalice\""
+    }]
+  });
+  const wrongRow = rowNamed(wrong, /^decryption$/);
+  assert.ok(/tried/.test(wrongRow.value) && !/no key supplied/
+      .test(wrongRow.value),
+    "a key tried and failed must not read as no key at all: " +
+        wrongRow.value);
+  assert.ok(/none decrypted this/.test(wrongRow.note || ""),
+    "the note must still say the keys were tried: " + wrongRow.note);
+  assert.ok(/the password with salt/.test(wrongRow.note || ""),
+    "and NAME what was tried, so a reader with several keys knows which one " +
+    "this was about: " + wrongRow.note);
+  assert.ok(/krbtgt\/EXAMPLE\.COM/.test(wrongRow.note || ""),
+    "and it must carry the same guidance as the no-key case — this is the " +
+    "branch a page with a client key actually reaches, and it was the one " +
+    "with no guidance in it: " + wrongRow.note);
+
+  // And with the right key it opens, which is what all of the above is for.
+  const opened = await describe.describe(b64(ticket), {
+    keys: [{ etype: 18, key: serviceKey, label: "the krbtgt key" }]
+  });
+  assert.ok(sectionTitled(opened, /EncTicketPart \(decrypted\)/),
+    "with the named key the EncTicketPart must open");
+  everyValueIsAString(opened, "an opened ticket");
+  log.debug("Leaving anUnopenedTicketSaysWhoseKeyOpensItAndWhereToPutIt().");
+}
+
+// ---------------------------------------------------------------------------
+// The two encrypted parts of a REQUEST, which were described and never opened.
+//
+// PA-ENC-TIMESTAMP is under the client's own key at key usage 1 — a key the AS
+// page has just derived — and the timestamp inside is the entire content of a
+// clock-skew failure. PA-TGS-REQ is worse: it carries a whole AP-REQ, so the
+// ticket being spent and the Authenticator proving the client holds its session
+// key were both invisible behind a byte count, on a page whose own comment said
+// the nesting is the thing about this message people do not expect.
+// ---------------------------------------------------------------------------
+async function aRequestsOwnEncryptedPartsAreOpenedToo() {
+  log.debug("Entering aRequestsOwnEncryptedPartsAreOpenedToo().");
+  const e = kcrypto.etypeById(18);
+  const clientKey = await e.stringToKey("password!",
+      prim.utf8("EXAMPLE.COMalice"), null);
+  const when = new Date(Date.UTC(2026, 7, 17, 10, 30, 45));
+  const asReq = msgs.encKdcReq({
+    msgType: msgs.MSG_TYPE.AS_REQ,
+    padata: [{
+      type: msgs.PA_TYPE.ENC_TIMESTAMP,
+      value: msgs.encEncryptedData({
+        etype: 18,
+        cipher: await e.encrypt(clientKey,
+            kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP,
+            msgs.encPaEncTsEnc(when, 123456))
+      })
+    }],
+    reqBody: {
+      kdcOptions: [msgs.KDC_OPTION.FORWARDABLE],
+      cname: { type: 1, name: ["alice"] },
+      realm: "EXAMPLE.COM",
+      sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
+      till: new Date(Date.UTC(2026, 7, 17, 20, 0, 0)),
+      nonce: 55,
+      etypes: [18]
+    }
+  });
+
+  const blind = await describe.describe(b64(asReq));
+  assert.ok(sectionTitled(blind, /PA-ENC-TIMESTAMP/),
+    "the padata's envelope is described with no key, as it always was");
+  // allSections rather than sectionTitled: that helper ASSERTS the section
+  // exists, so it cannot express an absence.
+  assert.ok(!allSections(blind).some(function (s) {
+    return /PA-ENC-TS-ENC \(decrypted\)/.test(s.title);
+  }), "and nothing is claimed about its contents");
+
+  const opened = await describe.describe(b64(asReq), {
+    keys: await describe.keysFromPassword("password!", "EXAMPLE.COMalice",
+        [18])
+  });
+  const stamp = sectionTitled(opened, /PA-ENC-TS-ENC \(decrypted\)/);
+  assert.ok(stamp, "with the client's key the pre-authentication timestamp " +
+    "must open — it is under that key at key usage 1, and the AS page has " +
+    "just derived it");
+  const timestampRow = rowNamed(opened, /^patimestamp$/);
+  assert.ok(timestampRow.value.indexOf("20260817103045Z") === 0,
+    "and the timestamp itself must be readable: " + timestampRow.value);
+  assert.ok(/clock/i.test(timestampRow.note || ""),
+    "with the note saying what it is compared against, since that is the " +
+    "whole of a KRB_AP_ERR_SKEW: " + timestampRow.note);
+  assert.strictEqual(rowNamed(opened, /^pausec$/).value, "123456",
+    "cusec-style precision lives here, not in the KerberosTime");
+  assert.ok(/key usage 1/.test(stamp.note || ""),
+    "and the section must say which usage opened it: " + stamp.note);
+
+  // Now the TGS-REQ, built by the real client so the nesting is the nesting the
+  // pages actually produce.
+  const sessionKey = kcrypto.randomBytes(32);
+  const serviceKey = await e.stringToKey("krbtgtpw",
+      prim.utf8("EXAMPLE.COMkrbtgt"), null);
+  const tgt = {
+    ticket: msgs.readTicket(msgs.encTicket({
+      realm: "EXAMPLE.COM",
+      sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
+      encPart: {
+        etype: 18,
+        cipher: await e.encrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
+          msgs.encEncTicketPart({
+            flags: [msgs.TICKET_FLAG.INITIAL],
+            key: { etype: 18, key: sessionKey },
+            crealm: "EXAMPLE.COM",
+            cname: { type: 1, name: ["alice"] },
+            authtime: when,
+            endtime: new Date(Date.UTC(2026, 7, 17, 20, 0, 0))
+          }))
+      }
+    })),
+    sessionKey: sessionKey,
+    etype: 18,
+    client: { type: 1, name: ["alice"] },
+    realm: "EXAMPLE.COM"
+  };
+  const built = await client.buildTgsReq({
+    tgt: tgt,
+    sname: { type: 2, name: ["HTTP", "web.example.com"] },
+    realm: "EXAMPLE.COM"
+  });
+
+  const bare = await describe.describe(b64(built.request));
+  const nested = sectionTitled(bare, /PA-TGS-REQ/);
+  assert.ok(nested, "a TGS-REQ's padata carries an entire AP-REQ and the " +
+    "pane must expand it rather than reporting a byte count");
+  const nestedTitles = allSections(bare).map(function (s) { return s.title; });
+  assert.ok(nestedTitles.some(function (t) { return /^Ticket$/.test(t); }),
+    "including the TICKET being spent, which is where the TGT actually " +
+    "travels: " + nestedTitles.join(" | "));
+  assert.ok(nestedTitles.some(function (t) { return /Authenticator/.test(t); }),
+    "and the Authenticator beside it: " + nestedTitles.join(" | "));
+
+  // The Authenticator is under the TGT's SESSION key, which is a key the TGS
+  // page holds — so this half opens on that page with nothing typed at all.
+  const withSession = await describe.describe(b64(built.request), {
+    keys: [{
+      etype: 18,
+      key: sessionKey,
+      label: "the TGT's session key"
+    }]
+  });
+  const auth = sectionTitled(withSession, /Authenticator \(decrypted\)/);
+  assert.ok(auth, "with the TGT's session key the Authenticator inside " +
+    "PA-TGS-REQ must open");
+  assert.ok(/session key/.test(auth.note || ""),
+    "saying which key did it: " + auth.note);
+  const cksum = allRows(withSession).filter(function (r) {
+    return r.section === auth.title && r.name === "cksum";
+  })[0];
+  assert.ok(cksum && /^type 16/.test(cksum.value),
+    "and the checksum over the request body must be visible in it: " +
+        (cksum ? cksum.value : "(no cksum row)"));
+  everyValueIsAString(withSession, "a TGS-REQ with its Authenticator open");
+  log.debug("Leaving aRequestsOwnEncryptedPartsAreOpenedToo().");
+}
+
+// ---------------------------------------------------------------------------
+// A TICKET'S CONTENTS WITH NO SERVICE KEY, which is what a client actually has.
+//
+// A client cannot decrypt a ticket it holds — that is what a ticket is for —
+// but it is not ignorant of what is inside one, because the KDC repeats the
+// ticket's flags, session key, times and sname into the reply's enc-part under
+// the CLIENT's own key. So with nothing but the password, an AS-REP must show
+// the ticket's contents, and the assertions here are about the two things that
+// make that honest rather than misleading:
+//
+//   * the values are LABELLED as the KDC's report rather than as plaintext out
+//     of the ciphertext above — a KDC that put different flags in the ticket
+//     than it reported would be invisible to every client, and a pane that
+//     printed both the same way would hide exactly that;
+//   * the one field the KDC does not repeat — the ticket's authorization-data,
+//     i.e. the PAC — is NAMED as missing rather than left as a gap.
+//
+// And when a key that really opens the ticket is available, the real
+// EncTicketPart wins: actual plaintext beats a report of it, and it is the only
+// way the PAC can ever appear.
+// ---------------------------------------------------------------------------
+async function aTicketsContentsAreShownFromTheKdcsOwnReport() {
+  log.debug("Entering aTicketsContentsAreShownFromTheKdcsOwnReport().");
+  const e = kcrypto.etypeById(18);
+  const salt = "EXAMPLE.COMalice";
+  const clientKey = await e.stringToKey("password!", prim.utf8(salt), null);
+  const serviceKey = await e.stringToKey("krbtgtpw",
+      prim.utf8("EXAMPLE.COMkrbtgt"), null);
+  const sessionKey = kcrypto.randomBytes(32);
+  const auth = new Date(Date.UTC(2026, 7, 17, 9, 0, 0));
+  const end = new Date(Date.UTC(2026, 7, 17, 19, 0, 0));
+  const renew = new Date(Date.UTC(2026, 7, 24, 9, 0, 0));
+  const flags = [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.INITIAL,
+      msgs.TICKET_FLAG.PRE_AUTHENT];
+  const asRep = msgs.encKdcRep({
+    msgType: msgs.MSG_TYPE.AS_REP,
+    crealm: "EXAMPLE.COM",
+    cname: { type: 1, name: ["alice"] },
+    ticket: {
+      realm: "EXAMPLE.COM",
+      sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
+      encPart: {
+        etype: 18,
+        cipher: await e.encrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
+          msgs.encEncTicketPart({
+            flags: flags,
+            key: { etype: 18, key: sessionKey },
+            crealm: "EXAMPLE.COM",
+            cname: { type: 1, name: ["alice"] },
+            authtime: auth,
+            endtime: end,
+            renewTill: renew
+          }))
+      }
+    },
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(clientKey, kcrypto.KEY_USAGE.AS_REP_ENCPART,
+        msgs.encEncKdcRepPart({
+          key: { etype: 18, key: sessionKey },
+          lastReq: [{ type: 0, value: auth }],
+          nonce: 77,
+          flags: flags,
+          authtime: auth,
+          starttime: auth,
+          endtime: end,
+          renewTill: renew,
+          srealm: "EXAMPLE.COM",
+          sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] }
+        }, msgs.APPLICATION.ENC_AS_REP_PART))
+    }
+  });
+
+  // The client's key and NOTHING else — the state of the AS page after an
+  // ordinary exchange.
+  const asClient = await describe.describe(b64(asRep), {
+    keys: await describe.keysFromPassword("password!", salt, [18])
+  });
+  const reported = sectionTitled(asClient,
+      /EncTicketPart — as the KDC reported/);
+  assert.ok(/EncASRepPart/.test(reported.note || ""),
+    "the section must say where the values came from — the reply's own " +
+    "enc-part, not the ticket's ciphertext: " + reported.note);
+  assert.ok(/KDC's word/.test(reported.note || "") ||
+      /on the KDC's word/.test(reported.note || ""),
+    "and must not present them as the ticket's plaintext: " + reported.note);
+  const inReported = allRows(asClient).filter(function (r) {
+    return r.section === reported.title;
+  });
+  function reportedRow(name) {
+    const found = inReported.filter(function (r) { return r.name === name; });
+    assert.strictEqual(found.length, 1,
+      "the reported contents must carry exactly one " + name + " row, got " +
+      found.length + " (rows: " +
+      inReported.map(function (r) { return r.name; }).join(", ") + ")");
+    return found[0];
+  }
+  assert.ok(/forwardable/.test(reportedRow("flags").value) &&
+      /pre-authent/.test(reportedRow("flags").value),
+    "the ticket's flags must be readable: " + reportedRow("flags").value);
+  assert.ok(reportedRow("key").value.indexOf(prim.toHex(sessionKey)) !== -1,
+    "and the SESSION key, which is the field the client actually needs: " +
+        reportedRow("key").value);
+  assert.ok(/credential/.test(reportedRow("key").note || ""),
+    "flagged as the credential it is: " + reportedRow("key").note);
+  assert.ok(/alice/.test(reportedRow("cname").value),
+    "the client the ticket names: " + reportedRow("cname").value);
+  assert.ok(/krbtgt/.test(reportedRow("sname").value),
+    "and the service it is for: " + reportedRow("sname").value);
+  ["authtime", "starttime", "endtime", "renew-till"].forEach(function (name) {
+    assert.ok(/2026/.test(reportedRow(name).value),
+      "all four times must be shown, and " + name + " is " +
+          reportedRow(name).value);
+  });
+  const ad = reportedRow("authorization-data");
+  assert.ok(/not repeated/.test(ad.value),
+    "the field the KDC does NOT repeat must be named rather than omitted: " +
+        ad.value);
+  assert.ok(/PAC/.test(ad.note || ""),
+    "and said to be the PAC, which is what it means on Active Directory: " +
+        ad.note);
+  // The row above it must not read as a dead end now that the answer is below.
+  const row = rowNamed(asClient, /^decryption$/);
+  assert.ok(/contents are below/.test(row.value),
+    "with the contents on screen the decryption row must point AT them, not " +
+    "merely report a failure: " + row.value);
+  everyValueIsAString(asClient, "an AS-REP with the client key only");
+
+  // With the krbtgt key as well, the real EncTicketPart wins and the report is
+  // not shown — plaintext beats a statement about it.
+  const withService = await describe.describe(b64(asRep), {
+    keys: (await describe.keysFromPassword("password!", salt, [18]))
+      .concat([{ etype: 18, key: serviceKey, label: "the krbtgt key" }])
+  });
+  assert.ok(sectionTitled(withService, /EncTicketPart \(decrypted\)/),
+    "a key that opens the ticket must produce the real EncTicketPart");
+  assert.ok(!allSections(withService).some(function (s) {
+    return /as the KDC reported/.test(s.title);
+  }), "and the KDC's report must then be dropped rather than shown beside " +
+     "it — two sections of the same fields invite the reader to wonder which " +
+     "is real");
+
+  // No key at all: no report either, because there is nothing to report FROM.
+  const blind = await describe.describe(b64(asRep));
+  assert.ok(!allSections(blind).some(function (s) {
+    return /as the KDC reported/.test(s.title);
+  }), "with no key the reply's enc-part is closed too, so there is nothing " +
+     "to report and nothing may be invented");
+  log.debug("Leaving aTicketsContentsAreShownFromTheKdcsOwnReport().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Verifying common/krb5/krb5_describe.js and " +
@@ -1269,6 +1657,9 @@ async function test() {
   await aTicketsPacIsDecodedAndItsSignaturesReported();
   await aDelegatedCredentialIsDescribedAsACapability();
   await aNegotiateHeaderIsExplainedLayerByLayer();
+  await anUnopenedTicketSaysWhoseKeyOpensItAndWhereToPutIt();
+  await aRequestsOwnEncryptedPartsAreOpenedToo();
+  await aTicketsContentsAreShownFromTheKdcsOwnReport();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }
