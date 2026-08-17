@@ -121,3 +121,46 @@ variable "tags" {
     Lifecycle   = "destroy-after-test-run"
   }
 }
+
+# ---------------------------------------------------------------------------
+# The delegation fixture.
+#
+# Four accounts, and they mirror the mock KDC's four exactly
+# (sts/krb5_principals.js) so that ONE test can drive either KDC with nothing
+# but the realm differing. The roles are what matter, not the names:
+#
+#   frontend   classic constrained delegation: msDS-AllowedToDelegateTo names
+#              the back-end, AND TrustedToAuthForDelegation so its S4U2Self
+#              ticket comes back FORWARDABLE (the protocol-transition half).
+#   backend    the classic target. Authorizes nothing itself.
+#   notrusted  the same classic list as frontend MINUS protocol transition.
+#              It exists because that flag's absence is invisible where it is
+#              set: S4U2Self still succeeds and returns a ticket that simply is
+#              not forwardable, and classic S4U2Proxy then fails a step later
+#              complaining about the evidence. Two accounts differing in exactly
+#              one attribute is the only way to show which attribute did it.
+#   rbcd       resource-based target: msDS-AllowedToActOnBehalfOfOtherIdentity
+#              names the front-end. The permission lives on the TARGET, which is
+#              the inversion that is the whole security story of RBCD.
+# ---------------------------------------------------------------------------
+variable "provision_delegation" {
+  description = "Create the four delegation accounts. Off makes the bootstrap shorter when only the AS/TGS/AP chain is wanted."
+  type        = bool
+  default     = true
+}
+
+variable "delegation_hosts" {
+  description = "Host portions of the four delegation SPNs, keyed by role. The SPN is <service_class>/<host>.<domain_name>."
+  type = object({
+    frontend  = string
+    backend   = string
+    notrusted = string
+    rbcd      = string
+  })
+  default = {
+    frontend  = "frontend"
+    backend   = "backend"
+    notrusted = "notrusted"
+    rbcd      = "rbcd"
+  }
+}

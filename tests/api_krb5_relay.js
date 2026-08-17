@@ -360,6 +360,114 @@ async function connectAndCallDeadlinesAreSeparate() {
 }
 
 // ---------------------------------------------------------------------------
+// The NAME LOOKUP is on a deadline too, and it is the one that was not.
+//
+// This test exists because the suite caught the hang on 2026-08-17:
+// everyPathSettles' "bad host" case reported HUNG, with the relay still
+// resolving `no-such-host.invalid` five seconds in. Both budgets are armed
+// inside sendOverTcp/sendOverUdp, so while a name is being resolved NOTHING is
+// timing the call — a stub resolver waiting out its own retries against a
+// forwarder that is not answering holds the promise open for as long as it
+// likes, and on the real endpoint that is a browser waiting on an api that
+// never replies.
+//
+// It cannot be tested against the machine's own resolver. `dns.lookup` is
+// getaddrinfo, so `dns.setServers` does not touch it and there is no way to
+// aim it at a black hole from inside the process; a name that does not exist
+// is answered in tens of milliseconds here, which is why the bug survived
+// every previous run of this file and surfaced only as an intermittent. So the
+// relay takes its lookup as an injectable dependency and this passes one that
+// never calls back — the resolver-stopped-answering case, made deterministic.
+// ---------------------------------------------------------------------------
+async function theNameLookupIsOnADeadline() {
+  log.debug("Entering theNameLookupIsOnADeadline().");
+  let lookups = 0;
+  const relay = relayMod.createRelay({
+    blockPrivateNetworkCalls: false,
+    krb5AllowedPorts: [88],
+    connectionTimeout: 400,
+    callTimeout: 5000,
+    maxContentLength: 4096
+  }, ssrfGuard.createGuard({ blockPrivateNetworkCalls: false }, quiet), quiet, {
+    lookup: function () {
+      // Never calls back: a resolver that has stopped answering. Counted so
+      // that a relay which somehow never asks cannot pass this by refusing
+      // for an unrelated reason.
+      lookups += 1;
+    }
+  });
+
+  // Raced against a bound rather than simply awaited, because the failure this
+  // is looking for is a promise that never settles: an `await` on it fails by
+  // HANGING, which takes the whole run with it and names nothing. Mutation-
+  // tested by removing the deadline from the relay — without the race the test
+  // stalled indefinitely, with it, it fails here in three seconds and says
+  // why.
+  const started = Date.now();
+  const attempt = relay.send({
+    host: "kdc.example.com",
+    port: 88,
+    message: asReq()
+  }).then(function () {
+    return { outcome: "resolved" };
+  }, function (e) {
+    return { outcome: "rejected", error: e };
+  });
+  const raced = await Promise.race([attempt, new Promise(function (resolve) {
+    setTimeout(function () { resolve({ outcome: "HUNG" }); }, 3000);
+  })]);
+  const elapsed = Date.now() - started;
+  assert.strictEqual(raced.outcome, "rejected", "a lookup that never comes " +
+      "back left the relay " + raced.outcome + " after " + elapsed + "ms. " +
+      "Both budgets are armed inside sendOverTcp/sendOverUdp, so until the " +
+      "name resolves nothing is timing the call and the promise never " +
+      "settles — the hang api/CLAUDE.md warns about, reached by the one " +
+      "path that had no deadline of its own.");
+  const err = raced.error;
+  assert.strictEqual(err.code, "EKRB5DNSTIMEOUT", "refused with " + err.code +
+      " rather than EKRB5DNSTIMEOUT (" + err.message + ")");
+
+  assert.strictEqual(lookups, 1, "the relay must actually have attempted the " +
+      "lookup — a refusal that arrives without one is this test passing for " +
+      "the wrong reason");
+  assert.ok(elapsed >= 400, "the lookup was abandoned after " + elapsed +
+      "ms, before the 400ms connect budget it is given. A deadline that " +
+      "fires early kills a slow-but-working resolver.");
+  assert.ok(elapsed < 1000, "the lookup ran for " + elapsed + "ms. The " +
+      "budget it is given is the CONNECT one (400ms) — the call budget " +
+      "(5000ms here) is armed inside sendOverTcp and never starts, so a " +
+      "deadline taken from it would be a deadline nothing enforces.");
+  assert.ok(/resolv/i.test(err.message) && /kdc\.example\.com/.test(
+      err.message),
+    "and the failure must name resolution and the host, so it is not read " +
+        "as the KDC refusing: " + err.message);
+
+  // A resolver that answers normally must still be believed: the deadline is a
+  // ceiling, not a race the lookup can lose on a slow machine.
+  const slow = relayMod.createRelay({
+    blockPrivateNetworkCalls: false,
+    krb5AllowedPorts: [88],
+    connectionTimeout: 900,
+    callTimeout: 1200,
+    maxContentLength: 4096
+  }, ssrfGuard.createGuard({ blockPrivateNetworkCalls: false }, quiet), quiet, {
+    lookup: function (host, options, callback) {
+      setTimeout(function () {
+        callback(null, [{ address: "198.51.100.9", family: 4 }]);
+      }, 250);
+    }
+  });
+  const slowErr = await mustReject("a resolver that answers slowly but does " +
+      "answer",
+    slow.send({ host: "kdc.example.com", port: 88, message: asReq() }));
+  assert.notStrictEqual(slowErr.code, "EKRB5DNSTIMEOUT",
+    "a lookup that answered inside the budget must be used, not abandoned: " +
+        slowErr.message);
+
+  log.debug("Leaving theNameLookupIsOnADeadline().");
+}
+
+// ---------------------------------------------------------------------------
 // The reply cap, applied to what the far end DECLARED.
 // ---------------------------------------------------------------------------
 async function repliesAreCappedBeforeTheyAreRead() {
@@ -740,12 +848,35 @@ async function onlyKerberosRequestsAreRelayed() {
       port: "eighty-eight",
       message: asReq()
     }), "EKRB5NOPORT");
-  await mustReject("an unresolvable name",
+  // A name that does not exist, refused as a DNS problem — but NOT pinned to
+  // EKRB5DNS, because this one case depends on the machine's own resolver and
+  // the failure it produces depends on how that resolver behaves. Answered
+  // (NXDOMAIN, normally in tens of milliseconds) it is EKRB5DNS; unanswered —
+  // a forwarder that has gone quiet, which is what took this file's
+  // everyPathSettles down on 2026-08-17 — the stub waits out its own retries
+  // and the relay's own DNS deadline fires first. Both are the relay refusing
+  // for the right reason, and insisting on one of them makes a green run a
+  // fact about the network here. What is asserted is that resolution failed,
+  // that it is named as such, and that it was BOUNDED, which is the part the
+  // code owns; theNameLookupIsOnADeadline() pins the timeout case
+  // deterministically with an injected resolver.
+  const startedName = Date.now();
+  const nameErr = await mustReject("an unresolvable name",
     relay.send({
       host: "no-such-host.invalid",
       port: 88,
       message: asReq()
-    }), "EKRB5DNS");
+    }));
+  assert.ok(["EKRB5DNS", "EKRB5DNSTIMEOUT"].indexOf(nameErr.code) !== -1,
+    "a name that cannot be resolved must fail as a DNS problem, got " +
+        nameErr.code + " (" + nameErr.message + ")");
+  assert.ok(/resolv/i.test(nameErr.message), "and must say so rather than " +
+      "reading as the KDC refusing: " + nameErr.message);
+  const nameElapsed = Date.now() - startedName;
+  assert.ok(nameElapsed < 700 + 500, "resolution ran for " + nameElapsed +
+      "ms against a 700ms connect budget. Nothing times a call while a name " +
+      "is being resolved except the relay's own DNS deadline, so an " +
+      "unbounded lookup here is an unbounded request on POST /krb5/kdc.");
 
   log.debug("Leaving onlyKerberosRequestsAreRelayed().");
 }
@@ -1089,6 +1220,7 @@ async function test() {
   await theServiceEndpointIsOffUntilConfigured();
   await repliesAreCappedBeforeTheyAreRead();
   await connectAndCallDeadlinesAreSeparate();
+  await theNameLookupIsOnADeadline();
   await udpWorksAndFailsHonestly();
   await everyPathSettles();
   log.info("Test completed successfully.");

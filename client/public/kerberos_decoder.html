@@ -47,8 +47,20 @@ a TCP socket to port 88 &mdash; does not. It also stores <strong>nothing</strong
 password, not a keytab. Everything you give it is key material or a credential, and a scratchpad that remembered
 those would be a worse place to leave a keytab than the file it came from.</p>
 
-<fieldset class="krb-pane">
-  <legend>The bytes</legend>
+<!--#include file="/partials/krb_steps.html"-->
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane on this page.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<div class="dbg-pane" id="pane_bytes">
+  <legend class="dbg-legend" id="bytes_expand_button">The bytes</legend>
+  <fieldset name="bytes_fieldset" id="bytes_fieldset" style="display: block;">
   <textarea id="krb_input" class="krb-input" rows="10" spellcheck="false"
             placeholder="base64, base64url or hex — e.g. a0YwRKEDAgEFogMCAQqjDjAMoAMCAQKhBTADoAEA…"></textarea>
   <div class="krb-buttons">
@@ -58,19 +70,21 @@ those would be a worse place to leave a keytab than the file it came from.</p>
   <div id="krb_status" class="krb-status"></div>
   <div id="krb_crypto_note"></div>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>Keys, to see inside the encrypted parts (optional)</legend>
+<div class="dbg-pane" id="pane_keys_see_inside_encrypted_pa">
+  <legend class="dbg-legend" id="keys_see_inside_encrypted_pa_expand_button">Keys, to see inside the encrypted parts (optional)</legend>
+  <fieldset name="keys_see_inside_encrypted_pa_fieldset" id="keys_see_inside_encrypted_pa_fieldset" style="display: block;">
   <p class="krb-note">Most of what is interesting in a Kerberos message is encrypted, and under three different
   keys: a ticket is sealed with the <strong>service's</strong> long-term key, an AS-REP's enc-part with the
   <strong>client's</strong>, and an Authenticator with the <strong>session</strong> key from inside the ticket.
   Supply whichever you have; each part reports which key opened it, or says what would have.</p>
 
   <div class="krb-keys">
-    <label for="krb_key_hex">A raw key, in hex</label>
+    <div class="tooltip"><label for="krb_key_hex">A raw key, in hex</label><span class="tooltiptext">A raw key as hex, if you already have one — from a keytab, or derived elsewhere. Supplying a key is what lets the decoder open encrypted parts instead of only describing their envelopes.</span></div>
     <input type="text" id="krb_key_hex" class="krb-field" spellcheck="false"
            placeholder="e.g. a 32-byte aes256 key as 64 hex characters">
-    <label for="krb_key_etype">…of encryption type</label>
+    <div class="tooltip"><label for="krb_key_etype">…of encryption type</label><span class="tooltiptext">Which encryption type the raw key above belongs to. A key of the wrong etype fails integrity, which looks exactly like the wrong key.</span></div>
     <select id="krb_key_etype" class="krb-field">
       <option value="18" selected="selected">18 — aes256-cts-hmac-sha1-96</option>
       <option value="17">17 — aes128-cts-hmac-sha1-96</option>
@@ -79,9 +93,9 @@ those would be a worse place to leave a keytab than the file it came from.</p>
       <option value="23">23 — arcfour-hmac-md5 (legacy)</option>
     </select>
 
-    <label for="krb_password">…or a password</label>
+    <div class="tooltip"><label for="krb_password">…or a password</label><span class="tooltiptext">Never sent. It is turned into a key here, in the browser, and only an encrypted timestamp goes to the KDC. The api never sees it.</span></div>
     <input type="password" id="krb_password" class="krb-field" autocomplete="off">
-    <label for="krb_salt">…with its salt <strong>(required, and not guessable)</strong></label>
+    <div class="tooltip"><label for="krb_salt">…with its salt <strong>(required, and not guessable)</strong></label><span class="tooltiptext">The string mixed into string-to-key, and NOT guessable: AD uses the realm plus the sAMAccountName for a user but a host-shaped string for a computer account. The KDC publishes it in the PREAUTH_REQUIRED error and nowhere else.</span></div>
     <input type="text" id="krb_salt" class="krb-field" spellcheck="false"
            placeholder="e.g. EXAMPLE.COMalice">
     <p class="krb-note">The salt is not something to guess. Take it from the KDC's own
@@ -90,7 +104,7 @@ those would be a worse place to leave a keytab than the file it came from.</p>
     the realm followed by the sAMAccountName for a user, but a <em>host</em>-shaped string for a computer
     account, which is where guessing stops working.</p>
 
-    <label for="krb_keytab">…or a keytab (base64 or hex)</label>
+    <div class="tooltip"><label for="krb_keytab">…or a keytab (base64 or hex)</label><span class="tooltiptext">A keytab, base64 or hex. Every key in it is tried, which is usually the quickest way to open a ticket whose etype you do not know.</span></div>
     <textarea id="krb_keytab" class="krb-raw" rows="4" spellcheck="false"
               placeholder="the contents of a krb5.keytab, base64-encoded"></textarea>
     <p class="krb-note">A keytab holds a service's long-term keys, so it is what opens a service ticket. Both
@@ -98,6 +112,7 @@ those would be a worse place to leave a keytab than the file it came from.</p>
     treated as the end of the file.</p>
   </div>
 </fieldset>
+</div>
 
 <div id="krb_output" class="krb-output"></div>
 
@@ -106,6 +121,10 @@ is not the same as it being <em>accepted</em>: a KDC also weighs its own clock, 
 state. Where this page can measure such a thing it does &mdash; a <code>KRB-ERROR</code> carries the KDC's own
 timestamp, so the clock difference against this browser is computed rather than guessed &mdash; and where it
 cannot, it says so instead of implying a verdict.</p>
+
+<!--#include file="/partials/krb_tickets.html"-->
+
+<!--#include file="/partials/krb_history.html"-->
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">

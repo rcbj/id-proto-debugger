@@ -37,8 +37,11 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${HERE}/../.." && pwd)"
 
+# krb5_spnego.js is here for the same reason krb5_gss.js is: the SPNEGO-protected
+# resource in the mock STS decodes the very tokens the browser encodes, so the two
+# ends must share one RFC 4178 coder or they will agree only with themselves.
 MODULES=(krb5_primitives.js krb5_asn1.js krb5_crypto.js krb5_messages.js krb5_gss.js
-         krb5_ndr.js krb5_pac.js)
+         krb5_spnego.js krb5_ndr.js krb5_pac.js)
 
 target="${1:-}"
 if [[ -z "${target}" ]]; then

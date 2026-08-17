@@ -120,6 +120,7 @@ const BUNDLES = [
   ['kerberos_tgs', 'kerberos_tgs'],
   ['kerberos_ap', 'kerberos_ap'],
   ['kerberos_delegation', 'kerberos_delegation'],
+  ['spnego', 'spnego'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>
@@ -259,8 +260,16 @@ BUNDLES.filter(function (entry) {
 const stagedData = path.join(SRC, 'data.js');
 fs.copyFileSync(COMMON_DATA, stagedData);
 const KRB5_DIR = path.join(CLIENT_DIR, '..', 'common', 'krb5');
+// Which bundles need common/krb5 staged into src/ before browserify can
+// resolve their requires. NOT `indexOf('kerberos') === 0` any more: spnego.js
+// requires the same codec and its bundle is not called kerberos-anything, so
+// the prefix test left it unbuildable with "Cannot find module
+// './krb5_spnego.js'" — a message naming a file that exists, two directories
+// away. The list is explicit for that reason.
+const KRB5_BUNDLES = ['kerberos', 'kerberos_tgs', 'kerberos_ap',
+  'kerberos_delegation', 'kerberos_decoder', 'spnego'];
 const needsKrb5 = BUILT_BUNDLES.some(function (entry) {
-  return entry[0].indexOf('kerberos') === 0;
+  return KRB5_BUNDLES.indexOf(entry[0]) !== -1;
 });
 const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
   ? fs.readdirSync(KRB5_DIR).filter((f) => f.endsWith('.js')).map((f) => {

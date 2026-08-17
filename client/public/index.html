@@ -175,6 +175,25 @@
       <span class="landing-card-desc">Get a TGT from a real KDC and watch both messages, or decode a v5 message, ticket or keytab: every field named, encrypted parts opened when you have the key.</span>
       <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: Kerberos is DER over port 88, which a browser cannot open and no edge function can catch. Run the debugger locally for it.</span>
     </a>
+    <!-- The second card that is not on the deployed static sites, and for the
+         same reason: SPNEGO is an HTTP protocol, but the ticket inside it is
+         not — obtaining one is the AS and TGS exchanges, which need the api's
+         port-88 relay. So this card is marked and greyed alongside Kerberos.
+         Its own request DOES go through the api too (POST /krb5/spnego), for
+         the header visibility a cross-origin fetch cannot give. -->
+    <a class="landing-card" href="/spnego.html" data-not-on-static>
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3 12h18"/>
+          <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z"/>
+          <circle cx="12" cy="12" r="9"/>
+          <path d="M15.5 15.5l2.5 2.5"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">SPNEGO</span>
+      <span class="landing-card-desc">Kerberos over HTTP (RFC 4559/4178): watch the Negotiate challenge, the token a browser would send, the mechanism list and its MIC, and the ticket inside.</span>
+      <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: the ticket SPNEGO carries comes from a KDC on port 88, which a browser cannot reach. Run the debugger locally for it.</span>
+    </a>
   </div>
 </div>
 

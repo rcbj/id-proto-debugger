@@ -63,3 +63,15 @@ resource "aws_key_pair" "dc" {
   public_key = tls_private_key.dc.public_key_openssh
   tags       = { Name = "${local.name_prefix}-dc" }
 }
+
+# One password for all four delegation accounts. They differ by ATTRIBUTE, not
+# by secret, and four random strings would be four more things for a failure
+# message to be wrong about.
+resource "random_password" "delegation" {
+  length           = 24
+  min_upper        = 2
+  min_lower        = 2
+  min_numeric      = 2
+  min_special      = 2
+  override_special = local.pw_special
+}

@@ -50,6 +50,8 @@ var kcrypto = require("./krb5_crypto.js");
 var gss = require("./krb5_gss.js");
 var client = require("./krb5_client.js");
 var panes = require("./kerberos_panes.js");
+var ophistory = require("./kerberos_history.js");
+var tickets = require("./kerberos_tickets.js");
 
 var el = panes.el;
 var val = panes.val;
@@ -233,6 +235,17 @@ function renderGssChecksum(hostId, checksumBytes) {
 
 async function onPresent() {
   log.debug("Entering onPresent().");
+  // Opened before the guard, so presenting with no ticket selected is recorded
+  // as the Failure it is. Every exit sets a status on krb_ap_status, and that
+  // is what closes the row. The target here is the SERVICE, not a KDC: this is
+  // the one exchange on these five pages that does not go to a KDC at all.
+  ophistory.begin({
+    operation: ophistory.OPS.AP,
+    principal: (chosenTicket && chosenTicket.client) || "(no ticket chosen)",
+    target: ((chosenTicket && chosenTicket.service) || "?") + " at " +
+        val("krb_service_host").trim() + ":" + val("krb_service_port"),
+    statusId: "krb_ap_status"
+  });
   if (!chosenTicket) {
     status("krb_ap_status", "No usable ticket is selected.", "krb-bad");
     return false;
@@ -258,6 +271,14 @@ async function onPresent() {
   // The wrapper, then the AP-REQ, then the 0x8003 structure inside it.
   var host = el("krb_request_pane");
   panes.clear(host);
+  // And the same bytes in the Hex tab. Called by hand here, unlike every other
+  // message pane on these pages, because this one is not rendered by
+  // renderMessage(): what a service is handed is a GSS token rather than a
+  // Kerberos message, so the pane below is assembled here. The bytes given are
+  // the WHOLE token — the wrapper is part of what went out, and a hex view that
+  // started at the AP-REQ would disagree with the byte counts in the table
+  // above it.
+  panes.renderCompanionHex("krb_request_pane", built.token, "What went out");
   var wrapperPane = panes.make("div", "krb-section");
   wrapperPane.appendChild(panes.make("h4", "krb-section-title", "The GSS " +
       "InitialContextToken"));
@@ -456,6 +477,18 @@ async function onPresent() {
 // seeing the token's shape and that verification is keyed by WHO signed it.
 async function onPerMessage(seal) {
   log.debug("Entering onPerMessage(). seal=" + seal);
+  // A per-message token is computed here and never sent anywhere, which is why
+  // it is worth logging: the row records that a MIC or a Wrap was produced over
+  // a context established by the AP-REQ above it, and both halves of that
+  // sentence are the thing being debugged.
+  ophistory.begin({
+    operation: seal ? ophistory.OPS.WRAP : ophistory.OPS.MIC,
+    // The context object carries keys and a sequence number, not a name, so
+    // the principal comes from the ticket the context was built from.
+    principal: (chosenTicket && chosenTicket.client) || "",
+    target: "in-browser (no network)",
+    statusId: "krb_ap_status"
+  });
   if (!context) {
     status("krb_ap_status", "No security context: present a ticket with " +
         "mutual authentication first.",
@@ -567,6 +600,22 @@ async function onPerMessage(seal) {
 
 window.onload = async function () {
   log.debug("Entering onload().");
+  // The shared chrome every workflow here has: the step trail marks where we
+  // are, and the toggle collapses or expands every pane at once. wirePanes()
+  // pairs each legend with its fieldset by id, so a pane added later is
+  // clickable without anything being registered for it.
+  panes.markCurrentStep("krb_step_ap");
+  panes.wirePanes();
+  // The Decoded/Hex strips inside the message panes. Paired by their group
+  // name the way the legends are paired with their fieldsets, so a strip
+  // added to the markup needs nothing here.
+  panes.wireTabs();
+  var toggleAll = el("dbg_toggle_all");
+  if (toggleAll) {
+    toggleAll.addEventListener("change", function () {
+      panes.setAllPanes(toggleAll.checked);
+    });
+  }
   panes.enforceStoragePreference();
   try {
     var host = window.localStorage.getItem(panes.KEYS.SERVICE_HOST);
@@ -585,6 +634,20 @@ window.onload = async function () {
     disableOnNoService: ["krb_present_button"]
   });
   renderTicketChoice();
+  // The Ticket Cache & History pane, from partials/krb_tickets.html. This page
+  // presents a SERVICE ticket, so those are the kinds it can take back — a
+  // delegated one included, since S4U2Proxy produces a service ticket and this
+  // page presents it exactly as it presents any other. A TGT is not enough
+  // here, and the pane says so on the row rather than by refusing a click.
+  // Activating writes to the service ticket cache, which is the list the
+  // dropdown above is built from, so the callback rebuilds it.
+  tickets.mount({
+    slots: ["service", "delegated"],
+    onActivate: function () {
+      renderTicketChoice();
+    }
+  });
+  ophistory.mount("krb_operation_history", "krb_clear_operations_button");
   var select = el("krb_ticket_select");
   if (select) select.addEventListener("change", onTicketChosen);
   var present = el("krb_present_button");

@@ -111,6 +111,12 @@ RUN browserify src/kerberos.js -o public/js/kerberos.js --debug --standalone ker
 RUN browserify src/kerberos_tgs.js -o public/js/kerberos_tgs.js --debug --standalone kerberos_tgs -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/kerberos_ap.js -o public/js/kerberos_ap.js --debug --standalone kerberos_ap -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/kerberos_delegation.js -o public/js/kerberos_delegation.js --debug --standalone kerberos_delegation -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+# SPNEGO. Its bundle requires the SAME common/krb5 codec the five pages above
+# do — the COPY that stages those modules into src/ is further up and covers
+# this too — plus krb5_spnego.js, which is new. A missing staging here is
+# "Cannot find module './krb5_spnego.js'" naming a file that exists two
+# directories away.
+RUN browserify src/spnego.js -o public/js/spnego.js --debug --standalone spnego -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----

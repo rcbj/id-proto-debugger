@@ -282,6 +282,18 @@ function nothingThatShipsLinksToADroppedPage(staticSite) {
       if (!entry.name.endsWith(".html")) return;
       // A dropped page linking to another dropped page is fine: neither ships.
       if (dropped.indexOf(entry.name) >= 0) return;
+      // Nor does a dropped ASSET, and that is a separate list. This sweep only
+      // consulted EXCLUDED_PAGES, which is right for pages and wrong for a
+      // PARTIAL: partials/krb_steps.html is html, is not a page, links to all
+      // five Kerberos pages, and is itself excluded — so before this line it
+      // was reported as an offender for linking to things it correctly links
+      // to. The paths in EXCLUDED_ASSETS are site-root-relative, which is the
+      // same shape path.relative(PUBLIC_DIR, ...) produces.
+      const siteRelative = path.relative(PUBLIC_DIR, full).split(path.sep)
+          .join("/");
+      if ((staticSite.EXCLUDED_ASSETS || []).indexOf(siteRelative) >= 0) {
+        return;
+      }
       // Against what the build SHIPS, not what the source says: the landing
       // card's href to /kerberos.html is in index.html and is exactly what the
       // rewrite takes out. Sweeping the raw source would fail on the one link

@@ -60,7 +60,8 @@ var serviceHost = process.env.KRB5_SERVICE_HOST || kdcHost;
 var servicePort = process.env.KRB5_SERVICE_PORT || "8888";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
 var principal = process.env.KRB5_PRINCIPAL || "alice";
-var password = process.env.KRB5_PASSWORD || "hunter2";
+// One password for every user in the mock KDC, whoever KRB5_PRINCIPAL names.
+var password = process.env.KRB5_PASSWORD || "password!";
 var spn = process.env.KRB5_SPN || "HTTP/web.example.com";
 
 async function waitForText(driver, id, pattern, timeoutMs, what) {

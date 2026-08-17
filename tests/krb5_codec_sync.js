@@ -63,9 +63,14 @@ log.info("Log initialized. logLevel=" + log.level());
 // client half and the presentation layer have no counterpart in the KDC, so
 // vendoring them would create a copy nothing reads — and an unread copy is one
 // that drifts silently.
+// krb5_spnego.js joins them for the same reason as krb5_gss.js and the sharper
+// version of it: the mock's SPNEGO-protected resource DECODES the NegTokenInit
+// the browser encodes and ENCODES the NegTokenResp the browser decodes, so
+// every field of RFC 4178 crosses between the two copies in both directions.
 const MODULES = ["krb5_primitives.js", "krb5_asn1.js", "krb5_crypto.js",
     "krb5_messages.js",
-                 "krb5_gss.js", "krb5_ndr.js", "krb5_pac.js"];
+                 "krb5_gss.js", "krb5_spnego.js", "krb5_ndr.js",
+                 "krb5_pac.js"];
 
 // The canonical copy.
 //
@@ -159,7 +164,9 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
       msgs: require(path.join(dir, "krb5_messages.js")),
       kcrypto: require(path.join(dir, "krb5_crypto.js")),
       ndr: require(path.join(dir, "krb5_ndr.js")),
-      kpac: require(path.join(dir, "krb5_pac.js"))
+      kpac: require(path.join(dir, "krb5_pac.js")),
+      gss: require(path.join(dir, "krb5_gss.js")),
+      spnego: require(path.join(dir, "krb5_spnego.js"))
     };
   }
   const A = load(CANONICAL_DIR);
@@ -515,10 +522,57 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
         " signatures verified");
   }
 
+  // --- SPNEGO, cross-wise. The negotiation is the one layer where the two
+  // copies genuinely talk to EACH OTHER in both directions in production: the
+  // browser encodes a NegTokenInit that the mock decodes, and the mock encodes
+  // a NegTokenResp that the browser decodes. A divergence here is a handshake
+  // that fails with "not a SPNEGO token" against an entirely correct peer.
+  assert.deepStrictEqual(A.spnego.NEG_STATE, B.spnego.NEG_STATE,
+    "the negState table differs between the copies, so one end's " +
+        "accept-completed is the other's reject");
+  assert.strictEqual(A.spnego.SPNEGO_OID, B.spnego.SPNEGO_OID,
+      "the SPNEGO OID differs");
+  for (const [encoder, decoder, label] of [[A, B, "A encodes, B decodes"],
+      [B, A, "B encodes, A decodes"]]) {
+    const mechs = [encoder.spnego.KRB5_MECH_OID,
+        encoder.spnego.MS_KRB5_MECH_OID];
+    const init = encoder.spnego.encodeNegTokenInit({
+      mechTypes: mechs,
+      mechToken: new Uint8Array([0x6e, 0x02, 0x01, 0x05]),
+      mechListMic: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])
+    });
+    const readInit = decoder.spnego.decodeNegotiationToken(init.token);
+    assert.strictEqual(readInit.kind, "NegTokenInit",
+        label + ": a NegTokenInit did not survive");
+    assert.deepStrictEqual(readInit.mechTypes, mechs,
+        label + ": the mechanism list did not survive");
+    // The bytes the mechListMIC is computed over. If the two copies disagreed
+    // about these, both ends would compute a MIC the other cannot verify and
+    // the error would name a checksum.
+    assert.strictEqual(decoder.prim.toHex(readInit.mechListDer),
+      encoder.prim.toHex(init.mechListDer),
+      label + ": the MechTypeList bytes the mechListMIC covers differ " +
+        "between the copies");
+    const resp = encoder.spnego.encodeNegTokenResp({
+      negState: encoder.spnego.NEG_STATE.ACCEPT_COMPLETED,
+      supportedMech: encoder.spnego.KRB5_MECH_OID,
+      responseToken: new Uint8Array([0x6f, 0x02, 0x01, 0x05]),
+      mechListMic: new Uint8Array([9, 9])
+    });
+    const readResp = decoder.spnego.decodeNegotiationToken(resp);
+    assert.strictEqual(readResp.kind, "NegTokenResp",
+        label + ": a NegTokenResp did not survive");
+    assert.strictEqual(readResp.negState,
+        decoder.spnego.NEG_STATE.ACCEPT_COMPLETED,
+        label + ": the negState did not survive");
+    assert.strictEqual(readResp.supportedMech, decoder.spnego.KRB5_MECH_OID,
+        label + ": the selected mechanism did not survive");
+  }
+
   log.info("the two copies of the codec agree on " + corpus.length +
       " message shapes, " +
-    Object.keys(A.kcrypto.ETYPES).length + " encryption types and the PAC, " +
-        "cross-wise.");
+    Object.keys(A.kcrypto.ETYPES).length + " encryption types, the PAC and " +
+        "the SPNEGO negotiation, cross-wise.");
   log.debug("Leaving theTwoCopiesAgreeOnTheWire().");
 }
 

@@ -90,7 +90,11 @@ var config = {
   // Note what this does NOT relax: the address policy above still applies, and so
   // does the requirement that the payload actually be an AS-REQ, a TGS-REQ or an
   // AP-REQ (api/krb5_frame.js). The relay also reuses `connectionTimeout`,
-  // `callTimeout` and `maxContentLength` from this same file.
+  // `callTimeout` and `maxContentLength` from this same file — and spends
+  // `connectionTimeout` TWICE, once bounding the name lookup and once bounding
+  // the connection, because until a KDC's name has been resolved neither of
+  // the other budgets has started and an unbounded lookup is an unbounded
+  // request.
   krb5AllowedPorts: [88, 464, 749],
   // The ports POST /krb5/service may reach — the AP exchange, i.e. presenting a
   // ticket to a Kerberos-protected service.

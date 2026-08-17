@@ -399,7 +399,7 @@ function kdcRequestsRoundTrip() {
 async function kdcRepliesRoundTripAndTolerateTheIrregularTag() {
   log.debug("Entering kdcRepliesRoundTripAndTolerateTheIrregularTag().");
   const e = kcrypto.etypeById(18);
-  const clientKey = await e.stringToKey("hunter2",
+  const clientKey = await e.stringToKey("password!",
       prim.utf8("EXAMPLE.COMalice"), null);
   const serviceKey = await e.stringToKey("servicepw",
       prim.utf8("EXAMPLE.COMkrbtgt"), null);
@@ -640,7 +640,7 @@ async function preAuthTimestampUsesTheSaltAndItsOwnKeyUsage() {
   log.debug("Entering preAuthTimestampUsesTheSaltAndItsOwnKeyUsage().");
   const e = kcrypto.etypeById(18);
   const salt = "EXAMPLE.COMalice";
-  const key = await e.stringToKey("hunter2", prim.utf8(salt),
+  const key = await e.stringToKey("password!", prim.utf8(salt),
       unhex("00001000"));
   const when = new Date(Date.UTC(2026, 7, 13, 12, 0, 5));
 
@@ -675,7 +675,7 @@ async function preAuthTimestampUsesTheSaltAndItsOwnKeyUsage() {
 
   // And the salt matters: the same password with the wrong salt is a different
   // key.
-  const wrongSaltKey = await e.stringToKey("hunter2",
+  const wrongSaltKey = await e.stringToKey("password!",
       prim.utf8("EXAMPLE.COMAlice"), unhex("00001000"));
   await assert.rejects(
     () => e.decrypt(wrongSaltKey, kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP,

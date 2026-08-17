@@ -75,6 +75,13 @@ function stsModule(name) {
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {} };
 
+// The password every USER account in the mock KDC holds. There are no per-account user
+// secrets there: any username authenticates and they all share this one, so a test names
+// the account whose BEHAVIOUR it wants (noreauth, locked, aesonly...) and never a
+// password to go with it. KRB5_USER_PASSWORD is the same variable the KDC reads, so
+// overriding it moves both ends together.
+const USER_PASSWORD = process.env.KRB5_USER_PASSWORD || "password!";
+
 // ---------------------------------------------------------------------------
 // Driving the KDC.
 //
@@ -327,7 +334,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
     "and must carry the same salt");
 
   // 2. Now the real request, keyed from the salt the KDC just gave us.
-  const preauth = await encTimestampPadata("hunter2", aes256);
+  const preauth = await encTimestampPadata(USER_PASSWORD, aes256);
   const second = await exchange(buildAsReq({
     padata: [preauth.padata],
     nonce: 0xcafe1234
@@ -380,7 +387,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
 // the one thing neither end can verify alone.
 async function theTicketAndTheClientAgreeOnTheSessionKey(context) {
   log.debug("Entering theTicketAndTheClientAgreeOnTheSessionKey().");
-  const preauth = await encTimestampPadata("hunter2", context.info);
+  const preauth = await encTimestampPadata(USER_PASSWORD, context.info);
   const reply = await exchange(buildAsReq({ padata: [preauth.padata] }));
   assert.strictEqual(reply.decoded.kind, "AS-REP", "expected a ticket");
   const rep = reply.decoded.rep;
@@ -428,7 +435,7 @@ async function anAccountWithoutPreAuthGetsATicketStraightAway() {
         "ticket, not an error");
   const rep = reply.decoded.rep;
   const profile = kcrypto.etypeById(rep.encPart.etype);
-  const key = await profile.stringToKey("no-preauth-here",
+  const key = await profile.stringToKey(USER_PASSWORD,
       prim.utf8("EXAMPLE.COMnoreauth"), null);
   const part = msgs.readEncKdcRepPart(
     await profile.decrypt(key, kcrypto.KEY_USAGE.AS_REP_ENCPART,
@@ -543,7 +550,7 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
   // A pre-auth timestamp encrypted under the wrong SALT — the same password, a
   // different salt. Indistinguishable from a wrong password at the KDC, which
   // is the point being demonstrated.
-  const wrongSalt = await encTimestampPadata("hunter2",
+  const wrongSalt = await encTimestampPadata(USER_PASSWORD,
     { etype: 18, salt: "EXAMPLE.COMAlice", s2kparams: context.info.s2kparams });
   await expectError("the right password with the wrong salt",
     buildAsReq({ padata: [wrongSalt.padata] }), 24, /PREAUTH_FAILED/);
@@ -551,7 +558,7 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
   // A timestamp outside the tolerance. Built by hand rather than by moving any
   // clock: the padata carries the time, so a stale one is just a stale value.
   const profile = kcrypto.etypeById(18);
-  const key = await profile.stringToKey("hunter2",
+  const key = await profile.stringToKey(USER_PASSWORD,
       prim.utf8("EXAMPLE.COMalice"), null);
   const stale = msgs.encPaEncTsEnc(new Date(Date.now() - 20 * 60 * 1000), 0);
   const skewed = await expectError("a timestamp twenty minutes old",
@@ -740,7 +747,7 @@ async function theKdcHonoursTheClientsEtypeOrder() {
       entries.map(function (e) { return e.etypeName; }).join(", "));
 
     // Now complete the exchange and check the etype it actually USED.
-    const preauth = await encTimestampPadata("hunter2", chosen);
+    const preauth = await encTimestampPadata(USER_PASSWORD, chosen);
     const done = await exchange(buildAsReq({
       etypes: offered,
       padata: [preauth.padata]

@@ -61,6 +61,8 @@ var kcrypto = shared("krb5_crypto.js");
 var describe = shared("krb5_describe.js");
 var keytab = shared("krb5_keytab.js");
 var kpac = shared("krb5_pac.js");
+var gss = shared("krb5_gss.js");
+var spnego = shared("krb5_spnego.js");
 
 const hex = (b) => prim.toHex(b);
 const unhex = (s) => prim.fromHex(s);
@@ -336,7 +338,7 @@ async function describesAnAsRepAndDecryptsWhenGivenKeys() {
   log.debug("Entering describesAnAsRepAndDecryptsWhenGivenKeys().");
   const e = kcrypto.etypeById(18);
   const salt = "EXAMPLE.COMalice";
-  const clientKey = await e.stringToKey("hunter2", prim.utf8(salt), null);
+  const clientKey = await e.stringToKey("password!", prim.utf8(salt), null);
   const serviceKey = await e.stringToKey("krbtgtpw",
       prim.utf8("EXAMPLE.COMkrbtgt"), null);
   const sessionKey = kcrypto.randomBytes(32);
@@ -409,7 +411,7 @@ async function describesAnAsRepAndDecryptsWhenGivenKeys() {
   // With the client's key, derived from a password and the salt — the case a
   // reader is actually in.
   const withClient = await describe.describe(b64(asRep), {
-    keys: await describe.keysFromPassword("hunter2", salt, [18])
+    keys: await describe.keysFromPassword("password!", salt, [18])
   });
   const keyRow = rowNamed(withClient, /^key$/);
   assert.strictEqual(keyRow.value.indexOf("aes256-cts-hmac-sha1-96"), 0,
@@ -425,7 +427,7 @@ async function describesAnAsRepAndDecryptsWhenGivenKeys() {
   // With the SERVICE's key as well: now the ticket opens too, which is the
   // whole point of accepting a keytab.
   const withBoth = await describe.describe(b64(asRep), {
-    keys: (await describe.keysFromPassword("hunter2", salt, [18]))
+    keys: (await describe.keysFromPassword("password!", salt, [18]))
       .concat([{ etype: 18, key: serviceKey, label: "the krbtgt key" }])
   });
   // The decrypted EncTicketPart is nested two levels down (inside the Ticket
@@ -1127,6 +1129,132 @@ async function aDelegatedCredentialIsDescribedAsACapability() {
   log.debug("Leaving aDelegatedCredentialIsDescribedAsACapability().");
 }
 
+// ---------------------------------------------------------------------------
+// A `Negotiate` HEADER, which is what somebody pastes when they have copied an
+// Authorization line out of a capture or a browser's network tab.
+//
+// This is the one branch of krb5_describe.js that is not a Kerberos message,
+// and it exists because the decoder page takes bytes from anywhere — a header
+// value is where most people first meet a Kerberos token. The trap it fixes is
+// invisible: a SPNEGO token begins 0x60, which IS [APPLICATION 0], so
+// msgs.identify() called it a Kerberos message this build does not decode.
+// True of the grammar, and the wrong layer entirely.
+//
+// Nothing else opens this path, so a ReferenceError in it would go unnoticed
+// indefinitely — the same reason the delegated-credential section above exists.
+// ---------------------------------------------------------------------------
+async function aNegotiateHeaderIsExplainedLayerByLayer() {
+  log.debug("Entering aNegotiateHeaderIsExplainedLayerByLayer().");
+  log.info("=== A Negotiate header ===");
+
+  // What a Windows client sends: three mechanisms, an optimistic token, and a
+  // MIC over the list.
+  const mechs = [spnego.KRB5_MECH_OID, spnego.MS_KRB5_MECH_OID,
+      "1.3.6.1.4.1.311.2.2.10"];
+  const inner = msgs.encApReq({
+    apOptions: [msgs.AP_OPTION.MUTUAL_REQUIRED],
+    ticket: msgs.readTicket(msgs.encTicket({
+      realm: "EXAMPLE.COM",
+      sname: { type: 3, name: ["HTTP", "web.example.com"] },
+      encPart: { etype: 18, kvno: 3, cipher: kcrypto.randomBytes(64) }
+    })),
+    authenticator: { etype: 18, cipher: kcrypto.randomBytes(64) }
+  });
+  const init = spnego.encodeNegTokenInit({
+    mechTypes: mechs,
+    mechToken: gss.encodeInitialContextToken(gss.TOK_ID.AP_REQ, inner),
+    mechListMic: unhex("0404ffffffffffffff0000000000000000")
+  });
+
+  const doc = await describe.describe(b64(init.token));
+  assert.ok(/NegTokenInit/.test(doc.kind),
+    "a pasted Authorization header must be recognised as SPNEGO rather than " +
+    "as [APPLICATION 0] — it begins 0x60, which IS a Kerberos application " +
+    "tag, so identify() answers before anything else gets a chance. Got " +
+    JSON.stringify(doc.kind));
+
+  const rows = doc.sections[0].rows;
+  const named = rows.map(function (r) { return r.name; });
+  assert.ok(named.indexOf("mechTypes[0]") !== -1,
+      "the mechanism list must be listed one row per mechanism: " +
+      named.join(", "));
+  const first = rows.filter(function (r) {
+    return r.name === "mechTypes[0]";
+  })[0];
+  assert.ok(/Kerberos v5/.test(first.value),
+      "and each one NAMED, not left as an OID: " + first.value);
+  assert.ok(/first/i.test(first.note || ""),
+    "and the FIRST one must say what its position decides — RFC 4178 section " +
+    "5 makes the mechListMIC optional only when the acceptor selects it: " +
+    JSON.stringify(first.note));
+  const ms = rows.filter(function (r) { return r.name === "mechTypes[1]"; })[0];
+  assert.ok(/48018/.test(ms.value) && /Kerberos/.test(ms.value),
+    "Microsoft's mis-typed Kerberos OID must be named as Kerberos rather " +
+    "than left unrecognised — every Windows client offers it, and an " +
+    "acceptor that treats it as unknown refuses all of them: " + ms.value);
+
+  const listBytes = rows.filter(function (r) {
+    return r.name === "MechTypeList bytes";
+  })[0];
+  assert.ok(listBytes && /^30/.test(listBytes.value),
+    "the bytes the mechListMIC covers must be shown, and they must begin " +
+    "0x30 — the SEQUENCE, NOT the [0]-tagged form the field sits behind here " +
+    "(RFC 4178 section 5). Got " + (listBytes ? listBytes.value : "no row"));
+
+  // The recursion: the mechToken is an ordinary GSS token, and the AP-REQ
+  // inside it is an ordinary AP-REQ, so both go through the describers that
+  // already exist rather than through a second implementation.
+  const nested = doc.sections.filter(function (s) {
+    return /mechToken/.test(s.title || "");
+  })[0];
+  assert.ok(nested, "the mechToken must be opened rather than left as hex: " +
+      doc.sections.map(function (s) { return s.title; }).join(" | "));
+  const nestedTitles = (nested.sections || []).map(function (s) {
+    return s.title;
+  });
+  assert.ok(nestedTitles.indexOf("AP-REQ") !== -1,
+    "and the Kerberos message inside it described by the same code that " +
+    "describes a pasted AP-REQ: " + nestedTitles.join(", "));
+
+  // The acceptor's answer, which is a BARE NegTokenResp and therefore has no
+  // wrapper and no OID at all.
+  const resp = spnego.encodeNegTokenResp({
+    negState: spnego.NEG_STATE.REJECT,
+    supportedMech: spnego.KRB5_MECH_OID
+  });
+  const answer = await describe.describe(b64(resp));
+  assert.strictEqual(answer.kind, "SPNEGO NegTokenResp",
+    "a bare NegTokenResp — 0xa1 with no wrapper — must be recognised too, " +
+    "and it is the shape every token after the first takes in BOTH " +
+    "directions. Got " + answer.kind);
+  assert.ok(answer.problems.some(function (p) {
+    return /nothing.*why|no mechanism token/i.test(p);
+  }), "and a rejection carrying no mechanism token must be FLAGGED: SPNEGO " +
+    "has no reason field at all, so that token is the entire diagnosis and " +
+    "its absence cannot be told from a wrong password. Problems: " +
+    answer.problems.join(" | "));
+
+  // A malformed inner message is CONTENT, not an exception. The negotiation
+  // around it is very often what explains the breakage — a token truncated by
+  // a proxy still has a perfectly readable mechanism list in front of it — so
+  // losing the whole document to a throw would discard the useful half.
+  const broken = spnego.encodeNegTokenInit({
+    mechTypes: [spnego.KRB5_MECH_OID],
+    mechToken: gss.encodeInitialContextToken(gss.TOK_ID.AP_REQ,
+        unhex("6e020105"))
+  });
+  const partial = await describe.describe(b64(broken.token));
+  assert.ok(/NegTokenInit/.test(partial.kind),
+    "a NegTokenInit whose mechToken does not parse must still be described " +
+    "as a NegTokenInit: " + partial.kind);
+  assert.ok(partial.problems.some(function (p) {
+    return /does not parse/.test(p);
+  }), "with the inner failure reported as a problem rather than thrown: " +
+    partial.problems.join(" | "));
+  log.info("a Negotiate header is explained layer by layer");
+  log.debug("Leaving aNegotiateHeaderIsExplainedLayerByLayer().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Verifying common/krb5/krb5_describe.js and " +
@@ -1140,6 +1268,7 @@ async function test() {
   await aKeytabOpensATicket();
   await aTicketsPacIsDecodedAndItsSignaturesReported();
   await aDelegatedCredentialIsDescribedAsACapability();
+  await aNegotiateHeaderIsExplainedLayerByLayer();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

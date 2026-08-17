@@ -437,7 +437,8 @@ async function aesSha1RoundTripsAtEveryBoundary() {
   log.debug("Entering aesSha1RoundTripsAtEveryBoundary().");
   for (const id of [17, 18]) {
     const e = kcrypto.etypeById(id);
-    const key = await e.stringToKey("hunter2", ascii("EXAMPLE.COMalice"), null);
+    const key = await e.stringToKey("password!",
+        ascii("EXAMPLE.COMalice"), null);
     assert.strictEqual(key.length, e.keyBytes, e.name + " key length");
 
     // 0 crosses no boundary; 1 and 15 make a partial second block; 16 makes the
@@ -543,7 +544,8 @@ async function checksumsAreKeyedAndVerified() {
   log.debug("Entering checksumsAreKeyedAndVerified().");
   for (const id of [17, 18, 19, 20, 23]) {
     const e = kcrypto.etypeById(id);
-    const key = await e.stringToKey("hunter2", ascii("EXAMPLE.COMalice"), null);
+    const key = await e.stringToKey("password!",
+        ascii("EXAMPLE.COMalice"), null);
     const msg = ascii("the quick brown fox");
     const c = await e.checksum(key, kcrypto.KEY_USAGE.AP_REQ_AUTH_CKSUM, msg);
     assert.strictEqual(c.length, e.checksumBytes, e.name + " checksum length");

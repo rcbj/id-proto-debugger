@@ -76,3 +76,10 @@ output "instance_private_key_pem" {
   value       = tls_private_key.dc.private_key_pem
   sensitive   = true
 }
+
+output "delegation" {
+  description = "The four delegation roles and their SPNs. Keytabs and passwords are not here — they are in the bootstrap's dc.json, which is where the test reads them from."
+  value = var.provision_delegation ? {
+    for role, d in local.delegation : role => d.spn
+  } : {}
+}

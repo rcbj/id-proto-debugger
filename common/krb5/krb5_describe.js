@@ -39,6 +39,8 @@ var asn1 = require("./krb5_asn1.js");
 var msgs = require("./krb5_messages.js");
 var kcrypto = require("./krb5_crypto.js");
 var kpac = require("./krb5_pac.js");
+var gss = require("./krb5_gss.js");
+var spnego = require("./krb5_spnego.js");
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({
   name: "krb5_describe",
@@ -1133,6 +1135,308 @@ function describeKrbError(e, problems) {
 // ---------------------------------------------------------------------------
 // The entry point.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// A GSS or SPNEGO token, which is what somebody pastes when they have copied an
+// `Authorization: Negotiate` or `WWW-Authenticate: Negotiate` header.
+//
+// This is the ONE branch of this module that is not a Kerberos message, and it
+// is here rather than on the SPNEGO page for the reason everything else in this
+// file is: the decoder page takes bytes from anywhere, and a header value is
+// where most people first meet a Kerberos token. Before this, such a paste
+// reported "[APPLICATION 0] — this build does not decode that message yet",
+// which is true, unhelpful, and names the wrong layer.
+//
+// The recursion is deliberate: the mechToken inside a NegTokenInit is an
+// ordinary InitialContextToken, and the AP-REQ inside THAT is an ordinary
+// AP-REQ, so both are handed to the functions that already describe them
+// (including their decryption attempts against whatever keys the reader
+// supplied). One implementation of "explain an AP-REQ", reached three ways.
+// ---------------------------------------------------------------------------
+function looksLikeGssToken(bytes) {
+  log.debug("Entering looksLikeGssToken().");
+  var b = prim.toBytes(bytes);
+  // 0xa1 is a bare NegTokenResp and cannot be anything else here — no Kerberos
+  // message begins with it. 0x60 is [APPLICATION 0], which the Kerberos
+  // grammar never uses (its lowest is 1, Ticket), so it is always a GSS
+  // InitialContextToken.
+  var yes = b.length > 1 && (b[0] === 0x60 || b[0] === 0xa1);
+  log.debug("Leaving looksLikeGssToken(). " + yes);
+  return yes;
+}
+
+// The mechanism token inside a mechToken/responseToken: an InitialContextToken
+// wrapping an AP-REQ, an AP-REP or a KRB-ERROR.
+async function describeMechToken(bytes, keys, problems, label) {
+  log.debug("Entering describeMechToken(). " + label);
+  var section = {
+    title: label,
+    note: null,
+    rows: [],
+    sections: []
+  };
+  var inner;
+  try {
+    inner = gss.decodeInitialContextToken(bytes);
+  } catch (e) {
+    // Not a wrapped token. RFC 4121 section 4.1 wraps only the FIRST token of a
+    // mechanism's exchange, so a bare AP-REP here is correct rather than
+    // broken — try it as a plain message before reporting anything.
+    section.rows.push(row("wrapper", "none",
+        "Only a mechanism's FIRST token carries the RFC 2743 0x60 wrapper. " +
+        "This one has none, so it is read as a bare message: " + e.message));
+    var bare = null;
+    try {
+      bare = msgs.identify(bytes);
+    } catch (e2) {
+      // identify() only peeks at a tag; a throw here means the bytes are not
+      // ASN.1 at all, which the tree below reports better than a row would.
+      bare = null;
+    }
+    if (bare) {
+      section.sections.push(await describeKerberosInside(bytes, keys,
+          problems));
+    } else {
+      section.rows.push(row("contents", hexOf(bytes),
+          "Not a Kerberos message and not a GSS wrapper."));
+    }
+    log.debug("Leaving describeMechToken(). Unwrapped.");
+    return section;
+  }
+  section.rows.push(row("mechanism OID", inner.mechOid + "  (" +
+      spnego.mechName(inner.mechOid) + ")", null));
+  section.rows.push(row("token id",
+      prim.toHex(new Uint8Array(inner.tokId)) + "  (" +
+      (inner.tokIdName || "unrecognised") + ")",
+      "RFC 4121 section 4.1: 01 00 is an AP-REQ, 02 00 an AP-REP, 03 00 a " +
+      "KRB-ERROR."));
+  section.sections.push(await describeKerberosInside(inner.inner, keys,
+      problems));
+  log.debug("Leaving describeMechToken().");
+  return section;
+}
+
+// One Kerberos message, as a nested section. Shares every describer above, so
+// the decryption attempts and the notes are the ones the top-level view gives.
+async function describeKerberosInside(bytes, keys, problems) {
+  log.debug("Entering describeKerberosInside().");
+  var id = msgs.identify(bytes);
+  var A = msgs.APPLICATION;
+  try {
+    return await describeKerberosMessage(bytes, keys, problems, id, A);
+  } catch (e) {
+    // A message that announces itself and then does not parse is CONTENT here,
+    // not an exception — the same rule the top level follows. Letting it
+    // propagate would lose the whole document, including the negotiation
+    // around it, which is very often the part that explains why the inner
+    // bytes are wrong: a token truncated by a proxy still has a perfectly
+    // readable mechTypes list in front of it.
+    problems.push("The " + (id ? id.name : "mechanism token") +
+        " inside this token does not parse: " + e.message);
+    log.debug("Leaving describeKerberosInside(). Does not parse.");
+    return {
+      title: (id ? id.name : "Mechanism token") + " (does not parse)",
+      rows: [
+        row("error", e.message),
+        row("bytes", hexOf(bytes))
+      ]
+    };
+  }
+}
+
+async function describeKerberosMessage(bytes, keys, problems, id, A) {
+  log.debug("Entering describeKerberosMessage().");
+  if (id && id.applicationNumber === A.AP_REQ) {
+    var reqDoc = await describeApReq(msgs.readApReq(bytes), keys, problems);
+    log.debug("Leaving describeKerberosMessage(). AP-REQ.");
+    return { title: "AP-REQ", note: reqDoc.summary, sections: reqDoc.sections };
+  }
+  if (id && id.applicationNumber === A.AP_REP) {
+    var repDoc = await describeApRep(msgs.readApRep(bytes), keys);
+    log.debug("Leaving describeKerberosMessage(). AP-REP.");
+    return { title: "AP-REP", note: repDoc.summary, sections: repDoc.sections };
+  }
+  if (id && id.applicationNumber === A.KRB_ERROR) {
+    var errDoc = describeKrbError(msgs.readKrbError(bytes), problems);
+    log.debug("Leaving describeKerberosMessage(). KRB-ERROR.");
+    return {
+      title: "KRB-ERROR",
+      note: errDoc.summary,
+      sections: errDoc.sections
+    };
+  }
+  log.debug("Leaving describeKerberosMessage(). Unrecognised.");
+  return {
+    title: "Mechanism token",
+    rows: [row("contents", hexOf(bytes),
+        id ? "A " + id.name + ", which is not one of the three messages a " +
+            "GSS context exchange carries." : "Not a Kerberos message.")]
+  };
+}
+
+async function describeSpnego(bytes, keys, problems) {
+  log.debug("Entering describeSpnego().");
+  var parsed;
+  try {
+    parsed = spnego.decodeNegotiationToken(bytes);
+  } catch (e) {
+    var fallback = {
+      kind: "GSS token (unrecognised)",
+      summary: e.message,
+      sections: [],
+      tree: null,
+      problems: [e.message]
+    };
+    try {
+      fallback.tree = asn1.tree(bytes);
+    } catch (e2) {
+      // Neither a negotiation token nor parseable ASN.1. Both facts are worth
+      // saying: the first names the layer, the second says why nothing below
+      // it can be shown.
+      fallback.problems.push("The ASN.1 structure could not be shown " +
+          "either: " + e2.message);
+    }
+    log.debug("Leaving describeSpnego(). Not a negotiation token.");
+    return fallback;
+  }
+
+  if (parsed.kind === "RawKerberos") {
+    var raw = {
+      kind: "GSS InitialContextToken (Kerberos, not SPNEGO)",
+      summary: "A bare Kerberos GSS token — no negotiation around it",
+      sections: [{
+        title: "What this is",
+        note: parsed.note,
+        rows: [
+          row("mechanism OID", parsed.mechOid + "  (Kerberos v5)",
+              "SPNEGO's own OID is " + spnego.SPNEGO_OID + ", and it is not " +
+              "here — so nothing was negotiated."),
+          row("total size", prim.toBytes(bytes).length + " bytes")
+        ]
+      }],
+      problems: []
+    };
+    raw.sections.push(await describeMechToken(bytes, keys, problems,
+        "The Kerberos token"));
+    log.debug("Leaving describeSpnego(). Raw Kerberos.");
+    return raw;
+  }
+
+  if (parsed.kind === "NegTokenResp") {
+    var respDoc = {
+      kind: "SPNEGO NegTokenResp",
+      summary: "The acceptor's answer" +
+        (parsed.negStateName ? " — " + parsed.negStateName : ""),
+      sections: [{
+        title: "NegTokenResp",
+        note: "Every SPNEGO token after the initiator's first one is a BARE " +
+          "NegTokenResp: no 0x60 wrapper and no OID, just [1] and the " +
+          "SEQUENCE (RFC 4178 section 4.2).",
+        rows: [
+          row("negState", parsed.negState === null ? null :
+              parsed.negState + "  (" + parsed.negStateName + ")",
+              parsed.negStateMeaning),
+          row("supportedMech", parsed.supportedMech
+            ? parsed.supportedMech + "  (" + parsed.supportedMechName + ")"
+            : null,
+            parsed.supportedMech
+              ? "The mechanism the acceptor chose. Legal only in its FIRST " +
+                "reply; on a later one it is telling the initiator to start " +
+                "again."
+              : null),
+          row("responseToken", parsed.responseToken ?
+              hexOf(parsed.responseToken) : null,
+              parsed.responseToken ? "the selected mechanism's own token" :
+                  null),
+          row("mechListMIC", parsed.mechListMic ?
+              hexOf(parsed.mechListMic) : null,
+              parsed.mechListMic
+                ? "An RFC 4121 MIC over the DER of the MechTypeList — the " +
+                  "SEQUENCE, NOT the [0] wrapper it sits behind in the " +
+                  "NegTokenInit (RFC 4178 section 5). Two bytes, and it is " +
+                  "the commonest reason a MIC does not verify."
+                : null)
+        ]
+      }],
+      problems: parsed.problems || []
+    };
+    if (parsed.responseToken) {
+      respDoc.sections.push(await describeMechToken(parsed.responseToken, keys,
+          problems, "Inside responseToken"));
+    }
+    log.debug("Leaving describeSpnego(). NegTokenResp.");
+    return respDoc;
+  }
+
+  var mechRows = parsed.mechTypes.map(function (oid, i) {
+    var mech = spnego.mechByOid(oid);
+    return row("mechTypes[" + i + "]", oid + "  (" +
+        parsed.mechTypeNames[i] + ")",
+      (i === 0 ? "The initiator's FIRST preference. RFC 4178 section 5 makes " +
+          "the mechListMIC exchange optional only when the acceptor selects " +
+          "this one. " : "") + (mech ? mech.note : ""));
+  });
+  var initDoc = {
+    kind: "SPNEGO " + parsed.kind,
+    summary: "An initiator offering " + parsed.mechTypes.length +
+      " mechanism(s)" + (parsed.mechToken ? " with an optimistic token" : ""),
+    sections: [{
+      title: parsed.kind,
+      note: parsed.kind === "NegTokenInit2"
+        ? "[MS-SPNG]'s extended initial token, which a Windows ACCEPTOR " +
+          "sends when it speaks first. Its negHints takes tag [3], which is " +
+          "mechListMIC's tag in RFC 4178 — so the two are told apart by what " +
+          "is inside (a SEQUENCE against an OCTET STRING), never by the " +
+          "direction of travel."
+        : "The initiator's first token, and the only one wrapped in an RFC " +
+          "2743 InitialContextToken carrying SPNEGO's own OID (" +
+          spnego.SPNEGO_OID + ").",
+      rows: mechRows.concat([
+        row("reqFlags", parsed.reqFlags ? hexOf(parsed.reqFlags) : null,
+            parsed.reqFlags
+              ? "Deprecated by RFC 4178 section 4.2.1 — receivers MUST " +
+                "ignore it. The flags a service reads are in the 0x8003 " +
+                "checksum inside the AP-REQ."
+              : null),
+        row("mechToken", parsed.mechToken ? hexOf(parsed.mechToken) : null,
+            parsed.mechToken
+              ? "The OPTIMISTIC token: the initiator's first token for its " +
+                "preferred mechanism, sent before knowing whether the " +
+                "acceptor will choose that mechanism. It is what lets " +
+                "Kerberos ride on the very first HTTP request."
+              : "No optimistic token, so the acceptor must answer with " +
+                "accept-incomplete and ask for one — an extra round trip."),
+        row("mechListMIC", parsed.mechListMic ?
+            hexOf(parsed.mechListMic) : null,
+            parsed.mechListMic
+              ? "Computed over the DER of the MechTypeList — the SEQUENCE, " +
+                "not the [0] wrapper (RFC 4178 section 5)."
+              : null),
+        row("negHints.hintName", parsed.negHints ?
+            parsed.negHints.hintName : null,
+            parsed.negHints
+              ? "Every Windows server sends the literal " +
+                "\"not_defined_in_RFC4178@please_ignore\" here. It looks " +
+                "like a defect and is not."
+              : null)
+      ])
+    }],
+    problems: parsed.problems || []
+  };
+  if (parsed.mechListDer) {
+    initDoc.sections[0].rows.push(row("MechTypeList bytes",
+        hexOf(parsed.mechListDer),
+        "These exact bytes are the input to GSS_GetMIC for the mechListMIC. " +
+        "They are sliced out of what arrived rather than re-encoded, because " +
+        "a re-encoding that is legal and different verifies against nothing."));
+  }
+  if (parsed.mechToken) {
+    initDoc.sections.push(await describeMechToken(parsed.mechToken, keys,
+        problems, "Inside mechToken"));
+  }
+  log.debug("Leaving describeSpnego(). " + parsed.kind + ".");
+  return initDoc;
+}
+
 async function describe(input, options) {
   log.debug("Entering describe().");
   var opts = options || {};
@@ -1148,7 +1452,15 @@ async function describe(input, options) {
 
   var id = msgs.identify(bytes);
   var doc;
-  if (!id) {
+  if (looksLikeGssToken(bytes)) {
+    // Asked BEFORE identify(), and the order is the whole point. A GSS token
+    // begins 0x60 — [APPLICATION 0] — so identify() answers "[APPLICATION 0]"
+    // and the message falls through to "this build does not decode that
+    // message yet". True of the Kerberos grammar, and the wrong layer: what
+    // was pasted is a `Negotiate` header value, and the Kerberos message is
+    // two wrappers inside it.
+    doc = await describeSpnego(bytes, keys, problems);
+  } else if (!id) {
     // Not a Kerberos message. Show the ASN.1 structure rather than refusing: a
     // structural tree is far more useful than "could not parse", and it is how
     // a codec bug in THIS tool becomes visible.

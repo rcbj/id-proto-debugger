@@ -44,74 +44,130 @@ rather than showing you a hex blob.</p>
 
 <div id="krb_environment_note"></div>
 
-<fieldset class="krb-pane">
-  <legend>The ticket to present</legend>
-  <label for="krb_ticket_select">Service ticket</label>
+<!--#include file="/partials/krb_steps.html"-->
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane on this page.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<div class="dbg-pane" id="pane_ticket_present">
+  <legend class="dbg-legend" id="ticket_present_expand_button">The ticket to present</legend>
+  <fieldset name="ticket_present_fieldset" id="ticket_present_fieldset" style="display: block;">
+  <div class="tooltip"><label for="krb_ticket_select">Service ticket</label><span class="tooltiptext">Which held service ticket to present. Each one names a single service; a ticket for one service proves nothing to another.</span></div>
   <select id="krb_ticket_select" class="krb-field"></select>
   <div id="krb_ticket_pane"></div>
   <p class="krb-note">A TGT will not do: it is a ticket to <code>krbtgt</code>, and a service refuses it
   with <code>KRB_AP_ERR_NOT_US</code>. That refusal is worth seeing once, and the decoder page will show
   you the ticket's <code>sname</code> if you want to know why.</p>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>Where the service is</legend>
-  <div class="krb-keys">
-    <label for="krb_service_host">Host or address</label>
-    <input type="text" id="krb_service_host" class="krb-field" value="127.0.0.1" spellcheck="false">
-    <p class="krb-note">Prefilled from the SPN's host component, which is a <em>guess</em>: an SPN's host
-    part and the address a service actually answers on are not required to agree, and on a load-balanced
-    service they routinely do not.</p>
+<div class="dbg-pane" id="pane_config">
+  <legend class="dbg-legend" id="config_expand_button">Configuration Parameters</legend>
+  <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
+  <div class="krb-grid">
+    <div class="krb-keys">
+      <div class="krb-group">Where the service is</div>
+      <div class="tooltip"><label for="krb_service_host">Host or address</label><span class="tooltiptext">Where the protected service is. This goes to the api's SERVICE relay, which is off unless configured — a service is not on port 88 and a port list cannot bound it.</span></div>
+      <input type="text" id="krb_service_host" class="krb-field" value="127.0.0.1" spellcheck="false">
 
-    <label for="krb_service_port">Port</label>
-    <input type="text" id="krb_service_port" class="krb-field" value="8888">
-    <p class="krb-note">There is no default: a Kerberos service can be on any port. That is also why the
-    api disables this relay endpoint unless <code>krb5ServicePorts</code> is set &mdash; sending
+      <div class="tooltip"><label for="krb_service_port">Port</label><span class="tooltiptext">The service's port. It must be on the api's krb5ServicePorts list, which is empty by default and therefore refuses everything until set.</span></div>
+      <input type="text" id="krb_service_port" class="krb-field" value="8888">
+    </div>
+
+    <div class="krb-keys">
+      <div class="krb-group">What to ask for &mdash; the GSS flags</div>
+      <div class="krb-checks">
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_flag_mutual" checked="checked">
+        MUTUAL &mdash; require the service to prove itself back</label><span class="tooltiptext">Ask the service to prove itself back with an AP-REP. Without it the client has authenticated to the service and learned nothing about who answered.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_flag_integ" checked="checked">
+        INTEG &mdash; integrity protection for per-message tokens</label><span class="tooltiptext">Offer integrity protection for later per-message tokens (MIC). Advertised in the 0x8003 checksum's flags.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_flag_conf" checked="checked">
+        CONF &mdash; confidentiality (GSS_Wrap)</label><span class="tooltiptext">Offer confidentiality for later per-message tokens (Wrap). Also advertised in the 0x8003 flags.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_flag_replay">
+        REPLAY &mdash; replay detection for per-message tokens</label><span class="tooltiptext">Ask for replay detection on per-message tokens. It commits the service to keeping state about what it has already seen.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_flag_sequence">
+        SEQUENCE &mdash; out-of-sequence detection</label><span class="tooltiptext">Ask for out-of-sequence detection, which orders per-message tokens rather than merely deduplicating them.</span></div>
+      <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_send_subkey" checked="checked">
+        send a subkey in the Authenticator</label><span class="tooltiptext">Put a fresh subkey in the authenticator so later per-message tokens use it instead of the ticket's session key. Changes which key the AP-REP and every MIC/Wrap is keyed with.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <details class="krb-more">
+    <summary>What these choices actually decide</summary>
+    <p class="krb-note">The host is prefilled from the SPN's host component, which is a <em>guess</em>:
+    an SPN's host part and the address a service actually answers on are not required to agree, and on a
+    load-balanced service they routinely do not.</p>
+    <p class="krb-note">There is no default port: a Kerberos service can be on any port. That is also
+    why the api disables this relay endpoint unless <code>krb5ServicePorts</code> is set &mdash; sending
     caller-supplied bytes to an arbitrary port is a broader capability than reaching a KDC on port 88, so
     it is switched on deliberately. What bounds it instead is the payload check: only a GSS-wrapped
     AP-REQ, or a bare one, gets through.</p>
-  </div>
-</fieldset>
-
-<fieldset class="krb-pane">
-  <legend>What to ask for &mdash; the GSS flags</legend>
-  <div class="krb-keys">
-    <label class="krb-check"><input type="checkbox" id="krb_flag_mutual" checked="checked">
-      MUTUAL &mdash; require the service to prove itself back</label>
-    <label class="krb-check"><input type="checkbox" id="krb_flag_integ" checked="checked">
-      INTEG &mdash; integrity protection for per-message tokens</label>
-    <label class="krb-check"><input type="checkbox" id="krb_flag_conf" checked="checked">
-      CONF &mdash; confidentiality (GSS_Wrap)</label>
-    <label class="krb-check"><input type="checkbox" id="krb_flag_replay">
-      REPLAY &mdash; replay detection for per-message tokens</label>
-    <label class="krb-check"><input type="checkbox" id="krb_flag_sequence">
-      SEQUENCE &mdash; out-of-sequence detection</label>
-    <label class="krb-check"><input type="checkbox" id="krb_send_subkey" checked="checked">
-      send a subkey in the Authenticator</label>
     <p class="krb-note">Untick <strong>MUTUAL</strong> to see what a one-way context looks like: the
     service may accept the ticket and answer nothing at all, which is legitimate and means
     <em>nothing has proved the service is who it claims to be</em>. That is the difference between
     authenticating a client and authenticating a connection.</p>
-  </div>
+  </details>
+
   <input type="button" id="krb_present_button" class="btn2" value="Present the ticket"
          disabled="disabled">
   <div id="krb_ap_status" class="krb-status"></div>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>What went out</legend>
-  <div id="krb_request_pane"></div>
-  <div id="krb_apreq_pane"></div>
-  <div id="krb_checksum_pane"></div>
+<div class="dbg-pane" id="pane_sent">
+  <legend class="dbg-legend" id="sent_expand_button">What went out</legend>
+  <fieldset name="sent_fieldset" id="sent_fieldset" style="display: block;">
+  <div class="krb-tabs" data-krb-tabs="request">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="request" data-krb-tab="decoded">
+    <div id="krb_request_pane"></div>
+    <div id="krb_apreq_pane"></div>
+    <div id="krb_checksum_pane"></div>
+  </div>
+  <!-- The hex tab shows the GSS InitialContextToken: the bytes that actually
+       went to the service, wrapper and all. The decoded tab beside it takes
+       that token apart, which is why the AP-REQ and the 0x8003 checksum are
+       panes there and not here. -->
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="request"
+       data-krb-tab="hex">
+    <div id="krb_request_hex"></div>
+  </div>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>What came back</legend>
-  <div id="krb_reply_pane"></div>
+<div class="dbg-pane" id="pane_received">
+  <legend class="dbg-legend" id="received_expand_button">What came back</legend>
+  <fieldset name="received_fieldset" id="received_fieldset" style="display: block;">
+  <div class="krb-tabs" data-krb-tabs="reply">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="reply" data-krb-tab="decoded">
+    <div id="krb_reply_pane"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="reply"
+       data-krb-tab="hex">
+    <div id="krb_reply_hex"></div>
+  </div>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>The security context</legend>
+<div class="dbg-pane" id="pane_security_context">
+  <legend class="dbg-legend" id="security_context_expand_button">The security context</legend>
+  <fieldset name="security_context_fieldset" id="security_context_fieldset" style="display: block;">
   <div id="krb_context_pane"></div>
   <p class="krb-note">Mutual authentication is an <strong>echo</strong>: the AP-REP returns the
   Authenticator's <code>ctime</code> and <code>cusec</code> encrypted under the ticket's session key. Only
@@ -122,11 +178,13 @@ rather than showing you a hex blob.</p>
   <code>ctime</code> is second-precision and the sub-second part travels in <code>cusec</code>. Comparing
   a millisecond-precision timestamp here accuses a perfectly correct service of not being itself.</p>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>Per-message tokens</legend>
+<div class="dbg-pane" id="pane_per_message_tokens">
+  <legend class="dbg-legend" id="per_message_tokens_expand_button">Per-message tokens</legend>
+  <fieldset name="per_message_tokens_fieldset" id="per_message_tokens_fieldset" style="display: block;">
   <div class="krb-keys">
-    <label for="krb_message">Message</label>
+    <div class="tooltip"><label for="krb_message">Message</label><span class="tooltiptext">The payload to protect with a per-message token, once a context exists. Its bytes are what the MIC covers or what Wrap encrypts.</span></div>
     <input type="text" id="krb_message" class="krb-field" value="the quick brown fox">
   </div>
   <input type="button" id="krb_mic_button" class="btn2" value="GetMIC (integrity)" disabled="disabled">
@@ -138,6 +196,7 @@ rather than showing you a hex blob.</p>
   initiator signs with 25 and seals with 24, an acceptor with 23 and 22. The wrong pair produces a token
   the far end cannot verify, and the error names the checksum rather than the direction.</p>
 </fieldset>
+</div>
 
 <p class="krb-intro"><strong>The PAC, and what a Windows service actually reads.</strong> A ticket proves
 who the client is and says nothing about its group memberships &mdash; a Windows service authorizes on the
@@ -159,6 +218,10 @@ hold the <code>krbtgt</code> key at all.</p>
 S4U2Proxy and resource-based constrained delegation &mdash; and cross-realm referrals. A ticket this build
 produces carries a PAC a Windows service can read, but nothing here yet asks a KDC to obtain one
 <em>on behalf of</em> somebody else.</p>
+
+<!--#include file="/partials/krb_tickets.html"-->
+
+<!--#include file="/partials/krb_history.html"-->
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">

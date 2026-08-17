@@ -52,7 +52,9 @@ var kdcPort = process.env.KRB5_KDC_PORT || "88";
 var stsUrl = process.env.STS_URL || "http://localhost:8081";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
 var principal = process.env.KRB5_PRINCIPAL || "alice";
-var password = process.env.KRB5_PASSWORD || "hunter2";
+// Every user account in the mock KDC shares one password, and any username
+// authenticates against it — so this is the password for whatever KRB5_PRINCIPAL says.
+var password = process.env.KRB5_PASSWORD || "password!";
 
 async function waitForText(driver, id, pattern, timeoutMs, what) {
   // Wait on CONTENT, not on the element: every field here is static markup, so
@@ -218,9 +220,10 @@ async function stepTwoGetsATicketAndTreatsItAsACredential(driver) {
   log.debug("Entering stepTwoGetsATicketAndTreatsItAsACredential().");
   // CLEAR FIRST. The field arrives pre-filled from the build's own
   // krb5PasswordDefault (applyBuildDefaults() in client/src/kerberos.js), so
-  // sendKeys APPENDS: the KDC was handed "hunter2hunter2" and answered
-  // KDC_ERR_PREAUTH_FAILED, whose text names a wrong password, a wrong salt or
-  // a clock outside the skew — three things, none of them this.
+  // sendKeys APPENDS: the KDC was handed the password twice over
+  // ("password!password!") and answered KDC_ERR_PREAUTH_FAILED, whose text names a
+  // wrong password, a wrong salt or a clock outside the skew — three things, none
+  // of them this.
   await driver.findElement(By.id("krb_password")).clear();
   await driver.findElement(By.id("krb_password")).sendKeys(password);
   await driver.findElement(By.id("krb_preauth_button")).click();
@@ -331,8 +334,19 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
     "         step2: b('krb_preauth_button')," +
     "         hScroll: document.documentElement.scrollWidth > " +
         "window.innerWidth + 1," +
-    "         legend: (document.querySelector('fieldset.krb-pane > legend') " +
+    // The panes moved to the shared dbg-pane structure every other workflow
+    // uses (a .dbg-legend title beside a fieldset, rather than a legend INSIDE
+    // a fieldset.krb-pane), so this reads the new selector. Kept as a check on
+    // the first pane's title rather than on the markup: what matters is that
+    // the page still names its configuration pane.
+    "         legend: (document.querySelector('.dbg-pane > .dbg-legend') " +
         "|| {}).textContent," +
+    "         panes: document.querySelectorAll('.dbg-pane').length," +
+    "         trail: !!document.getElementById('krb_steps')," +
+    "         current: (document.querySelector('.krb-step-current a') " +
+        "|| {}).textContent," +
+    "         toggle: !!document.getElementById('dbg_toggle_all')," +
+    "         tips: document.querySelectorAll('.tooltiptext').length," +
     "         realm: v('krb_realm'), principal: v('krb_principal')," +
     "         host: v('krb_kdc_host'), port: v('krb_kdc_port')," +
     "         password: v('krb_password') ? 'set' : '' };");
@@ -361,6 +375,25 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
       "the first pane is the configuration one and is named for it across " +
           "the workflows, got: " +
       m.legend);
+
+    // The shared chrome, added 2026-08-16 to bring these pages into line with
+    // every other workflow. Each of the three is asserted because each fails
+    // silently: a trail with nothing marked current looks like a trail, a
+    // toggle with no handler looks like a toggle, and a field with no tooltip
+    // looks like a field.
+    assert.ok(m.trail, "the step trail (partials/krb_steps.html) is missing.");
+    assert.strictEqual(m.current, "1. AS exchange",
+      "the trail should mark THIS page as current; it marks " +
+          JSON.stringify(m.current) + ". markCurrentStep() is called by " +
+          "bundle, so an unmarked trail means that call is missing or names " +
+          "the wrong id.");
+    assert.ok(m.toggle, "the collapse/expand-all toggle is missing.");
+    assert.ok(m.panes >= 6,
+      "expected the six panes this page has, found " + m.panes);
+    assert.ok(m.tips >= 15,
+      "every field on this page should carry a tooltip; found " + m.tips +
+          " tooltip(s) for " + m.panes + " panes. A field without one is the " +
+          "thing this check exists to catch.");
 
     // And the defaults, which are the other half of being usable on arrival.
     // They come from the build's config (client/src/env/*.js), so a build with

@@ -68,6 +68,8 @@ var kcrypto = require("./krb5_crypto.js");
 var client = require("./krb5_client.js");
 var kpac = require("./krb5_pac.js");
 var panes = require("./kerberos_panes.js");
+var ophistory = require("./kerberos_history.js");
+var tickets = require("./kerberos_tickets.js");
 
 var el = panes.el;
 var val = panes.val;
@@ -89,15 +91,31 @@ function revive(entry) {
     log.debug("Leaving revive().");
     return {
       ticket: msgs.readTicket(panes.b64ToBytes(entry.ticket)),
-      sessionKey: panes.b64ToBytes(entry.sessionKey),
-      etype: entry.etype,
-      client: entry.client,
+      // The cache stores a session key as HEX under `sessionKey` and its
+      // encryption type under `sessionKeyEtype` — kerberos.js writes it,
+      // kerberos_tgs.js and kerberos_ap.js read it, and this page must speak
+      // the same dialect. Reading that hex as base64 SUCCEEDS, because every
+      // hex digit is also a base64 character: it yields 48 plausible bytes
+      // where 32 were issued, and nothing anywhere reports a key that is
+      // merely wrong.
+      sessionKey: prim.fromHex(entry.sessionKey),
+      etype: entry.sessionKeyEtype,
+      // A parsed principal, not the string the cache holds. buildTgsReq() puts
+      // this in the Authenticator's cname and S4U2Self uses it as the sname,
+      // and both read `.name` — which a string does not have, so a string here
+      // encodes as a one-component name containing nothing.
+      client: msgs.parsePrincipal(String(entry.client).split("@")[0],
+          msgs.NAME_TYPE.PRINCIPAL),
       realm: entry.realm,
       service: entry.service ? msgs.parsePrincipal(entry.service,
           msgs.NAME_TYPE.SRV_HST) : null,
       serviceRealm: entry.serviceRealm || entry.realm,
+      // The cache calls the ticket flags `flags` and stores them as NAMES.
+      // Reading them from `flagNames` gives an empty list for every ticket the
+      // AS page issued, and this page then says a perfectly forwardable TGT is
+      // not forwardable — which reads as a KDC or an account problem.
       flags: entry.flags || [],
-      flagNames: entry.flagNames || [],
+      flagNames: entry.flags || [],
       authtime: entry.authtime ? new Date(entry.authtime) : null,
       starttime: entry.starttime ? new Date(entry.starttime) : null,
       endtime: entry.endtime ? new Date(entry.endtime) : null,
@@ -112,24 +130,34 @@ function revive(entry) {
 }
 
 // What the cache should hold for a credential this page obtained.
+//
+// This is the shape every other page in the workflow reads: a HEX session key
+// under `sessionKey`, its encryption type under `sessionKeyEtype`, and the
+// ticket flags as NAMES under `flags`. Writing a different one here would not
+// fail on this page — revive() would read its own dialect back perfectly — it
+// would fail on the AP page, on the TGS page after a renewal replaced the live
+// TGT, and on every Ticket Cache & History row that *Make active* hands
+// back.
 function toEntry(result, spnText) {
-  log.debug("Leaving toEntry().");
   log.debug("Entering toEntry().");
+  log.debug("Leaving toEntry().");
   return {
+    isTgt: ((result.service && result.service.name) || [])[0] === "krbtgt",
     ticket: panes.bytesToB64(msgs.encTicket(result.ticket)),
-    sessionKey: panes.bytesToB64(result.sessionKey),
-    etype: result.etype,
-    client: result.client ? msgs.principalToString(result.client) : null,
+    sessionKey: prim.toHex(result.sessionKey),
+    sessionKeyEtype: result.etype,
+    sessionKeyEtypeName: kcrypto.etypeName(result.etype),
+    client: result.client ? msgs.principalToString(result.client,
+        result.realm) : null,
     realm: result.realm,
     service: spnText,
     serviceRealm: result.serviceRealm || result.realm,
-    flags: result.flags || [],
-    flagNames: result.flagNames || [],
+    flags: result.flagNames || [],
     authtime: result.authtime ? result.authtime.toISOString() : null,
     starttime: result.starttime ? result.starttime.toISOString() : null,
     endtime: result.endtime ? result.endtime.toISOString() : null,
     renewTill: result.renewTill ? result.renewTill.toISOString() : null,
-    obtained: new Date().toISOString()
+    storedAt: new Date().toISOString()
   };
 }
 
@@ -203,6 +231,31 @@ function renderHeld() {
   log.debug("Leaving renderHeld(). tgt=" + !!tgt + ", evidence=" + !!evidence);
 }
 
+// ---------------------------------------------------------------------------
+// Open an Operations History row for one of this page's four exchanges.
+//
+// Each has its own status line, so each closes independently and more than one
+// can be in flight — which is why kerberos_history.js keys the open rows by
+// status id rather than holding a single slot.
+//
+// Called at the TOP of each handler, before its guards, so that pressing
+// S4U2Proxy with no evidence ticket is a recorded Failure rather than nothing
+// at all. Fields are read unparsed: a name that would not parse is exactly the
+// row worth having.
+// ---------------------------------------------------------------------------
+function beginDelegationOperation(operation, statusId, principal, detail) {
+  log.debug("Entering beginDelegationOperation(). " + operation);
+  ophistory.begin({
+    operation: operation,
+    principal: principal || "",
+    target: val("krb_kdc_host").trim() + ":" + (val("krb_kdc_port") || "88") +
+        "/" + (val("krb_transport") || "tcp"),
+    statusId: statusId,
+    detail: detail || ""
+  });
+  log.debug("Leaving beginDelegationOperation().");
+}
+
 function kdcTarget() {
   return {
     host: val("krb_kdc_host").trim(),
@@ -270,6 +323,13 @@ async function exchange(opts) {
 // ---------------------------------------------------------------------------
 async function onS4u2Self() {
   log.debug("Entering onS4u2Self().");
+  // The principal recorded is the IMPERSONATED user, not the service running
+  // the exchange, because that is the whole question about an S4U2Self row:
+  // whose identity was asserted without their taking any part in it. The
+  // service is in the detail.
+  beginDelegationOperation(ophistory.OPS.S4U2SELF, "krb_s4u2self_status",
+      val("krb_impersonate").trim(),
+      "As " + ((tgt && tgt.client) || "(no TGT held)") + ".");
   if (!tgt) {
     status("krb_s4u2self_status", "No usable TGT is held.", "krb-bad");
     return false;
@@ -311,8 +371,13 @@ async function onS4u2Self() {
       userRealm: val("krb_realm").trim() || tgt.realm,
       // sname is the requesting service ITSELF. Taken from the TGT's own client
       // name rather than typed, because a mismatch is refused and typing it
-      // would invite one.
-      sname: tgt.client,
+      // would invite one — but typed as a SERVICE principal, which is what
+      // tests/krb5_delegation_interop.js sends to both KDCs. The mock compares
+      // the components only; a real KDC is entitled to be fussier.
+      sname: {
+        type: msgs.NAME_TYPE.SRV_INST,
+        name: tgt.client.name
+      },
       realm: val("krb_realm").trim() || tgt.realm
     });
   } catch (e) {
@@ -355,7 +420,13 @@ async function onS4u2Self() {
 
   var entry = toEntry(read, msgs.principalToString(read.service));
   panes.saveEvidence(entry);
+  // Labelled explicitly: an S4U2Self ticket is a service ticket to the
+  // requesting service ITSELF, so nothing in its names distinguishes it from an
+  // ordinary one, and what it is for — being handed back to the KDC as
+  // evidence — is the only interesting thing about it.
+  panes.recordTicket(entry, "evidence");
   renderHeld();
+  tickets.refresh();
 
   var forwardable = (read.flagNames || []).indexOf("forwardable") !== -1;
   status("krb_s4u2self_status",
@@ -379,6 +450,11 @@ async function onS4u2Self() {
 // ---------------------------------------------------------------------------
 async function onS4u2Proxy() {
   log.debug("Entering onS4u2Proxy().");
+  beginDelegationOperation(ophistory.OPS.S4U2PROXY, "krb_s4u2proxy_status",
+      (evidence && evidence.client) || val("krb_impersonate").trim(),
+      "To " + (val("krb_deleg_target").trim() || "(no target named)") +
+      (panes.checked("krb_resource_based") ? ", resource-based." :
+          ", classic."));
   if (!tgt || !evidence) {
     status("krb_s4u2proxy_status",
       "This needs both the service's own TGT and an evidence ticket from " +
@@ -466,7 +542,10 @@ async function onS4u2Proxy() {
     return false;
   }
 
-  panes.saveServiceTicket(toEntry(read, targetText));
+  var delegated = toEntry(read, targetText);
+  panes.saveServiceTicket(delegated);
+  panes.recordTicket(delegated, "delegated");
+  tickets.refresh();
   await renderDelegationTrail(read, targetText);
 
   status("krb_s4u2proxy_status",
@@ -510,6 +589,8 @@ async function renderDelegationTrail(read, targetText) {
 // ---------------------------------------------------------------------------
 async function onRenew() {
   log.debug("Entering onRenew().");
+  beginDelegationOperation(ophistory.OPS.RENEW, "krb_renew_status",
+      (tgt && tgt.client) || "(no TGT held)", "");
   if (!tgt) {
     status("krb_renew_status", "No usable TGT is held.", "krb-bad");
     return false;
@@ -569,8 +650,14 @@ async function onRenew() {
     return false;
   }
 
-  panes.saveTgt(toEntry(read, msgs.principalToString(read.service)));
+  var renewed = toEntry(read, msgs.principalToString(read.service));
+  panes.saveTgt(renewed);
+  // A renewal produces a TGT, and ticketKind() will say so from its krbtgt
+  // service whatever label is passed here — which is the point of deriving it
+  // rather than trusting the caller.
+  panes.recordTicket(renewed, "TGT");
   renderHeld();
+  tickets.refresh();
 
   // The two facts worth stating, because both are things a renewal must NOT do.
   var authtimeHeld = before.authtime && read.authtime &&
@@ -605,6 +692,8 @@ async function onRenew() {
 // ---------------------------------------------------------------------------
 async function onForward() {
   log.debug("Entering onForward().");
+  beginDelegationOperation(ophistory.OPS.FORWARD, "krb_forward_status",
+      (tgt && tgt.client) || "(no TGT held)", "");
   if (!tgt) {
     status("krb_forward_status", "No usable TGT is held.", "krb-bad");
     return false;
@@ -725,12 +814,32 @@ async function onForward() {
 function onForgetEvidence() {
   panes.forgetEvidence();
   renderHeld();
+  // The ticket is still in the history — this discards the live slot, not the
+  // record — so the pane below has to be repainted or it goes on marking that
+  // row "in use" when nothing holds it.
+  tickets.refresh();
+  ophistory.note({
+    operation: ophistory.OPS.FORGET_EVIDENCE,
+    detail: "The evidence ticket has been discarded."
+  });
   status("krb_s4u2self_status", "The evidence ticket has been discarded.",
       "krb-note");
 }
 
 function wire() {
   log.debug("Entering wire().");
+  // The shared chrome every workflow here has: the step trail marks where we
+  // are, and the toggle collapses or expands every pane at once. wirePanes()
+  // pairs each legend with its fieldset by id, so a pane added later is
+  // clickable without anything being registered for it.
+  panes.markCurrentStep("krb_step_delegation");
+  panes.wirePanes();
+  var toggleAll = el("dbg_toggle_all");
+  if (toggleAll) {
+    toggleAll.addEventListener("change", function () {
+      panes.setAllPanes(toggleAll.checked);
+    });
+  }
   panes.loadKdcFields();
   panes.setVal("krb_impersonate",
     window.localStorage.getItem(panes.KEYS.DELEGATION_USER) || "alice");
@@ -738,6 +847,17 @@ function wire() {
     window.localStorage.getItem(panes.KEYS.DELEGATION_TARGET) || "");
   panes.reportEnvironment("krb_environment");
   renderHeld();
+  // The Ticket Cache & History pane, from partials/krb_tickets.html. This is
+  // the one page holding TWO slots — a TGT to spend and an S4U2Self evidence
+  // ticket to present as evidence — so both kinds can be taken back here, and
+  // renderHeld() re-reads and re-revives both.
+  tickets.mount({
+    slots: ["TGT", "evidence"],
+    onActivate: function () {
+      renderHeld();
+    }
+  });
+  ophistory.mount("krb_operation_history", "krb_clear_operations_button");
 
   var wiring = [
     ["krb_s4u2self_button", onS4u2Self],

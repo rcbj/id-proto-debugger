@@ -42,6 +42,8 @@ var msgs = require("./krb5_messages.js");
 var kcrypto = require("./krb5_crypto.js");
 var client = require("./krb5_client.js");
 var panes = require("./kerberos_panes.js");
+var ophistory = require("./kerberos_history.js");
+var tickets = require("./kerberos_tickets.js");
 
 var el = panes.el;
 var val = panes.val;
@@ -122,8 +124,43 @@ function renderHeldTgt() {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// The way back, when somebody arrived from another workflow.
+//
+// The SPNEGO page spends a service ticket and cannot obtain one, so it sends
+// people here with ?return=spnego and the SPN it wants. This offers the link
+// back — as a LINK, never a redirect: the two decoded messages above are what
+// this page exists to show, and navigating away the moment a ticket arrives
+// takes them off the screen exactly when somebody wanted to read them.
+//
+// "Ready" is not "a ticket exists": it is "a ticket for THAT SPN exists". A
+// held ticket for another service proves nothing to this one, and a banner
+// that said otherwise would send somebody back to a page that refuses them.
+// ---------------------------------------------------------------------------
+function showReturnBanner() {
+  log.debug("Entering showReturnBanner().");
+  var wanted = String(val("krb_spn") || "").split("@")[0].toLowerCase();
+  var held = false;
+  panes.readServiceTickets().forEach(function (entry) {
+    if (String(entry.service || "").split("@")[0].toLowerCase() === wanted) {
+      held = true;
+    }
+  });
+  panes.renderReturnBanner("krb_return_banner", {
+    ready: held,
+    readyText: "You now hold a service ticket for " + val("krb_spn") +
+      ", which is what it spends.",
+    needText: "It needs a service ticket for " + (val("krb_spn") ||
+      "the SPN it derived from the URL") + ". Buy one here."
+  });
+  log.debug("Leaving showReturnBanner(). ready=" + held);
+}
+
 function renderServiceTickets() {
   log.debug("Entering renderServiceTickets().");
+  // Repainted here rather than only on load, because whether the caller has
+  // what it came for changes exactly when this list does.
+  showReturnBanner();
   var host = el("krb_tickets_pane");
   if (!host) {
     log.debug("Leaving renderServiceTickets().");
@@ -168,6 +205,19 @@ function requestedEtypes() {
 
 async function onRequestServiceTicket() {
   log.debug("Entering onRequestServiceTicket().");
+  // Opened before the guards, so clicking this with no TGT held is recorded as
+  // the Failure it is. Every exit below sets a status on krb_tgs_status, and
+  // that is what closes the row — see the note at the top of
+  // kerberos_history.js. The principal is the TGT's client rather than a field
+  // on this page, because a TGS-REQ acts as whoever the TGT was issued to and
+  // that is the only place this page can learn it.
+  ophistory.begin({
+    operation: ophistory.OPS.TGS,
+    principal: (tgt && tgt.client) || "(no TGT held)",
+    target: val("krb_spn").trim() + " via " + val("krb_kdc_host").trim() +
+        ":" + (val("krb_kdc_port") || "88"),
+    statusId: "krb_tgs_status"
+  });
   if (!tgt) {
     status("krb_tgs_status", "No usable TGT is held.", "krb-bad");
     return false;
@@ -314,7 +364,12 @@ async function onRequestServiceTicket() {
     storedAt: new Date().toISOString()
   };
   panes.saveServiceTicket(entry);
+  // Into the workflow-wide Ticket Cache & History as well, which every page
+  // shows. Every page that OBTAINS a ticket records it; the pane is a record of
+  // the whole workflow rather than of one page.
+  panes.recordTicket(entry, "service");
   renderServiceTickets();
+  tickets.refresh();
   lastExchange = outcome;
 
   // Which key usage opened the reply is reported, not hidden. A client that
@@ -336,14 +391,41 @@ async function onRequestServiceTicket() {
 }
 
 function onForgetTickets() {
+  log.debug("Entering onForgetTickets().");
+  var dropped = panes.readServiceTickets().length;
   panes.forgetServiceTickets();
   renderServiceTickets();
+  // The tickets are still in the history — this discards the live cache, not
+  // the record — so the pane below has to be repainted or it goes on marking
+  // rows "in use" that nothing holds any more.
+  tickets.refresh();
+  ophistory.note({
+    operation: ophistory.OPS.FORGET_TICKETS,
+    detail: dropped + " service ticket(s) discarded."
+  });
   status("krb_tgs_status", "The stored service tickets were cleared.", null);
+  log.debug("Leaving onForgetTickets().");
   return false;
 }
 
 window.onload = async function () {
   log.debug("Entering onload().");
+  // The shared chrome every workflow here has: the step trail marks where we
+  // are, and the toggle collapses or expands every pane at once. wirePanes()
+  // pairs each legend with its fieldset by id, so a pane added later is
+  // clickable without anything being registered for it.
+  panes.markCurrentStep("krb_step_tgs");
+  panes.wirePanes();
+  // The Decoded/Hex strips inside the message panes. Paired by their group
+  // name the way the legends are paired with their fieldsets, so a strip
+  // added to the markup needs nothing here.
+  panes.wireTabs();
+  var toggleAll = el("dbg_toggle_all");
+  if (toggleAll) {
+    toggleAll.addEventListener("change", function () {
+      panes.setAllPanes(toggleAll.checked);
+    });
+  }
   panes.enforceStoragePreference();
   panes.loadKdcFields();
   try {
@@ -352,11 +434,37 @@ window.onload = async function () {
   } catch (e) {
     // No storage: the default in the markup stands.
   }
+  // A caller may name the SPN it needs, and it wins over what was stored: the
+  // SPNEGO page derived it from a URL that is the reason somebody is here, so
+  // filling the field with the last SPN this page happened to use would send
+  // them back with a ticket for the wrong service — which is refused a page
+  // later with KRB_AP_ERR_NOT_US and reads as a broken ticket.
+  panes.noteReturnTarget();
+  try {
+    var asked = new URLSearchParams(window.location.search).get("spn");
+    if (asked) {
+      panes.setVal("krb_spn", asked);
+    }
+  } catch (e) {
+    // No URLSearchParams, or an unparseable query. The stored value stands.
+    log.warn("could not read the requested SPN: " + e.message);
+  }
   await panes.reportEnvironment("krb_environment_note", {
     disableOnNoBackend: ["krb_tgs_button"]
   });
   renderHeldTgt();
   renderServiceTickets();
+  // The Ticket Cache & History pane, from partials/krb_tickets.html. This page
+  // spends a TGT, so a TGT is what it can take back — and renderHeldTgt() is
+  // what re-reads it, re-revives it and re-enables the button, which is why the
+  // callback is that function rather than a repaint.
+  tickets.mount({
+    slots: ["TGT"],
+    onActivate: function () {
+      renderHeldTgt();
+    }
+  });
+  ophistory.mount("krb_operation_history", "krb_clear_operations_button");
   var button = el("krb_tgs_button");
   if (button) button.addEventListener("click",
       function () { onRequestServiceTicket(); });

@@ -23,4 +23,14 @@ locals {
   # takes SSM offline and with it the only channel into the instance. See the
   # note in userdata.ps1.tftpl.
   vpc_dns = cidrhost(local.vpc_cidr, 2)
+
+  # The delegation fixture, resolved once so the userdata, the outputs and the
+  # test cannot disagree about a single SPN. sAMAccountName is capped at 20
+  # characters by AD, which "svc-notrusted" (13) is comfortably inside.
+  delegation = {
+    for role, host in var.delegation_hosts : role => {
+      account = "svc-${host}"
+      spn     = "${var.service_class}/${host}.${var.domain_name}"
+    }
+  }
 }

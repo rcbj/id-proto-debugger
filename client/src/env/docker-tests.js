@@ -54,7 +54,7 @@ var config = {
   krb5KdcHostDefault: "sts",
   krb5KdcPortDefault: "88",
   krb5PrincipalDefault: "alice",
-  krb5PasswordDefault: "hunter2"
+  krb5PasswordDefault: "password!"
 };
 
 module.exports = config;

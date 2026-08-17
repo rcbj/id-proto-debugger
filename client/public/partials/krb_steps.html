@@ -1,0 +1,37 @@
+<!-- The steps of the Kerberos v5 workflow: links to every page, on one row, at
+     the top of each of them. Each page marks its own step with
+     class="krb-step-current" from its bundle (kerberos_panes.js
+     markCurrentStep()), so the same markup can be shared.
+
+     FIVE NUMBERED STEPS AND ONE TOOL, and the split is the protocol's own. The
+     AS, TGS and AP exchanges are a sequence: each one spends what the previous
+     one produced, which is why they are numbered and why moving back and forth
+     along them is useful. Delegation is step 4 because it needs a TGT from step
+     1 and produces tickets the AP exchange consumes — it extends the sequence
+     rather than sitting outside it.
+
+     SPNEGO is step 5 and it is a SIBLING of step 3 rather than a successor:
+     both present a service ticket, and the only difference is the transport —
+     a raw socket there, an HTTP header here. It is numbered last rather than
+     placed beside the AP exchange because renumbering the three exchanges
+     would move ids every Kerberos test locates by, and because it is the one
+     step that spends a ticket somewhere a browser can actually reach.
+
+     The DECODER is not a step. It takes pasted bytes and needs no KDC, no
+     credential and no predecessor, so numbering it would imply an order that
+     does not exist. It is listed last, unnumbered, because it is the page every
+     other one sends you to when something does not decode.
+
+     Keep the captions short — five entries share the width of one row and
+     ol.krb-trail in kerberos.css does not wrap. The class is
+     krb-trail and NOT krb-steps: .krb-steps was already taken on
+     kerberos.html, where it lays step 1 and step 2 out side by
+     side, and the unscoped rule for that reached this list too. -->
+<ol class="krb-trail" id="krb_steps">
+  <li id="krb_step_as"><a href="/kerberos.html">1. AS exchange</a><span>Password &rarr; TGT</span></li>
+  <li id="krb_step_tgs"><a href="/kerberos_tgs.html">2. TGS exchange</a><span>TGT &rarr; service ticket</span></li>
+  <li id="krb_step_ap"><a href="/kerberos_ap.html">3. AP exchange</a><span>Present it to a service</span></li>
+  <li id="krb_step_delegation"><a href="/kerberos_delegation.html">4. Delegation</a><span>S4U, forwarding, renewal</span></li>
+  <li id="krb_step_spnego"><a href="/spnego.html">5. SPNEGO</a><span>A ticket in an HTTP header</span></li>
+  <li id="krb_step_decoder" class="krb-step-tool"><a href="/kerberos_decoder.html">Decoder</a><span>Explain pasted bytes</span></li>
+</ol>

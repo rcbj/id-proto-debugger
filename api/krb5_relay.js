@@ -134,10 +134,18 @@ function resolveAllowedPorts(value, log) {
   return ports;
 }
 
-function createRelay(appconfig, guard, log) {
+function createRelay(appconfig, guard, log, deps) {
   log.debug("Entering createRelay().");
   appconfig = appconfig || {};
   const logger = log || { debug() {}, info() {}, warn() {}, error() {} };
+
+  // The name lookup is injectable for one reason, and it is the reason the DNS
+  // deadline below exists at all: a deadline cannot be tested against a
+  // resolver that works. `dns.lookup` is getaddrinfo, so it ignores
+  // `dns.setServers`, and there is no way to point it at a black hole from
+  // inside the process. `tests/api_krb5_relay.js` passes a lookup that never
+  // calls back; nothing else supplies this.
+  const lookup = (deps && deps.lookup) || dns.lookup;
 
   const allowedPorts = resolveAllowedPorts(appconfig.krb5AllowedPorts, logger);
   // "any" is accepted for the service endpoint, because a real deployment
@@ -231,9 +239,29 @@ function createRelay(appconfig, guard, log) {
   // Resolve the host and return an address that has passed the policy. A
   // literal is checked directly — node never calls a DNS resolver for one,
   // which is the gap that made the HTTP guard need two hooks rather than one.
+  //
+  // THE LOOKUP IS ON A DEADLINE, and it has to be: both budgets below start
+  // inside sendOverTcp/sendOverUdp, so until this promise settles NOTHING is
+  // timing the call. That is the hang the top of this file says cannot happen,
+  // and it is not hypothetical — a run on 2026-08-17 failed
+  // `everyPathSettles`'s "bad host" case with the relay still resolving
+  // `no-such-host.invalid` five seconds in, because the stub resolver was
+  // waiting out its own retries against a forwarder that was not answering.
+  // The same wait on the real endpoint is a browser waiting on an api that
+  // never replies.
+  //
+  // The budget spent is `connectionTimeout`, applied SEPARATELY from the one
+  // sendOverTcp arms — resolving a name and reaching an address are two ways of
+  // not having got there yet, and each gets the connect budget — so a whole
+  // call is bounded by connectionTimeout (resolve) + connectionTimeout
+  // (connect) + callTimeout (reply).
+  //
+  // A late callback is dropped rather than raced: `dns.lookup` runs in the
+  // libuv threadpool and cannot be cancelled, so the request outlives the
+  // rejection and its answer arrives after the caller has been told.
   function resolveAllowedAddress(host) {
-    log.debug("Leaving resolveAllowedAddress().");
     log.debug("Entering resolveAllowedAddress().");
+    log.debug("Leaving resolveAllowedAddress().");
     return new Promise(function (resolve, reject) {
       const literalFamily = net.isIP(host);
       if (literalFamily) {
@@ -255,7 +283,27 @@ function createRelay(appconfig, guard, log) {
           wasLiteral: true
         });
       }
-      dns.lookup(host, { all: true }, function (err, addresses) {
+      let settled = false;
+      const deadline = setTimeout(function () {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        logger.warn('krb5_relay: gave up resolving ' + host + ' after ' +
+            connectTimeout + ' milliseconds');
+        reject(refuse('Timed out after ' + connectTimeout + ' milliseconds ' +
+            'resolving ' + host + '. The name was never turned into an ' +
+            'address, so no connection was attempted — this is a DNS ' +
+            'problem on the machine running this service rather than ' +
+            'anything about the KDC. Check the resolver, or give the KDC ' +
+            'by address.', 'EKRB5DNSTIMEOUT'));
+      }, connectTimeout);
+      lookup(host, { all: true }, function (err, addresses) {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(deadline);
         if (err) {
           return reject(refuse('Could not resolve ' + host + ': ' +
               err.message +
@@ -289,8 +337,8 @@ function createRelay(appconfig, guard, log) {
   }
 
   function sendOverTcp(target, payload, timings) {
-    log.debug("Leaving sendOverTcp().");
     log.debug("Entering sendOverTcp().");
+    log.debug("Leaving sendOverTcp().");
     return new Promise(function (resolve, reject) {
       let settled = false;
       let buffer = Buffer.alloc(0);
@@ -386,8 +434,8 @@ function createRelay(appconfig, guard, log) {
   }
 
   function sendOverUdp(target, payload, timings) {
-    log.debug("Leaving sendOverUdp().");
     log.debug("Entering sendOverUdp().");
+    log.debug("Leaving sendOverUdp().");
     return new Promise(function (resolve, reject) {
       let settled = false;
       const socket = dgram.createSocket(target.family === 6 ? 'udp6' : 'udp4');

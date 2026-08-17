@@ -44,6 +44,7 @@ var log = bunyan.createLogger({
 var prim = require("./krb5_primitives.js");
 var msgs = require("./krb5_messages.js");
 var describer = require("./krb5_describe.js");
+var history = require("./kerberos_history.js");
 
 // ---------------------------------------------------------------------------
 // Storage keys. One list, so no page invents a variant.
@@ -72,7 +73,24 @@ var KEYS = {
   // a service that has no idea what it is.
   EVIDENCE: "krb_s4u_evidence",
   DELEGATION_TARGET: "krb_deleg_target",
-  DELEGATION_USER: "krb_deleg_user"
+  DELEGATION_USER: "krb_deleg_user",
+  // A LIST of every ticket this workflow has issued — metadata only, never a
+  // key. See recordTicket() for why that distinction is the whole design.
+  TICKET_HISTORY: "krb_ticket_history",
+  // The SPNEGO page's own two fields. The URL is remembered like every other
+  // endpoint on these pages; the SPN is derived from it and kept separately
+  // because a user may legitimately override it — an SPN's host component and
+  // the host in the URL are not required to agree, and on a load-balanced or
+  // CNAMEd service they routinely do not. That disagreement is the single
+  // commonest cause of a SPNEGO failure in the field, so it has to be
+  // editable rather than computed and hidden.
+  SPNEGO_URL: "krb_spnego_url",
+  SPNEGO_SPN: "krb_spnego_spn",
+  // Where to send the user back to. See noteReturnTarget() below: the SPNEGO
+  // workflow needs a service ticket, the pages that obtain one are the AS and
+  // TGS pages, and a workflow that sends you somewhere and does not bring you
+  // back is a workflow you leave.
+  RETURN_TO: "krb_return_to"
 };
 
 function el(id) { return document.getElementById(id); }
@@ -92,7 +110,16 @@ function make(tag, className, text) {
 function clear(node) { while (node &&
     node.firstChild) node.removeChild(node.firstChild); }
 
+// Writing a status line is also how an Operations History row is CLOSED —
+// see the long note at the top of kerberos_history.js for why the close is
+// driven from here rather than from each handler's exits. settle() is a no-op
+// unless an operation was opened against this exact status id, so the load-time
+// and descriptive status writes (most of the 91 in these bundles) cost a map
+// lookup and nothing else. It runs before the element check on purpose: a
+// missing status element is a broken page, and losing the log entry too would
+// hide the operation that noticed.
 function status(id, text, cls) {
+  history.settle(id, cls, text);
   var e = el(id);
   if (!e) {
     return;
@@ -153,6 +180,43 @@ function renderTree(host, nodes, depth) {
   log.debug("Leaving renderTree().");
 }
 
+// ---------------------------------------------------------------------------
+// The hex view that belongs to a decoded pane, found BY CONVENTION.
+//
+// Every message pane on these pages is `krb_<something>_pane`, and the hex tab
+// beside it is `krb_<something>_hex`. So the hex view does not need wiring at
+// each call site: renderMessage() looks for the companion and fills it if the
+// page has one. That matters because the alternative is a second call next to
+// every renderMessage() — there are ten across four bundles — and the failure
+// mode of forgetting one is a hex tab that silently keeps the PREVIOUS
+// message's bytes while the decoded tab beside it shows the new one. Two panes
+// disagreeing about what just happened is worse than no hex tab.
+//
+// A page opts in with markup alone: add the tab strip and a `_hex` div, and the
+// view appears. Nothing here has to know which pages did.
+//
+// The require is INSIDE the function on purpose. kerberos_hex.js requires this
+// module for el/make/clear, so a top-level require here would be a cycle — and
+// in browserify a cycle is not a warning, it is `panes.el is not a function` at
+// load time, because this module's exports object is not assigned until its
+// last line. By call time both modules are complete.
+// ---------------------------------------------------------------------------
+function renderCompanionHex(hostId, bytes, label) {
+  log.debug("Entering renderCompanionHex(). host=" + hostId);
+  if (!/_pane$/.test(hostId)) {
+    log.debug("Leaving renderCompanionHex(). Not a _pane id.");
+    return null;
+  }
+  var hexId = hostId.replace(/_pane$/, "_hex");
+  if (!el(hexId)) {
+    log.debug("Leaving renderCompanionHex(). This page has no " + hexId + ".");
+    return null;
+  }
+  var hexview = require("./kerberos_hex.js");
+  log.debug("Leaving renderCompanionHex().");
+  return hexview.render(hexId, bytes, label);
+}
+
 // One message, described by common/krb5/krb5_describe.js and rendered here.
 //
 // The pane is replaced in place and is NOT cleared before the new content is
@@ -164,6 +228,10 @@ async function renderMessage(hostId, label, bytes, keys) {
   if (!host) {
     return null;
   }
+  // Before the decode, and outside its try: bytes that will NOT decode are
+  // exactly the bytes somebody wants to look at one at a time, so the hex view
+  // must survive a message the describer refuses.
+  renderCompanionHex(hostId, bytes, label);
   var doc;
   try {
     doc = await describer.describe(prim.toBytes(bytes), { keys: keys || [] });
@@ -288,6 +356,34 @@ async function sendToService(options) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The THIRD relay call, and the one that is not a socket.
+//
+// SPNEGO is Kerberos over HTTP, so this one goes through POST /krb5/spnego —
+// an ordinary HTTP GET made on the page's behalf, with the Authorization
+// header built by the api from a token this page supplies.
+//
+// It does not fetch() the resource directly, and the reason is the whole point
+// of the SPNEGO page: a cross-origin fetch can read a response header only if
+// the server chose to expose it, and `WWW-Authenticate` is exactly the header
+// the workflow exists to show. The browser also owns its own request headers,
+// so a page cannot report what it sent. Both sides come back from the api
+// verbatim instead.
+// ---------------------------------------------------------------------------
+async function sendSpnego(options) {
+  log.debug("Entering sendSpnego().");
+  var body = await post("/krb5/spnego", {
+    url: options.url,
+    // Absent for the unauthenticated first request, which is a request with no
+    // Authorization header rather than one with an empty token.
+    token: options.token ? bytesToB64(options.token) : undefined,
+    sslValidate: options.sslValidate !== false
+  });
+  log.debug("Leaving sendSpnego(). status=" + (body.response &&
+      body.response.status));
+  return body;
+}
+
 // What the relay will and will not do, so a page can say so before a call fails
 // rather than reporting its own limits as somebody else's fault.
 async function relayLimits() {
@@ -387,6 +483,9 @@ function enforceStoragePreference() {
       // The evidence ticket carries a session key like any other, so it belongs
       // in the purge. A key left behind by an opt-out is not an opt-out.
       window.localStorage.removeItem(KEYS.EVIDENCE);
+      // The history holds a session key per entry, so it is a hundred times
+      // the reason the three above are here.
+      window.localStorage.removeItem(KEYS.TICKET_HISTORY);
     } catch (e) {
       log.warn("could not purge localStorage: " + e.message);
     }
@@ -538,6 +637,112 @@ async function reportEnvironment(hostId, options) {
   log.debug("Leaving reportEnvironment().");
 }
 
+// ---------------------------------------------------------------------------
+// COMING BACK.
+//
+// The SPNEGO page needs a service ticket and has no way to obtain one: getting
+// a ticket is the AS exchange followed by the TGS exchange, and those are two
+// other pages in this workflow. Re-implementing either on a third page would
+// be a second implementation of the thing this workflow exists to show, so the
+// SPNEGO page sends you to them instead — and this is the half that brings you
+// back, because a workflow that sends you away and does not return is one you
+// leave.
+//
+// It is a LINK and never a redirect. The pages here re-render in place and do
+// not navigate for you (see the note on Operations History): an automatic hop
+// back the moment a TGT arrives takes the AS exchange's two decoded messages
+// off the screen at exactly the moment somebody wanted to read them, which is
+// what that page is FOR.
+//
+// The target is taken from `?return=` and then kept in storage, so it survives
+// the AS page sending you on to the TGS page — the common route, and one where
+// the query parameter would otherwise be lost at the first hop.
+// ---------------------------------------------------------------------------
+var RETURN_TARGETS = {
+  spnego: {
+    href: "/spnego.html",
+    name: "SPNEGO",
+    what: "Kerberos over HTTP"
+  }
+};
+
+function noteReturnTarget() {
+  log.debug("Entering noteReturnTarget().");
+  var asked = null;
+  try {
+    asked = new URLSearchParams(window.location.search).get("return");
+  } catch (e) {
+    // No URLSearchParams, or an unparseable query. Not fatal — the trail at
+    // the top of the page still reaches every other page — so the banner is
+    // simply not offered.
+    log.warn("could not read the query string: " + e.message);
+  }
+  if (asked && RETURN_TARGETS[asked]) {
+    try {
+      window.sessionStorage.setItem(KEYS.RETURN_TO, asked);
+    } catch (e) {
+      log.warn("could not remember the return target: " + e.message);
+    }
+    log.debug("Leaving noteReturnTarget(). " + asked);
+    return RETURN_TARGETS[asked];
+  }
+  if (asked) {
+    // An unknown value is dropped rather than turned into a link. This is a
+    // navigation target read out of the URL, so anything but a name from the
+    // table above would be somebody else choosing where this page points.
+    log.warn("ignoring an unrecognised return target " + JSON.stringify(asked));
+  }
+  var remembered = null;
+  try {
+    remembered = window.sessionStorage.getItem(KEYS.RETURN_TO);
+  } catch (e) {
+    // No storage: the banner is offered only on the page the link landed on.
+    remembered = null;
+  }
+  log.debug("Leaving noteReturnTarget(). " + (remembered || "none"));
+  return remembered ? RETURN_TARGETS[remembered] || null : null;
+}
+
+function clearReturnTarget() {
+  log.debug("Entering clearReturnTarget().");
+  try {
+    window.sessionStorage.removeItem(KEYS.RETURN_TO);
+  } catch (e) {
+    log.warn("could not clear the return target: " + e.message);
+  }
+  log.debug("Leaving clearReturnTarget().");
+}
+
+// Render the banner. `options.ready` decides which of two sentences it carries,
+// and the distinction is the useful part: "you still need X" and "you have what
+// you came for" are different instructions, and a banner that says neither is
+// just a link.
+function renderReturnBanner(hostId, options) {
+  log.debug("Entering renderReturnBanner().");
+  var opts = options || {};
+  var host = el(hostId);
+  var target = opts.target || noteReturnTarget();
+  if (!host || !target) {
+    log.debug("Leaving renderReturnBanner(). Nothing to show.");
+    return null;
+  }
+  clear(host);
+  var box = make("div", "krb-return-banner" + (opts.ready ? " krb-ok" : ""));
+  box.appendChild(make("span", "krb-return-what",
+      "You came here from " + target.name + " (" + target.what + ")."));
+  box.appendChild(make("span", "krb-return-why",
+      opts.ready
+        ? (opts.readyText || "You now have what it needs.")
+        : (opts.needText || "Finish this exchange and come back.")));
+  var link = make("a", "krb-return-link",
+      "Back to " + target.name + " →");
+  link.href = target.href;
+  box.appendChild(link);
+  host.appendChild(box);
+  log.debug("Leaving renderReturnBanner(). ready=" + !!opts.ready);
+  return target;
+}
+
 // The KDC coordinates, shared by the AS and TGS pages. Read from storage so the
 // TGS page does not ask again for what the AS page was already told.
 function loadKdcFields() {
@@ -572,8 +777,439 @@ function saveKdcFields() {
   log.debug("Leaving saveKdcFields().");
 }
 
+// ---------------------------------------------------------------------------
+// Panes: collapsing one, collapsing all, and marking the step trail.
+//
+// All five Kerberos pages share these for the same reason they share everything
+// else in this module: a pane behaving differently on two of them would be a
+// bug visible only by comparing the two.
+//
+// The markup contract. The CLASSES are the ones every other workflow here uses
+// (css/debugger.css, and any dbg-pane in vc-presentation-3.html), so the panes
+// look and behave identically:
+//
+//   <div class="dbg-pane" id="pane_x">
+//     <legend class="dbg-legend" id="x_expand_button">Title</legend>
+//     <fieldset name="x_fieldset" id="x_fieldset">...</fieldset>
+//   </div>
+//
+// The WIRING differs from those workflows on purpose, and it is the one place
+// this is not a copy. They put the fieldset's id in an inline
+// onclick="...togglePane('x_fieldset')", which repeats the id in two places and
+// fails silently when the two drift: a legend that does nothing at all, with
+// nothing in the page complaining. wirePanes() below instead PAIRS them by
+// convention — `x_expand_button` drives `x_fieldset` — so there is one id and
+// nothing to get out of step. These pages already wire every other control from
+// their bundle rather than inline, so this also matches how they are built.
+// ---------------------------------------------------------------------------
+function togglePane(bodyId) {
+  log.debug("Entering togglePane().");
+  var b = el(bodyId);
+  if (b) {
+    b.style.display = (b.style.display === "none") ? "block" : "none";
+  }
+  log.debug("Leaving togglePane().");
+  return false;
+}
+
+// Expand or collapse every pane on the page.
+//
+// The fieldsets are DISCOVERED rather than listed, which is the difference from
+// the other workflows' copies of this: they each hard-code an array of ids, and
+// every one is a list a new pane has to be remembered into. Reading them off
+// the DOM means a pane added later is covered by construction.
+function setAllPanes(expand) {
+  log.debug("Entering setAllPanes(). expand=" + !!expand);
+  var panes = document.querySelectorAll(".dbg-pane fieldset");
+  for (var i = 0; i < panes.length; i++) {
+    panes[i].style.display = expand ? "block" : "none";
+  }
+  var text = document.querySelector(".dbg-toggle-text");
+  if (text) {
+    text.textContent = expand ? "Collapse all panes" : "Expand all panes";
+  }
+  log.debug("Leaving setAllPanes(). " + panes.length + " pane(s).");
+  return false;
+}
+
+// Mark this page's entry in the shared step trail (partials/krb_steps.html).
+// Called by each page's bundle with its own id, because the partial is one file
+// serving five pages and cannot know which it is on.
+function markCurrentStep(stepId) {
+  log.debug("Entering markCurrentStep(). step=" + stepId);
+  var li = el(stepId);
+  if (li) {
+    li.className = (li.className ? li.className + " " : "") +
+        "krb-step-current";
+  } else {
+    // Not fatal: the trail is navigation, and a page missing it is still
+    // usable. Worth a line though, because the usual cause is a renamed id in
+    // the partial, and the symptom otherwise is a trail where nothing looks
+    // current.
+    log.warn("no step-trail entry with id " + stepId +
+        "; is partials/krb_steps.html included on this page?");
+  }
+  log.debug("Leaving markCurrentStep().");
+}
+
+// Bind every pane's legend to its fieldset, pairing `x_expand_button` with
+// `x_fieldset`. Called once from each page's own wire().
+//
+// A legend whose fieldset is missing is reported rather than ignored: it means
+// the pair has drifted, which is the failure the id convention exists to
+// prevent, and a silent skip would hide it again.
+function wirePanes() {
+  log.debug("Entering wirePanes().");
+  var legends = document.querySelectorAll(".dbg-legend");
+  var wired = 0;
+  for (var i = 0; i < legends.length; i++) {
+    var legend = legends[i];
+    var id = legend.id || "";
+    if (id.indexOf("_expand_button") === -1) {
+      log.warn("a .dbg-legend has id " + JSON.stringify(id) +
+          ", which does not end in _expand_button, so it cannot be paired " +
+          "with a fieldset");
+      continue;
+    }
+    var bodyId = id.replace("_expand_button", "_fieldset");
+    if (!el(bodyId)) {
+      log.warn("legend " + id + " names no fieldset " + bodyId +
+          " — the pane's ids have drifted and the title will do nothing");
+      continue;
+    }
+    legend.style.cursor = "pointer";
+    legend.addEventListener("click", (function (target) {
+      return function () {
+        togglePane(target);
+        return false;
+      };
+    })(bodyId));
+    wired += 1;
+  }
+  log.debug("Leaving wirePanes(). " + wired + " pane(s) wired.");
+  return wired;
+}
+
+// ---------------------------------------------------------------------------
+// Tabs inside a pane.
+//
+// Markup, paired by a shared group name the way wirePanes() pairs legends with
+// fieldsets — so there is one name to get right rather than two ids to keep in
+// step:
+//
+//   <div class="krb-tabs" data-krb-tabs="request">
+//     <button class="krb-tab krb-tab-on"
+//             data-krb-tab="decoded">Decoded</button>
+//     <button class="krb-tab" data-krb-tab="hex">Hex</button>
+//   </div>
+//   <div class="krb-tabpanel" data-krb-tabs="request"
+//        data-krb-tab="decoded">…</div>
+//   <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="request"
+//        data-krb-tab="hex">…</div>
+//
+// The panels are hidden with a class rather than inline display, so that
+// setAllPanes() collapsing the fieldset above them does not fight with
+// whichever tab happens to be showing.
+// ---------------------------------------------------------------------------
+function selectTab(group, name) {
+  log.debug("Entering selectTab(). group=" + group + " tab=" + name);
+  var i;
+  var buttons = document.querySelectorAll(
+      '.krb-tab[data-krb-tabs="' + group + '"]');
+  // The buttons carry the group on their CONTAINER in the markup above, so read
+  // it from either place: a button inside a group div, or one labelled itself.
+  if (!buttons.length) {
+    var holder = document.querySelector('.krb-tabs[data-krb-tabs="' + group +
+        '"]');
+    buttons = holder ? holder.querySelectorAll(".krb-tab") : [];
+  }
+  for (i = 0; i < buttons.length; i++) {
+    var on = buttons[i].getAttribute("data-krb-tab") === name;
+    buttons[i].className = "krb-tab" + (on ? " krb-tab-on" : "");
+    buttons[i].setAttribute("aria-selected", on ? "true" : "false");
+  }
+  var panels = document.querySelectorAll(
+      '.krb-tabpanel[data-krb-tabs="' + group + '"]');
+  for (i = 0; i < panels.length; i++) {
+    var show = panels[i].getAttribute("data-krb-tab") === name;
+    panels[i].className = "krb-tabpanel" + (show ? "" : " krb-tabpanel-off");
+  }
+  log.debug("Leaving selectTab(). " + buttons.length + " button(s), " +
+      panels.length + " panel(s).");
+}
+
+// Bind every tab strip on the page. Called once from each page's wire().
+function wireTabs() {
+  log.debug("Entering wireTabs().");
+  var strips = document.querySelectorAll(".krb-tabs");
+  var wired = 0;
+  for (var i = 0; i < strips.length; i++) {
+    var group = strips[i].getAttribute("data-krb-tabs");
+    if (!group) {
+      log.warn("a .krb-tabs strip has no data-krb-tabs group name, so its " +
+          "buttons cannot be paired with panels");
+      continue;
+    }
+    var buttons = strips[i].querySelectorAll(".krb-tab");
+    for (var j = 0; j < buttons.length; j++) {
+      buttons[j].addEventListener("click", (function (g, name) {
+        return function () {
+          selectTab(g, name);
+          return false;
+        };
+      })(group, buttons[j].getAttribute("data-krb-tab")));
+    }
+    wired += buttons.length;
+  }
+  log.debug("Leaving wireTabs(). " + wired + " tab(s) wired.");
+  return wired;
+}
+
+// ---------------------------------------------------------------------------
+// The ticket cache & history: every ticket this workflow has obtained, and a
+// way back to any of them.
+//
+// The STORE half. The pane over it is client/src/kerberos_tickets.js, on all
+// five pages. Modelled on debugger2.js's Operation History — same pane shape, same
+// newest-first ordering, same numbered column, same scrolling list. Two things
+// differ, and the first is the important one.
+//
+// THIS IS A CREDENTIAL STORE, deliberately. Each entry keeps the ticket bytes
+// and its session key, so any row can be made the active ticket again — which
+// is the point: an AS exchange is cheap to repeat but a ticket is a moment in
+// time, and comparing two of them, or going back to one issued before a
+// configuration change, is exactly what this workflow is for.
+//
+// That decision has a cost and it is bounded in one place. A session key is a
+// credential; whatever holds it can use the ticket. So the history obeys the
+// SAME control as the single live ticket — krb_save_ccache — and it is in
+// sessionStorage unless that box is ticked, writeEntry() clears the other store
+// either way, and enforceStoragePreference() purges the list from localStorage
+// the moment the box is cleared. It is in that purge list; leaving it out would
+// have meant an opt-out that left a hundred session keys behind, which is not
+// an opt-out. The cap exists for the same reason as much as for the display: a
+// hundred is a bounded number of credentials to be holding.
+//
+// SECOND, WHAT HAPPENS AT THE CAP. Operation History empties itself when it
+// fills — `if (history.length >= LIMIT) { history = []; }` — which loses
+// everything at the moment there is most to look at. This trims the oldest
+// instead, which is what a reader expects a capped log to do.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// What KIND of ticket this is, decided from the ticket itself.
+//
+// A ticket is a TGT if and only if its service is krbtgt — that is the
+// protocol's own definition and it does not depend on a caller remembering to
+// label anything. An explicit kind is accepted for the cases the service name
+// cannot distinguish (an S4U2Self ticket is a service ticket to the requesting
+// service ITSELF, which looks like any other), but krbtgt always wins: a
+// mislabelled ticket is the error that would matter, because the kind is what
+// chooses the live slot an activated ticket is written into (TICKET_SLOTS,
+// below) — and the AS, TGS and delegation pages will try to SPEND whatever is
+// in the TGT slot.
+// ---------------------------------------------------------------------------
+function ticketKind(entry) {
+  log.debug("Entering ticketKind().");
+  if (!entry) {
+    log.debug("Leaving ticketKind(). None.");
+    return "unknown";
+  }
+  var service = String(entry.service || "");
+  if (/^krbtgt\//i.test(service)) {
+    log.debug("Leaving ticketKind(). TGT.");
+    return "TGT";
+  }
+  if (entry.kind) {
+    log.debug("Leaving ticketKind(). " + entry.kind + ".");
+    return entry.kind;
+  }
+  log.debug("Leaving ticketKind(). Service ticket.");
+  return "service";
+}
+
+// ---------------------------------------------------------------------------
+// WHICH LIVE SLOT A REMEMBERED TICKET GOES BACK INTO.
+//
+// One table rather than a decision at each call site, because the pages hold
+// different slots and the pane that offers "Make active" is now on all five of
+// them. The store function is the SAME one the page that obtained such a ticket
+// wrote with — a ticket put back by hand must land where a freshly issued one
+// would, or the next exchange reads a slot nobody filled.
+//
+// A `delegated` ticket is a service ticket obtained by S4U2Proxy, so it shares
+// the service ticket cache: the AP page presents it exactly as it presents any
+// other, and giving it a slot of its own would hide it from the page that uses
+// it.
+// ---------------------------------------------------------------------------
+var TICKET_SLOTS = {
+  TGT: { store: saveTgt, name: "the ticket-granting ticket slot" },
+  evidence: { store: saveEvidence, name: "the evidence ticket slot" },
+  service: { store: saveServiceTicket, name: "the service ticket cache" },
+  delegated: { store: saveServiceTicket, name: "the service ticket cache" }
+};
+
+var TICKET_HISTORY_LIMIT = 100;
+
+function recordTicket(entry, kind) {
+  log.debug("Entering recordTicket(). kind=" + kind);
+  if (!entry) {
+    log.debug("Leaving recordTicket(). Nothing to record.");
+    return null;
+  }
+  var history = readTicketHistory();
+  // The WHOLE entry, ticket bytes and session key included, so activate() can
+  // hand it straight back to saveTgt(). Copied rather than referenced: the
+  // caller goes on to store its own copy under KEYS.TGT, and two names for one
+  // object is how a later edit to the live ticket silently rewrites history.
+  var row = JSON.parse(JSON.stringify(entry));
+  // The label the caller gave, kept so an S4U2Self evidence ticket can say what
+  // it is. ticketKind() still overrides it for anything addressed to krbtgt.
+  if (kind) { row.kind = kind; }
+  row.recordedAt = new Date().toISOString();
+  // Every page in the workflow writes here, so a ticket bought twice — the same
+  // service ticket re-requested, a TGT re-activated then renewed — would
+  // otherwise pile up identical rows. Matched on the ticket bytes, which are
+  // what make two tickets the same ticket.
+  history = history.filter(function (h) {
+    return !h || h.ticket !== row.ticket;
+  });
+  history.unshift(row);
+  var trimmed = history.slice(0, TICKET_HISTORY_LIMIT);
+  writeEntry(KEYS.TICKET_HISTORY, trimmed);
+  log.info("ticket history: " + trimmed.length + " entr" +
+      (trimmed.length === 1 ? "y" : "ies") +
+      (history.length > trimmed.length ? " (oldest trimmed at the " +
+        TICKET_HISTORY_LIMIT + " cap)" : ""));
+  log.debug("Leaving recordTicket().");
+  return trimmed;
+}
+
+function readTicketHistory() {
+  log.debug("Entering readTicketHistory().");
+  var list = readEntry(KEYS.TICKET_HISTORY);
+  if (!list || !list.length) {
+    log.debug("Leaving readTicketHistory(). Empty.");
+    return [];
+  }
+  if (!Array.isArray(list)) {
+    // Something else wrote this key. Treat it as empty rather than throwing on
+    // every render — but say so, because it means two things share a name.
+    log.warn(KEYS.TICKET_HISTORY + " does not hold a list; ignoring it.");
+    log.debug("Leaving readTicketHistory(). Not a list.");
+    return [];
+  }
+  log.debug("Leaving readTicketHistory(). " + list.length + " entry(ies).");
+  return list;
+}
+
+// Make a remembered ticket the active one again.
+//
+// It is written to its slot unchanged — no re-issue, no re-derivation — because
+// the whole value of a history is that the ticket is the one that was issued
+// then, expiry and flags and all. An expired one is allowed through on purpose:
+// the next exchange refusing it, and saying why, is more useful than this pane
+// pretending it does not exist.
+//
+// WHICH slot comes from the ticket itself, through ticketKind() and the table
+// above, never from the caller: a service ticket written into the TGT slot is
+// accepted here and fails a page later, naming an encryption type. The `kind`
+// argument is therefore a CHECK rather than an instruction — a caller offering
+// "TGT" for a row that is not one gets null and nothing is written.
+function activateTicket(index, kind) {
+  log.debug("Entering activateTicket(). index=" + index + " kind=" + kind);
+  var history = readTicketHistory();
+  var entry = history[index];
+  if (!entry) {
+    log.warn("no ticket at history index " + index +
+        "; the list has " + history.length + " entry(ies).");
+    log.debug("Leaving activateTicket(). Not found.");
+    return null;
+  }
+  var actual = ticketKind(entry);
+  if (kind && kind !== actual) {
+    log.warn("history row " + index + " is a " + actual + " ticket, not the " +
+        kind + " the caller expected; nothing was activated.");
+    log.debug("Leaving activateTicket(). Wrong kind.");
+    return null;
+  }
+  var slot = TICKET_SLOTS[actual];
+  if (!slot) {
+    log.warn("a " + actual + " ticket has no live slot to go back into.");
+    log.debug("Leaving activateTicket(). No slot.");
+    return null;
+  }
+  slot.store(entry);
+  log.info("activated the " + actual + " for " + (entry.client || "?") +
+      " issued " + (entry.storedAt || "?") + " into " + slot.name +
+      " (history row " + (index + 1) + ")");
+  log.debug("Leaving activateTicket().");
+  return entry;
+}
+
+// ---------------------------------------------------------------------------
+// Which remembered tickets are being HELD right now, and where.
+//
+// Keyed by the ticket bytes, which are what make two tickets the same ticket —
+// the same reason activeTicketIndex() matches on them rather than on an index.
+// Read once per render rather than once per row: a hundred rows against three
+// storage reads each is three hundred JSON parses for a table.
+// ---------------------------------------------------------------------------
+function heldTickets() {
+  log.debug("Entering heldTickets().");
+  var held = {};
+  var tgt = readTgt();
+  if (tgt && tgt.ticket) {
+    held[tgt.ticket] = TICKET_SLOTS.TGT.name;
+  }
+  var evidence = readEvidence();
+  if (evidence && evidence.ticket) {
+    held[evidence.ticket] = TICKET_SLOTS.evidence.name;
+  }
+  readServiceTickets().forEach(function (entry) {
+    if (entry && entry.ticket) {
+      held[entry.ticket] = TICKET_SLOTS.service.name;
+    }
+  });
+  log.debug("Leaving heldTickets(). " + Object.keys(held).length + " held.");
+  return held;
+}
+
+// Which history row is the live ticket, or -1. Matched on the ticket bytes
+// rather than on an index, because the list shifts as new tickets arrive and an
+// index remembered across a render would drift onto a different row.
+function activeTicketIndex() {
+  log.debug("Entering activeTicketIndex().");
+  var live = readTgt();
+  if (!live || !live.ticket) {
+    log.debug("Leaving activeTicketIndex(). None held.");
+    return -1;
+  }
+  var history = readTicketHistory();
+  for (var i = 0; i < history.length; i++) {
+    if (history[i] && history[i].ticket === live.ticket) {
+      log.debug("Leaving activeTicketIndex(). Row " + i + ".");
+      return i;
+    }
+  }
+  log.debug("Leaving activeTicketIndex(). Held ticket is not in the list.");
+  return -1;
+}
+
+function forgetTicketHistory() {
+  log.debug("Entering forgetTicketHistory().");
+  removeEntry(KEYS.TICKET_HISTORY);
+  log.debug("Leaving forgetTicketHistory().");
+}
+
 module.exports = {
   KEYS: KEYS,
+  togglePane: togglePane,
+  wirePanes: wirePanes,
+  wireTabs: wireTabs,
+  selectTab: selectTab,
+  setAllPanes: setAllPanes,
+  markCurrentStep: markCurrentStep,
   el: el,
   val: val,
   setVal: setVal,
@@ -587,13 +1223,24 @@ module.exports = {
   renderSection: renderSection,
   renderTree: renderTree,
   renderMessage: renderMessage,
+  renderCompanionHex: renderCompanionHex,
   bytesToB64: bytesToB64,
   b64ToBytes: b64ToBytes,
   sendToKdc: sendToKdc,
   sendToService: sendToService,
+  sendSpnego: sendSpnego,
   relayLimits: relayLimits,
   savingToLocalStorage: savingToLocalStorage,
   saveTgt: saveTgt,
+  recordTicket: recordTicket,
+  ticketKind: ticketKind,
+  readTicketHistory: readTicketHistory,
+  forgetTicketHistory: forgetTicketHistory,
+  activateTicket: activateTicket,
+  activeTicketIndex: activeTicketIndex,
+  heldTickets: heldTickets,
+  TICKET_SLOTS: TICKET_SLOTS,
+  TICKET_HISTORY_LIMIT: TICKET_HISTORY_LIMIT,
   readTgt: readTgt,
   forgetTgt: forgetTgt,
   saveEvidence: saveEvidence,
@@ -607,5 +1254,9 @@ module.exports = {
   renderTicketPane: renderTicketPane,
   reportEnvironment: reportEnvironment,
   loadKdcFields: loadKdcFields,
-  saveKdcFields: saveKdcFields
+  saveKdcFields: saveKdcFields,
+  RETURN_TARGETS: RETURN_TARGETS,
+  noteReturnTarget: noteReturnTarget,
+  clearReturnTarget: clearReturnTarget,
+  renderReturnBanner: renderReturnBanner
 };

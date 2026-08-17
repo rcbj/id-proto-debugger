@@ -1,0 +1,54 @@
+<!-- The Kerberos workflow's Ticket Cache & History pane, included at the bottom
+     of all five pages, immediately above the Operations History pane.
+
+     ONE STORE, FIVE PAGES. Every ticket this workflow obtains lands in one list
+     — the AS page's TGTs, the TGS page's service tickets, the delegation page's
+     S4U2Self evidence, delegated tickets and renewals — and what each page can
+     do with a row depends on which live slot that page holds. So the markup is
+     a partial and the behaviour is one module (client/src/kerberos_tickets.js),
+     configured per page with the slots it owns: five copies of a credential
+     store would drift, and the one that drifted would be the one that put the
+     wrong kind of ticket in a slot.
+
+     The ids here are wired by kerberos_tickets.js's mount(), which every page's
+     onload calls. Nothing else reads them.
+
+     UNLIKE the Operations History pane below it, this one DOES hold key
+     material: a row keeps the ticket and its session key, because that is what
+     makes an earlier ticket usable again. So it obeys the krb_save_ccache
+     checkbox on the AS page exactly as the live ticket does — see the third
+     note below, and enforceStoragePreference() in kerberos_panes.js. -->
+<div class="dbg-pane" id="pane_ticket_history">
+  <legend class="dbg-legend" id="ticket_history_expand_button">Ticket Cache &amp; History</legend>
+  <fieldset name="ticket_history_fieldset" id="ticket_history_fieldset"
+            style="display: block;">
+  <p class="krb-note">Every ticket this workflow has obtained, newest first
+  &mdash; from <em>every</em> page, not just this one: the AS exchange's TGTs,
+  the TGS exchange's service tickets, and the delegation page's S4U2Self
+  evidence, delegated tickets and renewals all appear here. A row marked
+  <strong>in use</strong> is one the workflow is holding right now, which is the
+  cache half of this pane; the rest is what it held earlier.</p>
+  <p class="krb-note"><strong>Make active</strong> puts a ticket back in the
+  live slot it belongs in, unchanged &mdash; same expiry, same flags, no
+  re-issue &mdash; so two tickets can be compared, or one from before a
+  configuration change returned to. An expired ticket can be activated too: the
+  next exchange refusing it, and saying why, is more useful than this pane
+  pretending it is not there. <strong>Which rows this page can activate depends
+  on which slot it holds</strong>, and the kind is derived from the ticket's own
+  service name (<code>krbtgt/&hellip;</code> is a TGT, by the protocol's
+  definition) rather than from a label &mdash; a mislabelled ticket accepted
+  into the TGT slot would fail a page later, naming something else.</p>
+  <p class="krb-note">Each row <strong>holds a session key</strong>, and
+  whatever holds one can use the ticket. So this list obeys the same checkbox as
+  the ticket cache does on the <a href="/kerberos.html">AS exchange</a> page: it
+  lives in <code>sessionStorage</code> unless <em>keep the credential cache in
+  localStorage</em> is ticked, and unticking it purges the whole list on the
+  spot. Capped at <span id="krb_history_cap">100</span>, oldest dropped first.
+  That is the opposite of the Operations History pane below, which holds no key
+  material and is therefore never purged with it.</p>
+  <div id="krb_ticket_history_pane"></div>
+  <div id="krb_ticket_status" class="krb-status"></div>
+  <input type="button" id="krb_clear_history_button" class="btn2"
+         value="Clear ticket history" disabled="disabled">
+</fieldset>
+</div>

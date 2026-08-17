@@ -94,7 +94,7 @@
    without a media query. The minimum is 240px because the KDC-host and etype
    fields are the widest things here and a narrower column truncates their
    placeholders.
-   --------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------ */
 /* Options on one line rather than four. Wrapping is deliberate: at one column the
    labels stack again, which is what a phone needs. */
 .krb-opts {
@@ -137,6 +137,44 @@
 
 @media (max-width: 900px) {
   .krb-steps { grid-template-columns: 1fr; }
+}
+
+/* A heading for one column of a merged pane.
+
+   kerberos_ap.html carried "Where the service is" and "What to ask for —
+   the GSS flags" as two panes, and they are now two columns of one
+   Configuration Parameters pane, as on kerberos.html. The pane legend can only
+   say one thing, so what those legends said moves in here — without it the six
+   checkboxes are a list of unexplained capitals sitting beside a host and a
+   port, and nothing on screen says they are the GSS flags that travel in the
+   0x8003 checksum.
+
+   It is a div rather than a label because it labels a GROUP: a <label> with no
+   control to point at is one the browser cannot associate with anything, and
+   pointing it at the first field would claim the heading belongs to that field
+   alone. The weight and spacing match `.krb-keys label` deliberately, so a
+   column reads as a titled block rather than as a stray sentence. */
+.krb-group {
+  display: block;
+  font-weight: bold;
+  margin-bottom: 2px;
+}
+
+/* A column of checkboxes, one per line — and it needs saying, because the
+   default is not that.
+
+   Each checkbox here is a `.tooltip` wrapper, and bootstrap makes `.tooltip`
+   `display: inline-block`. So consecutive checkbox rows FLOW: whether two
+   share a line depends on whether two labels happen to fit, which is a
+   function of the column width and the words. At full width the AP page's six
+   flags stacked and the question never came up; in a `.krb-grid` column,
+   "SEQUENCE — out-of-sequence detection" and "send a subkey in the
+   Authenticator" fit together and the last two ran side by side — which reads
+   as a grouping that is not there, and puts a checkbox somewhere the eye does
+   not scan for one. This is the same class of
+   accident as `.krb-opts`, only that one wants the flowing and says so. */
+.krb-checks .tooltip {
+  display: block;
 }
 
 /* Prose that earns its place but not its vertical space. The explanations are the
@@ -297,3 +335,520 @@
 .krb-tree-tag { font-weight: bold; font-size: 12px; }
 .krb-tree-meta { font-size: 11px; color: #777; }
 .krb-tree-text { font-size: 11px; color: #333; }
+
+/* ---------------------------------------------------------------------------
+   The step trail.
+   -------------------------------------------------------------------------
+   Mirrors ol.vc-steps in sd_jwt_vc.css deliberately rather than sharing it: the
+   Kerberos pages do not load sd_jwt_vc.css and should not start, because that
+   file carries the whole SD-JWT VC workflow's layout. The rules below are the
+   trail's and nothing else, so the duplication is eight declarations
+   rather than
+   a stylesheet. If a third workflow wants a trail, THAT is the point to promote
+   these into common.css — not before, because two copies is not yet a pattern.
+
+   flex-wrap: nowrap is load-bearing. Five entries share one row and the
+   captions
+   are sized to fit; letting them wrap turns the trail into a two-line
+   block that
+   pushes the first pane below the fold, which is the thing docs/kerberos.md's
+   one-screen budget is about.
+   ------------------------------------------------------------------------ */
+/* MARGINS AND PADDING HERE ARE PART OF A BUDGET, not taste. The trail and the
+   collapse-all row are two new full-width strips above the first control, and
+   together they cost 71px of the 640px the AS page has to fit its configuration
+   and both buttons into at 1366x768 — which took kerberos_as_page.js's
+   theConfigurationAndBothControlsFitOnOneScreen() from 494px to 642px, two past
+   the limit. Measured: this block plus the .dbg-controls override below give
+   back ~30px, so the page is inside the budget with headroom rather than by
+   2px. Before growing either strip, read that test. */
+ol.krb-trail {
+  list-style: none;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 6px;
+  margin: 4px 0 6px;
+  padding: 0;
+}
+ol.krb-trail li {
+  flex: 1 1 0;
+  min-width: 0;
+  border: 1px solid #ccc;
+  border-left: 4px solid #ccc;
+  border-radius: 3px;
+  padding: 3px 8px;
+  background: #fafafa;
+  overflow-wrap: anywhere;
+}
+ol.krb-trail li a {
+  font-weight: bold;
+  text-decoration: none;
+  font-size: 0.9em;
+}
+ol.krb-trail li span {
+  display: block;
+  font-size: 0.72em;
+  color: #666;
+  line-height: 1.2;
+}
+ol.krb-trail li.krb-step-current {
+  border-left-color: #12107c;
+  background: #eef;
+}
+/* The decoder, which is a tool rather than a step — see
+   partials/krb_steps.html.
+   Dashed so it reads as "not part of the sequence" without needing a caption to
+   say so. */
+ol.krb-trail li.krb-step-tool {
+  border-style: dashed;
+  background: #f4f4f4;
+}
+
+/* ---------------------------------------------------------------------------
+   Tabs inside a pane, and the hex view they exist for.
+   ---------------------------------------------------------------------------
+   The tab strip is deliberately plain: it sits INSIDE a pane whose title is
+   already a control, and a second heavy control next to it makes the pane look
+   like two panes.
+   ------------------------------------------------------------------------ */
+.krb-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 8px;
+  border-bottom: 1px solid #ddd;
+}
+.krb-tab {
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: none;
+  padding: 3px 12px;
+  font-size: 0.85em;
+  color: #555;
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+}
+.krb-tab:hover { background: #f2f2f2; }
+.krb-tab-on {
+  border-color: #ddd;
+  background: #fff;
+  color: #12107c;
+  font-weight: bold;
+  margin-bottom: -1px;
+  border-bottom: 1px solid #fff;
+}
+.krb-tabpanel-off { display: none; }
+
+/* ---------------------------------------------------------------------------
+   The hex dump.
+   ---------------------------------------------------------------------------
+   Monospace and nowrap, because a hex dump whose rows wrap is not a hex dump:
+   the whole value of the format is that column N is always byte N.
+
+   The resting tints are pale on purpose. They exist to show the message's
+   top-level divisions at a glance, and anything stronger competes with the
+   hover highlight, which is the thing you are actually looking for. See the
+   note in client/src/kerberos_hex.js on why only depth-1 sections are tinted.
+   ------------------------------------------------------------------------ */
+.krb-hex-path {
+  font-size: 0.8em;
+  color: #444;
+  background: #f7f7f7;
+  border: 1px solid #e5e5e5;
+  border-radius: 3px;
+  padding: 4px 8px;
+  margin-bottom: 6px;
+  overflow-wrap: anywhere;
+}
+/* The field's NAME, on its own line and first, because it is the answer: a
+   reader pointing at a byte wants `req-body → cname`, and the offsets are what
+   they want second.
+
+   ONE LINE EACH, CLIPPED, and that is not a style choice — it is what keeps the
+   dump still. The strip sits ABOVE the bytes, so any line it gains pushes every
+   row down; the pointer then rests on a different byte, which re-renders the
+   strip, which may shrink it again. Measured before this rule: hovering a
+   name-string inside a req-body took the meta line to three rendered lines and
+   moved the dump 32px down mid-hover. A min-height alone does not fix that —
+   it equalises empty against full, not one line against three. The full text
+   is on each line's `title`, so nothing is lost to the clip. */
+.krb-hex-field,
+.krb-hex-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-height: 1.3em;
+}
+.krb-hex-field {
+  font-weight: bold;
+  color: #12107c;
+}
+.krb-hex-meta {
+  color: #666;
+}
+.krb-hex-dump {
+  font-family: Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 0.82em;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.krb-hex-row { white-space: nowrap; }
+.krb-hex-off {
+  color: #999;
+  margin-right: 10px;
+  user-select: none;
+}
+.krb-hex-b {
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+/* Every eighth byte gets a little air, the usual dump convention — it is what
+   makes counting to an offset possible without reading the gutter. */
+.krb-hex-b:nth-of-type(8n+1) { margin-left: 6px; }
+/* The readable column. It is now a CONTAINER of one cell per byte rather than
+   one string, so that hovering a byte can light its character too — which is
+   the half of the dump where a realm, a principal name or the `krbtgt` in a
+   TGT is legible, and which used to be the half that could not take part.
+   `white-space: pre` stays on the container so the padding spaces at the end
+   of a short final row keep the column aligned. */
+.krb-hex-ascii {
+  margin-left: 12px;
+  color: #777;
+  white-space: pre;
+  user-select: none;
+}
+/* One character. No padding and no margin: the gutter is a fixed-width column
+   and anything between the cells breaks the alignment with the hex above it.
+   The cursor says it is pointable, because it is — hovering the text names the
+   field exactly as hovering the bytes does. */
+.krb-hex-a {
+  cursor: pointer;
+}
+/* The tag and length bytes of whichever element owns this byte. Underlined
+   rather than coloured so it composes with the section tint underneath. */
+.krb-hex-hdr { text-decoration: underline dotted #999; }
+/* The hovered or pinned element. Strong, because it is the answer to the
+   question the view was opened to ask. */
+.krb-hex-on {
+  background: #12107c;
+  color: #fff;
+}
+.krb-hex-on.krb-hex-hdr { text-decoration-color: #ccc; }
+
+/* Six resting tints for the top-level sections. Pale, distinguishable, and
+   chosen to stay legible with black text on them. */
+.krb-hex-s0 { background: #eef3fb; }
+.krb-hex-s1 { background: #f2f7ee; }
+.krb-hex-s2 { background: #fbf3ee; }
+.krb-hex-s3 { background: #f6eef8; }
+.krb-hex-s4 { background: #eef8f7; }
+.krb-hex-s5 { background: #f9f7e8; }
+
+/* ---------------------------------------------------------------------------
+   Ticket Cache & History.
+   ---------------------------------------------------------------------------
+   TEN ROWS VISIBLE, the rest by scrolling. The height is in `em` rather than px
+   so it tracks the font: a px box sized for ten rows shows nine and a half the
+   moment anyone changes the base size.
+
+   Rounded so the eleventh row is CLIPPED and visibly so — a partial row is what
+   tells a reader there is more below, and is worth more than a tidy edge.
+
+   The header is sticky, as debugger2.html's Operation History does it: a
+   scrolling table whose header leaves is a table of unlabelled columns.
+   ------------------------------------------------------------------------ */
+.krb-history-scroll {
+  max-height: 24em;
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 3px;
+  margin: 6px 0 8px;
+}
+table.krb-history {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+table.krb-history th {
+  position: sticky;
+  top: 0;
+  background: #fafafa;
+  border-bottom: 1px solid #ddd;
+  text-align: left;
+  padding: 4px 8px;
+  font-weight: bold;
+  /* Above the cells when they scroll under it; without this the sticky header
+     is painted behind them and the text of both shows at once. */
+  z-index: 1;
+}
+table.krb-history td {
+  padding: 3px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: middle;
+}
+table.krb-history tr:last-child td { border-bottom: none; }
+table.krb-history .krb-history-num {
+  color: #999;
+  text-align: right;
+  width: 3em;
+  user-select: none;
+}
+table.krb-history .krb-history-when { white-space: nowrap; }
+/* The Type column. Narrow and fixed so the Client and Expires columns keep
+   the width; the values are short words (TGT, service, evidence). */
+table.krb-history .krb-history-kind { width: 6em; }
+table.krb-history .krb-history-act { width: 8em; text-align: right; }
+/* The row for the ticket currently held. Worth marking because a list of twenty
+   tickets otherwise gives no clue which one the panes above are about. */
+table.krb-history tr.krb-history-held td { background: #eef; }
+table.krb-history .krb-history-held-tag {
+  font-size: 0.85em;
+  color: #12107c;
+  font-weight: bold;
+}
+/* An expiry already past. Not an error — a history is expected to fill with
+   them — so it is greyed rather than reddened. */
+table.krb-history .krb-history-gone { color: #999; }
+.krb-history-activate {
+  font-size: 0.95em;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------------
+   The Operations History pane, on all five pages.
+
+   Rendered by client/src/op_history.js with classPrefix "krb-op", so every
+   class below is one that module emits. The prefix is NOT "krb": op_history's
+   layout classes are `<prefix>-history` and `<prefix>-table`, and those two
+   names are already taken on this page by the Ticket Cache & History table
+   which is a different table with different columns.
+
+   The three result colours are NOT redefined here — op_history is configured
+   with this page's own .krb-ok / .krb-bad / .krb-pending, which already mean
+   answered, refused and waiting.
+   ------------------------------------------------------------------------ */
+.krb-op-history-empty {
+  color: #666;
+  font-style: italic;
+  margin: 6px 0;
+}
+.krb-op-history-scroll {
+  /* Ten rows before it scrolls, matching the ticket pane above it: two
+     scrolling lists of different heights on one page read as a mistake. */
+  max-height: 24em;
+  overflow-y: auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 3px;
+  margin: 6px 0 8px;
+}
+/* op_history.js puts BOTH of these on the one table element: `-table` for the
+   family's general table look, `-history` for this table in particular. Both
+   have to exist, or the pane inherits nothing. */
+table.krb-op-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85em;
+}
+table.krb-op-history th {
+  position: sticky;
+  top: 0;
+  background: #fafafa;
+  border-bottom: 1px solid #ddd;
+  text-align: left;
+  padding: 4px 8px;
+  font-weight: bold;
+  /* Above the cells when they scroll under it; without this the sticky header
+     is painted behind them and the text of both shows at once. */
+  z-index: 1;
+}
+table.krb-op-history td {
+  padding: 3px 8px;
+  border-bottom: 1px solid #f0f0f0;
+  vertical-align: top;
+}
+table.krb-op-history tr:last-child td { border-bottom: none; }
+/* The "#" column op_history renders first, and the timestamp beside it. The
+   time is two lines (date over time) and must not wrap a third way. */
+table.krb-op-history td:first-child {
+  color: #999;
+  text-align: right;
+  width: 3em;
+  user-select: none;
+}
+table.krb-op-history .krb-op-history-time {
+  white-space: nowrap;
+  color: #555;
+  width: 7em;
+}
+/* A principal and an SPN are long, and an SPN has no spaces in it at all, so
+   without this one row sets the width of the whole table and the Result column
+   is squeezed to nothing. */
+table.krb-op-history .krb-op-who,
+table.krb-op-history .krb-op-target {
+  font-family: monospace;
+  font-size: 0.95em;
+  word-break: break-all;
+  max-width: 16em;
+}
+
+/* The shared collapse-all row (css/debugger.css) sits between the trail and
+   the first pane, and on these pages both are above the one control that has to
+   be reachable without scrolling — see the budget note on ol.krb-trail.
+   Overridden here rather than in debugger.css because the other workflows have
+   the room, and unscoped because THIS SHEET is loaded by the five Kerberos
+   pages and nothing else: client/static_site.js even drops it from a static
+   build along with them. A `.krb-page` wrapper would be tidier and would also
+   be a class no page carries, which is the kind of selector that silently
+   matches nothing. */
+.dbg-controls {
+  margin: 2px 0 6px;
+}
+
+/* ---------------------------------------------------------------------------
+   Tooltips on a FORM LABEL, which is not what the shared .tooltip was shaped
+   for.
+
+   The shared rule (css/bootstrap.css, customised long ago) gives every
+   .tooltip a dotted bottom border, because it was written for a word inside a
+   sentence that needs to advertise itself as hoverable. Wrapping a field label
+   in it puts a dotted rule under every label on the page — noise on a form,
+   where the input beneath already says "this is a field" — and, with the
+   label's own bootstrap `margin-bottom: 5px` inside the inline-block, costs
+   about 4px per row. Eleven rows in the configuration pane and three in step 2
+   is most of the reason the exchange controls no longer fit the 640px budget
+   kerberos_as_page.js enforces. Measured, not guessed: see the note on
+   ol.krb-trail.
+   ------------------------------------------------------------------------ */
+.krb-grid .tooltip,
+.krb-grid-tight .tooltip,
+.krb-opts .tooltip {
+  border-bottom: 0;
+}
+
+.krb-grid .tooltip > label,
+.krb-grid-tight .tooltip > label {
+  margin-bottom: 1px;
+}
+
+/* Both of these sit above the exchange controls on the AS page, and both are
+   folded prose or a row of checkboxes rather than anything that needs the
+   breathing room bootstrap's defaults give it. */
+.krb-more {
+  margin: 4px 0;
+}
+
+.krb-opts .krb-check {
+  margin-top: 2px;
+}
+
+/* The shared pane chrome (css/debugger.css), trimmed for the same budget. The
+   AS page stacks the configuration pane and then the two step panes above the
+   controls that have to be reachable without scrolling, so a few px of pane
+   padding is multiplied by the panes above the fold. Unscoped for the reason
+   given on .dbg-controls above: this sheet reaches the five Kerberos pages and
+   nothing else. */
+.dbg-pane {
+  margin-bottom: 8px;
+}
+
+.dbg-legend {
+  padding: 2px 0;
+}
+
+/* ---------------------------------------------------------------------------
+   SPNEGO (spnego.html): the HTTP panes, the way back, and the response body.
+   ---------------------------------------------------------------------------
+   This sheet reaches the SIX Kerberos pages and nothing else, so these are
+   unscoped like everything above them. See client/CLAUDE.md's note on
+   checkStylesheetsLoaded() in tests/navigation.js: a class prefixed krb- that a
+   page uses must be defined in a stylesheet that page actually loads, and this
+   is that stylesheet.
+   ------------------------------------------------------------------------ */
+
+/* One HTTP message. The request line or status line, then the headers as an
+   ordinary krb-table — headers are name/value pairs and there is no reason for
+   them to look different from every other name/value pair on these pages. */
+.krb-http {
+  border-left: 3px solid #ddd;
+  padding-left: 10px;
+  margin: 4px 0 10px;
+}
+/* Monospace, because a request line and a status line are literal text off the
+   wire and the whole point is that they are shown verbatim. */
+.krb-http-line {
+  font-family: Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 0.85em;
+  color: #12107c;
+  margin-bottom: 4px;
+  word-break: break-all;
+}
+
+/* The response body, as TEXT. `white-space: pre-wrap` rather than `pre`: this
+   is somebody else's HTML source and its lines can be arbitrarily long, so
+   wrapping it is the difference between a readable pane and a horizontal
+   scrollbar the length of the page. Bounded in height for the same reason the
+   SD-JWT VC panes are (docs/sd-jwt-vc-issuance.md): a narrow pane MULTIPLIES
+   height once real content arrives, and a protected page can be any size. */
+.krb-body {
+  background: #f7f7f7;
+  border: 1px solid #e5e5e5;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 0.78em;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* The banner that offers a way back to whichever workflow sent you here for a
+   ticket. It sits above the step trail, so it is deliberately ONE line tall on
+   a desktop width — the trail and the collapse-all row are already spending
+   the AS page's one-screen budget (see the note on ol.krb-trail), and a
+   two-line banner would push step 1's button past it. */
+.krb-return-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  border: 1px solid #cdd7e5;
+  border-left: 4px solid #12107c;
+  border-radius: 3px;
+  background: #f4f7fc;
+  padding: 4px 10px;
+  margin: 4px 0 6px;
+  font-size: 0.85em;
+}
+/* Ready: the caller has what it came for. Green rather than a new colour,
+   because krb-ok already means exactly this everywhere else on these pages. */
+.krb-return-banner.krb-ok {
+  border-color: #b6d7b9;
+  border-left-color: #2e7d32;
+  background: #f2f9f2;
+}
+.krb-return-what { font-weight: bold; }
+.krb-return-why { color: #555; }
+.krb-return-link {
+  margin-left: auto;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+/* The links out of the SPNEGO page's credentials pane — to the AS and TGS
+   pages, which are where a ticket comes from. Laid out as a row of link-shaped
+   controls rather than as buttons: they navigate, and a button that navigates
+   is a link wearing a costume. */
+.krb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 8px 0 2px;
+}
+.krb-step-link {
+  font-weight: bold;
+  white-space: nowrap;
+}

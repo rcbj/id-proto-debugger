@@ -24,6 +24,18 @@
 //     columns    [{ key, label, className }] — the columns between "#"/"Time"
 //                and "Result"; `key` names the field on a recorded entry.
 //     emptyText  shown when nothing has been recorded yet.
+//     classPrefix   the prefix on the classes render() emits, default 'saml'.
+//                   The three SAML-family workflows share one stylesheet and so
+//                   share the default; the Kerberos pages do not link it, and
+//                   `saml-*` classes on a page that never loads
+//                   css/saml_common.css are exactly what
+//                   checkStylesheetsLoaded() in tests/navigation.js fails on.
+//     resultClasses { ok, bad, pending } — the classes on the Result cell.
+//                   Separate from classPrefix because a workflow usually
+//                   already has colours for these three states (the Kerberos
+//                   pages have had krb-ok / krb-bad / krb-pending since their
+//                   status lines were written) and a second set that meant the
+//                   same thing would be one more place for them to disagree.
 
 
 var bunyan = require("bunyan");
@@ -72,18 +84,21 @@ function newEntryId() {
       Math.floor(Math.random() * 1e6).toString(36);
 }
 
-function resultClass(result) {
+// `classes` is the caller's { ok, bad, pending }; the defaults are the SAML
+// family's, which three of the four workflows use.
+function resultClass(result, classes) {
   log.debug("Entering resultClass().");
+  var map = classes || {};
   if (result === RESULT_SUCCESS) {
     log.debug("Leaving resultClass().");
-    return 'saml-ok';
+    return map.ok || 'saml-ok';
   }
   if (result === RESULT_FAILURE) {
     log.debug("Leaving resultClass().");
-    return 'saml-bad';
+    return map.bad || 'saml-bad';
   }
   log.debug("Leaving resultClass().");
-  return 'saml-pending';
+  return map.pending || 'saml-pending';
 }
 
 function createHistory(config) {
@@ -91,6 +106,8 @@ function createHistory(config) {
   var STORE_KEY = config.storeKey;
   var COLUMNS = config.columns || [];
   var EMPTY_TEXT = config.emptyText || 'No calls recorded yet.';
+  var PREFIX = config.classPrefix || 'saml';
+  var RESULT_CLASSES = config.resultClasses || null;
 
   function read() {
     log.debug("Entering read().");
@@ -210,13 +227,13 @@ function createHistory(config) {
     }
     var history = read();
     if (!history.length) {
-      box.innerHTML = '<p class="saml-history-empty">' +
+      box.innerHTML = '<p class="' + PREFIX + '-history-empty">' +
           escapeHtml(EMPTY_TEXT) + '</p>';
       log.debug("Leaving render().");
       return;
     }
-    var html = '<div class="saml-history-scroll"><table class="saml-table ' +
-        'saml-history">' +
+    var html = '<div class="' + PREFIX + '-history-scroll"><table class="' +
+        PREFIX + '-table ' + PREFIX + '-history">' +
       '<thead><tr><th>#</th><th>Time (UTC)</th>';
     COLUMNS.forEach(function (c) { html += '<th>' + escapeHtml(c.label) +
                     '</th>'; });
@@ -226,15 +243,15 @@ function createHistory(config) {
       var ts = String(item.timestamp || '');
       html += '<tr>' +
         '<td>' + (i + 1) + '</td>' +
-        '<td class="saml-history-time">' + escapeHtml(ts.substring(0, 10)) +
-            '<br>' +
+        '<td class="' + PREFIX + '-history-time">' +
+            escapeHtml(ts.substring(0, 10)) + '<br>' +
           escapeHtml(ts.substring(11, 19)) + 'Z</td>';
       COLUMNS.forEach(function (c) {
         html += '<td' + (c.className ? ' class="' + c.className + '"' : '') +
             '>' +
           escapeHtml(item[c.key]) + '</td>';
       });
-      html += '<td class="' + resultClass(item.result) + '">' +
+      html += '<td class="' + resultClass(item.result, RESULT_CLASSES) + '">' +
           escapeHtml(item.result) +
         (item.detail ? ' — ' + escapeHtml(item.detail) : '') + '</td>' +
         '</tr>';

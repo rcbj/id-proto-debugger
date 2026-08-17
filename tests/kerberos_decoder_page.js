@@ -258,7 +258,7 @@ async function decryptsAnAsRepFromAPasswordAndSalt(driver) {
 
   const e = kcrypto.etypeById(18);
   const salt = "EXAMPLE.COMalice";
-  const password = "hunter2";
+  const password = "password!";
   const clientKey = await e.stringToKey(password, prim.utf8(salt), null);
   const sessionKey = kcrypto.randomBytes(32);
   const now = new Date(Date.UTC(2026, 7, 13, 12, 0, 0));

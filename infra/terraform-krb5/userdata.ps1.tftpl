@@ -173,6 +173,110 @@ try {
   }
 
   # -----------------------------------------------------------------------
+  # THE DELEGATION FIXTURE.
+  #
+  # Four accounts mirroring the mock KDC's four (sts/krb5_principals.js), so one
+  # test drives either KDC. Each gets ktpass -- which sets the password, maps the
+  # SPN and writes a keytab in one call -- and then the attribute that gives it
+  # its role.
+  #
+  # THREE THINGS HERE ARE EASY TO GET WRONG AND SILENT WHEN WRONG:
+  #
+  #  1. msDS-AllowedToDelegateTo names a SERVICE, exactly, as a string. A typo
+  #     is not an error; it is a KDC_ERR_BADOPTION later, from the other side of
+  #     the exchange, mentioning nothing about the attribute.
+  #  2. TrustedToAuthForDelegation is the PROTOCOL-TRANSITION half and it is
+  #     separate from the delegate-to list. Without it S4U2Self still succeeds
+  #     and hands back a ticket that simply is not FORWARDABLE, and classic
+  #     S4U2Proxy then fails a step later complaining about the evidence. That
+  #     is why svc-notrusted exists: same list, flag absent, so the flag can be
+  #     shown to be the cause.
+  #  3. RBCD's permission lives on the TARGET, as
+  #     msDS-AllowedToActOnBehalfOfOtherIdentity, and it is a SECURITY
+  #     DESCRIPTOR rather than a name. Set-ADUser's
+  #     -PrincipalsAllowedToDelegateToAccount writes it correctly; hand-building
+  #     an SDDL string here would be a second way to be wrong.
+  # -----------------------------------------------------------------------
+  $delegation = @{}
+%{ if provision_delegation ~}
+  $roles = @(
+    @{ role = 'frontend';  account = '${delegation_frontend_account}';  spn = '${delegation_frontend_spn}' },
+    @{ role = 'backend';   account = '${delegation_backend_account}';   spn = '${delegation_backend_spn}' },
+    @{ role = 'notrusted'; account = '${delegation_notrusted_account}'; spn = '${delegation_notrusted_spn}' },
+    @{ role = 'rbcd';      account = '${delegation_rbcd_account}';      spn = '${delegation_rbcd_spn}' }
+  )
+  $delPw = '${delegation_password}'
+  foreach ($r in $roles) {
+    $sec = ConvertTo-SecureString $delPw -AsPlainText -Force
+    New-ADUser -Name $r.account -SamAccountName $r.account `
+      -UserPrincipalName ($r.account + '@${domain_name}') `
+      -AccountPassword $sec -Enabled $true `
+      -PasswordNeverExpires $true -CannotChangePassword $true `
+      -ChangePasswordAtLogon $false
+    Set-ADUser -Identity $r.account -KerberosEncryptionType AES256
+    & ktpass.exe -princ ($r.spn + '@${realm}') `
+      -mapuser ('${netbios_name}\' + $r.account) `
+      -pass $delPw -crypto AES256-SHA1 `
+      -ptype KRB5_NT_PRINCIPAL -mapop set `
+      -out ('C:\krb5\' + $r.role + '.keytab')
+    if ($LASTEXITCODE -ne 0) { throw ('ktpass failed for ' + $r.account) }
+  }
+
+  # frontend: classic constrained delegation TO the back-end, plus protocol
+  # transition so its S4U2Self ticket is forwardable.
+  Set-ADUser -Identity '${delegation_frontend_account}' `
+    -Add @{ 'msDS-AllowedToDelegateTo' = '${delegation_backend_spn}' }
+  Set-ADAccountControl -Identity '${delegation_frontend_account}' `
+    -TrustedToAuthForDelegation $true
+
+  # notrusted: the SAME list, and deliberately NOT trusted for protocol
+  # transition. One attribute apart from the account above.
+  Set-ADUser -Identity '${delegation_notrusted_account}' `
+    -Add @{ 'msDS-AllowedToDelegateTo' = '${delegation_backend_spn}' }
+  Set-ADAccountControl -Identity '${delegation_notrusted_account}' `
+    -TrustedToAuthForDelegation $false
+
+  # rbcd: the target names who may act on ITS behalf. Note the direction.
+  $fe = Get-ADUser -Identity '${delegation_frontend_account}'
+  Set-ADUser -Identity '${delegation_rbcd_account}' `
+    -PrincipalsAllowedToDelegateToAccount $fe
+
+  # Assert rather than assume. A delegate-to list that did not take, or a
+  # security descriptor that did not write, is invisible until the exchange
+  # fails from the far side.
+  $feList = (Get-ADUser -Identity '${delegation_frontend_account}' `
+    -Properties 'msDS-AllowedToDelegateTo').'msDS-AllowedToDelegateTo'
+  if ($feList -notcontains '${delegation_backend_spn}') {
+    throw 'msDS-AllowedToDelegateTo did not take on the front end'
+  }
+  $rbcdSd = (Get-ADUser -Identity '${delegation_rbcd_account}' `
+    -Properties 'msDS-AllowedToActOnBehalfOfOtherIdentity').'msDS-AllowedToActOnBehalfOfOtherIdentity'
+  if (-not $rbcdSd) {
+    throw 'msDS-AllowedToActOnBehalfOfOtherIdentity did not take on the rbcd target'
+  }
+  $feUac = (Get-ADUser -Identity '${delegation_frontend_account}' `
+    -Properties userAccountControl).userAccountControl
+  if (-not ($feUac -band 0x00040000)) {
+    throw 'TrustedToAuthForDelegation did not take on the front end'
+  }
+  $ntUac = (Get-ADUser -Identity '${delegation_notrusted_account}' `
+    -Properties userAccountControl).userAccountControl
+  if ($ntUac -band 0x00040000) {
+    throw 'svc-notrusted must NOT be trusted for protocol transition'
+  }
+
+  foreach ($r in $roles) {
+    $kt = 'C:\krb5\' + $r.role + '.keytab'
+    $delegation[$r.role] = @{
+      account    = $r.account
+      spn        = $r.spn
+      password   = $delPw
+      keytab_b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($kt))
+    }
+  }
+%{ endif ~}
+
+  # -----------------------------------------------------------------------
   # Hand it all back. The keytab is base64'd because it is binary and this
   # goes through a JSON document the test reads directly.
   # -----------------------------------------------------------------------
@@ -189,6 +293,7 @@ try {
     spn          = "${spn}"
     keytab_b64   = $keytabB64
     os           = (Get-CimInstance Win32_OperatingSystem).Caption
+    delegation   = $delegation
     completed_at = (Get-Date).ToUniversalTime().ToString("o")
   }
   Set-Content -Path C:\krb5\dc.json -Encoding ascii -Value ($meta | ConvertTo-Json -Depth 4)

@@ -1051,6 +1051,161 @@ function buildJobs() {
     env: {},
   });
 
+  // SPNEGO's codec (common/krb5/krb5_spnego.js), byte by byte. Node only, no
+  // browser and no services, and it never skips.
+  //
+  // Every value it asserts is derived by hand from RFC 4178 section 4 and from
+  // the OIDs' own registrations rather than from what the encoder produces,
+  // because a reader and a writer sharing one misunderstanding agree perfectly
+  // with each other and with nothing else. Four things earn it its keep: the
+  // OID coder (SPNEGO is the first thing here that has to write one — Kerberos's
+  // own ASN.1 contains no OBJECT IDENTIFIER at all, and Microsoft's mis-typed
+  // Kerberos OID differs from the real one in a single arc); that the
+  // mechListMIC covers `MechTypeList` and NOT `[0] MechTypeList`, which is two
+  // bytes and the commonest mistake in this protocol; that a `[3]` is a MIC in
+  // RFC 4178 and negHints in [MS-SPNG]'s NegTokenInit2, told apart by what is
+  // inside rather than by the direction of travel; and that negState is
+  // ENUMERATED rather than INTEGER, which encode identically apart from the tag
+  // so a coder using the wrong one round-trips against itself perfectly and is
+  // refused by a strict peer.
+  jobs.push({
+    name: "SPNEGO codec (RFC 4178's NegTokenInit and NegTokenResp, byte by byte)",
+    script: "krb5_spnego_codec.js",
+    env: {},
+  });
+
+  // SPNEGO over HTTP end to end: RFC 4559 carrying RFC 4178 carrying RFC 4121
+  // carrying an AP-REQ. Node only — the mock KDC and the mock's Express app are
+  // started in-process on ephemeral ports — so it never skips.
+  //
+  // The NEGATIVES are the substantial half, deliberately: an acceptor that
+  // authenticates a good client looks finished and is worth very little. Ten of
+  // them, and the two that nothing else could catch are a mechListMIC computed
+  // over the `[0]`-tagged list (the ticket is perfect and the request is
+  // refused) and an edited mechanism list (everything else about the request is
+  // valid, which is exactly why the MIC is the only thing that can notice —
+  // that is the downgrade RFC 4178 section 5 exists to stop). The rest: no
+  // mechanism in common in both directions, a list with no token answered
+  // accept-incomplete rather than reject, a tampered MIC, a replayed AP-REQ, a
+  // ticket for another service, a TGT presented as one, a Basic Authorization
+  // header, bytes that are not a token, and a continuation with nothing to
+  // continue. Each asserts WHICH check fired, not merely that something was
+  // refused — and the ones carrying a KRB-ERROR assert the error code inside
+  // the responseToken, because SPNEGO's negState has no reason field at all and
+  // an acceptor that swallows the mechanism's error leaves a rejection
+  // indistinguishable from a wrong password.
+  jobs.push({
+    name: "SPNEGO over HTTP (the handshake, and the ten negatives that make an acceptor worth anything)",
+    script: "krb5_spnego_http.js",
+    env: {},
+  });
+
+  // The Ticket Cache & History pane, on all five Kerberos pages. Node only:
+  // the pane is markup and needs a browser, but what it STORES is a hundred
+  // session keys and that is checkable without one. The assertion that matters
+  // is that unticking krb_save_ccache purges the whole list —
+  // enforceStoragePreference() names each key it removes, so a key added later
+  // is forgotten there by
+  // default, and the symptom would be an opt-out that quietly keeps a hundred
+  // credentials. The rest is where an activated ticket LANDS (a service ticket
+  // in the TGT slot is accepted silently and fails a page later) and the
+  // static wiring: every page includes the partial, mounts it once, mounts
+  // only the slots it holds, and the decoder mounts it read-only.
+  jobs.push({
+    name: "Kerberos ticket cache & history (credential store, slots, the " +
+        "opt-out purge, and the wiring on all five pages)",
+    script: "krb5_ticket_history.js",
+    env: {},
+  });
+
+  // The Operations History pane, on all five Kerberos pages. Node only, and
+  // deliberately: the half of this that a browser test could not catch is the
+  // static one. A row is opened when an operation starts and closed by the
+  // status line that operation named, so a page that opens a row against a line
+  // it never writes a terminal status to leaves every one of those operations
+  // reading "Sent" — a legitimate-looking value meaning "the far end never
+  // answered". The pane renders, the row is there, and nothing looks wrong. So
+  // this checks, per bundle, that every line an operation is opened against has
+  // both a success and a failure path; that all five pages include the partial
+  // AND mount it against the partial's own ids (a page that includes it and
+  // never mounts shows an empty div, which looks exactly like a workflow that
+  // has done nothing); and that the classes op_history.js renders with this
+  // workflow's prefix are defined in css/kerberos.css, since its defaults are
+  // the saml-* ones and these pages do not load that stylesheet.
+  jobs.push({
+    name: "Kerberos operations history (the log, and the wiring on all five " +
+        "pages)",
+    script: "krb5_operation_history.js",
+    env: {},
+  });
+
+  // The byte ranges the hex tab on the AS exchange page colours with. Node
+  // only, no browser: the arithmetic is in common/krb5/krb5_ranges.js precisely
+  // so it can be checked without one, and an offset that is relative rather
+  // than absolute does not crash — it highlights the wrong bytes, plausibly.
+  jobs.push({
+    name: "Kerberos byte ranges (absolute offsets for the hex view)",
+    script: "krb5_ranges_offsets.js",
+    env: {},
+  });
+
+  // The NAMES on those bytes, and the wiring that puts the view on a page.
+  // Node only, and the same reasoning: a tag mapped to the wrong field does not
+  // crash, it says `till` while highlighting `rtime`. Half the file is static —
+  // a hex pane nothing fills, or a tab strip nothing wires, renders empty,
+  // which is what a page looks like before an exchange has been run.
+  jobs.push({
+    name: "Kerberos field names (RFC 4120 names on the hex view's bytes)",
+    script: "krb5_field_naming.js",
+    env: {},
+  });
+
+  // Delegation, run TWICE — once per KDC — because that is the only way a
+  // divergence between the mock and Active Directory becomes visible.
+  //
+  // tests/krb5_tgs_ap.js already drives S4U against the mock, and harder: it
+  // forges tickets and swaps keys, which no real domain controller can be asked
+  // to do. But it only ever asks the mock, and the mock was written from the
+  // same reading of [MS-SFU] as the client it checks — so a shared misreading
+  // shows up in neither. These two jobs run ONE set of assertions against both,
+  // so the same assertion failing on one and passing on the other is the
+  // finding.
+  //
+  // The mock half needs nothing (in-process KDC on an ephemeral port). The
+  // Windows half needs a domain controller and is skipped without one, on the
+  // same terms as krb5_real_dc.js: it costs money and no launcher starts it.
+  {
+    const delegationIdps = [
+      { key: "mock", label: "mock KDC", skip: null, env: {} },
+      {
+        key: "windows",
+        label: "real Windows KDC",
+        skip: env.KRB5_DC_JSON ? null :
+          "no real Windows KDC to delegate against (KRB5_DC_JSON unset). " +
+          "The four delegation accounts are provisioned by " +
+          "infra/terraform-krb5 and described in the bootstrap's dc.json; " +
+          "./infra/krb5-test.sh fetches it and sets this. Not free tier, so " +
+          "nothing starts it automatically.",
+        env: {
+          KRB5_DELEG_TARGET: "windows",
+          KRB5_DC_JSON: env.KRB5_DC_JSON,
+          KRB5_DC_HOST: env.KRB5_DC_HOST,
+          KRB5_DC_PORT: env.KRB5_DC_PORT,
+        },
+      },
+    ];
+    for (const idp of delegationIdps) {
+      const job = {
+        name: "Kerberos delegation — S4U2Self, classic S4U2Proxy, RBCD [" +
+          idp.label + "]",
+        script: "krb5_delegation_interop.js",
+        env: Object.assign({ KRB5_DELEG_TARGET: idp.key }, idp.env),
+      };
+      if (idp.skip) { job.skip = idp.skip; }
+      jobs.push(job);
+    }
+  }
+
   // What a real Windows KDC sent, asserted offline. This is the job that keeps
   // the expensive one's evidence alive: tests/krb5_real_dc.js needs a domain
   // controller on EC2 and therefore runs almost never, so its exchange was
@@ -1214,6 +1369,66 @@ function buildJobs() {
   };
   if (kerberosPagesSkip) tgsApPageJob.skip = kerberosPagesSkip;
   jobs.push(tgsApPageJob);
+
+  // The SPNEGO page, and the two pages a user is ROUTED THROUGH to feed it.
+  // krb5_spnego_http.js already drives the protocol harder than this does with
+  // no browser, so this job covers only what needs one:
+  //
+  //  * **the routing loop**, which is the whole reason this is a workflow. The
+  //    SPNEGO page cannot obtain a ticket — that is the AS page and then the
+  //    TGS page — so it sends the user out with `?return=spnego` and each of
+  //    them offers a link back. This walks the loop: out, on to the TGS page
+  //    with the SPN carried in the query, and back through the banner's own
+  //    link. Nothing about the protocol notices when that breaks.
+  //  * **the banner BEFORE a ticket exists**, which is the case it is for and
+  //    the one an implementation puts after an early return and never renders.
+  //    That happened here once already.
+  //  * **the credential handoff** under a third reader of kerberos_panes.js's
+  //    shared cache. A rename there is silent: the pane renders, the button
+  //    stays disabled, and the page says "no service ticket held" for a ticket
+  //    that is sitting in storage.
+  //  * **the SPN the page guesses** from the URL's host, which nothing in the
+  //    SPNEGO exchange carries — when it is wrong the failure is a KDC error
+  //    three steps earlier naming nothing about HTTP, so the field has to
+  //    exist, be pre-filled and be overridable.
+  //  * **the panes**: the decoded NegTokenInit and what its mechanism ORDER
+  //    decides, the AP-REQ inside it, the 0x8003 checksum, the hex view naming
+  //    a field and its absolute offset under the pointer, and the ticket —
+  //    which is opaque until a service key is supplied and must SAY so rather
+  //    than rendering an empty pane. Supplying the key opens the EncTicketPart
+  //    and the PAC, which is the structure a client can never see in its own
+  //    ticket.
+  //
+  // And three negatives through the UI, each a deliberate misconfiguration the
+  // mock offers as a query parameter: an acceptor with no mechanism in common,
+  // a client offering only a mechanism this build cannot perform, and a server
+  // that accepts the ticket and proves nothing back.
+  //
+  // Needs the client, the api and the mock STS (its KDC and its
+  // SPNEGO-protected page). Unlike the AP page it needs no extra api setting —
+  // POST /krb5/spnego is an ordinary outbound HTTP call rather than a byte
+  // relay to an arbitrary port. It skips with a named reason for each missing
+  // piece, including an api or a mock that predates the workflow.
+  const spnegoPageJob = {
+    name: "SPNEGO page (the routing loop, the handshake, the ticket, and three refusals)",
+    script: "kerberos_spnego_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
+      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+      // The URL the API — not the browser — fetches, so it is the api's view of
+      // the mock that matters. On the containerized stack that is the compose
+      // name; STS_URL is browser-facing and follows a different rule (see
+      // tests/CLAUDE.md on WSFED_STS_METADATA_URL), which is why this is its
+      // own variable rather than derived.
+      KRB5_SPNEGO_URL: env.KRB5_SPNEGO_URL ||
+        (env.KRB5_SPNEGO_HOST ? "http://" + env.KRB5_SPNEGO_HOST +
+          "/spnego/protected" : "http://sts:8081/spnego/protected"),
+    },
+  };
+  if (kerberosPagesSkip) spnegoPageJob.skip = kerberosPagesSkip;
+  jobs.push(spnegoPageJob);
 
   // The DELEGATION page: S4U2Self, S4U2Proxy with both authorization routes, forwarding
   // and renewal. tests/krb5_tgs_ap.js already drives every one of those exchanges with no
@@ -2057,8 +2272,8 @@ function buildJobs() {
     const kerberosSkip =
       "Kerberos is not part of this target. The workflow needs the api's " +
       "port-88 relay, which a static deployment has not got, so " +
-      "client/static_site.js leaves all five pages out of the build and the " +
-      "landing card is greyed out. The codec and mock-KDC jobs are skipped " +
+      "client/static_site.js leaves all six pages out of the build and both " +
+      "landing cards are greyed out. The codec and mock-KDC jobs are skipped " +
       "here too: they exercise local code and report nothing about the " +
       "deployed site, so running them adds noise and, when the run's " +
       "CONFIG_FILE does not resolve inside the sts/ submodule, spurious " +

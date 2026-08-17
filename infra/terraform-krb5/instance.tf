@@ -68,6 +68,21 @@ resource "aws_instance" "dc" {
     artifacts_bucket   = aws_s3_bucket.artifacts.bucket
     aws_region         = var.aws_region
     vpc_dns            = local.vpc_dns
+
+    # The delegation fixture. Flattened to scalars rather than passed as an
+    # object because templatefile() has no way to iterate a map inside a
+    # PowerShell here-string without generating $${...}, which templatefile()
+    # would then try to interpolate itself.
+    provision_delegation         = var.provision_delegation
+    delegation_password          = random_password.delegation.result
+    delegation_frontend_account  = local.delegation.frontend.account
+    delegation_frontend_spn      = local.delegation.frontend.spn
+    delegation_backend_account   = local.delegation.backend.account
+    delegation_backend_spn       = local.delegation.backend.spn
+    delegation_notrusted_account = local.delegation.notrusted.account
+    delegation_notrusted_spn     = local.delegation.notrusted.spn
+    delegation_rbcd_account      = local.delegation.rbcd.account
+    delegation_rbcd_spn          = local.delegation.rbcd.spn
   })
 
   # Re-rendering the userdata (a changed password, a changed SPN) has to rebuild

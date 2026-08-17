@@ -60,7 +60,13 @@ var EXCLUDED_PAGES = [
   'kerberos_tgs',
   'kerberos_ap',
   'kerberos_delegation',
-  'kerberos_decoder'
+  'kerberos_decoder',
+  // SPNEGO looks like the exception and is not. Its own exchange IS HTTP, so
+  // the api relay it uses could in principle be anything — but the ticket it
+  // carries comes from a KDC on port 88, and obtaining one is the AS and TGS
+  // pages, which are not here. A SPNEGO page on a static site would be a page
+  // whose only button says "no service ticket held" for ever.
+  'spnego'
 ];
 
 // Everything else those pages own, as paths relative to the site root. Only
@@ -69,7 +75,27 @@ var EXCLUDED_PAGES = [
 // surviving page links leaves the survivor unstyled with nothing 404ing that
 // anybody looks at.
 var EXCLUDED_ASSETS = [
-  'css/kerberos.css'
+  'css/kerberos.css',
+  // The step trail, which is a partial and therefore easy to forget: build.js
+  // INLINES it into each of the five pages and also leaves the file itself in
+  // dist/. With all five pages dropped, that leftover links to five 404s —
+  // which is precisely what nothingThatShipsLinksToADroppedPage() in
+  // tests/static_site_exclusions.js caught when the trail was added. Nothing
+  // that still ships includes it, so it goes with the pages.
+  'partials/krb_steps.html',
+  // The Operations History pane, the second Kerberos-only partial and the same
+  // trap: build.js inlines it into all five pages AND leaves the file in dist/.
+  // It links to no page, so nothingThatShipsLinksToADroppedPage() would not
+  // catch it — it would simply be a pane nothing includes, describing a
+  // workflow the site does not have.
+  'partials/krb_history.html',
+  // The Ticket Cache & History pane, the third Kerberos-only partial, inlined
+  // into all five pages and likewise left in dist/. This one WOULD be caught,
+  // and loudly: its prose links to /kerberos.html for the credential-cache
+  // checkbox, so a surviving copy is a file linking to a page that was
+  // dropped — which fails the build in
+  // nothingThatShipsLinksToADroppedPage() rather than shipping.
+  'partials/krb_tickets.html'
 ];
 
 // The marker an <a class="landing-card"> carries in client/public/index.html to

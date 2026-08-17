@@ -288,6 +288,8 @@ do
     KRB5_SPN="${SPN}" \
     KRB5_KEYTAB_B64="${KEYTAB_B64}" \
     KRB5_DC_AMI="${KRB5_DC_AMI:-}" \
+    KRB5_DC_JSON=/tmp/krb5-dc.json \
+    KRB5_DELEG_TARGET=windows \
     node "${script}"
   )
   rc=$?

@@ -61,6 +61,20 @@ var describer = require("./krb5_describe.js");
 // would drift on the question that matters most, which is WHERE a session key
 // is kept.
 var panes = require("./kerberos_panes.js");
+// The hex view is required here for ONE pane. The request and reply panes get
+// theirs from renderMessage(), which pairs `krb_x_pane` with `krb_x_hex` by
+// convention — but the held ticket is not a message this page sent or received,
+// it is a field lifted out of one, so renderCache() renders it itself. That is
+// also why its decoded pane is `krb_cache_pane` while its hex is
+// `krb_ticket_hex`: the two halves are of different things, and the convention
+// correctly does not fire.
+var hexview = require("./kerberos_hex.js");
+var ophistory = require("./kerberos_history.js");
+// The Ticket Cache & History pane, which lived in this file until it went on
+// all five pages. It renders the list and owns Make active and Clear; this page
+// supplies the slot it holds (a TGT) and re-renders the pane above when a row
+// is put back into it.
+var tickets = require("./kerberos_tickets.js");
 
 // ---------------------------------------------------------------------------
 // Storage. Six keys, all prefixed krb_, and the cache is deliberately separate
@@ -264,6 +278,28 @@ function buildAsReq(padata) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Open an Operations History row for one of this page's two AS exchanges.
+//
+// The principal and the KDC are read from the FIELDS rather than from the
+// parsed request, because this is called before the request is built and the
+// row has to exist even when it never will be. What the user typed is also
+// what they will scan this list for.
+// ---------------------------------------------------------------------------
+function beginAsOperation(operation) {
+  log.debug("Entering beginAsOperation(). " + operation);
+  var user = val("krb_principal").trim();
+  var realm = val("krb_realm").trim();
+  ophistory.begin({
+    operation: operation,
+    principal: user + (realm ? "@" + realm : ""),
+    target: val("krb_kdc_host").trim() + ":" + (val("krb_kdc_port") || "88") +
+        "/" + (val("krb_transport") || "tcp"),
+    statusId: "krb_as_status"
+  });
+  log.debug("Leaving beginAsOperation().");
+}
+
 // What the KDC told us in the last PREAUTH_REQUIRED: the etypes, salts and
 // iteration counts. Held in memory only — it is derived from a message the page
 // still has on screen, so persisting it would add nothing but a stale copy.
@@ -274,6 +310,11 @@ var discovered = null;
 // ---------------------------------------------------------------------------
 async function onRequestWithoutPreAuth() {
   log.debug("Entering onRequestWithoutPreAuth().");
+  // Opened before this handler's own guards run, so a request that cannot even
+  // be built is recorded as the Failure it is. Every exit below sets a status
+  // on krb_as_status, and that is what closes this row — see the note at the
+  // top of kerberos_history.js.
+  beginAsOperation(ophistory.OPS.AS_NO_PREAUTH);
   status("krb_as_status", "Sending an AS-REQ with no pre-authentication…",
       "krb-pending");
   var request;
@@ -299,7 +340,8 @@ async function onRequestWithoutPreAuth() {
     return false;
   }
 
-  var doc = await renderMessage("krb_reply_pane", "Received", result.reply);
+  var doc = await renderMessage("krb_reply_pane", "Received",
+      result.reply);
   var response;
   try {
     response = msgs.readKdcResponse(result.reply);
@@ -430,6 +472,7 @@ function renderDiscovered(info) {
 // ---------------------------------------------------------------------------
 async function onRequestWithPreAuth() {
   log.debug("Entering onRequestWithPreAuth().");
+  beginAsOperation(ophistory.OPS.AS_PREAUTH);
   var password = val("krb_password");
   if (!password) {
     status("krb_as_status", "A password is needed to build PA-ENC-TIMESTAMP. " +
@@ -583,7 +626,13 @@ async function completeWithReply(replyBytes, clientKey) {
     storedAt: new Date().toISOString()
   };
   saveCache(entry);
+  // Into the history as well as into the live slot. Both, not one then the
+  // other: the history is what makes an earlier ticket reachable, and a ticket
+  // that was issued and never recorded is one the pane at the bottom will deny
+  // ever existed.
+  panes.recordTicket(entry);
   renderCache(entry);
+  tickets.refresh();
   status("krb_as_status",
     "A TGT for " + entry.client + " was issued and stored, valid until " +
         entry.endtime + ". " +
@@ -595,8 +644,16 @@ async function completeWithReply(replyBytes, clientKey) {
   log.debug("Leaving completeWithReply(). ticket stored.");
 }
 
+
 function renderCache(entry) {
   log.debug("Entering renderCache().");
+  // FIRST, not last. This function has three early returns — no pane, no
+  // ticket, an unreadable one — and a banner painted at the bottom is a banner
+  // that never appears in the case that matters most: somebody who arrived
+  // from another workflow BECAUSE they have no ticket. That is the shape the
+  // repo-root CLAUDE.md warns about for `Leaving` lines, and it bites the same
+  // way for anything else placed after a return.
+  showReturnBanner();
   var host = el("krb_cache_pane");
   if (!host) {
     log.debug("Leaving renderCache().");
@@ -609,8 +666,21 @@ function renderCache(entry) {
         "exchange above to get one."));
     var button = el("krb_forget_button");
     if (button) button.disabled = true;
+    // Clear the hex tab too. Left alone it would go on showing the bytes of a
+    // ticket that has just been forgotten, which is the one thing a page about
+    // credential storage must not do.
+    hexview.render("krb_ticket_hex", null, "Ticket");
     log.debug("Leaving renderCache().");
     return;
+  }
+  // The ticket as it arrived. b64ToBytes rather than the decoded structure,
+  // because the hex view's whole point is the bytes that were on the wire.
+  try {
+    hexview.render("krb_ticket_hex", panes.b64ToBytes(current.ticket),
+        "Ticket");
+  } catch (e) {
+    log.warn("the cached ticket did not decode to bytes for the hex view: " +
+        e.message);
   }
   var pane = make("div", "krb-section");
   pane.appendChild(make("h4", "krb-section-title", "Credential cache"));
@@ -644,10 +714,42 @@ function renderCache(entry) {
   log.debug("Leaving renderCache().");
 }
 
+// ---------------------------------------------------------------------------
+// The way back, when somebody arrived from another workflow.
+//
+// The SPNEGO page cannot obtain a ticket — that is this page and then the TGS
+// page — so it sends people here with ?return=spnego. This offers the link
+// back, and says which of the two states they are in. It never navigates on
+// its own: an automatic hop the moment a TGT arrived would take the two
+// decoded messages off the screen at the moment somebody wanted to read them,
+// which is what this page is FOR.
+// ---------------------------------------------------------------------------
+function showReturnBanner() {
+  log.debug("Entering showReturnBanner().");
+  var held = panes.readTgt();
+  panes.renderReturnBanner("krb_return_banner", {
+    ready: !!held,
+    readyText: "You have a ticket-granting ticket. SPNEGO needs a SERVICE " +
+      "ticket though, so step 2 — the TGS exchange — comes next; going back " +
+      "now will offer you that link.",
+    needText: "It needs a service ticket, and a service ticket is bought " +
+      "with a TGT. Get one here, then buy the ticket on the TGS page."
+  });
+  log.debug("Leaving showReturnBanner().");
+}
+
 function onForget() {
   log.debug("Entering onForget().");
+  // Recorded before the purge, while the ticket it is about can still be
+  // named: afterwards there is nothing left to say whose it was.
+  var held = readCache();
   purgeCache();
   renderCache(null);
+  ophistory.note({
+    operation: ophistory.OPS.FORGET_TGT,
+    principal: (held && held.client) || "",
+    detail: "Cleared from both sessionStorage and localStorage."
+  });
   status("krb_as_status", "The credential cache was cleared from both " +
       "sessionStorage and " +
     "localStorage.", null);
@@ -665,6 +767,13 @@ function onSaveCacheChanged() {
     } catch (e) {
       log.warn("could not purge the stored cache: " + e.message);
     }
+    // The purge empties localStorage, so both panes are now showing rows and
+    // fields that no longer exist. Re-read them from the store rather than
+    // leaving the screen asserting a credential is held when it has just been
+    // deleted — which on a page about credential storage is the worst possible
+    // thing to be wrong about.
+    renderCache(null);
+    tickets.refresh();
   }
   saveConfiguration();
   log.debug("Leaving onSaveCacheChanged().");
@@ -734,9 +843,39 @@ function reportEnvironment() {
 
 window.onload = function () {
   log.debug("Entering onload().");
+  // The shared chrome every workflow here has: the step trail marks where we
+  // are, and the toggle collapses or expands every pane at once. wirePanes()
+  // pairs each legend with its fieldset by id, so a pane added later is
+  // clickable without anything being registered for it.
+  panes.markCurrentStep("krb_step_as");
+  panes.wirePanes();
+  panes.wireTabs();
+  var toggleAll = el("dbg_toggle_all");
+  if (toggleAll) {
+    toggleAll.addEventListener("change", function () {
+      panes.setAllPanes(toggleAll.checked);
+    });
+  }
   loadConfiguration();
   reportEnvironment();
+  // Read before the first render, so the banner is painted by renderCache()
+  // below rather than needing a second pass.
+  panes.noteReturnTarget();
   renderCache(null);
+  // The Ticket Cache & History pane, from partials/krb_tickets.html. The slot
+  // this page holds is a TGT slot — the TGS exchange spends whatever is in it —
+  // so a TGT is the only kind it may take back; a service ticket accepted here
+  // would fail a page later, naming something else. The callback re-renders the
+  // pane above, so the cache, its hex tab and the list all move together.
+  tickets.mount({
+    slots: ["TGT"],
+    onActivate: function (entry) {
+      renderCache(entry);
+    }
+  });
+  // The Operations History pane, from partials/krb_history.html. The same two
+  // ids on all five pages, because they all include the same partial.
+  ophistory.mount("krb_operation_history", "krb_clear_operations_button");
   var without = el("krb_noreauth_button");
   if (without) without.addEventListener("click",
       function () { onRequestWithoutPreAuth(); });

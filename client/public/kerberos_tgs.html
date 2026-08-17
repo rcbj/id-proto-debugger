@@ -45,15 +45,34 @@ checksum over the encoded request body. The panes below show that nesting.</p>
 
 <div id="krb_environment_note"></div>
 
-<fieldset class="krb-pane">
-  <legend>The TGT you hold</legend>
+<!-- Where to go back to, when another workflow sent you here for a ticket.
+     Filled by kerberos_panes.js renderReturnBanner() and empty otherwise, so it
+     costs nothing on an ordinary visit. -->
+<div id="krb_return_banner"></div>
+
+<!--#include file="/partials/krb_steps.html"-->
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane on this page.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<div class="dbg-pane" id="pane_tgt_you_hold">
+  <legend class="dbg-legend" id="tgt_you_hold_expand_button">The TGT you hold</legend>
+  <fieldset name="tgt_you_hold_fieldset" id="tgt_you_hold_fieldset" style="display: block;">
   <div id="krb_tgt_pane"></div>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>The service you want a ticket for</legend>
+<div class="dbg-pane" id="pane_service_you_want_ticket_for">
+  <legend class="dbg-legend" id="service_you_want_ticket_for_expand_button">The service you want a ticket for</legend>
+  <fieldset name="service_you_want_ticket_for_fieldset" id="service_you_want_ticket_for_fieldset" style="display: block;">
   <div class="krb-keys">
-    <label for="krb_spn">Service principal name (SPN)</label>
+    <div class="tooltip"><label for="krb_spn">Service principal name (SPN)</label><span class="tooltiptext">The service to get a ticket for, as the KDC knows it. It must match a registered servicePrincipalName EXACTLY — a near miss is KDC_ERR_S_PRINCIPAL_UNKNOWN, which reads as a missing service rather than a typo.</span></div>
     <input type="text" id="krb_spn" class="krb-field" value="HTTP/web.example.com" spellcheck="false"
            placeholder="HTTP/web.example.com, cifs/fileserver.example.com, MSSQLSvc/db.example.com:1433">
     <p class="krb-note">The commonest failure here is <code>KDC_ERR_S_PRINCIPAL_UNKNOWN</code>, and it
@@ -62,29 +81,29 @@ checksum over the encoded request body. The panes below show that nesting.</p>
     the name-type as well &mdash; a two-part SPN is <code>NT-SRV-HST</code>, and AD is inconsistent about
     enforcing that, which is worse than being strict.</p>
 
-    <label for="krb_realm">Realm</label>
+    <div class="tooltip"><label for="krb_realm">Realm</label><span class="tooltiptext">The Kerberos realm, conventionally the DNS domain upper-cased. It is case-sensitive on the wire and a realm that differs only in case is a different realm.</span></div>
     <input type="text" id="krb_realm" class="krb-field" value="EXAMPLE.COM" spellcheck="false">
 
-    <label for="krb_kdc_host">KDC host or address</label>
+    <div class="tooltip"><label for="krb_kdc_host">KDC host or address</label><span class="tooltiptext">Where the KDC is. Resolved and reached by the api's relay, not by the browser — Kerberos is DER over a socket and a page cannot open one.</span></div>
     <input type="text" id="krb_kdc_host" class="krb-field" value="127.0.0.1" spellcheck="false">
 
-    <label for="krb_kdc_port">Port</label>
+    <div class="tooltip"><label for="krb_kdc_port">Port</label><span class="tooltiptext">88 by convention, on both TCP and UDP. The api will only reach ports on its krb5AllowedPorts list, so a non-standard port has to be added there too.</span></div>
     <input type="text" id="krb_kdc_port" class="krb-field" value="88">
 
-    <label for="krb_transport">Transport</label>
+    <div class="tooltip"><label for="krb_transport">Transport</label><span class="tooltiptext">UDP first is the traditional client behaviour, falling back to TCP when the reply will not fit. A reply carrying a PAC usually will not, so most real exchanges end up on TCP.</span></div>
     <select id="krb_transport" class="krb-field">
       <option value="tcp" selected="selected">TCP</option>
       <option value="udp">UDP</option>
     </select>
 
-    <label for="krb_etypes">Encryption types offered for the new ticket</label>
+    <div class="tooltip"><label for="krb_etypes">Encryption types offered for the new ticket</label><span class="tooltiptext">The encryption types offered, IN PREFERENCE ORDER — the order is the negotiation. The KDC picks the first it supports, so putting 23 (RC4) first tests the weak path by accident.</span></div>
     <input type="text" id="krb_etypes" class="krb-field" value="18 17" spellcheck="false">
     <p class="krb-note">The KDC picks the first of these the <em>service account</em> supports &mdash;
     not the first the user supports. A ticket the client can read and the service cannot is
     <code>KDC_ERR_ETYPE_NOSUPP</code> from the service's point of view.</p>
 
-    <label class="krb-check"><input type="checkbox" id="krb_use_subkey">
-      send a subkey in the Authenticator</label>
+    <div class="tooltip"><label class="krb-check"><input type="checkbox" id="krb_use_subkey">
+      send a subkey in the Authenticator</label><span class="tooltiptext">Send a subkey in the authenticator. It changes which key usage number opens the reply — 9 with a subkey, 8 without — and a client that always tries one fails half the time.</span></div>
     <p class="krb-note">A subkey changes which key the reply is encrypted under: <strong>key usage
     9</strong> with one, <strong>key usage 8</strong> without. The KDC chooses based on what was sent,
     so a client that always tries one of the two fails half the time &mdash; and the failure is an
@@ -94,23 +113,54 @@ checksum over the encoded request body. The panes below show that nesting.</p>
          disabled="disabled">
   <div id="krb_tgs_status" class="krb-status"></div>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>What went out</legend>
-  <div id="krb_request_pane"></div>
+<div class="dbg-pane" id="pane_sent">
+  <legend class="dbg-legend" id="sent_expand_button">What went out</legend>
+  <fieldset name="sent_fieldset" id="sent_fieldset" style="display: block;">
+  <div class="krb-tabs" data-krb-tabs="request">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="request" data-krb-tab="decoded">
+    <div id="krb_request_pane"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="request"
+       data-krb-tab="hex">
+    <div id="krb_request_hex"></div>
+  </div>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>What came back</legend>
-  <div id="krb_reply_pane"></div>
+<div class="dbg-pane" id="pane_received">
+  <legend class="dbg-legend" id="received_expand_button">What came back</legend>
+  <fieldset name="received_fieldset" id="received_fieldset" style="display: block;">
+  <div class="krb-tabs" data-krb-tabs="reply">
+    <button type="button" class="krb-tab krb-tab-on" role="tab"
+            aria-selected="true" data-krb-tab="decoded">Decoded</button>
+    <button type="button" class="krb-tab" role="tab"
+            aria-selected="false" data-krb-tab="hex">Hex</button>
+  </div>
+  <div class="krb-tabpanel" data-krb-tabs="reply" data-krb-tab="decoded">
+    <div id="krb_reply_pane"></div>
+  </div>
+  <div class="krb-tabpanel krb-tabpanel-off" data-krb-tabs="reply"
+       data-krb-tab="hex">
+    <div id="krb_reply_hex"></div>
+  </div>
 </fieldset>
+</div>
 
-<fieldset class="krb-pane">
-  <legend>Service tickets held</legend>
+<div class="dbg-pane" id="pane_service_tickets_held">
+  <legend class="dbg-legend" id="service_tickets_held_expand_button">Service tickets held</legend>
+  <fieldset name="service_tickets_held_fieldset" id="service_tickets_held_fieldset" style="display: block;">
   <div id="krb_tickets_pane"></div>
   <input type="button" id="krb_forget_tickets_button" class="btn2" value="Forget these tickets"
          disabled="disabled">
 </fieldset>
+</div>
 
 <p class="krb-intro"><strong>What a service ticket does not tell you.</strong> That the KDC issued one
 says only that the KDC was willing. Whether the <em>service</em> accepts it depends on its own key
@@ -118,6 +168,10 @@ version, its clock, and &mdash; on Windows &mdash; on the PAC inside the ticket,
 memberships live and which this build does not yet produce.
 <a href="/kerberos_ap.html">Presenting the ticket</a> is the only way to find out, and that is the next
 page.</p>
+
+<!--#include file="/partials/krb_tickets.html"-->
+
+<!--#include file="/partials/krb_history.html"-->
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">

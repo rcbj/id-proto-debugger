@@ -132,6 +132,15 @@ const MAX_CONTENT_LENGTH = resolvePositiveNumber(
   'maxContentLength', appconfig.maxContentLength, DEFAULT_MAX_CONTENT_LENGTH,
       'bytes');
 
+// How much of a SPNEGO-protected page's body POST /krb5/spnego hands back for
+// DISPLAY. Not a transfer limit — MAX_CONTENT_LENGTH is that, and it still
+// applies — but a display one: what is being debugged there is the handshake in
+// the headers, and the body is a page meant for a browser. Enough to see that
+// the resource really did arrive and to read a short mock's whole answer, and
+// not so much that a JSON response carries a megabyte of somebody's intranet
+// home page into a pane nobody will read.
+const SPNEGO_BODY_CHARS = 16384;
+
 /**
  * Read one non-negative integer setting out of the environment config.
  *
@@ -2207,6 +2216,134 @@ app.post('/krb5/service', function (req, res) {
     });
 });
 
+// ---------------------------------------------------------------------------
+// POST /krb5/spnego — the SPNEGO handshake, which is the one Kerberos exchange
+// that IS an HTTP exchange.
+//
+// Why this is not /krb5/service, and not a browser fetch:
+//
+//  * It is not /krb5/service. That endpoint is a raw byte relay to a TCP port
+//    and is bounded by a payload check that insists on a GSS-wrapped AP-REQ. A
+//    SPNEGO exchange is an HTTP request whose Authorization header happens to
+//    carry one, so the bytes are not the payload and the port is 80 or 443 —
+//    neither of that endpoint's two bounds applies.
+//  * It is not a fetch from the page, and that is the interesting half. A
+//    cross-origin fetch can read a response header only if the server chose to
+//    expose it with Access-Control-Expose-Headers — and `WWW-Authenticate` is
+//    exactly the header this workflow exists to show. Worse, the browser
+//    controls its own request headers, so a page cannot report what it sent.
+//    This endpoint reports both sides verbatim, which is the whole product.
+//
+// What bounds it: the method is GET and nothing else, and the ONLY header the
+// caller can influence is `Authorization`, whose value this service builds
+// itself as `Negotiate <base64>` from a token it has validated the alphabet of.
+// A caller cannot inject a header, a method or a body. Everything else is the
+// same axios instance every other outbound call here uses, so the SSRF guard,
+// the four limits and the User-Agent apply unchanged and automatically.
+/**
+ * Perform one step of a SPNEGO (RFC 4178) HTTP handshake and report both sides.
+ * @route POST /krb5/spnego
+ * @param {string} url.body.required - the protected resource, an http(s) URL
+ * @param {string} token.body - the SPNEGO token, base64; omitted for the
+ *                              unauthenticated first request
+ * @param {boolean} sslValidate.body - verify the TLS certificate (default true)
+ * @returns {object} 200 - what was sent and what came back, headers included
+ * @returns {object} 400 - the request was refused (see the reason)
+ * @returns {object} 502 - the resource could not be reached
+ */
+app.post('/krb5/spnego', function (req, res) {
+  log.debug('Entering POST /krb5/spnego.');
+  var b = req.body || {};
+  var url = b.url;
+  var sslValidate = (b.sslValidate === false || b.sslValidate === 'false') ?
+      false : true;
+  if (!url) {
+    log.debug('Leaving POST /krb5/spnego. No url.');
+    return res.status(STATUS_400).json({
+      error: 'url is required. It is the SPNEGO-protected resource to fetch.' });
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    log.debug('Leaving POST /krb5/spnego. Not an http(s) url.');
+    return res.status(STATUS_400).json({
+      error: 'url must be an absolute http(s) URL.' });
+  }
+  var headers = { 'Accept': '*/*' };
+  if (b.token) {
+    // Validated the same way and for the same reason as the two relay
+    // endpoints above: node's base64 decoder is lenient, so an unreadable
+    // token would otherwise reach the far end as a shorter, different token
+    // and be refused by IT — which names the wrong mistake, on somebody else's
+    // machine.
+    var raw = String(b.token).trim().replace(/\s+/g, '');
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(raw) || raw.length % 4 === 1) {
+      log.debug('Leaving POST /krb5/spnego. token is not base64.');
+      return res.status(STATUS_400).json({
+        error: 'token is not valid base64. It is the SPNEGO token exactly as ' +
+               'it appears after "Negotiate " in the Authorization header.' });
+    }
+    headers.Authorization = 'Negotiate ' + raw;
+  }
+  var startedAt = Date.now();
+  axios.get(url, {
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [function (d) {
+      return d; }],
+    // A 401 is the PROTOCOL here, not a failure: the first request is supposed
+    // to be refused, and the refusal carries the challenge. Throwing on it
+    // would make the normal case an error path.
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(sslValidate),
+    headers: withUserAgent(headers)
+  })
+  .then(function (response) {
+    var elapsed = Date.now() - startedAt;
+    var body = String(response.data == null ? '' : response.data);
+    // The body is capped for DISPLAY, separately from maxContentLength which
+    // caps the transfer. A protected page is HTML meant for a browser and the
+    // reader wants to see that it arrived, not to read it here.
+    var shown = body.slice(0, SPNEGO_BODY_CHARS);
+    log.debug('Leaving POST /krb5/spnego. status=' + response.status);
+    return res.status(STATUS_200).json({
+      request: {
+        method: 'GET',
+        url: url,
+        // What was actually sent, including the User-Agent this service adds,
+        // so the pane shows the request rather than the caller's intent.
+        headers: withUserAgent(headers)
+      },
+      response: {
+        status: response.status,
+        statusText: response.statusText || '',
+        headers: response.headers && response.headers.toJSON ?
+                 response.headers.toJSON() : (response.headers || {}),
+        body: shown,
+        bodyTruncated: body.length > shown.length,
+        bodyLength: body.length
+      },
+      timing: { totalMs: elapsed }
+    });
+  })
+  .catch(function (error) {
+    // THE NO-RESPONSE BRANCH MUST ANSWER — see the note on POST /krb5/kdc. A
+    // policy refusal (the SSRF guard, a blocked scheme) is the caller asking
+    // for something this service will not do; anything else is the far end.
+    var blocked = error && (error.code === 'EBLOCKEDADDRESS' ||
+                            error.code === 'EPROTOCOLNOTALLOWED');
+    var status = blocked ? STATUS_400 : 502;
+    log.warn('POST /krb5/spnego to ' + url + ' failed [' +
+      (error && error.code) + ']: ' + (error && error.message));
+    log.debug('Leaving POST /krb5/spnego. status=' + status);
+    return res.status(status).json({
+      error: (error && error.message) ? error.message : String(error),
+      code: (error && error.code) || null });
+  });
+});
+
 /**
  * What the Kerberos relay will and will not do, so the page can say so before a
  * call fails. A debugger that discovers its own limits by hitting them is a
@@ -2222,6 +2359,14 @@ app.get('/krb5/limits', function (req, res) {
     servicePorts: krb5.servicePorts,
     serviceEnabled: krb5.serviceEnabled,
     addressPolicyEnabled: krb5.addressPolicyEnabled,
+    // SPNEGO goes over HTTP through POST /krb5/spnego rather than over a
+    // socket, so it has no port list of its own and no off switch: it is the
+    // same capability as every other endpoint here that fetches a caller-named
+    // URL. Published all the same, because the page asks this endpoint what it
+    // can do before offering a button that needs it — an older api would
+    // simply not have the field.
+    spnegoEnabled: true,
+    spnegoBodyChars: SPNEGO_BODY_CHARS,
     limits: krb5.limits
   });
 });

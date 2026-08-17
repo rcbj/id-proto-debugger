@@ -50,6 +50,14 @@ var keytabReader = require("./krb5_keytab.js");
 // touches the network (reportEnvironment / relayLimits) is never called from
 // here — this page talks to nothing.
 var panes = require("./kerberos_panes.js");
+var ophistory = require("./kerberos_history.js");
+// The Ticket Cache & History pane, mounted READ-ONLY here for the same reason
+// the Operations History pane is only displayed: this page must write nothing.
+// It reads the list the other four pages fill and offers each row's bytes to
+// the box above, which is a read of storage and a write to a textarea — see
+// persistsNothing() in tests/kerberos_decoder_page.js, which asserts no krb*
+// key exists in either store after this page has been used.
+var tickets = require("./kerberos_tickets.js");
 
 // The DOM helpers all come from kerberos_panes.js now. They used to be copied
 // into this file, and into kerberos.js, which is exactly the duplication that
@@ -219,6 +227,15 @@ async function collectKeys() {
 // ---------------------------------------------------------------------------
 async function onDecode() {
   log.debug("Entering onDecode().");
+  // NOT recorded in the Operations History. This page shows that log and never
+  // adds to it: its one hard guarantee is that NOTHING it is given persists —
+  // it is where somebody pastes a captured message together with the long-term
+  // key that opens it, and the log lives in localStorage. Recording even "a
+  // decode happened" put a `krb_operation_history` key into storage on this
+  // page, which is what persistsNothing() in tests/kerberos_decoder_page.js
+  // exists to catch, and it caught it. A decode is also the one action here
+  // with no far end and no credential of its own to name, so the log loses
+  // least by omitting it.
   var host = el("krb_output");
   clear(host);
   status("krb_status", "Decoding…", "krb-pending");
@@ -277,6 +294,37 @@ async function onDecode() {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// A row of the Ticket Cache & History pane, put in the box above.
+//
+// The bytes are copied into the input and decoded; nothing is stored, and the
+// keys pane is left exactly as it was, because the key that opens a ticket is
+// the SERVICE's long-term key and only the reader knows whether they have it.
+// The status line says what to expect rather than letting an unopened enc-part
+// read as a failed decode.
+// ---------------------------------------------------------------------------
+function onDecodeStoredTicket(entry) {
+  log.debug("Entering onDecodeStoredTicket().");
+  var input = el("krb_input");
+  if (!input || !entry || !entry.ticket) {
+    status("krb_status", "That ticket has no bytes to decode.", "krb-bad");
+    log.debug("Leaving onDecodeStoredTicket(). Nothing to decode.");
+    return false;
+  }
+  input.value = entry.ticket;
+  // The note goes on the PANE's own status line rather than on krb_status,
+  // which onDecode() is about to write to twice — a message posted here would
+  // last until the decode finished and then vanish, which reads as a page that
+  // changed its mind.
+  status(tickets.STATUS_ID, "The ticket for " + (entry.service || "?") +
+      " is in the box at the top of the page. It is encrypted under that " +
+      "service's own long-term key, so its enc-part opens only if you supply " +
+      "that key, or its keytab, in the keys pane.", null);
+  onDecode();
+  log.debug("Leaving onDecodeStoredTicket().");
+  return false;
+}
+
 function onClear() {
   log.debug("Entering onClear().");
   ["krb_input", "krb_key_hex", "krb_password", "krb_salt",
@@ -319,16 +367,41 @@ function reportCryptoAvailability() {
 
 window.onload = function () {
   log.debug("Entering onload().");
+  // The shared chrome every workflow here has: the step trail marks where we
+  // are, and the toggle collapses or expands every pane at once. wirePanes()
+  // pairs each legend with its fieldset by id, so a pane added later is
+  // clickable without anything being registered for it.
+  panes.markCurrentStep("krb_step_decoder");
+  panes.wirePanes();
+  var toggleAll = el("dbg_toggle_all");
+  if (toggleAll) {
+    toggleAll.addEventListener("change", function () {
+      panes.setAllPanes(toggleAll.checked);
+    });
+  }
   var decode = el("krb_decode_button");
   if (decode) decode.addEventListener("click", function () { onDecode(); });
   var clearButton = el("krb_clear_button");
   if (clearButton) clearButton.addEventListener("click", onClear);
   reportCryptoAvailability();
+  // Read-only: no slot to activate into, no Clear button (this page's own Clear
+  // means something else entirely), and nothing written anywhere. Each row
+  // offers its ticket to the box above instead, which is what this page is for
+  // — a ticket is sealed with the SERVICE's long-term key, so what comes out
+  // without a key is the envelope, and supplying that key is the pane above.
+  tickets.mount({
+    readOnly: true,
+    onSelect: function (entry) {
+      onDecodeStoredTicket(entry);
+    }
+  });
+  ophistory.mount("krb_operation_history", "krb_clear_operations_button");
   status("krb_status", "Paste a Kerberos message and press Decode.", null);
   log.debug("Leaving onload().");
 };
 
 module.exports = {
   onDecode: onDecode,
+  onDecodeStoredTicket: onDecodeStoredTicket,
   onClear: onClear
 };

@@ -85,6 +85,13 @@ const SERVICE = ["HTTP", "web.example.com"];
 // named here rather than inlined.
 const KRBTGT_PASSWORD = process.env.KRB5_KRBTGT_PASSWORD ||
     "krbtgt-mock-password";
+// Every USER account in the mock holds this one password — alice, bob, carol,
+// sensitive and any username invented on the spot alike. There are no per-account
+// user secrets there any more, so a test names the account whose BEHAVIOUR it
+// wants and never a password to go with it. Same variable the KDC reads, so
+// overriding it moves both ends together. Service and krbtgt accounts still have
+// their own, which is why those are separate constants.
+const USER_PASSWORD = process.env.KRB5_USER_PASSWORD || "password!";
 const SERVICE_PASSWORD = "service-account-password";
 // The inter-realm trust: ONE shared secret, held as krbtgt/PARTNER.COM in both
 // realms.
@@ -571,7 +578,7 @@ async function thePacAgreesWithTheAccountsBehaviour() {
 // and since nobody looks inside a TGT that would go unnoticed.
 async function decliningThePacYieldsATicketWithoutOne() {
   log.debug("Entering decliningThePacYieldsATicketWithoutOne().");
-  const declined = await getTgt("alice", "hunter2",
+  const declined = await getTgt("alice", USER_PASSWORD,
     [{ type: msgs.PA_TYPE.PAC_REQUEST, value: msgs.encPaPacRequest(false) }]);
   const profile = kcrypto.etypeById(declined.etype);
   const krbtgtKey = await profile.stringToKey(KRBTGT_PASSWORD,
@@ -620,7 +627,7 @@ async function decliningThePacYieldsATicketWithoutOne() {
   // The positive control: with the SAME code path but no decline, a PAC is
   // present. Without this the assertions above would pass against a KDC that
   // never issues one.
-  const granted = await getTgt("alice", "hunter2");
+  const granted = await getTgt("alice", USER_PASSWORD);
   const grantedPart = msgs.readEncTicketPart(await profile.decrypt(krbtgtKey,
     kcrypto.KEY_USAGE.KDC_REP_TICKET, granted.ticket.encPart.cipher));
   assert.strictEqual(kpac.findPacs(grantedPart.authorizationData || []).length,
@@ -653,7 +660,7 @@ async function decliningThePacYieldsATicketWithoutOne() {
   // distinguishable from the implicit grant. These two differing is what proves
   // the padata was read at all — with the bug above, every PAC came back marked
   // implicit, including this one.
-  const asked = await getTgt("alice", "hunter2",
+  const asked = await getTgt("alice", USER_PASSWORD,
     [{ type: msgs.PA_TYPE.PAC_REQUEST, value: msgs.encPaPacRequest(true) }]);
   const askedPart = msgs.readEncTicketPart(await profile.decrypt(krbtgtKey,
     kcrypto.KEY_USAGE.KDC_REP_TICKET, asked.ticket.encPart.cipher));
@@ -922,7 +929,7 @@ async function aCrossRealmReferralIsIssuedAndCanBeFollowed(tgt) {
 async function theTrustedRealmServesItsOwnClients() {
   log.debug("Entering theTrustedRealmServesItsOwnClients().");
   const PARTNER_REALM = "PARTNER.COM";
-  const carol = await getTgt("carol", "partner-user-password", null,
+  const carol = await getTgt("carol", USER_PASSWORD, null,
       PARTNER_REALM);
   assert.strictEqual(carol.realm, PARTNER_REALM,
     "the TGT must be issued by and for " + PARTNER_REALM);
@@ -1259,7 +1266,7 @@ async function delegationWorksBothWaysAndIsRefusedOtherwise() {
   // with different session keys, and the request would then be built with one
   // and read with the other — which fails as an integrity error and looks like
   // a KDC problem.
-  const aliceTgt = await getTgt("alice", "hunter2");
+  const aliceTgt = await getTgt("alice", USER_PASSWORD);
   const aliceRequest = await client.buildTgsReq({
     tgt: aliceTgt,
     sname: {
@@ -1575,7 +1582,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
 
   // A ticket that is not renewable cannot be renewed, and the reason is that
   // renewability is requested when the ticket is first obtained.
-  const notRenewable = await getTgt("bob", "correct horse battery staple",
+  const notRenewable = await getTgt("bob", USER_PASSWORD,
       null, REALM, null,
     [msgs.KDC_OPTION.FORWARDABLE]);
   assert.ok(!notRenewable.renewTill,
@@ -1695,7 +1702,7 @@ async function renewalsExtendWithoutReauthenticating(tgt) {
 // up in it at all.
 async function forwardedCredentialsAreUnconstrained() {
   log.debug("Entering forwardedCredentialsAreUnconstrained().");
-  const alice = await getTgt("alice", "hunter2");
+  const alice = await getTgt("alice", USER_PASSWORD);
   assert.ok(alice.flagNames.indexOf("forwardable") !== -1,
     "alice's TGT must be forwardable for any of this to be possible: " +
         alice.flagNames.join(", "));
@@ -1786,7 +1793,7 @@ async function forwardedCredentialsAreUnconstrained() {
 
   // The protection: an account flagged NOT_DELEGATED. It is refused at the AS
   // exchange, so it never even acquires a forwardable ticket to be forwarded.
-  const sensitive = await getTgt("sensitive", "do-not-delegate-me");
+  const sensitive = await getTgt("sensitive", USER_PASSWORD);
   assert.ok(sensitive.flagNames.indexOf("forwardable") === -1,
     "a sensitive account's TGT must NOT be forwardable even though " +
         "FORWARDABLE was requested — " +
@@ -2357,7 +2364,7 @@ async function test() {
       " is on " + servicePort);
 
   try {
-    const tgt = await getTgt("alice", "hunter2");
+    const tgt = await getTgt("alice", USER_PASSWORD);
     const serviceTicket = await theTgsExchangeIssuesAServiceTicket(tgt);
     await theKdcIssuesAVerifiablePac(tgt, serviceTicket);
     await thePacAgreesWithTheAccountsBehaviour();

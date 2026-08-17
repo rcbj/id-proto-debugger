@@ -169,6 +169,22 @@ COPY common/krb5/krb5_asn1.js common/krb5/krb5_messages.js ./
 COPY common/krb5/krb5_describe.js common/krb5/krb5_keytab.js ./
 COPY common/krb5/krb5_gss.js common/krb5/krb5_client.js ./
 COPY common/krb5/krb5_ndr.js common/krb5/krb5_pac.js ./
+# krb5_ranges.js joined the set when the AS exchange page grew its hex tab: it
+# maps each byte to the ASN.1 element that owns it. Required by
+# tests/krb5_ranges_offsets.js AND by client/src/kerberos_hex.js, so it is
+# bundle source as well as test input.
+# The SPNEGO codec, loaded flat beside the tests by krb5_spnego_codec.js and
+# krb5_spnego_http.js — and, crucially, by krb5_codec_sync.js, which compares
+# this copy byte for byte against the vendored one under sts/. Miss it here and
+# that test reports the vendored codec as INCOMPLETE, which reads as a broken
+# submodule rather than a missing COPY.
+COPY common/krb5/krb5_spnego.js ./
+COPY common/krb5/krb5_ranges.js ./
+# The field-name table krb5_ranges.js requires. Same two readers: the test
+# below and the browser bundle. Without this COPY the ranges module fails to
+# load in the image while working perfectly on a host run, which is the trap
+# jwk_pem_encoding.js checks for.
+COPY common/krb5/krb5_field_names.js ./
 COPY tests/krb5_crypto_vectors.js tests/krb5_codec.js tests/krb5_describe_output.js tests/kerberos_decoder_page.js tests/krb5_codec_sync.js tests/kerberos_as_page.js ./
 COPY tests/kerberos_tgs_ap_page.js ./
 COPY tests/krb5_as_exchange.js tests/krb5_tgs_ap.js tests/krb5_pac_layout.js ./
@@ -181,6 +197,59 @@ COPY tests/kerberos_delegation_page.js ./
 # MODULE_NOT_FOUND in 0.0s while passing on every host run, which is the trap
 # jwk_pem_encoding.js checks for; it caught exactly this pair.
 COPY tests/krb5_windows_vectors.js tests/krb5_real_dc.js ./
+# The dual-target delegation test. Its mock half runs in the image, so it is
+# not optional here; the Windows half skips without a domain controller.
+COPY tests/krb5_delegation_interop.js ./
+# The hex view's range arithmetic. Its module is copied by the krb5 block
+# above; this is the test that checks the offsets are absolute.
+COPY tests/krb5_ranges_offsets.js ./
+# SPNEGO: the codec's own byte-level test, the HTTP handshake end to end, and
+# the page. The first two are node-only and never skip; the third needs the
+# stack. jwk_pem_encoding.js fails the build's own sanity check when a script
+# run-report.js schedules is not copied here — which is how this line got
+# written, rather than by remembering.
+COPY tests/krb5_spnego_codec.js tests/krb5_spnego_http.js ./
+COPY tests/kerberos_spnego_page.js ./
+# The field names on those ranges. It also reads the PAGES and their bundles as
+# text, which arrive through the client/public and client/src COPY lines.
+COPY tests/krb5_field_naming.js ./
+# The ticket history store. It loads client/src/kerberos_panes.js, which the
+# krb5 block above already copies flat beside the codec it requires.
+COPY tests/krb5_ticket_history.js ./
+COPY client/src/kerberos_panes.js ./
+# The Operations History pane. It loads client/src/kerberos_history.js, which
+# requires client/src/op_history.js — the store the SAML, WS-Trust and
+# WS-Federation logs share — so both come in flat.
+COPY tests/krb5_operation_history.js ./
+COPY client/src/kerberos_history.js client/src/op_history.js ./
+#
+# THE WIRING HALF OF BOTH PANE TESTS reads the five pages, their bundles and the
+# two partials as TEXT — a page that includes a pane and never mount()s it
+# renders an empty div, which no browser test can tell apart from a workflow
+# that has done nothing, and no runtime check can see at all. Those tests
+# resolve those files as ../client/src and ../client/public relative to
+# themselves, so the copies below land in that repository-shaped layout rather
+# than flat: WORKDIR is /usr/src/app, so ../client is /usr/src/client. Without
+# them both tests fail in the image with "missing from client/src" while
+# passing on every host run — the same shape as the krb5_as_exchange.js
+# omission the collision check in tests/jwk_pem_encoding.js was written for.
+#
+# Nothing here is REQUIREd except kerberos_history.js (loadHistory() prefers
+# this copy over the flat one), which is why op_history.js and
+# kerberos_panes.js are beside it: a relative require resolves against the file,
+# not against the test.
+COPY client/src/kerberos.js client/src/kerberos_tgs.js client/src/kerberos_ap.js /usr/src/client/src/
+COPY client/src/kerberos_delegation.js client/src/kerberos_decoder.js client/src/kerberos_tickets.js /usr/src/client/src/
+COPY client/src/kerberos_history.js client/src/kerberos_panes.js client/src/op_history.js /usr/src/client/src/
+# kerberos_hex.js is read as TEXT by tests/krb5_field_names.js, which checks the
+# two things about the renderer no browser test can see: that the readable
+# gutter is per-byte cells carrying a range (so hovering a byte lights its
+# character), and that the strip leads with the RFC's field name.
+COPY client/src/kerberos_hex.js /usr/src/client/src/
+COPY client/public/kerberos.html client/public/kerberos_tgs.html client/public/kerberos_ap.html /usr/src/client/public/
+COPY client/public/kerberos_delegation.html client/public/kerberos_decoder.html /usr/src/client/public/
+COPY client/public/partials/krb_history.html client/public/partials/krb_tickets.html /usr/src/client/public/partials/
+COPY client/public/css/kerberos.css /usr/src/client/public/css/
 COPY tests/captures ./captures
 # The mock KDC and the ticket-protected service, out of the sts/ SUBMODULE, so that
 # krb5_as_exchange.js and krb5_tgs_ap.js can start them in-process and drive the real
@@ -213,6 +282,17 @@ COPY sts/krb5_primitives.js sts/krb5_asn1.js sts/krb5_crypto.js sts/krb5_message
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build
 # until the sts/ gitlink points at a mock-sts commit that has both files.
 COPY sts/krb5_ndr.js sts/krb5_pac.js ./sts/
+# SPNEGO: the mock's protected page (spnego.js) and the RFC 4178 codec it and
+# the browser share (krb5_spnego.js, vendored). Both are loaded by
+# tests/krb5_spnego_http.js, which requires spnego.js to REGISTER its routes on
+# the same express app it then listens on — so app.js above is not optional
+# here, and loading them from two different directories would register the
+# routes on an app nobody is serving.
+#
+# **These two COPY lines can only exist once the sts/ gitlink points at a
+# commit containing both files.** Added before the bump the image build fails
+# with "COPY sts/spnego.js: not found", which says nothing about submodules.
+COPY sts/spnego.js sts/krb5_spnego.js ./sts/
 # And the submodule's own env/, which is NOT optional: helpers.js does
 # require(process.env.CONFIG_FILE), and a RELATIVE CONFIG_FILE ('./env/test.js')
 # resolves against the requiring file's own directory — so it means sts/env/test.js

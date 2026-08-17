@@ -32,7 +32,12 @@
 //
 // This layer is deliberately SEPARATE from the AP-REQ itself (krb5_messages.js) so
 // that SPNEGO — which is a negotiation wrapper around exactly this token — is a
-// wrapper to be added later rather than a rewrite. SPNEGO is not implemented here.
+// wrapper rather than a rewrite. That wrapper now exists: it is krb5_spnego.js,
+// and it holds RFC 4178 and nothing else. **Nothing here knows about it**, and
+// that is the seam working: the dependency runs one way (krb5_spnego.js requires
+// this file for the mechanism OID and for GSS_GetMIC, and this file requires
+// nothing of it), so the AP exchange is unchanged whether or not a negotiation
+// happened around it.
 // ---------------------------------------------------------------------------
 
 var prim = require("./krb5_primitives.js");
@@ -239,16 +244,19 @@ function decodeInitialContextToken(bytes) {
   var oid = value.subarray(0, KRB5_MECH_OID_DER.length);
   if (!prim.equalConstantTime(oid, KRB5_MECH_OID_DER)) {
     // Naming what was found is the useful part: the SPNEGO OID here means the
-    // caller negotiated rather than using Kerberos directly, which is a
-    // different (and not yet implemented) mechanism.
-    var spnego = new Uint8Array([0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05,
+    // caller negotiated rather than speaking Kerberos directly. That is a
+    // different mechanism and it is NOT this function's job — krb5_spnego.js
+    // decodes it, and hands back the mechToken, which is what this function
+    // then reads. Saying so is the difference between a dead end and a
+    // redirection.
+    var spnegoOid = new Uint8Array([0x06, 0x06, 0x2b, 0x06, 0x01, 0x05, 0x05,
         0x02]);
-    var isSpnego = value.length >= spnego.length &&
-      prim.equalConstantTime(value.subarray(0, spnego.length), spnego);
+    var isSpnego = value.length >= spnegoOid.length &&
+      prim.equalConstantTime(value.subarray(0, spnegoOid.length), spnegoOid);
     throw new Error("krb5: this GSS token names " +
-      (isSpnego ? "the SPNEGO mechanism (1.3.6.1.5.5.2), which this build " +
-          "does not implement — " +
-                  "it speaks the Kerberos mechanism directly"
+      (isSpnego ? "the SPNEGO mechanism (1.3.6.1.5.5.2), which is a " +
+          "NEGOTIATION around this one rather than this one. Decode it with " +
+          "krb5_spnego.js and pass its mechToken here"
                 : "a mechanism this build does not know (" + prim.toHex(oid) +
                     ")") + ".");
   }
