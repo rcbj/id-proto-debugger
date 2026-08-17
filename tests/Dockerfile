@@ -203,6 +203,11 @@ COPY tests/krb5_delegation_interop.js ./
 # The hex view's range arithmetic. Its module is copied by the krb5 block
 # above; this is the test that checks the offsets are absolute.
 COPY tests/krb5_ranges_offsets.js ./
+# The six pages' layout: does each one put the control it exists for on the
+# first screen? It needs the site and nothing else — no KDC, no api — which is
+# the point of it being its own job rather than an assertion inside the page
+# tests that skip without a KDC.
+COPY tests/kerberos_page_density.js ./
 # SPNEGO: the codec's own byte-level test, the HTTP handshake end to end, and
 # the page. The first two are node-only and never skip; the third needs the
 # stack. jwk_pem_encoding.js fails the build's own sanity check when a script
@@ -368,6 +373,13 @@ COPY infra/edge/edge_common.js ./
 COPY api/ssrf_guard.js ./
 COPY api/connect_timeout.js ./
 COPY tests/schemas ./schemas
+# The suite's own headless-by-default check. It starts no browser: it READS this
+# directory, so it needs nothing here except to BE here — and every test script
+# copied above has landed flat beside it. Without this COPY the job run-report
+# schedules for it fails in the image with MODULE_NOT_FOUND in 0.0s while
+# passing on every host run, which is the failure jwk_pem_encoding.js watches
+# for and is how it was caught.
+COPY tests/browser_tests_headless.js ./
 COPY tests/run-report.js ./
 # Shared test helpers (populateMetadata, ...). The test scripts require it as
 # ../common/tests.js; WORKDIR is /usr/src/app, so it must land in /usr/src/common.

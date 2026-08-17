@@ -552,11 +552,12 @@ async function onRequestWithPreAuth() {
 
 // The one key this page derives, in the shape the describer wants it.
 //
-// It opens two things and NOT a third, which is the distinction the Decryption
-// keys pane at the foot of the page exists for: PA-ENC-TIMESTAMP on the way out
-// and the AS-REP's enc-part on the way back are both under the client's
-// long-term key, while the TICKET inside that reply is under krbtgt's and no
-// password typed here will ever open it.
+// It opens two things and NOT a third, and that distinction is why this page
+// asks for no other key: PA-ENC-TIMESTAMP on the way out and the AS-REP's
+// enc-part on the way back are both under the client's long-term key, while the
+// TICKET inside that reply is under krbtgt's and no password typed anywhere
+// will ever open it. The ticket's contents are shown from the KDC's own report
+// of them instead — see reportedTicketContents() below.
 function clientKeyList(clientKey) {
   log.debug("Entering clientKeyList().");
   if (!clientKey) {

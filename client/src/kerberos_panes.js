@@ -272,18 +272,153 @@ function renderReplyPartsHex(replyPaneId, bytes) {
 }
 
 // ---------------------------------------------------------------------------
+// WHAT THIS WORKFLOW ALREADY KNOWS, handed to every message it describes.
+//
+// A ticket's EncTicketPart is sealed with the SERVICE principal's own long-term
+// key and a client never holds it — that is what a ticket IS. For a while the
+// answer to that on four of these pages was a pane asking the reader to paste
+// a key in, which is the wrong answer twice over: the reader usually has no
+// such key, and the contents they wanted were **already in this browser**.
+//
+// They are, because the KDC repeats them. `EncKDCRepPart` carries the ticket's
+// flags, session key, both principals and all four times in the part of the
+// reply encrypted under a key the client does hold, and every page here stores
+// exactly those fields when it takes a ticket into the cache. So the two
+// functions below hand the describer:
+//
+//   * `ticketReports()` — the KDC's own account of every ticket this workflow
+//     holds, keyed by the ticket's DER so `reportedFor()` can match each one to
+//     the ticket in front of it and never to a different ticket for the same
+//     principal. A TGT presented inside a TGS-REQ's PA-TGS-REQ, and a service
+//     ticket presented inside a SPNEGO mechToken, now read exactly like one
+//     arriving in a reply.
+//   * `heldSessionKeys()` — the session keys of the tickets in the live slots,
+//     which is what opens an Authenticator, an AP-REP and a KRB-CRED. Those are
+//     credentials this page earned rather than anything the reader has to find,
+//     so making somebody type them back in was never defensible.
+//
+// The ONE thing neither can produce is a ticket's authorization-data — the PAC
+// — which the KDC does not repeat and which exists only inside the ciphertext.
+// That still needs the service's own key, and the Kerberos Decoder page is
+// where a reader who has one supplies it.
+//
+// The history is read for the reports and NOT for the keys. A report is a
+// string comparison and a hundred of them cost nothing; a key is a decryption
+// attempt per encrypted part, so the key pool stays the ≤10 tickets the pages
+// are actually holding.
+// ---------------------------------------------------------------------------
+function knownTickets() {
+  log.debug("Entering knownTickets().");
+  var seen = {};
+  var out = [];
+  function add(entry) {
+    log.debug("Entering add().");
+    if (!entry || !entry.ticket || seen[entry.ticket]) {
+      log.debug("Leaving add(). Nothing to add.");
+      return;
+    }
+    seen[entry.ticket] = true;
+    out.push(entry);
+    log.debug("Leaving add().");
+  }
+  add(readTgt());
+  add(readEvidence());
+  readServiceTickets().forEach(add);
+  log.debug("Leaving knownTickets(). " + out.length + " held.");
+  return out;
+}
+
+function ticketReports() {
+  log.debug("Entering ticketReports().");
+  var reports = [];
+  var seen = {};
+  knownTickets().concat(readTicketHistory()).forEach(function (entry) {
+    if (!entry || !entry.ticket || seen[entry.ticket]) {
+      return;
+    }
+    seen[entry.ticket] = true;
+    var hex;
+    try {
+      hex = prim.toHex(b64ToBytes(entry.ticket));
+    } catch (e) {
+      // A cache entry written by an older build, or corrupted. It simply does
+      // not match anything, which is the same as not being there.
+      log.warn("a cached ticket could not be read back: " + e.message);
+      return;
+    }
+    // "alice@EXAMPLE.COM" / "krbtgt/EXAMPLE.COM@EXAMPLE.COM": the realm is
+    // behind the LAST @, and a service principal has slashes but never a
+    // second @.
+    var srealm = String(entry.service || "").split("@").slice(1).join("@");
+    reports.push({
+      ticketHex: hex,
+      source: "From the KDC's own reply when this ticket was issued, " +
+        "decrypted then with a key this workflow held and kept in the " +
+        "credential cache since" +
+        (entry.storedAt ? " (" + entry.storedAt + ")" : "") + ".",
+      flagNames: entry.flags || [],
+      sessionKey: {
+        etypeName: entry.sessionKeyEtypeName ||
+            (entry.sessionKeyEtype === undefined ? null :
+                String(entry.sessionKeyEtype)),
+        hex: entry.sessionKey
+      },
+      crealm: entry.realm,
+      cname: entry.client,
+      authtime: entry.authtime ? new Date(entry.authtime) : null,
+      starttime: entry.starttime ? new Date(entry.starttime) : null,
+      endtime: entry.endtime ? new Date(entry.endtime) : null,
+      renewTill: entry.renewTill ? new Date(entry.renewTill) : null,
+      srealm: srealm || entry.realm,
+      sname: entry.service
+    });
+  });
+  log.debug("Leaving ticketReports(). " + reports.length + " report(s).");
+  return reports;
+}
+
+function heldSessionKeys() {
+  log.debug("Entering heldSessionKeys().");
+  var keys = [];
+  knownTickets().forEach(function (entry) {
+    if (!entry.sessionKey || entry.sessionKeyEtype === undefined) {
+      return;
+    }
+    try {
+      keys.push({
+        etype: entry.sessionKeyEtype,
+        key: prim.fromHex(entry.sessionKey),
+        label: "the session key of the held ticket for " +
+            (entry.service || "an unnamed service")
+      });
+    } catch (e) {
+      // One unreadable entry must not cost the others: this is a pool of
+      // candidates and a missing candidate is a part that stays closed.
+      log.warn("a held session key could not be read: " + e.message);
+    }
+  });
+  log.debug("Leaving heldSessionKeys(). " + keys.length + " key(s).");
+  return keys;
+}
+
+// ---------------------------------------------------------------------------
 // THE KEYS A READER SUPPLIED, and why they are held here rather than passed in.
 //
 // Every page in this workflow hands renderMessage() the keys IT holds — the
 // client key on the AS page, the TGT's session key on the TGS page, the
-// ticket's on the AP page — and none of them holds the one key that opens the
-// part people most want to see: a ticket's EncTicketPart is sealed with the
-// SERVICE's own long-term key, which a client never has. That key can only come
-// from the reader, so `kerberos_keys.js` mounts a pane that collects it and
-// registers itself here. renderMessage() then adds those keys to whatever the
-// caller passed, which means no page had to be changed for its message panes to
-// start opening tickets — and a page that does not mount the pane is
-// unaffected, because the supplier stays null.
+// ticket's on the AP page — and heldSessionKeys() above adds the ones the
+// credential cache holds. What none of that reaches is a SERVICE account's
+// long-term key, which is the only thing that opens a ticket's PAC, and which
+// can come from nowhere but the reader.
+//
+// **One page collects such a key and only one**: the SPNEGO page, where the
+// ticket on screen is a service ticket the reader may well hold the keytab for,
+// and where the fields have always lived beside that ticket. It registers them
+// here through setExtraKeys(), so its key reaches every message pane on that
+// page without any of the render calls knowing. The other exchange pages
+// register nothing — the supplier stays null and nothing changes — because
+// what they were asking for is now shown without asking. The decoder page has
+// its own fields and passes its own keys, and never registers here at all.
 //
 // The rendered messages are REMEMBERED for the same reason: a key pasted after
 // an exchange has already run must open the panes already on screen, and
@@ -365,8 +500,15 @@ async function renderMessage(hostId, label, bytes, keys) {
   };
   var doc;
   try {
-    doc = await describer.describe(prim.toBytes(bytes),
-        { keys: (keys || []).concat(await extraKeys()) });
+    // Three sources of keys and one of contents, assembled here so that no page
+    // has to remember any of them: what the caller holds, what the credential
+    // cache holds, what a reader supplied — and the KDC's own report of every
+    // ticket this workflow has, which is what makes a ticket legible with no
+    // key at all.
+    doc = await describer.describe(prim.toBytes(bytes), {
+      keys: (keys || []).concat(heldSessionKeys()).concat(await extraKeys()),
+      reported: ticketReports()
+    });
   } catch (e) {
     clear(host);
     host.appendChild(make("p", "krb-note krb-bad", label + " could not be " +
@@ -1357,6 +1499,8 @@ module.exports = {
   renderMessage: renderMessage,
   setExtraKeys: setExtraKeys,
   extraKeys: extraKeys,
+  ticketReports: ticketReports,
+  heldSessionKeys: heldSessionKeys,
   rerenderMessages: rerenderMessages,
   renderCompanionHex: renderCompanionHex,
   renderReplyPartsHex: renderReplyPartsHex,

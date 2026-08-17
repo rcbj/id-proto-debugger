@@ -28,7 +28,15 @@
 
 <h3 class="krb-title">Kerberos Decoder &mdash; read a v5 message, ticket or keytab</h3>
 
-<p class="krb-intro">Paste the bytes of a <a href="https://www.rfc-editor.org/rfc/rfc4120.html"
+<p class="krb-intro">Paste a Kerberos v5 message, ticket or keytab &mdash; base64, base64url or hex
+&mdash; and see every field named. Nothing is sent anywhere and nothing is stored.</p>
+
+<!-- Three paragraphs of orientation, folded: this page's one control is a paste
+     box, and a reader who has to scroll past the explanation to find it has
+     been given the explanation instead of the tool. Kept verbatim below. -->
+<details class="krb-more">
+  <summary>What it reads, what it accepts, and what it does not do</summary>
+  <p class="krb-intro">Paste the bytes of a <a href="https://www.rfc-editor.org/rfc/rfc4120.html"
 target="_blank" rel="noopener noreferrer">Kerberos v5</a> message &mdash; out of a Wireshark capture, out of a
 log, out of a debugger &mdash; and see every field of it, named, with the encryption types and flags spelled out
 rather than left as numbers. <strong>AS-REQ, AS-REP, TGS-REQ, TGS-REP, AP-REQ, AP-REP, KRB-ERROR</strong>, a bare
@@ -46,6 +54,7 @@ back end, which is why it works on the deployed site while the rest of the Kerbe
 a TCP socket to port 88 &mdash; does not. It also stores <strong>nothing</strong>: not the message, not a
 password, not a keytab. Everything you give it is key material or a credential, and a scratchpad that remembered
 those would be a worse place to leave a keytab than the file it came from.</p>
+</details>
 
 <!--#include file="/partials/krb_steps.html"-->
 
@@ -73,48 +82,67 @@ those would be a worse place to leave a keytab than the file it came from.</p>
 </div>
 
 <div class="dbg-pane" id="pane_keys_see_inside_encrypted_pa">
-  <!-- Called "Keys, to see inside the encrypted parts" until 2026-08-17. The
-       five exchange pages now carry a pane of their own (partials/krb_keys.html)
-       and the describer's own prose names it, so the two go by one name; the ids
-       are unchanged, since they are what the pane toggle pairs by. -->
+  <!-- Called "Keys, to see inside the encrypted parts" until 2026-08-17. This
+       is now the ONE pane of its kind on a page of its own: the exchange pages
+       show a ticket's contents from the KDC's own report of them and ask for no
+       key at all, and the SPNEGO page's fields are inside its ticket pane. The
+       ids are unchanged, since they are what the pane toggle pairs by. -->
   <legend class="dbg-legend" id="keys_see_inside_encrypted_pa_expand_button">Decryption keys &mdash; to see inside the encrypted parts (optional)</legend>
   <fieldset name="keys_see_inside_encrypted_pa_fieldset" id="keys_see_inside_encrypted_pa_fieldset" style="display: block;">
-  <p class="krb-note">Most of what is interesting in a Kerberos message is encrypted, and under three different
-  keys: a ticket is sealed with the <strong>service's</strong> long-term key, an AS-REP's enc-part with the
-  <strong>client's</strong>, and an Authenticator with the <strong>session</strong> key from inside the ticket.
-  Supply whichever you have; each part reports which key opened it, or says what would have.</p>
+  <p class="krb-note">Supply whichever key you have; each encrypted part then
+  reports which key opened it, or says what would have.</p>
 
-  <div class="krb-keys">
-    <div class="tooltip"><label for="krb_key_hex">A raw key, in hex</label><span class="tooltiptext">A raw key as hex, if you already have one — from a keytab, or derived elsewhere. Supplying a key is what lets the decoder open encrypted parts instead of only describing their envelopes.</span></div>
-    <input type="text" id="krb_key_hex" class="krb-field" spellcheck="false"
-           placeholder="e.g. a 32-byte aes256 key as 64 hex characters">
-    <div class="tooltip"><label for="krb_key_etype">…of encryption type</label><span class="tooltiptext">Which encryption type the raw key above belongs to. A key of the wrong etype fails integrity, which looks exactly like the wrong key.</span></div>
-    <select id="krb_key_etype" class="krb-field">
-      <option value="18" selected="selected">18 — aes256-cts-hmac-sha1-96</option>
-      <option value="17">17 — aes128-cts-hmac-sha1-96</option>
-      <option value="20">20 — aes256-cts-hmac-sha384-192</option>
-      <option value="19">19 — aes128-cts-hmac-sha256-128</option>
-      <option value="23">23 — arcfour-hmac-md5 (legacy)</option>
-    </select>
+  <!-- Three routes to a key in three columns rather than eight stacked rows,
+       and the prose about each folded below them. The ids here are the
+       decoder's own (krb_key_* / krb_password), not the SPNEGO page's
+       krb_deckey_* ones: kerberos_keys.js is shared as an IMPLEMENTATION and
+       this page registers nothing with kerberos_panes.js, because it passes its
+       keys to the describer itself. -->
+  <div class="krb-grid">
+    <div class="krb-keys">
+      <div class="tooltip"><label for="krb_key_hex">A raw key, in hex</label><span class="tooltiptext">A raw key as hex, if you already have one — from a keytab, or derived elsewhere. Supplying a key is what lets the decoder open encrypted parts instead of only describing their envelopes.</span></div>
+      <input type="text" id="krb_key_hex" class="krb-field" spellcheck="false"
+             placeholder="e.g. a 32-byte aes256 key as 64 hex characters">
+      <div class="tooltip"><label for="krb_key_etype">…of encryption type</label><span class="tooltiptext">Which encryption type the raw key above belongs to. A key of the wrong etype fails integrity, which looks exactly like the wrong key.</span></div>
+      <select id="krb_key_etype" class="krb-field">
+        <option value="18" selected="selected">18 — aes256-cts-hmac-sha1-96</option>
+        <option value="17">17 — aes128-cts-hmac-sha1-96</option>
+        <option value="20">20 — aes256-cts-hmac-sha384-192</option>
+        <option value="19">19 — aes128-cts-hmac-sha256-128</option>
+        <option value="23">23 — arcfour-hmac-md5 (legacy)</option>
+      </select>
+    </div>
 
-    <div class="tooltip"><label for="krb_password">…or a password</label><span class="tooltiptext">Never sent. It is turned into a key here, in the browser, and only an encrypted timestamp goes to the KDC. The api never sees it.</span></div>
-    <input type="password" id="krb_password" class="krb-field" autocomplete="off">
-    <div class="tooltip"><label for="krb_salt">…with its salt <strong>(required, and not guessable)</strong></label><span class="tooltiptext">The string mixed into string-to-key, and NOT guessable: AD uses the realm plus the sAMAccountName for a user but a host-shaped string for a computer account. The KDC publishes it in the PREAUTH_REQUIRED error and nowhere else.</span></div>
-    <input type="text" id="krb_salt" class="krb-field" spellcheck="false"
-           placeholder="e.g. EXAMPLE.COMalice">
+    <div class="krb-keys">
+      <div class="tooltip"><label for="krb_password">…or a password</label><span class="tooltiptext">Never sent. It is turned into a key here, in the browser, and only an encrypted timestamp goes to the KDC. The api never sees it.</span></div>
+      <input type="password" id="krb_password" class="krb-field" autocomplete="off">
+      <div class="tooltip"><label for="krb_salt">…with its salt <strong>(required, and not guessable)</strong></label><span class="tooltiptext">The string mixed into string-to-key, and NOT guessable: AD uses the realm plus the sAMAccountName for a user but a host-shaped string for a computer account. The KDC publishes it in the PREAUTH_REQUIRED error and nowhere else.</span></div>
+      <input type="text" id="krb_salt" class="krb-field" spellcheck="false"
+             placeholder="e.g. EXAMPLE.COMalice">
+    </div>
+
+    <div class="krb-keys">
+      <div class="tooltip"><label for="krb_keytab">…or a keytab (base64 or hex)</label><span class="tooltiptext">A keytab, base64 or hex. Every key in it is tried, which is usually the quickest way to open a ticket whose etype you do not know.</span></div>
+      <textarea id="krb_keytab" class="krb-raw" rows="3" spellcheck="false"
+                placeholder="the contents of a krb5.keytab, base64-encoded"></textarea>
+    </div>
+  </div>
+
+  <details class="krb-more">
+    <summary>Which key opens what, where the salt comes from, and what a keytab holds</summary>
+    <p class="krb-note">Most of what is interesting in a Kerberos message is encrypted, and under three different
+    keys: a ticket is sealed with the <strong>service's</strong> long-term key, an AS-REP's enc-part with the
+    <strong>client's</strong>, and an Authenticator with the <strong>session</strong> key from inside the ticket.
+    Supply whichever you have; each part reports which key opened it, or says what would have.</p>
     <p class="krb-note">The salt is not something to guess. Take it from the KDC's own
     <code>PA-ETYPE-INFO2</code>, which arrives inside the <code>KDC_ERR_PREAUTH_REQUIRED</code> error &mdash;
     paste that error in here and this page will read the salt out of it for you. Active Directory's default is
     the realm followed by the sAMAccountName for a user, but a <em>host</em>-shaped string for a computer
     account, which is where guessing stops working.</p>
-
-    <div class="tooltip"><label for="krb_keytab">…or a keytab (base64 or hex)</label><span class="tooltiptext">A keytab, base64 or hex. Every key in it is tried, which is usually the quickest way to open a ticket whose etype you do not know.</span></div>
-    <textarea id="krb_keytab" class="krb-raw" rows="4" spellcheck="false"
-              placeholder="the contents of a krb5.keytab, base64-encoded"></textarea>
     <p class="krb-note">A keytab holds a service's long-term keys, so it is what opens a service ticket. Both
     MIT formats are read (0x0501 little-endian and 0x0502 big-endian), and deleted slots are skipped rather than
     treated as the end of the file.</p>
-  </div>
+  </details>
 </fieldset>
 </div>
 

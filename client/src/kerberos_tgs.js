@@ -44,11 +44,13 @@ var client = require("./krb5_client.js");
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
 var tickets = require("./kerberos_tickets.js");
-// The Decryption keys pane. The service ticket this page is issued is sealed
-// with the SERVICE account's key, and the TGT it spends with krbtgt's —
-// neither of which a client holds, so both stay opaque until the reader
-// supplies one here.
-var deckeys = require("./kerberos_keys.js");
+// NOTE: there is no Decryption keys pane on this page, and adding one would be
+// a regression rather than a feature. Both tickets here are sealed with a key
+// no client holds — the TGT with krbtgt's, the service ticket with the service
+// account's — and their contents are shown anyway, out of what the KDC
+// reported when it issued each of them. kerberos_panes.js supplies that to
+// every message pane (ticketReports()), so the TGT three envelopes down inside
+// PA-TGS-REQ reads as fully as the ticket in the reply.
 
 var el = panes.el;
 var val = panes.val;
@@ -339,6 +341,29 @@ async function onRequestServiceTicket() {
       extra = " On Active Directory this means the SPN is not registered, or " +
           "is registered on a " +
         "different account — `setspn -Q " + spnText + "` is the check.";
+      // Where the SPN in that field CAME FROM, when it came from somewhere the
+      // reader did not choose. Arriving here from the SPNEGO page means the name
+      // was derived from a URL's host — `HTTP/<host>`, which is what every
+      // browser does and which nothing in SPNEGO confirms — so the likeliest
+      // cause is not a broken KDC but a guess, and the page that made the guess
+      // is the place to correct it. Without this the error names Active
+      // Directory tooling at somebody who never typed the name at all.
+      // noteReturnTarget() is the reader: it takes `?return=` from the URL when
+      // there is one and otherwise hands back what was remembered, so calling it
+      // here answers "did somebody send me here" without a second piece of
+      // state. It returns the TARGET (href, name, what) rather than the key, so
+      // the comparison is on the page it names — comparing it to the string
+      // "spnego" is always false and the message would simply never appear.
+      var cameFrom = panes.noteReturnTarget();
+      if (cameFrom && cameFrom.href === "/spnego.html") {
+        extra += " This request came from the SPNEGO page, which DERIVED " +
+          spnText + " from the URL's host: an SPN's host component and the " +
+          "host in a URL are not required to agree, and on a load-balanced or " +
+          "CNAMEd service they routinely do not. Correct it in the Service " +
+          "principal name field there — that field also decides which held " +
+          "ticket that page looks for, so changing it only here would buy a " +
+          "ticket it then reports as not held.";
+      }
     } else if (error.errorCode === 14) {
       extra = " The service account and this request have no encryption type " +
           "in common; in 2026 " +
@@ -473,10 +498,6 @@ window.onload = async function () {
     }
   });
   ophistory.mount("krb_operation_history", "krb_clear_operations_button");
-  // The Decryption keys pane, from partials/krb_keys.html. It opens the
-  // EncTicketPart of BOTH tickets on this page: the TGT travelling inside the
-  // request's PA-TGS-REQ, and the service ticket that comes back.
-  deckeys.mount({});
   var button = el("krb_tgs_button");
   if (button) button.addEventListener("click",
       function () { onRequestServiceTicket(); });

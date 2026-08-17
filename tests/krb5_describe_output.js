@@ -1643,6 +1643,148 @@ async function aTicketsContentsAreShownFromTheKdcsOwnReport() {
   log.debug("Leaving aTicketsContentsAreShownFromTheKdcsOwnReport().");
 }
 
+// ---------------------------------------------------------------------------
+// A PRESENTED ticket, opened from what the workflow already knows.
+//
+// The section above covers a ticket arriving in a REPLY, where the reply's own
+// enc-part reports it. This one covers the harder and commoner case: a ticket
+// being PRESENTED — inside a TGS-REQ's PA-TGS-REQ, inside an AP-REQ, inside a
+// SPNEGO mechToken — where there is no reply beside it and nothing in the
+// message says anything about its contents. Those are the panes that used to
+// end in an instruction to go and find a key.
+//
+// The caller supplies what it knows: `options.reported` as a LIST of records,
+// each keyed by `ticketHex`. In the browser that list is the credential cache
+// (kerberos_panes.js's ticketReports()), which holds the KDC's report of every
+// ticket this workflow has obtained — so the TGT a TGS-REQ spends and the
+// service ticket a SPNEGO exchange presents both read as fully as one arriving
+// in a reply, with nothing typed anywhere.
+//
+// THE MATCH IS ON THE TICKET'S OWN DER AND NOTHING ELSE, and the negative below
+// is the point of the section. Two tickets for the same principal are not the
+// same ticket — a re-issued one has a different session key and different times
+// — so a match by `sname` would print one ticket's contents under another's
+// ciphertext, confidently and wrongly. That is a worse failure than showing
+// nothing, which is why the miss case is asserted as hard as the hit.
+// ---------------------------------------------------------------------------
+async function aPresentedTicketIsOpenedFromWhatTheWorkflowKnows() {
+  log.debug("Entering aPresentedTicketIsOpenedFromWhatTheWorkflowKnows().");
+  const e = kcrypto.etypeById(18);
+  const serviceKey = await e.stringToKey("krbtgtpw",
+      prim.utf8("EXAMPLE.COMkrbtgt"), null);
+  const sessionKey = kcrypto.randomBytes(32);
+  const auth = new Date(Date.UTC(2026, 7, 17, 9, 0, 0));
+  const end = new Date(Date.UTC(2026, 7, 17, 19, 0, 0));
+  const ticketBytes = msgs.encTicket({
+    realm: "EXAMPLE.COM",
+    sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
+    encPart: {
+      etype: 18,
+      cipher: await e.encrypt(serviceKey, kcrypto.KEY_USAGE.KDC_REP_TICKET,
+        msgs.encEncTicketPart({
+          flags: [msgs.TICKET_FLAG.FORWARDABLE, msgs.TICKET_FLAG.INITIAL],
+          key: { etype: 18, key: sessionKey },
+          crealm: "EXAMPLE.COM",
+          cname: { type: 1, name: ["alice"] },
+          authtime: auth,
+          endtime: end
+        }))
+    }
+  });
+  const tgt = {
+    ticket: msgs.readTicket(ticketBytes),
+    sessionKey: sessionKey,
+    etype: 18,
+    client: { type: 1, name: ["alice"] },
+    realm: "EXAMPLE.COM"
+  };
+  const built = await client.buildTgsReq({
+    tgt: tgt,
+    sname: { type: 2, name: ["HTTP", "web.example.com"] },
+    realm: "EXAMPLE.COM"
+  });
+
+  // What the credential cache holds about that ticket, in the shape
+  // kerberos_panes.js builds.
+  const report = {
+    ticketHex: hex(prim.toBytes(ticketBytes)),
+    source: "From the KDC's own reply when this ticket was issued.",
+    flagNames: ["forwardable", "initial"],
+    sessionKey: { etypeName: "aes256-cts-hmac-sha1-96", hex: hex(sessionKey) },
+    crealm: "EXAMPLE.COM",
+    cname: "alice@EXAMPLE.COM",
+    authtime: auth,
+    starttime: auth,
+    endtime: end,
+    renewTill: null,
+    srealm: "EXAMPLE.COM",
+    sname: "krbtgt/EXAMPLE.COM@EXAMPLE.COM"
+  };
+
+  // Without it: the state every one of these panes was in.
+  const blind = await describe.describe(b64(built.request));
+  assert.ok(!allSections(blind).some(function (s) {
+    return /as the KDC reported/.test(s.title || "");
+  }), "with nothing known about the ticket nothing may be claimed about it");
+
+  const known = await describe.describe(b64(built.request), {
+    reported: [report]
+  });
+  const shown = sectionTitled(known, /as the KDC reported it/);
+  assert.ok(shown, "the ticket three envelopes down inside PA-TGS-REQ must " +
+    "show its contents from what the caller knows about it");
+  const keyRow = allRows(known).filter(function (r) {
+    return r.section === shown.title && r.name === "key";
+  })[0];
+  assert.ok(keyRow && keyRow.value.indexOf(hex(sessionKey)) !== -1,
+    "including the session key, which is the one field a client needs rather " +
+    "than merely wants: " + (keyRow ? keyRow.value : "(no key row)"));
+  const flagRow = allRows(known).filter(function (r) {
+    return r.section === shown.title && r.name === "flags";
+  })[0];
+  assert.ok(flagRow && /forwardable/.test(flagRow.value),
+    "and the flags: " + (flagRow ? flagRow.value : "(no flags row)"));
+  assert.ok(/KDC's own reply/.test(shown.note || ""),
+    "labelled as the KDC's word rather than as plaintext out of the " +
+    "ciphertext above, which is the whole difference: " + shown.note);
+  const authzRow = allRows(known).filter(function (r) {
+    return r.section === shown.title && r.name === "authorization-data";
+  })[0];
+  assert.ok(authzRow && /not repeated/.test(authzRow.value),
+    "and the one field this cannot supply — the PAC — named as absent " +
+    "rather than left as a gap: " +
+    (authzRow ? authzRow.value : "(no authorization-data row)"));
+  everyValueIsAString(known, "a presented ticket read from the cache");
+
+  // THE NEGATIVE. A record for a DIFFERENT ticket of the SAME principal must
+  // not be used: matching by name would show this reader another ticket's
+  // session key and times, which is worse than showing nothing at all.
+  const other = Object.assign({}, report, {
+    ticketHex: hex(kcrypto.randomBytes(64))
+  });
+  const mismatched = await describe.describe(b64(built.request), {
+    reported: [other]
+  });
+  assert.ok(!allSections(mismatched).some(function (s) {
+    return /as the KDC reported/.test(s.title || "");
+  }), "a report for a different ticket must be ignored however well its " +
+     "principal matches — two tickets for one service are not one ticket");
+
+  // And a key that really opens it still wins: plaintext beats a report of it,
+  // and it is the only way the PAC can ever appear.
+  const opened = await describe.describe(b64(built.request), {
+    reported: [report],
+    keys: [{ etype: 18, key: serviceKey, label: "the krbtgt key" }]
+  });
+  assert.ok(sectionTitled(opened, /EncTicketPart \(decrypted\)/),
+    "with the ticket's own key the real EncTicketPart must be shown");
+  assert.ok(!allSections(opened).some(function (s) {
+    return /as the KDC reported/.test(s.title || "");
+  }), "and the report dropped rather than shown beside it — two sections of " +
+     "the same fields invite the reader to wonder which is real");
+  log.debug("Leaving aPresentedTicketIsOpenedFromWhatTheWorkflowKnows().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Verifying common/krb5/krb5_describe.js and " +
@@ -1660,6 +1802,7 @@ async function test() {
   await anUnopenedTicketSaysWhoseKeyOpensItAndWhereToPutIt();
   await aRequestsOwnEncryptedPartsAreOpenedToo();
   await aTicketsContentsAreShownFromTheKdcsOwnReport();
+  await aPresentedTicketIsOpenedFromWhatTheWorkflowKnows();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

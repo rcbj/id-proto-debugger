@@ -16,7 +16,19 @@
  * docs/sd-jwt-vc-issuance.md, which cost a debugging round to learn.
  */
 
-.krb-return { margin: 0 0 4px; font-size: 0.95em; }
+/* The way back, on the SAME LINE as the page title rather than on a row of its
+   own. It is four words against a 940px container, so a row to itself was 24px
+   of the one-screen budget (see the note on ol.krb-trail) spent on whitespace.
+   Floated rather than flexed because that needs no wrapper element around the
+   two, and the title is an <h3> whose own line box is taller than this text —
+   so the float never pushes anything down. The `clear` on .krb-title's siblings
+   is not needed for the same reason; the paragraph after the heading starts
+   below the float's bottom edge already. */
+.krb-return {
+  float: right;
+  margin: 4px 0 0;
+  font-size: 0.95em;
+}
 /* h3 inherits bootstrap's generous heading margins; this page needs the first
    control above the fold more than it needs the whitespace. */
 .krb-title { margin-bottom: 6px; margin-top: 2px; line-height: 1.25; }
@@ -31,26 +43,6 @@
   padding-left: 10px;
 }
 
-.krb-pane {
-  margin-bottom: 10px;
-  padding: 8px 12px;
-}
-
-.krb-pane > legend {
-  font-size: 15px;
-  font-weight: bold;
-  width: auto;
-  padding: 0 6px;
-  margin-bottom: 6px;
-  border: 0;
-  /* Bootstrap sets `legend { line-height: 40px }` for its own 21px legends. This rule
-     overrode the font-size and not the line-height, so every pane title on every
-     Kerberos page was a 15px word in a 40px box — about 19px of wasted height per pane,
-     which on a page with three stacked panes is most of the reason the first control sat
-     below the fold. */
-  line-height: 1.4;
-}
-
 .krb-input,
 .krb-raw {
   width: 100%;
@@ -63,16 +55,46 @@
 
 .krb-buttons { margin: 8px 0; }
 
+/* THE ELEMENT-AND-ATTRIBUTE SELECTOR OUTRANKS THIS CLASS, so the class has to
+   name the element too. Bootstrap's `input[type="text"], select, textarea
+   { margin-bottom: 10px }` is (0,1,1) and a bare `.krb-field` is (0,1,0): the
+   4px asked for here was losing to 10px on every text input on all six pages,
+   which is 6px times about ten fields a page, and it looked like generous
+   spacing rather than a rule that was not applying. `input.krb-field` ties on
+   specificity and wins on order, since this sheet loads after bootstrap. */
 .krb-field {
   width: 100%;
   box-sizing: border-box;
   margin-bottom: 4px;
 }
 
+input.krb-field,
+select.krb-field,
+textarea.krb-field {
+  margin-bottom: 4px;
+}
+
 .krb-keys label {
   display: block;
   font-weight: bold;
-  margin-top: 3px;
+  margin-top: 2px;
+}
+
+/* The label inside a `.tooltip` wrapper keeps bootstrap's `margin-bottom: 5px`,
+   which is spacing meant for a label that sits above a control with air around
+   it. There is already air: the input below it is 4px off the next row. The
+   grid variants have said so since 2026-08-15; a `.krb-keys` column outside a
+   grid is the same row with the same label and wants the same number, and the
+   TGS and delegation pages are made of those. */
+.krb-keys .tooltip > label {
+  margin-bottom: 1px;
+}
+
+/* And the dotted underline the shared `.tooltip` gives a hoverable WORD IN A
+   SENTENCE, which on a stack of form labels is a rule under every one of them.
+   Same reasoning as the `.krb-grid .tooltip` rule at the foot of this sheet. */
+.krb-keys > .tooltip {
+  border-bottom: 0;
 }
 
 /* A checkbox and its explanation on one line. This class was used by kerberos.html,
@@ -175,6 +197,38 @@
    accident as `.krb-opts`, only that one wants the flowing and says so. */
 .krb-checks .tooltip {
   display: block;
+}
+
+/* A column of a .krb-grid that is allowed to take the width of two.
+   The AP page's configuration pane has two columns of content in a grid that
+   fits three, so the six GSS flags stacked six deep beside a two-field column
+   and left a third of the pane empty. Given the room, the flags below lay
+   themselves out in two columns and the pane loses ~70px. */
+.krb-span-2 {
+  grid-column: span 2;
+}
+
+/* …but only where the grid HAS three columns to give. Below 980px bootstrap's
+   container is 724px, `auto-fit` settles on two, and a cell spanning both is
+   pushed onto its own row — which leaves the first row half empty and is worse
+   than not spanning at all. Measured on kerberos_ap.html at 900px wide. */
+@media (max-width: 979px) {
+  .krb-span-2 {
+    grid-column: auto;
+  }
+}
+
+/* Two columns of checkboxes where the container is wide enough for two, one
+   where it is not. The minimum is 280px because these labels are sentences
+   ("MUTUAL — require the service to prove itself back"), and a column narrower
+   than the label wraps it — which costs a line per row and gives back exactly
+   what the second column saved. The rule above still makes each .tooltip a
+   block, which is what keeps one checkbox per line WITHIN a column. */
+.krb-checks-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0 14px;
+  align-items: start;
 }
 
 /* Prose that earns its place but not its vertical space. The explanations are the
@@ -437,6 +491,19 @@ ol.krb-trail li.krb-step-tool {
   margin-bottom: -1px;
   border-bottom: 1px solid #fff;
 }
+/* The panel a tab shows. It is a plain block and needs no styling of its own —
+   the sibling rule below is what does the work — but it must be DEFINED, and
+   it was not: `checkStylesheetsLoaded()` in tests/navigation.js fails a page
+   using a `krb-` class this sheet does not define, and every page with a tab
+   strip on it uses this one. That guard exists because a page once linked the
+   wrong stylesheet after a rename and rendered completely unstyled, so the
+   answer is a rule rather than an exemption.
+
+   IT MUST STAY ABOVE `.krb-tabpanel-off`. Both selectors are (0,1,0), so
+   source order decides `display`, and a `display: block` written below the
+   `-off` rule shows every panel at once — five tabs' contents stacked, which
+   reads as the tab strip having no effect at all. */
+.krb-tabpanel { display: block; }
 .krb-tabpanel-off { display: none; }
 
 /* ---------------------------------------------------------------------------
@@ -770,11 +837,30 @@ table.krb-op-history .krb-op-target {
    given on .dbg-controls above: this sheet reaches the five Kerberos pages and
    nothing else. */
 .dbg-pane {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .dbg-legend {
-  padding: 2px 0;
+  padding: 1px 0;
+  margin-bottom: 2px;
+  /* THE SAME BUG, TWICE — and the second time it was invisible because the fix
+     was still in the file.
+
+     Bootstrap sets `legend { line-height: 40px }` for its own 21px legends. A
+     sheet that overrides a legend's font-size and not its line-height leaves a
+     15px word in a 40px box: about 19px of dead space PER PANE. That was found
+     and fixed on 2026-08-15 — but the rule carrying the fix was
+     `.krb-pane > legend`, and these pages then moved to the shared pane chrome
+     (a `.dbg-legend` beside a fieldset, rather than a legend inside a
+     `fieldset.krb-pane`). Nothing matched `.krb-pane` any more, so the fix
+     stopped applying and the sheet still contained it — which is exactly the
+     shape of defect that survives a re-read. Measured back: 19px on each of the
+     six to eleven panes these pages carry, 45px of legend down to 26px.
+
+     Keep this rule pointed at whatever the panes actually use. `.krb-pane` is
+     gone from the sheet for that reason: a dead selector is worse than no
+     selector, because it reads as coverage. */
+  line-height: 1.4;
 }
 
 /* ---------------------------------------------------------------------------

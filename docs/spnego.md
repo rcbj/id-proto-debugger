@@ -249,35 +249,54 @@ hovering a byte names the ASN.1 element that owns it and its absolute offset —
 the same binary field breakdown the AS exchange page carries, over the SPNEGO
 token and over the ticket.
 
-**The ticket is opaque, and the page says so.** It travels inside the AP-REQ
-encrypted under the *service's* long-term key, which this browser does not hold
-— that is the honest state of a client, and it never holds the key its own
-ticket is sealed with. Supply the service key (hex), its password and salt, or
-its **keytab** and the pane opens the `EncTicketPart`: the client name, the
-flags, the session key and the **PAC**, which is what a Windows service
-authorizes on. Nothing typed there is stored or sent anywhere; the derivation
-happens in the browser through `krb5_describe.js`'s `keysFromPassword()`.
+**The ticket's ciphertext is opaque and its CONTENTS are not, which is not the
+same thing.** It travels inside the AP-REQ encrypted under the *service's*
+long-term key, which this browser does not hold — that is the honest state of a
+client, and it never holds the key its own ticket is sealed with. What the pane
+shows anyway is the KDC's own report of what is inside it: the flags, the session
+key, both principals and all four times, kept by the TGS exchange page when it
+bought the ticket and supplied to every message pane by
+`kerberos_panes.js`'s `ticketReports()`. Nothing is typed and nothing is pressed
+for any of that, and it is labelled as the KDC's word rather than as plaintext.
 
-**Those fields are no longer this page's own, and that is the point.** They were
-— `krb_service_key_hex`, `krb_service_password`, `krb_service_salt` and an *Open
-the ticket* button, in the ticket pane — which made this the only page in the
-workflow where a ticket could be opened, and it is the one page that cannot
-*obtain* one. Since 2026-08-17 they are `partials/krb_keys.html` plus
-`client/src/kerberos_keys.js`, included at the foot of all five exchange pages;
-the ids are `krb_deckey_*` and the button is *Open the encrypted parts with these
-keys*. Three things came with the move: the pane registers itself with
-`kerberos_panes.js` (`setExtraKeys`), so every message pane here — the
-negotiation tokens, the AP-REQ, the ticket inside it — is re-read with the keys
-supplied rather than the ticket pane alone; the keytab route this page never had
-came for free; and the *default salt* stayed page-specific, passed to `mount()`
-as `assumedServiceSalt()`, because this is the only page that knows the SPN it
-just used and so the only one that can offer realm + principal as an assumption.
-It says which salt it assumed rather than assuming quietly. See `docs/kerberos.md`.
+**The one field the report cannot cover is the `authorization-data` — the PAC —
+and that is what the key fields in this pane are for.** They are this page's own
+again, in the ticket pane beside the ticket they open, where they were before a
+shared **Decryption keys** pane briefly moved them to the foot of this page and
+four others (2026-08-17, reverted the next day: four of those five pages were
+asking for a key to show what the report already showed). The ids are
+`krb_deckey_*` and the implementation is `client/src/kerberos_keys.js`, shared
+with the decoder page so the three routes — raw key + etype, password + salt,
+**keytab** — exist once and cannot drift in their wording, which is the entire
+product when a key does not work. `mount()` registers it with
+`kerberos_panes.js` (`setExtraKeys`), so a supplied key re-reads every message
+pane here — the negotiation tokens, the AP-REQ, the ticket inside it — rather
+than the ticket pane alone.
+
+**This is the only page in the workflow that collects a key**, and the reason is
+the ticket: a *service* ticket, whose keytab a reader plausibly has. The
+*default salt* is page-specific too, passed to `mount()` as
+`assumedServiceSalt()`, because this is the only page that knows the SPN it just
+used and so the only one that can offer realm + principal as an assumption. It
+says which salt it assumed rather than assuming quietly. Nothing typed here is
+stored or sent anywhere; the derivation happens in the browser through
+`krb5_describe.js`'s `keysFromPassword()`. See `docs/kerberos.md`.
 
 The salt field matters more than it looks: a salt is **not derivable from a
 principal name** (Active Directory salts a computer account as realm + `host` +
 short name + DNS domain), which is the whole reason `PA-ETYPE-INFO2` exists, and
 a wrong salt looks exactly like a wrong password.
+
+**THE SPN IS A GUESS, AND THE WORKFLOW USED TO LEAD YOU OFF A CLIFF WITH IT.** This is the one defect in this workflow that a person hit before a test did, on 2026-08-17, and all of it is worth keeping written down.
+
+The page derives `HTTP/<the URL's host>` — correct behaviour, what every browser does, and all a client can do, since nothing in SPNEGO carries the SPN. The shipped default URL was `http://localhost:8081/spnego/protected`, so the derived name was `HTTP/localhost` (or `HTTP/sts` on the containerized stack), while the mock's configured account was `HTTP/web.example.com`. Following the workflow therefore produced `KDC_ERR_S_PRINCIPAL_UNKNOWN` on the TGS page — a correct error about a name the *page* chose, three steps from anything the reader typed, naming Active Directory tooling at somebody who had not asked for `HTTP/localhost` at all. Four things were wrong and all four are fixed:
+
+* **The mock now answers for the hosts it is actually reached by.** `KRB5_SERVICE_DOMAINS` (the realm's domain plus `localhost`, `sts`, `127.0.0.1`) registers a service on first sight, and the acceptor holds the key for what the KDC issued. `docs/mock-sts.md` has the design, including the three things that keep `KDC_ERR_S_PRINCIPAL_UNKNOWN` reachable and stop the acceptor becoming every service in the realm.
+* **The URL is a build default rather than markup.** `krb5SpnegoUrlDefault` in `client/src/env/*.js`, applied by `applyBuildDefaults()` before anything stored — the same rule as the KDC host, and for the same reason: the api fetches that URL, so the working value is the compose name in a container, loopback on a host run and nothing at all where there is no api. The markup could only ever be right about one of the three. **`krb5SpnegoSpnDefault` exists beside it and is deliberately EMPTY**: pre-filling the SPN would hide the derivation this page exists to show, so a build sets it only for a service whose SPN genuinely does not match its URL host.
+* **The far end is asked.** When the challenge carries `X-Krb5-Service-Principal` / `X-Krb5-Accepts-Spn-Hosts` — which only this mock sends, because SPNEGO carries nothing of the sort — `reconcileSpn()` reconciles the guess with them and the note beside the field says which of three things happened: the derived name is one the service answers for, or the service named a different one and the field has been **filled in**, or the two disagree and **the user's own value is left alone**. That last case is not politeness: an override is the legitimate answer on every load-balanced or CNAMEd service there is, and a debugger that overwrites a deliberate value is one you stop trusting. Every one of those messages says the headers are the mock's own courtesy, because a reader who learns that services announce their SPN has learned something false.
+* **The refusal on the TGS page now names where the SPN came from.** Arriving with `?return=spnego` means the name was derived from a URL host, so `KDC_ERR_S_PRINCIPAL_UNKNOWN` there says so and points back at the field that produced it — including the trap that field also decides which held ticket the SPNEGO page looks for, so correcting it only on the TGS page buys a ticket that page then reports as not held.
+
+**And the test was hiding it.** `tests/kerberos_spnego_page.js` read the mock's advertised SPN and silently replaced its own with it (*"the mock advertises X rather than Y; using that"*), starting from `HTTP/web.example.com` in the first place — so the derived path a human takes was never exercised, and the suite was green while the first run was broken. It now derives the SPN from the protected URL exactly as the page does, asserts the reconciliation note, and reads the service's key out of `GET /krb5/principals` **at the moment it needs it** rather than at start-up, because a service registered on first sight is not in that table until a ticket is asked for. `tests/krb5_spnego_http.js` proves the same chain with no browser for `localhost`, `sts` and `127.0.0.1`, and asserts that a host outside the list still cannot get a ticket. That is the shape [[tests-that-quietly-do-nothing]] warns about: a test that routes around the thing it is meant to check.
 
 **The decoder page understands a `Negotiate` header too.** `krb5_describe.js`
 now recognises a GSS token before it asks `identify()` — a SPNEGO token begins

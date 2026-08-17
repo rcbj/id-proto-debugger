@@ -364,10 +364,18 @@ function ticketKeyGuidance(ticket, reported) {
 //    ever appear.
 //
 // `reported` is deliberately made of primitives (strings, Dates, a hex string)
-// rather than a decoded structure: the two callers have the values in different
+// rather than a decoded structure: the callers have the values in different
 // shapes — a decrypted `EncKDCRepPart` in `describeKdcRep()`, a stored
-// credential-cache entry on the AS page — and normalising at the call site
-// keeps one renderer instead of two.
+// credential-cache entry everywhere else — and normalising at the call site
+// keeps one renderer instead of three.
+//
+// It is reached for EVERY ticket on every page now, not only the one a reply
+// just issued: `kerberos_panes.js` hands the whole credential cache to
+// `describe()` and `reportedFor()` matches each ticket to its own record. So a
+// TGT presented inside a TGS-REQ, and a service ticket presented inside a
+// SPNEGO mechToken, read the same as one arriving in a reply — which is the
+// point, because those are the two places a reader was previously told to go
+// and find a key.
 // ---------------------------------------------------------------------------
 function describeReportedTicketContents(reported) {
   log.debug("Entering describeReportedTicketContents().");
@@ -406,8 +414,62 @@ function describeReportedTicketContents(reported) {
   };
 }
 
-async function describeTicket(ticket, keys, problems, reported) {
+// ---------------------------------------------------------------------------
+// WHICH report belongs to THIS ticket, out of what the caller knows.
+//
+// `reported` arrives in two shapes and both are legitimate:
+//
+//   * a SINGLE record — the KDC reply's own account of the ticket it has just
+//     issued (describeKdcRep), or a page's stored copy of one for a ticket it
+//     is showing on its own (the bare-Ticket path in describe()). It is about
+//     the ticket in hand and needs no matching.
+//   * a LIST — what a PAGE knows about every ticket the workflow holds. A
+//     message routinely carries a ticket the caller was not thinking of: the
+//     TGT inside a TGS-REQ's PA-TGS-REQ, the service ticket inside an AP-REQ
+//     inside a SPNEGO mechToken. So a list has to be matched against the
+//     ticket rather than assumed to be about it.
+//
+// **The match is on the ticket's own DER and on nothing else.** Two tickets
+// for the same principal are not the same ticket — a re-issued one has a
+// different session key and different times — so matching by `sname` would
+// print one ticket's contents under another's ciphertext, which is precisely
+// the mistake this whole report exists not to make. A ticket goes on the wire
+// byte-for-byte and is stored byte-for-byte, so the comparison is exact
+// wherever the workflow has a record at all, and where it has none the ticket
+// is described as unopened rather than approximately.
+// ---------------------------------------------------------------------------
+function reportedFor(reported, ticket) {
+  log.debug("Entering reportedFor().");
+  if (!reported) {
+    log.debug("Leaving reportedFor(). Nothing known.");
+    return null;
+  }
+  if (!Array.isArray(reported)) {
+    log.debug("Leaving reportedFor(). A single record.");
+    return reported;
+  }
+  var hex = null;
+  try {
+    hex = prim.toHex(prim.toBytes(ticket.raw));
+  } catch (e) {
+    // A ticket this reader built rather than read may carry no raw bytes.
+    // Nothing can be matched then, which is a miss and not an error.
+    log.warn("this ticket carries no raw bytes to match on: " + e.message);
+    hex = null;
+  }
+  for (var i = 0; hex && i < reported.length; i++) {
+    if (reported[i] && reported[i].ticketHex === hex) {
+      log.debug("Leaving reportedFor(). Matched record " + i + ".");
+      return reported[i];
+    }
+  }
+  log.debug("Leaving reportedFor(). No record of this ticket.");
+  return null;
+}
+
+async function describeTicket(ticket, keys, problems, known) {
   log.debug("Entering describeTicket().");
+  var reported = reportedFor(known, ticket);
   var whose = msgs.principalToString(ticket.sname, ticket.realm);
   var section = {
     title: "Ticket",
@@ -797,7 +859,7 @@ async function describePacSignatures(parsed, keys, problems, serviceKey) {
   };
 }
 
-async function describeKdcReq(req, input, keys, problems) {
+async function describeKdcReq(req, input, keys, problems, known) {
   log.debug("Entering describeKdcReq().");
   var isTgs = req.msgType === msgs.MSG_TYPE.TGS_REQ;
   var body = req.reqBody;
@@ -862,8 +924,11 @@ async function describeKdcReq(req, input, keys, problems) {
         // whole content of a pre-authentication failure.
         var stampAttempt = await tryDecrypt(enc,
             kcrypto.KEY_USAGE.AS_REQ_PA_ENC_TIMESTAMP, keys,
-          "Supply the client's key, or its password and salt, in the " +
-          "Decryption keys pane to read the timestamp inside.");
+          "Supply the client's key, or its password and salt, to read the " +
+          "timestamp inside. Unlike a ticket's key this is one a client HAS — " +
+          "whatever built this field derived it from the password — so \"not " +
+          "opened\" here is a key that does not match rather than a key " +
+          "nobody could have.");
         if (stampAttempt.ok) {
           try {
             var stamp = msgs.readPaEncTsEnc(stampAttempt.plain);
@@ -903,8 +968,12 @@ async function describeKdcReq(req, input, keys, problems) {
       // inside opens on exactly the same terms as any other.
       try {
         var inner = msgs.readApReq(prim.toBytes(pa.value));
+        // `known` goes in with it: the ticket three envelopes down is the TGT
+        // this page holds, and its contents are what the KDC reported when it
+        // issued it. Without this the one message that hides the most says
+        // least.
         var innerDoc = await describeApReq(inner, keys, problems,
-            { authUsage: kcrypto.KEY_USAGE.TGS_REQ_AUTH });
+            { authUsage: kcrypto.KEY_USAGE.TGS_REQ_AUTH, reported: known });
         doc.sections.push({
           title: "PA-TGS-REQ — the AP-REQ that carries the TGT",
           note: "A TGS request authenticates by PRESENTING a ticket, so an " +
@@ -1011,7 +1080,7 @@ async function describeKdcReq(req, input, keys, problems) {
   return doc;
 }
 
-async function describeKdcRep(rep, keys, problems) {
+async function describeKdcRep(rep, keys, problems, known) {
   log.debug("Entering describeKdcRep().");
   var isTgs = rep.msgType === msgs.MSG_TYPE.TGS_REP;
   // `kind` is computed before the document literal rather than inside it. The
@@ -1110,7 +1179,11 @@ async function describeKdcRep(rep, keys, problems) {
         renewTill: part.renewTill,
         srealm: part.srealm,
         sname: principalOf(part.sname, part.srealm)
-      } : null));
+      // With no enc-part opened this reply says nothing about its own ticket,
+      // and the caller's pool is the next best thing: a reply re-read after the
+      // ticket was stored — a page reloaded, a pane replayed — still shows the
+      // contents, because the workflow kept them when the reply first opened.
+      } : (known || null)));
   doc.sections.push(encSection);
 
   if (part) {
@@ -1180,6 +1253,11 @@ async function describeKdcRep(rep, keys, problems) {
 // TGS page's own Authenticator as undecryptable while holding the key that
 // opens it. That is exactly the failure this whole change is about, one layer
 // in.
+//
+// options.reported — what the caller knows about the tickets in play, for the
+// ticket this AP-REQ presents. See reportedFor(): an AP-REQ is where a ticket
+// most often appears without a reply beside it to explain it, so this is the
+// path that makes a presented ticket legible.
 async function describeApReq(r, keys, problems, options) {
   log.debug("Entering describeApReq().");
   var opts = options || {};
@@ -1203,7 +1281,8 @@ async function describeApReq(r, keys, problems, options) {
       ]
     }]
   };
-  doc.sections.push(await describeTicket(r.ticket, keys, problems));
+  doc.sections.push(await describeTicket(r.ticket, keys, problems,
+      opts.reported || null));
   var encSection = describeEncryptedData(r.authenticator,
     "Authenticator (encrypted under the ticket's SESSION key, at key usage " +
         authUsage + ")");
@@ -1461,7 +1540,7 @@ function looksLikeGssToken(bytes) {
 
 // The mechanism token inside a mechToken/responseToken: an InitialContextToken
 // wrapping an AP-REQ, an AP-REP or a KRB-ERROR.
-async function describeMechToken(bytes, keys, problems, label) {
+async function describeMechToken(bytes, keys, problems, label, known) {
   log.debug("Entering describeMechToken(). " + label);
   var section = {
     title: label,
@@ -1489,7 +1568,7 @@ async function describeMechToken(bytes, keys, problems, label) {
     }
     if (bare) {
       section.sections.push(await describeKerberosInside(bytes, keys,
-          problems));
+          problems, known));
     } else {
       section.rows.push(row("contents", hexOf(bytes),
           "Not a Kerberos message and not a GSS wrapper."));
@@ -1505,19 +1584,19 @@ async function describeMechToken(bytes, keys, problems, label) {
       "RFC 4121 section 4.1: 01 00 is an AP-REQ, 02 00 an AP-REP, 03 00 a " +
       "KRB-ERROR."));
   section.sections.push(await describeKerberosInside(inner.inner, keys,
-      problems));
+      problems, known));
   log.debug("Leaving describeMechToken().");
   return section;
 }
 
 // One Kerberos message, as a nested section. Shares every describer above, so
 // the decryption attempts and the notes are the ones the top-level view gives.
-async function describeKerberosInside(bytes, keys, problems) {
+async function describeKerberosInside(bytes, keys, problems, known) {
   log.debug("Entering describeKerberosInside().");
   var id = msgs.identify(bytes);
   var A = msgs.APPLICATION;
   try {
-    return await describeKerberosMessage(bytes, keys, problems, id, A);
+    return await describeKerberosMessage(bytes, keys, problems, id, A, known);
   } catch (e) {
     // A message that announces itself and then does not parse is CONTENT here,
     // not an exception — the same rule the top level follows. Letting it
@@ -1538,10 +1617,11 @@ async function describeKerberosInside(bytes, keys, problems) {
   }
 }
 
-async function describeKerberosMessage(bytes, keys, problems, id, A) {
+async function describeKerberosMessage(bytes, keys, problems, id, A, known) {
   log.debug("Entering describeKerberosMessage().");
   if (id && id.applicationNumber === A.AP_REQ) {
-    var reqDoc = await describeApReq(msgs.readApReq(bytes), keys, problems);
+    var reqDoc = await describeApReq(msgs.readApReq(bytes), keys, problems,
+        { reported: known });
     log.debug("Leaving describeKerberosMessage(). AP-REQ.");
     return { title: "AP-REQ", note: reqDoc.summary, sections: reqDoc.sections };
   }
@@ -1568,7 +1648,7 @@ async function describeKerberosMessage(bytes, keys, problems, id, A) {
   };
 }
 
-async function describeSpnego(bytes, keys, problems) {
+async function describeSpnego(bytes, keys, problems, known) {
   log.debug("Entering describeSpnego().");
   var parsed;
   try {
@@ -1611,7 +1691,7 @@ async function describeSpnego(bytes, keys, problems) {
       problems: []
     };
     raw.sections.push(await describeMechToken(bytes, keys, problems,
-        "The Kerberos token"));
+        "The Kerberos token", known));
     log.debug("Leaving describeSpnego(). Raw Kerberos.");
     return raw;
   }
@@ -1656,7 +1736,7 @@ async function describeSpnego(bytes, keys, problems) {
     };
     if (parsed.responseToken) {
       respDoc.sections.push(await describeMechToken(parsed.responseToken, keys,
-          problems, "Inside responseToken"));
+          problems, "Inside responseToken", known));
     }
     log.debug("Leaving describeSpnego(). NegTokenResp.");
     return respDoc;
@@ -1726,12 +1806,23 @@ async function describeSpnego(bytes, keys, problems) {
   }
   if (parsed.mechToken) {
     initDoc.sections.push(await describeMechToken(parsed.mechToken, keys,
-        problems, "Inside mechToken"));
+        problems, "Inside mechToken", known));
   }
   log.debug("Leaving describeSpnego(). " + parsed.kind + ".");
   return initDoc;
 }
 
+// ---------------------------------------------------------------------------
+// options.keys      the keys to try against every encrypted part.
+// options.reported  what the caller already knows about the tickets these bytes
+//                   carry — either ONE record (this ticket's contents, as the
+//                   AS page's Ticket pane supplies) or a LIST of them keyed by
+//                   `ticketHex` (what every exchange page supplies, out of the
+//                   workflow's own credential cache). It reaches every ticket
+//                   in the message however deep it is nested: an AP-REQ inside
+//                   a mechToken inside a NegTokenInit is three envelopes down
+//                   and is exactly where a reader wants it. See reportedFor().
+// ---------------------------------------------------------------------------
 async function describe(input, options) {
   log.debug("Entering describe().");
   var opts = options || {};
@@ -1754,7 +1845,7 @@ async function describe(input, options) {
     // message yet". True of the Kerberos grammar, and the wrong layer: what
     // was pasted is a `Negotiate` header value, and the Kerberos message is
     // two wrappers inside it.
-    doc = await describeSpnego(bytes, keys, problems);
+    doc = await describeSpnego(bytes, keys, problems, opts.reported || null);
   } else if (!id) {
     // Not a Kerberos message. Show the ASN.1 structure rather than refusing: a
     // structural tree is far more useful than "could not parse", and it is how
@@ -1780,11 +1871,13 @@ async function describe(input, options) {
     try {
       if (n === A.AS_REQ || n === A.TGS_REQ) {
         doc = await describeKdcReq(msgs.readKdcReq(bytes), parsed, keys,
-            problems);
+            problems, opts.reported || null);
       } else if (n === A.AS_REP || n === A.TGS_REP) {
-        doc = await describeKdcRep(msgs.readKdcRep(bytes), keys, problems);
+        doc = await describeKdcRep(msgs.readKdcRep(bytes), keys, problems,
+            opts.reported || null);
       } else if (n === A.AP_REQ) {
-        doc = await describeApReq(msgs.readApReq(bytes), keys, problems);
+        doc = await describeApReq(msgs.readApReq(bytes), keys, problems,
+            { reported: opts.reported || null });
       } else if (n === A.AP_REP) {
         doc = await describeApRep(msgs.readApRep(bytes), keys);
       } else if (n === A.KRB_ERROR) {
@@ -1797,7 +1890,8 @@ async function describe(input, options) {
           // this is the path the AS page's Ticket pane takes: it holds the
           // ticket's bytes on their own, plus the contents the KDC reported for
           // it, which it kept when the reply was read. Same renderer either
-          // way.
+          // way, and either shape — one record about this ticket, or the
+          // page's whole pool of them for reportedFor() to match.
           sections: [await describeTicket(msgs.readTicket(bytes), keys,
               problems, opts.reported || null)]
         };

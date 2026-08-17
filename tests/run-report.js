@@ -1480,6 +1480,31 @@ function buildJobs() {
   if (kerberosPagesSkip) delegationPageJob.skip = kerberosPagesSkip;
   jobs.push(delegationPageJob);
 
+  // The layout of all six pages at 1366x768: does each one put the control it
+  // exists for on the first screen, and do the two CSS rules that height rests
+  // on still match anything?
+  //
+  // It is a job of its own rather than an assertion inside the five page tests
+  // above because those SKIP without a KDC, and a layout regression has nothing
+  // to do with a KDC. It needs the site and nothing else — the buttons it
+  // measures are in the served markup, not rendered by a bundle — so on a run
+  // where the stack is half up this is still a real check. It does skip on a
+  // static target for the same reason the others do: the pages are not there.
+  //
+  // Both of the CSS facts it asserts were found broken on 2026-08-17 and
+  // neither made a page look wrong: bootstrap's `legend { line-height: 40px }`
+  // was back on every pane (the override still said `.krb-pane > legend`, and
+  // the panes had moved to `.dbg-pane`), and `.krb-field`'s 4px bottom margin
+  // was losing to `input[type="text"]`'s 10px on specificity. Between them they
+  // were most of ~1,300px across the workflow.
+  const kerberosDensityJob = {
+    name: "Kerberos pages fit one screen (six pages, 1366x768, pane chrome)",
+    script: "kerberos_page_density.js",
+    env: {},
+  };
+  if (kerberosPagesSkip) kerberosDensityJob.skip = kerberosPagesSkip;
+  jobs.push(kerberosDensityJob);
+
   // The api's outbound address policy (api/ssrf_guard.js): the service fetches
   // URLs its caller supplies, so it must refuse loopback and private
   // destinations or it is an SSRF probe into whatever network it runs in. Node

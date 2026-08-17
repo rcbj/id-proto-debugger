@@ -41,10 +41,11 @@ var log = bunyan.createLogger({
 log.info("Log initialized. logLevel=" + log.level());
 
 var describer = require("./krb5_describe.js");
-// The key-assembly half of the shared Decryption keys pane, used here with this
-// page's own field ids — see collectKeys(). Only collectFrom() is called: this
-// page passes its keys to describe() explicitly and must not register itself as
-// a supplier with kerberos_panes.js, which is what mount() does.
+// The key-assembly half shared with the SPNEGO page's ticket-pane fields, used
+// here with this page's own field ids — see collectKeys(). Only collectFrom()
+// is called: this page passes its keys to describe() explicitly and must not
+// register itself as a supplier with kerberos_panes.js, which is what mount()
+// does.
 var deckeys = require("./kerberos_keys.js");
 // The shared DOM half, so this page and the three exchange pages cannot
 // disagree about how a message renders. Requiring it is safe on the STATIC
@@ -157,8 +158,8 @@ function renderDocument(doc) {
 // matters here more than it looks, because that wording is the entire product
 // when a key does not work. What stays local is only the id map: this page's
 // password field is called `krb_password` because it IS the keys pane, while on
-// kerberos.html that id is the client's own credential and the shared pane
-// therefore uses `krb_deckey_*`.
+// kerberos.html that id is the client's own credential — so the SPNEGO page,
+// the only other page that collects a key, uses `krb_deckey_*`.
 //
 // No default salt is offered. This page has no exchange behind it and so no
 // realm and no principal to build one from, and a guessed salt looks exactly

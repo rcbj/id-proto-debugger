@@ -52,11 +52,14 @@ var client = require("./krb5_client.js");
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
 var tickets = require("./kerberos_tickets.js");
-// The Decryption keys pane. This page's prose has always said "supply the
-// service key below and the pane will decode it" — the PAC, the group SIDs
-// and the four signatures — and until that pane existed there was no field
-// on the page to supply it in.
-var deckeys = require("./kerberos_keys.js");
+// NOTE: there is no Decryption keys pane on this page. The ticket this page
+// presents is sealed with the service account's key, which a client never
+// holds — but everything the KDC told the client about it is in the credential
+// cache, and kerberos_panes.js hands that to every message pane, so the ticket
+// inside the AP-REQ shows its flags, session key, principals and times with
+// nothing to fill in. The one part that genuinely needs the service's own key
+// is the PAC, and the Kerberos Decoder page is where a reader who has that key
+// supplies it.
 
 var el = panes.el;
 var val = panes.val;
@@ -661,10 +664,6 @@ window.onload = async function () {
     }
   });
   ophistory.mount("krb_operation_history", "krb_clear_operations_button");
-  // The Decryption keys pane, from partials/krb_keys.html. With the service
-  // account's key here the ticket inside the AP-REQ opens exactly as it does
-  // for the service receiving it, PAC and server signature included.
-  deckeys.mount({});
   var select = el("krb_ticket_select");
   if (select) select.addEventListener("change", onTicketChosen);
   var present = el("krb_present_button");

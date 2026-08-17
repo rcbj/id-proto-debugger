@@ -64,13 +64,19 @@ var client = require("./krb5_client.js");
 // through panes.renderMessage(), and the string-to-key it used to call directly
 // is now kerberos_keys.js's job. A require left behind here would put the whole
 // describer in this bundle twice over in the reader's mind and nowhere in the
-// code — the pane below is the only key-derivation path on this page.
+// code — the key fields in the ticket pane are the only key-derivation path
+// on this page.
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
 var tickets = require("./kerberos_tickets.js");
 var hexview = require("./kerberos_hex.js");
-// The shared Decryption keys pane. It is what opens the ticket inside the
-// AP-REQ, which is the one thing on this page a client cannot read for itself.
+// The key fields in the ticket pane. They are what open the PAC inside the
+// ticket, which is the one thing on this page a client cannot read for itself
+// — everything else the ticket says is shown from the KDC's own report of it,
+// which the workflow kept when the TGS page obtained the ticket. This is the
+// ONLY page in the workflow that collects a key: the ticket here is a service
+// ticket, whose keytab a reader plausibly has, and the fields sit beside the
+// ticket rather than in a pane of their own at the foot of the page.
 var deckeys = require("./kerberos_keys.js");
 
 var el = panes.el;
@@ -126,7 +132,13 @@ function onUrlChanged() {
   log.debug("Leaving onUrlChanged().");
 }
 
-function renderSpnNote(derived) {
+// `reconciled` is reconcileSpn()'s verdict, and it is OPTIONAL on purpose: this
+// note is painted on every keystroke in the URL field, long before anything has
+// been asked of the far end, and at that point the derivation is genuinely all
+// there is. Once the probe has run its verdict is appended rather than replacing
+// the derivation — the reader needs to know both what this client guessed and what
+// the service said, because on every service but this mock there is no second half.
+function renderSpnNote(derived, reconciled) {
   log.debug("Entering renderSpnNote().");
   var host = el("krb_spn_note");
   if (!host) {
@@ -148,6 +160,14 @@ function renderSpnNote(derived) {
       "KDC_ERR_S_PRINCIPAL_UNKNOWN, which names nothing about HTTP.";
   }
   host.appendChild(make("p", "krb-note", text));
+  if (reconciled && reconciled.note) {
+    // krb-good when the guess was confirmed or corrected before it could fail,
+    // krb-warn when the two disagree and the user's own value stands.
+    host.appendChild(make("p", "krb-note " +
+      (reconciled.filledIn || !reconciled.volunteered.principal ||
+        spn === reconciled.volunteered.principal ? "krb-good" : "krb-warn"),
+      reconciled.note));
+  }
   log.debug("Leaving renderSpnNote().");
 }
 
@@ -328,6 +348,132 @@ function renderExchange(hostId, title, result, note) {
 // The token out of a `WWW-Authenticate: Negotiate <base64>` header, or null.
 // Parsed here rather than in the api because it is protocol rather than
 // transport — the api relays HTTP and knows nothing about what is in a header.
+// ---------------------------------------------------------------------------
+// WHAT THE FAR END VOLUNTEERED ABOUT ITS OWN SPN, if anything.
+//
+// Nothing in SPNEGO carries the SPN. That is the protocol, it is why this page
+// derives `HTTP/<url host>` like every browser does, and it is why a wrong guess
+// fails at the KDC with `KDC_ERR_S_PRINCIPAL_UNKNOWN` — an error that names
+// nothing about HTTP and sends people to look at DNS.
+//
+// So this is strictly opportunistic. The mock KDC's protected resource volunteers
+// two headers on its 401 (`X-Krb5-Service-Principal` and
+// `X-Krb5-Accepts-Spn-Hosts`), which are nobody's standard and which a real
+// service will not send. When they are there the page uses them and SAYS it is
+// using them; when they are absent nothing changes and the guess stands, labelled
+// as a guess. What it must never do is present a header it was handed as though it
+// were something the protocol told it — the reader would learn the wrong lesson
+// about every service that is not this one.
+// ---------------------------------------------------------------------------
+function headerValue(result, name) {
+  var headers = (result && result.response && result.response.headers) || {};
+  var found = null;
+  Object.keys(headers).forEach(function (key) {
+    if (key.toLowerCase() === name) {
+      found = Array.isArray(headers[key]) ? headers[key].join(", ") :
+          String(headers[key]);
+    }
+  });
+  return found;
+}
+
+function volunteeredSpn(result) {
+  log.debug("Entering volunteeredSpn().");
+  var principal = headerValue(result, "x-krb5-service-principal");
+  var hosts = headerValue(result, "x-krb5-accepts-spn-hosts");
+  if (!principal && !hosts) {
+    log.debug("Leaving volunteeredSpn(). Nothing volunteered.");
+    return null;
+  }
+  log.debug("Leaving volunteeredSpn(). principal=" + principal);
+  return {
+    // Without the realm: the SPN field names a principal, and the realm it lives
+    // in is the TGS page's own field. Pasting `HTTP/x@EXAMPLE.COM` into it would
+    // be asking for a service whose last component is a realm.
+    principal: principal ? String(principal).split("@")[0] : null,
+    realm: principal && principal.indexOf("@") !== -1
+        ? String(principal).split("@").slice(1).join("@") : null,
+    hosts: (hosts || "").split(",").map(function (h) {
+      return h.trim().toLowerCase();
+    }).filter(function (h) { return h.length > 0; })
+  };
+}
+
+// Does the SPN this page derived name a host the far end says it answers for?
+// Same rule the mock applies: the host IS one of the entries, or ends with a dot
+// and one of them.
+function hostIsCovered(host, hosts) {
+  log.debug("Entering hostIsCovered().");
+  var wanted = String(host || "").toLowerCase();
+  var covered = (hosts || []).some(function (entry) {
+    return wanted === entry || wanted.endsWith("." + entry);
+  });
+  log.debug("Leaving hostIsCovered(). " + covered);
+  return covered;
+}
+
+// ---------------------------------------------------------------------------
+// Reconcile the guess with what was volunteered, and say which happened.
+//
+// Three outcomes, and each is a different thing for the reader to know:
+//
+//   * the derived SPN is one the service answers for — nothing to change, and the
+//     guess is CONFIRMED rather than merely unrefuted;
+//   * the service names a different SPN and the field still holds the derived
+//     guess — fill it in, because a ticket for the guess cannot be issued and the
+//     next page would fail with an error naming nothing about HTTP;
+//   * the service names a different SPN and the user has typed their own — leave
+//     it ALONE and say both. Overwriting somebody's deliberate override is how a
+//     debugger becomes untrustworthy, and an override is the legitimate case on
+//     every load-balanced service there is.
+// ---------------------------------------------------------------------------
+function reconcileSpn(result) {
+  log.debug("Entering reconcileSpn().");
+  var volunteered = volunteeredSpn(result);
+  if (!volunteered) {
+    log.debug("Leaving reconcileSpn(). Nothing to reconcile.");
+    return null;
+  }
+  var derived = derivedSpn(val("krb_spnego_url").trim());
+  var current = val("krb_spnego_spn").trim();
+  var host = hostOf(val("krb_spnego_url").trim());
+  var outcome = { volunteered: volunteered, filledIn: false, note: null };
+  if (volunteered.hosts.length && hostIsCovered(host, volunteered.hosts)) {
+    outcome.note = "This service volunteered that it answers for any SPN whose " +
+      "host is one of " + volunteered.hosts.join(", ") + ", and " + host +
+      " is one — so the SPN derived from the URL is one it holds a key for. " +
+      "Those headers are this mock's own courtesy (X-Krb5-Accepts-Spn-Hosts); " +
+      "no real service sends them, and against one the derived name stays a " +
+      "guess.";
+    log.debug("Leaving reconcileSpn(). Derived name covered.");
+    return outcome;
+  }
+  if (!volunteered.principal) {
+    log.debug("Leaving reconcileSpn(). Hosts only, and not covered.");
+    return outcome;
+  }
+  if (current && current !== derived) {
+    outcome.note = "This service says it is " + volunteered.principal +
+      ", and you have asked for " + current + ". Yours is left alone — an " +
+      "override is the legitimate case on a load-balanced or CNAMEd service " +
+      "— but only one of the two can have a key at the KDC.";
+    log.debug("Leaving reconcileSpn(). Override respected.");
+    return outcome;
+  }
+  panes.setVal("krb_spnego_spn", volunteered.principal);
+  outcome.filledIn = true;
+  outcome.note = "The SPN derived from this URL is " + (derived || "(none)") +
+    ", and this service volunteered that it holds a key for " +
+    volunteered.principal + " instead — so that is what the field now says. A " +
+    "ticket for the derived name would have been refused by the KDC with " +
+    "KDC_ERR_S_PRINCIPAL_UNKNOWN, which names nothing about HTTP. The header " +
+    "carrying this (X-Krb5-Service-Principal) is this mock's own courtesy: " +
+    "SPNEGO itself carries no SPN, so against a real service this is the one " +
+    "thing you have to find out for yourself.";
+  log.debug("Leaving reconcileSpn(). Filled in " + volunteered.principal);
+  return outcome;
+}
+
 function challengeToken(result) {
   log.debug("Entering challengeToken().");
   var headers = (result && result.response && result.response.headers) || {};
@@ -427,11 +573,21 @@ async function onProbe() {
     log.debug("Leaving onProbe(). Unexpected token.");
     return false;
   }
+  // Before the reader is sent off for a ticket: did the far end volunteer which
+  // SPN it holds a key for? Only this mock does, and only because the protocol's
+  // silence here is the commonest cause of a SPNEGO failure there is.
+  var reconciled = reconcileSpn(result);
+  renderSpnNote(derivedSpn(val("krb_spnego_url").trim()), reconciled);
+  renderCredentials();
   status("krb_spnego_status",
     "401 with a bare `Negotiate` challenge, which is exactly right. Nothing " +
     "in it says which realm, which KDC or which service principal name — so " +
     "everything from here is the client's own guess. Step 2 builds the " +
-    "token.", "krb-ok");
+    "token." + (reconciled && reconciled.filledIn
+      ? " This service did volunteer its SPN in a non-standard header, and the " +
+        "field above has been set to " + val("krb_spnego_spn") + " — see the " +
+        "note beside it."
+      : ""), "krb-ok");
   log.debug("Leaving onProbe(). Challenged.");
   return false;
 }
@@ -1076,21 +1232,19 @@ async function confirmContext(parsed, built, init, result) {
 // ---------------------------------------------------------------------------
 // The ticket that was sent — and what it takes to see inside it.
 //
-// The key fields and the "Open the ticket" button that used to be HERE are now
-// the shared Decryption keys pane (partials/krb_keys.html, kerberos_keys.js),
-// which every exchange page carries. Three things came out of that seam:
-// kerberos_panes.js adds the supplied keys to every message render, so this
-// pane passes none of its own; the button there replays this pane along with
-// all the others; and the KEYTAB route this page never had comes for free — a
-// service account's keys arrive in a keytab far more often than as hex.
+// The key fields and the button live in the ticket pane itself (spnego.html),
+// which is where they were before a shared pane briefly moved them to the foot
+// of this page and to four other pages besides. kerberos_keys.js is still the
+// implementation — one set of three routes to a key, shared with the decoder
+// page — and mount() registers it with kerberos_panes.js, so the key reaches
+// every message pane on this page without any render call being given one.
 //
-// The default salt is the one thing that stays page-specific, and it is passed
-// to mount() rather than moved into the shared module: this page is the only
-// one that knows the SPN it just used, so it is the only one that can offer
-// realm + principal as an assumption. What it must never do is offer it
-// silently — a computer account is salted REALM + "host" + short name + DNS
-// domain, and a wrong salt is indistinguishable from a wrong password.
-// kerberos_keys.js says which it assumed, in the pane, for exactly that reason.
+// The default salt is this page's own: it is the only page that knows the SPN
+// it just used, so it is the only one that can offer realm + principal as an
+// assumption. What it must never do is offer it silently — a computer account
+// is salted REALM + "host" + short name + DNS domain, and a wrong salt is
+// indistinguishable from a wrong password. kerberos_keys.js says which it
+// assumed, in the pane, for exactly that reason.
 // ---------------------------------------------------------------------------
 function assumedServiceSalt() {
   log.debug("Entering assumedServiceSalt().");
@@ -1106,19 +1260,23 @@ async function renderTicket() {
     log.debug("Leaving renderTicket(). Nothing sent yet.");
     return;
   }
-  // No keys passed: this page holds none that open a ticket, and the ones the
-  // reader supplied are added by renderMessage() itself.
+  // No keys passed: this page holds none that open a ticket. What it does hold
+  // — the ticket's own session key, and the KDC's report of what is inside it —
+  // renderMessage() adds for itself, along with anything typed in the fields
+  // below the pane.
   await panes.renderMessage("krb_ticket_pane", "The ticket inside the AP-REQ",
       lastTicketBytes);
   var host = el("krb_ticket_pane");
   var supplied = await panes.extraKeys();
   if (host && !supplied.length) {
     host.appendChild(make("p", "krb-note",
-      "No service key supplied, so the encrypted part above is opaque — " +
+      "No service key supplied, so the ciphertext itself is unopened and the " +
+      "contents above are the KDC's report of it rather than its plaintext — " +
       "which is the honest state of a CLIENT: it never holds the key its own " +
-      "ticket is sealed with, and cannot read the PAC it is carrying. Supply " +
-      "the service account's key, its password and salt, or its keytab in " +
-      "the Decryption keys pane below, and this pane opens where it stands."));
+      "ticket is sealed with. The one field that report does not cover is the " +
+      "PAC. For that, supply the service account's key, its password and " +
+      "salt, or its keytab in the fields below, and this pane opens where it " +
+      "stands."));
   }
   hexview.render("krb_ticket_hex", lastTicketBytes, "The ticket");
   log.debug("Leaving renderTicket().");
@@ -1139,8 +1297,31 @@ function rememberFields() {
   log.debug("Leaving rememberFields().");
 }
 
+// The build's own defaults, applied BEFORE anything stored so a value the user has
+// typed still wins — the same order and the same reason as the AS page's
+// applyBuildDefaults(). The URL is fetched by the API rather than by the browser,
+// so the working value differs per build (`sts` inside compose, loopback on a host
+// run, nothing at all where there is no api), and it lived in the markup as one of
+// those three. The SPN default is normally EMPTY and the derivation stands; a build
+// sets it only for a service whose SPN does not match its URL host.
+function applyBuildDefaults() {
+  log.debug("Entering applyBuildDefaults().");
+  var applied = 0;
+  if (appconfig.krb5SpnegoUrlDefault) {
+    panes.setVal("krb_spnego_url", appconfig.krb5SpnegoUrlDefault);
+    applied++;
+  }
+  if (appconfig.krb5SpnegoSpnDefault) {
+    panes.setVal("krb_spnego_spn", appconfig.krb5SpnegoSpnDefault);
+    applied++;
+  }
+  log.debug("Leaving applyBuildDefaults(). applied=" + applied);
+  return applied;
+}
+
 function loadFields() {
   log.debug("Entering loadFields().");
+  applyBuildDefaults();
   try {
     var url = window.localStorage.getItem(panes.KEYS.SPNEGO_URL);
     var spn = window.localStorage.getItem(panes.KEYS.SPNEGO_SPN);
@@ -1188,8 +1369,8 @@ window.onload = async function () {
     }
   });
   ophistory.mount("krb_operation_history", "krb_clear_operations_button");
-  // The Decryption keys pane, from partials/krb_keys.html. It registers itself
-  // with kerberos_panes.js, so the keys it collects reach every message pane on
+  // The key fields in the ticket pane. They register themselves with
+  // kerberos_panes.js, so the keys they collect reach every message pane on
   // this page — the negotiation tokens, the AP-REQ and the ticket inside it —
   // without any of the render calls above knowing about it. The salt callback
   // is this page's own: see assumedServiceSalt().
@@ -1223,5 +1404,7 @@ module.exports = {
   onAuthenticate: onAuthenticate,
   assumedServiceSalt: assumedServiceSalt,
   derivedSpn: derivedSpn,
+  applyBuildDefaults: applyBuildDefaults,
+  reconcileSpn: reconcileSpn,
   selectedMechs: selectedMechs
 };

@@ -350,15 +350,24 @@ async function s4u2ProxyWorksBothWaysAndExplainsRefusals(driver) {
   const trail = await waitForText(driver, "krb_trail_pane",
       /S4U_DELEGATION_INFO/, 15000,
     "the delegation-trail pane");
-  // WHERE the key can be supplied, not which page it used to be. This asked for
-  // the literal words "decoder page" and the pane now sends the reader to the
-  // Decryption keys pane at the foot of THIS page instead, which is a better
-  // answer to the same question — so the assertion is on the property (it names
-  // somewhere to supply the key) rather than on one wording. Another assertion
-  // that could only have passed before the page it describes was improved.
-  assert.ok(/Decryption keys pane|decoder page|keytab/.test(trail),
+  // WHERE the key can be supplied, not which page it happens to be on today.
+  // The wording has moved twice — the decoder page, then a Decryption keys pane
+  // on this page, then the decoder page again once that pane was removed — so
+  // the assertion is on the PROPERTY (it names somewhere the trail can be read)
+  // rather than on one of those spellings.
+  assert.ok(/Decoder|decoder page|keytab/.test(trail),
     "and should say where the trail CAN be read, since this page cannot " +
         "decrypt it: " + trail);
+  // And the other half of the same pane, which is what the removal of that key
+  // pane was for: the rest of the delegated ticket is NOT a dead end. Its
+  // contents are on screen already, from the KDC's own report of them, and the
+  // note has to distinguish the one field that is missing from the many that
+  // are not — otherwise "you cannot read this" reads as though nothing were
+  // readable.
+  assert.ok(/KDC's own word|report/.test(trail),
+    "and must say that everything else the ticket says is already shown, on " +
+    "the KDC's word, rather than leaving the reader thinking the whole " +
+        "ticket is opaque: " + trail);
 
   // RBCD without the padata: [MS-SFU] requires KDC_ERR_BADOPTION, and the page
   // has to narrow an error that mentions nothing about padata.

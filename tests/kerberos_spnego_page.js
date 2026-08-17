@@ -62,15 +62,28 @@ var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
 var principal = process.env.KRB5_PRINCIPAL || "alice";
 // One password for every user in the mock KDC, whoever KRB5_PRINCIPAL names.
 var password = process.env.KRB5_PASSWORD || "password!";
-var spn = process.env.KRB5_SPN || "HTTP/web.example.com";
-// The service account's own password, which is NOT the user password — it is
-// what opens the ticket, and the only way this page can show what is inside
-// one. Its salt is read from the KDC rather than guessed: a salt is not
-// derivable from a principal name, which is the whole reason PA-ETYPE-INFO2
-// exists.
+// The SPN this test drives, and it is deliberately the one the PAGE DERIVES from
+// the protected URL's host — `HTTP/<host>`, which is what RFC 4559 clients and
+// every browser do. It used to default to the mock's configured
+// `HTTP/web.example.com` and then be silently replaced by whatever the mock
+// advertised, which meant the derived path a human actually takes was never
+// exercised: the workflow led people to KDC_ERR_S_PRINCIPAL_UNKNOWN while this
+// test passed, because the test typed the answer in. Filled in by preconditions()
+// from the URL; KRB5_SPN still overrides for a service whose SPN genuinely differs
+// from its host.
+var spn = process.env.KRB5_SPN || null;
+// What the far end says its own SPN is, when it volunteers one. Only the mock
+// does — nothing in SPNEGO carries it — and it is kept to assert the page
+// RECONCILES the two rather than to replace the derived guess with it.
+var advertisedSpn = null;
+// The CONFIGURED service account's own password, which is NOT the user password —
+// it is what opens the ticket, and the only way this page can show what is inside
+// one. A service the mock registered on first sight carries a different, shared
+// password instead, and serviceKeyFor() picks whichever applies. Its salt is read
+// from the KDC in both cases rather than guessed: a salt is not derivable from a
+// principal name, which is the whole reason PA-ETYPE-INFO2 exists.
 var servicePassword = process.env.KRB5_SERVICE_PASSWORD ||
     "service-account-password";
-var serviceSalt = null;
 // Where the protected page is, as the BROWSER must reach it. Not stsUrl
 // blindly: on the containerized stack the browser and the api resolve the mock
 // by different names, and this URL is handed to the api rather than fetched
@@ -110,6 +123,36 @@ async function selectTab(driver, group, name) {
   await driver.findElement(By.css('.krb-tabs[data-krb-tabs="' + group +
       '"] .krb-tab[data-krb-tab="' + name + '"]')).click();
   log.debug("Leaving selectTab().");
+}
+
+// The key that opens a ticket for one SPN, read from the KDC's own published
+// table. Called after the ticket exists, because a service the mock registered on
+// first sight is not in that table until somebody asks for a ticket to it.
+async function serviceKeyFor(principalName) {
+  log.debug("Entering serviceKeyFor(). " + principalName);
+  const answer = { salt: null, password: servicePassword, autoCreated: false,
+      known: [] };
+  try {
+    const response = await fetch(stsUrl + "/krb5/principals");
+    const body = await response.json();
+    answer.known = (body.principals || []).map(function (p) {
+      return String(p.principal || "").split("@")[0];
+    });
+    (body.principals || []).forEach(function (p) {
+      if (String(p.principal || "").split("@")[0] === principalName) {
+        answer.salt = p.salt || null;
+        answer.autoCreated = !!p.autoCreated;
+      }
+    });
+    if (answer.autoCreated && body.accountPolicy &&
+        body.accountPolicy.autoServicePassword) {
+      answer.password = body.accountPolicy.autoServicePassword;
+    }
+  } catch (e) {
+    log.warn("could not read the principal table: " + e.message);
+  }
+  log.debug("Leaving serviceKeyFor(). salt=" + JSON.stringify(answer.salt));
+  return answer;
 }
 
 // What has to be true before any of this means anything. Each answer is a
@@ -166,18 +209,16 @@ async function preconditions() {
           "/krb5/spnego — this build of the api predates the SPNEGO workflow"
       };
     }
-    // The salt for the SERVICE account, read rather than guessed.
     const advertised = await advert.json();
-    (body.principals || []).forEach(function (p) {
-      if (String(p.principal || "").split("@")[0] === spn) {
-        serviceSalt = p.salt || null;
-      }
-    });
+    advertisedSpn = advertised.servicePrincipalName
+        ? String(advertised.servicePrincipalName).split("@")[0] : null;
     log.debug("Leaving preconditions(). Ready.");
     return {
       ok: true,
       kdcPort: String(body.kdcPort),
-      spn: advertised.servicePrincipalName || null
+      spn: advertisedSpn,
+      acceptsAnySpnForHosts: advertised.acceptsAnySpnForHosts || null,
+      principals: body.principals || []
     };
   } catch (e) {
     log.debug("Leaving preconditions(). Unreachable.");
@@ -310,8 +351,15 @@ async function theBannerLinkLeadsBackAndTheTicketIsThere(driver) {
     "fails at the KDC, three steps earlier, naming nothing about HTTP. Got " +
     JSON.stringify(derived));
 
-  await setField(driver, "krb_spnego_spn", spn);
-  await driver.findElement(By.id("krb_spnego_spn")).sendKeys("\t");
+  // The derived value is LEFT ALONE, which is the point: the ticket bought two
+  // steps ago was for this same derived name, so the handoff below is being
+  // checked on the SPN a client actually guesses. Typing the mock's canonical SPN
+  // in here — which this test used to do — made every assertion after it true of
+  // a name no browser would ever ask for.
+  assert.strictEqual(derived, spn,
+    "the page's derived SPN and the one this test bought a ticket for must be " +
+    "the same string, or the handoff below proves nothing: the page says " +
+    derived + " and the test used " + spn);
   await waitForText(driver, "krb_credentials_pane", /HELD/, 20000,
     "the SPNEGO page does not see the service ticket the TGS page just " +
     "stored — the credential handoff through kerberos_panes.js's shared " +
@@ -349,7 +397,35 @@ async function theChallengeIsBare(driver) {
   assert.ok(/GET /.test(pane) && /401/.test(pane),
       "including the request line and the status: " +
       JSON.stringify(pane.slice(0, 300)));
-  log.info("the first challenge is bare, and both sides are shown");
+
+  // WHAT THE FAR END VOLUNTEERED, and that the page used it. The mock sends
+  // X-Krb5-Service-Principal and X-Krb5-Accepts-Spn-Hosts on its challenge —
+  // nobody's standard, and the only way a client can learn an SPN it would
+  // otherwise have to guess. The page must reconcile its guess with them and SAY
+  // which happened, because the reader's next step is buying a ticket for one name
+  // or the other.
+  const note = await driver.findElement(By.id("krb_spn_note")).getText();
+  assert.ok(/Derived from the URL's host/.test(note),
+    "the SPN note must still say the name was derived — that is true of every " +
+    "service, and the headers below are true of one: " +
+        JSON.stringify(note.slice(0, 300)));
+  if (advertisedSpn) {
+    assert.ok(/volunteered/.test(note),
+      "and when the service volunteers its SPN the page must say so rather " +
+      "than silently agreeing with itself: " + JSON.stringify(note));
+    assert.ok(/mock|no real service|courtesy/i.test(note),
+      "labelled as the non-standard courtesy it is, or the reader learns the " +
+      "wrong lesson about every service that does not send it: " +
+          JSON.stringify(note));
+    const spnField = await driver.findElement(By.id("krb_spnego_spn"))
+        .getAttribute("value");
+    assert.strictEqual(spnField, spn,
+      "and the derived SPN must be left in place, because this service " +
+      "answers for it — the reconciliation only fills the field in when the " +
+      "guess cannot work: " + spnField);
+  }
+  log.info("the first challenge is bare, both sides are shown, and the SPN " +
+      "note reconciles the guess with what the service volunteered");
   log.debug("Leaving theChallengeIsBare().");
 }
 
@@ -453,10 +529,30 @@ async function theTicketIsOpaqueUntilTheServiceKeyIsSupplied(driver) {
       "the ticket's visible fields must be shown: " +
       JSON.stringify(before.slice(0, 200)));
   assert.ok(/No service key supplied|Supply/.test(before),
-    "and the pane must SAY that the rest is opaque without the service key. " +
-    "That is the honest state of a client — it never holds the key its own " +
-    "ticket is sealed with — and an empty pane says nothing at all: " +
-    JSON.stringify(before.slice(0, 400)));
+    "and the pane must SAY that the ciphertext itself is unopened without " +
+    "the service key. That is the honest state of a client — it never holds " +
+    "the key its own ticket is sealed with — and an empty pane says nothing " +
+    "at all: " + JSON.stringify(before.slice(0, 400)));
+
+  // WITH NO KEY TYPED ANYWHERE, the ticket's contents are already here. They
+  // come from the KDC's own report of them, which the TGS page kept when it
+  // bought this ticket and kerberos_panes.js hands to every message pane. This
+  // is the assertion that would have failed for the whole time the only route
+  // to these fields was a key pane: a client cannot decrypt a ticket it holds,
+  // but it is not ignorant of what is inside one.
+  assert.ok(/as the KDC reported it/.test(before),
+    "the ticket's contents must be shown from the KDC's own report, with " +
+    "nothing supplied and nothing to press: " +
+        JSON.stringify(before.slice(0, 600)));
+  assert.ok(/the SESSION key/.test(before) && /authtime/.test(before) &&
+      /endtime/.test(before),
+    "including the session key and the times, which are what a reader came " +
+    "for: " + JSON.stringify(before.slice(0, 800)));
+  assert.ok(/authorization-data/.test(before) &&
+      /not repeated in the reply/.test(before),
+    "and the ONE field that report cannot cover — the PAC — must be named as " +
+    "absent rather than left as a gap: " +
+        JSON.stringify(before.slice(0, 900)));
 
   const hexCells = await driver.findElements(
       By.css("#krb_ticket_hex .krb-hex-b"));
@@ -464,37 +560,56 @@ async function theTicketIsOpaqueUntilTheServiceKeyIsSupplied(driver) {
       "and the ticket's own hex view must render, got " + hexCells.length +
       " cells");
 
-  if (!serviceSalt) {
-    // Not a failure: the salt comes from the KDC's own principal list, and a
-    // build that does not publish it cannot be asked to open anything. Said
-    // rather than skipped silently.
-    log.warn("the mock KDC did not publish a salt for " + spn +
-        ", so the decryption half of this section did not run");
+  // The service account's salt and password, read from the KDC **now** rather
+  // than at start-up: the SPN under test is the one derived from the URL, and the
+  // mock registers such a service ON FIRST SIGHT — so at preconditions() time
+  // there was no entry to read a salt from. Which password opens it depends on
+  // which kind of account it turned out to be: a configured one keeps its own,
+  // and one created on demand carries the shared auto-service password the
+  // endpoint publishes. A salt is never derivable from a principal name, which is
+  // why it is read in both cases.
+  const key = await serviceKeyFor(spn);
+  if (!key.salt) {
+    // Not a failure: a build that publishes no salt cannot be asked to open
+    // anything. Said rather than skipped silently.
+    log.warn("the mock KDC published no salt for " + spn + " (it lists " +
+        key.known.join(", ") + "), so the decryption half of this section did " +
+        "not run");
     log.debug("Leaving theTicketIsOpaqueUntilTheServiceKeyIsSupplied().");
     return;
   }
-  // The fields are the SHARED Decryption keys pane's (partials/krb_keys.html),
-  // not this page's own any more: since 2026-08-17 every exchange page carries
-  // that pane, and this page's bespoke one was the only place in the workflow a
-  // ticket could be opened — on the one page that cannot obtain a ticket in the
-  // first place. The ids moved with it (krb_deckey_*), and the pane it repaints
-  // is still this one, because it registers itself with kerberos_panes.js rather
-  // than knowing which panes exist.
-  await setField(driver, "krb_deckey_password", servicePassword);
-  await setField(driver, "krb_deckey_salt", serviceSalt);
+  log.info("opening the ticket with " + spn + "'s own key — salt " +
+      JSON.stringify(key.salt) + ", the " +
+      (key.autoCreated ? "shared auto-service" : "configured account's") +
+      " password");
+  // The key fields are in the ticket pane itself, which is where they were
+  // before a shared pane briefly moved them to the foot of this page and to
+  // four other pages besides. This is the one page in the workflow that
+  // collects a key at all: the ticket here is a SERVICE ticket, whose keytab a
+  // reader plausibly holds, and the one thing a key buys is the PAC. The ids
+  // are krb_deckey_* (kerberos_keys.js names them, and it is shared with the
+  // decoder page) and the pane they repaint is this one, because they register
+  // with kerberos_panes.js rather than knowing which panes exist.
+  await setField(driver, "krb_deckey_password", key.password);
+  await setField(driver, "krb_deckey_salt", key.salt);
   await driver.findElement(By.id("krb_deckey_button")).click();
+  // Waited on the DECRYPTED section, not on "session key": the KDC's report
+  // above already shows a session key, so a wait on that phrase would be
+  // satisfied before the button did anything and this whole half of the
+  // section would assert nothing.
   const opened = await driver.wait(async function () {
     const text = await driver.findElement(By.id("krb_ticket_pane")).getText();
-    return /session key/i.test(text) ? text : false;
+    return /EncTicketPart \(decrypted\)/.test(text) ? text : false;
   }, 60000, "the ticket never opened with the service key");
-  assert.ok(/session key/i.test(opened),
-    "with the service key the EncTicketPart must open — that is what a " +
-    "service does, and it is the only way to see the client name, the flags " +
-    "and the PAC this ticket is actually carrying");
+  assert.ok(!/as the KDC reported it/.test(opened),
+    "and once the real EncTicketPart is open the KDC's report must be " +
+    "dropped rather than shown beside it — two sets of the same fields " +
+    "invite the reader to wonder which is real: " +
+        JSON.stringify(opened.slice(0, 600)));
   assert.ok(/PAC|Logon Information/i.test(opened),
-    "including the PAC, which is what a Windows service authorizes on and " +
-    "the structure a client can never see in its own ticket: " +
-    JSON.stringify(opened.slice(0, 500)));
+    "including the PAC, which is what a Windows service authorizes on, the " +
+    "structure a client can never see in its own ticket, and the ONLY thing " +
+    "these fields exist to reveal: " + JSON.stringify(opened.slice(0, 500)));
   log.info("the ticket is opaque, and opens with the service key");
   log.debug("Leaving theTicketIsOpaqueUntilTheServiceKeyIsSupplied().");
 }
@@ -601,16 +716,38 @@ async function test() {
         "; using that.");
     kdcPort = ready.kdcPort;
   }
-  if (ready.spn && ready.spn.split("@")[0] !== spn) {
-    log.warn("the mock advertises " + ready.spn + " rather than " + spn +
-        "; using that.");
-    spn = ready.spn.split("@")[0];
-  }
   if (!protectedUrl) {
     protectedUrl = stsUrl + "/spnego/protected";
   }
-  log.info("the protected page is " + protectedUrl + ", the SPN is " + spn +
-      ", the KDC is on " + kdcHost + ":" + kdcPort);
+  // THE SPN IS DERIVED, exactly as the page derives it, and it is NOT replaced
+  // with whatever the mock advertises. That replacement is what this test used to
+  // do — "the mock advertises X rather than Y; using that" — and it is why the
+  // workflow could lead a person straight into KDC_ERR_S_PRINCIPAL_UNKNOWN while
+  // this test stayed green: the derived name was never the one exercised. Now the
+  // whole run uses the guess a client actually makes, and the mock's own
+  // advertisement is asserted against rather than substituted in.
+  if (!spn) {
+    spn = "HTTP/" + new URL(protectedUrl).hostname;
+  }
+  log.info("the protected page is " + protectedUrl + ", the SPN DERIVED from " +
+      "its host is " + spn + (advertisedSpn && advertisedSpn !== spn
+        ? " (the mock's canonical SPN is " + advertisedSpn + ", and it " +
+          "advertises that it answers for " +
+          (ready.acceptsAnySpnForHosts || []).join(", ") + ")"
+        : "") + ", the KDC is on " + kdcHost + ":" + kdcPort);
+  if (advertisedSpn && advertisedSpn !== spn &&
+      !(ready.acceptsAnySpnForHosts || []).some(function (host) {
+        const wanted = spn.split("/").slice(-1)[0].toLowerCase();
+        return wanted === host || wanted.endsWith("." + host);
+      })) {
+    // The derived SPN cannot work here and this run would fail for a
+    // configuration reason rather than a defect. Named rather than worked
+    // around, because working around it is the thing that hid the bug.
+    log.warn("the mock does not answer for " + spn + " and names " +
+        advertisedSpn + " instead, so the derived SPN cannot be issued a " +
+        "ticket. Set KRB5_SPN to override, or KRB5_SERVICE_DOMAINS on the mock " +
+        "to include this host.");
+  }
 
   const options = new chrome.Options();
   // --headless=new, never bare --headless: the image's Chrome 121 ignores

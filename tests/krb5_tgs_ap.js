@@ -2035,11 +2035,19 @@ async function theTgsExchangeRefusesWhatItShould(tgt) {
   }), 25, /must carry the TGT/);
 
   // An SPN that is not registered — on AD the single commonest TGS failure.
+  //
+  // The host has to be OUTSIDE the hosts the mock is willing to be a service for
+  // (KRB5_SERVICE_DOMAINS, `example.com` and the three names this stack is reached
+  // by), because since 2026-08-17 an SPN inside them is registered on first sight —
+  // a client derives `HTTP/<url host>` and cannot know the mock's table. This case
+  // used `HTTP/nosuchhost.example.com` and started passing for the wrong reason;
+  // `elsewhere.invalid` is in no domain this KDC claims, and `.invalid` is reserved
+  // by RFC 2606 so it can never become one.
   const forUnknown = await client.buildTgsReq({
     tgt: tgt,
     sname: {
       type: msgs.NAME_TYPE.SRV_HST,
-      name: ["HTTP", "nosuchhost.example.com"]
+      name: ["HTTP", "nosuchhost.elsewhere.invalid"]
     }
   });
   const unknown = await expectError("an unregistered SPN", forUnknown.request,
@@ -2047,6 +2055,37 @@ async function theTgsExchangeRefusesWhatItShould(tgt) {
   assert.ok(/SPN/.test(unknown.eText || ""),
     "the refusal should name the Active Directory cause, since that is the " +
         "diagnosis: " + unknown.eText);
+  assert.ok(/registers a service on first sight/.test(unknown.eText || ""),
+    "and it should say what this KDC WOULD have created, since the reader's " +
+        "next question is why their own SPN was not: " + unknown.eText);
+
+  // The other half of that behaviour, which is new and would otherwise be
+  // asserted nowhere: an SPN inside those hosts is issued a ticket even though
+  // nothing configured it. This is what makes the SPNEGO workflow usable — the SPN
+  // a client derives from `http://localhost:8081/...` is `HTTP/localhost`, and it
+  // was KDC_ERR_S_PRINCIPAL_UNKNOWN on every run before this.
+  const derivedShapes = [["HTTP", "localhost"], ["HTTP", "sts"],
+    ["HTTP", "127.0.0.1"], ["HTTP", "anything.example.com"]];
+  for (var d = 0; d < derivedShapes.length; d++) {
+    const built = await client.buildTgsReq({
+      tgt: tgt,
+      sname: { type: msgs.NAME_TYPE.SRV_HST, name: derivedShapes[d] }
+    });
+    const read = await client.readTgsRep({
+      tgt: tgt,
+      reply: await sendFramed(kdcPort, built.request),
+      nonce: built.nonce,
+      subkey: null,
+      requestedSname: built.sname
+    });
+    assert.ok(read.ok,
+      derivedShapes[d].join("/") + " names a host this mock answers on, so it " +
+      "must be registered on first sight and issued a ticket: " +
+      (read.ok ? "" : read.error.error.name + " — " + read.error.eText));
+    assert.strictEqual(msgs.principalToString(read.service),
+        derivedShapes[d].join("/"),
+      "and the ticket must name the SPN that was asked for");
+  }
 
   // THE CHECKSUM CASE. The body is swapped after the Authenticator was built
   // over the original, which is exactly what a re-encoding bug produces — and

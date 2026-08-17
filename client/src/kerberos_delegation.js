@@ -70,11 +70,12 @@ var kpac = require("./krb5_pac.js");
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
 var tickets = require("./kerberos_tickets.js");
-// The Decryption keys pane. S4U_DELEGATION_INFO — the only record IN a ticket
-// that a delegation happened — lives in the PAC of a ticket encrypted under
-// the TARGET service's key, so this pane is what makes the audit trail
-// readable on this page instead of on another one.
-var deckeys = require("./kerberos_keys.js");
+// NOTE: there is no Decryption keys pane on this page. Every ticket it obtains
+// shows its contents from the KDC's own report of them, which kerberos_panes.js
+// supplies to every message pane. The one thing that still needs the TARGET
+// service's key is S4U_DELEGATION_INFO inside the PAC — the only record IN a
+// ticket that a delegation happened — and renderDelegationTrail() says so
+// rather than pretending otherwise.
 
 var el = panes.el;
 var val = panes.val;
@@ -610,24 +611,22 @@ async function onS4u2Proxy() {
 }
 
 // The audit trail, which is the only record IN the ticket that a delegation
-// happened. Reading it needs the target service's key, so this pane says so
-// when it has none rather than showing an empty box.
-// The last delegation this page produced, so the note below can be repainted
-// when a key arrives. Held for the same reason kerberos_panes.js remembers what
-// each message pane rendered: the key that makes this readable is typed AFTER
-// the exchange, and re-running an S4U2Proxy request to read a trail you already
-// have is not an answer.
-var lastDelegation = null;
-
+// happened. Everything else about the delegated ticket is on screen without
+// anything being asked of the reader — the S4U2Proxy reply pane shows its
+// flags, session key, principals and times out of the KDC's own report — and
+// this one field is the exception, because it lives in the PAC and the PAC
+// exists only inside the ciphertext. So the note says which part is missing and
+// why, and names the page that can open it for a reader who holds the target
+// service's key. It does not ask for a key here: there is nowhere on this page
+// to put one, deliberately, since the four exchanges above are what this page
+// is for.
 async function renderDelegationTrail(read, targetText) {
   log.debug("Entering renderDelegationTrail().");
-  lastDelegation = { read: read, targetText: targetText };
   var host = el("krb_trail_pane");
   if (!host) {
     log.debug("Leaving renderDelegationTrail(). No pane.");
     return;
   }
-  var supplied = await panes.extraKeys();
   panes.clear(host);
   host.appendChild(panes.make("p", "krb-note",
     "The delegated ticket names " + msgs.principalToString(read.client) +
@@ -637,42 +636,14 @@ async function renderDelegationTrail(read, targetText) {
     "S4U_DELEGATION_INFO inside the PAC — which is encrypted under " +
         targetText + "'s own key, " +
     "and a client never holds that: this page is the client here."));
-  // Which of the two states the reader is in, said explicitly. "Supply the key"
-  // read as an instruction that had nowhere to be carried out until the
-  // Decryption keys pane existed on this page, and once a key HAS been supplied
-  // the same sentence reads as though nothing happened.
-  host.appendChild(panes.make("p", "krb-note", supplied.length
-    ? "You have supplied " + supplied.length + " key(s), so the S4U2Proxy " +
-      "reply pane above was re-read with them: if one of them is " +
-      targetText + "'s, the ticket's EncTicketPart is open there and the " +
-      "trail is inside its PAC. If it says the keys were tried and none " +
-      "worked, the key is a different principal's or a stale kvno."
-    : "Supply that key in the Decryption keys pane at the foot of this page " +
-      "— as a raw key, as " + targetText + "'s password and salt, or as its " +
-      "keytab — and the S4U2Proxy reply pane above opens where it stands, " +
-      "PAC and trail included. Nothing typed there is stored or sent " +
-      "anywhere."));
-  log.debug("Leaving renderDelegationTrail(). supplied=" + supplied.length);
-}
-
-// The Decryption keys pane's onApply hook. The message panes replay themselves;
-// this one is prose about them and has to be told.
-function refreshDelegationTrail() {
-  log.debug("Entering refreshDelegationTrail().");
-  if (!lastDelegation) {
-    log.debug("Leaving refreshDelegationTrail(). No delegation yet.");
-    return false;
-  }
-  Promise.resolve()
-    .then(function () {
-      return renderDelegationTrail(lastDelegation.read,
-          lastDelegation.targetText);
-    })
-    .catch(function (e) {
-      log.error("the delegation trail could not be repainted: " + e.message);
-    });
-  log.debug("Leaving refreshDelegationTrail().");
-  return true;
+  host.appendChild(panes.make("p", "krb-note",
+    "Everything else the ticket says is in the reply pane above already, on " +
+    "the KDC's own word — it repeats the ticket's flags, session key, both " +
+    "principals and all four times to the client, and this page kept them. " +
+    "The delegation trail is the single field it does not repeat. To read " +
+    "that, take the ticket to the Kerberos Decoder page with " + targetText +
+    "'s key, password and salt, or keytab; nothing else opens a PAC."));
+  log.debug("Leaving renderDelegationTrail().");
 }
 
 // ---------------------------------------------------------------------------
@@ -956,11 +927,6 @@ function wire() {
     }
   });
   ophistory.mount("krb_operation_history", "krb_clear_operations_button");
-  // The Decryption keys pane, from partials/krb_keys.html. onApply re-renders
-  // the delegation trail note as well, because that pane is not a message
-  // pane and so is not replayed by panes.rerenderMessages().
-  deckeys.mount({ onApply: refreshDelegationTrail });
-
   var wiring = [
     ["krb_s4u2self_button", onS4u2Self],
     ["krb_s4u2proxy_button", onS4u2Proxy],

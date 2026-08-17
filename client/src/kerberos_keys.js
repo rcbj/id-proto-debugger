@@ -1,39 +1,41 @@
 // File: kerberos_keys.js
 //
 // ---------------------------------------------------------------------------
-// The Decryption keys pane, shared by every Kerberos page that shows a message.
+// The three routes to a decryption key, in one implementation, for the two
+// pages that ask for one.
 //
 // ---------------------------------------------------------------------------
-// WHY THIS EXISTS, which is a protocol fact rather than a UI preference.
+// WHICH PAGES ASK, AND WHY THE OTHERS DO NOT.
 //
 // A ticket's EncTicketPart is encrypted at key usage 2 under the SERVICE
 // principal's own long-term key — `krbtgt/REALM`'s for a ticket-granting
 // ticket, the service account's for a service ticket. A client never holds that
 // key: it carries the ticket and cannot read it, which is the whole reason a
-// ticket is safe to hand over. So on every page here the most interesting
-// section of the most interesting message said "not opened", and the only thing
-// on screen was an instruction to go and use the decoder page.
+// ticket is safe to hand over.
 //
-// That instruction was the defect. The key can only come from the reader, but
-// the place to put it belongs beside the message it opens: leaving the page you
-// are debugging, pasting a ticket into another one and pasting a key beside it
-// is three steps to see a field that is already on screen — and it loses the
-// context the page was showing. The decoder page keeps its own pane and its own
-// job (bytes from anywhere, no exchange, no credential), which is why it is
-// still there and still linked; what changed is that it is no longer the only
-// way to open what THIS page just received.
+// For a few days in August 2026 the answer to that was a **Decryption keys**
+// pane on all five exchange pages, and it was the wrong answer. What a reader
+// wants out of a ticket — its flags, its session key, both principals, all four
+// times — the KDC repeats to the client in the reply's enc-part, and every page
+// here stores exactly those fields when it takes a ticket into the credential
+// cache. So `kerberos_panes.js` now hands that report to every message it
+// describes (`ticketReports()`), the contents appear with nothing typed, and
+// four of those five panes were asking for a key to show what was already
+// known. They are gone; nothing on the AS, TGS, AP or delegation pages collects
+// a key.
 //
-// ---------------------------------------------------------------------------
-// HOW IT REACHES THE PANES, without touching a single call site.
+// Two places still do, and both have a reason of their own:
 //
-// `mount()` registers `collect` with kerberos_panes.js, which adds whatever
-// this pane yields to the keys each caller passes `renderMessage()`. So every
-// message pane on every one of these pages — ten across five bundles, plus the
-// AP-REQ nested inside a TGS-REQ's padata — opens on the same terms, and a page
-// that never mounts this pane behaves exactly as it did before. The button then
-// replays the panes already on screen (`panes.rerenderMessages()`), because the
-// common case is pasting a key AFTER an exchange has run and re-running an
-// exchange to read a ticket you already hold is not an answer.
+//   * **the SPNEGO page**, where the fields live INSIDE the ticket pane (they
+//     always did, until the shared pane briefly moved them out). The ticket
+//     there is a service ticket whose keytab a reader plausibly holds, and the
+//     one thing a key buys is the **PAC** — the single field the KDC does not
+//     repeat, which exists only inside the ciphertext. It calls `mount()`,
+//     which registers `collect` with `kerberos_panes.js`.
+//   * **the decoder page**, which has no exchange, no credential and no report
+//     of anything: bytes arrive by paste and a key is the only way in. It uses
+//     `collectFrom()` against its own ids and never calls `mount()`, because it
+//     passes the keys to the describer itself.
 //
 // ---------------------------------------------------------------------------
 // THREE ROUTES, because a reader is in one of three situations.
@@ -49,15 +51,19 @@
 //     Every usable key in it is offered, so a ticket whose etype you do not
 //     know still opens.
 //
+// A route that fails NEVER stops the others, and each failure becomes a note
+// rather than an exception: three keys are offered here and a mistyped one must
+// not cost a reader the two that were right.
+//
 // ---------------------------------------------------------------------------
 // NOTHING HERE IS STORED. Every other field on these pages is remembered in
-// localStorage; this pane's are not, in any store, and that is deliberate
-// rather than unfinished: what goes in here is a long-term key — the credential
-// the whole realm rests on, in the krbtgt case — and a debugger that remembered
-// it would be a worse place to leave it than the keytab it came from. The
-// consequence is honest and stated in the pane: the keys last as long as the
-// page is open. `collect()` reads the fields on every render for the same
-// reason, so there is no copy of them anywhere but the DOM.
+// localStorage; these are not, in any store, and that is deliberate rather than
+// unfinished: what goes in here is a long-term key — the credential the whole
+// realm rests on, in the krbtgt case — and a debugger that remembered it would
+// be a worse place to leave it than the keytab it came from. The consequence is
+// honest and stated in the page: the keys last as long as the page is open.
+// `collect()` reads the fields on every render for the same reason, so there is
+// no copy of them anywhere but the DOM.
 // ---------------------------------------------------------------------------
 
 var appconfig = require(process.env.CONFIG_FILE);
@@ -78,10 +84,13 @@ var val = panes.val;
 var make = panes.make;
 var status = panes.status;
 
-// The ids in partials/krb_keys.html. Deliberately NOT `krb_password` /
-// `krb_salt`: those are taken on kerberos.html, where they are the CLIENT's
-// credentials for pre-authentication, and reusing them would mean typing a
-// service key into the field that authenticates you.
+// The ids in the SPNEGO page's ticket pane (spnego.html). Deliberately NOT
+// `krb_password` / `krb_salt`: those are taken on kerberos.html, where they are
+// the CLIENT's credentials for pre-authentication, and reusing them would mean
+// typing a service key into the field that authenticates you. They were
+// `krb_service_*` on that page until 2026-08-17 and kept the `krb_deckey_*`
+// names when the fields came back to it, because this module and the tests name
+// them and a third spelling would buy nothing.
 var FIELDS = {
   hex: "krb_deckey_hex",
   etype: "krb_deckey_etype",
@@ -201,9 +210,9 @@ async function collectFrom(fields, options) {
 async function collect() {
   log.debug("Entering collect().");
   if (!el(FIELDS.hex) && !el(FIELDS.password) && !el(FIELDS.keytab)) {
-    // This page does not carry the pane. Not an error: the decoder page has its
-    // own, and a page could legitimately have none.
-    log.debug("Leaving collect(). No pane on this page.");
+    // This page does not carry the fields. Not an error: the decoder page has
+    // its own ids, and every other page needs none.
+    log.debug("Leaving collect(). No key fields on this page.");
     return [];
   }
   var gathered = await collectFrom(FIELDS, mounted || {});
@@ -268,16 +277,18 @@ async function apply() {
 //                      required rather than inventing one.
 // options.onApply      called after a successful application, for panes that
 //                      are NOT message panes and so are not replayed by
-//                      rerenderMessages() — the delegation page's trail note is
-//                      the only one today.
+//                      rerenderMessages(). Nothing passes it today; it is kept
+//                      because a page with prose ABOUT a decryption has to be
+//                      told when one happens, and the delegation page had
+//                      exactly that until its note stopped depending on a key.
 // ---------------------------------------------------------------------------
 function mount(options) {
   log.debug("Entering mount().");
   mounted = options || {};
   if (!el(FIELDS.hex) && !el(FIELDS.password) && !el(FIELDS.keytab)) {
-    // A page that includes the partial gets the pane; one that does not is not
+    // Only the SPNEGO page carries these fields; a page that does not is not
     // broken, so this is a debug line rather than a warning.
-    log.debug("Leaving mount(). This page has no Decryption keys pane.");
+    log.debug("Leaving mount(). This page has no key fields.");
     return false;
   }
   panes.setExtraKeys(collect);

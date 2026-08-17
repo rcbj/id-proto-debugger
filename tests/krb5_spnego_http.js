@@ -793,6 +793,75 @@ async function aReplayedApReqIsRefusedAndSaysWhy(serviceTicket) {
 }
 
 // ---------------------------------------------------------------------------
+// THE SPN A CLIENT ACTUALLY DERIVES, which is not the configured one.
+//
+// RFC 4559 clients guess `HTTP/<the URL's host>` — browsers included — and
+// nothing in SPNEGO carries the real SPN, so that guess is all a client has. This
+// mock is reached at `localhost`, at `sts` on the containerized stack and at
+// `127.0.0.1` from the AP page's defaults, while its configured account is
+// `HTTP/web.example.com`: every one of those guesses used to be
+// KDC_ERR_S_PRINCIPAL_UNKNOWN before the exchange even started, which is a real
+// error with a real cause and exactly the wrong first experience of the workflow.
+//
+// The KDC now registers a service on first sight for the hosts it answers on, and
+// the acceptor holds the key for those names as well as its canonical one. This
+// section proves the whole chain with the DERIVED name — ticket issued, ticket
+// accepted, page served — because the mock-side change is worth nothing if the
+// acceptor still refuses what the KDC now issues.
+// ---------------------------------------------------------------------------
+async function theSpnAClientDerivesFromTheUrlIsAccepted(tgt) {
+  log.debug("Entering theSpnAClientDerivesFromTheUrlIsAccepted().");
+  log.info("=== the SPN a client derives from the URL ===");
+  const advert = JSON.parse((await get("/spnego?format=json")).body);
+  assert.ok(Array.isArray(advert.acceptsAnySpnForHosts) &&
+      advert.acceptsAnySpnForHosts.length,
+    "the advertisement must say which hosts this acceptor answers for, since " +
+    "the client's derived SPN is otherwise a guess it cannot check: " +
+    JSON.stringify(advert.acceptsAnySpnForHosts));
+  assert.ok(advert.acceptsAnySpnForHosts.indexOf("localhost") !== -1,
+    "including localhost, which is what this stack is reached by on a host " +
+    "run: " + JSON.stringify(advert.acceptsAnySpnForHosts));
+
+  for (const host of ["localhost", "sts", "127.0.0.1"]) {
+    const derived = await getServiceTicket(tgt,
+      { type: msgs.NAME_TYPE.SRV_HST, name: ["HTTP", host] });
+    const built = await buildInit(derived, {});
+    const resp = await get("/spnego/protected", built.token);
+    // The failure detail is read only when there IS a failure: on a 200 the
+    // responseToken is an AP-REP, and errorInside() throws on one — an assertion
+    // message that cannot be built is a passing case that reports as a codec bug.
+    const why = resp.status === 200 ? "" : (function () {
+      const err = errorInside(resp);
+      return err ? " with " + err.error.name : "";
+    }());
+    assert.strictEqual(resp.status, 200,
+      "a ticket for HTTP/" + host + " — the SPN a client derives when it " +
+      "reaches this service at " + host + " — must be accepted. Got " +
+      resp.status + why);
+    assert.ok(/protected content/i.test(resp.body || ""),
+      "and the protected page must actually be served");
+  }
+
+  // The other side of the same coin: a host this service does not answer on is
+  // still refused by the KDC, so the error stays reachable and this is not a
+  // KDC that says yes to everything.
+  let refused = null;
+  try {
+    await getServiceTicket(tgt,
+      { type: msgs.NAME_TYPE.SRV_HST, name: ["HTTP", "elsewhere.invalid"] });
+  } catch (e) {
+    refused = e;
+  }
+  assert.ok(refused,
+    "an SPN outside the hosts this mock answers on must still be refused by " +
+    "the KDC — if everything is registered on demand, nothing above proves " +
+    "the registration is scoped");
+  log.info("the derived SPN works end to end, and a host outside the list " +
+      "still does not");
+  log.debug("Leaving theSpnAClientDerivesFromTheUrlIsAccepted().");
+}
+
+// ---------------------------------------------------------------------------
 // NEGATIVE 7. A ticket for somebody else.
 // ---------------------------------------------------------------------------
 async function aTicketForAnotherServiceIsRefused(tgt) {
@@ -1010,6 +1079,7 @@ async function test() {
     await aTamperedMicIsRejected(serviceTicket);
     await anEditedMechanismListIsCaughtByTheMic(serviceTicket);
     await aReplayedApReqIsRefusedAndSaysWhy(serviceTicket);
+    await theSpnAClientDerivesFromTheUrlIsAccepted(tgt);
     await aTicketForAnotherServiceIsRefused(tgt);
     await aTgtIsNotAServiceTicket(tgt);
     await theHttpLayerRefusesWhatItShould();

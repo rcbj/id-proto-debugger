@@ -265,6 +265,28 @@ async function theTgsPageSpendsTheTgt(driver) {
     "with no subkey sent, the reply must be reported as opened at key usage " +
         "8: " + status);
 
+  // THE TGT THREE ENVELOPES DOWN, opened with nothing typed. A TGS-REQ carries
+  // its ticket inside an AP-REQ inside PA-TGS-REQ, sealed with krbtgt's key,
+  // which nobody driving this page has — and until 2026-08-17 that section
+  // ended in an instruction to go and find one. The contents are the KDC's own
+  // report of them, kept by the AS page when it obtained the TGT, so the pane
+  // shows them with no key and nothing to press.
+  const sent = await driver.findElement(By.id("krb_request_pane")).getText();
+  assert.ok(/as the KDC reported it/.test(sent),
+    "the TGT inside PA-TGS-REQ must show its contents from the KDC's own " +
+    "report, with nothing supplied: " + JSON.stringify(sent.slice(-900)));
+  assert.ok(/the SESSION key/.test(sent) && /krbtgt\//.test(sent),
+    "including the session key, and naming krbtgt as the principal whose " +
+    "ticket it is: " + JSON.stringify(sent.slice(-900)));
+  // The absence of a control, not merely the absence of a click: a pane that
+  // needs a key typed into it is exactly what this replaced, and it would pass
+  // every assertion above if this test happened to fill it in.
+  const keyFields = await driver.findElements(By.id("krb_deckey_button"));
+  assert.strictEqual(keyFields.length, 0,
+    "and this page must carry no key-entry pane at all — what such a pane " +
+    "asked for is now shown without asking, and the one part it could still " +
+    "open (the PAC) belongs on the Decoder page");
+
   const tickets = await driver.findElement(By.id("krb_tickets_pane")).getText();
   assert.ok(tickets.indexOf(spn) !== -1,
       "the service ticket must be listed: " + tickets.slice(0, 200));
@@ -345,6 +367,22 @@ async function theApPagePresentsItAndChecksTheEcho(driver) {
         "mechanism OID: " +
     request.slice(0, 250));
   assert.ok(/01 00/.test(request), "and the AP-REQ token id");
+
+  // And the ticket being PRESENTED, which is the whole subject of this page:
+  // sealed with the service account's key, which this page does not hold, and
+  // legible anyway because the TGS page kept what the KDC said was in it.
+  const apreq = await driver.findElement(By.id("krb_apreq_pane")).getText();
+  assert.ok(/as the KDC reported it/.test(apreq),
+    "the presented ticket must show its contents from the KDC's own report: " +
+        JSON.stringify(apreq.slice(-900)));
+  assert.ok(/authorization-data/.test(apreq) &&
+      /not repeated in the reply/.test(apreq),
+    "and must name the ONE field that report cannot cover — the PAC — rather " +
+    "than leaving it as a gap the reader has to notice: " +
+        JSON.stringify(apreq.slice(-900)));
+  const apKeyFields = await driver.findElements(By.id("krb_deckey_button"));
+  assert.strictEqual(apKeyFields.length, 0,
+    "and this page must carry no key-entry pane either");
 
   // The 0x8003 structure, field by field. This is the pane the AP page exists
   // for.
