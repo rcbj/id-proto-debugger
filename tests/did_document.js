@@ -71,6 +71,24 @@ function base58RoundTrips() {
   }
   log.info("[base58] OK — 40 lengths round-tripped.");
 
+  // The all-zero inputs, explicitly, because the loop above reaches them only
+  // by luck: it is `crypto.randomBytes(1) === 0x00`, one run in 256, and that
+  // is how the encoder shipped for months seeding its digit array with a zero
+  // it had already counted as a leading "1" — 0x00 encoded as "11" and decoded
+  // back to THREE zero bytes. A round trip driven by random bytes is not a
+  // check on the boundary it happens to include at that rate; name it.
+  [1, 2, 5, 32].forEach(function (length) {
+    var zeroes = new Uint8Array(length);
+    var encoded = did.base58Encode(zeroes);
+    assert.strictEqual(encoded, "1".repeat(length),
+      length + " zero byte(s) must encode as exactly " + length +
+      ' "1"(s); got "' + encoded + '".');
+    assert.deepStrictEqual(Array.from(did.base58Decode(encoded)),
+      Array.from(zeroes),
+      length + " zero byte(s) did not survive a base58btc round trip.");
+  });
+  log.info("[base58] OK — an all-zero input is exactly that many \"1\"s.");
+
   // Base 58 arithmetic cannot express a leading zero byte, so the encoder has
   // to count them and re-emit one "1" each. A key that silently loses one is a
   // DIFFERENT key, and it decodes cleanly.

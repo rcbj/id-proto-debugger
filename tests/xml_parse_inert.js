@@ -49,6 +49,26 @@ log.info("Log initialized. logLevel=" + log.level());
 
 const SRC_DIR = path.join(__dirname, "..", "client", "src");
 
+// "That directory exists" is not "this is a checkout", and the difference is
+// what this test skips on. The tests image stages most borrowed modules FLAT
+// beside the scripts, but it also mirrors a handful of Kerberos bundles into
+// /usr/src/client/src, because the two Kerberos pane tests resolve their files
+// as ../client/src (tests/Dockerfile). So SRC_DIR is present in the image and
+// holds eleven modules, none of which parses XML — the whole sweep below then
+// ran over the mirror and failed with "found no parseFromString calls at all",
+// which reads as the XML pages having moved rather than as the layout it is.
+//
+// client/package.json is what separates the two: it is outside client/src
+// entirely, so no mirror of that directory can ever contain it, and a checkout
+// cannot lack it. Ask for a file only a checkout has, never for the directory.
+function isCheckout() {
+  log.debug("Entering isCheckout().");
+  const manifest = path.join(__dirname, "..", "client", "package.json");
+  const present = fs.existsSync(manifest);
+  log.debug("Leaving isCheckout(). " + manifest + " present=" + present);
+  return present;
+}
+
 // The shared XML/crypto engine. It is the module every XML page reaches for, so
 // an HTML sink appearing HERE would be reachable from all of them at once.
 const XML_ENGINE = "xmldsig.js";
@@ -255,12 +275,14 @@ function parsedNodesStayDetached() {
 async function test() {
   log.debug("Entering test().");
   // This test reads sources rather than running anything, so it needs the
-  // checkout. The tests image stages individual modules flat and has no
-  // client/src; say so rather than reporting a silent pass over zero files.
-  if (!fs.existsSync(SRC_DIR)) {
-    log.info("SKIPPED — no client/src in this layout (running from the " +
-             "tests image); " +
-             "this check runs in a checkout, where the sources are present.");
+  // checkout. The tests image stages individual modules flat and carries only a
+  // PARTIAL mirror of client/src; say so rather than sweeping that mirror and
+  // reporting either a silent pass or an absence that reads as a moved page.
+  if (!isCheckout()) {
+    log.info("SKIPPED — no client/package.json in this layout, so this is " +
+             "the tests image (which carries only a partial mirror of " +
+             "client/src) rather than a checkout; this check runs in a " +
+             "checkout, where the sources are present.");
     log.debug("Leaving test().");
     return;
   }

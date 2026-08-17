@@ -51,6 +51,31 @@ var log = bunyan.createLogger({ name: "jwk_pem",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
+// The two source sweeps below read the WHOLE of client/src, so "that directory
+// exists" is not the question they need answered — "is this a checkout" is. The
+// tests image stages most borrowed modules FLAT beside these scripts, but it
+// also mirrors eleven Kerberos bundles into /usr/src/client/src, because the
+// two Kerberos pane tests resolve their files as ../client/src (see
+// tests/Dockerfile). A guard on the directory therefore stopped skipping the
+// moment that mirror appeared, and the elliptic sweep ran over eleven files it
+// had never been meant to judge before dying on client/package.json, which no
+// mirror carries — a failure naming a manifest for what is really a layout.
+//
+// That manifest is the discriminator precisely because it sits OUTSIDE
+// client/src: no mirror of that directory can ever contain it, and a checkout
+// cannot lack it. Returns the directory to sweep, or undefined in the image.
+function checkoutSrcDir() {
+  log.debug("Entering checkoutSrcDir().");
+  const manifest = path.join(__dirname, "..", "client", "package.json");
+  if (!fs.existsSync(manifest)) {
+    log.debug("Leaving checkoutSrcDir(). No " + manifest + ".");
+    return undefined;
+  }
+  const dir = path.join(__dirname, "..", "client", "src");
+  log.debug("Leaving checkoutSrcDir(). " + dir);
+  return dir;
+}
+
 // In a checkout the module is at client/src/jwk_pem.js; the tests image copies
 // it flat next to the test scripts (see tests/Dockerfile).
 var jwkToPem = paths.requireSharedModule(
@@ -415,12 +440,14 @@ function ellipticStaysOutOfTheBundles() {
   log.debug("Entering ellipticStaysOutOfTheBundles().");
   log.info("[bundles] Reading client/src for the requires that pull " +
            "`elliptic` into a bundle.");
-  const srcDir = path.join(__dirname, "..", "client", "src");
-  if (!fs.existsSync(srcDir)) {
-    // The tests image copies individual modules flat and has no client/src, so
-    // there is nothing to read. Say so rather than reporting a silent pass.
-    log.info("[bundles] SKIPPED — no client/src in this layout (running from " +
-             "the tests image).");
+  const srcDir = checkoutSrcDir();
+  if (!srcDir) {
+    // The tests image copies individual modules flat and carries only a partial
+    // mirror of client/src, so there is nothing here worth reading. Say so
+    // rather than reporting a pass over eleven Kerberos bundles.
+    log.info("[bundles] SKIPPED — no client/package.json in this layout, so " +
+             "this is the tests image (which carries only a partial mirror " +
+             "of client/src) rather than a checkout.");
     log.debug("Leaving ellipticStaysOutOfTheBundles().");
     return;
   }
@@ -552,10 +579,11 @@ function bigIntLiteralsStayOutOfTheBundles() {
   log.debug("Entering bigIntLiteralsStayOutOfTheBundles().");
   log.info("[bigint] Reading client/src for BigInt literals, which envify's " +
            "esprima cannot parse.");
-  const srcDir = path.join(__dirname, "..", "client", "src");
-  if (!fs.existsSync(srcDir)) {
-    log.info("[bigint] SKIPPED — no client/src in this layout (running from " +
-             "the tests image).");
+  const srcDir = checkoutSrcDir();
+  if (!srcDir) {
+    log.info("[bigint] SKIPPED — no client/package.json in this layout, so " +
+             "this is the tests image (which carries only a partial mirror " +
+             "of client/src) rather than a checkout.");
     log.debug("Leaving bigIntLiteralsStayOutOfTheBundles().");
     return;
   }

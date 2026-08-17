@@ -291,6 +291,14 @@ COPY tests/captures ./captures
 # catches that and says which COPY is missing.
 COPY sts/krb5_kdc.js sts/krb5_service.js sts/krb5_principals.js ./sts/
 COPY sts/app.js sts/helpers.js sts/bbs2023.js ./sts/
+# admin_stats.js is the recomputation that paragraph asks for, and the one that
+# proves it is not optional: the mock's admin console grew a counters module,
+# app.js/krb5_kdc.js/krb5_service.js all require it, and this image did not
+# carry it — so all four in-process mock-KDC jobs (krb5_as_exchange,
+# krb5_tgs_ap, krb5_spnego_http, krb5_delegation_interop) died at load with
+# "Cannot find module './admin_stats'" while every host run stayed green. It
+# requires ./helpers and nothing else, so it adds no further closure of its own.
+COPY sts/admin_stats.js ./sts/
 COPY sts/krb5_primitives.js sts/krb5_asn1.js sts/krb5_crypto.js sts/krb5_messages.js sts/krb5_gss.js ./sts/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build
