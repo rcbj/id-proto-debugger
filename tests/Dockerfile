@@ -117,8 +117,13 @@ COPY client/src/url_safety.js ./
 # on which COPY ran last, and the failure would be silent.
 COPY client/src/metadata_schema.js ./
 # The BBS implementation, loaded directly by tests/bbs_crypto.js and checked
-# there against @digitalbazaar/bbs-signatures.
+# there against @digitalbazaar/bbs-signatures — and, for the SHAKE-256
+# ciphersuite, against the draft's own published test vectors, which are
+# vendored as tests/bbs_vectors.json because a test must not need the network
+# to know what the right answer is. tests/digital_signature.js drives the same
+# vectors through the page, so BOTH tests fail at load without this file.
 COPY client/src/bbs.js ./
+COPY tests/bbs_vectors.json ./
 # The bbs-2023 cryptosuite, BOTH implementations, for tests/bbs2023_cryptosuite.js
 # — the wallet's and the STS's. They share a basename and this image copies flat,
 # so the STS's is renamed on the way in; the test resolves either layout.
@@ -358,6 +363,27 @@ COPY tests/api_krb5_relay.js ./
 # tests/jwk_pem_encoding.js is what catches that, and it caught exactly this
 # when the two tests were first written.
 COPY tests/api_ldap.js tests/ldap_page.js ./
+# The PKI workflow's four jobs, and everything they load.
+#
+# The three node-only ones drive the modules directly — the certificate
+# authoring (client/src/x509.js), the key material and keystore formats
+# (client/src/key_material.js) and the TLS probe (api/tls_probe.js) — so those
+# modules are copied FLAT beside the tests, like every other borrowed module
+# here, and the tests resolve either layout through module_paths.js.
+#
+# x509.js requires ./key_material, which requires ./jose_jwe (copied further
+# up), so the closure is those three plus what jose_jwe already needed. Both
+# need `pkijs` and `asn1js`, which is why tests/package.json declares them: a
+# borrowed module's own requires resolve from where the module LIVES, and in
+# this image that is beside the tests.
+#
+# openssl is already installed at the top of this file for the WS-Trust schema
+# work; pki_x509.js and pki_key_formats.js assert by asking it what it reads,
+# and say so rather than skipping if it is absent.
+COPY client/src/x509.js client/src/key_material.js client/src/pki_store.js ./
+COPY api/tls_probe.js ./
+COPY tests/pki_x509.js tests/pki_key_formats.js tests/api_tls_probe.js ./
+COPY tests/pki_page.js ./
 # The WebAuthn decoder, loaded directly by tests/webauthn_decode.js: the CBOR
 # reader, the COSE_Key decoder (which requires ./jwk_pem, copied above) and the
 # artifact parser/verifier. The vectors beside them are real ceremonies produced

@@ -1,0 +1,28 @@
+# Terraform — never commit these to a public repo.
+#
+# .terraform/ is the local data directory `terraform init` writes, and here it
+# is the expensive one: this stack pulls the aws, tls and random providers, and
+# the aws provider binary alone is ~707 MB — seven times GitHub's 100 MB
+# per-file limit, so a commit carrying it cannot be pushed at all. It also holds
+# .terraform/terraform.tfstate, which is NOT this stack's state (that lives in
+# S3, see the backend block in versions.tf) but a cache of the backend
+# configuration. Nothing under .terraform/ belongs in the repo; it is rebuilt by
+# `terraform init`.
+# Note the one difference from the sibling site modules: they also ignore
+# .terraform.lock.hcl, but here it is deliberately tracked, so it is not listed
+# (a .gitignore entry would not untrack it anyway, only mislead).
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# terraform.tfvars here holds only the domain, instance size and account names —
+# no secret, and allowed_cidr is deliberately absent — so it is committed. The
+# domain, service and user passwords are generated per apply by the random
+# provider and live only in the remote state.

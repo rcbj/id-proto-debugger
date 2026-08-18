@@ -147,6 +147,32 @@ var config = {
   // client's own protocol-level sizeLimit may ask for fewer; it may not ask for
   // more. Omit it for the code default of 1000.
   ldapMaxEntries: 1000,
+  // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
+  // TLS test the PKI page (client/public/pki.html) runs.
+  //
+  // It is an allowlist for the same reason the Kerberos ports are, and for one
+  // reason more: unlike the Kerberos relay there is no PAYLOAD SHAPE bounding
+  // this endpoint. A ClientHello sent to port 22 is a perfectly well-formed
+  // ClientHello, so "it must look like the protocol" rules nothing out here and
+  // the ports have to do all the work.
+  //
+  // Omit the setting for the code default (api/tls_probe.js: 443, 636, 989,
+  // 990, 993, 995, 1433, 4443, 5061, 5432, 5671, 6697, 8443, 8843, 9443, 10443,
+  // 8883 — https, the alternate https ports, LDAPS, FTPS, the mail ports, AMQPS,
+  // SIP-TLS, PostgreSQL, MSSQL, IRC and MQTT over TLS). Set it to the string
+  // "any" for a deployment that genuinely needs arbitrary ports; as with
+  // krb5ServicePorts that is a word rather than an empty list or a 0, so
+  // switching it on cannot be a plausible typo.
+  //
+  // What this does NOT relax: the address policy below still applies (a raw
+  // socket bypasses the axios guard, so tls_probe.js asks the guard for its
+  // DECISION), and the same connectionTimeout / callTimeout / maxContentLength
+  // bound the lookup, the connect, the handshake and the certificate chain.
+  // "any" here because this is the local debugging stack: the TLS server being
+  // tested is usually one somebody has just started on an ephemeral port, and
+  // an allowlist that has to be edited per run is an allowlist that gets set to
+  // "any" anyway, less visibly.
+  tlsAllowedPorts: "any",
   // SAML Service Provider identity (this debugger acting as an SP).
   spEntityId: "http://localhost:3000/saml/sp",
   acsUrl: "http://localhost:4000/samlacs",

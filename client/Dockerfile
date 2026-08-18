@@ -122,6 +122,7 @@ RUN browserify src/spnego.js -o public/js/spnego.js --debug --standalone spnego 
 # static deployments. This line stays regardless: the exclusion is static-only,
 # and tests/static_site_exclusions.js fails if the container build loses a page.
 RUN browserify src/ldap.js -o public/js/ldap.js --debug --standalone ldap -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/pki.js -o public/js/pki.js --debug --standalone pki -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----

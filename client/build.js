@@ -122,6 +122,7 @@ const BUNDLES = [
   ['kerberos_delegation', 'kerberos_delegation'],
   ['spnego', 'spnego'],
   ['ldap', 'ldap'],
+  ['pki', 'pki'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>

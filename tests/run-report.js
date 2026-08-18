@@ -445,12 +445,17 @@ function buildJobs() {
   // it validates, and exercises the keystore downloads. Asymmetric: SLH-DSA (12
   // sets); RSA (v1.5 & PSS × every hash × 2048/3072); ECC (ECDSA over
   // P-256/384/521/secp256k1 × every hash, EdDSA, Schnorr, BLS); ML-DSA
-  // (44/65/87). Symmetric MACs: keyed-hash (HMAC/KMAC/BLAKE), block-cipher
-  // (CMAC/CBC-MAC/ GMAC), universal-hash (Poly1305/SipHash) — compute + verify
-  // + tamper check.
+  // (44/65/87); BBS over BLS12-381 in BOTH ciphersuites — KeyGen (deterministic
+  // from the key material, with key_info bound in), sign/verify over a message
+  // LIST, every way the draft says that must fail (changed, reordered, dropped,
+  // added message; changed header), derived proofs with selective disclosure,
+  // unlinkability, replay and substituted-disclosure refusals, and the draft's
+  // own test vectors driven through the page. Symmetric MACs: keyed-hash
+  // (HMAC/KMAC/BLAKE), block-cipher (CMAC/CBC-MAC/ GMAC), universal-hash
+  // (Poly1305/SipHash) — compute + verify + tamper check.
   jobs.push({
-    name: "Digital Signature (asymmetric sigs + symmetric MACs — generate, " +
-        "sign/MAC, validate, download)",
+    name: "Digital Signature (asymmetric sigs incl. BBS + symmetric MACs — " +
+        "generate, sign/MAC, validate, download)",
     script: "digital_signature.js",
     env: {},
   });
@@ -1672,14 +1677,18 @@ function buildJobs() {
   }
 
   // The BBS signatures the debugger produces, checked by a DIFFERENT BBS
-  // implementation (@digitalbazaar/bbs-signatures). No browser and no services,
-  // so it never skips. It is the foundation the bbs-2023 cryptosuite stands on:
-  // BBS has several places where a signer and verifier can share a mistake and
-  // agree perfectly with each other and with nobody else.
+  // implementation (@digitalbazaar/bbs-signatures) AND by the draft's own
+  // published test vectors (vendored as tests/bbs_vectors.json). No browser and
+  // no services, so it never skips. It is the foundation the bbs-2023
+  // cryptosuite and the Digital Signature page's BBS pane both stand on: BBS
+  // has several places where a signer and verifier can share a mistake and
+  // agree perfectly with each other and with nobody else. Covers both
+  // ciphersuites, KeyGen, and the fact that neither suite accepts the other's
+  // signature.
   {
     jobs.push({
       name: "BBS signatures (cross-checked against an independent " +
-          "implementation)",
+          "implementation and the draft's vectors)",
       script: "bbs_crypto.js",
       env: {},
     });
@@ -2406,6 +2415,83 @@ function buildJobs() {
   jobs.push({
     name: "WS-Trust message schema validation (RST vs OASIS-derived XSD)",
     script: "wstrust_schema_validate.js",
+    env: {},
+  });
+
+  // ---------------------------------------------------------------------------
+  // PKI: the certificate authority workflow (client/public/pki.html), its two
+  // modules, and the TLS test the api makes for it.
+  //
+  // Three of the four are node-only and never skip. That split is deliberate
+  // and it is what makes "every combination" affordable: the certificates
+  // themselves are checked in node against OPENSSL — a second implementation,
+  // which is the only kind of check that catches an encoding that is wrong and
+  // self-consistent — while the browser test is left with only the page.
+  // ---------------------------------------------------------------------------
+
+  // Certificate authoring: every signature algorithm crossed with every subject
+  // key algorithm (~240 certificates), every X.509v3 extension, a four-deep
+  // root/intermediate/issuing/leaf chain, and the enforcement of the extensions
+  // that are supposed to REFUSE something — name constraints, pathLenConstraint,
+  // and an unknown critical extension.
+  //
+  // The assertions are made by `openssl verify` and `openssl x509 -text` rather
+  // than by reading back what this codebase just wrote, because every defect
+  // this test was written for produces bytes that parse perfectly and are
+  // refused by something else: a Name built as one multi-valued RDN, an
+  // otherName wrapped in a second [0] tag (`openssl verify` says
+  // `ossl_x509v3_cache_extensions:reason(158)` and names nothing), a signature
+  // whose declared algorithm is not the one used, and a 2050+ date encoded as a
+  // UTCTime, which reads as 1950. Node only, never skipped.
+  jobs.push({
+    name: "PKI certificates (every algorithm combination, every X.509v3 " +
+        "extension, a four-deep chain — against OpenSSL)",
+    script: "pki_x509.js",
+    env: {},
+  });
+
+  // Key generation and every keystore format — PEM, DER, JWK set and PKCS#12,
+  // each with and without a password — read back by OpenSSL. This module was
+  // the bottom third of jwt_tools.js and was exercised only through that page's
+  // Download button, which can see a status line and not a file; extracting it
+  // for the PKI page is what made the matrix testable. Node only, never
+  // skipped.
+  jobs.push({
+    name: "PKI key material (7 algorithms x 4 keystore formats, encrypted " +
+        "and not — against OpenSSL)",
+    script: "pki_key_formats.js",
+    env: {},
+  });
+
+  // The TLS / mutual-TLS probe behind POST /tls/connect. Same accounting as the
+  // Kerberos relay — `tls.connect` is a raw socket, so the SSRF guard's axios
+  // installation never sees it — plus one assertion that earns its keep more
+  // than the rest: a COMPLETED HANDSHAKE IS NOT AN ACCEPTED CLIENT CERTIFICATE.
+  // Under TLS 1.3 the client is finished before the server has said anything
+  // about the certificate, and the refusal arrives afterwards as an alert or as
+  // a bare hang-up, so an implementation that resolves on `secureConnect`
+  // answers "client authentication not required" for every TLS 1.3 server on
+  // earth. It drives the module directly, with its own throwaway listeners, so
+  // it needs no running api. Node only, never skipped.
+  jobs.push({
+    name: "TLS probe (address policy on raw sockets, port allowlist, " +
+        "truststores, mutual-auth measurement, deadlines)",
+    script: "api_tls_probe.js",
+    env: {},
+  });
+
+  // The page itself: the root/intermediate/issuing/leaf hierarchy built
+  // entirely through the form, the store surviving a reload, the private-key
+  // opt-out in both states (read out of localStorage, because that failure is
+  // silent in the reassuring direction), and the TLS test end to end through
+  // the api. It also asserts the one thing this page's design forbids — a
+  // browser-side option for the TLS test, which a browser could not honour.
+  // Needs the client, and the api for its last section, which skips without
+  // one.
+  jobs.push({
+    name: "PKI page (CA hierarchy through the form, the store, the " +
+        "private-key opt-out, the api-only TLS test)",
+    script: "pki_page.js",
     env: {},
   });
 

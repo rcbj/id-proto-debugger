@@ -38,7 +38,7 @@ This project currently supports the following specs & features:
 * [XML Signature](https://www.w3.org/TR/xmldsig-core/)
 * [XML Encryption](https://www.w3.org/TR/xmlenc-core1/)
 * [Base64 Encoding](https://www.rfc-editor.org/info/rfc4648/)
-* [X.509 Public-Key and Attributes Certificate Framework](https://www.itu.int/rec/t-rec-x.509/en)
+* [X.509 Public-Key and Attributes Certificate Framework](https://www.itu.int/rec/t-rec-x.509/en) -- and, on the **Certificate Authority & X.509 Tools** page, the ability to *build* one: a Root CA, an Intermediate and an Issuing CA, then the leaf certificates any of them can sign — TLS server, TLS client for mutual authentication, code signing, S/MIME, OCSP responder, time stamping, smartcard logon and Kerberos PKINIT — with every [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280) X.509v3 extension editable including its critical flag, and any extension at all addable by OID. Then it opens a real **TLS or mutual-TLS connection** with what you issued. See the Certificate Authority & X.509 Tools section below.
 * [RFC8414]](https://www.rfc-editor.org/rfc/rfc8414.html)
 * With the ability to add custom parameters to the Authorization Endpoint call and Token Endpoint call, numerous other protocols can be supported. We'll eventually get around to adding direct support.
 * Token Endpoint calls can be initiated from the front-end or back-end depending on what the IdP requires in various use cases.
@@ -476,7 +476,7 @@ SHA hashing uses the Web Crypto API (`crypto.subtle.digest`), which is only avai
 ## Digital Signature
 The **Digital Signature** page (`/digital_signature.html`) is a standalone, browser-only workbench for generating keys, signing/MACing arbitrary values, and validating them across classical, elliptic-curve, and post-quantum signature schemes — plus symmetric MACs.
 
-**All cryptography runs in your browser** using pure-JavaScript libraries — [node-forge](https://github.com/digitalbazaar/forge) (RSA, AES), [`@noble/curves`](https://github.com/paulmillr/noble-curves) (ECC), [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) (SLH-DSA / ML-DSA), and [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) (hashes, HMAC, KMAC, keyed BLAKE). Signing deliberately does **not** use the Web Crypto API: `crypto.subtle` supports only the SHA family, whereas these panes let you pair RSA/ECDSA with a wide range of hashes. **No key material is stored:** keys live only in this page and are never written to local storage.
+**All cryptography runs in your browser** using pure-JavaScript libraries — [node-forge](https://github.com/digitalbazaar/forge) (RSA, AES), [`@noble/curves`](https://github.com/paulmillr/noble-curves) (ECC), [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) (SLH-DSA / ML-DSA), and [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) (hashes, HMAC, KMAC, keyed BLAKE). BBS is this project's own implementation of [`draft-irtf-cfrg-bbs-signatures`](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/) over `@noble/curves`' BLS12-381 — the same module the SD-JWT VC workflow signs `bbs-2023` credentials with. Signing deliberately does **not** use the Web Crypto API: `crypto.subtle` supports only the SHA family, whereas these panes let you pair RSA/ECDSA with a wide range of hashes. **No key material is stored:** keys live only in this page and are never written to local storage.
 
 Reach it from the **Tools** pane on `debugger.html` or `debugger2.html`, or browse directly to `/digital_signature.html`. Every field has a **Copy** button and a hover tooltip, and the "← Return to debugger" link goes back to whichever page you came from. Each pane is **collapsible** — click its title to collapse/expand it, or use the **Expand all** / **Collapse all** buttons at the top — to save screen space on this long page.
 
@@ -490,6 +490,7 @@ Each pane carries an **Asymmetric** or **Symmetric (MAC)** badge. The asymmetric
 | RSA | PKCS#1 v1.5 & PSS, any hash | 2048/3072/4096/1024-bit keys |
 | ECC | ECDSA (P-256/384/521, secp256k1) any hash; EdDSA (Ed25519/Ed448); Schnorr (BIP-340); BLS (BLS12-381) | |
 | ML-DSA (FIPS 204, post-quantum) | lattice-based | ML-DSA-44 / 65 / 87 |
+| BBS (draft-irtf-cfrg-bbs-signatures) | pairing-based, multi-message + selective disclosure | `BLS12-381-SHA-256` and `BLS12-381-SHAKE-256` |
 
 **Symmetric — MACs:**
 
@@ -500,7 +501,7 @@ Each pane carries an **Asymmetric** or **Symmetric (MAC)** badge. The asymmetric
 | Universal-Hash MACs | universal hashing | Poly1305 (one-time key); SipHash-2-4 |
 
 ### Common layout
-Every pane has the same controls:
+Every pane has the same controls (the BBS pane adds to them — it signs a message *list* and has a proof section; see Pane #5):
 * **Value** — the message to sign or validate (any text).
 * **Signature (Base64)** — produced by *Sign*; paste one here to validate.
 * **Key Pair** — an algorithm/curve/parameter dropdown, a **Generate Keys** button, and the private + public key fields (PEM for RSA/SLH-DSA/ML-DSA; raw hex for ECC).
@@ -542,6 +543,19 @@ Keys are shown as raw hex. Signatures are Base64.
 ### Pane #4 — ML-DSA
 Post-quantum, lattice-based signatures (FIPS 204, formerly CRYSTALS-Dilithium) — the primary NIST post-quantum signature standard. Choose `ML-DSA-44`, `65`, or `87`, Generate Keys, then Sign / Validate. Unlike SLH-DSA, signing is fast.
 
+### Pane #5 — BBS
+[BBS signatures](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/) over BLS12-381 — the only pane that does not sign a single value, and the only one whose signature can be turned into something else. It signs an ordered **list** of messages; the holder can then derive a **proof** that reveals only the messages they choose, and because each derivation is freshly randomised, two proofs from one signature are **unlinkable**. That is the property selective disclosure with an SD-JWT cannot offer, where the issuer's signature is reused verbatim every time.
+
+Everything the draft parameterises is on the pane:
+
+* **Ciphersuite** — `BLS12-381-SHA-256` (the one `bbs-2023` uses) or `BLS12-381-SHAKE-256`. They are not two spellings of one scheme: they expand messages differently and each has its own fixed `P1` point, so a key, a signature and a proof all belong to **one** suite. Validating across suites fails, as it should.
+* **Input encoding** — every octet-string field (messages, header, presentation header, key info, key DST) is read as **UTF-8 text** or as **hex**. Choose hex to reproduce the draft's own test vectors byte for byte.
+* **Messages** — one per line; index 0 is the first line. Order and count are both bound into the signature. A blank line is an empty message; a single trailing newline is just the line ending, so to end the list *with* an empty message add one more newline.
+* **Header** — an octet string signed over but not a message: it cannot be selectively withheld.
+* **Key Pair** — BBS **KeyGen** rather than a random scalar: the key is derived from **Key Material** (≥ 32 bytes of hex — leave it empty and the page generates 32 random bytes and shows them), optional **Key Info**, and an optional **Key DST** (empty means the ciphersuite default, `ciphersuite_id || "KEYGEN_DST_"`). The same inputs always give the same key, so the pair on screen is reproducible from what is on screen. The private key is a 32-byte scalar and the public key a compressed 96-byte G2 point, both hex.
+* **Sign** / **Validate Signature** — an 80-byte signature (a 48-byte G1 point and a 32-byte scalar), Base64.
+* **Derived Proof** — **Disclosed Indexes** (comma- or space-separated; empty discloses nothing, which is a legitimate proof) and a **Presentation Header**, the verifier's nonce. **Derive Proof** produces the proof; **Verify Proof** checks it against the disclosed messages, their indexes, the header and the presentation header. Derive twice and the bytes differ — that is the unlinkability, not a bug.
+
 ### Symmetric MAC panes
 Three panes (badged **Symmetric (MAC)**) authenticate with a single shared secret. Each has a Value box, a MAC (Base64) box, an algorithm dropdown, a Secret Key (hex) field with **Generate Key** (which sizes the key to the algorithm; changing the algorithm re-generates it), and **Compute MAC** / **Verify MAC** buttons. *Verify* recomputes the tag over the current value + key and compares it to the MAC box.
 
@@ -560,6 +574,7 @@ An optional password encrypts the private material: PBES2 for PEM/DER (RSA), a P
 | ECC — ECDSA / EdDSA | ✗ | ✗ | ✓ | ✗ |
 | ECC — Schnorr / BLS | ✗ | ✗ | ✗ (copy the hex) | ✗ |
 | SLH-DSA / ML-DSA | ✓ (raw, unencrypted) | ✗ | ✓ | ✗ |
+| BBS | ✗ | ✗ | ✓ (OKP / `Bls12381G2`) | ✗ |
 
 ### Notes & limitations
 * **Signatures vs MACs** — the asymmetric panes are digital signatures (non-repudiation, public verifiability); the symmetric MAC panes use a shared secret and provide neither, so they are *not* signatures despite living on the same page. They're grouped and badged separately.
@@ -567,6 +582,47 @@ An optional password encrypts the private material: PBES2 for PEM/DER (RSA), a P
 * **Interoperability** — standard combinations (RSA/ECDSA with SHA-2/SHA-3, EdDSA, HMAC/KMAC) verify against other tools; exotic ones (RIPEMD-160, BLAKE2b, BLAKE3, keyed-BLAKE MACs, some curve+hash pairings) may not be accepted elsewhere, as they go beyond the JOSE/PKIX registries.
 * **Not offered** (no maintained pure-JS/CJS support): Falcon/FN-DSA, finite-field DSA, Brainpool curves, SM2, GOST (signatures); UMAC, VMAC, PMAC (MACs).
 * **No persistence** — keys, signatures, and MACs live only in the page for the current session.
+
+## Certificate Authority & X.509 Tools
+The **Certificate Authority & X.509 Tools** page (`/pki.html`) builds the PKI the other protocols on this site run on, and then tests it. Reach it from the **Tools** pane on the OAuth2/OIDC, SAML, WS-Federation and Verifiable Credential pages, or browse directly to `/pki.html`.
+
+### Building a hierarchy
+Three CA profiles, in the shape a real deployment uses:
+
+* **Root CA** — self-signed, long-lived, and the only certificate here that signs itself. Its private key signs the intermediate and then ideally never comes out again.
+* **Intermediate CA** — signed by the root, `pathLenConstraint 1`, so exactly one more CA may follow it.
+* **Issuing CA** — signed by the intermediate, `pathLenConstraint 0`, so it may sign leaves and nothing else. A validator enforces that, and the page lets you prove it by trying.
+
+Then eleven leaf profiles: TLS server, TLS client, both at once, digital signature / non-repudiation, key encipherment, code signing, S/MIME, OCSP responder (with `id-pkix-ocsp-nocheck`), time stamping, smartcard logon and Kerberos KDC (PKINIT). A profile sets the extensions that kind of certificate normally carries; every one of them is then editable, which is the point — issuing the certificate that is wrong in **exactly one way** is how you find out what refuses it and what does not.
+
+### Every algorithm combination
+The **signature algorithm** (what the issuer signs with) and the **subject key algorithm** (what is being certified) are chosen independently, and every combination works:
+
+| | |
+|---|---|
+| Signature | RSASSA-PKCS1-v1_5 and RSA-PSS over SHA-256/384/512, ECDSA over SHA-256/384/512, Ed25519 — plus SHA-1 with RSA and ECDSA, marked weak and defaulted to by nothing, because *"does my stack still accept a SHA-1 certificate?"* is a question a debugger should be able to ask |
+| Subject key | RSA 2048 / 3072 / 4096, ECDSA P-256 / P-384 / P-521, Ed25519 |
+
+The signature list is filtered to what the signing key can actually produce, since an RSA key cannot make an ECDSA signature and offering it produces a browser error that names neither.
+
+### Full X.509v3 extension control
+`basicConstraints`, `keyUsage` (all nine bits), `extendedKeyUsage` (sixteen named purposes plus any OID), `subjectAltName` and `issuerAltName` (DNS, IP v4/v6, email, URI, directory name, registered ID, Microsoft **UPN** and RFC 4556 **Kerberos principal** otherNames, and raw otherNames by OID), `subjectKeyIdentifier`, `authorityKeyIdentifier`, `cRLDistributionPoints`, `freshestCRL`, `authorityInfoAccess`, `subjectInfoAccess`, `certificatePolicies` (with CPS and user-notice qualifiers), `policyMappings`, `policyConstraints`, `nameConstraints` (permitted and excluded subtrees, with the address-plus-mask encoding an IP constraint actually requires), `inhibitAnyPolicy`, `privateKeyUsagePeriod`, RFC 7633 TLS Feature (must-staple), `id-pkix-ocsp-nocheck`, the Netscape certificate type and comment — and **any extension at all** as an OID, a critical flag and base64 DER.
+
+The **critical** flag is separately settable on each. A validator must reject a certificate carrying a critical extension it does not understand, so marking the wrong one critical is a good way to find out what your stack really implements.
+
+### Keys and certificates are kept
+Everything issued is kept in the browser, because a certificate authority is only worth having if it is still there tomorrow — the whole point of a root is that it signs an intermediate next week and an issuing CA the week after. Each object records who issued it, so the page can assemble the chain for an export, a truststore or the TLS test below.
+
+Key pairs come from the same pane, and the same code, as the [JWT Tools](#jwt-tools) page, and download in the same formats: **PEM**, **DER**, a **JWK set**, or a password-protected **PKCS#12** carrying the key with its whole certificate chain — the format `keytool`, OpenSSL, Windows and macOS all import. The private key can be encrypted (PBES2) in every format.
+
+**Private keys are saved by default and there is a checkbox to stop it**, as on every other key-generating page here. It is the private half only: clearing it strips the private keys already written and keeps the certificates and public keys, which are public documents — so the trust anchors and the chains stay usable while nothing can sign any more.
+
+### The TLS / mutual-TLS test
+The last pane opens a real TLS connection with what you issued and reports the whole handshake: negotiated version and cipher, ALPN protocol, the server's certificate chain, whether it verified against the truststore **you** chose, and the TLS alert when it did not. You choose the client certificate to present (or none), the trust anchors (yours, the platform's, both, or nothing at all), the minimum and maximum TLS version, the cipher list, the ALPN protocols and the SNI name — separately from the address dialled, so a certificate for `www.example.com` can be tested against a staging host.
+
+Ask it to and it will connect **twice**, with the client certificate and without, and tell you whether the server *requires* client authentication, does not, or refused the certificate you offered. That has to be measured rather than read: nothing exposes the server's CertificateRequest, and under TLS 1.3 the handshake completes before the server has said anything about your certificate — its refusal arrives afterwards, as an alert or as a bare hang-up.
+
+**This test is made by the API layer, and there is deliberately no option to make it from the browser.** A page cannot choose which client certificate to present (the browser picks from its own store, through its own UI), cannot be given a truststore, cannot read the negotiated version, cipher or chain, and receives a failed handshake as a generic network error with the alert — the one informative thing — discarded. So it is one of the few features here that needs the api service running.
 
 ## SAML Assertion Tool
 The **SAML Assertion Tool** page (`/saml_tools.html`) is a standalone, browser-only workbench for building a SAML assertion, signing it with [XML Signature](https://www.w3.org/TR/xmldsig-core/), and encrypting it with [XML Encryption](https://www.w3.org/TR/xmlenc-core1/). It emits a spec-compliant assertion for **SAML 1.0**, **SAML 1.1**, or **SAML 2.0** — the three schemas differ in more than a version number, and the page follows each one.

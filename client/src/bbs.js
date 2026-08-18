@@ -71,28 +71,81 @@ var Fr = bls.fields.Fr;
 // here and the literals out of the code below. See client/CLAUDE.md.
 var _B0 = BigInt(0), _B8 = BigInt(8), _B255 = BigInt(255);
 
-// --- ciphersuite BLS12-381-SHA-256 (section 4.1) ----------------------------
+// --- ciphersuites (section 6) -----------------------------------------------
 //
-// Two constants that are easy to get wrong, and both were, in the first draft
-// of this file — with a self-test that passed anyway, because sign() and
+// Two constants per suite are easy to get wrong, and both were, in the first
+// draft of this file — with a self-test that passed anyway, because sign() and
 // verify() shared the mistake. Only cross-checking against a different
 // implementation found them.
 //
-//   CIPHERSUITE_ID is the bare suite id. The DSTs are built from the API id,
-//   which is that plus "H2G_HM2S_" — keeping them separate matters because the
-//   blind and pseudonym APIs use different suffixes over the same suite.
+//   The suite id is the bare ciphersuite id. The DSTs are built from the API
+//   id, which is that plus "H2G_HM2S_" — keeping them separate matters because
+//   the blind and pseudonym APIs use different suffixes over the same suite,
+//   and because KeyGen's default DST is built from the BARE id.
 //
 //   P1 is a FIXED point defined by the ciphersuite, not the G1 base point.
 //   B = P1 + Q1*domain + ... , and using the generator instead produces
 //   signatures that verify perfectly against your own verifier and against
-//   nobody else's.
-var CIPHERSUITE_ID = "BBS_BLS12381G1_XMD:SHA-256_SSWU_RO_";
-var API_ID = CIPHERSUITE_ID + "H2G_HM2S_";
-var P1_HEX = "a8ce256102840821a3e94ea9025e4662b205762f9776b3a766c872b948f1fd" +
-             "225e7c59698588e70d11406d161b4e28c9";
+//   nobody else's. Each suite has its OWN P1 — copying the SHA-256 one into
+//   the SHAKE-256 suite fails in exactly the same silent way.
+//
+// The draft defines two suites over BLS12-381 and they differ in more than a
+// hash name: BLS12-381-SHA-256 expands with expand_message_xmd over SHA-256,
+// BLS12-381-SHAKE-256 with expand_message_xof over SHAKE-256 (which needs the
+// suite's security parameter, 128 bits, passed explicitly). So a suite is a
+// small object here, and every operation below takes one as an OPTIONAL LAST
+// argument defaulting to SHA-256 — the suite bbs-2023 uses, and the only one
+// this module offered until the Digital Signature page needed both. Callers
+// that pass nothing are unaffected, which is what keeps the byte-for-byte
+// cross-check in tests/bbs_crypto.js meaningful.
+var SHA256_SUITE_ID = "BBS_BLS12381G1_XMD:SHA-256_SSWU_RO_";
+var SHAKE256_SUITE_ID = "BBS_BLS12381G1_XOF:SHAKE-256_SSWU_RO_";
+var P1_SHA256_HEX = "a8ce256102840821a3e94ea9025e4662b205762f9776b3a766c872b" +
+                    "948f1fd225e7c59698588e70d11406d161b4e28c9";
+var P1_SHAKE256_HEX = "8929dfbc7e6642c4ed9cba0856e493f8b9d7d5fcb0c31ef8fdcd3" +
+                      "4d50648a56c795e106e9eada6e0bda386b414150755";
 var EXPAND_LEN = 48;            // octets of uniform bytes per scalar
 var OCTET_SCALAR_LENGTH = 32;
 var OCTET_POINT_LENGTH = 48;    // compressed G1
+var XOF_K = 128;                // BLS12-381's security parameter, in bits
+
+function makeSuite(name, id, p1Hex, expand) {
+  log.debug("Entering makeSuite().");
+  log.debug("Leaving makeSuite().");
+  return { name: name, id: id, apiId: id + "H2G_HM2S_", p1Hex: p1Hex,
+           expand: expand, generatorCache: [], p1Cache: null };
+}
+
+var SUITES = {
+  "BLS12-381-SHA-256": makeSuite("BLS12-381-SHA-256", SHA256_SUITE_ID,
+                                 P1_SHA256_HEX, "xmd"),
+  "BLS12-381-SHAKE-256": makeSuite("BLS12-381-SHAKE-256", SHAKE256_SUITE_ID,
+                                   P1_SHAKE256_HEX, "xof")
+};
+var SUITE_NAMES = ["BLS12-381-SHA-256", "BLS12-381-SHAKE-256"];
+var DEFAULT_SUITE = SUITES["BLS12-381-SHA-256"];
+// Kept under their old names: the default suite's ids, which is what every
+// caller of this module meant before there was a choice.
+var CIPHERSUITE_ID = SHA256_SUITE_ID;
+var API_ID = DEFAULT_SUITE.apiId;
+
+// A suite argument may be absent (the default), a name from SUITE_NAMES, or a
+// suite object as returned by makeSuite().
+function suiteOf(suite) {
+  log.debug("Entering suiteOf().");
+  if (!suite) {
+    log.debug("Leaving suiteOf(). Default suite.");
+    return DEFAULT_SUITE;
+  }
+  if (typeof suite === "string") {
+    var named = SUITES[suite];
+    if (!named) throw new Error("Unknown BBS ciphersuite: " + suite);
+    log.debug("Leaving suiteOf(). Named suite.");
+    return named;
+  }
+  log.debug("Leaving suiteOf().");
+  return suite;
+}
 
 function te(s) {
   log.debug("Entering te().");
@@ -121,13 +174,43 @@ function i2osp(value, length) {
   return out;
 }
 
+// expand_message, per suite: the one place the two ciphersuites actually
+// diverge. The XOF form takes the security parameter as well as the hash, and
+// omitting it does not fail — it produces different bytes.
+function expandMessage(message, dst, length, suite) {
+  log.debug("Entering expandMessage().");
+  var s = suiteOf(suite);
+  if (s.expand === "xof") {
+    log.debug("Leaving expandMessage(). XOF.");
+    return hashToCurve.expand_message_xof(message, dst, length, XOF_K,
+        shake256Fn());
+  }
+  log.debug("Leaving expandMessage(). XMD.");
+  return hashToCurve.expand_message_xmd(message, dst, length, sha256Fn());
+}
+
+// hash_to_curve for G1, per suite. @noble merges these options over the
+// curve's own defaults, which are the XMD/SHA-256 pair — so the SHA-256 suite
+// passes only a DST and gets exactly what it always got.
+function hashToG1(message, dst, suite) {
+  log.debug("Entering hashToG1().");
+  var s = suiteOf(suite);
+  var opts = { DST: dst };
+  if (s.expand === "xof") {
+    opts.expand = "xof";
+    opts.k = XOF_K;
+    opts.hash = shake256Fn();
+  }
+  log.debug("Leaving hashToG1().");
+  return bls.G1.hashToCurve(message, opts);
+}
+
 // hash_to_scalar (section 4.3.1): expand to 48 octets and reduce mod r.
 // Reducing 48 octets rather than 32 is what keeps the result statistically
 // uniform in Fr; taking 32 and reducing would bias the low end.
-function hashToScalar(message, dst) {
+function hashToScalar(message, dst, suite) {
   log.debug("Entering hashToScalar().");
-  var uniform = hashToCurve.expand_message_xmd(message, dst, EXPAND_LEN,
-      sha256Fn());
+  var uniform = expandMessage(message, dst, EXPAND_LEN, suite);
   log.debug("Leaving hashToScalar().");
   return Fr.create(nobleUtils.bytesToNumberBE(uniform));
 }
@@ -151,38 +234,61 @@ function sha256Fn() {
   return sha256Impl;
 }
 
+// The same, for the SHAKE-256 suite. Resolved on first use rather than at load
+// so a caller that only ever uses the SHA-256 suite is unaffected by its
+// absence.
+var shake256Impl = null;
+function shake256Fn() {
+  log.debug("Entering shake256Fn().");
+  if (shake256Impl) {
+    log.debug("Leaving shake256Fn().");
+    return shake256Impl;
+  }
+  try {
+    shake256Impl = require("@noble/hashes/sha3").shake256;
+  } catch (e) {
+    throw new Error("BBS needs SHAKE-256 from @noble/hashes: " + e.message);
+  }
+  if (!shake256Impl) {
+    throw new Error("BBS needs SHAKE-256 from @noble/hashes, which this " +
+                    "build does not export.");
+  }
+  log.debug("Leaving shake256Fn().");
+  return shake256Impl;
+}
+
 // create_generators (section 4.2): a deterministic list of G1 points, derived
 // from the ciphersuite alone, so a verifier reconstructs exactly the generators
 // the signer used without them being transmitted.
-var generatorCache = [];
-function createGenerators(count) {
+function createGenerators(count, suite) {
   log.debug("Entering createGenerators().");
-  if (generatorCache.length >= count) {
-    log.debug("Leaving createGenerators().");
-    return generatorCache.slice(0, count);
+  var s = suiteOf(suite);
+  if (s.generatorCache.length >= count) {
+    log.debug("Leaving createGenerators(). Cached.");
+    return s.generatorCache.slice(0, count);
   }
-  var seedDst = te(API_ID + "SIG_GENERATOR_SEED_");
-  var generateDst = te(API_ID + "SIG_GENERATOR_DST_");
+  var seedDst = te(s.apiId + "SIG_GENERATOR_SEED_");
+  var generateDst = te(s.apiId + "SIG_GENERATOR_DST_");
   var seedLen = EXPAND_LEN;
-  var v = hashToCurve.expand_message_xmd(te(API_ID + "MESSAGE_GENERATOR_SEED"),
-                                         seedDst, seedLen, sha256Fn());
+  var v = expandMessage(te(s.apiId + "MESSAGE_GENERATOR_SEED"), seedDst,
+                        seedLen, s);
   var out = [];
   for (var i = 1; i <= count; i++) {
-    v = hashToCurve.expand_message_xmd(concatBytes(v, i2osp(i, 8)), seedDst,
-        seedLen, sha256Fn());
-    var p = bls.G1.hashToCurve(v, { DST: generateDst });
+    v = expandMessage(concatBytes(v, i2osp(i, 8)), seedDst, seedLen, s);
+    var p = hashToG1(v, generateDst, s);
     out.push(G1.fromAffine(p.toAffine()));
   }
-  generatorCache = out;
+  s.generatorCache = out;
   log.debug("Leaving createGenerators().");
   return out;
 }
 
-function messagesToScalars(messages) {
+function messagesToScalars(messages, suite) {
   log.debug("Entering messagesToScalars().");
-  var dst = te(API_ID + "MAP_MSG_TO_SCALAR_AS_HASH_");
+  var s = suiteOf(suite);
+  var dst = te(s.apiId + "MAP_MSG_TO_SCALAR_AS_HASH_");
   log.debug("Leaving messagesToScalars().");
-  return messages.map(function (m) { return hashToScalar(m, dst); });
+  return messages.map(function (m) { return hashToScalar(m, dst, s); });
 }
 
 // --- keys -------------------------------------------------------------------
@@ -192,35 +298,69 @@ function secretKeyToPublicKey(sk) {
   return G2.BASE.multiply(sk).toRawBytes(true);
 }
 
+// KeyGen (section 3.4.1). A secret key is DERIVED from key material rather
+// than being random bytes in its own right, so the same material and the same
+// key_info always give the same key — which is what makes a key pair on the
+// Digital Signature page reproducible from what is on screen.
+//
+// Three details are load-bearing and each is a silent divergence rather than
+// an error if it is missed: the default DST is built from the BARE ciphersuite
+// id (not the API id every other DST here uses), key_info is length-prefixed
+// with two octets before being appended, and the material must be at least 32
+// octets — a shorter one is refused rather than stretched.
+function keyGen(keyMaterial, keyInfo, keyDst, suite) {
+  log.debug("Entering keyGen().");
+  var s = suiteOf(suite);
+  var info = keyInfo || new Uint8Array(0);
+  if (!keyMaterial || keyMaterial.length < 32) {
+    throw new Error("BBS KeyGen needs at least 32 octets of key material; " +
+                    "got " + ((keyMaterial && keyMaterial.length) || 0) + ".");
+  }
+  if (info.length > 65535) {
+    throw new Error("BBS KeyGen key_info must be at most 65535 octets; got " +
+                    info.length + ".");
+  }
+  var dst = (keyDst && keyDst.length) ? keyDst : te(s.id + "KEYGEN_DST_");
+  var sk = hashToScalar(concatBytes(keyMaterial, i2osp(info.length, 2), info),
+                        dst, s);
+  if (sk === _B0) {
+    throw new Error("BBS KeyGen produced an invalid (zero) secret key; use " +
+                    "different key material.");
+  }
+  log.debug("Leaving keyGen().");
+  return sk;
+}
+
 // --- Sign / Verify (section 3.5) -------------------------------------------
 //
 // B = P1 + Q1*domain + H_1*msg_1 + ... + H_L*msg_L
 // A = B * (1/(sk + e))
 // signature = (A, e)
-function calculateDomain(pk, q1, generators, header) {
+function calculateDomain(pk, q1, generators, header, suite) {
   log.debug("Entering calculateDomain().");
+  var s = suiteOf(suite);
   var dom = concatBytes(
     i2osp(generators.length, 8),
     q1.toRawBytes(true),
     concatBytes.apply(null,
         generators.map(function (g) { return g.toRawBytes(true); })),
-    te(API_ID),
+    te(s.apiId),
     i2osp(header.length, 8), header);
   log.debug("Leaving calculateDomain().");
-  return hashToScalar(concatBytes(pk, dom), te(API_ID + "H2S_"));
+  return hashToScalar(concatBytes(pk, dom), te(s.apiId + "H2S_"), s);
 }
 
-var p1Cache = null;
-function P1() {
+function P1(suite) {
   log.debug("Entering P1().");
-  if (!p1Cache) p1Cache = G1.fromHex(P1_HEX);
+  var s = suiteOf(suite);
+  if (!s.p1Cache) s.p1Cache = G1.fromHex(s.p1Hex);
   log.debug("Leaving P1().");
-  return p1Cache;
+  return s.p1Cache;
 }
 
-function computeB(domain, msgScalars, q1, generators) {
+function computeB(domain, msgScalars, q1, generators, suite) {
   log.debug("Entering computeB().");
-  var b = P1().add(q1.multiply(domain));
+  var b = P1(suite).add(q1.multiply(domain));
   msgScalars.forEach(function (m, i) {
     if (m !== _B0) b = b.add(generators[i].multiply(m));
   });
@@ -228,37 +368,39 @@ function computeB(domain, msgScalars, q1, generators) {
   return b;
 }
 
-function sign(sk, pk, header, messages) {
+function sign(sk, pk, header, messages, suite) {
   log.debug("Entering sign().");
-  var msgScalars = messagesToScalars(messages);
-  var all = createGenerators(msgScalars.length + 1);
+  var s = suiteOf(suite);
+  var msgScalars = messagesToScalars(messages, s);
+  var all = createGenerators(msgScalars.length + 1, s);
   var q1 = all[0];
   var generators = all.slice(1);
-  var domain = calculateDomain(pk, q1, generators, header);
+  var domain = calculateDomain(pk, q1, generators, header, s);
   var e = hashToScalar(
     concatBytes(i2osp(sk, OCTET_SCALAR_LENGTH),
                 concatBytes.apply(null, msgScalars.map(function (m) {
                   return i2osp(m, OCTET_SCALAR_LENGTH);
                 })),
                 i2osp(domain, OCTET_SCALAR_LENGTH)),
-    te(API_ID + "H2S_"));
-  var b = computeB(domain, msgScalars, q1, generators);
+    te(s.apiId + "H2S_"), s);
+  var b = computeB(domain, msgScalars, q1, generators, s);
   var a = b.multiply(Fr.inv(Fr.add(sk, e)));
   log.debug("Leaving sign().");
   return concatBytes(a.toRawBytes(true), i2osp(e, OCTET_SCALAR_LENGTH));
 }
 
-function verify(pk, signature, header, messages) {
+function verify(pk, signature, header, messages, suite) {
   log.debug("Entering verify().");
+  var s = suiteOf(suite);
   var a = G1.fromHex(signature.slice(0, OCTET_POINT_LENGTH));
   var e = Fr.create(nobleUtils.bytesToNumberBE(signature.slice(
       OCTET_POINT_LENGTH)));
-  var msgScalars = messagesToScalars(messages);
-  var all = createGenerators(msgScalars.length + 1);
+  var msgScalars = messagesToScalars(messages, s);
+  var all = createGenerators(msgScalars.length + 1, s);
   var q1 = all[0];
   var generators = all.slice(1);
-  var domain = calculateDomain(pk, q1, generators, header);
-  var b = computeB(domain, msgScalars, q1, generators);
+  var domain = calculateDomain(pk, q1, generators, header, s);
+  var b = computeB(domain, msgScalars, q1, generators, s);
   var w = G2.fromHex(pk);
   // e(A, W + G2*e) == e(B, G2)
   var lhs = bls.pairing(a, w.add(G2.BASE.multiply(e)));
@@ -315,8 +457,10 @@ function randomScalar() {
 // from the same credential are unlinkable — which is the property an SD-JWT
 // cannot offer, since there the issuer's signature is reused verbatim every
 // time.
-function proofChallenge(initRes, disclosedIndexes, disclosedScalars, ph) {
+function proofChallenge(initRes, disclosedIndexes, disclosedScalars, ph,
+                        suite) {
   log.debug("Entering proofChallenge().");
+  var s = suiteOf(suite);
   var zipped = [];
   disclosedIndexes.forEach(function (idx, i) {
     zipped.push(idx);
@@ -327,17 +471,19 @@ function proofChallenge(initRes, disclosedIndexes, disclosedScalars, ph) {
         initRes.domain]);
   log.debug("Leaving proofChallenge().");
   return hashToScalar(concatBytes(serializeArray(arr), i2osp(ph.length, 8), ph),
-                      te(API_ID + "H2S_"));
+                      te(s.apiId + "H2S_"), s);
 }
 
-function proofGen(pk, signature, header, ph, messages, disclosedIndexes) {
+function proofGen(pk, signature, header, ph, messages, disclosedIndexes,
+                  suite) {
   log.debug("Entering proofGen().");
+  var s = suiteOf(suite);
   var a = G1.fromHex(signature.slice(0, OCTET_POINT_LENGTH));
   var e = Fr.create(nobleUtils.bytesToNumberBE(signature.slice(
       OCTET_POINT_LENGTH)));
-  var msgScalars = messagesToScalars(messages);
+  var msgScalars = messagesToScalars(messages, s);
   var L = msgScalars.length;
-  var all = createGenerators(L + 1);
+  var all = createGenerators(L + 1, s);
   var q1 = all[0];
   var H = all.slice(1);
   var disclosed = disclosedIndexes.slice().sort(function (x, y) { return x -
@@ -346,8 +492,8 @@ function proofGen(pk, signature, header, ph, messages, disclosedIndexes) {
   for (var i =
        0; i < L; i++) if (disclosed.indexOf(i) === -1) undisclosed.push(i);
 
-  var domain = calculateDomain(pk, q1, H, header);
-  var b = computeB(domain, msgScalars, q1, H);
+  var domain = calculateDomain(pk, q1, H, header, s);
+  var b = computeB(domain, msgScalars, q1, H, s);
 
   var rs = [];
   for (var k = 0; k < undisclosed.length + 5; k++) rs.push(randomScalar());
@@ -365,7 +511,7 @@ function proofGen(pk, signature, header, ph, messages, disclosedIndexes) {
   var initRes = { Abar: Abar, Bbar: Bbar, D: D, T1: T1, T2: T2,
       domain: domain };
   var challenge = proofChallenge(initRes, disclosed,
-    disclosed.map(function (j) { return msgScalars[j]; }), ph);
+    disclosed.map(function (j) { return msgScalars[j]; }), ph, s);
 
   var r3 = Fr.inv(r2);
   var eHat = Fr.add(eTilde, Fr.mul(e, challenge));
@@ -404,27 +550,28 @@ function parseProof(proof) {
 }
 
 function proofVerify(pk, proof, header, ph, disclosedMessages,
-                     disclosedIndexes) {
+                     disclosedIndexes, suite) {
   log.debug("Entering proofVerify().");
+  var s = suiteOf(suite);
   var p = parseProof(proof);
   var disclosed = disclosedIndexes.slice().sort(function (x, y) { return x -
       y; });
   var U = p.mHat.length;
   var R = disclosed.length;
   var L = R + U;
-  var all = createGenerators(L + 1);
+  var all = createGenerators(L + 1, s);
   var q1 = all[0];
   var H = all.slice(1);
   var undisclosed = [];
   for (var i =
        0; i < L; i++) if (disclosed.indexOf(i) === -1) undisclosed.push(i);
 
-  var domain = calculateDomain(pk, q1, H, header);
-  var disclosedScalars = messagesToScalars(disclosedMessages);
+  var domain = calculateDomain(pk, q1, H, header, s);
+  var disclosedScalars = messagesToScalars(disclosedMessages, s);
 
   var T1 = p.Bbar.multiply(p.challenge).add(p.Abar.multiply(p.eHat))
       .add(p.D.multiply(p.r1Hat));
-  var Bv = P1().add(q1.multiply(domain));
+  var Bv = P1(s).add(q1.multiply(domain));
   disclosedScalars.forEach(function (m, idx) { Bv =
                            Bv.add(H[disclosed[idx]].multiply(m)); });
   var T2 = Bv.multiply(p.challenge).add(p.D.multiply(p.r3Hat));
@@ -433,7 +580,7 @@ function proofVerify(pk, proof, header, ph, disclosedMessages,
 
   var initRes = { Abar: p.Abar, Bbar: p.Bbar, D: p.D, T1: T1, T2: T2,
       domain: domain };
-  var expected = proofChallenge(initRes, disclosed, disclosedScalars, ph);
+  var expected = proofChallenge(initRes, disclosed, disclosedScalars, ph, s);
   if (!Fr.eql(expected, p.challenge)) {
     log.debug("Leaving proofVerify().");
     return false;
@@ -450,6 +597,11 @@ function proofVerify(pk, proof, header, ph, disclosedMessages,
 module.exports = {
   CIPHERSUITE_ID: CIPHERSUITE_ID,
   API_ID: API_ID,
+  SUITES: SUITES,
+  SUITE_NAMES: SUITE_NAMES,
+  DEFAULT_SUITE: DEFAULT_SUITE,
+  suiteOf: suiteOf,
+  keyGen: keyGen,
   P1: P1,
   OCTET_SCALAR_LENGTH: OCTET_SCALAR_LENGTH,
   OCTET_POINT_LENGTH: OCTET_POINT_LENGTH,
