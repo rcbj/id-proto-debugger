@@ -19,7 +19,11 @@
 //   * every access / ID / refresh token is an RS256 JWT whose signature
 //     verifies against jwks_uri, with the claims OIDC asks for (aud, nonce,
 //     at_hash, c_hash);
-//   * an authorization code is single use and a bad code_verifier is refused;
+//   * a bad code_verifier is refused WITHOUT consuming the code, and a code
+//     that was redeemed is single use in the way this mock relaxes it: the
+//     identical request gets the identical tokens back for the rest of the
+//     code's lifetime, and any other request for that code is refused with the
+//     difference named;
 //   * introspection tells the truth, revocation takes effect, and a revoked
 //     refresh token stops working;
 //   * dynamic client registration (RFC 7591) and its management calls
@@ -461,7 +465,22 @@ async function testAuthorizationCode(meta, verify) {
                      "a bad code_verifier should be invalid_grant.");
   log.info("[code] OK — PKCE is verified, not just accepted.");
 
-  // ... and that attempt consumed the code, so start again.
+  // ... and that refusal must NOT have consumed the code. A check that burns
+  // what it refuses answers the next attempt — the corrected one — with
+  // "already-used" instead of tokens, which is the wrong sentence at exactly
+  // the moment somebody is acting on the right one.
+  const corrected = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: code, client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI, code_verifier: verifier
+  });
+  assert.strictEqual(corrected.status, 200,
+    "a refused code_verifier must leave the code redeemable, so the same " +
+        "code with the RIGHT verifier should be exchanged. Got HTTP " +
+        corrected.status + ": " + corrected.raw);
+  log.info("[code] OK — a refused PKCE check does not consume the code.");
+
+  // A fresh one for the token assertions below, so they read against a code
+  // whose whole history is this exchange.
   const second = await authorize(meta, {
     response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
     scope: "openid profile email", state: "state-2", nonce: nonce,
@@ -503,14 +522,75 @@ async function testAuthorizationCode(meta, verify) {
   log.info("[code] OK — access / ID / refresh tokens all verify against " +
            "jwks_uri, with matching claims.");
 
-  // Single use.
+  // Single use, NON-SPEC-ally relaxed to idempotent for the rest of the code's
+  // own lifetime: the identical Token Request gets the identical token set
+  // back — the first answer, not a second one — because a debugging service
+  // that answers a reloaded page with "Unknown or already-used authorization
+  // code" has told the user nothing about which of those two it was. The
+  // relaxation is the mock's, is documented in docs/mock-sts.md, and RFC 6749
+  // section 4.1.2 permits a real server to refuse this outright.
   const replay = await postForm(meta.token_endpoint, {
     grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI, code_verifier: verifier
   });
-  assert.strictEqual(replay.body.error, "invalid_grant",
-                     "an authorization code must be single use.");
-  log.info("[code] OK — a replayed authorization code is refused.");
+  assert.strictEqual(replay.status, 200,
+    "the same Token Request for a code already redeemed should be answered " +
+        "with what it was answered the first time. Got HTTP " + replay.status +
+        ": " + replay.raw);
+  assert.deepStrictEqual(replay.body, set,
+    "a replay must return the SAME token set, not a newly minted one — " +
+        "nothing is issued twice here.");
+  log.info("[code] OK — an identical replay returns the identical tokens.");
+
+  // Everything else about that code is still refused, and the refusal says
+  // which part of the request did not match. This is what stops the relaxation
+  // from being a way to redeem somebody else's code.
+  const otherClient = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: code2,
+    client_id: CLIENT_ID + "-somebody-else",
+    redirect_uri: REDIRECT_URI, code_verifier: verifier
+  });
+  assert.strictEqual(otherClient.status, 400,
+    "a redeemed code presented by a DIFFERENT client must be refused. Got " +
+        "HTTP " + otherClient.status + ": " + otherClient.raw);
+  assert.strictEqual(otherClient.body.error, "invalid_grant",
+                     "that refusal should be invalid_grant.");
+  assert.ok(/client_id/.test(String(otherClient.body.error_description)),
+    "the refusal should name what differed from the request the code was " +
+        "redeemed with. Got: " + otherClient.body.error_description);
+  const otherVerifier = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI, code_verifier: b64u(crypto.randomBytes(32))
+  });
+  assert.strictEqual(otherVerifier.status, 400,
+    "a redeemed code presented with a different code_verifier must be " +
+        "refused. Got HTTP " + otherVerifier.status + ": " +
+        otherVerifier.raw);
+  assert.ok(/code_verifier/.test(String(otherVerifier.body.error_description)),
+    "that refusal should name the code_verifier. Got: " +
+        otherVerifier.body.error_description);
+  log.info("[code] OK — a redeemed code is replayed only for the request it " +
+           "was redeemed with; another client and another verifier are both " +
+           "refused, each told what differed.");
+
+  // And a code this server never minted is its own answer, rather than being
+  // reported as one that was used: the two are indistinguishable to a client,
+  // and only the server can tell them apart.
+  const unknown = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: "not-a-code-" + b64u(
+        crypto.randomBytes(12)),
+    client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, code_verifier: verifier
+  });
+  assert.strictEqual(unknown.status, 400,
+    "a code this server never issued must be refused. Got HTTP " +
+        unknown.status + ": " + unknown.raw);
+  assert.strictEqual(unknown.body.error, "invalid_grant",
+                     "an unknown code should be invalid_grant.");
+  assert.ok(/memory|restart/i.test(String(unknown.body.error_description)),
+    "the refusal for a code that was never issued should say so — this " +
+        "server holds codes in memory and cannot know one it never minted. " +
+        "Got: " + unknown.body.error_description);
+  log.info("[code] OK — an unknown code is reported as unknown, not as used.");
   log.debug("Leaving testAuthorizationCode().");
   return set;
 }

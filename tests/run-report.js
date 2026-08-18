@@ -1527,13 +1527,32 @@ function buildJobs() {
   // life of its process, so a fixed uid would be entryAlreadyExists on the
   // second run and the test would only pass against a freshly started service.
   //
+  // It also runs bind, add a user, add a group, join the group and modify the
+  // user AGAINST THE SECOND SOCKET, LDAPS on 636, and then reads the result back
+  // over 389. The mock registers one set of handlers on two ldapjs server objects
+  // — that library chooses a net.Server or a tls.Server at construction, so TLS
+  // cannot be a flag on one server — and the defect that invites is a handler on
+  // one instance and not the other, which presents as an operation that works in
+  // the clear and fails over TLS and is read as a TLS fault. The cross-socket read
+  // is the assertion: everything else in that section would pass equally against
+  // two separate directories sharing a base DN. It also pins that TLS did not make
+  // the password checked (every bind still succeeds, "invalid" is still 49) and
+  // that the api still VERIFIES certificates by default — every LDAPS call passes
+  // rejectUnauthorized: false, so without that negative an api which had stopped
+  // verifying would look identical.
+  //
   // Needs the api and the mock STS. No browser. LDAP_URL is the API's view of
   // the directory rather than this test's or the browser's, which on the
   // containerized stack are three different names — it is its own variable for
-  // the same reason KRB5_SPNEGO_URL is.
+  // the same reason KRB5_SPNEGO_URL is. There is deliberately NO LDAPS_URL here:
+  // the test builds it from LDAP_URL's host and the port the mock says its LDAPS
+  // socket actually bound, so a host run that moved it to 1636 needs no change on
+  // this side. Setting LDAPS_URL in the environment still overrides the whole of
+  // it, and the LDAPS section skips with its own reason when 636 never bound —
+  // which is the ordinary outcome of a host run that is not root.
   jobs.push({
-    name: "LDAP protocol (bind, add, modify, delete, search, compare, and " +
-        "what a result code is)",
+    name: "LDAP protocol (bind, add, modify, delete, search, compare, the " +
+        "same five over LDAPS, and what a result code is)",
     script: "api_ldap.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",

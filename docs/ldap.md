@@ -53,7 +53,9 @@ What does turn it off is passing a `SearchResultEntry` **instance** rather than 
 
 ## The mock directory
 
-`sts/ldap_server.js`, an LDAPv3 server on TCP **389** (`LDAP_PORT`), base DN `dc=example,dc=com` (`LDAP_BASE_DN`). `GET /ldap` describes it, `GET /ldap/directory` lists every entry, and both take `?format=json`.
+`sts/ldap_server.js`, an LDAPv3 server on TCP **389** (`LDAP_PORT`) and, over TLS, on TCP **636** (`LDAPS_PORT`), base DN `dc=example,dc=com` (`LDAP_BASE_DN`). `GET /ldap` describes it, `GET /ldap/directory` lists every entry, and both take `?format=json`.
+
+The second port is the **same directory**, not a second one: one store, one set of handlers, two ldapjs server objects (that library decides between a `net.Server` and a `tls.Server` at construction, so TLS cannot be an option on one server). `tests/api_ldap.js` runs bind, add a user, add a group, join it and modify the user over 636 and then reads the result back over 389, because everything short of that cross-socket read would pass just as well against two separate directories sharing a base DN. Two things TLS there does **not** change: every bind still succeeds — encryption keeps the password off the wire, nothing checks it — and no client certificate is ever requested, so a certificate offered to 636 is not a login. The certificate is the mock's own, self-signed and regenerated on every start, which is why the api's LDAPS calls in that test pass `rejectUnauthorized: false` and why the refusal *without* it is asserted: an api that had quietly stopped verifying would otherwise look identical.
 
 It is started from `listen()` in the mock's `server.js` rather than at require time, for the same reason the KDC is: binding a privileged port can fail, and a require that throws takes the whole service down where a route cannot. A failure to bind is **recorded and published** (`listening` / `listenError` on `GET /ldap`) rather than fatal — the HTTP view answers 200 either way, so without that field there is no way to tell a running directory from one whose listener lost a race with the host's own `slapd`, and both tests check it before doing anything.
 

@@ -41,6 +41,25 @@
 //     implementation that got one right and the other backwards looks correct
 //     until somebody asks the other question.
 //
+// **AND THE SAME WORKFLOW OVER LDAPS.** The mock's directory answers on two raw
+// sockets — plain 389 and TLS-from-the-first-byte 636 — and they are one directory:
+// one store, one set of handlers, registered on two ldapjs server objects because
+// that library decides between a net.Server and a tls.Server at construction. The
+// failure that arrangement invites is a handler that lands on one instance and not
+// the other, which presents as an operation that works in the clear and fails over
+// TLS — read as a TLS fault, which it is not. So section 11 runs bind, add a user,
+// add a group, put the user in it and modify the user against 636, then READS THE
+// RESULT BACK OVER 389: the cross-socket read is the assertion, because everything
+// else in that section would still pass against two directories that shared a port
+// number and nothing else. It also pins the two facts about that listener that a
+// client would otherwise learn wrongly — TLS does not make the password checked
+// (every bind still succeeds, and "invalid" is still 49), and no CLIENT certificate
+// is ever asked for there — and the one about its certificate: verification is ON by
+// default in the api and a self-signed certificate is refused, so the workflow passes
+// rejectUnauthorized: false deliberately and the negative is asserted rather than
+// assumed. It is here rather than in a test of its own because a second file would
+// duplicate every helper in this one and would still be testing the same directory.
+//
 // And two properties of the mock directory that the debugger teaches and that
 // would be quietly wrong if they regressed: a bind succeeds with ANY password
 // except the literal `invalid` (so result code 49 stays reachable), and
@@ -54,8 +73,10 @@
 // to check — authenticate over OAuth2 and look for the entry over LDAP.
 //
 // ---------------------------------------------------------------------------
-// **Services needed:** the api, and the mock STS (its HTTP side and its LDAP
-// listener). No browser. It SKIPS with a named reason for each missing piece,
+// **Services needed:** the api, and the mock STS (its HTTP side and its two LDAP
+// listeners — the LDAPS section skips on its own if 636 never bound, which is the
+// ordinary outcome of a host run that is not root, while the rest of the file runs).
+// No browser. It SKIPS with a named reason for each missing piece,
 // including an api or a mock that predates this workflow — "POST /ldap/search
 // answered 404" reads as a broken deployment rather than as a build without the
 // endpoint, and the two send you to different places.
@@ -67,6 +88,12 @@
 // tests/CLAUDE.md against webauthn_oidc_mfa.js and applies unchanged here.
 // ---------------------------------------------------------------------------
 const assert = require("assert");
+// Both are for the LDAPS section only, and both are node's own: `tls` opens one
+// connection to port 636 to see WHICH certificate that socket serves — a question
+// no HTTP page can answer about itself — and `crypto` turns the PEM the mock
+// publishes over HTTP into the same SHA-256 fingerprint so the two can be compared.
+const tls = require("tls");
+const crypto = require("crypto");
 const { Command, Option } = require("commander");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -83,6 +110,16 @@ var stsUrl = process.env.STS_URL || "http://localhost:8081";
 // than derived from stsUrl for the same reason KRB5_SPNEGO_URL is: the api
 // resolves it, and the api's view of the mock is not the test's.
 var ldapUrl = process.env.LDAP_URL || "ldap://sts:389";
+// The same directory over TLS, again as the API must reach it. Left EMPTY by
+// default rather than defaulted to ldaps://sts:636, because the port is the one
+// thing this test should not guess: the mock publishes which port its LDAPS socket
+// actually bound on GET /ldap, and a host run moves it (636 is privileged, so
+// LDAPS_PORT=1636 is the usual answer — which is why the api's ldapAllowedPorts
+// carries 1636 as well as 636). So the URL is BUILT below from the host of
+// LDAP_URL, which is the api's view of the mock, and the port the mock reports.
+// Setting LDAPS_URL overrides the whole of that for a deployment where the two
+// sockets are not on the same host name.
+var ldapsUrl = process.env.LDAPS_URL || "";
 var baseDn = process.env.LDAP_BASE_DN || "dc=example,dc=com";
 var bindDn = process.env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com";
 // Any password works against this directory; this one is not a secret and is
@@ -101,6 +138,14 @@ var uid = "dbg-" + stamp;
 var groupCn = "dbg-group-" + stamp;
 var userDn = "uid=" + uid + "," + usersDn;
 var groupDn = "cn=" + groupCn + "," + groupsDn;
+// The LDAPS section's own names. Separate from the two above rather than reusing
+// them after the deletes in section 7, so that a failure names which transport
+// created the entry it is complaining about — and so the two sections do not have
+// to run in a particular order.
+var uidTls = "dbg-tls-" + stamp;
+var groupCnTls = "dbg-tls-group-" + stamp;
+var userDnTls = "uid=" + uidTls + "," + usersDn;
+var groupDnTls = "cn=" + groupCnTls + "," + groupsDn;
 
 function connection() {
   log.debug("Entering connection().");
@@ -798,6 +843,725 @@ async function theLimitsAreHonest(limits) {
   log.debug("Leaving theLimitsAreHonest().");
 }
 
+
+// ---------------------------------------------------------------------------
+// 11. THE SAME DIRECTORY OVER LDAPS (port 636).
+//
+// Two sockets, one directory. The mock registers every handler on TWO ldapjs
+// server objects — ldapjs picks a net.Server or a tls.Server at CONSTRUCTION, so
+// TLS cannot be an option on one server — and the defect that arrangement invites
+// is a handler registered on one instance and not the other. Its symptom is an
+// operation that works in the clear and fails over TLS, which everybody reads as
+// a TLS fault and nobody reads as a missing route.
+//
+// So the five operations are run over 636 and the RESULT IS READ BACK OVER 389.
+// That last step is the assertion the rest of the section cannot make: bind, add,
+// add, modify and modify all succeeding over TLS is equally consistent with a
+// SECOND directory living behind 636, which would be a far worse bug than the one
+// being looked for and completely invisible from this side.
+//
+// Three other things are pinned here because a client that learned them wrongly
+// would carry the mistake to a real directory:
+//
+//  * **TLS is not authentication.** Every bind still succeeds and the literal
+//    password `invalid` is still 49. Encryption changed what is on the wire, not
+//    whether anything checks it — and "it is over LDAPS" is exactly the sentence
+//    people substitute for "it is authenticated".
+//  * **Certificate verification is ON by default in the api**, and the mock's
+//    certificate is self-signed and regenerated on every start. So the workflow
+//    passes `rejectUnauthorized: false` deliberately, and the refusal without it
+//    is asserted rather than assumed: a client that quietly stopped verifying
+//    would pass every other assertion in this file.
+//  * **One certificate serves all of this service's TLS sockets** — 8443, 9443 and
+//    636 — so trusting this mock is one fetch of GET /tls/server-certificate and
+//    not three. That is checked from both ends: against what the mock SAYS it
+//    serves, and against what the socket actually presents.
+// ---------------------------------------------------------------------------
+
+// The LDAPS URL, built from the api's view of the host and the port the mock says
+// it bound. See the note beside `ldapsUrl` at the top for why this is not a
+// constant.
+function ldapsUrlFrom(described) {
+  log.debug("Entering ldapsUrlFrom().");
+  if (ldapsUrl) {
+    log.debug("Leaving ldapsUrlFrom(). LDAPS_URL was set.");
+    return ldapsUrl;
+  }
+  // The host of LDAP_URL, with any port and any path taken off. That URL is the
+  // API's view of the directory, which on the containerized stack is neither this
+  // test's view nor the browser's.
+  const host = String(ldapUrl).replace(/^ldaps?:\/\//i, "").replace(/[/?#].*$/, "")
+      .replace(/:\d+$/, "");
+  const port = described.tls.port || 636;
+  log.debug("Leaving ldapsUrlFrom(). Built one.");
+  return "ldaps://" + host + ":" + port;
+}
+
+// A connection to the LDAPS listener. `rejectUnauthorized: false` is here rather
+// than being the api's default: the api verifies unless it is explicitly told not
+// to, and the mock's certificate is self-signed and regenerated every start, so
+// there is nothing a truststore could hold between runs. The negative below is
+// what keeps that flag honest.
+function secureConnection() {
+  log.debug("Entering secureConnection().");
+  log.debug("Leaving secureConnection().");
+  return { url: ldapsUrl, bindDn: bindDn, password: password,
+           rejectUnauthorized: false };
+}
+
+// SHA-256 over the DER inside a PEM, formatted the way node and the mock both
+// format a certificate fingerprint: uppercase hex, colon separated.
+function fingerprintOf(pem) {
+  log.debug("Entering fingerprintOf().");
+  const der = Buffer.from(String(pem).replace(/-----[^-]+-----/g, "")
+      .replace(/\s+/g, ""), "base64");
+  const hex = crypto.createHash("sha256").update(der).digest("hex")
+      .toUpperCase();
+  log.debug("Leaving fingerprintOf().");
+  return (hex.match(/.{2}/g) || []).join(":");
+}
+
+// What the LDAPS socket actually presents, from THIS test's view of the mock —
+// the host of STS_URL, which preconditions() has already proved reachable, and the
+// port the mock published. Resolves to null when the socket cannot be reached from
+// here, which is a real possibility on a deployment that publishes the mock's HTTP
+// port and not its directory: that is a gap in what this test can see rather than
+// a failure, and it is logged as one.
+function peerCertificateOverLdaps(port) {
+  log.debug("Entering peerCertificateOverLdaps(). port=" + port);
+  const host = new URL(stsUrl).hostname;
+  log.debug("Leaving peerCertificateOverLdaps(). The promise is pending.");
+  return new Promise(function (resolve) {
+    let settled = false;
+    function finish(value, why) {
+      if (settled) return;
+      settled = true;
+      if (why) log.warn(why);
+      resolve(value);
+    }
+    const socket = tls.connect({
+      host: host, port: port, servername: host,
+      // The certificate is self-signed by design, and this connection exists to
+      // LOOK at it rather than to trust it. Nothing is sent over this socket.
+      rejectUnauthorized: false
+    }, function () {
+      const cert = socket.getPeerCertificate();
+      socket.end();
+      finish(cert && cert.fingerprint256 ? cert : null,
+        cert && cert.fingerprint256 ? "" : "the LDAPS socket at " + host + ":" +
+          port + " presented no certificate this test could read");
+    });
+    socket.setTimeout(5000, function () {
+      socket.destroy();
+      finish(null, "the LDAPS socket at " + host + ":" + port + " did not " +
+        "complete a handshake within 5s from THIS test's view of the mock; the " +
+        "api reached it perfectly well, so the certificate check is skipped " +
+        "rather than failed");
+    });
+    socket.on("error", function (e) {
+      finish(null, "could not open TLS to " + host + ":" + port + " from this " +
+        "test (" + e.message + "). The api reached the same directory, so this " +
+        "is this test's view of the mock rather than a broken listener — the " +
+        "certificate check is skipped and the rest of the LDAPS section stands");
+    });
+  });
+}
+
+async function theSameDirectoryAnswersOverLdaps(described) {
+  log.debug("Entering theSameDirectoryAnswersOverLdaps().");
+  log.info("=== LDAPS ===");
+
+  // Three different reasons to skip, and they send you to three different places.
+  // `tls` was a BOOLEAN false on the mock before LDAPS existed, so an old sts/
+  // gitlink is told apart from a listener that failed to bind.
+  if (!described.tls || typeof described.tls !== "object") {
+    log.warn("SKIP (LDAPS): this mock publishes tls=" +
+             JSON.stringify(described.tls) + " on GET /ldap, which is the shape " +
+             "it had before it offered LDAPS — the sts/ gitlink predates it.");
+    log.debug("Leaving theSameDirectoryAnswersOverLdaps(). No LDAPS in the mock.");
+    return;
+  }
+  if (!described.tls.ldaps) {
+    log.warn("SKIP (LDAPS): the mock is not offering LDAPS at all (" +
+             (described.tls.error || "no reason was published") + "). It serves " +
+             "the certificate its TLS endpoint generates, so this is a mock " +
+             "whose TLS module produced none rather than a port problem.");
+    log.debug("Leaving theSameDirectoryAnswersOverLdaps(). Not offered.");
+    return;
+  }
+  if (!described.tls.listening) {
+    log.warn("SKIP (LDAPS): the mock's LDAPS listener is not up: " +
+             (described.tls.error || "it never bound") + ". 636 is privileged " +
+             "exactly as 389 is, so a host run that is not root lands here; set " +
+             "LDAPS_PORT on the mock (1636 is already in the api's " +
+             "ldapAllowedPorts) to move it. The plain listener is a separate " +
+             "socket and the rest of this file has just used it.");
+    log.debug("Leaving theSameDirectoryAnswersOverLdaps(). Not listening.");
+    return;
+  }
+  ldapsUrl = ldapsUrlFrom(described);
+  log.info("the directory's second socket is " + ldapsUrl +
+           " as the api must reach it");
+
+  // --- the bind, which TLS does not make into a check ----------------------
+  const bound = await call("/ldap/bind", secureConnection());
+  assertSucceeded(bound, "a simple bind over LDAPS");
+  assert.strictEqual(bound.body.target.secure, true,
+    "the answer must report the connection as SECURE. It is the one field that " +
+    "distinguishes this exchange from the identical one on 389, and a debugger " +
+    "that cannot say whether a bind was encrypted is answering the wrong " +
+    "question. Got " + JSON.stringify(bound.body.target));
+  assert.strictEqual(bound.body.target.port, described.tls.port,
+    "and on the port the mock published, so that a run against a moved " +
+    "listener says which one it reached.");
+  assert.ok(!JSON.stringify(bound.body).includes(password),
+    "the password must not come back from this endpoint either. TLS is why it " +
+    "was not readable on the wire; it says nothing about what the api echoes.");
+
+  const anonymousTls = await call("/ldap/bind",
+    { url: ldapsUrl, bindDn: "", password: "", rejectUnauthorized: false });
+  assertSucceeded(anonymousTls, "an anonymous bind over LDAPS");
+
+  const refusedTls = await call("/ldap/bind",
+    { url: ldapsUrl, bindDn: bindDn, password: "invalid",
+      rejectUnauthorized: false });
+  assertRefused(refusedTls, 49,
+    "a bind over LDAPS with the literal password \"invalid\"");
+  log.info("LDAPS bind: still every password but \"invalid\", which is still " +
+           "49. TLS changed what is on the wire and not whether it is checked.");
+
+  // --- create a user -------------------------------------------------------
+  const addUser = secureConnection();
+  addUser.dn = userDnTls;
+  addUser.attributes = {
+    objectClass: ["top", "person", "organizationalPerson", "inetOrgPerson"],
+    uid: [uidTls],
+    cn: ["Debugger over TLS " + stamp],
+    sn: ["Debugger"],
+    mail: [uidTls + "@sts-mock.example"],
+    title: ["Created over LDAPS by tests/api_ldap.js"]
+  };
+  assertSucceeded(await call("/ldap/add", addUser),
+    "adding " + userDnTls + " over LDAPS");
+
+  // --- create a group ------------------------------------------------------
+  const addGroup = secureConnection();
+  addGroup.dn = groupDnTls;
+  addGroup.attributes = {
+    objectClass: ["top", "groupOfNames"],
+    cn: [groupCnTls],
+    description: ["Created over LDAPS by tests/api_ldap.js"],
+    // A groupOfNames must have a member (RFC 4519), so it is seeded with an
+    // entry that already exists — the same reason section 4 gives.
+    member: ["uid=alice," + usersDn]
+  };
+  assertSucceeded(await call("/ldap/add", addGroup),
+    "adding " + groupDnTls + " over LDAPS");
+
+  // --- put the user in the group, which is a modify ON THE GROUP -----------
+  const join = secureConnection();
+  join.dn = groupDnTls;
+  join.changes = [{ operation: "add", type: "member", values: [userDnTls] }];
+  const joined = await call("/ldap/modify", join);
+  assertSucceeded(joined, "adding " + userDnTls + " to " + groupDnTls +
+    " over LDAPS");
+  assert.strictEqual(joined.body.request.dn, groupDnTls,
+    "membership is a modify on the GROUP over TLS exactly as it is in the " +
+    "clear — the transport does not move it to the user.");
+
+  // --- modify the user -----------------------------------------------------
+  const change = secureConnection();
+  change.dn = userDnTls;
+  change.changes = [
+    { operation: "replace", type: "title", values: ["Staff Engineer over TLS"] },
+    { operation: "add", type: "telephoneNumber", values: ["+1 555 0636"] }
+  ];
+  assertSucceeded(await call("/ldap/modify", change),
+    "modifying " + userDnTls + " over LDAPS");
+
+  // --- AND NOW READ IT BACK OVER 389 ---------------------------------------
+  //
+  // The assertion this whole section exists for. Everything above is equally
+  // consistent with a second, separate directory behind 636; only a read from
+  // the OTHER socket can tell the two apart, and "one store, two listeners" is
+  // precisely what the mock claims.
+  const readBack = connection();
+  readBack.baseDn = userDnTls;
+  readBack.scope = "base";
+  readBack.filter = "(objectClass=*)";
+  readBack.attributes = ["title", "telephoneNumber", "mail"];
+  const plainRead = await call("/ldap/search", readBack);
+  assertSucceeded(plainRead, "reading " + userDnTls + " back over PLAIN LDAP");
+  assert.strictEqual(plainRead.body.entryCount, 1,
+    "an entry created over LDAPS must be there when the plain listener is " +
+    "asked for it. If this is noSuchObject, 636 is answering from a store of " +
+    "its own — two directories sharing a base DN, which every other assertion " +
+    "in this section would pass. Got " + JSON.stringify(dnsOf(plainRead)));
+  const byLowerName = {};
+  Object.keys(plainRead.body.entries[0].attributes).forEach(function (name) {
+    byLowerName[name.toLowerCase()] =
+      plainRead.body.entries[0].attributes[name];
+  });
+  assert.deepStrictEqual(byLowerName.title, ["Staff Engineer over TLS"],
+    "and the modify sent over TLS must be visible in the clear, with `replace` " +
+    "meaning replace on both listeners. Got " + JSON.stringify(byLowerName.title));
+  assert.deepStrictEqual(byLowerName.telephonenumber, ["+1 555 0636"],
+    "as must the `add`.");
+
+  const readGroup = connection();
+  readGroup.baseDn = groupDnTls;
+  readGroup.scope = "base";
+  readGroup.filter = "(objectClass=*)";
+  readGroup.attributes = ["member"];
+  const plainGroup = await call("/ldap/search", readGroup);
+  assertSucceeded(plainGroup, "reading " + groupDnTls + " back over PLAIN LDAP");
+  const members = (plainGroup.body.entries[0].attributes.member || [])
+    .map(function (v) { return String(v).toLowerCase(); });
+  assert.ok(members.includes(userDnTls.toLowerCase()),
+    "and the membership added over TLS must be in the group the plain " +
+    "listener reads. Got " + JSON.stringify(members));
+  log.info("LDAPS: five operations over 636, all of them visible on 389. One " +
+           "store, two sockets.");
+
+  // --- what happens when verification is left ON ---------------------------
+  //
+  // Not a curiosity: every call above passed `rejectUnauthorized: false`, and an
+  // api that had stopped verifying certificates altogether would answer all of
+  // them identically. This is the only assertion in the file that would notice.
+  const verified = await call("/ldap/bind",
+    { url: ldapsUrl, bindDn: bindDn, password: password });
+  assert.strictEqual(verified.status, 502,
+    "with verification left at its default the api must REFUSE this " +
+    "connection: the mock's certificate is self-signed and regenerated every " +
+    "start, so nothing in a truststore can vouch for it. A 200 here means " +
+    "certificates are not being verified at all — which would make every " +
+    "`rejectUnauthorized: false` above a no-op and the setting a decoration. " +
+    "Got " + verified.status + " " +
+    JSON.stringify(verified.body).slice(0, 300));
+  assert.ok(/certificate|self.signed|verif/i.test(String(verified.body.error)),
+    "and it must say that the CERTIFICATE was the problem. \"Could not " +
+    "connect\" for a refused certificate sends somebody to look at the network " +
+    "for a trust decision. Got " + JSON.stringify(verified.body));
+
+  // --- one certificate for all of this mock's TLS sockets ------------------
+  const pem = await fetch(stsUrl + "/tls/server-certificate");
+  assert.ok(pem.ok, "GET /tls/server-certificate should answer 200; got " +
+            pem.status + ". It is where a caller gets the anchor for all three " +
+            "of this mock's TLS sockets, so a directory that cannot be trusted " +
+            "without it is a directory nobody can verify.");
+  const published = fingerprintOf(await pem.text());
+  assert.strictEqual(described.tls.certificate.fingerprint256, published,
+    "GET /ldap says LDAPS serves the certificate the HTTPS listeners publish, " +
+    "and that claim is what tells a caller ONE fetch is enough. If the two " +
+    "fingerprints differ, the directory has generated a keypair of its own and " +
+    "an ldapsearch against a truststore built for 8443 fails with `unable to " +
+    "get local issuer certificate` — an error that names nothing and reads as " +
+    "a broken directory. Published " + published + ", claimed " +
+    described.tls.certificate.fingerprint256);
+
+  // --- and take the two entries away again, over the same socket -----------
+  //
+  // Not merely tidiness, though a directory capped at 2000 entries that grows by
+  // two on every run of this file is a reason on its own: delete is the one
+  // operation left that this section has not sent over TLS, and it is the one
+  // whose failure would be least visible — a delete that answered success on 636
+  // while leaving the entry behind would look exactly like a passing test.
+  const removeUserTls = secureConnection();
+  removeUserTls.dn = userDnTls;
+  assertSucceeded(await call("/ldap/delete", removeUserTls),
+    "deleting " + userDnTls + " over LDAPS");
+  const removeGroupTls = secureConnection();
+  removeGroupTls.dn = groupDnTls;
+  assertSucceeded(await call("/ldap/delete", removeGroupTls),
+    "deleting " + groupDnTls + " over LDAPS");
+  const gone = connection();
+  gone.baseDn = usersDn;
+  gone.scope = "one";
+  gone.filter = "(uid=" + uidTls + ")";
+  const nothing = await call("/ldap/search", gone);
+  assertSucceeded(nothing, "looking for " + userDnTls + " after the delete");
+  assert.strictEqual(nothing.body.entryCount, 0,
+    "and the plain listener must agree it is gone. A delete that answered " +
+    "success over TLS and left the entry in the store would look identical " +
+    "from 636 and identical to a passing test. Got " +
+    JSON.stringify(dnsOf(nothing)));
+
+  const presented = await peerCertificateOverLdaps(described.tls.port);
+  if (presented) {
+    assert.strictEqual(presented.fingerprint256, published,
+      "and the socket must actually PRESENT it. The two checks are different " +
+      "claims: the one above is what the mock says about itself, this is what " +
+      "636 hands a client during the handshake, and only the second is what a " +
+      "truststore will be judged against. Presented " +
+      presented.fingerprint256 + ", published " + published);
+    log.info("LDAPS certificate: 636 presents the same certificate " +
+             "/tls/server-certificate publishes, so trusting this mock is one " +
+             "fetch and not three.");
+  }
+  log.debug("Leaving theSameDirectoryAnswersOverLdaps().");
+}
+
+// ---------------------------------------------------------------------------
+// 12. A POPULATED DIRECTORY: 20 users, 10 groups, and one user in all of them.
+//
+// Everything above this point is one user and one group, which is the right
+// shape for asserting what an operation MEANS and the wrong shape for asserting
+// anything about a set. Three defects survive a one-of-each workflow untouched,
+// and each of them is the kind that shows up first in somebody else's directory
+// with a few hundred entries in it:
+//
+//  1. **A SEARCH THAT SILENTLY RETURNS FEWER ENTRIES THAN MATCHED.** There are
+//     three caps between this test and the store — the api's `ldapMaxEntries`
+//     and `maxContentLength`, and the mock's own LDAP_SIZE_LIMIT — and the
+//     honest answer to hitting one is `sizeLimitExceeded` (4). The dishonest
+//     one is a truncated list with result 0, which is indistinguishable from a
+//     directory that holds exactly that many. With one user in the directory no
+//     cap is anywhere near, so this cannot be seen at all; with twenty it is
+//     one assertion. That is why the counts below are `strictEqual` and not
+//     `ok(length >= 1)`.
+//  2. **MEMBERSHIP THAT IS NOT PER-GROUP.** Ten groups with two members each
+//     will pass "the group contains the user" for every group even if the
+//     modify wrote to the wrong one, or to all of them, or if the api reused a
+//     connection's last DN. So each group is read back and its member list is
+//     compared for EXACT EQUALITY against the two users that belong in it —
+//     a superset is a failure here, which is the only arrangement in which one
+//     group's members leaking into another is visible.
+//  3. **THE REVERSE LOOKUP AT FAN-OUT.** Section 5 asserts both directions with
+//     one user in one group, where "the groups of a user" and "this one group"
+//     are the same answer and a filter that ignored its `member` clause would
+//     pass. Here one user is in TEN groups and every other user is in exactly
+//     ONE, so a `(member=...)` filter that matches too much and one that matches
+//     too little give different wrong answers, and neither is the right one.
+//
+// The pivot user is deliberately one of the twenty rather than a twenty-first,
+// which makes ONE of the ten joins a re-add of a value that is already there.
+// That is worth having on purpose: RFC 4511 section 4.6 makes adding an
+// existing value `attributeOrValueExists` (20), **and this mock does not do
+// that** — its modify handler filters values it already holds and answers
+// success. The divergence is asserted rather than worked around, because a
+// client that learns "re-adding a member is harmless" here will hit 20 the
+// first time it points at a real directory, and a test that quietly avoided the
+// case would be why nobody knew.
+//
+// Cost: about ninety round trips, each of which opens a connection in the api.
+// They are sequential rather than concurrent so that a failure names the entry
+// it happened on instead of one of twenty in flight.
+//
+// NOTE ON THE COUNTS. The brief for this section said twenty users, ten groups,
+// two unique users per group — which uses each of the twenty exactly once — and
+// then "one of the users in all 20 groups". There are ten groups, so the pivot
+// joins TEN. Nothing here creates twenty groups; if that was the intent it is a
+// one-line change to GROUP_COUNT and the pairing arithmetic follows it.
+// ---------------------------------------------------------------------------
+const USER_COUNT = 20;
+const GROUP_COUNT = 10;
+// Which of the twenty is in every group. Zero-based, so this is the first user —
+// and therefore also one of the two that belong to the first group, which is
+// what makes that join a duplicate. See above.
+const PIVOT = 0;
+
+// This section's own names, built from the same per-run stamp as everything
+// else. The `pop` infix keeps them out of the way of the other sections' `dbg-`
+// and `dbg-tls-` entries, so a filter here cannot pick one of those up and a
+// failure names which section built the entry it is complaining about.
+var popUid = function (n) {
+  return "dbg-pop-" + stamp + "-" + String(n + 1).padStart(2, "0");
+};
+var popUserDn = function (n) {
+  return "uid=" + popUid(n) + "," + usersDn;
+};
+var popGroupCn = function (n) {
+  return "dbg-pop-group-" + stamp + "-" + String(n + 1).padStart(2, "0");
+};
+var popGroupDn = function (n) {
+  return "cn=" + popGroupCn(n) + "," + groupsDn;
+};
+// Group g holds users 2g and 2g+1. Written once and read everywhere below,
+// because the pairing is the thing every assertion in this section is about and
+// a second copy of the arithmetic would be a second chance to get it wrong.
+function pairFor(g) {
+  return [2 * g, 2 * g + 1];
+}
+
+// The `member` values of one entry, lower-cased and sorted, as the comparable
+// thing. Sorted because RFC 4511 puts no order on the values of an attribute —
+// a directory may return them however it likes, and an assertion that depended
+// on the order would be asserting an implementation detail.
+async function memberDnsOf(dn) {
+  log.debug("Entering memberDnsOf(). dn=" + dn);
+  const read = connection();
+  read.baseDn = dn;
+  read.scope = "base";
+  read.filter = "(objectClass=*)";
+  read.attributes = ["member"];
+  const answer = await call("/ldap/search", read);
+  assertSucceeded(answer, "reading the members of " + dn);
+  assert.strictEqual(answer.body.entryCount, 1,
+    "a base-scoped read of " + dn + " returns exactly that entry.");
+  const attrs = answer.body.entries[0].attributes;
+  // Case-insensitively, for the reason section 3 gives: what comes back is the
+  // directory's spelling of the attribute description, not the caller's.
+  let values = [];
+  Object.keys(attrs).forEach(function (name) {
+    if (name.toLowerCase() === "member") {
+      values = attrs[name];
+    }
+  });
+  const out = values.map(function (v) { return String(v).toLowerCase(); }).sort();
+  log.debug("Leaving memberDnsOf(). " + out.length + " member(s).");
+  return out;
+}
+
+async function aPopulatedDirectory(limits) {
+  log.debug("Entering aPopulatedDirectory().");
+  log.info("=== Populate: " + USER_COUNT + " users, " + GROUP_COUNT +
+           " groups, " + popUid(PIVOT) + " in all of them ===");
+
+  // The caps have to be BIGGER than what this section is about to build, or the
+  // counts below would fail for a reason that is not a defect. Checked and named
+  // rather than assumed: "expected 20, got 10" against an api configured with
+  // ldapMaxEntries: 10 sends somebody looking for a directory bug that is not
+  // there. Skipped rather than failed, because a cap this low is a deployment's
+  // choice and the rest of the file still stands.
+  const cap = (limits && limits.limits && limits.limits.maxEntries) || 0;
+  if (cap && cap <= USER_COUNT) {
+    log.warn("SKIP section 12: the api returns at most " + cap + " entries " +
+             "(ldapMaxEntries) and this section needs to read back " +
+             USER_COUNT + ". Raise it, or accept that the fan-out is " +
+             "unchecked in this deployment.");
+    log.debug("Leaving aPopulatedDirectory(). Skipped: the cap is too low.");
+    return;
+  }
+
+  // --- the twenty users --------------------------------------------------
+  for (let n = 0; n < USER_COUNT; n++) {
+    const body = connection();
+    body.dn = popUserDn(n);
+    body.attributes = {
+      objectClass: ["top", "person", "organizationalPerson", "inetOrgPerson"],
+      uid: [popUid(n)],
+      cn: ["Populated " + (n + 1)],
+      sn: ["Populated"],
+      mail: [popUid(n) + "@sts-mock.example"],
+      // The one attribute that says which section built this entry, for
+      // somebody reading /ldap/directory or /admin/groups after a failed run
+      // and wondering where thirty objects came from.
+      title: ["Created by tests/api_ldap.js section 12"]
+    };
+    assertSucceeded(await call("/ldap/add", body), "adding " + popUserDn(n));
+  }
+  log.info(USER_COUNT + " users created under " + usersDn + ".");
+
+  // --- the ten groups, each seeded with the FIRST of its two users --------
+  //
+  // Seeded with one of its own rather than with `uid=alice`: a groupOfNames MUST
+  // carry at least one member (RFC 4519), and borrowing a seeded entry for that
+  // would put a value in every group that the exact-equality assertions below
+  // would then have to make an exception for — an exception being exactly the
+  // hole through which a leaked member would travel unnoticed.
+  for (let g = 0; g < GROUP_COUNT; g++) {
+    const first = pairFor(g)[0];
+    const create = connection();
+    create.dn = popGroupDn(g);
+    create.attributes = {
+      objectClass: ["top", "groupOfNames"],
+      cn: [popGroupCn(g)],
+      description: ["Created by tests/api_ldap.js section 12"],
+      member: [popUserDn(first)]
+    };
+    assertSucceeded(await call("/ldap/add", create), "adding " + popGroupDn(g));
+  }
+  log.info(GROUP_COUNT + " groups created under " + groupsDn + ".");
+
+  // --- the second of each pair, which is a modify ON THE GROUP ------------
+  for (let g = 0; g < GROUP_COUNT; g++) {
+    const second = pairFor(g)[1];
+    const join = connection();
+    join.dn = popGroupDn(g);
+    join.changes = [{ operation: "add", type: "member",
+                      values: [popUserDn(second)] }];
+    const joined = await call("/ldap/modify", join);
+    assertSucceeded(joined, "adding " + popUserDn(second) + " to " +
+      popGroupDn(g));
+    assert.strictEqual(joined.body.request.dn, popGroupDn(g),
+      "the modify must be sent to the GROUP. Section 4 asserts this once; it " +
+      "is asserted again per group here because the failure this catches at " +
+      "scale is different — a request DN that came from the LAST call rather " +
+      "than from this one is invisible when there is only ever one group.");
+  }
+
+  // --- and the pivot user into every one of them --------------------------
+  //
+  // Including group 0, which already lists them. See the header: that add is a
+  // duplicate, a real directory answers 20, and this one answers success — so
+  // the assertion is on the SUCCESS and, immediately below, on the member list
+  // not having grown.
+  const pivotDn = popUserDn(PIVOT);
+  for (let g = 0; g < GROUP_COUNT; g++) {
+    const join = connection();
+    join.dn = popGroupDn(g);
+    join.changes = [{ operation: "add", type: "member", values: [pivotDn] }];
+    const joined = await call("/ldap/modify", join);
+    const duplicate = pairFor(g).indexOf(PIVOT) >= 0;
+    assertSucceeded(joined, "adding " + pivotDn + " to " + popGroupDn(g) +
+      (duplicate ? " (which already lists them)" : ""));
+    if (duplicate) {
+      log.info("re-adding " + pivotDn + " to " + popGroupDn(g) + " — a value " +
+               "the group already holds — answered LDAP success. RFC 4511 " +
+               "section 4.6 makes that attributeOrValueExists (20); this mock " +
+               "filters the value instead. Asserted so the divergence is " +
+               "recorded rather than discovered against a real directory.");
+    }
+  }
+  log.info(pivotDn + " added to all " + GROUP_COUNT + " groups.");
+
+  // --- every user is there, and there are exactly twenty of them ----------
+  //
+  // `one` rather than `sub`, and a substring filter on this run's own prefix, so
+  // the count is a count of what this section built and not of whatever else the
+  // directory has accumulated — the mock's store lives for the life of its
+  // process and another test, or a previous run, may have left entries in it.
+  const readUsers = connection();
+  readUsers.baseDn = usersDn;
+  readUsers.scope = "one";
+  readUsers.filter = "(uid=dbg-pop-" + stamp + "-*)";
+  const foundUsers = await call("/ldap/search", readUsers);
+  assertSucceeded(foundUsers, "searching for this run's " + USER_COUNT +
+    " users");
+  const userDns = dnsOf(foundUsers).sort();
+  assert.strictEqual(userDns.length, USER_COUNT,
+    "exactly " + USER_COUNT + " users must come back. FEWER is the failure " +
+    "this section exists for: a cap reached silently returns a short list with " +
+    "result 0, which is indistinguishable from a directory that holds that " +
+    "many — the honest answer is sizeLimitExceeded (4). MORE means the " +
+    "substring filter matched something this run did not create. Got " +
+    userDns.length + ": " + JSON.stringify(userDns));
+  const expectedUserDns = [];
+  for (let n = 0; n < USER_COUNT; n++) {
+    expectedUserDns.push(popUserDn(n).toLowerCase());
+  }
+  assert.deepStrictEqual(userDns, expectedUserDns.sort(),
+    "and they must be exactly the twenty that were created, which the count " +
+    "alone does not say.");
+
+  // --- and every group ----------------------------------------------------
+  const readGroups = connection();
+  readGroups.baseDn = groupsDn;
+  readGroups.scope = "one";
+  readGroups.filter = "(cn=dbg-pop-group-" + stamp + "-*)";
+  const foundGroups = await call("/ldap/search", readGroups);
+  assertSucceeded(foundGroups, "searching for this run's " + GROUP_COUNT +
+    " groups");
+  const groupDns = dnsOf(foundGroups).sort();
+  const expectedGroupDns = [];
+  for (let g = 0; g < GROUP_COUNT; g++) {
+    expectedGroupDns.push(popGroupDn(g).toLowerCase());
+  }
+  assert.deepStrictEqual(groupDns, expectedGroupDns.sort(),
+    "exactly the " + GROUP_COUNT + " groups this section created. Got " +
+    JSON.stringify(groupDns));
+
+  // --- each group holds EXACTLY the members it should ---------------------
+  //
+  // Exact equality, not "contains". Every membership defect worth catching at
+  // this scale is a SUPERSET — a modify that landed on the wrong group, a
+  // connection that reused the previous DN, a pivot added twice — and every one
+  // of them passes a "contains" assertion on every group.
+  for (let g = 0; g < GROUP_COUNT; g++) {
+    const pair = pairFor(g);
+    const expected = [popUserDn(pair[0]).toLowerCase(),
+                      popUserDn(pair[1]).toLowerCase()];
+    if (pair.indexOf(PIVOT) < 0) {
+      expected.push(pivotDn.toLowerCase());
+    }
+    const actual = await memberDnsOf(popGroupDn(g));
+    assert.deepStrictEqual(actual, expected.sort(),
+      popGroupDn(g) + " must hold exactly " + expected.length + " members: " +
+      "its own two users" +
+      (pair.indexOf(PIVOT) < 0 ? " and the pivot" :
+        " — the pivot being one of them already, which is why re-adding them " +
+        "must NOT have produced a third value") + ". Got " +
+      JSON.stringify(actual));
+  }
+  log.info("every group holds exactly its own two users plus the pivot, and " +
+           "the pivot's own group holds two rather than three.");
+
+  // --- the reverse lookup, which is where the fan-out is visible -----------
+  //
+  // There is no attribute on a user that lists their groups — see section 5 —
+  // so this is a search of the GROUPS for a `member` value naming the user.
+  // Two searches rather than one: the pivot must be found in all ten and any
+  // other user in exactly one, and it takes both to tell a filter that matches
+  // too much from one that matches too little. Either alone is passed by one of
+  // the two wrong implementations.
+  const pivotGroups = connection();
+  pivotGroups.baseDn = groupsDn;
+  pivotGroups.scope = "sub";
+  pivotGroups.filter = "(&(cn=dbg-pop-group-" + stamp + "-*)(member=" +
+    pivotDn + "))";
+  const foundPivotGroups = await call("/ldap/search", pivotGroups);
+  assertSucceeded(foundPivotGroups, "searching for the groups of " + pivotDn);
+  assert.deepStrictEqual(dnsOf(foundPivotGroups).sort(), expectedGroupDns.sort(),
+    "the pivot user must be found in ALL " + GROUP_COUNT + " groups from the " +
+    "group end. Got " + JSON.stringify(dnsOf(foundPivotGroups).sort()));
+
+  // A user who is in exactly one. The last of the twenty, so it is the second
+  // of its pair — the one added by `modify` rather than seeded at create time,
+  // which is the half of the membership path the check above does not reach.
+  const loner = USER_COUNT - 1;
+  const lonerGroup = popGroupDn(Math.floor(loner / 2));
+  const lonerSearch = connection();
+  lonerSearch.baseDn = groupsDn;
+  lonerSearch.scope = "sub";
+  lonerSearch.filter = "(&(cn=dbg-pop-group-" + stamp + "-*)(member=" +
+    popUserDn(loner) + "))";
+  const foundLoner = await call("/ldap/search", lonerSearch);
+  assertSucceeded(foundLoner, "searching for the groups of " + popUserDn(loner));
+  assert.deepStrictEqual(dnsOf(foundLoner), [lonerGroup.toLowerCase()],
+    popUserDn(loner) + " belongs to exactly one group, " + lonerGroup + ". A " +
+    "filter that ignored its `member` clause would answer all " + GROUP_COUNT +
+    " here and would still have passed the pivot's search above. Got " +
+    JSON.stringify(dnsOf(foundLoner)));
+
+  // --- take it all away again ---------------------------------------------
+  //
+  // Thirty entries in a store that lives for the life of the mock's process is
+  // not a leak that breaks anything, but it is thirty objects in every later
+  // `/ldap/directory` and `/admin/groups` a person opens while debugging
+  // something else. Groups first, then users, so that nothing is deleted out
+  // from under a membership this section still has assertions about — the
+  // dangling member that produces is section 7's lesson and is asserted there,
+  // once, on purpose.
+  for (let g = 0; g < GROUP_COUNT; g++) {
+    const remove = connection();
+    remove.dn = popGroupDn(g);
+    assertSucceeded(await call("/ldap/delete", remove),
+      "deleting " + popGroupDn(g));
+  }
+  for (let n = 0; n < USER_COUNT; n++) {
+    const remove = connection();
+    remove.dn = popUserDn(n);
+    assertSucceeded(await call("/ldap/delete", remove),
+      "deleting " + popUserDn(n));
+  }
+
+  // And the searches that found them must now find nothing — which is the one
+  // assertion that says the deletes reached the store rather than merely
+  // answering success. `entryCount` 0 with result 0 is the right answer to a
+  // filter that matches nothing; it is not an error.
+  const noUsers = await call("/ldap/search", readUsers);
+  assertSucceeded(noUsers, "searching for this run's users after the deletes");
+  assert.strictEqual(dnsOf(noUsers).length, 0,
+    "every user this section created must be gone. Got " +
+    JSON.stringify(dnsOf(noUsers)));
+  const noGroups = await call("/ldap/search", readGroups);
+  assertSucceeded(noGroups, "searching for this run's groups after the deletes");
+  assert.strictEqual(dnsOf(noGroups).length, 0,
+    "and every group. Got " + JSON.stringify(dnsOf(noGroups)));
+  log.info("all " + (USER_COUNT + GROUP_COUNT) + " entries removed again.");
+  log.debug("Leaving aPopulatedDirectory().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const ready = await preconditions();
@@ -821,6 +1585,8 @@ async function test() {
   await theUserAndGroupAreDeleted();
   await theApiRefusesWhatItWillNotDo();
   await authenticatingAnywhereCreatesAnLdapUser(ready.directory);
+  await theSameDirectoryAnswersOverLdaps(ready.directory);
+  await aPopulatedDirectory(ready.limits);
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }
