@@ -832,6 +832,9 @@ program
       "endpoints against the mock STS's embedded directory.")
   .addOption(new Option("-a, --api <url>", "base url of the api")
       .default(apiUrl))
+  // Accepted and ignored: run-report.js passes --url to every job.
+  .addOption(new Option("-u, --url <url>", "base url (unused: this test " +
+      "needs no browser)"))
   .parse(process.argv);
 apiUrl = program.opts().api || apiUrl;
 

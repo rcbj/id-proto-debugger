@@ -2618,7 +2618,9 @@ app.get('/ldap/limits', function (req, res) {
     saslMechanisms: [],
     limits: ldap.limits
   });
+});
 
+// ---------------------------------------------------------------------------
 // TLS / mutual TLS — POST /tls/connect, GET /tls/limits
 //
 // The PKI page (client/public/pki.html) issues certificates in the browser and
