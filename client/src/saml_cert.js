@@ -1,14 +1,31 @@
 // File: saml_cert.js
 // Author: Robert C. Broeckelmann Jr.
 //
-// SAML signer-certificate details page. Reads the signer certificate saved by
-// the SAML config page (localStorage key samltools_saml_signer_cert, a bare
-// base64 DER string from the metadata) or any PEM/base64 the user pastes,
-// parses it with node-forge, and renders the details in a table.
+// Certificate details page, shared by nine others. Reads the certificate saved
+// by whichever page sent you here (localStorage key saml_cert_view), or the
+// SAML signer certificate (samltools_saml_signer_cert, a bare base64 DER
+// string out of an IdP's metadata), or any PEM/base64 pasted into the box, and
+// renders what is in it.
+//
+// IT PARSES WITH x509.js, NOT node-forge, and that is the whole of the
+// 2026-08-18 change to this file. node-forge's certificateFromPem() reads the
+// SubjectPublicKeyInfo eagerly and supports exactly one algorithm in it, so
+// every EC and every Ed25519 certificate died here on
+//
+//     Parse error: Cannot read public key. OID is not RSA.
+//
+// — a message about a public key, from a page that had not got as far as
+// showing the subject. That was every certificate the PKI page issues except
+// the RSA ones, and its own "View certificate details" button lands here.
+//
+// x509.js is the module that page issues with, so this is now one description
+// of a certificate rather than two: every extension it can build it can also
+// read back, and describeCertificate() names the key algorithm from the
+// SubjectPublicKeyInfo whether or not this browser can import the key.
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
-var forge = require("node-forge");
+var x509 = require("./x509.js");
 var log = bunyan.createLogger({ name: 'saml_cert', level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 
@@ -37,6 +54,12 @@ function esc(s) {
 }
 
 // Accept PEM or bare base64 DER; return normalized PEM.
+//
+// A pasted bundle is normal — an IdP's metadata carries a chain, and so does
+// half of what anybody has in a file — so the FIRST certificate is taken
+// rather than the concatenation of all of them. x509.js's pemToDer() strips
+// every armour line before it decodes, which turns two certificates into one
+// unparseable blob and an error about ASN.1 rather than about a chain.
 function toPem(input) {
   log.debug("Entering toPem().");
   var s = (input || '').trim();
@@ -45,70 +68,16 @@ function toPem(input) {
     return '';
   }
   if (s.indexOf('-----BEGIN') >= 0) {
-    log.debug("Leaving toPem().");
-    return s;
+    var first = s.match(
+        /-----BEGIN [^-]*-----[\s\S]*?-----END [^-]*-----/);
+    log.debug("Leaving toPem(). PEM.");
+    return first ? first[0] + '\n' : s;
   }
   var b64 = s.replace(/\s+/g, '');
   var lines = b64.match(/.{1,64}/g) || [b64];
   log.debug("Leaving toPem().");
   return '-----BEGIN CERTIFICATE-----\n' + lines.join('\n') +
       '\n-----END CERTIFICATE-----\n';
-}
-
-function dnString(attrs) {
-  log.debug("Entering dnString().");
-  log.debug("Leaving dnString().");
-  return (attrs || []).map(function (a) {
-    return (a.shortName || a.name || a.type) + '=' + a.value;
-  }).join(', ');
-}
-
-function fingerprint(cert, mdCreate) {
-  log.debug("Entering fingerprint().");
-  var der = forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
-  var md = mdCreate();
-  md.update(der);
-  var hex = md.digest().toHex().toUpperCase();
-  log.debug("Leaving fingerprint().");
-  return (hex.match(/.{2}/g) || [hex]).join(':');
-}
-
-function pubKeyInfo(cert) {
-  log.debug("Entering pubKeyInfo().");
-  var pk = cert.publicKey;
-  if (pk && pk.n && pk.n.bitLength) {
-    log.debug("Leaving pubKeyInfo().");
-    return 'RSA ' + pk.n.bitLength() + '-bit (e=' + (pk.e ?
-        pk.e.toString(10) : '?') + ')';
-  }
-  log.debug("Leaving pubKeyInfo().");
-  return 'unknown';
-}
-
-function extSummary(ext) {
-  log.debug("Entering extSummary().");
-  if (ext.name === 'subjectAltName' && ext.altNames) {
-    log.debug("Leaving extSummary().");
-    return ext.altNames.map(function (n) { return (n.value || n.ip ||
-                            ''); }).filter(Boolean).join(', ');
-  }
-  if (ext.name === 'keyUsage') {
-    var flags = ['digitalSignature', 'nonRepudiation', 'keyEncipherment',
-        'dataEncipherment',
-                 'keyAgreement', 'keyCertSign', 'cRLSign'];
-    log.debug("Leaving extSummary().");
-    return flags.filter(function (f) { return ext[f]; }).join(', ');
-  }
-  if (ext.name === 'basicConstraints') {
-    log.debug("Leaving extSummary().");
-    return 'cA=' + (!!ext.cA);
-  }
-  if (typeof ext.value === 'string') {
-    log.debug("Leaving extSummary().");
-    return ext.value;
-  }
-  log.debug("Leaving extSummary().");
-  return '(present)';
 }
 
 function row(k, v) {
@@ -118,41 +87,66 @@ function row(k, v) {
       '</td></tr>';
 }
 
+// The button's handler. describeCertificate() is async — it imports the public
+// key and digests the DER — so the work is done by renderCert() and this
+// returns false straight away, which is what an onclick has to give back.
 function parseCert() {
   log.debug("Entering parseCert().");
+  renderCert().catch(function (e) {
+    log.error('parseCert: ' + (e && e.message));
+    fail('Parse error: ' + (e && e.message ? e.message : e));
+  });
+  log.debug("Leaving parseCert().");
+  return false;
+}
+
+function fail(message) {
+  log.debug("Entering fail().");
+  setVal('saml_cert_status', message);
+  el('saml_cert_details').innerHTML = '&nbsp;';
+  log.debug("Leaving fail().");
+}
+
+async function renderCert() {
+  log.debug("Entering renderCert().");
   var pem = toPem(val('saml_cert_input'));
   if (!pem) {
-    setVal('saml_cert_status', 'Paste a certificate first.');
-    el('saml_cert_details').innerHTML = '&nbsp;';
-    log.debug("Leaving parseCert().");
-    return false;
+    fail('Paste a certificate first.');
+    log.debug("Leaving renderCert(). Nothing to parse.");
+    return;
   }
-  var cert;
+  var described;
   try {
-    cert = forge.pki.certificateFromPem(pem);
+    described = await x509.describeCertificate(pem);
   } catch (e) {
-    log.error('parseCert: ' + e.message);
-    setVal('saml_cert_status', 'Parse error: ' + e.message);
-    el('saml_cert_details').innerHTML = '&nbsp;';
-    log.debug("Leaving parseCert().");
-    return false;
+    log.error('renderCert: ' + e.message);
+    fail('Parse error: ' + e.message);
+    log.debug("Leaving renderCert(). Not a certificate.");
+    return;
   }
 
-  var sigAlg = forge.pki.oids[cert.signatureOid] || cert.signatureOid;
-  var html = '<table class="saml-table">';
-  html += row('Subject', dnString(cert.subject.attributes));
-  html += row('Issuer', dnString(cert.issuer.attributes));
-  html += row('Serial Number', cert.serialNumber);
-  html += row('Version', 'v' + ((cert.version || 2) + 1));
-  html += row('Not Before', cert.validity.notBefore);
-  html += row('Not After', cert.validity.notAfter);
-  html += row('Signature Algorithm', sigAlg);
-  html += row('Public Key', pubKeyInfo(cert));
-  html += row('SHA-1 Fingerprint', fingerprint(cert, forge.md.sha1.create));
-  html += row('SHA-256 Fingerprint', fingerprint(cert, forge.md.sha256.create));
-  (cert.extensions || []).forEach(function (ext) {
-    html += row('Extension: ' + (ext.name || ext.id) + (ext.critical ?
-                ' (critical)' : ''), extSummary(ext));
+  var html = '<table class="saml-table" id="saml_cert_table">';
+  html += row('Subject', described.subject);
+  html += row('Issuer', described.issuer);
+  html += row('Serial Number', described.serialHex);
+  html += row('Version', 'v' + described.version);
+  html += row('Not Before', described.notBefore);
+  html += row('Not After', described.notAfter);
+  html += row('Signature Algorithm', described.signatureAlgorithm + ' (' +
+      described.signatureAlgorithmOid + ')');
+  html += row('Public Key', described.publicKey);
+  html += row('Public Key Algorithm', described.publicKeyAlgorithm);
+  html += row('Self-signed', described.selfSigned ? 'yes' : 'no');
+  // Null rather than absent when this browser has no Web Crypto — see
+  // fingerprintsOf() in x509.js. The rows stay so that the table does not
+  // quietly change shape.
+  html += row('SHA-1 Fingerprint', described.fingerprints.sha1 ||
+      '(needs Web Crypto, which this page does not have here)');
+  html += row('SHA-256 Fingerprint', described.fingerprints.sha256 ||
+      '(needs Web Crypto, which this page does not have here)');
+  described.extensions.forEach(function (ext) {
+    html += row('Extension: ' + ext.name + (ext.critical ? ' (critical)' : ''),
+        x509.extensionValueText(ext));
   });
   html += '</table>';
   html += '<div class="saml-field" ' +
@@ -160,9 +154,10 @@ function parseCert() {
       'readonly>' + esc(pem.trim()) + '</textarea></div>';
 
   el('saml_cert_details').innerHTML = html;
-  setVal('saml_cert_status', 'Parsed.');
-  log.debug("Leaving parseCert().");
-  return false;
+  setVal('saml_cert_status', 'Parsed. ' + described.publicKey + ', signed ' +
+      'with ' + described.signatureAlgorithm + '.');
+  log.debug("Leaving renderCert(). " + described.extensions.length +
+      " extension(s).");
 }
 
 function copyField(id) {
@@ -212,7 +207,9 @@ function setReturnLink() {
     'digital_signature.html': { href: '/digital_signature.html',
                                label: 'Digital Signature (SLH-DSA)' },
     'jwt_tools.html':         { href: '/jwt_tools.html',
-                               label: 'JWT Tools' }
+                               label: 'JWT Tools' },
+    'pki.html':               { href: '/pki.html',
+                               label: 'Certificate Authority & X.509 Tools' }
   };
   var link = el('return_link');
   if (link && allowed[from]) {

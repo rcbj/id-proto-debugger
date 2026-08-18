@@ -25,11 +25,11 @@
 // and it is the shape everything below assumes. The page is FIVE panes, and
 // the first of them — `pane_config` — holds what were three: Key Pair, Issue a
 // Certificate and X.509v3 Extensions. They are one act, and every field in all
-// three is an input to the single Issue Certificate button at its foot. So a
-// new block of fields belongs inside that pane under a `.pki-group` heading
-// rather than in a sixth pane; tests/pki_page.js asserts the pane list by
-// name, and docs/pki.md says what the merge bought and what it costs when the
-// layout that made it possible collapses.
+// three is an input to the single "Generate Key Pair & Issue Certificate"
+// button at the TOP of it. So a new block of fields belongs inside that pane
+// under a `.pki-group` heading rather than in a sixth pane; tests/pki_page.js
+// asserts the pane list by name, and docs/pki.md says what the merge bought
+// and what it costs when the layout that made it possible collapses.
 //
 // ---------------------------------------------------------------------------
 // WHY THERE IS NO "RUN THE TLS TEST IN THE BROWSER" OPTION
@@ -114,6 +114,10 @@ function setText(id, text) {
   var e = el(id);
   if (e) e.textContent = text == null ? '' : String(text);
 }
+function setTitle(id, text) {
+  var e = el(id);
+  if (e) e.title = text == null ? '' : String(text);
+}
 function trimmed(id) {
   return String(val(id) || '').trim();
 }
@@ -190,6 +194,35 @@ function saveState() {
   log.debug("Leaving saveState().");
 }
 
+// "YYYY-MM-DDTHH:MM" in local time — what a datetime-local input holds — from
+// anything Date can parse, and '' from anything it cannot. Minute precision,
+// because that is the input's own default step and a seconds field is a fifth
+// spin box in a column that has room for four.
+function asLocalDateTime(text) {
+  log.debug("Entering asLocalDateTime().");
+  var raw = String(text == null ? '' : text).trim();
+  if (!raw) {
+    log.debug("Leaving asLocalDateTime(). Empty.");
+    return '';
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) {
+    log.debug("Leaving asLocalDateTime(). Already in shape.");
+    return raw;
+  }
+  var d = new Date(raw);
+  if (isNaN(d.getTime())) {
+    log.debug("Leaving asLocalDateTime(). Unparseable: " + raw);
+    return '';
+  }
+  function pad(n) {
+    return (n < 10 ? '0' : '') + n;
+  }
+  var out = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' +
+      pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  log.debug("Leaving asLocalDateTime(). " + out);
+  return out;
+}
+
 function restoreState() {
   log.debug("Entering restoreState().");
   if (!window.localStorage) {
@@ -203,6 +236,15 @@ function restoreState() {
     if (v === null) continue;
     if (els[i].type === 'checkbox') {
       els[i].checked = (v === '1' || v === 'true' || v === 'on');
+    } else if (els[i].type === 'datetime-local') {
+      // A datetime-local input takes "YYYY-MM-DDTHH:MM" in LOCAL time and
+      // REJECTS anything else by silently setting itself to empty — so a
+      // value stored by an older build of this page (these four fields were
+      // ISO 8601 text inputs until 2026-08-18, and their placeholder said
+      // "2026-01-01T00:00:00Z") would vanish on the reload that upgraded the
+      // page, with nothing anywhere to say why. Converting it here keeps the
+      // INSTANT and moves it into the shape the control accepts.
+      els[i].value = asLocalDateTime(v);
     } else {
       els[i].value = v;
     }
@@ -285,6 +327,37 @@ async function generateKeys() {
   }
   renderHistory();
   log.debug("Leaving generateKeys().");
+  return false;
+}
+
+// The ONE button the configuration pane is an input to, and the reason there
+// is no longer a second one. "Generate Key Pair" and "Issue Certificate" were
+// two halves of a single act: a pair that is never certified is kept nowhere
+// (generateKeys() says so in its own status line), and issue() refuses
+// outright without one — "Generate a key pair first" is an error message for
+// a step that could only ever be forgotten.
+//
+// The pair is generated here unless the reuse checkbox says an existing one is
+// to be certified: a CA re-issuing its own certificate, or the pair the
+// store's "Use this key pair" button just loaded, which ticks that box itself.
+// The fields are checked as well as the box, because a ticked box over two
+// empty fields is a request to certify nothing.
+async function generateAndIssue() {
+  log.debug("Entering generateAndIssue().");
+  var reuse = checked('pki_reuse_key') && !!trimmed('pki_private_key') &&
+      !!trimmed('pki_public_key');
+  if (!reuse) {
+    await generateKeys();
+    // generateKeys() has already put its own failure in the status line. A
+    // second attempt at issuing would replace that message with a vaguer one
+    // about a missing key pair.
+    if (!trimmed('pki_private_key') || !trimmed('pki_public_key')) {
+      log.debug("Leaving generateAndIssue(). No key pair to certify.");
+      return false;
+    }
+  }
+  await issue();
+  log.debug("Leaving generateAndIssue().");
   return false;
 }
 
@@ -778,16 +851,145 @@ function applyProfileDefaults(profileId) {
   log.debug("Leaving applyProfileDefaults().");
 }
 
+// The subject CN follows the profile, until somebody types one of their own.
+//
+// A default CN is worth having because an empty subject is a legal DN and the
+// store then holds four rows nobody can tell apart; and it has to MOVE with the
+// profile, or picking Intermediate CA after Root CA issues an intermediate
+// called "RootCA", which chains correctly and reads as a bug in the
+// chain view for as long as it takes to notice.
+//
+// So: an empty field is filled, a field still holding ANY profile's default is
+// replaced, and anything else is left exactly as it is. That third case is the
+// one that matters — this runs on every profile change and once on load, after
+// restoreState(), so a name typed yesterday would otherwise be overwritten by
+// a page that had merely been reopened.
+function applyDefaultSubjectCN(profileId) {
+  log.debug("Entering applyDefaultSubjectCN(). profile=" + profileId);
+  var current = trimmed('pki_dn_cn');
+  if (current && !x509.isDefaultSubjectCN(current)) {
+    log.debug("Leaving applyDefaultSubjectCN(). Kept " + current);
+    return;
+  }
+  setVal('pki_dn_cn', x509.defaultSubjectCN(profileId));
+  log.debug("Leaving applyDefaultSubjectCN().");
+}
+
+// The rest of the subject DN — O, OU, L, ST, C — which does not follow the
+// profile and so is filled ONCE, on load, into whatever is empty.
+//
+// It is fill-only: anything already in a field stays, including a value this
+// function put there yesterday. The case it cannot tell apart is a field
+// somebody deliberately EMPTIED — clearing O and reloading gets O back — which
+// is the same trade applyDefaultSubjectCN() has always made for the CN, and
+// the alternative is remembering a negative in storage for every field on the
+// page.
+function applyDefaultSubjectDN() {
+  log.debug("Entering applyDefaultSubjectDN().");
+  var fields = [['O', 'pki_dn_o'], ['OU', 'pki_dn_ou'], ['L', 'pki_dn_l'],
+                ['ST', 'pki_dn_st'], ['C', 'pki_dn_c']];
+  fields.forEach(function (field) {
+    if (trimmed(field[1])) return;
+    setVal(field[1], x509.DEFAULT_DN[field[0]] || '');
+  });
+  log.debug("Leaving applyDefaultSubjectDN().");
+}
+
+// The last subjectAltName this page wrote by itself.
+//
+// It is what tells "the SAN is still ours" from "somebody has edited it" in
+// the one case x509.isDefaultSubjectAltName() cannot answer: once the CN has
+// been typed over, the SAN this page derived from it (`dns:www.example.test`)
+// is not any profile's default and looks exactly like a name a person chose.
+// A module variable rather than storage, deliberately — after a reload the
+// page has no idea which of the two it is looking at, and the safe reading of
+// an unknown is that it belongs to the reader.
+var lastAutoSan = null;
+
+function setSubjectAltName(value) {
+  log.debug("Entering setSubjectAltName(). " + (value || '(none)'));
+  setVal('pki_san', value);
+  setChecked('pki_ext_san', !!value);
+  lastAutoSan = value;
+  log.debug("Leaving setSubjectAltName().");
+}
+
+// Whether the subjectAltName field is one this page may still overwrite:
+// empty, any profile's default, the last one this page wrote, or one that
+// already says exactly what the CN says — in which case rewriting it to match
+// a new CN takes nothing away.
+function subjectAltNameIsOurs() {
+  log.debug("Entering subjectAltNameIsOurs().");
+  var current = trimmed('pki_san');
+  var cn = trimmed('pki_dn_cn');
+  var ours = x509.isDefaultSubjectAltName(current) ||
+      current === lastAutoSan ||
+      (!!cn && current === 'dns:' + cn);
+  log.debug("Leaving subjectAltNameIsOurs(). " + ours);
+  return ours;
+}
+
+// The subjectAltName that goes with the profile, which only the two serverAuth
+// profiles have: `dns:` + whatever the CN says.
+//
+// For a TLS server that is not a convenience, it is the difference between a
+// certificate a client will accept and one it will not — every current browser
+// ignores the Common Name — so the checkbox is ticked with it rather than left
+// for the reader to find among twenty-two extension cards.
+//
+// The same three cases as the CN, and for the same reason: fill an empty
+// field, REPLACE one this page put there (a Root CA chosen after a TLS Server
+// keeps `dns:server`, which is a name that certificate has no business
+// asserting), and never touch a name somebody typed.
+//
+// It follows the CN rather than the profile's own default, which is the whole
+// point of it: picking TLS Server and then typing the name you actually want
+// is the ordinary way to use this page, and a SAN left naming `server` while
+// the CN says something else is the same unusable certificate as no SAN at
+// all — the one this is here to stop.
+function applyDefaultSubjectAltName(profileId) {
+  log.debug("Entering applyDefaultSubjectAltName(). profile=" + profileId);
+  if (!subjectAltNameIsOurs()) {
+    log.debug("Leaving applyDefaultSubjectAltName(). Kept " +
+        trimmed('pki_san'));
+    return;
+  }
+  var wanted = x509.defaultSubjectAltName(profileId);
+  var cn = trimmed('pki_dn_cn');
+  if (wanted && cn) wanted = 'dns:' + cn;
+  setSubjectAltName(wanted);
+  log.debug("Leaving applyDefaultSubjectAltName(). " + (wanted || '(none)'));
+}
+
+// The CN changed under a profile whose subjectAltName is derived from it.
+// Wired to the field itself rather than to the delegated change listener,
+// which only saves state.
+function onSubjectCnChange() {
+  log.debug("Entering onSubjectCnChange().");
+  applyDefaultSubjectAltName(val('pki_profile'));
+  saveState();
+  log.debug("Leaving onSubjectCnChange().");
+  return false;
+}
+
 function onProfileChange() {
   log.debug("Entering onProfileChange().");
   var profileId = val('pki_profile');
   applyProfileDefaults(profileId);
+  applyDefaultSubjectCN(profileId);
   var p = x509.profile(profileId) || {};
   // A root is self-signed by definition, so the issuer dropdown is pointless
   // for it and actively misleading: a "root" signed by something else is an
   // intermediate.
   show('pki_issuer_row', !p.selfSigned);
-  setText('pki_profile_note', profileNote(profileId));
+  // The note this profile used to print under the dropdown is the dropdown's
+  // own tooltip now. It says something for seven of the fourteen profiles, so
+  // there is a fallback: a control whose title is empty has no tooltip at all,
+  // and "some of these have one" is worse than none.
+  setTitle('pki_profile', profileNote(profileId) ||
+      'Sets the default extensions, the default validity and whether this ' +
+      'certificate is self-signed.');
+  applyDefaultSubjectAltName(profileId);
   setVal('pki_validity_years', String(p.years || 1));
   refreshSignatureOptions();
   saveState();
@@ -894,10 +1096,10 @@ function refreshSignatureOptions() {
   } else if (signerDesc) {
     select.value = x509.defaultSignatureAlgorithm(signerDesc);
   }
-  setText('pki_sig_alg_note', signerDesc
+  setTitle('pki_sig_alg', signerDesc
     ? 'The signing key is ' + (signerDesc.label || signerDesc.kind) +
       ', so these are the algorithms it can produce.'
-    : 'No signing key chosen yet.');
+    : 'No signing key chosen yet, so this is every algorithm the page has.');
   log.debug("Leaving refreshSignatureOptions(). " + allowed.length +
       " option(s).");
 }
@@ -908,6 +1110,25 @@ function onIssuerChange() {
   saveState();
   log.debug("Leaving onIssuerChange().");
   return false;
+}
+
+// A fresh random 128-bit serial in the Serial Number field.
+//
+// The field is filled rather than left empty so that the value about to be
+// signed is visible — and editable — before the certificate exists, instead
+// of appearing for the first time in the store's Serial Number row. It is
+// refilled after every issue, because a serial that stayed put would be
+// re-used by the next certificate the same CA signs, and two certificates
+// from one issuer sharing a serial is exactly what a serial is for
+// preventing: they are indistinguishable to anything that revokes, caches or
+// pins by (issuer, serial).
+function newSerial() {
+  log.debug("Entering newSerial().");
+  setVal('pki_serial', x509.randomSerialHex(16));
+  // setVal() is not a user edit, so the delegated change listener never sees
+  // it and the value would not survive a reload.
+  saveState();
+  log.debug("Leaving newSerial().");
 }
 
 function validityDates() {
@@ -947,9 +1168,10 @@ async function issue() {
     var privatePem = trimmed('pki_private_key');
     var publicPem = trimmed('pki_public_key');
     if (!privatePem || !publicPem) {
-      throw new Error('Generate a key pair first: the certificate certifies ' +
-          'the public key above, and a CA needs the private half to sign ' +
-          'with later.');
+      throw new Error('There is no key pair to certify. Clear "reuse the ' +
+          'key pair below" and the button generates one: the certificate ' +
+          'certifies the public key above, and a CA needs the private half ' +
+          'to sign with later.');
     }
     var keyDesc = currentKeyDescriptor();
     // The fields may hold JWK (the format toggle); everything below is PEM.
@@ -1009,7 +1231,7 @@ async function issue() {
       created: new Date().toISOString()
     });
 
-    setVal('pki_serial', '');
+    newSerial();
     renderStore();
     refreshIssuerOptions();
     refreshTlsSelectors();
@@ -1054,8 +1276,8 @@ function renderStore() {
   if (!entries.length) {
     var empty = document.createElement('p');
     empty.className = 'saml-note';
-    empty.textContent = 'Nothing issued yet. Generate a key pair, choose the ' +
-        'Root CA profile, and issue the first certificate.';
+    empty.textContent = 'Nothing issued yet. Choose the Root CA profile ' +
+        'above and press "Generate Key Pair & Issue Certificate".';
     box.appendChild(empty);
     setText('pki_store_count', '0 objects');
     log.debug("Leaving renderStore(). Empty.");
@@ -1197,30 +1419,12 @@ function detailTable(described) {
       described.fingerprints.sha256));
   described.extensions.forEach(function (ext) {
     body.appendChild(detailRow('Extension: ' + ext.name +
-        (ext.critical ? ' (critical)' : ''), describeExtensionValue(ext)));
+        (ext.critical ? ' (critical)' : ''), x509.extensionValueText(ext)));
   });
   table.appendChild(body);
   log.debug("Leaving detailTable(). " + described.extensions.length +
       " extension(s).");
   return table;
-}
-
-function describeExtensionValue(ext) {
-  log.debug("Entering describeExtensionValue().");
-  var value = ext.value;
-  var text;
-  if (value === null || value === undefined) text = '(present)';
-  else if (typeof value === 'string' || typeof value === 'number') {
-    text = String(value);
-  } else if (Object.prototype.toString.call(value) === '[object Array]') {
-    text = value.map(function (item) {
-      return typeof item === 'object' ? JSON.stringify(item) : String(item);
-    }).join(', ');
-  } else {
-    text = JSON.stringify(value);
-  }
-  log.debug("Leaving describeExtensionValue().");
-  return text;
 }
 
 function chainTable(verdicts) {
@@ -1321,9 +1525,15 @@ function useStoredKey() {
   setVal('pki_public_key', entry.publicKeyPem);
   setVal('pki_key_alg', entry.keyAlg);
   setChecked('pki_key_jwk', false);
+  // Tick the reuse box with it: the one button above generates a fresh pair
+  // by default, which would throw this one away between loading it and
+  // issuing for it.
+  setChecked('pki_reuse_key', true);
   saveState();
   refreshSignatureOptions();
-  status('Loaded the key pair of "' + entry.subject + '" into the key pane.');
+  status('Loaded the key pair of "' + entry.subject + '" into the key pane, ' +
+      'and ticked "reuse the key pair below" so the next certificate is ' +
+      'issued for it rather than for a new one.');
   log.debug("Leaving useStoredKey().");
   return false;
 }
@@ -1943,6 +2153,10 @@ window.onload = function () {
   // the module that enforces it.
   store.setSaveKeys(keyMaterialMayBeStored());
   renderKeyStorageNote();
+  if (!trimmed('pki_serial')) newSerial();
+  // Before onProfileChange(), which fills the CN: these five do not follow the
+  // profile and the DN reads as one block whichever order they are written in.
+  applyDefaultSubjectDN();
   if (!val('pki_profile')) setVal('pki_profile', 'root-ca');
   if (!val('pki_key_alg')) setVal('pki_key_alg', 'rsa-2048');
   onProfileChange();
@@ -1958,6 +2172,7 @@ window.onload = function () {
 
 module.exports = {
   // the Key Pair block of the configuration pane
+  generateAndIssue: generateAndIssue,
   generateKeys: generateKeys,
   downloadKeys: downloadKeys,
   toggleKeyFormat: toggleKeyFormat,
@@ -1967,6 +2182,8 @@ module.exports = {
   viewCertificate: viewCertificate,
   // issuing
   onProfileChange: onProfileChange,
+  applyDefaultSubjectCN: applyDefaultSubjectCN,
+  onSubjectCnChange: onSubjectCnChange,
   onIssuerChange: onIssuerChange,
   issue: issue,
   // the store

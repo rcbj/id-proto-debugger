@@ -64,23 +64,29 @@ over, then fails here instead of being nobody's test.
 This page carries more fields than any other in the tree: a key pair, sixteen
 certificate fields, a distinguished name, **twenty** X.509v3 extension cards and
 a TLS pane. On 2026-08-18 its first three panes — *Key Pair*, *Issue a
-Certificate*, *X.509v3 Extensions* — became one, `pane_config`, and the
-extension list became two columns. Nothing was removed; what changed is where it
-sits and how much margin it pays.
+Certificate*, *X.509v3 Extensions* — became one, `pane_config`, its fields laid
+out in three columns, with the extension list flowing in three of its own and
+the TLS pane in two. Nothing was removed; what changed is where it sits and how
+much margin it pays.
 
 **What it bought, measured at 1366x768 in headless Chrome.** The page went from
 **4941px** to **3323px** — a third of it — and the *Keys & Certificates* pane,
 which is where you go to look at what you just issued, moved from 3802px down
-the document to **2146px**. `tests/pki_page.js` holds a 4000px budget with ~20%
-of slack in it for font metrics (fonts-liberation in the container, the host's
+the document to **2146px**. A second pass the same day took it to **~2600px**:
+the configuration pane went to three columns, the extension list to three, and
+the TLS pane to two. A third took it to **2196px** by moving every standing
+note and warning into the tooltip of the control it describes — see *Every
+field has a tooltip* below. `tests/pki_page.js` holds a **2700px** budget with
+~20% of slack in it for font metrics (fonts-liberation in the container, the host's
 Arial on a host run), because what it is there to catch is the change that gives
-the whole saving back at once rather than the tens of pixels a font accounts
+a whole saving back at once rather than the tens of pixels a font accounts
 for.
 
 **Why one pane.** Those three described one act. Every field in all three is an
-input to the single **Issue Certificate** button, which is now at the foot of the
-pane they became — you cannot issue anything from *Key Pair* alone, and the
-extensions are not a separate operation, they are arguments. Each extra pane
+input to the single **Generate Key Pair & Issue Certificate** button, at the top
+of the *Key Pair* block of the pane they became — you cannot issue anything from
+*Key Pair* alone, and the extensions are not a separate operation, they are
+arguments. Each extra pane
 costs a title bar, two borders and the gap between them before a field is drawn,
 and it made the reader collapse three things to reach the store rather than one.
 This is the same trade `kerberos_ap.html` made, for the same reasons and with the
@@ -94,16 +100,75 @@ labels a **group**: a `<label>` with no control to point at is one the browser
 cannot associate with anything, and pointing it at the first field would claim
 the heading belongs to that field alone.
 
-**Two traps live in that layout, and both are invisible until something is
-narrow.** `.pki-cols` is `auto-fit` with a **420px** minimum, and that minimum —
-not the design — is what decides whether the pane has two columns or one: a
-layout that looks deliberate at 1500px and stacks at 1024 is usually this number
-biting rather than a broken rule. And `.pki-col` carries `min-width: 0`, which is
-not decoration: a grid item's default minimum is its content's, and this page's
-content includes an unbreakable 64-character line of base64 in a PEM textarea.
-Without it the column refuses to be narrower than that line, the grid overflows
-its pane, and the page scrolls sideways — which reads as a broken layout rather
-than as two missing words of CSS.
+**The configuration pane is THREE columns, and the third one is why.** Key pair,
+certificate fields, subject DN. It was two, with the DN under the certificate
+fields, and the arithmetic of a grid is what was wrong with that: a grid **row
+is as tall as its tallest item**, so a 392px column sat beside a 675px one and
+the key pair ended in 283px of nothing. Three blocks of roughly equal height
+spend that space instead of paying for it. `tests/pki_page.js` measures both the
+heights (a column under 60% of the tallest is dead space with a border) and the
+**tops** — see the next paragraph for what makes them move.
+
+**Four traps live in that layout, and all four are invisible until something
+is narrow.** `.pki-cols` is `auto-fit` with a **390px** minimum, and that
+minimum — not the design — is what decides whether the pane has three columns,
+two or one: three need `3*390 + 2*22 = 1214px` and there are 1275 at a 1366px
+window, so raising it to the 420 it used to be silently wraps the third column
+onto a row of its own and makes the pane **taller** than the two-column version
+it replaced. A layout that looks deliberate at 1500px and stacks at 1024 is
+usually this number biting rather than a broken rule — with the exception of
+the configuration pane above 1330px, where `.pki-cols-3`'s media queries take
+the track sizes over and the minimum stops deciding anything. `.pki-col` carries
+`min-width: 0`, which is not decoration: a grid item's default minimum is its
+content's, and this page's content includes an unbreakable 64-character line of
+base64 in a PEM textarea. Without it the column refuses to be narrower than that
+line, the grid overflows its pane, and the page scrolls sideways — which reads
+as a broken layout rather than as two missing words of CSS. And `.pki-flag`'s
+`white-space: nowrap` belongs to the flag **grids** and the card headings, where
+the labels are single identifiers: the half-dozen flags elsewhere are whole
+sentences ("also connect without it, and say whether the server requires one"),
+and a sentence that may not wrap hangs 66px out of a half-width column at 900px
+— reported by the page as a horizontal scrollbar rather than as a label.
+
+**The fourth is a control that does not shrink, and it is the only one of the
+four with no symptom at all.** `.pki-col` carries `min-width: 0` and the fields
+inside it are `flex: 1 1 0`, so a control with a **fixed** width does not
+narrow with its column — it keeps that width and draws over the column beside
+it. Nothing reports that: the grid itself still fits, so there is no horizontal
+scrollbar, nothing is clipped, and the page height does not move. What you see
+is two controls sharing a few pixels, which reads as a font difference.
+
+The one that had it was `input[type="number"]`. `saml_common.css` sizes
+`.saml-pane textarea`, `input[type="text"]`, `input[type="password"]` and
+`select` at `width: 100%` with `box-sizing: border-box`, and does not name
+`number` — so `bootstrap.css`'s `input { width: 206px }` plus its own padding
+and border survived on the two this page has, at 220px each. *Validity (years)*
+sat 49px inside the Key Pair column at 1366px, over the Export block's
+*Keystore Format* label and select, and the TLS pane's *Port* was the same
+220px between a *Host* and an *SNI* that were not. Both are now sized by
+`.saml-pane input[type="number"]` in `css/pki.css`, with the shared sheet's own
+declarations rather than a second opinion about how wide a field should be. It
+is fixed **here** rather than in `saml_common.css` because the only other
+number inputs in the tree — `jwt_clock_skew` on `token_detail.html`,
+`vc_batch_size` on `vc-issuance-2.html` — sit in table cells carrying a `size`
+attribute, where `100%` means the width of the cell: deliberately narrow fields
+that a fix in the shared sheet would stretch for a defect neither of them has.
+
+This was invisible while these were three full-width panes: the overflow had
+nothing to land on. So `tests/pki_page.js` now measures every control in every
+`.pki-col` against its column's right edge rather than just the one that had
+it — any control type the shared sheet does not name arrives the same way.
+
+**The TLS pane is two columns, on the same reasoning and with the same
+`.pki-cols`.** Left is the connection this end makes — host, port, SNI, the
+version range, the cipher list, ALPN, and the client certificate; right is what
+the answer is checked against — the truststore, the extra PEM anchors, and the
+`GET` that asks the server what *it* saw. That is also the order the two are
+decided in. The button, the status line and the report stay full width below,
+because the report is a table of what both ends saw and half a page is not where
+it goes. *Truststore* lost its `.saml-sub` wrapper on the way: it heads a column
+now, and a column that opens on a dashed separator reads as the tail of the one
+beside it.
 
 **The extension list is CSS columns, deliberately not a grid.** A grid lays its
 items out in **row** order, so twenty cards of wildly different heights
@@ -111,12 +176,16 @@ items out in **row** order, so twenty cards of wildly different heights
 four-row textarea and a paragraph of syntax) leave a gap under every short one to
 the height of the tallest in its row. A column flow packs them and keeps document
 order reading **down** each column, which is the order the list is in and the
-order the page's own prose refers to. `columns: 460px 2` is a **maximum** of two:
-below about 980px of pane there is room for one and it collapses on its own, so
-no media query is needed — and, less happily, one card that stops fitting 460px
-collapses the whole list with no symptom except that you scroll further. That is
-~900px of page, which is why `tests/pki_page.js` **measures** the column count
-from where the cards actually landed rather than assuming it. `break-inside:
+order the page's own prose refers to. `columns: 380px 3` is a **maximum** of three:
+below about 1180px of pane there is room for two and below ~780px for one, and
+each collapse happens on its own, so no media query is needed — and, less
+happily, one card that stops fitting 380px costs a whole column with no symptom
+except that you scroll further. That is ~400px of page, which is why
+`tests/pki_page.js` **measures** the column count from where the cards actually
+landed rather than assuming it. What decides whether a card fits is the
+`.pki-flags` minimum inside it: at **172px** the keyUsage and extendedKeyUsage
+grids are still two flags wide in a 380px column, and raising it back to the 240
+it was is what would take the list from three columns to two. `break-inside:
 avoid` is what stops a card being split across the boundary; a `subjectAltName`
 whose checkbox is at the foot of one column and whose textarea is at the head of
 the next is two half-controls, and it happens silently.
@@ -133,6 +202,87 @@ the other direction is stricter and is asserted too: **nothing anybody has to
 operate may be inside a fold.** A checkbox behind a summary is a setting nobody
 finds, and unlike missing prose that costs a certificate rather than an
 explanation.
+
+**One button, and it is at the top.** *Generate Key Pair* and *Issue
+Certificate* were two buttons for one act. A pair that is never certified is
+kept nowhere — `generateKeys()` says exactly that in its own status line — and
+`issue()` refused outright without one, so the second button was a step that
+could only ever be forgotten and the page had an error message
+("Generate a key pair first") whose whole job was to say so. They are now
+`pki.generateAndIssue()`, on one button at the **top** of the *Key Pair* block:
+a reader should not have to scroll past twenty-two extension cards to find out
+what any of them are for. What the two-button flow gave for free was re-issuing
+for a key that already exists — a CA renewing its own certificate — so a
+**reuse the key pair below** checkbox (`pki_reuse_key`) sits beside it, cleared
+by default, and the store's *Use this key pair* button ticks it itself rather
+than loading a pair the next click would throw away. The box is checked
+**together with the fields**: ticked over two empty fields it is a request to
+certify nothing, and the generation happens anyway.
+
+**Each extension is one line.** `issuerAltName`, `cRLDistributionPoints`,
+`freshestCRL` and the eleven others with a value were a checkbox row, then a
+textarea under it, then a note under that; the checkbox row and the textarea are
+now the same row — name, value, `critical` — inside `.pki-ext-head`, with only
+the syntax note below. The boxes are `rows="1"` in the markup **and**
+`min-height` in `.pki-inline`, and neither is enough alone. Note what did *not*
+change: they are still `<textarea>`s, so the multi-line values these extensions
+take (subjectAltName is one name per line, and always was) are still typed,
+stored and parsed exactly as before — what was cut is the space an empty one
+occupies, which was four lines of nothing twenty-two times over. `resize:
+vertical` rather than `both`, because horizontal resizing inside a CSS column
+pushes the column's own width around. The 90px floor under the flex basis is
+what makes a long name — `cRLDistributionPoints` is 21 characters — wrap the
+row instead of collapsing the box to a slot.
+
+**The key pair and the certificate fields swapped columns**, so the pane now
+reads *Issue a Certificate* | *Key Pair* | *Subject Distinguished Name*: the
+profile decides what the certificate is, and the key algorithm and the button
+sit in the middle beside the DN they are about to be bound into.
+
+**That middle column is two rows, and both of them are one line.** The key
+algorithm select, the *Show as JWK* toggle, *Generate Key Pair & Issue
+Certificate* and its *reuse the key pair below* checkbox are one row; the
+keystore format, the password, *include the chain*, *save private keys here*
+and *Download* are the other. They were four lines between them — the select
+had a row of its own above the button, and the format and password a row of
+their own above the checkboxes and the button — and those two extra lines are
+the whole of why the key-pair column used to hang ~70px below the two beside
+it. Everything on both rows is now as wide as what it holds (`.pki-narrow`,
+130px for seven algorithm names, 140px for four format names, 100px for a
+password) rather than half a column each.
+
+**The width for that comes from the other two columns, and it takes two media
+queries.** Nothing above will fit in an equal third of the pane: the key-pair
+row alone wants ~650px and a third is 410px at a 1366px window, 478px at the
+container's 1478px maximum. So `.pki-cols-3` — the configuration pane's grid,
+and not the TLS pane's, which is the same class with two columns — gives the
+middle column `1.3fr` against `0.85fr` either side from 1330px, and `1.4fr`
+against `0.8fr` from 1530px, where the middle reaches ~669px and nothing on
+either row wraps at all. The side columns lose nothing measurable to it: they
+are label-and-input rows and eight short DN fields, and at 1366px they measure
+354px and 374px against the 352px and 363px they were.
+
+**Between 1330px and 1530px the rows shrink instead of wrapping**, which is
+what `flex-wrap: nowrap` on `.pki-actions` and `.pki-export-row` inside that
+media query is for. Flexbox assigns items to lines by their *max-content*
+width before it shrinks anything, so a row that is 100px short does not narrow
+its widest item — it moves the last control to a line of its own, which is
+exactly the white space this removes. With `nowrap` the fixed-width controls
+keep their width and the checkbox labels take the shortfall as wrapped text:
+at 1366px *reuse the key pair below* is two lines of text inside a row that is
+still one row. The `nowrap` is confined to the media query on purpose, because
+the row's unshrinkable minimum — a 130px select plus a 235px button — is wider
+than the 390px column the base `auto-fit` rule hands it below that, and an
+overflowing flex line is a horizontal scrollbar across the whole page.
+`tests/pki_page.js` asserts the property that survives both bands: every
+control in each row shares one bottom edge, which one flex line always has and
+two never do.
+
+**Measured at 1366x768 in headless Chrome, with an empty store**: 2523px of
+document, a 1159px configuration pane, a 605px extension list still in three
+columns, and *Keys & Certificates* 1365px down. The budget in
+`tests/pki_page.js` is 2700px and is there to catch a change that gives a whole
+saving back at once.
 
 **The density overrides live in `css/pki.css` and override `css/saml_common.css`
 on purpose.** That sheet is linked by `pki.html` and by nothing else, so a bare
@@ -163,6 +313,197 @@ Two things came out of that extraction that are worth knowing:
   has to wrap it in, because **pkijs cannot import an Ed25519 public key**. The
   certificate is `x509.js`'s job now, so the format works and the refusal is
   gone.
+
+## The profile fills in the subject CN
+
+Every profile carries a `cn` beside its extension defaults in `x509.js`'s
+`PROFILES` — `RootCA`, `IntermediateCA`, `IssuingCA` for the three authorities,
+`server` and `client` for the TLS pair, and `Signer`, `Recipient`,
+`CodeSigner`, `EmailUser`, `OCSPResponder`, `TimeStampingAuthority`,
+`SmartcardUser`, `kdc` for the rest. It is in the module rather than in the
+page for the same reason the extension defaults are: the node tests then start
+from what the browser starts from.
+
+**They were *Example Root CA* and `localhost` until 2026-08-18**, and two
+things went with the rename. The TLS profiles no longer default to a name a
+local server answers to — issuing for `localhost` is now one field to type,
+which is the trade for a store whose rows read as a hierarchy. And `server` and
+`client` are short enough to be words somebody might type for themselves:
+`isDefaultSubjectCN()` cannot tell those apart from one of ours and will
+replace them on the next profile change, which was already true of `localhost`
+and is more likely now.
+
+Nothing fails without it. An empty subject is a legal DN and `x509.js` will
+issue one — what it costs is a store holding four rows that read the same and a
+chain view nobody can follow, after typing four names by hand to get to the
+first handshake.
+
+**The rule is three cases, and two of them are the reason it is a function
+rather than a line.** `applyDefaultSubjectCN()` in `pki.js` fills an empty
+field, **replaces** a field still holding any profile's default, and leaves
+anything else exactly as it is:
+
+* it has to MOVE with the profile, or picking *Intermediate CA* after *Root CA*
+  issues an intermediate called "Example Root CA" — which chains correctly,
+  validates, and reads as a bug in the chain view rather than in the form;
+* and it must never touch a name somebody typed. The path that would lose one is
+  not the profile dropdown but a **reload**: `onProfileChange()` runs on load,
+  *after* `restoreState()` has just put their CN back in the field.
+
+That is why the test is `x509.isDefaultSubjectCN()` — "is this any profile's
+default" — rather than a comparison with the current profile's. By the time the
+question is asked the dropdown has already moved on, and the value in the field
+belongs to the profile that was selected a moment ago.
+
+## The serial number is filled in, not left blank
+
+`pki_serial` used to be an optional field: empty meant `issueCertificate()`
+called `x509.randomSerialHex(16)` for you, and the value first appeared in the
+store's *Serial Number* row, after the certificate had been signed. Since
+2026-08-18 the field carries a random 128-bit serial from the moment the page
+loads, `newSerial()` in `pki.js` puts a fresh one there after **every**
+successful issue, and it is an ordinary editable input the whole time — type a
+serial and that is what gets signed.
+
+**Why it is refilled rather than left holding the last one.** Two certificates
+from one issuer sharing a serial is precisely what a serial exists to prevent:
+`(issuer, serial)` is the pair a CRL entry, an OCSP request and most caches and
+pins are keyed on, so the second certificate is not merely a duplicate, it is
+indistinguishable from the first to everything that revokes or looks one up.
+A field that kept its value would produce that on the second press of the
+button, silently, and with the store showing two rows that differ everywhere
+else.
+
+Three details in eight lines of code:
+
+* `newSerial()` calls `saveState()` itself. `setVal()` is not a user edit, so
+  the delegated `change` listener at the bottom of `onload()` never sees it and
+  the value would not survive a reload — the field is `.stored` like every
+  other one on this page.
+* the refill is on the **success** path of `issue()`, where the old
+  `setVal('pki_serial', '')` used to be. A failed issue leaves the serial
+  alone, because the next thing that happens is another press of the same
+  button.
+* `issue()` still falls back to `x509.randomSerialHex(16)` when the field is
+  empty. The field can be cleared, and a cleared field must not mean a
+  certificate with no serial.
+
+`theSerialIsFilledInEditableAndRotates()` in `tests/pki_page.js` asserts all
+four through the form: the value on load, that it survives a reload, that the
+certificate carries the serial the field was showing, that the field holds a
+different one afterwards, and that a serial typed by hand is the one signed.
+
+## The rest of the DN, and the SAN that has to match the CN
+
+Since 2026-08-18 the CN is not the only field with something in it. **O, OU, L,
+ST and C** come from `x509.DEFAULT_DN` — *Example Corp*, *Information
+Technology*, *Austin*, *Texas*, *US* — and they behave **differently from the
+CN on purpose**: they do not vary by profile, so `applyDefaultSubjectDN()` runs
+once on load and fills only what is EMPTY. There is no "is this still a
+default" question to answer and no replacement rule to get wrong. What it
+cannot tell apart is a field somebody deliberately emptied — clear O, reload,
+and O is back — which is the same trade the CN has always made, and the
+alternative is remembering a negative in storage for every field on the page.
+
+A DN with nothing in it but a CN is a legal name and a poor example of one.
+These five put the encoding an operator actually meets — the PrintableString of
+a country code, the ordered RDNSequence — in the first certificate somebody
+issues here rather than the fifth.
+
+**The subjectAltName is the one that matters most and shows least.** The two
+serverAuth profiles now tick `subjectAltName` and fill it with `dns:` + their
+own CN, because for a TLS server the CN is *not* what is checked — every
+current browser ignores it. A server certificate issued here with the CN filled
+in and the SAN empty is a certificate no client will accept, and neither the
+page nor the store says so anywhere: it is a valid certificate, it chains, and
+the only symptom is a browser refusing it for a reason it attributes to the
+name.
+
+`defaultSubjectAltName()` derives it from the profile's `extKeyUsage` rather
+than storing it per profile, so a new server-ish profile cannot be added
+without one. `applyDefaultSubjectAltName()` in `pki.js` then applies the same
+three cases the CN uses — fill an empty field, **replace** one this page put
+there, never touch what somebody typed — and the middle case is the one worth
+having: picking *Root CA* after *TLS Server* has to take `dns:server` away
+again, because a root asserting that name has no business carrying it and the
+field is two columns from where the profile was chosen.
+
+**It follows the CN, not the profile's own default**, which is the whole point
+of it. Picking *TLS Server* and then typing the name you actually want is the
+ordinary way to use this page, and a SAN left saying `dns:server` while the CN
+says `www.example.test` is the same unusable certificate as no SAN at all — the
+one this is here to stop. So `pki_dn_cn` carries an `onchange` of its own.
+
+That makes "is this still ours?" a question `isDefaultSubjectAltName()` cannot
+answer alone: once the CN has been typed over, the SAN derived from it is not
+any profile's default and looks exactly like a name a person chose. So
+`subjectAltNameIsOurs()` also accepts the last value this page wrote
+(`lastAutoSan`, a module variable) and one that already says exactly what the
+CN says — rewriting *that* to match a new CN takes nothing away. `lastAutoSan`
+is deliberately not persisted: after a reload the page cannot tell its own
+derived SAN from a typed one, and the safe reading of an unknown is that it
+belongs to the reader. `tests/pki_page.js` asserts every one of those
+directions.
+
+## Every field has a tooltip, and that is where the notes went
+
+On 2026-08-18 the standing notes and warnings came off the page and became the
+`title` of the control they describe: the syntax lines under twelve extension
+textareas, the paragraph under the store, the truststore's, the history's, the
+two that printed under the *Profile* and *Signature Algorithm* dropdowns, and
+the warning at the head of the TLS pane. The page went from **~2600px to
+2196px** at 1366x768, and `tests/pki_page.js`'s budget came down from 3200 to
+**2700**.
+
+Three rules decided what moved:
+
+* **Static prose moved.** A sentence that is the same on every visit is a
+  tooltip; it was costing a line of page to say something the reader needs once.
+* **Runtime output stayed.** `pki_status`, `pki_tls_status`, `pki_store_count`,
+  `pki_tls_limits`, `pki_keys_storage_note` and the rest are what the page has
+  just *done*. Most are empty until they have something to say, so they cost no
+  height at rest, and a warning nobody hovers over is not a warning. The two
+  that were always filled — the profile note and the signature-algorithm note —
+  are prose selected by a dropdown rather than output, and they became the
+  **dropdown's own** `title`, dynamically: `setTitle('pki_profile', …)` where
+  it used to be `setText('pki_profile_note', …)`. The profile note has a
+  fallback sentence because only seven of the fourteen profiles have one, and a
+  control whose title is empty has no tooltip at all.
+* **The folds stayed.** The seven `<details class="pki-more">` blocks are one
+  summary line each and hold the prose that explains *why* something fails,
+  which is the prose worth keeping readable and copyable rather than in a
+  hover.
+
+The consequence is that a field with no tooltip is now a field with no
+explanation anywhere, so `everyFieldHasATooltip()` asserts every one of the
+**131** controls on the page has one — on itself, on its `label[for=…]`, or on
+a `<label>` around it, the three shapes this page uses. Three controls failed
+it when it was first written, and all three for the same reason: a
+`<label title="…">` with no `for` attribute is a label the browser associates
+with nothing, so its tooltip was not the field's tooltip either.
+
+## Not Before and Not After are pickers
+
+The four validity fields — the certificate's pair and `privateKeyUsagePeriod`'s
+— were text inputs holding ISO 8601 until 2026-08-18 and are `datetime-local`
+inputs now. The picker's value is **local** time and what is encoded is the
+instant, which `new Date("2035-06-07T08:09")` gets right without any conversion
+in `validityDates()`.
+
+Two things in eight lines of code, both of which fail silently:
+
+* **A `datetime-local` rejects anything but `YYYY-MM-DDTHH:MM` by setting
+  itself to EMPTY.** Every one of these fields is `.stored`, so the reload that
+  upgraded somebody's page would have handed the input a `2026-01-01T00:00:00Z`
+  it refuses, and their validity dates would have vanished with nothing
+  anywhere to say why. `restoreState()` converts by `type`, not by a list of
+  ids, so the two `privateKeyUsagePeriod` fields are covered by the same line.
+* **It has a minimum width of its own** — a row of spin fields plus a calendar
+  button, which Chrome will not draw narrower than their text. `width: 100%`
+  alone does not make one fit a 174px half-column: it stops shrinking and hangs
+  out over the column beside it, which is exactly the trap the `number` input
+  was in. `css/pki.css` gives it `min-width: 0` and 0.78em, and the
+  no-control-outside-its-column assertion is what proves it landed.
 
 ## Four things about certificates that are wrong and self-consistent
 
@@ -233,6 +574,57 @@ sign with one. Both are avoidable:
 
 OpenSSL verifies the result, and `tests/pki_x509.js` issues a whole chain
 through it.
+
+## "View certificate details" and the page it opens
+
+The store's *View certificate details* button hands the selected PEM to
+`saml_cert.html` through `localStorage['saml_cert_view']` and opens it in a
+second tab. That page is shared: ten pages send certificates to it, and until
+2026-08-18 it parsed them with **node-forge**, whose `certificateFromPem()`
+reads the SubjectPublicKeyInfo eagerly and supports exactly one algorithm in
+it. So every EC and every Ed25519 certificate — which is **every certificate
+this page issues except the RSA ones** — arrived at
+
+```
+Parse error: Cannot read public key. OID is not RSA.
+```
+
+a message about a public key, on a page that had not got as far as showing the
+subject, and produced by the page you were sent to rather than the one that
+issued the certificate.
+
+It parses with `x509.js` now, which is the module the certificate was issued
+with, so there is one description of a certificate in this tree rather than
+two: every extension the page can build it can also read back. Three things
+came with the change:
+
+* **`extensionValueText()` moved into `x509.js`** from `pki.js`, which had it
+  as `describeExtensionValue()`. `describeExtension()` returns a string for
+  some extensions, a number for others, an array for the list-shaped ones and
+  an object for `basicConstraints`, `nameConstraints` and the authority key
+  identifier — a caller that renders only the shapes it has met prints
+  `[object Object]` for the rest.
+* **`describeCertificate()` no longer needs Web Crypto to answer.** The two
+  fingerprints are the only part of it that does, and they are digests of a
+  public document; `fingerprintsOf()` returns nulls with a warning rather than
+  throwing, and the page prints a note in those two rows. The public key falls
+  back to the algorithm named in the SubjectPublicKeyInfo when
+  `describePublicPem()` cannot import the key — which is what a browser with
+  no Ed25519 in Web Crypto does with an Ed25519 certificate. The certificate
+  says what it is; a page that cannot import the key can still say so.
+* **`saml_cert.js` takes the FIRST certificate out of a pasted bundle.** A
+  chain is what an IdP's metadata carries, and `pemToDer()` strips every armour
+  line before decoding, which turns two certificates into one unparseable blob
+  and an error about ASN.1 rather than about a chain.
+
+The return link needed `pki.html` in its map as well, or the reader lands on a
+page whose only way back is the browser's own button.
+
+`theDetailsPageReadsEveryKeyAlgorithm()` in `tests/pki_page.js` asserts this
+through the button, in the tab it opens, once per key algorithm — **EC first**,
+since RSA is the one algorithm the old parser got right. Neither module's own
+tests could have caught it: `pki_x509.js` never opens a browser, and
+`pki_page.js` had never left the PKI page.
 
 ## The store, and the private-key opt-out
 
@@ -490,7 +882,7 @@ answer.
 | `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles; a four-deep chain; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers | never |
 | `tests/pki_key_formats.js` | 7 algorithms × 4 formats × password on/off, read back by OpenSSL; a PKCS#12 carrying a whole chain; the refusals by name; PEM↔JWK round trips | never |
 | `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, and the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success | never |
-| `tests/pki_page.js` | the hierarchy built through the form, the store surviving a reload, the private-key opt-out in both states, the list-field syntax, the TLS test end to end, no browser-side TLS option — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, and every folded note still holding its prose and no control | needs the client; the TLS section skips without an api |
+| `tests/pki_page.js` | the hierarchy built through the form, the *View certificate details* hand-off read back on `saml_cert.html` for every key algorithm, the store surviving a reload, the private-key opt-out in both states, the serial number (shown, persisted, signed, rotated, and typed over), the subject-DN defaults and the profile subjectAltName, a tooltip on every one of the 131 controls, the validity pickers and the ISO-8601 values an older build stored, the list-field syntax, the TLS test end to end, no browser-side TLS option — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, no control drawn outside its column, and every folded note still holding its prose and no control | needs the client; the TLS section skips without an api |
 | `tests/pki_mutual_tls.js` | the same page against a server that **answers back**: a client certificate issued through the form, presented with its chain to the mock STS's two listeners, and the **server's own account** of the connection — the chain it built, the anchor it verified against, and `required` told apart from `required-and-rejected` by trusting the CA between two otherwise identical runs | needs the client, the api and `STS_TLS_URL` |
 
 The first three are node-only and need **`openssl` on the PATH** (the tests image
@@ -514,7 +906,8 @@ that quietly stops asserting is worse than one that fails.
   checks. Miss the last and the extension is one nobody can set, with nothing to
   say so.
 * **A new block of fields is not a new pane.** Everything that is an input to
-  *Issue Certificate* goes inside `pane_config`, under a `.pki-group` heading if
+  *Generate Key Pair & Issue Certificate* goes inside `pane_config`, under a
+  `.pki-group` heading if
   it needs a name — `theConfigurationIsOnePane()` asserts the pane list by name,
   so a fourth pane fails there rather than being noticed by somebody a month
   later. The same section asserts that a `<details class="pki-more">` holds no

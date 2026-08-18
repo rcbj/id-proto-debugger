@@ -41,6 +41,12 @@ const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
+// The subject-DN defaults and the profile subjectAltName are the
+// module's, not the page's — this is the one place in this file that
+// compares against them rather than against a list copied into it, and
+// it is worth the require: a default changed in x509.js and not reaching
+// the form is exactly the shape of failure this whole file exists for.
+const x509 = require("../client/src/x509.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -207,6 +213,27 @@ async function waitForStatusChange(driver, id, previous, what) {
   return last;
 }
 
+// The one button generates the key pair and THEN issues, so the status line
+// passes through "Generating a … key pair…" and "Generated a …" before it says
+// anything about a certificate. A wait for "the line changed" returns the
+// first of those, and the assertion after it then fails naming a subject that
+// was never going to be in a message about a key pair.
+async function waitForIssueOutcome(driver, what) {
+  log.debug("Entering waitForIssueOutcome(). what=" + what);
+  let last = "";
+  try {
+    await driver.wait(async function () {
+      last = await textOf(driver, "pki_status");
+      return /Issued "|Could not issue|failed/.test(last || "");
+    }, CRYPTO_WAIT);
+  } catch (e) {
+    throw new Error("timed out waiting for " + what + " (the pki_status " +
+      "line still reads " + JSON.stringify(last) + ")");
+  }
+  log.debug("Leaving waitForIssueOutcome(). " + last);
+  return last;
+}
+
 // ---------------------------------------------------------------------------
 // 1. The page loads, offers what the modules define, and offers no TLS option
 //    the browser could not honour.
@@ -307,7 +334,8 @@ async function thePageOffersWhatTheModulesDefine(driver) {
 //
 // "Key Pair", "Issue a Certificate" and "X.509v3 Extensions" were three panes
 // describing one act — every field in all three is an input to the single
-// Issue Certificate button at the foot of the one pane that replaced them.
+// "Generate Key Pair & Issue Certificate" button at the top of the one pane
+// that replaced them.
 // Each pane cost a title bar, two borders and the gap between them before a
 // field was drawn, and made the reader collapse three things to reach the
 // store rather than one.
@@ -317,14 +345,20 @@ async function thePageOffersWhatTheModulesDefine(driver) {
 //
 //   * a fourth pane, added for the next block of fields, costs all of it back
 //     and looks like tidiness in the diff;
-//   * the two headings the lost legends became are `div`s with no control to
+//   * the headings the lost legends became are `div`s with no control to
 //     point at, so nothing but this notices when one goes — and without them
 //     the key algorithm dropdown and the profile dropdown are two unlabelled
 //     selects side by side;
-//   * the extension list is two columns by way of `columns: 460px 2`, which
-//     is a MAXIMUM: one card that stops fitting collapses the whole list to a
-//     single column, which is ~900px of page and the only symptom is that you
-//     scroll further. So the column count is measured rather than assumed;
+//   * the pane itself is THREE columns (key pair | certificate | subject DN)
+//     and a grid row is as tall as its tallest item, so a block moved from one
+//     column to another turns into dead space at the foot of the short one
+//     rather than into a shorter page — and the third column wraps to a row of
+//     its own, silently and for the worse, if `.pki-cols`' 390px minimum is
+//     raised. Both are measured;
+//   * the extension list is three columns by way of `columns: 380px 3`, which
+//     is a MAXIMUM: one card that stops fitting costs a whole column, which is
+//     ~400px of page and the only symptom is that you scroll further. So the
+//     column count is measured rather than assumed;
 //   * and the prose folded into `<details>` is folded rather than CUT. A
 //     `<summary>` whose paragraph was deleted in some later tidy-up still
 //     opens, still closes, and says nothing.
@@ -339,17 +373,21 @@ var LAYOUT_HEIGHT = 768;
 
 // How tall the whole page may be at that size, with every pane expanded.
 //
-// MEASURED, on 2026-08-18 at 1366x768 in headless Chrome: **3323px**, down
-// from **4941px** for the seven-pane version with a single-column extension
-// list — a third of the page, and the store pane moved from 3802px down the
-// document to 2146px. This budget is that measurement plus ~20%, which is
-// slack for the fonts: the containerized run has fonts-liberation and a host
-// run has the host's Arial, and their metrics are not the same. It is
-// deliberately not tight. What it is here to catch is the change that gives
-// the whole saving back at once — un-merging the configuration pane, or the
-// extension list falling to one column — each of which is worth many hundreds
-// of pixels rather than the tens that a font accounts for.
-var PAGE_HEIGHT_BUDGET = 4000;
+// MEASURED at 1366x768 in headless Chrome, four times on the same page:
+// **4941px** for the seven-pane version with a single-column extension list;
+// **3323px** on 2026-08-18 when the first three panes became one and that list
+// became two columns; **~2600px** later the same day when the configuration
+// pane went to THREE columns (the subject DN is one of its own), the extension
+// list to three, and the TLS pane to two; and **2196px** on 2026-08-18 when
+// every standing note and warning became the tooltip of the control it
+// describes. This budget is that last measurement plus ~20%, which is slack
+// for the fonts: the containerized run has fonts-liberation and a host run has
+// the host's Arial, and their metrics are not the same. It is deliberately not
+// tight. What it is here to catch is the change that gives a whole saving back
+// at once — un-merging the configuration pane, either list falling a column,
+// or a paragraph of prose unfolded back onto the page — each of which is worth
+// many hundreds of pixels rather than the tens that a font accounts for.
+var PAGE_HEIGHT_BUDGET = 2700;
 
 // The panes this page has after the merge, in order. Named rather than
 // counted, so a pane that is renamed and a pane that is added fail
@@ -387,7 +425,7 @@ async function theConfigurationIsOnePane(driver) {
       "return arguments[0].filter(function (id) {" +
       "  var e = document.getElementById(id);" +
       "  return !e || !pane.contains(e); });",
-      ["pki_key_alg", "pki_generate", "pki_private_key", "pki_ks_format",
+      ["pki_key_alg", "pki_reuse_key", "pki_private_key", "pki_ks_format",
        "pki_save_keys", "pki_profile", "pki_issuer", "pki_sig_alg",
        "pki_dn_cn", "pki_dn_extra", "pki_ext_bc", "pki_ext_san",
        "pki_custom_extensions", "pki_issue"]);
@@ -401,7 +439,8 @@ async function theConfigurationIsOnePane(driver) {
       "return Array.prototype.map.call(" +
       "  document.querySelectorAll('#pane_config .pki-group')," +
       "  function (g) { return (g.textContent || '').trim(); });");
-    ["Key Pair", "Issue a Certificate", "X.509v3 Extensions"].forEach(
+    ["Key Pair", "Issue a Certificate", "Subject Distinguished Name",
+     "X.509v3 Extensions"].forEach(
       function (wanted) {
         assert.ok(groups.indexOf(wanted) >= 0,
           "the '" + wanted + "' heading is gone. It was a pane legend and is " +
@@ -410,7 +449,86 @@ async function theConfigurationIsOnePane(driver) {
           groups.join(" | "));
       });
 
-    // The extension list's second column. `columns: 460px 2` is a maximum, so
+    // The configuration pane's own three columns — key pair, certificate,
+    // subject DN — and the two ways that layout fails without a symptom. A
+    // grid ROW is as tall as its tallest item, so a column carrying twice what
+    // its neighbour carries is not a layout, it is dead space with a border:
+    // with the DN inside the certificate column this pane was 392px beside
+    // 675px, and 283px of nothing at the foot of the key pair. And the third
+    // column silently wraps to a second ROW if `.pki-cols`' 390px minimum is
+    // raised — three columns need 3*390 + 2*22 = 1214px and there are 1275 —
+    // at which point the same markup is TALLER than what it replaced. So the
+    // tops are checked as well as the heights.
+    const cols = await driver.executeScript(
+      "return Array.prototype.map.call(" +
+      "  document.querySelectorAll('#pane_config .pki-col')," +
+      "  function (c) {" +
+      "    var r = c.getBoundingClientRect();" +
+      "    return { top: Math.round(r.top + window.scrollY)," +
+      "             height: Math.round(r.height) }; });");
+    assert.strictEqual(cols.length, 3,
+      "the configuration pane has " + cols.length + " .pki-col columns; it " +
+      "is meant to have three — the key pair, the certificate fields and the " +
+      "subject DN");
+    const tops = cols.map(function (c) { return c.top; });
+    assert.strictEqual(Math.max.apply(null, tops) -
+                       Math.min.apply(null, tops), 0,
+      "the configuration columns are on " + tops.length + " different rows " +
+      "(tops " + tops.join(", ") + ") at " + LAYOUT_WIDTH + "px, so one of " +
+      "them wrapped. `.pki-cols` is repeat(auto-fit, minmax(390px, 1fr)): a " +
+      "minimum raised past 410px puts the third column on a row of its own " +
+      "and makes the pane taller than the two-column version it replaced.");
+    const heights = cols.map(function (c) { return c.height; });
+    assert.ok(Math.min.apply(null, heights) >=
+              Math.max.apply(null, heights) * 0.6,
+      "the configuration columns are " + heights.join(", ") + "px tall. A " +
+      "grid row is as tall as its tallest item, so the difference is dead " +
+      "space — move a block between the columns rather than leaving it.");
+
+    // The two rows the middle column's height turns on, and the ONE property
+    // that says they are still rows. Both were two lines each — the algorithm
+    // select on its own above the button, the format and password above the
+    // Download button and its checkboxes — and those four lines are what left
+    // the key-pair column ~70px below the two beside it.
+    //
+    // What is asserted is the BOTTOM edge, not the height. Above 1330px both
+    // rows are `flex-wrap: nowrap` (css/pki.css) and `.saml-row` aligns its
+    // items along their bottoms, so one flex line is one distinct bottom
+    // however much a checkbox LABEL wraps inside it — which is what happens
+    // between 1330 and 1530, and is a line of text rather than a row of
+    // layout. A control that has moved onto a line of its own is a second
+    // bottom and nothing else on the page would show it: the row still holds
+    // every field, the page still works, and it is simply taller.
+    const bands = await driver.executeScript(
+      "return arguments[0].map(function (sel) {" +
+      "  var row = document.querySelector(sel);" +
+      "  if (!row) { return { sel: sel, missing: true }; }" +
+      "  var bottoms = {};" +
+      "  Array.prototype.forEach.call(row.children, function (c) {" +
+      "    bottoms[Math.round(c.getBoundingClientRect().bottom)] = true;" +
+      "  });" +
+      "  return { sel: sel, lines: Object.keys(bottoms).length," +
+      "           kids: row.children.length," +
+      "           height: Math.round(row.getBoundingClientRect().height) };" +
+      "});",
+      ["#pane_config .pki-actions", "#pane_config .pki-export-row"]);
+    bands.forEach(function (row) {
+      assert.ok(!row.missing,
+        "the row " + row.sel + " is gone. The key-pair column's height is " +
+        "these two rows: the algorithm select, the JWK toggle, the issue " +
+        "button and its reuse checkbox on one, and the keystore format, the " +
+        "password, both checkboxes and Download on the other.");
+      assert.strictEqual(row.lines, 1,
+        row.sel + " is on " + row.lines + " lines at " + LAYOUT_WIDTH +
+        "px (" + row.kids + " controls, " + row.height + "px tall). It is " +
+        "meant to be one: `flex-wrap: nowrap` above 1330px makes a width it " +
+        "cannot meet wrap a checkbox label instead of moving a control to a " +
+        "line of its own. A control that is too wide to shrink — a longer " +
+        "button caption, a `.pki-narrow` width raised past what it holds — " +
+        "puts the line back and the column below its neighbours again.");
+    });
+
+    // The extension list's third column. `columns: 380px 3` is a maximum, so
     // this is measured from where the cards actually landed.
     const ext = await driver.executeScript(
       "var list = document.querySelector('.pki-ext-list');" +
@@ -430,16 +548,60 @@ async function theConfigurationIsOnePane(driver) {
       "         cardHeightSum: sum };");
     assert.ok(ext && ext.cards >= 20,
       "the extension list is missing or nearly empty: " + JSON.stringify(ext));
-    assert.ok(ext.columns >= 2,
+    assert.ok(ext.columns >= 3,
       "the " + ext.cards + " extension cards laid out in " + ext.columns +
-      " column(s) at " + LAYOUT_WIDTH + "px. They are meant to flow in two: " +
-      "`columns: 460px 2` in css/pki.css is a MAXIMUM, so one card that " +
-      "stopped fitting 460px collapsed the whole list — about 900px of page, " +
-      "whose only symptom is that you scroll further.");
+      " column(s) at " + LAYOUT_WIDTH + "px. They are meant to flow in " +
+      "three: `columns: 380px 3` in css/pki.css is a MAXIMUM, so one card " +
+      "that stopped fitting 380px — a `.pki-flags` grid whose minimum grew " +
+      "past 172px is the likely one — costs a whole column, about 400px of " +
+      "page, whose only symptom is that you scroll further.");
     assert.ok(ext.listHeight < ext.cardHeightSum * 0.75,
       "the extension list is " + Math.round(ext.listHeight) + "px tall for " +
       Math.round(ext.cardHeightSum) + "px of cards, so the cards are " +
       "stacking rather than flowing into columns.");
+
+    // No control hangs out of the column it is in — which is the overflow
+    // the page CANNOT show you. `.pki-col` carries `min-width: 0` and its
+    // items are `flex: 1 1 0`, so a control with a FIXED width does not
+    // shrink with its column: it keeps that width and draws over whatever is
+    // in the next one. There is no scrollbar (the grid itself still fits),
+    // nothing is clipped, and the page height does not move — the only
+    // symptom is two controls sharing a few pixels, which reads as a font
+    // difference until it is measured.
+    //
+    // It is a shared-sheet omission that puts one there, so the check is over
+    // every control rather than over the one that had it: saml_common.css
+    // sizes `input[type="text"]`, `input[type="password"]`, `select` and
+    // `textarea` at `width: 100%` and does not name `input[type="number"]`,
+    // which left bootstrap.css's 220px on *Validity (years)* — 49px inside
+    // the Key Pair column at this width, over the *Keystore Format* label
+    // and select — and on the TLS pane's *Port*. Both are fixed in
+    // css/pki.css. Any control type that sheet does not name arrives the
+    // same way.
+    const spill = await driver.executeScript(
+      "var out = [];" +
+      "Array.prototype.forEach.call(" +
+      "  document.querySelectorAll('.pki-col'), function (col) {" +
+      "  var cr = col.getBoundingClientRect();" +
+      "  Array.prototype.forEach.call(" +
+      "    col.querySelectorAll('input, select, textarea, label')," +
+      "    function (e) {" +
+      "    var r = e.getBoundingClientRect();" +
+      "    if (r.width > 0 && r.right > cr.right + 1) {" +
+      "      out.push((e.id || e.htmlFor || e.tagName) + ' (' +" +
+      "        (e.type || e.tagName.toLowerCase()) + ') by ' +" +
+      "        Math.round(r.right - cr.right) + 'px');" +
+      "    }" +
+      "  });" +
+      "});" +
+      "return out;");
+    assert.deepStrictEqual(spill, [],
+      "these controls are drawn outside the column they belong to at " +
+      LAYOUT_WIDTH + "px: " + spill.join(", ") + ". A fixed width on a " +
+      "control in a `flex: 1 1 0` field does not shrink with its column — " +
+      "it overlaps the column beside it, with no scrollbar and no clipping " +
+      "to say so. Give it `width: 100%` and `box-sizing: border-box` the " +
+      "way css/saml_common.css does for every other control.");
 
     // Nothing scrolls sideways. The columns are grid and multi-column items
     // holding 64-character base64 lines, and a missing `min-width: 0` on
@@ -457,11 +619,12 @@ async function theConfigurationIsOnePane(driver) {
     assert.ok(pageHeight <= PAGE_HEIGHT_BUDGET,
       "the page is " + pageHeight + "px tall at " + LAYOUT_WIDTH + "x" +
       LAYOUT_HEIGHT + ", over the " + PAGE_HEIGHT_BUDGET + "px budget. It " +
-      "measured 3323px when the three configuration panes were merged and " +
-      "the extension list became two columns, down from 4941px; the budget " +
-      "carries ~20% of slack for font metrics, so this is not a few pixels " +
-      "of drift. Look for a pane that came back, an extension list that " +
-      "fell to one column, or prose that was unfolded.");
+      "measured ~2600px with the configuration pane in three columns, the " +
+      "extension list in three and the TLS pane in two, down from 4941px " +
+      "for the seven-pane version; the budget carries ~20% of slack for " +
+      "font metrics, so this is not a few pixels of drift. Look for a pane " +
+      "that came back, either list that fell a column, or prose that was " +
+      "unfolded.");
 
     // The folds kept their prose, and hold nothing anybody has to operate.
     const folds = await driver.executeScript(
@@ -517,30 +680,514 @@ async function theConfigurationIsOnePane(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. The serial number: filled in, editable, and a NEW one after every issue.
+//
+// The field used to be optional and empty, with x509.js picking a serial at
+// issue time; now the page puts a random 128-bit one there on load and a fresh
+// one there after every successful issue. Two of the three things asserted
+// here fail silently:
+//
+//   * a serial that is shown but not the one signed makes the field a
+//     decoration — the store row and the certificate would disagree with what
+//     the operator read before pressing the button;
+//   * a serial that does NOT rotate gives the next certificate from the same
+//     CA the same (issuer, serial) pair, which is the one pair a CRL entry, an
+//     OCSP request and every cache keyed on it cannot tell apart. The store
+//     shows two rows differing everywhere else, so nothing on the page says
+//     so.
+//
+// The reload in the middle is the third: newSerial() calls saveState() itself,
+// because setVal() fires no event and the page's delegated change listener is
+// what persists every `.stored` field.
+// ---------------------------------------------------------------------------
+const SERIAL_RE = /^[0-9a-f]{32}$/i;
+
+async function theSerialIsFilledInEditableAndRotates(driver) {
+  log.debug("Entering theSerialIsFilledInEditableAndRotates().");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_serial"));
+  await driver.executeScript("window.localStorage.clear();");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_serial"));
+
+  const first = await valueOf(driver, "pki_serial");
+  assert.ok(SERIAL_RE.test(first || ""),
+    "the Serial Number field does not hold a random 128-bit hex value on " +
+    "load, it holds " + JSON.stringify(first));
+  assert.ok(parseInt(first.slice(0, 2), 16) < 0x80,
+    "the generated serial has its top bit set, so DER encodes it with a " +
+    "leading zero byte and parsers report a 17-byte serial: " + first);
+
+  // It is saved like every other .stored field. setVal() fires no event, so
+  // this is the assertion that fails if newSerial() ever stops calling
+  // saveState() — and it fails on the NEXT page load, not on this one.
+  await driver.navigate().refresh();
+  await waitVisible(driver, By.id("pki_serial"));
+  assert.strictEqual(await valueOf(driver, "pki_serial"), first,
+    "the serial shown before a reload is not the one shown after it, so the " +
+    "value the operator was reading was never persisted");
+
+  // What is shown is what gets signed.
+  const status = await issueThrough(driver, { profile: "root-ca",
+    keyAlg: "ec-p256", sigAlg: "sha256-ecdsa", cn: "Page Serial Root" });
+  assert.ok(status.indexOf(first.slice(0, 16)) >= 0,
+    "the certificate was not issued with the serial the field was showing (" +
+    first + "): " + status);
+  let entries = await storeEntries(driver);
+  assert.strictEqual(entries.length, 1,
+    "expected one object in the store, found " + entries.length);
+  assert.strictEqual(String(entries[0].serialHex).toLowerCase(),
+    first.toLowerCase(),
+    "the stored certificate's serial is not the one the form showed");
+
+  // And a new one is waiting for the next certificate.
+  const second = await valueOf(driver, "pki_serial");
+  assert.ok(SERIAL_RE.test(second || ""),
+    "the Serial Number field was not refilled after issuing, it holds " +
+    JSON.stringify(second));
+  assert.notStrictEqual(second.toLowerCase(), first.toLowerCase(),
+    "the serial did not change after issuing, so the next certificate from " +
+    "this CA would carry the same (issuer, serial) pair as the last one");
+
+  // It is an ordinary field: a serial typed by hand is the one signed.
+  const typed = "0a1b2c3d4e5f60718293a4b5c6d7e8f9";
+  await issueThrough(driver, { profile: "root-ca", keyAlg: "ec-p256",
+    sigAlg: "sha256-ecdsa", cn: "Page Serial Root Two",
+    apply: async function (d) {
+      await setField(d, "pki_serial", typed);
+    } });
+  entries = await storeEntries(driver);
+  const typedEntry = entries.filter(function (e) {
+    return e.subject.indexOf("Page Serial Root Two") >= 0;
+  })[0];
+  assert.ok(typedEntry,
+    "the second certificate is not in the store: " +
+    entries.map(function (e) { return e.subject; }).join(" | "));
+  assert.strictEqual(String(typedEntry.serialHex).toLowerCase(), typed,
+    "a serial typed into the field was not the one signed — the field is a " +
+    "decoration rather than an input");
+  const third = await valueOf(driver, "pki_serial");
+  assert.ok(SERIAL_RE.test(third || "") && third.toLowerCase() !== typed,
+    "a typed serial was left in the field after issuing, so pressing the " +
+    "button twice signs it twice: " + JSON.stringify(third));
+  log.debug("Leaving theSerialIsFilledInEditableAndRotates().");
+}
+
+// ---------------------------------------------------------------------------
+// 2c. The rest of the subject DN, and the subjectAltName that follows the CN.
+//
+// The CN has followed the profile since the profiles existed; O/OU/L/ST/C are
+// new on 2026-08-18 and behave DIFFERENTLY on purpose — they do not vary by
+// profile, so they are filled once into whatever is empty and never replaced.
+// The two rules are asserted together because the failure is the same one in
+// both directions: a default that overwrites something typed loses work, and a
+// default that never arrives leaves a DN with nothing in it but a CN.
+//
+// The subjectAltName is the one that matters most and shows least. For a TLS
+// server the name a client checks is the SAN — every current browser ignores
+// the Common Name — so a server certificate issued here with the CN filled in
+// and the SAN empty is a certificate no client will accept, and nothing on the
+// page or in the store says so. The two serverAuth profiles therefore tick the
+// box and fill in `dns:` + their own CN, and picking a Root CA afterwards has
+// to take it away again: `dns:server` on a root is a name that certificate has
+// no business asserting.
+// ---------------------------------------------------------------------------
+async function theSubjectDefaultsAndTheSanFollowTheProfile(driver) {
+  log.debug("Entering theSubjectDefaultsAndTheSanFollowTheProfile().");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_dn_o"));
+  await driver.executeScript("window.localStorage.clear();");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_dn_o"));
+
+  // What the module defines is what the form holds.
+  const DN_FIELDS = [["O", "pki_dn_o"], ["OU", "pki_dn_ou"],
+                     ["L", "pki_dn_l"], ["ST", "pki_dn_st"],
+                     ["C", "pki_dn_c"]];
+  for (const [name, id] of DN_FIELDS) {
+    const wanted = x509.DEFAULT_DN[name];
+    assert.ok(wanted,
+      "x509.js defines no DEFAULT_DN." + name + ", so this test is checking " +
+      "the page against nothing");
+    assert.strictEqual(await valueOf(driver, id), wanted,
+      "the " + name + " field holds " +
+      JSON.stringify(await valueOf(driver, id)) + " on a first load; " +
+      "x509.js's DEFAULT_DN says " + JSON.stringify(wanted));
+  }
+
+  // Fill-only. A value in the field is somebody's, including one this page
+  // put there yesterday, and the path that loses it is the RELOAD.
+  await setField(driver, "pki_dn_o", "My Own Company Ltd");
+  await selectOption(driver, "pki_profile", "tls-client");
+  assert.strictEqual(await valueOf(driver, "pki_dn_o"), "My Own Company Ltd",
+    "changing the profile overwrote an O that was typed by hand");
+  await driver.navigate().refresh();
+  await waitVisible(driver, By.id("pki_dn_o"));
+  assert.strictEqual(await valueOf(driver, "pki_dn_o"), "My Own Company Ltd",
+    "a reload overwrote an O that was typed by hand — the defaults are " +
+    "applied after restoreState(), so this is the path that loses it");
+
+  // The subjectAltName follows the profile, both ways.
+  await selectOption(driver, "pki_profile", "tls-server");
+  const wantedSan = x509.defaultSubjectAltName("tls-server");
+  assert.ok(wantedSan,
+    "x509.js gives the tls-server profile no default subjectAltName");
+  assert.strictEqual(await valueOf(driver, "pki_san"), wantedSan,
+    "choosing the TLS Server profile did not fill in the subjectAltName. " +
+    "The CN is not what a TLS client checks, so a server certificate " +
+    "without one is refused by every current browser — and neither the page " +
+    "nor the store says why.");
+  assert.strictEqual(await valueOf(driver, "pki_dn_cn"),
+    x509.defaultSubjectCN("tls-server"),
+    "the TLS Server profile's CN is not the module's");
+  assert.strictEqual(wantedSan, "dns:" + x509.defaultSubjectCN("tls-server"),
+    "the profile's default subjectAltName does not name its own CN, so the " +
+    "certificate asserts one name and is called another");
+  const sanOn = await driver.executeScript(
+    "return document.getElementById('pki_ext_san').checked;");
+  assert.strictEqual(sanOn, true,
+    "the subjectAltName VALUE was filled in but the extension is not ticked, " +
+    "so none of it reaches the certificate");
+
+  await selectOption(driver, "pki_profile", "root-ca");
+  assert.strictEqual(await valueOf(driver, "pki_san"), "",
+    "a Root CA kept the TLS Server profile's subjectAltName. A root " +
+    "asserting dns:" + x509.defaultSubjectCN("tls-server") + " is a name it " +
+    "has no business carrying, and it is two columns away from where the " +
+    "profile was chosen.");
+  const stillOn = await driver.executeScript(
+    "return document.getElementById('pki_ext_san').checked;");
+  assert.strictEqual(stillOn, false,
+    "the subjectAltName extension is still ticked with nothing in it");
+
+  // The SAN follows the CN, which is the case this exists for: picking TLS
+  // Server and then typing the name you actually want is the ordinary way to
+  // use this page, and a SAN left saying dns:server while the CN says
+  // something else is the same unusable certificate as no SAN at all.
+  await selectOption(driver, "pki_profile", "tls-server");
+  await setField(driver, "pki_dn_cn", "www.my-own-name.test");
+  assert.strictEqual(await valueOf(driver, "pki_san"),
+    "dns:www.my-own-name.test",
+    "typing a CN under the TLS Server profile left the subjectAltName " +
+    "naming " + JSON.stringify(await valueOf(driver, "pki_san")) + ". The " +
+    "certificate would then assert one name and be called another, which is " +
+    "the certificate this default is here to stop.");
+
+  // And a name somebody typed is never touched.
+  await setField(driver, "pki_san", "dns:something.else.test");
+  await setField(driver, "pki_dn_cn", "www.changed-again.test");
+  assert.strictEqual(await valueOf(driver, "pki_san"),
+    "dns:something.else.test",
+    "changing the CN overwrote a subjectAltName that was typed by hand");
+  await selectOption(driver, "pki_profile", "tls-server-client");
+  assert.strictEqual(await valueOf(driver, "pki_san"),
+    "dns:something.else.test",
+    "changing the profile overwrote a subjectAltName that was typed by hand");
+
+  await driver.executeScript("window.localStorage.clear();");
+  log.debug("Leaving theSubjectDefaultsAndTheSanFollowTheProfile().");
+}
+
+// ---------------------------------------------------------------------------
+// 2d. Every control on the page has a tooltip.
+//
+// This page carries more fields than any other in the tree and, since
+// 2026-08-18, its standing notes are gone: the prose that was a paragraph
+// under a field is the `title` of that field. That is what took the page from
+// ~2600px to ~2200px, and it is only an improvement while the tooltip is
+// actually there — a field with neither a note nor a title is not compact, it
+// is undocumented, and nothing on screen distinguishes the two.
+//
+// A control counts as documented if it has a title of its own, or its
+// `label[for=…]` has one, or it sits inside a `<label>` that has one — the
+// three shapes this page uses. Hidden inputs are skipped: `pki_selected` is
+// state, not a field.
+// ---------------------------------------------------------------------------
+async function everyFieldHasATooltip(driver) {
+  log.debug("Entering everyFieldHasATooltip().");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_dn_cn"));
+
+  const found = await driver.executeScript(
+    "function tip(e) {" +
+    "  if ((e.title || '').trim()) { return true; }" +
+    "  if (e.id) {" +
+    "    var l = document.querySelector('label[for=\"' + e.id + '\"]');" +
+    "    if (l && (l.title || '').trim()) { return true; }" +
+    "  }" +
+    "  var p = e.parentElement;" +
+    "  while (p) {" +
+    "    if (p.tagName === 'LABEL' && (p.title || '').trim()) {" +
+    "      return true;" +
+    "    }" +
+    "    p = p.parentElement;" +
+    "  }" +
+    "  return false;" +
+    "}" +
+    "var out = { total: 0, missing: [] };" +
+    "Array.prototype.forEach.call(" +
+    "  document.querySelectorAll('input, select, textarea'), function (e) {" +
+    "  if (e.type === 'hidden') { return; }" +
+    "  out.total++;" +
+    "  if (!tip(e)) { out.missing.push((e.id || e.name || '(unnamed)') +" +
+    "    ' [' + e.type + ']'); }" +
+    "});" +
+    "return out;");
+  assert.ok(found.total >= 120,
+    "only " + found.total + " controls were found on the page, so this " +
+    "check is looking at the wrong document");
+  assert.deepStrictEqual(found.missing, [],
+    "these controls have no tooltip — not on themselves, not on their " +
+    "label[for], not on a label around them: " + found.missing.join(", ") +
+    ". The notes that used to explain them were moved into titles to shorten " +
+    "the page, so a field without one now has no explanation anywhere.");
+  log.debug("Leaving everyFieldHasATooltip(). " + found.total + " controls.");
+}
+
+// ---------------------------------------------------------------------------
+// 2e. Not Before / Not After are date-and-time pickers, and an ISO 8601 string
+//     stored by the older build still arrives.
+//
+// These four fields were text inputs holding ISO 8601 until 2026-08-18. A
+// `datetime-local` input takes "YYYY-MM-DDTHH:MM" in LOCAL time and rejects
+// anything else by silently setting itself to EMPTY — so the reload that
+// upgrades somebody's page would have dropped the validity dates they had
+// stored, with nothing anywhere to say why. restoreState() converts instead,
+// which is what the second half of this asserts.
+// ---------------------------------------------------------------------------
+async function theValidityFieldsArePickers(driver) {
+  log.debug("Entering theValidityFieldsArePickers().");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_not_before"));
+
+  const types = await driver.executeScript(
+    "return arguments[0].map(function (id) {" +
+    "  var e = document.getElementById(id);" +
+    "  return id + '=' + (e ? e.type : '(missing)'); });",
+    ["pki_not_before", "pki_not_after", "pki_pkup_not_before",
+     "pki_pkup_not_after"]);
+  types.forEach(function (pair) {
+    assert.ok(/=datetime-local$/.test(pair),
+      "a validity field is not a date-and-time picker: " +
+      types.join(", ") + ". All four are pickers so that a date is chosen " +
+      "rather than typed in a format that has to be explained.");
+  });
+
+  // A value the OLD build stored, arriving at the new one.
+  await driver.executeScript(
+    "window.localStorage.setItem('pkitools_pki_not_before'," +
+    " '2031-03-04T05:06:07Z');" +
+    "window.localStorage.setItem('pkitools_pki_not_after'," +
+    " '2032-03-04T05:06:07Z');");
+  await driver.navigate().refresh();
+  await waitVisible(driver, By.id("pki_not_before"));
+  const before = await valueOf(driver, "pki_not_before");
+  const after = await valueOf(driver, "pki_not_after");
+  assert.ok(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(before),
+    "an ISO 8601 value stored by the older build came back as " +
+    JSON.stringify(before) + ". A datetime-local input refuses anything but " +
+    "YYYY-MM-DDTHH:MM by emptying itself, so without the conversion in " +
+    "restoreState() the upgrade silently discards the dates.");
+  assert.ok(/^2031-03-0[34]T/.test(before),
+    "the converted Not Before is " + before + ", which is not the instant " +
+    "that was stored (2031-03-04T05:06:07Z, in this machine's own zone)");
+  assert.ok(/^2032-03-0[34]T/.test(after),
+    "the converted Not After is " + after);
+
+  // And a picked value is the one that gets signed.
+  await driver.executeScript("window.localStorage.clear();");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_not_before"));
+  await setField(driver, "pki_not_before", "2035-06-07T08:09");
+  await setField(driver, "pki_not_after", "2036-06-07T08:09");
+  await issueThrough(driver, { profile: "root-ca", keyAlg: "ec-p256",
+    sigAlg: "sha256-ecdsa", cn: "Page Picker Root" });
+  const entries = await storeEntries(driver);
+  const issued = entries.filter(function (e) {
+    return e.subject.indexOf("Page Picker Root") >= 0;
+  })[0];
+  assert.ok(issued, "the certificate issued with picked dates is not in the " +
+    "store: " + entries.map(function (e) { return e.subject; }).join(" | "));
+  assert.ok(/^2035-06-0[678]/.test(String(issued.notBefore)),
+    "the certificate's notBefore is " + issued.notBefore + ", not the " +
+    "2035-06-07 that was picked — the picker's value is local time and has " +
+    "to reach the encoder as the instant it names");
+  assert.ok(/^2036-06-0[678]/.test(String(issued.notAfter)),
+    "the certificate's notAfter is " + issued.notAfter + ", not the " +
+    "2036-06-07 that was picked");
+
+  await driver.executeScript("window.localStorage.clear();");
+  log.debug("Leaving theValidityFieldsArePickers().");
+}
+
+// ---------------------------------------------------------------------------
+// 2f. "View certificate details" opens a page that can read what this one
+//     issues — ALL of it, not the RSA quarter of it.
+//
+// That button hands the PEM to saml_cert.html through localStorage and opens
+// it in a second tab. Until 2026-08-18 that page parsed with node-forge, whose
+// certificateFromPem() reads the SubjectPublicKeyInfo eagerly and knows one
+// algorithm, so every EC and every Ed25519 certificate — which is every
+// certificate this page issues except the RSA ones — arrived at
+//
+//     Parse error: Cannot read public key. OID is not RSA.
+//
+// a message about a public key, on a page that had not got as far as the
+// subject. It parses with x509.js now, which is the module the certificate was
+// issued with.
+//
+// Neither module's own tests could see this: pki_x509.js never opens a
+// browser, and this file never left the PKI page. So the assertion is made
+// where the defect was — through the button, in the tab it opens, once per key
+// algorithm.
+// ---------------------------------------------------------------------------
+async function theDetailsPageReadsEveryKeyAlgorithm(driver) {
+  log.debug("Entering theDetailsPageReadsEveryKeyAlgorithm().");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_key_alg"));
+  await driver.executeScript("window.localStorage.clear();");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_key_alg"));
+
+  // One per key algorithm family, because the family is what the old parser
+  // could not read. The signature algorithm follows the key: a root is
+  // self-signed, so it can only be signed with what its own key produces.
+  //
+  // EC FIRST, and deliberately: RSA is the one algorithm a parser that knows
+  // only RSA gets right, so running it first makes the failure report
+  // whatever the RSA case happens to trip over next instead of the message
+  // the reader needs, which is on the second case.
+  const CASES = [
+    { keyAlg: "ec-p256", sigAlg: "sha256-ecdsa", cn: "Page View P256",
+      key: /^ECDSA P-256$/ },
+    { keyAlg: "ed25519", sigAlg: "ed25519", cn: "Page View Ed25519",
+      key: /^Ed25519$/ },
+    { keyAlg: "ec-p521", sigAlg: "sha512-ecdsa", cn: "Page View P521",
+      key: /^ECDSA P-521$/ },
+    { keyAlg: "rsa-2048", sigAlg: "sha256-rsa", cn: "Page View RSA",
+      key: /^RSA 2048-bit$/ }
+  ];
+
+  const main = await driver.getWindowHandle();
+  for (const item of CASES) {
+    await issueThrough(driver, { profile: "root-ca", keyAlg: item.keyAlg,
+      sigAlg: item.sigAlg, cn: item.cn });
+
+    // Issuing shows the certificate but does not SELECT it, and the button
+    // reads the selection — so this is the click a person makes.
+    const picked = await driver.executeScript(
+      "var want = arguments[0];" +
+      "var rows = document.querySelectorAll('#pki_store_table tbody tr');" +
+      "for (var i = 0; i < rows.length; i++) {" +
+      "  if ((rows[i].textContent || '').indexOf(want) >= 0) {" +
+      "    var radio = rows[i].querySelector('input[type=\"radio\"]');" +
+      "    if (radio) { radio.click(); return true; }" +
+      "  }" +
+      "}" +
+      "return false;", item.cn);
+    assert.strictEqual(picked, true,
+      "no row for " + item.cn + " in the store to select");
+
+    const before = await driver.getAllWindowHandles();
+    await click(driver, "pki_view_cert");
+    await driver.wait(async function () {
+      return (await driver.getAllWindowHandles()).length > before.length;
+    }, CRYPTO_WAIT, "View certificate details opened no tab for " + item.cn);
+    const opened = (await driver.getAllWindowHandles()).filter(function (h) {
+      return before.indexOf(h) < 0;
+    })[0];
+    await driver.switchTo().window(opened);
+    try {
+      await waitVisible(driver, By.id("saml_cert_input"));
+      // The page parses on load, so this waits for CONTENT rather than for
+      // the element — per tests/wait_for.js.
+      let status = "";
+      await driver.wait(async function () {
+        status = await valueOf(driver, "saml_cert_status");
+        return !!(status && status.trim());
+      }, CRYPTO_WAIT, "the details page never said whether it parsed " +
+        item.cn);
+      assert.ok(/^Parsed/.test(status),
+        "the certificate details page could not read a " + item.keyAlg +
+        " certificate: " + JSON.stringify(status) + ". It is handed the PEM " +
+        "this page issued, so a parser that knows one public-key algorithm " +
+        "fails here on every certificate but the RSA ones — and says so in a " +
+        "message about a key, before it has shown the subject.");
+
+      const rows = await driver.executeScript(
+        "var t = document.getElementById('saml_cert_table');" +
+        "if (!t) { return null; }" +
+        "var out = {};" +
+        "Array.prototype.forEach.call(t.querySelectorAll('tr')," +
+        "  function (r) { out[r.cells[0].textContent] =" +
+        "    r.cells[1].textContent; });" +
+        "return out;");
+      assert.ok(rows, "the details page printed no table for " + item.cn);
+      assert.ok(rows.Subject && rows.Subject.indexOf(item.cn) >= 0,
+        "the details page is showing " + JSON.stringify(rows.Subject) +
+        " rather than the certificate that was selected (" + item.cn + ")");
+      assert.ok(item.key.test(rows["Public Key"] || ""),
+        "the details page describes the public key of a " + item.keyAlg +
+        " certificate as " + JSON.stringify(rows["Public Key"]) + ". The " +
+        "algorithm is in the SubjectPublicKeyInfo, so this is readable " +
+        "without importing the key.");
+      assert.ok((rows["SHA-256 Fingerprint"] || "").indexOf(":") > 0,
+        "the details page shows no SHA-256 fingerprint for " + item.cn +
+        ": " + JSON.stringify(rows["SHA-256 Fingerprint"]));
+      assert.ok(Object.keys(rows).filter(function (k) {
+        return k.indexOf("Extension") === 0;
+      }).length >= 3,
+        "a root CA has basicConstraints, keyUsage and two key identifiers; " +
+        "the details page listed " + Object.keys(rows).filter(function (k) {
+          return k.indexOf("Extension") === 0;
+        }).length + " extension(s)");
+
+      // And the way back. saml_cert.html is reached from ten pages and reads
+      // ?from= to label its return link; a caller missing from that map
+      // leaves the reader on a page with no way back to where they were.
+      const back = await driver.executeScript(
+        "var a = document.getElementById('return_link');" +
+        "return a ? { href: a.getAttribute('href')," +
+        "             text: (a.textContent || '').trim() } : null;");
+      assert.ok(back && back.href === "/pki.html",
+        "the details page's return link points at " +
+        JSON.stringify(back && back.href) + " rather than back at the PKI " +
+        "page it was opened from");
+      assert.ok(/Certificate Authority/.test(back.text),
+        "the return link reads " + JSON.stringify(back && back.text));
+    } finally {
+      await driver.close();
+      await driver.switchTo().window(main);
+    }
+  }
+
+  await driver.executeScript("window.localStorage.clear();");
+  log.debug("Leaving theDetailsPageReadsEveryKeyAlgorithm().");
+}
+
+// ---------------------------------------------------------------------------
 // 3. The workflow: a root, an intermediate, an issuing CA and a leaf, built
 //    entirely through the form.
 // ---------------------------------------------------------------------------
-async function generateKeyPair(driver, algId) {
-  log.debug("Entering generateKeyPair(). alg=" + algId);
-  const before = await textOf(driver, "pki_status");
-  await selectOption(driver, "pki_key_alg", algId);
-  await click(driver, "pki_generate");
-  await driver.wait(async function () {
-    const priv = await valueOf(driver, "pki_private_key");
-    return priv && priv.indexOf("-----BEGIN") === 0;
-  }, CRYPTO_WAIT, "the key pair fields never filled for " + algId);
-  const status = await textOf(driver, "pki_status");
-  assert.notStrictEqual(status, before,
-    "the status line did not change after generating a key pair");
+// The key pair is no longer generated by a button of its own: ONE button
+// generates it and issues the certificate, because a pair that is never
+// certified is kept nowhere and a certificate cannot be issued without one.
+// So this asserts what the pair looked like AFTER the issue, which is the only
+// moment it exists.
+async function keyPairWasGenerated(driver, algId) {
+  log.debug("Entering keyPairWasGenerated(). alg=" + algId);
+  const priv = await valueOf(driver, "pki_private_key");
+  assert.ok(priv && priv.indexOf("-----BEGIN") === 0,
+    algId + ": the private key field did not fill");
   const publicPem = await valueOf(driver, "pki_public_key");
   assert.ok(publicPem.indexOf("-----BEGIN PUBLIC KEY-----") === 0,
     algId + ": the public key field does not hold a SubjectPublicKeyInfo PEM");
-  log.debug("Leaving generateKeyPair().");
+  log.debug("Leaving keyPairWasGenerated().");
 }
 
 async function issueThrough(driver, spec) {
   log.debug("Entering issueThrough(). subject=" + spec.cn);
-  await generateKeyPair(driver, spec.keyAlg);
+  await selectOption(driver, "pki_key_alg", spec.keyAlg);
   await selectOption(driver, "pki_profile", spec.profile);
   if (spec.issuerSubject) {
     // The issuer dropdown holds store ids, so it is chosen by the label the
@@ -571,15 +1218,15 @@ async function issueThrough(driver, spec) {
   }
   if (spec.apply) await spec.apply(driver);
 
-  const before = await textOf(driver, "pki_status");
   await click(driver, "pki_issue");
-  const status = await waitForStatusChange(driver, "pki_status", before,
+  const status = await waitForIssueOutcome(driver,
       "the certificate for " + spec.cn + " to be issued");
   assert.ok(status.indexOf("Issued") >= 0,
     "issuing " + spec.cn + " failed: " + status);
   assert.ok(status.indexOf(spec.cn) >= 0,
     "the status line names a different subject than the one issued: " +
     status);
+  await keyPairWasGenerated(driver, spec.keyAlg);
   log.debug("Leaving issueThrough().");
   return status;
 }
@@ -795,6 +1442,83 @@ async function thePrivateKeyOptOutIsReal(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 5b. The subject CN follows the profile, and stops the moment somebody types
+//     one of their own.
+//
+// An empty subject is a legal DN, so nothing about issuing fails without this
+// — what it costs is four rows in the store that read the same and a chain
+// view nobody can follow. The default is in x509.js beside the extension
+// defaults, so this asserts through the page what the node tests assert
+// through the module.
+//
+// Two of the three cases fail silently and neither is visible from the page:
+//
+//   * a default that does NOT move with the profile issues an intermediate
+//     called "RootCA" — it chains correctly, it validates, and it
+//     reads as a bug in the chain view rather than in the form;
+//   * a default that overwrites a name somebody typed loses their work, and
+//     the moment it happens is a page RELOAD, where onProfileChange() runs
+//     again after restoreState() has just put their CN back in the field.
+// ---------------------------------------------------------------------------
+async function theSubjectCnFollowsTheProfile(driver) {
+  log.debug("Entering theSubjectCnFollowsTheProfile().");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_profile"));
+  await driver.executeScript("window.localStorage.clear();");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_profile"));
+
+  // Every profile fills the field, and no two kinds of certificate that a
+  // reader has to tell apart in the store fill it with the same thing.
+  const profiles = await driver.executeScript(
+    "var e = document.getElementById('pki_profile');" +
+    "return Array.prototype.map.call(e.options, function (o) {" +
+    "  return o.value; });");
+  const seen = {};
+  for (const profileId of profiles) {
+    await selectOption(driver, "pki_profile", profileId);
+    const cn = await valueOf(driver, "pki_dn_cn");
+    assert.ok(cn && cn.trim().length > 0,
+      "the " + profileId + " profile left the CN empty. An empty subject is " +
+      "a legal DN and a store full of rows nobody can tell apart.");
+    seen[profileId] = cn;
+  }
+  ["root-ca", "intermediate-ca", "issuing-ca"].forEach(function (a) {
+    ["root-ca", "intermediate-ca", "issuing-ca"].forEach(function (b) {
+      if (a === b) return;
+      assert.notStrictEqual(seen[a], seen[b],
+        "the " + a + " and " + b + " profiles both default the CN to '" +
+        seen[a] + "'. These three are issued one after another into the same " +
+        "store and the chain view is read by subject.");
+    });
+  });
+  assert.ok(/root/i.test(seen["root-ca"]),
+    "the root CA profile defaults the CN to '" + seen["root-ca"] + "', " +
+    "which does not say what it is");
+
+  // A name somebody typed is never touched — not by a profile change, and not
+  // by the reload that runs onProfileChange() over a restored field.
+  await setField(driver, "pki_dn_cn", "my-own-name.test");
+  await selectOption(driver, "pki_profile", "tls-server");
+  assert.strictEqual(await valueOf(driver, "pki_dn_cn"), "my-own-name.test",
+    "changing the profile overwrote a CN that was typed by hand");
+  await driver.navigate().refresh();
+  await waitVisible(driver, By.id("pki_dn_cn"));
+  assert.strictEqual(await valueOf(driver, "pki_dn_cn"), "my-own-name.test",
+    "a reload overwrote a CN that was typed by hand — onProfileChange() runs " +
+    "after restoreState(), so this is the path that loses it");
+
+  // And an emptied field is filled again, so clearing it is not a trap.
+  await setField(driver, "pki_dn_cn", "");
+  await selectOption(driver, "pki_profile", "issuing-ca");
+  assert.strictEqual(await valueOf(driver, "pki_dn_cn"), seen["issuing-ca"],
+    "an emptied CN was not refilled by the next profile change");
+
+  await driver.executeScript("window.localStorage.clear();");
+  log.debug("Leaving theSubjectCnFollowsTheProfile().");
+}
+
+// ---------------------------------------------------------------------------
 // 6. The list fields' syntax, which is what the extension editor is made of.
 //    Driven through the page's own exported parsers: the syntax is documented
 //    on the page beside each field, and a parser that quietly accepts
@@ -1002,7 +1726,13 @@ async function test() {
   try {
     await thePageOffersWhatTheModulesDefine(driver);
     await theConfigurationIsOnePane(driver);
+    await theSubjectCnFollowsTheProfile(driver);
+    await theSerialIsFilledInEditableAndRotates(driver);
+    await theSubjectDefaultsAndTheSanFollowTheProfile(driver);
+    await everyFieldHasATooltip(driver);
+    await theValidityFieldsArePickers(driver);
     await theListFieldSyntaxIsWhatThePageDocuments(driver);
+    await theDetailsPageReadsEveryKeyAlgorithm(driver);
     await theHierarchyIsBuiltThroughTheForm(driver);
     await theStoreSurvivesAReload(driver);
     await thePrivateKeyOptOutIsReal(driver);

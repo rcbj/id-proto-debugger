@@ -1027,10 +1027,28 @@ function buildCustomExtension(spec) {
 // with. Everything below is a DEFAULT the page then lets you edit, including
 // the criticality flags: the point of the tool is to be able to issue the
 // certificate that is wrong in exactly one way and watch what refuses it.
+//
+// `cn` is the subject Common Name that goes with the kind of certificate this
+// is — `RootCA`, `IntermediateCA`, `IssuingCA` for the three authorities, and
+// `server` / `client` for the two TLS profiles, which is what the hierarchy
+// reads as in a chain view and in a store listing. It is here rather than in
+// the page for the same reason the extension defaults are: the node tests then
+// start from what the browser starts from. An empty CN is a legal DN and a
+// certificate nobody can tell apart from the next one in the store, which is
+// what typing four of them by hand before the first handshake actually costs.
+//
+// These were `Example Root CA`, `localhost` and so on until 2026-08-18. Two
+// things went with the rename: the TLS profiles no longer default to a name a
+// local server answers to (issue for `localhost` by typing it, which is one
+// field), and `server` / `client` are short enough to be words somebody might
+// type themselves — `isDefaultSubjectCN()` cannot tell those apart from one of
+// ours and will replace them on the next profile change. That was already true
+// of `localhost`; it is more likely now.
 // ---------------------------------------------------------------------------
 var PROFILES = {
   'root-ca': {
     label: 'Root CA (self-signed)',
+    cn: 'RootCA',
     ca: true,
     selfSigned: true,
     years: 20,
@@ -1039,6 +1057,7 @@ var PROFILES = {
   },
   'intermediate-ca': {
     label: 'Intermediate CA',
+    cn: 'IntermediateCA',
     ca: true,
     years: 10,
     keyUsage: ['keyCertSign', 'cRLSign', 'digitalSignature'],
@@ -1046,6 +1065,7 @@ var PROFILES = {
   },
   'issuing-ca': {
     label: 'Issuing CA',
+    cn: 'IssuingCA',
     ca: true,
     years: 5,
     keyUsage: ['keyCertSign', 'cRLSign', 'digitalSignature'],
@@ -1053,46 +1073,54 @@ var PROFILES = {
   },
   'tls-server': {
     label: 'TLS Server',
+    cn: 'server',
     years: 1,
     keyUsage: ['digitalSignature', 'keyEncipherment'],
     extKeyUsage: ['serverAuth']
   },
   'tls-client': {
     label: 'TLS Client (mutual auth)',
+    cn: 'client',
     years: 1,
     keyUsage: ['digitalSignature', 'keyEncipherment'],
     extKeyUsage: ['clientAuth']
   },
   'tls-server-client': {
     label: 'TLS Server + Client',
+    cn: 'server',
     years: 1,
     keyUsage: ['digitalSignature', 'keyEncipherment'],
     extKeyUsage: ['serverAuth', 'clientAuth']
   },
   'digital-signature': {
     label: 'Digital Signature / non-repudiation',
+    cn: 'Signer',
     years: 3,
     keyUsage: ['digitalSignature', 'nonRepudiation']
   },
   'key-encipherment': {
     label: 'Key Encipherment (encryption)',
+    cn: 'Recipient',
     years: 3,
     keyUsage: ['keyEncipherment', 'dataEncipherment']
   },
   'code-signing': {
     label: 'Code Signing',
+    cn: 'CodeSigner',
     years: 3,
     keyUsage: ['digitalSignature'],
     extKeyUsage: ['codeSigning']
   },
   'email': {
     label: 'S/MIME (email protection)',
+    cn: 'EmailUser',
     years: 3,
     keyUsage: ['digitalSignature', 'keyEncipherment', 'nonRepudiation'],
     extKeyUsage: ['emailProtection']
   },
   'ocsp-responder': {
     label: 'OCSP Responder',
+    cn: 'OCSPResponder',
     years: 1,
     keyUsage: ['digitalSignature'],
     extKeyUsage: ['ocspSigning'],
@@ -1100,6 +1128,7 @@ var PROFILES = {
   },
   'timestamping': {
     label: 'Time Stamping',
+    cn: 'TimeStampingAuthority',
     years: 5,
     keyUsage: ['digitalSignature', 'nonRepudiation'],
     extKeyUsage: ['timeStamping'],
@@ -1107,12 +1136,14 @@ var PROFILES = {
   },
   'smartcard-logon': {
     label: 'Smartcard Logon',
+    cn: 'SmartcardUser',
     years: 2,
     keyUsage: ['digitalSignature', 'keyEncipherment'],
     extKeyUsage: ['clientAuth', 'msSmartcardLogon']
   },
   'kdc': {
     label: 'Kerberos KDC (PKINIT)',
+    cn: 'kdc',
     years: 2,
     keyUsage: ['digitalSignature', 'keyEncipherment'],
     extKeyUsage: ['kdcAuthentication']
@@ -1136,6 +1167,87 @@ function profile(id) {
   var found = PROFILES[id];
   log.debug("Leaving profile().");
   return found ? Object.assign({ id: id }, found) : null;
+}
+
+// The subject CN a profile starts from. Empty for a profile that has none,
+// which is not one of the fourteen but is what an unknown id gives back.
+function defaultSubjectCN(profileId) {
+  log.debug("Entering defaultSubjectCN(). profile=" + profileId);
+  var p = profile(profileId) || {};
+  log.debug("Leaving defaultSubjectCN(). " + (p.cn || '(none)'));
+  return p.cn || '';
+}
+
+// Whether a CN is one THIS table wrote. The page needs the question to tell a
+// default it put there itself — which it may replace when the profile changes
+// — from a name somebody typed, which it must not touch. Comparing against the
+// current profile's own default is not enough: by the time the question is
+// asked the dropdown has already moved on, and the value in the field belongs
+// to the profile that was selected a moment ago.
+function isDefaultSubjectCN(value) {
+  log.debug("Entering isDefaultSubjectCN(). value=" + value);
+  var wanted = String(value || '').trim();
+  var found = PROFILE_ORDER.some(function (id) {
+    return PROFILES[id].cn === wanted;
+  });
+  log.debug("Leaving isDefaultSubjectCN(). " + found);
+  return found;
+}
+
+// The rest of the subject DN, which does NOT vary by profile.
+//
+// A distinguished name with nothing but a CN is a legal name and a poor
+// example of one: the O/OU/L/ST/C an operator actually meets are what makes
+// the DN encoding — the PrintableString of a country code, the ordered
+// RDNSequence — visible in the first certificate somebody issues here rather
+// than in the fifth. They are obviously-fictional values for the same reason
+// the CNs are: this page issues test certificates.
+//
+// Unlike the CN there is no "is this still a default" question to answer,
+// because none of these follow the profile: the page fills an EMPTY field and
+// never replaces one that has anything in it.
+var DEFAULT_DN = {
+  O: 'Example Corp',
+  OU: 'Information Technology',
+  L: 'Austin',
+  ST: 'Texas',
+  C: 'US'
+};
+
+// The subjectAltName a profile starts from, in the page's own list syntax.
+//
+// Only the profiles that carry serverAuth get one, and it is `dns:` + the
+// profile's own CN — because for a TLS server the CN is not what is checked.
+// Every current browser ignores it and reads subjectAltName, so a server
+// certificate whose SAN does not repeat the name in the CN is the one shape of
+// certificate this page could hand somebody that no client will accept. It is
+// derived from `extKeyUsage` rather than written into each profile so that a
+// new server-ish profile cannot be added without one.
+function defaultSubjectAltName(profileId) {
+  log.debug("Entering defaultSubjectAltName(). profile=" + profileId);
+  var p = profile(profileId) || {};
+  var eku = p.extKeyUsage || [];
+  if (eku.indexOf('serverAuth') < 0 || !p.cn) {
+    log.debug("Leaving defaultSubjectAltName(). None for this profile.");
+    return '';
+  }
+  log.debug("Leaving defaultSubjectAltName(). dns:" + p.cn);
+  return 'dns:' + p.cn;
+}
+
+// Whether a subjectAltName is one THIS table wrote, asked and answered for the
+// same reason isDefaultSubjectCN() is: the page may replace its own default
+// when the profile changes and must never touch a name somebody typed. Empty
+// counts, so the first server profile chosen fills an untouched field.
+function isDefaultSubjectAltName(value) {
+  log.debug("Entering isDefaultSubjectAltName(). value=" + value);
+  var wanted = String(value || '').trim();
+  var found = !wanted || PROFILE_ORDER.some(function (id) {
+    var mine = defaultSubjectAltName(id);
+    return !!mine && mine === wanted;
+  });
+  log.debug("Leaving isDefaultSubjectAltName(). " + found);
+  return found;
 }
 
 // The extension spec a profile starts from, which the page then edits. Kept
@@ -1674,17 +1786,78 @@ async function describeCertificate(pemOrDer) {
     extensions: (cert.extensions || []).map(describeExtension),
     fingerprints: {}
   };
+  // The key description comes from importing the key, which is the only way to
+  // learn an RSA modulus size or an EC curve — and the only part of this
+  // function that can decline: describePublicPem() returns null rather than
+  // throwing when no candidate imports, which is what a browser without
+  // Ed25519 in Web Crypto does with an Ed25519 certificate. The ALGORITHM is
+  // in the SubjectPublicKeyInfo either way, so that is the fallback rather
+  // than "unrecognised" — the certificate says what it is, and a page that
+  // cannot import the key can still say so.
   var keyDesc = await keys.describePublicPem(derToPem(spkiDer, 'PUBLIC KEY'));
   out.publicKey = keyDesc
     ? (keyDesc.kind === 'rsa' ? 'RSA ' + keyDesc.bits + '-bit'
       : keyDesc.kind === 'ec' ? 'ECDSA ' + keyDesc.curve : 'Ed25519')
-    : 'unrecognised';
-  var sha1 = await crypto.subtle.digest('SHA-1', der);
-  var sha256 = await crypto.subtle.digest('SHA-256', der);
-  out.fingerprints.sha1 = colonHex(new Uint8Array(sha1));
-  out.fingerprints.sha256 = colonHex(new Uint8Array(sha256));
+    : out.publicKeyAlgorithm;
+  out.fingerprints = await fingerprintsOf(der);
   log.debug("Leaving describeCertificate().");
   return out;
+}
+
+// SHA-1 and SHA-256 over the DER, or nulls.
+//
+// Both digests are Web Crypto, which is absent outside a secure context — and
+// this describes a certificate, which is a public document that needs no
+// secrecy to read. Everything else in describeCertificate() is ASN.1 parsing
+// that works anywhere, so a missing crypto.subtle costs two rows of a table
+// rather than the whole description: saml_cert.html is reachable from eight
+// pages and reads certificates that arrived in somebody else's metadata.
+async function fingerprintsOf(der) {
+  log.debug("Entering fingerprintsOf().");
+  var out = { sha1: null, sha256: null };
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    log.warn('fingerprintsOf(): no Web Crypto here, so no fingerprints.');
+    log.debug("Leaving fingerprintsOf(). No Web Crypto.");
+    return out;
+  }
+  try {
+    var sha1 = await crypto.subtle.digest('SHA-1', der);
+    var sha256 = await crypto.subtle.digest('SHA-256', der);
+    out.sha1 = colonHex(new Uint8Array(sha1));
+    out.sha256 = colonHex(new Uint8Array(sha256));
+  } catch (e) {
+    log.warn('fingerprintsOf(): ' + e.message);
+  }
+  log.debug("Leaving fingerprintsOf().");
+  return out;
+}
+
+// One described extension's value as a line of text.
+//
+// It lives here rather than in the page that first needed it because the
+// second page that needs it is saml_cert.html, which reads certificates this
+// tree did not issue: `describeExtension()` returns a string for some
+// extensions, a number for others, an array for the list-shaped ones and an
+// object for basicConstraints, nameConstraints and the authority key
+// identifier, and a caller that renders only the shapes it happens to have met
+// prints "[object Object]" for the rest.
+function extensionValueText(ext) {
+  log.debug("Entering extensionValueText().");
+  var value = ext ? ext.value : null;
+  var text;
+  if (value === null || value === undefined) {
+    text = '(present)';
+  } else if (typeof value === 'string' || typeof value === 'number') {
+    text = String(value);
+  } else if (Object.prototype.toString.call(value) === '[object Array]') {
+    text = value.map(function (item) {
+      return typeof item === 'object' ? JSON.stringify(item) : String(item);
+    }).join(', ');
+  } else {
+    text = JSON.stringify(value);
+  }
+  log.debug("Leaving extensionValueText().");
+  return text;
 }
 
 function colonHex(bytes) {
@@ -1774,11 +1947,17 @@ module.exports = {
   PROFILES: PROFILES,
   profileIds: profileIds,
   profile: profile,
+  defaultSubjectCN: defaultSubjectCN,
+  isDefaultSubjectCN: isDefaultSubjectCN,
+  DEFAULT_DN: DEFAULT_DN,
+  defaultSubjectAltName: defaultSubjectAltName,
+  isDefaultSubjectAltName: isDefaultSubjectAltName,
   defaultExtensions: defaultExtensions,
   // issuing and reading
   randomSerialHex: randomSerialHex,
   issueCertificate: issueCertificate,
   describeCertificate: describeCertificate,
+  extensionValueText: extensionValueText,
   verifyChain: verifyChain,
   verifySignature: verifySignature,
   bytesToHex: bytesToHex,

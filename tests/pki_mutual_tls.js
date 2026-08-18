@@ -278,20 +278,20 @@ async function serverCertificatePem() {
 // ---------------------------------------------------------------------------
 // Building the hierarchy through the form, exactly as a person would.
 // ---------------------------------------------------------------------------
-async function generateKeyPair(driver, algId) {
-  log.debug("Entering generateKeyPair(). alg=" + algId);
-  await selectOption(driver, "pki_key_alg", algId);
-  await click(driver, "pki_generate");
-  await driver.wait(async function () {
-    const priv = await valueOf(driver, "pki_private_key");
-    return priv && priv.indexOf("-----BEGIN") === 0;
-  }, CRYPTO_WAIT, "the key pair fields never filled for " + algId);
-  log.debug("Leaving generateKeyPair().");
+// The page has ONE button: it generates the key pair and issues the
+// certificate, because a pair that is never certified is kept nowhere. So the
+// pair is checked after the issue rather than before it.
+async function keyPairWasGenerated(driver, algId) {
+  log.debug("Entering keyPairWasGenerated(). alg=" + algId);
+  const priv = await valueOf(driver, "pki_private_key");
+  assert.ok(priv && priv.indexOf("-----BEGIN") === 0,
+    "the key pair fields never filled for " + algId);
+  log.debug("Leaving keyPairWasGenerated().");
 }
 
 async function issueThrough(driver, spec) {
   log.debug("Entering issueThrough(). subject=" + spec.cn);
-  await generateKeyPair(driver, spec.keyAlg);
+  await selectOption(driver, "pki_key_alg", spec.keyAlg);
   await selectOption(driver, "pki_profile", spec.profile);
   if (spec.issuerSubject) {
     // The issuer dropdown holds store ids, so it is chosen by the label the
@@ -318,13 +318,16 @@ async function issueThrough(driver, spec) {
     await setCheckbox(driver, "pki_ext_san", true);
     await setField(driver, "pki_san", spec.san);
   }
-  const before = await textOf(driver, "pki_status");
   await click(driver, "pki_issue");
-  let status = before;
+  // The button generates the key pair and then issues, so the status line
+  // says two things about the key pair first. Waiting for "it changed" would
+  // return one of those and the assertion below would fail on a message about
+  // a key rather than about a certificate.
+  let status = "";
   try {
     await driver.wait(async function () {
       status = await textOf(driver, "pki_status");
-      return status && status.trim() && status !== before;
+      return /Issued "|Could not issue|failed/.test(status || "");
     }, CRYPTO_WAIT);
   } catch (e) {
     throw new Error("timed out waiting for " + spec.cn + " to be issued (the " +
@@ -332,6 +335,7 @@ async function issueThrough(driver, spec) {
   }
   assert.ok(status.indexOf("Issued") >= 0,
     "issuing " + spec.cn + " failed: " + status);
+  await keyPairWasGenerated(driver, spec.keyAlg);
   log.debug("Leaving issueThrough().");
   return status;
 }

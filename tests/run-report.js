@@ -693,6 +693,13 @@ function buildJobs() {
     if (browser.capable && browser.bin) {
       // Use the binary we probed, not whatever Selenium would pick.
       extensionJob.env.CHROME_BIN = browser.bin;
+      // And, when Selenium Manager fetched the browser, the chromedriver it
+      // fetched with it: a Chrome for Testing 152 driven by the host's
+      // chromedriver for 151 fails on a version mismatch, which reads as a
+      // broken extension rather than as two halves of different releases.
+      if (browser.driver) {
+        extensionJob.env.CHROMEDRIVER_BIN = browser.driver;
+      }
     }
     if (!browser.capable) {
       extensionJob.skip =
@@ -701,9 +708,11 @@ function buildJobs() {
          ". Branded Google Chrome refuses " +
         "the flags and reports it only on stderr, so the job would fail with " +
             "every assertion timing " +
-        "out and nothing naming the cause. The containerized suite pins " +
-            "Chrome for Testing and does " +
-        "run it; to run it here, point CHROME_BIN at a Chrome-for-Testing or Chromium build.";
+        "out and nothing naming the cause. Selenium Manager could not fetch " +
+        "a Chrome for Testing either, so this host has no capable browser " +
+        "and " +
+        "no way to reach one — check the network, or point CHROME_BIN at a " +
+        "Chrome-for-Testing or Chromium build.";
     }
     jobs.push(extensionJob);
   }
@@ -2774,6 +2783,85 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
 }
 
 
+// Selenium Manager, which ships inside selenium-webdriver — the same binary the
+// library shells out to for a driver. It is used here for the BROWSER, which it
+// will fetch on request.
+function seleniumManagerPath() {
+  log.debug("Entering seleniumManagerPath().");
+  const dir = process.platform === "win32" ? "windows"
+    : process.platform === "darwin" ? "macos" : "linux";
+  const name = process.platform === "win32" ? "selenium-manager.exe"
+    : "selenium-manager";
+  const out = path.join(TESTS_DIR, "node_modules", "selenium-webdriver", "bin",
+      dir, name);
+  log.debug("Leaving seleniumManagerPath().");
+  return out;
+}
+
+function browserVersionOf(bin) {
+  log.debug("Entering browserVersionOf().");
+  let out = null;
+  try {
+    out = execFileSync(bin, ["--version"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch (e) {
+    log.debug("browserVersionOf(): " + bin + " did not answer: " + e.message);
+  }
+  log.debug("Leaving browserVersionOf(). " + out);
+  return out;
+}
+
+// Fetch a Chrome for Testing (and the chromedriver that matches it) through
+// Selenium Manager, into ~/.cache/selenium.
+//
+// This is what turns "skipped: your Chrome cannot side-load an extension" into
+// a job that runs. The download is ~150MB the first time and instant every time
+// after — the cache is keyed by version and shared with anything else on this
+// host that uses Selenium Manager — so it is done here, once, while the roster
+// is being built rather than in the middle of the job.
+//
+// --force-browser-download is required, not optional: without it the manager
+// finds the branded Chrome already on PATH and reports THAT, which is the
+// browser this whole function exists to get away from.
+function fetchTestingBrowser() {
+  log.debug("Entering fetchTestingBrowser().");
+  const manager = seleniumManagerPath();
+  if (!fs.existsSync(manager)) {
+    log.debug("Leaving fetchTestingBrowser(). No Selenium Manager at " +
+        manager);
+    return null;
+  }
+  let parsed;
+  try {
+    log.info("No extension-capable browser here; asking Selenium Manager for " +
+        "a Chrome for Testing (first run downloads it).");
+    const out = execFileSync(manager,
+        ["--browser", "chrome", "--force-browser-download",
+         "--output", "JSON", "--avoid-stats"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+          timeout: 600000 });
+    parsed = JSON.parse(out);
+  } catch (e) {
+    log.warn("fetchTestingBrowser(): " + e.message);
+    log.debug("Leaving fetchTestingBrowser(). Could not fetch.");
+    return null;
+  }
+  const result = parsed && parsed.result;
+  if (!result || !result.browser_path || !fs.existsSync(result.browser_path)) {
+    log.warn("fetchTestingBrowser(): Selenium Manager named no browser.");
+    log.debug("Leaving fetchTestingBrowser(). Nothing usable.");
+    return null;
+  }
+  const out = { bin: result.browser_path,
+                driver: result.driver_path || null,
+                version: browserVersionOf(result.browser_path),
+                fetched: true };
+  out.capable = /Chrome for Testing|Chromium/i.test(out.version || "");
+  log.info("Using " + (out.version || out.bin) + " for the extension job.");
+  log.debug("Leaving fetchTestingBrowser(). " + out.bin);
+  return out.capable ? out : null;
+}
+
 // Can the browser this run will use side-load an unpacked extension?
 //
 // BRANDED Google Chrome cannot. It refuses the flags and says so only on stderr
@@ -2782,23 +2870,32 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
 // extension job times out naming nothing. Chrome for Testing — which the tests
 // image pins — and Chromium both allow it.
 //
-// So this is an environment capability, not a defect, and the job SKIPS with
-// the browser named rather than failing. It cost a full host run of that job to
-// learn: the containerized suite passed it and local-run-tests.sh, which drives
-// the host's own Chrome, did not.
+// It used to answer with the FIRST browser it found and let the job skip when
+// that one was branded Chrome, which is what `./local-run-tests.sh` reported on
+// every host whose `google-chrome` is the real thing — a permanent skip on the
+// launcher most people run. Two things changed on 2026-08-18:
+//
+//   * every candidate is probed and a CAPABLE one wins, so a host carrying
+//     both Chromium and branded Chrome uses the Chromium rather than reporting
+//     on whichever name came first in the list;
+//   * and when none of them is capable, one is FETCHED — Selenium Manager
+//     downloads a Chrome for Testing and the chromedriver that matches it,
+//     which is the same thing the containerized suite gets by pinning it in
+//     the image.
+//
+// So the skip is now only for a host that has no capable browser AND cannot
+// reach the network to get one, which is the one case where it really is an
+// environment capability rather than something this runner can arrange.
 function extensionCapableBrowser() {
   log.debug("Entering extensionCapableBrowser().");
   const candidates = [process.env.CHROME_BIN, "chrome", "chromium",
       "chromium-browser",
                       "google-chrome"].filter(Boolean);
+  let firstFound = null;
   for (const bin of candidates) {
-    let out;
-    try {
-      out = execFileSync(bin, ["--version"],
-                         { encoding: "utf8", stdio: ["ignore", "pipe",
-                          "ignore"] }).trim();
-    } catch (e) {
-      // Not on PATH under this name; try the next.
+    const version = browserVersionOf(bin);
+    // Not on PATH under this name; try the next.
+    if (!version) {
       continue;
     }
     // Resolve to an absolute path, because the job is told to USE this exact
@@ -2816,12 +2913,22 @@ function extensionCapableBrowser() {
         resolved = bin;
       }
     }
-    log.debug("Leaving extensionCapableBrowser().");
-    return { bin: resolved, version: out,
-            capable: /Chrome for Testing|Chromium/i.test(out) };
+    const found = { bin: resolved, driver: null, version: version,
+                    capable: /Chrome for Testing|Chromium/i.test(version) };
+    if (found.capable) {
+      log.debug("Leaving extensionCapableBrowser(). " + version);
+      return found;
+    }
+    if (!firstFound) firstFound = found;
   }
-  log.debug("Leaving extensionCapableBrowser().");
-  return { bin: null, version: null, capable: false };
+  const fetched = fetchTestingBrowser();
+  if (fetched) {
+    log.debug("Leaving extensionCapableBrowser(). Fetched " + fetched.version);
+    return fetched;
+  }
+  log.debug("Leaving extensionCapableBrowser(). Nothing capable.");
+  return firstFound ||
+      { bin: null, driver: null, version: null, capable: false };
 }
 
 function renderJUnit(results, generatedAt) {
