@@ -2378,6 +2378,247 @@ app.get('/krb5/limits', function (req, res) {
 });
 
 // ---------------------------------------------------------------------------
+// LDAP. Seven operations and a limits document, all of them thin: everything
+// that is protocol, policy or timing is in api/ldap_client.js, and what is here
+// is the HTTP shape and the status code.
+//
+// LDAP is BER over a TCP socket (RFC 4511), so the browser cannot speak it at
+// all — no fetch, no XHR, no WebSocket produces an LDAPMessage. That is the
+// same reason the Kerberos workflow needs a relay, and the same reason the LDAP
+// page is left out of the static deployments, which have no api behind them.
+//
+// THE THREE OUTCOMES, because collapsing them is the mistake this endpoint
+// family exists to avoid. `ldapResult()` below is the whole of it:
+//
+//   * a refusal by THIS service — a scheme that is not ldap(s), a blocked
+//     address, a port that is not allowed, an operation that is missing a DN —
+//     is a 400. The caller asked for something this service will not do.
+//   * a network failure — nothing listening, connection refused, a timeout — is
+//     a 502. The caller asked for something reasonable and the far end did not
+//     deliver.
+//   * AN LDAP RESULT CODE FROM THE DIRECTORY IS A 200, with `ok: false` and the
+//     code. `noSuchObject` on a DN that is not there, `invalidCredentials` on a
+//     bad bind, `entryAlreadyExists` on a duplicate: the operation completed and
+//     the answer was "no". Reporting those as failures of this endpoint would
+//     make a debugger unable to show the single most interesting thing a
+//     directory ever says, and would put the most useful half of this workflow
+//     behind an error page.
+// ---------------------------------------------------------------------------
+const ldapClient = require('./ldap_client.js');
+// The LDAP client reuses the guard's address DECISION for the same reason the
+// Kerberos relay does: the guard's INSTALLATION is hooks on the axios agents,
+// and this transport is a raw socket with no axios in the path. Two
+// implementations of an address policy is one implementation and one hole.
+const ldap = ldapClient.createLdapClient(appconfig, guard, log);
+
+// Refusals this service made itself. Everything else that rejects is a network
+// failure. Listed rather than pattern-matched on the prefix, so that adding a
+// code forces a decision about which of the two it is.
+const LDAP_REFUSED_BY_POLICY = [
+  'ELDAPBADURL', 'ELDAPPORTNOTALLOWED', 'EBLOCKEDADDRESS', 'ELDAPNODN',
+  'ELDAPNOATTRIBUTES', 'ELDAPNOCHANGES', 'ELDAPBADCHANGE', 'ELDAPBADSCOPE',
+  'ELDAPREFUSED'
+];
+
+/**
+ * Run one LDAP operation and answer on every path.
+ *
+ * Shared by all seven routes because the difference between them is one method
+ * call: writing the status-code decision seven times is writing seven chances
+ * to get it wrong, and the one that matters (a result code is a 200) is the one
+ * a copy would most plausibly lose.
+ */
+function runLdapOperation(name, operation, req, res) {
+  log.debug('Entering runLdapOperation(). operation=' + name);
+  const body = req.body || {};
+  if (!body.url) {
+    log.debug('Leaving runLdapOperation(). No url.');
+    return res.status(STATUS_400).json({
+      error: 'url is required, and must be an ldap:// or ldaps:// URL naming ' +
+             'the directory server.' });
+  }
+  operation(body).then(function (result) {
+    log.info('POST /ldap/' + name + ' ' + result.target.url + ' -> ' +
+             (result.ok ? 'success' : (result.result &&
+              (result.result.name + ' (' + result.result.code + ')'))) +
+             ' in ' + result.timing.totalMs + 'ms');
+    log.debug('Leaving runLdapOperation(). ok=' + result.ok);
+    // 200 even when ok is false: see the note above. The caller reads `ok` and
+    // `result.code`, which is what a directory actually told it.
+    return res.status(STATUS_200).json(result);
+  }).catch(function (error) {
+    // THE NO-RESPONSE BRANCH MUST ANSWER, and here — as on the Kerberos relay —
+    // it is the common branch rather than the rare one, because pointing this
+    // at a host that may not be there is the point.
+    const refusedByPolicy =
+      LDAP_REFUSED_BY_POLICY.indexOf(error && error.code) !== -1;
+    const status = refusedByPolicy ? STATUS_400 : 502;
+    log.warn('POST /ldap/' + name + ' failed [' +
+             ((error && error.code) || 'no code') + ']: ' +
+             (error && error.message));
+    log.debug('Leaving runLdapOperation(). status=' + status);
+    return res.status(status).json({
+      error: (error && error.message) ? error.message : String(error),
+      code: (error && error.code) || null });
+  });
+}
+
+/**
+ * Bind to a directory — the LDAP authentication exchange, on its own.
+ * @route POST /ldap/bind
+ * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
+ * @param {string} bindDn.body - the bind DN; omit or empty for an anonymous bind
+ * @param {string} password.body - the simple-bind password
+ * @returns {object} 200 - the result, including a REFUSED bind with its code
+ * @returns {object} 400 - this service refused the request (see the reason)
+ * @returns {object} 502 - the directory could not be reached
+ */
+app.post('/ldap/bind', function (req, res) {
+  log.debug('Entering POST /ldap/bind.');
+  runLdapOperation('bind', ldap.bind, req, res);
+  log.debug('Leaving POST /ldap/bind.');
+});
+
+/**
+ * Search a directory.
+ * @route POST /ldap/search
+ * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
+ * @param {string} bindDn.body - the bind DN
+ * @param {string} password.body - the simple-bind password
+ * @param {string} baseDn.body.required - the search base
+ * @param {string} scope.body - base, one or sub (default sub)
+ * @param {string} filter.body - an RFC 4515 filter (default (objectClass=*))
+ * @param {array} attributes.body - the attributes to return; empty means all
+ * @param {integer} sizeLimit.body - the client's own cap on entries returned
+ * @returns {object} 200 - the entries, with the result code
+ * @returns {object} 400 - this service refused the request
+ * @returns {object} 502 - the directory could not be reached
+ */
+app.post('/ldap/search', function (req, res) {
+  log.debug('Entering POST /ldap/search.');
+  runLdapOperation('search', ldap.search, req, res);
+  log.debug('Leaving POST /ldap/search.');
+});
+
+/**
+ * Add an entry — a user, a group, a container.
+ * @route POST /ldap/add
+ * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
+ * @param {string} bindDn.body - the bind DN
+ * @param {string} password.body - the simple-bind password
+ * @param {string} dn.body.required - the DN of the entry to create
+ * @param {object} attributes.body.required - name to value or array of values
+ * @returns {object} 200 - the result code
+ * @returns {object} 400 - this service refused the request
+ * @returns {object} 502 - the directory could not be reached
+ */
+app.post('/ldap/add', function (req, res) {
+  log.debug('Entering POST /ldap/add.');
+  runLdapOperation('add', ldap.add, req, res);
+  log.debug('Leaving POST /ldap/add.');
+});
+
+/**
+ * Delete an entry.
+ * @route POST /ldap/delete
+ * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
+ * @param {string} bindDn.body - the bind DN
+ * @param {string} password.body - the simple-bind password
+ * @param {string} dn.body.required - the DN of the entry to remove
+ * @returns {object} 200 - the result code
+ * @returns {object} 400 - this service refused the request
+ * @returns {object} 502 - the directory could not be reached
+ */
+app.post('/ldap/delete', function (req, res) {
+  log.debug('Entering POST /ldap/delete.');
+  runLdapOperation('delete', ldap.del, req, res);
+  log.debug('Leaving POST /ldap/delete.');
+});
+
+/**
+ * Modify an entry's attributes — which is also how group membership changes.
+ * @route POST /ldap/modify
+ * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
+ * @param {string} bindDn.body - the bind DN
+ * @param {string} password.body - the simple-bind password
+ * @param {string} dn.body.required - the DN of the entry to change
+ * @param {array} changes.body.required - {operation, type, values} per change
+ * @returns {object} 200 - the result code
+ * @returns {object} 400 - this service refused the request
+ * @returns {object} 502 - the directory could not be reached
+ */
+app.post('/ldap/modify', function (req, res) {
+  log.debug('Entering POST /ldap/modify.');
+  runLdapOperation('modify', ldap.modify, req, res);
+  log.debug('Leaving POST /ldap/modify.');
+});
+
+/**
+ * Rename or move an entry.
+ * @route POST /ldap/modifydn
+ * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
+ * @param {string} bindDn.body - the bind DN
+ * @param {string} password.body - the simple-bind password
+ * @param {string} dn.body.required - the DN of the entry to rename
+ * @param {string} newRdn.body.required - its new relative DN
+ * @param {string} newSuperior.body - a new parent DN, to move it as well
+ * @returns {object} 200 - the result code
+ * @returns {object} 400 - this service refused the request
+ * @returns {object} 502 - the directory could not be reached
+ */
+app.post('/ldap/modifydn', function (req, res) {
+  log.debug('Entering POST /ldap/modifydn.');
+  runLdapOperation('modifyDN', ldap.modifyDn, req, res);
+  log.debug('Leaving POST /ldap/modifydn.');
+});
+
+/**
+ * Compare an attribute value without reading the entry.
+ * @route POST /ldap/compare
+ * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
+ * @param {string} bindDn.body - the bind DN
+ * @param {string} password.body - the simple-bind password
+ * @param {string} dn.body.required - the DN of the entry
+ * @param {string} attribute.body.required - the attribute to compare
+ * @param {string} value.body - the value to compare it against
+ * @returns {object} 200 - compareTrue (6) or compareFalse (5), neither an error
+ * @returns {object} 400 - this service refused the request
+ * @returns {object} 502 - the directory could not be reached
+ */
+app.post('/ldap/compare', function (req, res) {
+  log.debug('Entering POST /ldap/compare.');
+  runLdapOperation('compare', ldap.compare, req, res);
+  log.debug('Leaving POST /ldap/compare.');
+});
+
+/**
+ * What the LDAP client will and will not do, so the page can say so before a
+ * call fails — the same reason GET /krb5/limits exists. It is also how the page
+ * tells an older api from a broken one: a build without LDAP answers 404 here,
+ * which is a different thing from a directory that will not answer.
+ * @route GET /ldap/limits
+ * @returns {object} 200 - the ports, timeouts, caps and vocabulary in force
+ */
+app.get('/ldap/limits', function (req, res) {
+  log.debug('Entering GET /ldap/limits.');
+  log.debug('Leaving GET /ldap/limits.');
+  return res.status(STATUS_200).json({
+    allowedPorts: ldap.allowedPorts,
+    addressPolicyEnabled: ldap.addressPolicyEnabled,
+    schemes: ['ldap', 'ldaps'],
+    // Published so the page can build its dropdowns from what this service
+    // will actually accept, rather than from a list typed twice.
+    scopes: ldap.scopes,
+    modifyOperations: ldap.modifyOperations,
+    // Stated rather than left to be discovered: a referral is RECORDED and not
+    // followed, because following one means opening a connection to a URL the
+    // directory chose.
+    followsReferrals: false,
+    startTls: false,
+    saslMechanisms: [],
+    limits: ldap.limits
+  });
+
 // TLS / mutual TLS — POST /tls/connect, GET /tls/limits
 //
 // The PKI page (client/public/pki.html) issues certificates in the browser and

@@ -348,6 +348,21 @@ COPY sts/contexts ./sts/contexts
 # further down, and copying it twice is how the two lines drift apart.)
 COPY api/krb5_relay.js api/krb5_frame.js ./
 COPY tests/api_krb5_relay.js ./
+# The two LDAP tests. Unlike the Kerberos relay above, NOTHING out of api/ or
+# sts/ is copied for them: both drive the running services over HTTP — the api's
+# POST /ldap/* endpoints and the mock's GET /ldap views — rather than loading a
+# module in-process. That is deliberate, and it is what keeps the LDAP jobs out
+# of the class of failure the note above records: a test that loads a module out
+# of the sts/ submodule acquires that submodule's own CONFIG_FILE resolution and
+# its dependency closure, both of which have broken this image before.
+#
+# These two lines are not optional and their absence is silent on every host
+# run: run-report.js schedules both scripts, and without the COPY each fails in
+# the image with MODULE_NOT_FOUND in a tenth of a second while passing
+# everywhere else. testsImageHasNoCollidingFilenames() in
+# tests/jwk_pem_encoding.js is what catches that, and it caught exactly this
+# when the two tests were first written.
+COPY tests/api_ldap.js tests/ldap_page.js ./
 # The PKI workflow's four jobs, and everything they load.
 #
 # The three node-only ones drive the modules directly — the certificate

@@ -172,6 +172,13 @@ init()
   # here. Checked before anything builds: without the checkout, compose reports a
   # missing Dockerfile and nothing mentions a submodule.
   requireMockStsCheckout "${CURRENT_DIR}"
+  # The api needs node-ldapjs too — the same library on the client side of
+  # the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
+  # the mock's, because npm resolves a `file:` dependency's own requires from
+  # where the real directory lives, so a copy outside api/ never reaches
+  # api/node_modules. Uninitialised, the image builds fine and the service
+  # dies at startup with `Cannot find module 'ldapjs'`.
+  requireApiLdapjsCheckout "${CURRENT_DIR}"
   check_return_code $?
   # A fresh SP key pair for this run: exported for the tests (which sign and
   # decrypt with it) and for configureKeycloak (which registers the certificate
@@ -227,9 +234,16 @@ prepTestEnv()
   # `npm ci`, not `npm install`: mock-sts commits its lock, and `npm install`
   # REWRITES it (its lock still carries the pre-rename package name), which would
   # leave the submodule with a modified file after every run.
+  #
+  # `--omit=dev` is spelled out even though sts/.npmrc says the same thing, and
+  # the reason is that it DOES NOT APPLY HERE: npm reads .npmrc from the current
+  # directory, not from --prefix, so the submodule's own file is invisible to
+  # this invocation. Without the flag npm installs the devDependencies of the
+  # mock's `file:node-ldapjs` dependency — tap, eslint and their trees, roughly
+  # 200 packages nothing in this run loads — on every launcher run.
   if [ -f sts/package.json ];
   then
-    npm ci --prefix sts
+    npm ci --omit=dev --prefix sts
   fi
 }
 

@@ -42,7 +42,9 @@
    * instead is not available: this grid sits inside bootstrap's 940px
    * .container, so a bigger max-width here would do nothing. */
   /*
-   * SIX across as of the eleventh card (SPNEGO), and the arithmetic is the
+   * SIX across as of the eleventh card (SPNEGO) and still six at the twelfth
+   * (LDAP), which is the first addition since the fourth card that did NOT
+   * force a change here: 6+5 and 6+6 are both two rows. The arithmetic is the
    * same one the note above describes, run again: n columns fit when
    * n*min + (n-1)*gap <= 940, so six need min <= 143.3 (6*143 + 5*16 = 938).
    * At 175px eleven cards become 5+5+1 — three rows, and the third is below
@@ -127,6 +129,12 @@
    it cost no height at all — but it still needs its own accent rule, or
    landingFitsOnOneScreen() fails naming the card rather than this file. */
 .landing-card:nth-child(12) .landing-icon { color: #8a1f3d; }
+/* The thirtenth card (LDAP) cost NO column change, which is worth recording
+   because every previous card did: twelve in a six-wide grid is 6+6, the same
+   two rows eleven made as 6+5. The next one is the expensive one — thirteen is
+   6+6+1 and a third row is below the fold, so it will need seven columns
+   (min <= 124.3, since 7*124 + 6*10 = 928 at this 10px gap). */
+.landing-card:nth-child(13) .landing-icon { color: #8a3d3d; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

@@ -101,6 +101,16 @@ init()
       # A local dev server is served by client/Dockerfile's build, which carries
       # every page — the Kerberos ones included.
       KERBEROS_AVAILABLE="${KERBEROS_AVAILABLE:-${KERBEROS_PAGES_AVAILABLE:-true}}"
+      # And the LDAP page, for the same reason: a local dev server carries the
+      # whole client build. It gets its own variable rather than sharing the one
+      # above, because the two protocols are absent from a static site
+      # independently — a target could be api-backed with a directory reachable
+      # and no KDC, or the reverse.
+      LDAP_AVAILABLE="${LDAP_AVAILABLE:-true}"
+      # The mock directory started on the host (keycloak-tests.yml), reached by
+      # the API. Loopback here because on this branch the api is the local dev
+      # server's own, not a container on a compose network.
+      LDAP_URL="${LDAP_URL:-ldap://localhost:389}"
       # WS-Trust STS (mock) started on the host (keycloak-tests.yml). A local dev
       # site has the api backend, so the WS-Trust jobs can run here.
       WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://localhost:8081/sts}"
@@ -129,6 +139,22 @@ init()
       # KERBEROS_PAGES_AVAILABLE is still read, by this script and by
       # run-report.js, so an existing environment keeps working.
       KERBEROS_AVAILABLE="${KERBEROS_AVAILABLE:-${KERBEROS_PAGES_AVAILABLE:-false}}"
+      # LDAP is not in a static build either, and for the same reason rather
+      # than by analogy: RFC 4511 is BER over a TCP socket, so every button on
+      # ldap.html is a call to the api, and client/static_site.js leaves the
+      # page, its bundle and css/ldap.css out of dist/ and greys out the landing
+      # card.
+      #
+      # This switches off the PAGE job only. tests/api_ldap.js is deliberately
+      # left running: it speaks HTTP to the api and the mock rather than loading
+      # anything out of the sts/ submodule, so it does not acquire the spurious
+      # CONFIG_FILE failure the Kerberos jobs did here — and it skips with its
+      # own, more specific reason when either service is absent. Set this to
+      # true for a remote target that IS api-backed.
+      LDAP_AVAILABLE="${LDAP_AVAILABLE:-false}"
+      # Where the API would open the directory, if this target had one. Set only
+      # so that the variable is defined; on a static target nothing uses it.
+      LDAP_URL="${LDAP_URL:-ldap://localhost:389}"
       # SAML_ACS_URL / SAML_SLO_URL are NOT decided here. Where the IdP should
       # return its response depends on whether this target has the edge landings
       # deployed, which probeEdgeLandings() finds out with a real POST before
@@ -150,6 +176,7 @@ init()
   # old one keeps anything that still reads it consistent with it.
   KERBEROS_PAGES_AVAILABLE="${KERBEROS_AVAILABLE}"
   export KERBEROS_AVAILABLE KERBEROS_PAGES_AVAILABLE
+  export LDAP_AVAILABLE LDAP_URL
   # Only exported when set (backendless targets); otherwise common.sh derives them.
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL
@@ -244,6 +271,13 @@ init()
   # here. This launcher builds it too (keycloak-tests.yml), so the checkout has to
   # exist before compose runs.
   requireMockStsCheckout "${CURRENT_DIR}"
+  # The api needs node-ldapjs too — the same library on the client side of
+  # the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
+  # the mock's, because npm resolves a `file:` dependency's own requires from
+  # where the real directory lives, so a copy outside api/ never reaches
+  # api/node_modules. Uninitialised, the image builds fine and the service
+  # dies at startup with `Cannot find module 'ldapjs'`.
+  requireApiLdapjsCheckout "${CURRENT_DIR}"
   check_return_code $?
   # A fresh SP key pair for this run: the tests sign and decrypt with the private
   # key, configureKeycloak registers the certificate on the SAML client, and
@@ -276,10 +310,14 @@ prepTestEnv()
   # sts/bbs2023.js in place reach @digitalbazaar/bbs-signatures through a dynamic
   # import(), which resolves from that file's own directory and ignores NODE_PATH.
   # See the fuller note in local-run-tests.sh. `npm ci` so the submodule's
-  # committed lock is not rewritten under it.
+  # committed lock is not rewritten under it, and `--omit=dev` spelled out
+  # because npm reads .npmrc from the CURRENT directory rather than from
+  # --prefix, so the submodule's own copy of that setting is invisible here —
+  # without the flag this installs the devDependencies of its `file:` ldapjs
+  # dependency on every run.
   if [ -f sts/package.json ];
   then
-    npm ci --prefix sts
+    npm ci --omit=dev --prefix sts
   fi
 }
 

@@ -104,8 +104,15 @@ async function checkFooterVersion(driver, where) {
 // class defined in no stylesheet rendered as nothing, silently, which is exactly
 // the failure this function exists for. The merge of that page's three
 // configuration panes into one added four such classes at a stroke.
-// ---------------------------------------------------------------------------
-var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki)-/;
+//
+// `ldap` is here although this test never clicks that card — it is one of the
+// three that the static deployments disable (Kerberos, SPNEGO, LDAP), so it
+// cannot join the walk below without failing every run against a deployed site.
+// The prefix is listed anyway so that the day it does, or the day another page
+// borrows an `ldap-` class, the guard is already in force rather than being
+// remembered. tests/ldap_page.js makes the same check for that page directly.
+
+var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki|ldap)-/;
 
 async function checkStylesheetsLoaded(driver, where) {
   log.debug("Entering checkStylesheetsLoaded(). where=" + where);

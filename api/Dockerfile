@@ -50,7 +50,35 @@ RUN npm -v
 # where available (npm@5+)
 COPY api/package*.json ./
 RUN npm -version
-RUN npm install
+# The LDAP client's library is `"ldapjs": "file:node-ldapjs"` — the git
+# SUBMODULE at api/node-ldapjs, pinned by commit and used unmodified — so it has
+# to be in the image BEFORE npm runs, and at the path the manifest names.
+#
+# IT HAS TO SIT INSIDE THE PACKAGE ROOT, and that is not a tidiness choice. npm
+# installs a `file:` dependency as a SYMLINK, and node then resolves that
+# package's own requires by walking up from where the real directory lives — not
+# from the symlink. With the submodule one level above /usr/src/app, the walk
+# goes /usr/src/node_modules, /node_modules, and never reaches the
+# node_modules the install just wrote. The failure is `Cannot find module
+# 'abstract-logging'` from inside ldapjs, which names a package nobody here has
+# ever heard of. Keeping it under api/ makes the walk arrive at
+# /usr/src/app/node_modules on the first hop. The mock STS holds its copy the
+# same way, for the same reason.
+#
+# An UNINITIALISED SUBMODULE IS AN EMPTY DIRECTORY, and this is where that
+# shows up: the COPY succeeds, npm installs a package with no main, and the
+# failure arrives at runtime as `Cannot find module 'ldapjs'` from
+# api/ldap_client.js — which names a package. `git submodule update --init
+# --recursive` is what fixes it; common/common.sh checks for it before building.
+#
+# .npmrc carries `omit=dev`, and it is load-bearing rather than tidiness: npm
+# installs the devDependencies of a `file:` dependency, and ldapjs's are tap and
+# eslint — some 200 packages and a dozen advisories that have nothing to do with
+# this service. The flag below says the same thing twice on purpose, so a build
+# that loses the .npmrc does not quietly start shipping them.
+COPY api/.npmrc ./
+COPY api/node-ldapjs ./node-ldapjs
+RUN npm install --omit=dev
 # If you are building your code for production
 # RUN npm ci --only=production
 

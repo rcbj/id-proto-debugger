@@ -16,6 +16,7 @@
     "express": "^4.22.2",
     "express-logging": "latest",
     "express-swagger-generator": "^1.1.17",
+    "ldapjs": "file:node-ldapjs",
     "logops": "latest",
     "xml-crypto": "^6.0.0",
     "xpath": "^0.0.34"
