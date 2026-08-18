@@ -139,10 +139,18 @@ and is linked here as the `sts/` submodule. Cloned without it, `sts/` is an empt
 directory and the build fails with `failed to read dockerfile`. In a checkout that
 is already in that state:
 ```
-git submodule update --init sts
+git submodule update --init
 ```
 The test launchers do this for you — `requireMockStsCheckout()` in
 [`common/common.sh`](common/common.sh) — but a bare `docker-compose build` does not.
+
+There is a **second submodule**, [`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs)
+at `api/node-ldapjs/` (branch `master`): a fork of `ldapjs` for the LDAP support
+of issue #257, pinned at the final commit its maintainer left behind when the
+project was decommissioned on 2024-05-14 — which is why it is a submodule rather
+than a dependency in `api/package.json`. Nothing builds from it yet, so an
+uninitialised `api/node-ldapjs/` does not break anything today; the bare
+`git submodule update --init` above takes it along with `sts/` regardless.
 
 From a bash command prompt on Fedora or RHEL 7.x, run the following::
 ```

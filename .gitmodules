@@ -2,3 +2,7 @@
 	path = sts
 	url = https://github.com/rcbj/mock-sts.git
 	branch = main
+[submodule "api/node-ldapjs"]
+	path = api/node-ldapjs
+	url = https://github.com/rcbj/node-ldapjs.git
+	branch = master

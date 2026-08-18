@@ -28,6 +28,7 @@ OAuth2/OIDC Debugger — a two-service web application for testing and debugging
 The project is split into two independent Node.js services:
 
 - **`/api/`** — Express backend (port 4000). Proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It fetches URLs its **caller** chooses, so its outbound calls are governed by an address policy and six settings in `api/env/*.js` — none of which may be dropped from a new call site. See `api/CLAUDE.md` before touching `api/server.js`.
+- **`/api/node-ldapjs/`** — a fork of [`ldapjs`](https://github.com/ldapjs/node-ldapjs), linked here as a **submodule** on branch `master` ([`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs)), for the LDAP support of issue #257. It is a submodule rather than a line in `api/package.json` because **upstream is decommissioned** — its maintainer stopped the project on 2024-05-14 and said so in its README — so the fork is pinned at that final commit and there is nobody upstream to publish a fix to npm. **Nothing in this tree requires it yet**: no `require`, no `COPY`, no compose service, so an uninitialised checkout currently breaks nothing and no launcher initialises it the way `requireMockStsCheckout()` does `sts/`. That stops being true at the first call site, and whatever adds one adds the initialisation with it. Until then, treat an edit under `api/node-ldapjs/` the way you treat one under `sts/` — it is somebody else's checkout, and `git status` reports it as a modified submodule rather than as a modified file.
 - **`/client/`** — Express frontend (port 3000). Serves static HTML/JS pages and handles the OAuth2 redirect callback at `/callback`, forwarding query params to `debugger2.html`. Every protocol implementation that runs in the browser is here; see `client/CLAUDE.md`.
 - **`/common/data.js`** — Shared `convertToOAuth2Format()` function used by both services to normalize grant parameters (including PKCE and custom params).
 - **`/common/krb5/`** — the **Kerberos v5** codec and crypto, shared by the browser bundles, the api's frame checks and the test suite, because one wire codec must not exist twice. It is the only protocol implementation here that is not under `client/src/`, and eight of its modules are additionally **vendored** into the `sts/` submodule (a Docker build cannot COPY from outside its context) with `tests/krb5_codec_sync.js` keeping the copies honest. `krb5_spnego.js` (RFC 4178) is the newest of them and the one with most to lose from drift — the browser encodes what the mock decodes and the mock encodes what the browser decodes, so every field crosses between the two copies in both directions. See `docs/kerberos.md` and `docs/spnego.md`.
@@ -39,9 +40,12 @@ The project is split into two independent Node.js services:
 ## Running the App
 
 ```bash
-# Once per checkout: the mock STS is a submodule, not code in this repository.
-# The test launchers do this themselves; a bare docker-compose build does not.
-git submodule update --init sts
+# Once per checkout: TWO submodules, neither of them code in this repository —
+# sts/ (the mock STS) and api/node-ldapjs/ (the ldapjs fork, issue #257).
+# The test launchers initialise sts/ themselves; a bare docker-compose build
+# does not, and nothing initialises api/node-ldapjs/ for you. This form takes
+# both, and stays right when a third one lands:
+git submodule update --init
 
 # Start all services (api + client + sts)
 CONFIG_FILE=./env/local.js docker-compose up
