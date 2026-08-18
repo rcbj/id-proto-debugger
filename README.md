@@ -139,10 +139,19 @@ and is linked here as the `sts/` submodule. Cloned without it, `sts/` is an empt
 directory and the build fails with `failed to read dockerfile`. In a checkout that
 is already in that state:
 ```
-git submodule update --init sts
+git submodule update --init --recursive sts
 ```
+**`--recursive`, not plain `--init`.** The mock STS has a submodule of its own —
+[`node-ldapjs`](https://github.com/rcbj/node-ldapjs), which its `package.json`
+takes as `"ldapjs": "file:node-ldapjs"` — and `--init` alone stops one level
+short of it. An uninitialised submodule is an *empty directory* rather than a
+missing one, so the image builds perfectly well, npm installs a package with no
+`main`, and the `sts` container dies at startup with `Cannot find module
+'ldapjs'`: a message naming a package, not a submodule.
+
 The test launchers do this for you — `requireMockStsCheckout()` in
-[`common/common.sh`](common/common.sh) — but a bare `docker-compose build` does not.
+[`common/common.sh`](common/common.sh), which checks the nested one too — but a
+bare `docker-compose build` does not.
 
 From a bash command prompt on Fedora or RHEL 7.x, run the following::
 ```

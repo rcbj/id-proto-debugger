@@ -2371,6 +2371,33 @@ function buildJobs() {
     env: {},
   });
 
+  // The same page against a server that ANSWERS BACK. The job above points the
+  // TLS pane at the client's own plain-HTTP port on purpose — a handshake that
+  // fails with a real alert proves the whole round trip and needs no TLS
+  // service — but it therefore proves nothing about the certificate, since
+  // nothing ever accepted one. This one issues a client certificate from a Root
+  // and an Issuing CA in the browser, presents it to the mock STS's two HTTPS
+  // listeners, and asserts on the SERVER's own account of the connection: which
+  // chain it built (a leaf sent without its intermediates is invisible from the
+  // client), which anchor it verified against, and that the mutual-auth verdict
+  // is `required` rather than `required-and-rejected` — the two an operator
+  // confuses, told apart here by trusting the CA between two otherwise
+  // identical runs.
+  //
+  // STS_TLS_URL is the mock's PLAIN HTTP base, and it is a variable of its own
+  // rather than WSTRUST_STS_URL for the reason WSFED_STS_METADATA_URL is: that
+  // one may legitimately point at a real Apache CXF STS, which has no TLS
+  // endpoint of this kind at all. The test skips without it, and skips again if
+  // the service it finds is older than the endpoint.
+  if (env.STS_TLS_URL) {
+    jobs.push({
+      name: "PKI mutual TLS (a certificate issued in the browser, presented " +
+          "through the api, and read back from the server's point of view)",
+      script: "pki_mutual_tls.js",
+      env: { STS_TLS_URL: env.STS_TLS_URL },
+    });
+  }
+
   // ---------------------------------------------------------------------------
   // Kerberos is either present on this target or it is not, and when it is not
   // NONE of its jobs belong in the run — not just the four page ones.

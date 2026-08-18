@@ -75,6 +75,34 @@
 // its alert says why. Guessing from a single connection is what produces the
 // "mutual auth is not working" reports that turn out to be a server that never
 // asked.
+//
+// ---------------------------------------------------------------------------
+// AND ONE OPTIONAL THIRD THING: ASKING THE SERVER WHAT *IT* SAW.
+//
+// Everything above is the CLIENT's account of the handshake, and the client is
+// the party that already knows what it sent. What it cannot know is which chain
+// the server built out of that, which anchor it verified against, what it read
+// out of the leaf, or — under TLS 1.3, where the client finishes first —
+// whether the certificate was accepted at all. That answer exists only on the
+// far end, and the only way to get it back is to ask over the connection that
+// was just made, because a second connection is a different connection and
+// proves nothing about this one.
+//
+// So `httpRequest` is an optional `{ path }`: after the handshake, one GET is
+// written on the same socket and the response is reported verbatim — status
+// line, headers, body. The mock STS's `GET /tls/whoami` answers exactly this
+// question and is what the PKI page points at, but nothing here knows or cares
+// about that: any server that will answer a GET can be asked.
+//
+// What bounds it is narrower than the rest of this file and needs no setting of
+// its own, for the same reason `POST /krb5/spnego` needs none: the method is
+// GET and nothing else, the caller influences the PATH and nothing else, and
+// every header is built here. A caller cannot inject a header, a method or a
+// body — a path carrying CR or LF is refused rather than escaped, since
+// escaping it would mean deciding what the caller meant. The response is capped
+// by `maxContentLength`, and the read ends on the close that
+// `Connection: close` asks for, on the cap, or on `HTTP_RESPONSE_GRACE_MS` of
+// silence.
 // ---------------------------------------------------------------------------
 
 const tls = require('tls');
@@ -101,6 +129,15 @@ const MAX_TRUST_ANCHORS = 64;
 // The socket is closed as soon as anything arrives, so this is the cost of a
 // server that says nothing rather than the cost of every probe.
 const POST_HANDSHAKE_GRACE_MS = 750;
+// How long to wait for more of an HTTP response after the last byte arrived,
+// when `httpRequest` was asked for. It is RESTARTED on every chunk, so a slow
+// server is not cut off mid-answer; what it bounds is a server that answers and
+// then keeps the socket open despite the `Connection: close` this sends. The
+// whole call is still inside `callTimeout` either way.
+const HTTP_RESPONSE_GRACE_MS = 2000;
+// A path is a path. This is long enough for any query string worth debugging
+// and short enough that a caller cannot use it as a body.
+const MAX_HTTP_PATH_LENGTH = 2048;
 
 const TLS_VERSIONS = ['TLSv1', 'TLSv1.1', 'TLSv1.2', 'TLSv1.3'];
 
@@ -166,6 +203,113 @@ function splitPemCertificates(text) {
   const matches = String(text || '').match(
       /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
   return matches || [];
+}
+
+// Undo `Transfer-Encoding: chunked`.
+//
+// This is the one piece of decoding this file does, and it is not an exception
+// to "report the bytes verbatim" — it is what the bytes MEAN. A chunked body is
+// framing, not content: node's own HTTP server answers chunked whenever it does
+// not know the length in advance, which is most of the time, so a report that
+// handed the frames back would be handing back a body no caller can read, with
+// hexadecimal lengths interleaved through it. Every HTTP client on earth does
+// this before showing anyone a body.
+//
+// A truncated or malformed stream returns what it managed, with `complete`
+// false, because a partial answer from the far end is still an answer about the
+// far end.
+//
+// IT WORKS ON A BUFFER, AND THAT IS NOT AN IMPLEMENTATION DETAIL. A chunk size
+// counts BYTES; a JavaScript string is indexed in UTF-16 code units. Decode a
+// chunked body as a string and every multi-byte character in it — one em dash
+// is three bytes and one character — shifts the end of the chunk earlier than
+// the size says, so the decoder walks off the end of one chunk and into the
+// framing of the next. The symptom is a body that is *almost* right: valid
+// JSON followed by a fragment of hexadecimal, from a server whose only crime
+// was writing prose with punctuation in it. Found exactly that way.
+function decodeChunked(buffer) {
+  const parts = [];
+  let at = 0;
+  function done(complete) {
+    return { buffer: Buffer.concat(parts), complete: complete };
+  }
+  while (at < buffer.length) {
+    const eol = buffer.indexOf('\r\n', at);
+    if (eol === -1) return done(false);
+    const size = parseInt(
+        buffer.toString('latin1', at, eol).split(';')[0].trim(), 16);
+    if (!Number.isFinite(size)) return done(false);
+    if (size === 0) return done(true);
+    const start = eol + 2;
+    if (start + size > buffer.length) {
+      parts.push(buffer.slice(start));
+      return done(false);
+    }
+    parts.push(buffer.slice(start, start + size));
+    at = start + size + 2;
+  }
+  return done(false);
+}
+
+// Read an HTTP/1.1 response off the wire. Deliberately small and deliberately
+// NOT a parser: the status line and the headers are split out so the report can
+// name them, and the body is handed back as it was sent — chunked framing
+// removed, and nothing else touched. This endpoint's whole value is reporting
+// what the far end said, and a parser that normalised a body would be reporting
+// what it made of it instead.
+//
+// A response with no blank line in it at all — a server that hung up
+// mid-header, or something that is not HTTP — is returned as `raw` with
+// `parsed: false`,
+// because that is a fact about the far end and not an error here.
+function parseHttpResponse(input) {
+  // Bytes, for the reason decodeChunked() records at length. A caller with a
+  // string is accommodated, since the tests and the log both have one.
+  const buffer = Buffer.isBuffer(input)
+    ? input : Buffer.from(String(input || ''), 'utf8');
+  const separator = buffer.indexOf('\r\n\r\n');
+  if (separator === -1) {
+    return { parsed: false, raw: buffer.toString('utf8'), statusCode: null,
+             statusText: null, httpVersion: null, headers: {}, body: '' };
+  }
+  // The head is ASCII by definition (RFC 9110 section 5.5), and latin1 is the
+  // decoding that cannot throw or substitute on a header that is not.
+  const head = buffer.toString('latin1', 0, separator);
+  const body = buffer.slice(separator + 4);
+  const lines = head.split('\r\n');
+  const status = /^HTTP\/(\d(?:\.\d)?)\s+(\d{3})\s*(.*)$/.exec(lines[0] || '');
+  const headers = {};
+  lines.slice(1).forEach(function (line) {
+    const colon = line.indexOf(':');
+    if (colon <= 0) return;
+    const name = line.slice(0, colon).trim().toLowerCase();
+    const value = line.slice(colon + 1).trim();
+    // A repeated header is joined rather than overwritten (Set-Cookie is the
+    // one that matters), because dropping one silently would misreport what the
+    // server sent — which is the only thing this function is for.
+    headers[name] = headers[name] === undefined
+      ? value : (headers[name] + ', ' + value);
+  });
+  let payload = body;
+  let transferEncoding = null;
+  let bodyComplete = true;
+  if (/chunked/i.test(headers['transfer-encoding'] || '')) {
+    const decoded = decodeChunked(body);
+    payload = decoded.buffer;
+    bodyComplete = decoded.complete;
+    transferEncoding = 'chunked';
+  }
+  return {
+    parsed: !!status,
+    statusLine: lines[0] || '',
+    httpVersion: status ? status[1] : null,
+    statusCode: status ? parseInt(status[2], 10) : null,
+    statusText: status ? status[3] : null,
+    headers: headers,
+    transferEncoding: transferEncoding,
+    bodyComplete: bodyComplete,
+    body: payload.toString('utf8')
+  };
 }
 
 function createProbe(appconfig, guard, log, deps) {
@@ -285,6 +429,52 @@ function createProbe(appconfig, guard, log, deps) {
         resolve({ address: address, family: family, wasLiteral: false });
       });
     });
+  }
+
+  // Normalise `httpRequest` into the one shape the socket code accepts, or
+  // refuse it by name. The method is GET and is not negotiable, and the path is
+  // the ONLY thing a caller contributes to the bytes that go out — everything
+  // else in the request is built below. A path carrying CR or LF is refused
+  // rather than escaped: escaping means deciding what the caller meant, and
+  // what a newline in a request line means is somebody else's header.
+  function assertHttpRequest(value) {
+    logger.debug("Entering assertHttpRequest().");
+    if (value === undefined || value === null || value === false ||
+        value === '') {
+      logger.debug("Leaving assertHttpRequest(). Not asked for.");
+      return undefined;
+    }
+    const path = typeof value === 'string' ? value
+      : String((value && value.path) || '');
+    if (!path) {
+      logger.debug("Leaving assertHttpRequest(). No path.");
+      throw refuse('httpRequest needs a path — the request made over the ' +
+        'connection is a GET, and the path is the only part of it a caller ' +
+        'chooses.', 'ETLSBADHTTPPATH');
+    }
+    if (path.charAt(0) !== '/') {
+      logger.debug("Leaving assertHttpRequest(). Not absolute.");
+      throw refuse('The httpRequest path must start with "/"; got ' +
+        JSON.stringify(path) + '. This is a request over a connection that ' +
+        'has already been made, so it carries an origin-form path and never ' +
+        'a URL.', 'ETLSBADHTTPPATH');
+    }
+    if (path.length > MAX_HTTP_PATH_LENGTH) {
+      logger.debug("Leaving assertHttpRequest(). Too long.");
+      throw refuse('The httpRequest path is ' + path.length + ' characters; ' +
+        'this endpoint allows ' + MAX_HTTP_PATH_LENGTH + '.',
+        'ETLSBADHTTPPATH');
+    }
+    if (/[\r\n\s]/.test(path)) {
+      logger.debug("Leaving assertHttpRequest(). Illegal characters.");
+      throw refuse('The httpRequest path contains whitespace, a carriage ' +
+        'return or a line feed. It is refused rather than escaped: a newline ' +
+        'in a request line is how a caller writes somebody else\'s header, ' +
+        'and escaping it would mean guessing which of the two was meant. ' +
+        'Percent-encode it.', 'ETLSBADHTTPPATH');
+    }
+    logger.debug("Leaving assertHttpRequest(). path=" + path);
+    return { method: 'GET', path: path };
   }
 
   function assertVersion(name, value) {
@@ -581,6 +771,13 @@ function createProbe(appconfig, guard, log, deps) {
         // only silence spends the whole grace period.
         // ---------------------------------------------------------------
         secureReport = report;
+        if (options.httpRequest) {
+          // A different wait entirely: the socket is not being watched for a
+          // rejection, it is being read for an answer. See
+          // askOverTheConnection() below.
+          askOverTheConnection(report);
+          return;
+        }
         socket.resume();
         graceTimer = setTimeout(function () {
           finish(resolve, report);
@@ -597,6 +794,140 @@ function createProbe(appconfig, guard, log, deps) {
           finish(resolve, report);
         });
       });
+
+      // Ask the far end what IT saw, over the connection just made.
+      //
+      // It replaces the post-handshake grace rather than following it, and does
+      // its job: a server that rejects the client certificate answers this
+      // request with an alert or a hang-up instead of a response, which
+      // lands in the 'error' and 'close' handlers exactly as it would have.
+      // So a connection that produces an httpResponse has been vouched for by
+      // the strongest evidence there is — the far end spoke.
+      function askOverTheConnection(report) {
+        logger.debug("Entering askOverTheConnection().");
+        const request = options.httpRequest;
+        // The Host header is the name the caller asked to be verified, falling
+        // back to the host dialled — the same name in the SNI extension, so a
+        // virtual host routes this request the way it routed the handshake.
+        const hostName = connectOptions.servername || options.host;
+        const authority = options.port === 443
+          ? hostName : hostName + ':' + options.port;
+        const headers = {
+          'Host': authority,
+          'User-Agent': options.userAgent || 'Identity Protocol Debugger',
+          'Accept': 'application/json, text/html;q=0.8, */*;q=0.5',
+          // This is what makes the end of the response an EVENT rather than a
+          // guess. Without it a keep-alive server holds the socket open and
+          // this would have to implement Content-Length and chunked decoding to
+          // know when to stop — a second HTTP implementation, in the one place
+          // whose entire value is reporting bytes verbatim.
+          'Connection': 'close'
+        };
+        report.httpRequest = { method: request.method, path: request.path,
+                              headers: headers };
+        // BUFFERS, never a string. HTTP framing counts bytes and a string is
+        // indexed in code units, so accumulating as text puts every multi-byte
+        // character in the body one step out of step with the chunk sizes — see
+        // decodeChunked(). Decoding happens once, at the end, over the whole
+        // thing, which is also what stops a character split across two TCP
+        // segments from being decoded as two replacement characters.
+        const received = [];
+        let bytes = 0;
+        let kept = 0;
+        let truncated = false;
+        let responseTimer = null;
+
+        function settleWithResponse(reason) {
+          if (settled) return;
+          const parsed = parseHttpResponse(Buffer.concat(received));
+          report.httpResponse = {
+            parsed: parsed.parsed,
+            statusLine: parsed.statusLine || null,
+            httpVersion: parsed.httpVersion,
+            statusCode: parsed.statusCode,
+            statusText: parsed.statusText,
+            headers: parsed.headers,
+            // Chunked framing removed, because it is framing and not content —
+            // node's own HTTP server answers chunked whenever it does not know
+            // the length in advance, which is most of the time.
+            transferEncoding: parsed.transferEncoding || null,
+            bodyComplete: parsed.bodyComplete !== false,
+            body: parsed.body !== undefined ? parsed.body : (parsed.raw || ''),
+            bytes: bytes,
+            truncated: truncated,
+            endedBy: reason
+          };
+          // Bytes from the far end are the strongest evidence there is that it
+          // is content with the connection, which is exactly what the grace
+          // period is otherwise waiting to find out.
+          if (bytes) report.peerData = true;
+          finish(resolve, report);
+        }
+
+        function armResponseTimer() {
+          if (responseTimer) clearTimeout(responseTimer);
+          responseTimer = setTimeout(function () {
+            settleWithResponse('silence');
+          }, HTTP_RESPONSE_GRACE_MS);
+          // Kept on the outer variable as well so finish() clears it — there is
+          // one timer slot and only one of the two waits is ever armed.
+          graceTimer = responseTimer;
+        }
+
+        socket.on('data', function (chunk) {
+          bytes += chunk.length;
+          if (!truncated) {
+            const room = maxChainBytes - kept;
+            if (chunk.length > room) {
+              truncated = true;
+              if (room > 0) {
+                received.push(chunk.slice(0, room));
+                kept += room;
+              }
+              logger.warn('tls_probe: the response to ' + request.path +
+                          ' passed the ' + maxChainBytes +
+                          '-byte cap and was truncated.');
+              settleWithResponse('cap');
+              return;
+            }
+            received.push(chunk);
+            kept += chunk.length;
+          }
+          armResponseTimer();
+        });
+        socket.once('close', function () {
+          report.closedByPeer = true;
+          settleWithResponse('close');
+        });
+        socket.once('end', function () {
+          // 'end' is the peer's FIN and it arrives BEFORE 'close', so this is
+          // the handler that actually runs — which is why it must record the
+          // hang-up rather than leaving that to the one below. A TLS 1.3 server
+          // rejecting a client certificate closes the socket with no alert at
+          // all, so a FIN with no bytes behind it is precisely that refusal;
+          // recording it only on 'close' left `usable` true for a server that
+          // had answered nothing, which is the exact failure the grace period
+          // in the other branch exists to catch. A successful response ends the
+          // same way — `Connection: close` asks it to — but has bytes, and
+          // handshakeUsable() reads both.
+          report.closedByPeer = true;
+          settleWithResponse('end');
+        });
+        armResponseTimer();
+        try {
+          socket.write(request.method + ' ' + request.path + ' HTTP/1.1\r\n' +
+            Object.keys(headers).map(function (name) {
+              return name + ': ' + headers[name];
+            }).join('\r\n') + '\r\n\r\n');
+        } catch (e) {
+          // Writing to a socket the far end has already closed. It is not an
+          // error about the handshake, which happened and is reported; it is
+          // the rejection arriving in its third form.
+          logger.debug('askOverTheConnection(): write: ' + e.message);
+          settleWithResponse('write-failed');
+        }
+        logger.debug("Leaving askOverTheConnection().");
+      }
 
       socket.on('timeout', function () {
         finish(reject, refuse('The connection to ' + options.host + ':' +
@@ -676,12 +1007,15 @@ function createProbe(appconfig, guard, log, deps) {
         'Mutual authentication needs both — the certificate is what is sent, ' +
         'the key is what proves it is yours.', 'ETLSNOCLIENTKEY');
     }
+    const httpRequest = assertHttpRequest(opts.httpRequest);
     const trust = buildTrustStore(opts);
     const address = await resolveAllowedAddress(host);
 
     const base = {
       host: host,
       port: port,
+      httpRequest: httpRequest,
+      userAgent: opts.userAgent,
       servername: opts.servername,
       minVersion: minVersion,
       maxVersion: maxVersion,
@@ -804,6 +1138,14 @@ function createProbe(appconfig, guard, log, deps) {
       tlsVersions: TLS_VERSIONS.slice(),
       addressPolicyEnabled: addressPolicyEnabled,
       mutualAuthProbeAvailable: true,
+      // Published so a page can tell an older api from a broken one, the same
+      // reason GET /krb5/limits publishes `spnegoEnabled`: a request for
+      // something this build cannot do should read as an old build rather than
+      // as a server that ignored it.
+      httpRequestAvailable: true,
+      httpRequestMethod: 'GET',
+      httpResponseGraceMs: HTTP_RESPONSE_GRACE_MS,
+      maxHttpPathLength: MAX_HTTP_PATH_LENGTH,
       nodeVersion: process.version,
       systemRootCount: tls.rootCertificates.length
     };
@@ -824,5 +1166,8 @@ module.exports = {
   DEFAULT_ALLOWED_PORTS: DEFAULT_ALLOWED_PORTS,
   TLS_VERSIONS: TLS_VERSIONS,
   MAX_TRUST_ANCHORS: MAX_TRUST_ANCHORS,
-  splitPemCertificates: splitPemCertificates
+  HTTP_RESPONSE_GRACE_MS: HTTP_RESPONSE_GRACE_MS,
+  MAX_HTTP_PATH_LENGTH: MAX_HTTP_PATH_LENGTH,
+  splitPemCertificates: splitPemCertificates,
+  parseHttpResponse: parseHttpResponse
 };

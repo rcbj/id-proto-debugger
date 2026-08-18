@@ -20,8 +20,15 @@
 //     unticks, the note appears, and the key goes on being written. That is
 //     invisible without reading storage, which is why keypair_storage_optout.js
 //     exists for the other four protocols and why this section is here;
-//   * and the TLS pane growing a browser-side option, which is the one thing
-//     the design of this page forbids.
+//   * the TLS pane growing a browser-side option, which is the one thing
+//     the design of this page forbids;
+//   * and the page's LAYOUT, which is the newest of these and the only one
+//     that is not about correctness. This page carries more fields than any
+//     other in the tree, and on 2026-08-18 its three configuration panes
+//     became one and its extension list became two columns. Both savings undo
+//     themselves silently — a fourth pane looks like tidiness, and a card that
+//     stops fitting collapses the columns with no symptom but more scrolling —
+//     so section 2 measures them.
 //
 // So this drives the workflow the page exists for — root, intermediate,
 // issuing CA, then a leaf — entirely through the form, and then reads storage.
@@ -63,6 +70,43 @@ async function waitVisible(driver, locator) {
                     waitTime);
   log.debug("Leaving waitVisible().");
   return driver.findElement(locator);
+}
+
+// ---------------------------------------------------------------------------
+// Open the page the way a person does: from the landing page's PKI card, not
+// by typing the URL. The card (client/public/index.html, added 2026-08-18) is
+// this workflow's own front door — every other route to the page is somebody
+// else's Tools pane — and a test that navigates straight to PAGE goes on
+// passing after the card stops pointing anywhere, since nothing else in this
+// file reads index.html. tests/navigation.js checks the card too, but only
+// once and only on the containerized stack's own base URL; this runs wherever
+// this test runs, the deployed static sites included.
+//
+// EVERY load here goes through it, the reloads included. localStorage is per
+// ORIGIN rather than per page, so a trip via the landing page preserves
+// exactly what a direct re-get would and the store assertions still mean what
+// they say — while a reload that never leaves the page would be a weaker check
+// than the one it replaces.
+//
+// Clicked rather than followed by href: a card that is present, correct and
+// covered by something drawn over it is a card nobody can use, and only a real
+// click says so. It is scrolled into view first because the grid's last row
+// sits below the fold at the default window size.
+// ---------------------------------------------------------------------------
+var LANDING_CHOICES = By.css(".landing-choices");
+var PKI_CARD = By.css('a.landing-card[href="' + PAGE + '"]');
+
+async function openThePageFromTheLandingCard(driver) {
+  log.debug("Entering openThePageFromTheLandingCard().");
+  await driver.get(baseUrl);
+  await waitVisible(driver, LANDING_CHOICES);
+  const card = await waitVisible(driver, PKI_CARD);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", card);
+  await card.click();
+  await driver.wait(until.urlContains("pki.html"), waitTime,
+    "the landing page's PKI card did not open " + PAGE);
+  log.debug("Leaving openThePageFromTheLandingCard().");
 }
 
 // Set a field the way a person does — assign and dispatch — rather than
@@ -169,10 +213,10 @@ async function waitForStatusChange(driver, id, previous, what) {
 // ---------------------------------------------------------------------------
 async function thePageOffersWhatTheModulesDefine(driver) {
   log.debug("Entering thePageOffersWhatTheModulesDefine().");
-  await driver.get(baseUrl + PAGE);
+  await openThePageFromTheLandingCard(driver);
   await waitVisible(driver, By.id("pki_key_alg"));
   await driver.executeScript("window.localStorage.clear();");
-  await driver.get(baseUrl + PAGE);
+  await openThePageFromTheLandingCard(driver);
   await waitVisible(driver, By.id("pki_key_alg"));
 
   // The dropdowns are filled from key_material.js and x509.js rather than from
@@ -258,7 +302,222 @@ async function thePageOffersWhatTheModulesDefine(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// 2. The workflow: a root, an intermediate, an issuing CA and a leaf, built
+// 2. The configuration is ONE pane, and the layout that made it one still
+//    works.
+//
+// "Key Pair", "Issue a Certificate" and "X.509v3 Extensions" were three panes
+// describing one act — every field in all three is an input to the single
+// Issue Certificate button at the foot of the one pane that replaced them.
+// Each pane cost a title bar, two borders and the gap between them before a
+// field was drawn, and made the reader collapse three things to reach the
+// store rather than one.
+//
+// Every part of that merge fails SILENTLY, which is why it is asserted rather
+// than left to the eye:
+//
+//   * a fourth pane, added for the next block of fields, costs all of it back
+//     and looks like tidiness in the diff;
+//   * the two headings the lost legends became are `div`s with no control to
+//     point at, so nothing but this notices when one goes — and without them
+//     the key algorithm dropdown and the profile dropdown are two unlabelled
+//     selects side by side;
+//   * the extension list is two columns by way of `columns: 460px 2`, which
+//     is a MAXIMUM: one card that stops fitting collapses the whole list to a
+//     single column, which is ~900px of page and the only symptom is that you
+//     scroll further. So the column count is measured rather than assumed;
+//   * and the prose folded into `<details>` is folded rather than CUT. A
+//     `<summary>` whose paragraph was deleted in some later tidy-up still
+//     opens, still closes, and says nothing.
+//
+// The last assertion is the one that keeps the folds honest in the other
+// direction: nothing a person has to OPERATE may be inside a fold. A checkbox
+// behind a summary is a setting nobody can find, and unlike missing prose it
+// costs a certificate rather than an explanation.
+// ---------------------------------------------------------------------------
+var LAYOUT_WIDTH = 1366;
+var LAYOUT_HEIGHT = 768;
+
+// How tall the whole page may be at that size, with every pane expanded.
+//
+// MEASURED, on 2026-08-18 at 1366x768 in headless Chrome: **3323px**, down
+// from **4941px** for the seven-pane version with a single-column extension
+// list — a third of the page, and the store pane moved from 3802px down the
+// document to 2146px. This budget is that measurement plus ~20%, which is
+// slack for the fonts: the containerized run has fonts-liberation and a host
+// run has the host's Arial, and their metrics are not the same. It is
+// deliberately not tight. What it is here to catch is the change that gives
+// the whole saving back at once — un-merging the configuration pane, or the
+// extension list falling to one column — each of which is worth many hundreds
+// of pixels rather than the tens that a font accounts for.
+var PAGE_HEIGHT_BUDGET = 4000;
+
+// The panes this page has after the merge, in order. Named rather than
+// counted, so a pane that is renamed and a pane that is added fail
+// differently.
+var EXPECTED_PANES = ["pane_config", "pane_store", "pane_details", "pane_tls",
+                      "pane_history"];
+
+async function theConfigurationIsOnePane(driver) {
+  log.debug("Entering theConfigurationIsOnePane().");
+  const was = await driver.manage().window().getRect();
+  await driver.manage().window().setRect({ width: LAYOUT_WIDTH,
+                                           height: LAYOUT_HEIGHT });
+  try {
+    await openThePageFromTheLandingCard(driver);
+    await waitVisible(driver, By.id("pane_config"));
+
+    // NOTE: every function body inside these executeScript strings runs IN THE
+    // BROWSER, where there is no bunyan — see tests/CLAUDE.md. They carry no
+    // log lines for that reason.
+    const panes = await driver.executeScript(
+      "return Array.prototype.map.call(" +
+      "  document.querySelectorAll('fieldset.saml-pane')," +
+      "  function (p) { return p.id; });");
+    assert.deepStrictEqual(panes, EXPECTED_PANES,
+      "the page's panes are " + panes.join(", ") + ". Key Pair, Issue a " +
+      "Certificate and X.509v3 Extensions are ONE pane (pane_config): they " +
+      "are one act, and each extra pane costs a title bar, two borders and " +
+      "the gap between them before a single field is drawn.");
+
+    // Everything the merged pane is supposed to hold is INSIDE it, rather
+    // than merely present on the page — a field left behind in a stray
+    // container still answers getElementById.
+    const outside = await driver.executeScript(
+      "var pane = document.getElementById('pane_config');" +
+      "return arguments[0].filter(function (id) {" +
+      "  var e = document.getElementById(id);" +
+      "  return !e || !pane.contains(e); });",
+      ["pki_key_alg", "pki_generate", "pki_private_key", "pki_ks_format",
+       "pki_save_keys", "pki_profile", "pki_issuer", "pki_sig_alg",
+       "pki_dn_cn", "pki_dn_extra", "pki_ext_bc", "pki_ext_san",
+       "pki_custom_extensions", "pki_issue"]);
+    assert.deepStrictEqual(outside, [],
+      "these belong in the one configuration pane and are not in it: " +
+      outside.join(", "));
+
+    // The two legends that were lost are headings now. A pane legend can only
+    // say one thing, so what they said had to go somewhere.
+    const groups = await driver.executeScript(
+      "return Array.prototype.map.call(" +
+      "  document.querySelectorAll('#pane_config .pki-group')," +
+      "  function (g) { return (g.textContent || '').trim(); });");
+    ["Key Pair", "Issue a Certificate", "X.509v3 Extensions"].forEach(
+      function (wanted) {
+        assert.ok(groups.indexOf(wanted) >= 0,
+          "the '" + wanted + "' heading is gone. It was a pane legend and is " +
+          "now a .pki-group over the block it named; without it that block " +
+          "is a run of unlabelled fields. Headings found: " +
+          groups.join(" | "));
+      });
+
+    // The extension list's second column. `columns: 460px 2` is a maximum, so
+    // this is measured from where the cards actually landed.
+    const ext = await driver.executeScript(
+      "var list = document.querySelector('.pki-ext-list');" +
+      "if (!list) { return null; }" +
+      "var cards = Array.prototype.slice.call(" +
+      "  list.querySelectorAll('.pki-ext'));" +
+      "var lefts = {};" +
+      "var sum = 0;" +
+      "cards.forEach(function (c) {" +
+      "  var r = c.getBoundingClientRect();" +
+      "  lefts[Math.round(r.left)] = true;" +
+      "  sum += r.height;" +
+      "});" +
+      "return { cards: cards.length," +
+      "         columns: Object.keys(lefts).length," +
+      "         listHeight: list.getBoundingClientRect().height," +
+      "         cardHeightSum: sum };");
+    assert.ok(ext && ext.cards >= 20,
+      "the extension list is missing or nearly empty: " + JSON.stringify(ext));
+    assert.ok(ext.columns >= 2,
+      "the " + ext.cards + " extension cards laid out in " + ext.columns +
+      " column(s) at " + LAYOUT_WIDTH + "px. They are meant to flow in two: " +
+      "`columns: 460px 2` in css/pki.css is a MAXIMUM, so one card that " +
+      "stopped fitting 460px collapsed the whole list — about 900px of page, " +
+      "whose only symptom is that you scroll further.");
+    assert.ok(ext.listHeight < ext.cardHeightSum * 0.75,
+      "the extension list is " + Math.round(ext.listHeight) + "px tall for " +
+      Math.round(ext.cardHeightSum) + "px of cards, so the cards are " +
+      "stacking rather than flowing into columns.");
+
+    // Nothing scrolls sideways. The columns are grid and multi-column items
+    // holding 64-character base64 lines, and a missing `min-width: 0` on
+    // .pki-col reads as a broken page rather than as two words of CSS.
+    const sideways = await driver.executeScript(
+      "return document.documentElement.scrollWidth > window.innerWidth + 1;");
+    assert.strictEqual(sideways, false,
+      "the page scrolls horizontally at " + LAYOUT_WIDTH + "px");
+
+    // And the whole point of all of it: the page is a third shorter than the
+    // seven-pane version was. Checked last, so that when it fails the three
+    // assertions above have already said which piece of the layout gave way.
+    const pageHeight = await driver.executeScript(
+      "return document.documentElement.scrollHeight;");
+    assert.ok(pageHeight <= PAGE_HEIGHT_BUDGET,
+      "the page is " + pageHeight + "px tall at " + LAYOUT_WIDTH + "x" +
+      LAYOUT_HEIGHT + ", over the " + PAGE_HEIGHT_BUDGET + "px budget. It " +
+      "measured 3323px when the three configuration panes were merged and " +
+      "the extension list became two columns, down from 4941px; the budget " +
+      "carries ~20% of slack for font metrics, so this is not a few pixels " +
+      "of drift. Look for a pane that came back, an extension list that " +
+      "fell to one column, or prose that was unfolded.");
+
+    // The folds kept their prose, and hold nothing anybody has to operate.
+    const folds = await driver.executeScript(
+      "return Array.prototype.map.call(" +
+      "  document.querySelectorAll('details.pki-more'), function (d) {" +
+      "  var s = d.querySelector('summary');" +
+      "  var body = (d.textContent || '').length -" +
+      "             ((s && s.textContent) || '').length;" +
+      "  return { summary: s ? (s.textContent || '').trim() : ''," +
+      "           bodyLength: body," +
+      "           open: d.open," +
+      "           controls: d.querySelectorAll(" +
+      "             'input, select, textarea, button').length };" +
+      "});");
+    assert.ok(folds.length >= 5,
+      "the page has " + folds.length + " folded notes; the prose that was " +
+      "taking the first screen is meant to be folded rather than cut");
+    folds.forEach(function (f) {
+      assert.ok(f.summary.length > 0,
+        "a <details class=\"pki-more\"> has no summary, so nothing on " +
+        "screen says what opening it gives you");
+      assert.ok(f.bodyLength > 80,
+        "the fold titled '" + f.summary + "' holds " + f.bodyLength +
+        " characters. The prose is why this page is worth using and is " +
+        "folded rather than cut; a summary whose paragraph was deleted in " +
+        "some later tidy-up still opens and still says nothing.");
+      assert.strictEqual(f.open, false,
+        "the fold titled '" + f.summary + "' is open by default, which " +
+        "gives back the space folding it saved");
+      assert.strictEqual(f.controls, 0,
+        "the fold titled '" + f.summary + "' contains " + f.controls +
+        " form control(s). A fold is for prose: a checkbox behind a summary " +
+        "is a setting nobody finds, and that costs a certificate rather " +
+        "than an explanation.");
+    });
+
+    // And a fold opens. It is a <details> with no script behind it, so this
+    // is cheap — and a summary that does not open is indistinguishable from
+    // one whose paragraph is missing until you try.
+    const opened = await driver.executeScript(
+      "var d = document.querySelector('details.pki-more');" +
+      "d.open = true;" +
+      "var r = d.querySelector('p').getBoundingClientRect();" +
+      "var visible = r.height > 0;" +
+      "d.open = false;" +
+      "return visible;");
+    assert.strictEqual(opened, true,
+      "opening a folded note showed nothing");
+  } finally {
+    await driver.manage().window().setRect(was);
+  }
+  log.debug("Leaving theConfigurationIsOnePane().");
+}
+
+// ---------------------------------------------------------------------------
+// 3. The workflow: a root, an intermediate, an issuing CA and a leaf, built
 //    entirely through the form.
 // ---------------------------------------------------------------------------
 async function generateKeyPair(driver, algId) {
@@ -327,10 +586,10 @@ async function issueThrough(driver, spec) {
 
 async function theHierarchyIsBuiltThroughTheForm(driver) {
   log.debug("Entering theHierarchyIsBuiltThroughTheForm().");
-  await driver.get(baseUrl + PAGE);
+  await openThePageFromTheLandingCard(driver);
   await waitVisible(driver, By.id("pki_key_alg"));
   await driver.executeScript("window.localStorage.clear();");
-  await driver.get(baseUrl + PAGE);
+  await openThePageFromTheLandingCard(driver);
   await waitVisible(driver, By.id("pki_key_alg"));
 
   // A different key algorithm and signature algorithm at each level: a
@@ -410,7 +669,7 @@ async function theHierarchyIsBuiltThroughTheForm(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// 3. The store survives a reload. A "certificate authority" that does not is
+// 4. The store survives a reload. A "certificate authority" that does not is
 //    a generator.
 // ---------------------------------------------------------------------------
 async function theStoreSurvivesAReload(driver) {
@@ -446,7 +705,7 @@ async function theStoreSurvivesAReload(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. The private-key opt-out, in both states — the same four things
+// 5. The private-key opt-out, in both states — the same four things
 //    keypair_storage_optout.js checks for the other protocols, adapted to a
 //    store that holds many objects rather than one pair.
 //
@@ -536,7 +795,7 @@ async function thePrivateKeyOptOutIsReal(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. The list fields' syntax, which is what the extension editor is made of.
+// 6. The list fields' syntax, which is what the extension editor is made of.
 //    Driven through the page's own exported parsers: the syntax is documented
 //    on the page beside each field, and a parser that quietly accepts
 //    something else is a certificate carrying something the operator did not
@@ -606,7 +865,7 @@ async function theListFieldSyntaxIsWhatThePageDocuments(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. The TLS test, end to end through the api.
+// 7. The TLS test, end to end through the api.
 //
 // It is pointed at the CLIENT's own plain-HTTP port, which is a deliberate
 // choice: a handshake that FAILS with a real alert proves the whole round trip
@@ -616,7 +875,7 @@ async function theListFieldSyntaxIsWhatThePageDocuments(driver) {
 // ---------------------------------------------------------------------------
 async function theTlsTestGoesThroughTheApi(driver) {
   log.debug("Entering theTlsTestGoesThroughTheApi().");
-  await driver.get(baseUrl + PAGE);
+  await openThePageFromTheLandingCard(driver);
   await waitVisible(driver, By.id("pki_tls_host"));
 
   const backendNoticeShown = await driver.executeScript(
@@ -688,7 +947,7 @@ async function theTlsTestGoesThroughTheApi(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. The browser console must be clean. A page that throws on load looks
+// 8. The browser console must be clean. A page that throws on load looks
 //    exactly like a page that is working until something on it is used.
 // ---------------------------------------------------------------------------
 async function theBrowserConsoleIsClean(driver) {
@@ -742,6 +1001,7 @@ async function test() {
 
   try {
     await thePageOffersWhatTheModulesDefine(driver);
+    await theConfigurationIsOnePane(driver);
     await theListFieldSyntaxIsWhatThePageDocuments(driver);
     await theHierarchyIsBuiltThroughTheForm(driver);
     await theStoreSurvivesAReload(driver);

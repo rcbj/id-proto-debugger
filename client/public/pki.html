@@ -25,7 +25,20 @@
 
 <p class="saml-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
 
-<p class="saml-intro">Build a certificate authority — a <strong>Root CA</strong>, an <strong>Intermediate CA</strong> and an <strong>Issuing CA</strong> — and issue the leaf certificates any of them can sign: TLS server, TLS client for mutual authentication, code signing, S/MIME, OCSP responder, time stamping, smartcard logon and Kerberos PKINIT. Every <strong>X.509v3</strong> extension is editable, including its critical flag, and any extension at all can be added by OID. Every combination of <strong>signature algorithm</strong> (RSASSA-PKCS1-v1_5, RSA-PSS, ECDSA and Ed25519, over SHA-256/384/512, plus SHA-1 for testing what refuses it) and <strong>subject key algorithm</strong> (RSA 2048/3072/4096, ECDSA P-256/P-384/P-521, Ed25519) is available. Keys and certificates are kept in this browser so a CA is still there tomorrow, and can be exported as PEM, DER, JWK or PKCS#12. All cryptography runs in your browser; nothing is uploaded — except by the <strong>TLS test</strong> at the foot of the page, which cannot be done here at all.</p>
+<!-- The intro is five sentences and it was five sentences of the page's own
+     first screen. The first says what this is and the last is the one caveat
+     that has to be read before anything is typed, so those two stay; the
+     three that enumerate what is on offer are folded, because the reader who
+     wants the algorithm list is already looking at the dropdown that holds
+     it. Kept verbatim rather than cut, for the reason docs/kerberos.md gives
+     for .krb-more: prose that explains why a thing fails is the thing
+     nobody needed omitted. -->
+<p class="saml-intro">Build a certificate authority — a <strong>Root CA</strong>, an <strong>Intermediate CA</strong> and an <strong>Issuing CA</strong> — and issue the leaf certificates any of them can sign: TLS server, TLS client for mutual authentication, code signing, S/MIME, OCSP responder, time stamping, smartcard logon and Kerberos PKINIT. All cryptography runs in your browser; nothing is uploaded — except by the <strong>TLS test</strong> at the foot of the page, which cannot be done here at all.</p>
+
+<details class="pki-more">
+  <summary>What is on offer: every extension, every algorithm, and where it is all kept</summary>
+  <p class="saml-intro">Every <strong>X.509v3</strong> extension is editable, including its critical flag, and any extension at all can be added by OID. Every combination of <strong>signature algorithm</strong> (RSASSA-PKCS1-v1_5, RSA-PSS, ECDSA and Ed25519, over SHA-256/384/512, plus SHA-1 for testing what refuses it) and <strong>subject key algorithm</strong> (RSA 2048/3072/4096, ECDSA P-256/P-384/P-521, Ed25519) is available. Keys and certificates are kept in this browser so a CA is still there tomorrow, and can be exported as PEM, DER, JWK or PKCS#12.</p>
+</details>
 
 <p id="pki_backend_notice" class="saml-notice saml-hidden">This is the static (backend-less) deployment. Everything on this page works except the <strong>TLS test connection</strong>, which needs the API layer: a browser cannot choose which client certificate to present, cannot be given a truststore, and cannot read the handshake it made.</p>
 
@@ -40,400 +53,425 @@
 
 <p class="saml-status" id="pki_status"></p>
 
-<!-- ===================== Pane 1: Key Pair ===================== -->
-<fieldset class="saml-pane" id="pane_keys">
-  <legend class="saml-legend" onclick="return pki.togglePane('pane_keys_body');">Key Pair</legend>
-  <div class="saml-pane-body" id="pane_keys_body">
+<!-- ================ Pane 1: Certificate & Key Configuration ============
+     ONE pane, where there were three: "Key Pair", "Issue a Certificate"
+     and "X.509v3 Extensions". They described one act — every field in all
+     three is an input to the single Issue Certificate button at the foot
+     of this one — and splitting them cost a title bar, two borders and the
+     gap between them twice over, plus a reader who had to collapse three
+     panes to reach the store rather than one. What the two lost legends
+     said is not lost: each is a .pki-group heading over the block it named,
+     for the reason docs/kerberos.md gives for the merged pane on
+     kerberos_ap.html — a heading a pane legend can no longer carry has to
+     go somewhere, or the block below it reads as unlabelled fields.
+     ===================================================================== -->
+<fieldset class="saml-pane" id="pane_config">
+  <legend class="saml-legend" onclick="return pki.togglePane('pane_config_body');">Certificate &amp; Key Configuration</legend>
+  <div class="saml-pane-body" id="pane_config_body">
 
-    <p class="saml-note">The key pair the next certificate certifies &mdash; and, for a Root CA, the key that signs it. This is the same key-pair pane the <a href="/jwt_tools.html?from=pki.html">JWT Tools</a> page carries, over the same module (<code>client/src/key_material.js</code>), so the algorithms, the PEM/JWK toggle and the keystore formats are identical rather than similar.</p>
+    <div class="pki-cols">
+      <div class="pki-col">
+        <div class="pki-group">Key Pair</div>
+        <details class="pki-more">
+          <summary>Where this pair comes from</summary>
+          <p class="saml-note">The key pair the next certificate certifies &mdash; and, for a Root CA, the key that signs it. This is the same key-pair pane the <a href="/jwt_tools.html?from=pki.html">JWT Tools</a> page carries, over the same module (<code>client/src/key_material.js</code>), so the algorithms, the PEM/JWK toggle and the keystore formats are identical rather than similar.</p>
+        </details>
 
-    <div class="saml-row">
-      <div class="saml-grow">
-        <label for="pki_key_alg" title="The algorithm and parameters of the key pair. RSA sizes are the modulus; the EC entries are the NIST curves; Ed25519 is Web Crypto's only Edwards curve (Ed448 is defined by RFC 8032 and available in no browser).">Key Algorithm</label>
-        <select class="stored" id="pki_key_alg" name="pki_key_alg" onchange="return pki.onKeyAlgChange();"></select>
-      </div>
-      <input type="button" class="saml-btn" id="pki_generate" value="Generate Key Pair" onclick="return pki.generateKeys();" title="Generate a fresh key pair. Nothing is stored until a certificate is issued with it." />
-      <label class="pki-flag" title="Show the key pair as JWK instead of PEM. The conversion is key material only — the same key either way."><input type="checkbox" id="pki_key_jwk" name="pki_key_jwk" onchange="return pki.toggleKeyFormat();" /> Show as JWK</label>
-    </div>
-
-    <div class="saml-field">
-      <label class="saml-has-copy" title="The private key, PKCS#8 PEM (or JWK). It signs, and for a CA it goes on signing long after this certificate was issued.">Private Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_private_key');">Copy</button></label>
-      <textarea class="stored" rows="5" id="pki_private_key" name="pki_private_key"></textarea>
-    </div>
-    <div class="saml-field">
-      <label class="saml-has-copy" title="The public key, SubjectPublicKeyInfo PEM (or JWK). This is what the certificate certifies.">Public Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_public_key');">Copy</button></label>
-      <textarea class="stored" rows="4" id="pki_public_key" name="pki_public_key"></textarea>
-    </div>
-
-    <div class="saml-sub">
-      <div class="saml-sub-title">Export</div>
-      <div class="saml-row">
-        <div class="saml-grow">
-          <label for="pki_ks_format" title="PEM: the private key and public key (and the chain, if selected) in one file. DER: two binary files. JWK: a JWK set. PKCS#12: a password-protected .p12 holding the key and its certificate chain — the format keytool, OpenSSL, Windows and macOS all import.">Keystore Format</label>
-          <select class="stored" id="pki_ks_format" name="pki_ks_format">
-            <option value="pem" selected="selected">PEM</option>
-            <option value="der">DER</option>
-            <option value="jwk">JWK set</option>
-            <option value="pkcs12">PKCS#12 (.p12)</option>
-          </select>
+        <div class="saml-row">
+          <div class="saml-grow">
+            <label for="pki_key_alg" title="The algorithm and parameters of the key pair. RSA sizes are the modulus; the EC entries are the NIST curves; Ed25519 is Web Crypto's only Edwards curve (Ed448 is defined by RFC 8032 and available in no browser).">Key Algorithm</label>
+            <select class="stored" id="pki_key_alg" name="pki_key_alg" onchange="return pki.onKeyAlgChange();"></select>
+          </div>
+          <input type="button" class="saml-btn" id="pki_generate" value="Generate Key Pair" onclick="return pki.generateKeys();" title="Generate a fresh key pair. Nothing is stored until a certificate is issued with it." />
+          <label class="pki-flag" title="Show the key pair as JWK instead of PEM. The conversion is key material only — the same key either way."><input type="checkbox" id="pki_key_jwk" name="pki_key_jwk" onchange="return pki.toggleKeyFormat();" /> Show as JWK</label>
         </div>
-        <div class="saml-grow">
-          <label for="pki_ks_password" title="Required for PKCS#12. For PEM and DER it encrypts the private key as a PBES2 EncryptedPrivateKeyInfo; for JWK it wraps the set in a PBES2 JWE. Left empty, the private key is exported in the clear.">Password (optional; required for PKCS#12)</label>
-          <input type="password" id="pki_ks_password" name="pki_ks_password" autocomplete="new-password" />
+
+        <div class="saml-field">
+          <label class="saml-has-copy" title="The private key, PKCS#8 PEM (or JWK). It signs, and for a CA it goes on signing long after this certificate was issued.">Private Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_private_key');">Copy</button></label>
+          <textarea class="stored" rows="5" id="pki_private_key" name="pki_private_key"></textarea>
         </div>
-        <label class="pki-flag" title="Put the selected object's whole certificate chain in the file, which is what makes a PKCS#12 importable as an identity rather than as a bare key."><input class="stored" type="checkbox" id="pki_ks_include_chain" name="pki_ks_include_chain" checked="checked" /> include the chain</label>
-        <input type="button" class="saml-btn" id="pki_download" value="Download" onclick="return pki.downloadKeys();" title="Download the key pair (of the selected object in the store, if one is selected; otherwise the pair above)." />
+        <div class="saml-field">
+          <label class="saml-has-copy" title="The public key, SubjectPublicKeyInfo PEM (or JWK). This is what the certificate certifies.">Public Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_public_key');">Copy</button></label>
+          <textarea class="stored" rows="4" id="pki_public_key" name="pki_public_key"></textarea>
+        </div>
+
+        <div class="saml-sub">
+          <div class="saml-sub-title">Export</div>
+          <div class="saml-row">
+            <div class="saml-grow">
+              <label for="pki_ks_format" title="PEM: the private key and public key (and the chain, if selected) in one file. DER: two binary files. JWK: a JWK set. PKCS#12: a password-protected .p12 holding the key and its certificate chain — the format keytool, OpenSSL, Windows and macOS all import.">Keystore Format</label>
+              <select class="stored" id="pki_ks_format" name="pki_ks_format">
+                <option value="pem" selected="selected">PEM</option>
+                <option value="der">DER</option>
+                <option value="jwk">JWK set</option>
+                <option value="pkcs12">PKCS#12 (.p12)</option>
+              </select>
+            </div>
+            <div class="saml-grow">
+              <label for="pki_ks_password" title="Required for PKCS#12. For PEM and DER it encrypts the private key as a PBES2 EncryptedPrivateKeyInfo; for JWK it wraps the set in a PBES2 JWE. Left empty, the private key is exported in the clear.">Password (optional; required for PKCS#12)</label>
+              <input type="password" id="pki_ks_password" name="pki_ks_password" autocomplete="new-password" />
+            </div>
+            <label class="pki-flag" title="Put the selected object's whole certificate chain in the file, which is what makes a PKCS#12 importable as an identity rather than as a bare key."><input class="stored" type="checkbox" id="pki_ks_include_chain" name="pki_ks_include_chain" checked="checked" /> include the chain</label>
+            <input type="button" class="saml-btn" id="pki_download" value="Download" onclick="return pki.downloadKeys();" title="Download the key pair (of the selected object in the store, if one is selected; otherwise the pair above)." />
+          </div>
+        </div>
+
+        <div class="saml-field saml-check">
+          <input class="stored" type="checkbox" id="pki_save_keys" name="pki_save_keys" checked="checked" onchange="return pki.onSaveKeysChange();" />
+          <label for="pki_save_keys" title="Keep PRIVATE keys in this browser's localStorage so a certificate authority is still usable after a reload. Turn it off to keep private keys out of storage — the certificates and public keys are still kept, so they can be inspected, exported and used as trust anchors, but nothing will be able to sign or be presented as a client certificate. Clearing it also removes the private keys already written.">Save private keys in browser localStorage</label>
+        </div>
+        <div class="saml-note" id="pki_keys_storage_note"></div>
+      </div>
+
+      <div class="pki-col">
+        <div class="pki-group">Issue a Certificate</div>
+        <details class="pki-more">
+          <summary>What the profile does, and why every field it sets stays editable</summary>
+          <p class="saml-note">The profile sets the extensions below to what that kind of certificate normally carries; every one of them is then editable, which is the point &mdash; issuing the certificate that is wrong in exactly one way is how you find out what refuses it and what does not.</p>
+        </details>
+
+        <div class="saml-row">
+          <div class="saml-grow">
+            <label for="pki_profile" title="What kind of certificate this is. It sets the default extensions, the default validity, and whether it is self-signed.">Profile</label>
+            <select class="stored" id="pki_profile" name="pki_profile" onchange="return pki.onProfileChange();"></select>
+          </div>
+        </div>
+        <p class="saml-note" id="pki_profile_note"></p>
+
+        <div class="saml-row" id="pki_issuer_row">
+          <div class="saml-grow">
+            <label for="pki_issuer" title="The certificate authority that signs this certificate. Only CAs whose private key is still in this browser are listed — one whose key was purged cannot sign.">Signed by</label>
+            <select class="stored" id="pki_issuer" name="pki_issuer" onchange="return pki.onIssuerChange();"></select>
+          </div>
+        </div>
+
+        <div class="saml-row">
+          <div class="saml-grow">
+            <label for="pki_sig_alg" title="The algorithm the ISSUER signs with. The list is filtered to what the signing key can actually produce: an RSA key cannot make an ECDSA signature, and offering it produces a Web Crypto error that names neither.">Signature Algorithm</label>
+            <select class="stored" id="pki_sig_alg" name="pki_sig_alg"></select>
+          </div>
+        </div>
+        <p class="saml-note" id="pki_sig_alg_note"></p>
+
+        <div class="saml-row">
+          <div class="saml-grow">
+            <label for="pki_serial" title="Hex. Left empty, a random 128-bit positive serial is generated, which is what the CA/Browser Forum requires and what makes a collision on the signed bytes impractical to arrange.">Serial Number (hex, optional)</label>
+            <input class="stored" type="text" id="pki_serial" name="pki_serial" placeholder="(random 128-bit)" />
+          </div>
+          <div class="saml-grow">
+            <label for="pki_validity_years" title="Used when Not After is left empty.">Validity (years)</label>
+            <input class="stored" type="number" min="0" id="pki_validity_years" name="pki_validity_years" value="1" />
+          </div>
+        </div>
+        <div class="saml-row">
+          <div class="saml-grow">
+            <label for="pki_not_before" title="ISO 8601, e.g. 2026-01-01T00:00:00Z. Empty means now. A date at or after 2050 is encoded as a GeneralizedTime, as RFC 5280 requires — a UTCTime there is read as 1950, i.e. a certificate that expired seventy years ago.">Not Before (optional)</label>
+            <input class="stored" type="text" id="pki_not_before" name="pki_not_before" placeholder="(now)" />
+          </div>
+          <div class="saml-grow">
+            <label for="pki_not_after" title="ISO 8601. Empty means Not Before plus the validity above.">Not After (optional)</label>
+            <input class="stored" type="text" id="pki_not_after" name="pki_not_after" placeholder="(Not Before + validity)" />
+          </div>
+        </div>
+
+        <div class="saml-sub">
+          <div class="saml-sub-title">Subject Distinguished Name</div>
+          <p class="saml-note">Written in the order shown &mdash; a Name is an ordered RDNSequence, and a reordered DN is a different name that chains to nothing. For a TLS server, note that the name a client checks is in <code>subjectAltName</code> and not here: every current browser ignores the Common Name entirely.</p>
+          <div class="saml-row">
+            <div class="saml-grow"><label for="pki_dn_cn">CN (Common Name)</label><input class="stored" type="text" id="pki_dn_cn" name="pki_dn_cn" /></div>
+            <div class="saml-grow"><label for="pki_dn_o">O (Organization)</label><input class="stored" type="text" id="pki_dn_o" name="pki_dn_o" /></div>
+            <div class="saml-grow"><label for="pki_dn_ou">OU (Organizational Unit)</label><input class="stored" type="text" id="pki_dn_ou" name="pki_dn_ou" /></div>
+          </div>
+          <div class="saml-row">
+            <div class="saml-grow"><label for="pki_dn_l">L (Locality)</label><input class="stored" type="text" id="pki_dn_l" name="pki_dn_l" /></div>
+            <div class="saml-grow"><label for="pki_dn_st">ST (State / Province)</label><input class="stored" type="text" id="pki_dn_st" name="pki_dn_st" /></div>
+            <div class="saml-grow"><label for="pki_dn_c" title="Two letters, encoded as a PrintableString — a country encoded as UTF8String parses perfectly and is refused by several validators.">C (Country)</label><input class="stored" type="text" id="pki_dn_c" name="pki_dn_c" maxlength="2" /></div>
+          </div>
+          <div class="saml-row">
+            <div class="saml-grow"><label for="pki_dn_email">emailAddress</label><input class="stored" type="text" id="pki_dn_email" name="pki_dn_email" /></div>
+            <div class="saml-grow"><label for="pki_dn_dc">DC (Domain Component)</label><input class="stored" type="text" id="pki_dn_dc" name="pki_dn_dc" /></div>
+            <div class="saml-grow"><label for="pki_dn_uid">UID</label><input class="stored" type="text" id="pki_dn_uid" name="pki_dn_uid" /></div>
+          </div>
+          <div class="saml-row">
+            <div class="saml-grow"><label for="pki_dn_serialnumber" title="The DN attribute called serialNumber (2.5.4.5). Nothing to do with the certificate's serial number above.">serialNumber (DN attribute)</label><input class="stored" type="text" id="pki_dn_serialnumber" name="pki_dn_serialnumber" /></div>
+          </div>
+          <div class="saml-field">
+            <label for="pki_dn_extra" title="One NAME=value or OID=value per line, appended in order. Recognised names include SN, GN, title, description, businessCategory, postalCode, STREET, initials, pseudonym, dnQualifier, generationQualifier, and the three EV jurisdiction attributes.">Further attributes (one <code>NAME=value</code> or <code>OID=value</code> per line)</label>
+            <textarea class="stored" rows="3" id="pki_dn_extra" name="pki_dn_extra" placeholder="businessCategory=Private Organization&#10;1.3.6.1.4.1.311.60.2.1.3=US"></textarea>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="saml-field saml-check">
-      <input class="stored" type="checkbox" id="pki_save_keys" name="pki_save_keys" checked="checked" onchange="return pki.onSaveKeysChange();" />
-      <label for="pki_save_keys" title="Keep PRIVATE keys in this browser's localStorage so a certificate authority is still usable after a reload. Turn it off to keep private keys out of storage — the certificates and public keys are still kept, so they can be inspected, exported and used as trust anchors, but nothing will be able to sign or be presented as a client certificate. Clearing it also removes the private keys already written.">Save private keys in browser localStorage</label>
+    <div class="pki-group pki-group-wide">X.509v3 Extensions</div>
+    <details class="pki-more">
+      <summary>Which extensions are here, and what the critical flag costs</summary>
+      <p class="saml-note">Every extension RFC 5280 defines, plus the ones in common use that it does not, plus anything at all by OID. The <em>critical</em> flag is separately settable on each: a validator must reject a certificate carrying a critical extension it does not understand, so making the wrong one critical is a good way to find out what your stack actually implements.</p>
+    </details>
+
+    <!-- Two columns of extension cards rather than twenty stacked rows.
+         CSS columns rather than a grid: a grid lays its items out in row
+         order, so twenty cards of different heights leave a ragged gap
+         under every short one, while a column flow packs them and keeps
+         document order down each column. `columns: 460px 2` is a MAXIMUM of
+         two — below ~980px of pane there is only room for one, and it
+         collapses to one on its own rather than needing a media query. -->
+    <div class="pki-ext-list">
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Whether this certificate may act as a CA, and how many CAs may follow it. RFC 5280 requires it to be critical in a CA certificate."><input class="stored" type="checkbox" id="pki_ext_bc" name="pki_ext_bc" /> <strong>basicConstraints</strong></label>
+          <label class="pki-flag" title="RFC 5280: MUST be critical in a CA certificate."><input class="stored" type="checkbox" id="pki_bc_critical" name="pki_bc_critical" /> critical</label>
+        </div>
+        <div class="saml-row">
+          <label class="pki-flag" title="cA — this certificate may sign other certificates."><input class="stored" type="checkbox" id="pki_bc_ca" name="pki_bc_ca" /> cA</label>
+          <div class="saml-grow">
+            <label for="pki_bc_pathlen" title="pathLenConstraint: how many further CA certificates may appear below this one. 0 means it may only sign leaves. Empty means unlimited.">pathLenConstraint (empty = unlimited)</label>
+            <input class="stored" type="text" id="pki_bc_pathlen" name="pki_bc_pathlen" placeholder="(unlimited)" />
+          </div>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="What the certified key may be used for. RFC 5280 says this SHOULD be critical, and it is by default."><input class="stored" type="checkbox" id="pki_ext_ku" name="pki_ext_ku" /> <strong>keyUsage</strong></label>
+          <label class="pki-flag" title="RFC 5280: SHOULD be critical."><input class="stored" type="checkbox" id="pki_ku_critical" name="pki_ku_critical" /> critical</label>
+        </div>
+        <div class="pki-flags">
+          <label class="pki-flag" title="Sign data — the bit a TLS server, a code-signing certificate and an S/MIME signature all need."><input class="stored" type="checkbox" id="pki_ku_digitalSignature" name="pki_ku_digitalSignature" /> digitalSignature</label>
+          <label class="pki-flag" title="Also called contentCommitment. A signature the signer is not supposed to be able to disown."><input class="stored" type="checkbox" id="pki_ku_nonRepudiation" name="pki_ku_nonRepudiation" /> nonRepudiation</label>
+          <label class="pki-flag" title="Encrypt a symmetric key to this public key. Needed by RSA key transport; meaningless for an ECDSA key."><input class="stored" type="checkbox" id="pki_ku_keyEncipherment" name="pki_ku_keyEncipherment" /> keyEncipherment</label>
+          <label class="pki-flag" title="Encrypt data directly to this key. Almost never what is wanted."><input class="stored" type="checkbox" id="pki_ku_dataEncipherment" name="pki_ku_dataEncipherment" /> dataEncipherment</label>
+          <label class="pki-flag" title="Diffie-Hellman / ECDH. It is what makes encipherOnly and decipherOnly meaningful."><input class="stored" type="checkbox" id="pki_ku_keyAgreement" name="pki_ku_keyAgreement" /> keyAgreement</label>
+          <label class="pki-flag" title="Sign certificates. A CA needs this, and a validator refuses a CA that does not have it."><input class="stored" type="checkbox" id="pki_ku_keyCertSign" name="pki_ku_keyCertSign" /> keyCertSign</label>
+          <label class="pki-flag" title="Sign certificate revocation lists."><input class="stored" type="checkbox" id="pki_ku_cRLSign" name="pki_ku_cRLSign" /> cRLSign</label>
+          <label class="pki-flag" title="Only meaningful alongside keyAgreement."><input class="stored" type="checkbox" id="pki_ku_encipherOnly" name="pki_ku_encipherOnly" /> encipherOnly</label>
+          <label class="pki-flag" title="Only meaningful alongside keyAgreement."><input class="stored" type="checkbox" id="pki_ku_decipherOnly" name="pki_ku_decipherOnly" /> decipherOnly</label>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="The purposes this certificate is for. A TLS client refuses a server certificate without serverAuth; a server refuses a client certificate without clientAuth."><input class="stored" type="checkbox" id="pki_ext_eku" name="pki_ext_eku" /> <strong>extendedKeyUsage</strong></label>
+          <label class="pki-flag" title="Marking this critical means a validator that does not recognise one of the OIDs must reject the certificate."><input class="stored" type="checkbox" id="pki_eku_critical" name="pki_eku_critical" /> critical</label>
+        </div>
+        <div class="pki-flags">
+          <label class="pki-flag" title="TLS server — 1.3.6.1.5.5.7.3.1"><input class="stored" type="checkbox" id="pki_eku_serverAuth" name="pki_eku_serverAuth" /> serverAuth</label>
+          <label class="pki-flag" title="TLS client, the one mutual authentication needs — 1.3.6.1.5.5.7.3.2"><input class="stored" type="checkbox" id="pki_eku_clientAuth" name="pki_eku_clientAuth" /> clientAuth</label>
+          <label class="pki-flag" title="Code signing — 1.3.6.1.5.5.7.3.3"><input class="stored" type="checkbox" id="pki_eku_codeSigning" name="pki_eku_codeSigning" /> codeSigning</label>
+          <label class="pki-flag" title="S/MIME — 1.3.6.1.5.5.7.3.4"><input class="stored" type="checkbox" id="pki_eku_emailProtection" name="pki_eku_emailProtection" /> emailProtection</label>
+          <label class="pki-flag" title="Time stamping — 1.3.6.1.5.5.7.3.8"><input class="stored" type="checkbox" id="pki_eku_timeStamping" name="pki_eku_timeStamping" /> timeStamping</label>
+          <label class="pki-flag" title="OCSP responder — 1.3.6.1.5.5.7.3.9"><input class="stored" type="checkbox" id="pki_eku_ocspSigning" name="pki_eku_ocspSigning" /> ocspSigning</label>
+          <label class="pki-flag" title="IPsec end system — 1.3.6.1.5.5.7.3.5"><input class="stored" type="checkbox" id="pki_eku_ipsecEndSystem" name="pki_eku_ipsecEndSystem" /> ipsecEndSystem</label>
+          <label class="pki-flag" title="IPsec tunnel — 1.3.6.1.5.5.7.3.6"><input class="stored" type="checkbox" id="pki_eku_ipsecTunnel" name="pki_eku_ipsecTunnel" /> ipsecTunnel</label>
+          <label class="pki-flag" title="IPsec user — 1.3.6.1.5.5.7.3.7"><input class="stored" type="checkbox" id="pki_eku_ipsecUser" name="pki_eku_ipsecUser" /> ipsecUser</label>
+          <label class="pki-flag" title="IPsec IKE — 1.3.6.1.5.5.7.3.17"><input class="stored" type="checkbox" id="pki_eku_ipsecIKE" name="pki_eku_ipsecIKE" /> ipsecIKE</label>
+          <label class="pki-flag" title="Smartcard logon — 1.3.6.1.4.1.311.20.2.2"><input class="stored" type="checkbox" id="pki_eku_msSmartcardLogon" name="pki_eku_msSmartcardLogon" /> msSmartcardLogon</label>
+          <label class="pki-flag" title="Document signing — 1.3.6.1.4.1.311.10.3.12"><input class="stored" type="checkbox" id="pki_eku_msDocumentSigning" name="pki_eku_msDocumentSigning" /> msDocumentSigning</label>
+          <label class="pki-flag" title="Encrypting File System — 1.3.6.1.4.1.311.10.3.4"><input class="stored" type="checkbox" id="pki_eku_msEncryptingFileSystem" name="pki_eku_msEncryptingFileSystem" /> msEncryptingFileSystem</label>
+          <label class="pki-flag" title="Kerberos KDC, for PKINIT — 1.3.6.1.5.2.3.5"><input class="stored" type="checkbox" id="pki_eku_kdcAuthentication" name="pki_eku_kdcAuthentication" /> kdcAuthentication</label>
+          <label class="pki-flag" title="PKINIT client — 1.3.6.1.5.2.3.4"><input class="stored" type="checkbox" id="pki_eku_pkinitClientAuth" name="pki_eku_pkinitClientAuth" /> pkinitClientAuth</label>
+          <label class="pki-flag" title="Any extended key usage — 2.5.29.37.0"><input class="stored" type="checkbox" id="pki_eku_anyExtendedKeyUsage" name="pki_eku_anyExtendedKeyUsage" /> anyExtendedKeyUsage</label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="2" id="pki_eku_extra" name="pki_eku_extra" placeholder="1.3.6.1.4.1.99999.1.1"></textarea>
+          <p class="saml-note">Further purposes by OID, one per line.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="The SHA-1 of this certificate's public key, RFC 5280 section 4.2.1.2 method (1) — the same value every other implementation computes, so key identifiers match across tools."><input class="stored" type="checkbox" id="pki_ext_skid" name="pki_ext_skid" /> <strong>subjectKeyIdentifier</strong></label>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Identifies the ISSUER's key, so a validator can find the right CA certificate when several share a subject."><input class="stored" type="checkbox" id="pki_ext_akid" name="pki_ext_akid" /> <strong>authorityKeyIdentifier</strong></label>
+        </div>
+        <div class="saml-row">
+          <label class="pki-flag" title="Also name the issuer's own issuer and serial number. Rarely needed, occasionally required."><input class="stored" type="checkbox" id="pki_akid_issuer_serial" name="pki_akid_issuer_serial" /> also include authorityCertIssuer + serial</label>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="The names this certificate is for. For TLS this — not the Common Name — is what a client checks."><input class="stored" type="checkbox" id="pki_ext_san" name="pki_ext_san" /> <strong>subjectAltName</strong></label>
+          <label class="pki-flag" title="Should be critical when the subject DN is empty, and only then."><input class="stored" type="checkbox" id="pki_san_critical" name="pki_san_critical" /> critical</label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="4" id="pki_san" name="pki_san" placeholder="dns:localhost&#10;ip:127.0.0.1"></textarea>
+          <p class="saml-note">One name per line: <code>dns:example.com</code>, <code>ip:10.0.0.1</code> or <code>ip:2001:db8::1</code>, <code>email:user@example.com</code>, <code>uri:https://example.com/x</code>, <code>upn:user@EXAMPLE.COM</code> (Microsoft userPrincipalName), <code>krb5:host/x@EXAMPLE.COM</code> (RFC 4556 Kerberos principal), <code>rid:1.2.3.4</code>, <code>dirname:CN=alt,O=Example</code>, or <code>othername:&lt;oid&gt;:&lt;base64 DER&gt;</code> for anything else.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Alternative names for the issuer. Same syntax as subjectAltName."><input class="stored" type="checkbox" id="pki_ext_ian" name="pki_ext_ian" /> <strong>issuerAltName</strong></label>
+          <label class="pki-flag" title="Should not normally be critical."><input class="stored" type="checkbox" id="pki_ian_critical" name="pki_ian_critical" /> critical</label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="2" id="pki_ian" name="pki_ian" placeholder="uri:https://ca.example.com/"></textarea>
+          <p class="saml-note">Same syntax as subjectAltName above.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Where to fetch the CRL that would revoke this certificate."><input class="stored" type="checkbox" id="pki_ext_cdp" name="pki_ext_cdp" /> <strong>cRLDistributionPoints</strong></label>
+          <label class="pki-flag" title="Rarely critical."><input class="stored" type="checkbox" id="pki_cdp_critical" name="pki_cdp_critical" /> critical</label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="2" id="pki_cdp" name="pki_cdp" placeholder="http://crl.example.com/issuing.crl"></textarea>
+          <p class="saml-note">One URL per line.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Where to fetch the delta CRL. Same shape as cRLDistributionPoints."><input class="stored" type="checkbox" id="pki_ext_freshest" name="pki_ext_freshest" /> <strong>freshestCRL</strong></label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="2" id="pki_freshest" name="pki_freshest" placeholder="http://crl.example.com/delta.crl"></textarea>
+          <p class="saml-note">One URL per line.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Where to reach the issuer: its OCSP responder, and a copy of its own certificate for a client that was sent an incomplete chain."><input class="stored" type="checkbox" id="pki_ext_aia" name="pki_ext_aia" /> <strong>authorityInfoAccess</strong></label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="3" id="pki_aia" name="pki_aia" placeholder="ocsp:http://ocsp.example.com&#10;caissuers:http://example.com/issuing.cer"></textarea>
+          <p class="saml-note">One per line: <code>ocsp:&lt;url&gt;</code>, <code>caissuers:&lt;url&gt;</code>, <code>timestamping:&lt;url&gt;</code>, <code>carepository:&lt;url&gt;</code>, or <code>&lt;oid&gt;:&lt;url&gt;</code>.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Services offered by the SUBJECT of this certificate, rather than by its issuer."><input class="stored" type="checkbox" id="pki_ext_sia" name="pki_ext_sia" /> <strong>subjectInfoAccess</strong></label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="2" id="pki_sia" name="pki_sia" placeholder="carepository:http://example.com/certs/"></textarea>
+          <p class="saml-note">Same syntax as authorityInfoAccess above.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="The policies this certificate was issued under, with the two qualifiers RFC 5280 defines."><input class="stored" type="checkbox" id="pki_ext_policies" name="pki_ext_policies" /> <strong>certificatePolicies</strong></label>
+          <label class="pki-flag" title="Critical means a validator that cannot process the policy must reject the certificate."><input class="stored" type="checkbox" id="pki_policies_critical" name="pki_policies_critical" /> critical</label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="3" id="pki_policies" name="pki_policies" placeholder="1.3.6.1.4.1.99999.1.1|cps=https://example.com/cps|notice=Test certificates only"></textarea>
+          <p class="saml-note">One per line: <code>&lt;policy oid&gt;</code>, optionally followed by <code>|cps=&lt;uri&gt;</code> and <code>|notice=&lt;text&gt;</code>. <code>2.5.29.32.0</code> is anyPolicy.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Declares that one policy OID in the issuer's domain is equivalent to another in the subject's. RFC 5280 says this SHOULD be critical, and it is."><input class="stored" type="checkbox" id="pki_ext_policy_mappings" name="pki_ext_policy_mappings" /> <strong>policyMappings</strong></label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="2" id="pki_policy_mappings" name="pki_policy_mappings" placeholder="1.3.6.1.4.1.99999.1.1=1.3.6.1.4.1.88888.1.1"></textarea>
+          <p class="saml-note">One per line: <code>&lt;issuer policy oid&gt;=&lt;subject policy oid&gt;</code>.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Requires an explicit policy, or inhibits policy mapping, after a number of further certificates. RFC 5280: MUST be critical."><input class="stored" type="checkbox" id="pki_ext_policy_constraints" name="pki_ext_policy_constraints" /> <strong>policyConstraints</strong></label>
+        </div>
+        <div class="saml-row">
+          <div class="saml-grow"><label for="pki_require_explicit_policy">requireExplicitPolicy (certificates)</label><input class="stored" type="text" id="pki_require_explicit_policy" name="pki_require_explicit_policy" placeholder="(not set)" /></div>
+          <div class="saml-grow"><label for="pki_inhibit_policy_mapping">inhibitPolicyMapping (certificates)</label><input class="stored" type="text" id="pki_inhibit_policy_mapping" name="pki_inhibit_policy_mapping" placeholder="(not set)" /></div>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Limits the names a CA below this one may certify — the extension that makes a private CA safe to trust. RFC 5280: MUST be critical, and only meaningful in a CA certificate."><input class="stored" type="checkbox" id="pki_ext_name_constraints" name="pki_ext_name_constraints" /> <strong>nameConstraints</strong></label>
+          <label class="pki-flag" title="RFC 5280: MUST be critical."><input class="stored" type="checkbox" id="pki_nc_critical" name="pki_nc_critical" /> critical</label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="4" id="pki_name_constraints" name="pki_name_constraints" placeholder="permit dns:example.com&#10;permit ip:10.0.0.0/8&#10;exclude dns:bad.example.com"></textarea>
+          <p class="saml-note">One per line: <code>permit &lt;name&gt;</code> or <code>exclude &lt;name&gt;</code>, using the subjectAltName syntax. Note that an IP constraint takes a PREFIX (<code>10.0.0.0/8</code>): a name constraint's iPAddress is the address followed by its mask, which is the one place a general name is not simply an address.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="How many further certificates may still use the anyPolicy OID. RFC 5280: MUST be critical."><input class="stored" type="checkbox" id="pki_ext_inhibit_any" name="pki_ext_inhibit_any" /> <strong>inhibitAnyPolicy</strong></label>
+        </div>
+        <div class="saml-row">
+          <div class="saml-grow"><label for="pki_inhibit_any_skip">skipCerts</label><input class="stored" type="text" id="pki_inhibit_any_skip" name="pki_inhibit_any_skip" placeholder="0" /></div>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="A validity period for the PRIVATE key that is shorter than the certificate's — signatures made after it are not to be trusted, while the certificate goes on validating them."><input class="stored" type="checkbox" id="pki_ext_pkup" name="pki_ext_pkup" /> <strong>privateKeyUsagePeriod</strong></label>
+        </div>
+        <div class="saml-row">
+          <div class="saml-grow"><label for="pki_pkup_not_before">notBefore (ISO 8601)</label><input class="stored" type="text" id="pki_pkup_not_before" name="pki_pkup_not_before" /></div>
+          <div class="saml-grow"><label for="pki_pkup_not_after">notAfter (ISO 8601)</label><input class="stored" type="text" id="pki_pkup_not_after" name="pki_pkup_not_after" /></div>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="The TLS extensions a server promises to support. 5 is status_request — 'must-staple'."><input class="stored" type="checkbox" id="pki_ext_tls_feature" name="pki_ext_tls_feature" /> <strong>TLS Feature (RFC 7633)</strong></label>
+        </div>
+        <div class="saml-field">
+          <textarea class="stored" rows="2" id="pki_tls_feature" name="pki_tls_feature" placeholder="5"></textarea>
+          <p class="saml-note">One TLS extension number per line. 5 is status_request (must-staple); 17 is status_request_v2.</p>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="Tells a validator not to check the revocation status of this certificate — correct on an OCSP responder's own certificate and almost nowhere else."><input class="stored" type="checkbox" id="pki_ext_ocsp_nocheck" name="pki_ext_ocsp_nocheck" /> <strong>id-pkix-ocsp-nocheck</strong></label>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="A pre-RFC 5280 relic that some old appliances still read. Kept for the same reason SHA-1 is: this is where you find out."><input class="stored" type="checkbox" id="pki_ext_ns_cert_type" name="pki_ext_ns_cert_type" /> <strong>Netscape certificate type</strong></label>
+        </div>
+        <div class="pki-flags">
+          <label class="pki-flag" title="SSL client"><input class="stored" type="checkbox" id="pki_ns_sslClient" name="pki_ns_sslClient" /> sslClient</label>
+          <label class="pki-flag" title="SSL server"><input class="stored" type="checkbox" id="pki_ns_sslServer" name="pki_ns_sslServer" /> sslServer</label>
+          <label class="pki-flag" title="SSL CA"><input class="stored" type="checkbox" id="pki_ns_sslCA" name="pki_ns_sslCA" /> sslCA</label>
+          <label class="pki-flag" title="Email CA"><input class="stored" type="checkbox" id="pki_ns_emailCA" name="pki_ns_emailCA" /> emailCA</label>
+          <label class="pki-flag" title="Object-signing CA"><input class="stored" type="checkbox" id="pki_ns_objectSigningCA" name="pki_ns_objectSigningCA" /> objectSigningCA</label>
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head">
+          <label class="pki-flag" title="A free-text comment some tools display when showing the certificate."><input class="stored" type="checkbox" id="pki_ext_ns_comment" name="pki_ext_ns_comment" /> <strong>Netscape comment</strong></label>
+        </div>
+        <div class="saml-field">
+          <input class="stored" type="text" id="pki_ns_comment" name="pki_ns_comment" placeholder="Issued by the Identity Protocol Debugger" />
+        </div>
+      </div>
+
+      <div class="pki-ext">
+        <div class="pki-ext-head"><strong>Any other extension</strong></div>
+        <div class="saml-field">
+          <textarea class="stored" rows="3" id="pki_custom_extensions" name="pki_custom_extensions" placeholder="1.3.6.1.4.1.99999.7.7|-|DANDYWJj"></textarea>
+          <p class="saml-note">One per line: <code>&lt;oid&gt;|&lt;critical or -&gt;|&lt;base64 DER of the extension value&gt;</code>. The value is the DER of the extnValue's contents, not the OCTET STRING wrapping it. Without this the extension set would be whatever this page happens to know about, which is not what a debugger is for.</p>
+        </div>
+      </div>
     </div>
-    <div class="saml-note" id="pki_keys_storage_note"></div>
-  </div>
-</fieldset>
 
-<!-- ===================== Pane 2: Issue a Certificate ===================== -->
-<fieldset class="saml-pane" id="pane_issue">
-  <legend class="saml-legend" onclick="return pki.togglePane('pane_issue_body');">Issue a Certificate</legend>
-  <div class="saml-pane-body" id="pane_issue_body">
-
-    <p class="saml-note">The profile sets the extensions below to what that kind of certificate normally carries; every one of them is then editable, which is the point &mdash; issuing the certificate that is wrong in exactly one way is how you find out what refuses it and what does not.</p>
-
-    <div class="saml-row">
-      <div class="saml-grow">
-        <label for="pki_profile" title="What kind of certificate this is. It sets the default extensions, the default validity, and whether it is self-signed.">Profile</label>
-        <select class="stored" id="pki_profile" name="pki_profile" onchange="return pki.onProfileChange();"></select>
-      </div>
-    </div>
-    <p class="saml-note" id="pki_profile_note"></p>
-
-    <div class="saml-row" id="pki_issuer_row">
-      <div class="saml-grow">
-        <label for="pki_issuer" title="The certificate authority that signs this certificate. Only CAs whose private key is still in this browser are listed — one whose key was purged cannot sign.">Signed by</label>
-        <select class="stored" id="pki_issuer" name="pki_issuer" onchange="return pki.onIssuerChange();"></select>
-      </div>
-    </div>
-
-    <div class="saml-row">
-      <div class="saml-grow">
-        <label for="pki_sig_alg" title="The algorithm the ISSUER signs with. The list is filtered to what the signing key can actually produce: an RSA key cannot make an ECDSA signature, and offering it produces a Web Crypto error that names neither.">Signature Algorithm</label>
-        <select class="stored" id="pki_sig_alg" name="pki_sig_alg"></select>
-      </div>
-    </div>
-    <p class="saml-note" id="pki_sig_alg_note"></p>
-
-    <div class="saml-row">
-      <div class="saml-grow">
-        <label for="pki_serial" title="Hex. Left empty, a random 128-bit positive serial is generated, which is what the CA/Browser Forum requires and what makes a collision on the signed bytes impractical to arrange.">Serial Number (hex, optional)</label>
-        <input class="stored" type="text" id="pki_serial" name="pki_serial" placeholder="(random 128-bit)" />
-      </div>
-      <div class="saml-grow">
-        <label for="pki_validity_years" title="Used when Not After is left empty.">Validity (years)</label>
-        <input class="stored" type="number" min="0" id="pki_validity_years" name="pki_validity_years" value="1" />
-      </div>
-    </div>
-    <div class="saml-row">
-      <div class="saml-grow">
-        <label for="pki_not_before" title="ISO 8601, e.g. 2026-01-01T00:00:00Z. Empty means now. A date at or after 2050 is encoded as a GeneralizedTime, as RFC 5280 requires — a UTCTime there is read as 1950, i.e. a certificate that expired seventy years ago.">Not Before (optional)</label>
-        <input class="stored" type="text" id="pki_not_before" name="pki_not_before" placeholder="(now)" />
-      </div>
-      <div class="saml-grow">
-        <label for="pki_not_after" title="ISO 8601. Empty means Not Before plus the validity above.">Not After (optional)</label>
-        <input class="stored" type="text" id="pki_not_after" name="pki_not_after" placeholder="(Not Before + validity)" />
-      </div>
-    </div>
-
-    <div class="saml-sub">
-      <div class="saml-sub-title">Subject Distinguished Name</div>
-      <p class="saml-note">Written in the order shown &mdash; a Name is an ordered RDNSequence, and a reordered DN is a different name that chains to nothing. For a TLS server, note that the name a client checks is in <code>subjectAltName</code> and not here: every current browser ignores the Common Name entirely.</p>
-      <div class="saml-row">
-        <div class="saml-grow"><label for="pki_dn_cn">CN (Common Name)</label><input class="stored" type="text" id="pki_dn_cn" name="pki_dn_cn" /></div>
-        <div class="saml-grow"><label for="pki_dn_o">O (Organization)</label><input class="stored" type="text" id="pki_dn_o" name="pki_dn_o" /></div>
-        <div class="saml-grow"><label for="pki_dn_ou">OU (Organizational Unit)</label><input class="stored" type="text" id="pki_dn_ou" name="pki_dn_ou" /></div>
-      </div>
-      <div class="saml-row">
-        <div class="saml-grow"><label for="pki_dn_l">L (Locality)</label><input class="stored" type="text" id="pki_dn_l" name="pki_dn_l" /></div>
-        <div class="saml-grow"><label for="pki_dn_st">ST (State / Province)</label><input class="stored" type="text" id="pki_dn_st" name="pki_dn_st" /></div>
-        <div class="saml-grow"><label for="pki_dn_c" title="Two letters, encoded as a PrintableString — a country encoded as UTF8String parses perfectly and is refused by several validators.">C (Country)</label><input class="stored" type="text" id="pki_dn_c" name="pki_dn_c" maxlength="2" /></div>
-      </div>
-      <div class="saml-row">
-        <div class="saml-grow"><label for="pki_dn_email">emailAddress</label><input class="stored" type="text" id="pki_dn_email" name="pki_dn_email" /></div>
-        <div class="saml-grow"><label for="pki_dn_dc">DC (Domain Component)</label><input class="stored" type="text" id="pki_dn_dc" name="pki_dn_dc" /></div>
-        <div class="saml-grow"><label for="pki_dn_uid">UID</label><input class="stored" type="text" id="pki_dn_uid" name="pki_dn_uid" /></div>
-      </div>
-      <div class="saml-row">
-        <div class="saml-grow"><label for="pki_dn_serialnumber" title="The DN attribute called serialNumber (2.5.4.5). Nothing to do with the certificate's serial number above.">serialNumber (DN attribute)</label><input class="stored" type="text" id="pki_dn_serialnumber" name="pki_dn_serialnumber" /></div>
-      </div>
-      <div class="saml-field">
-        <label for="pki_dn_extra" title="One NAME=value or OID=value per line, appended in order. Recognised names include SN, GN, title, description, businessCategory, postalCode, STREET, initials, pseudonym, dnQualifier, generationQualifier, and the three EV jurisdiction attributes.">Further attributes (one <code>NAME=value</code> or <code>OID=value</code> per line)</label>
-        <textarea class="stored" rows="3" id="pki_dn_extra" name="pki_dn_extra" placeholder="businessCategory=Private Organization&#10;1.3.6.1.4.1.311.60.2.1.3=US"></textarea>
-      </div>
-    </div>
-
-    <div class="saml-row">
+    <!-- The button the whole pane is an input to, at the foot of it. -->
+    <div class="saml-row pki-actions">
       <input type="button" class="saml-btn pki-btn-primary" id="pki_issue" value="Issue Certificate" onclick="return pki.issue();" title="Build the certificate, sign it, and keep it in the store below." />
     </div>
   </div>
 </fieldset>
 
-<!-- ===================== Pane 3: X.509v3 Extensions ===================== -->
-<fieldset class="saml-pane" id="pane_extensions">
-  <legend class="saml-legend" onclick="return pki.togglePane('pane_extensions_body');">X.509v3 Extensions</legend>
-  <div class="saml-pane-body" id="pane_extensions_body">
-
-    <p class="saml-note">Every extension RFC 5280 defines, plus the ones in common use that it does not, plus anything at all by OID. The <em>critical</em> flag is separately settable on each: a validator must reject a certificate carrying a critical extension it does not understand, so making the wrong one critical is a good way to find out what your stack actually implements.</p>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Whether this certificate may act as a CA, and how many CAs may follow it. RFC 5280 requires it to be critical in a CA certificate."><input class="stored" type="checkbox" id="pki_ext_bc" name="pki_ext_bc" /> <strong>basicConstraints</strong></label>
-        <label class="pki-flag" title="RFC 5280: MUST be critical in a CA certificate."><input class="stored" type="checkbox" id="pki_bc_critical" name="pki_bc_critical" /> critical</label>
-      </div>
-      <div class="saml-row">
-        <label class="pki-flag" title="cA — this certificate may sign other certificates."><input class="stored" type="checkbox" id="pki_bc_ca" name="pki_bc_ca" /> cA</label>
-        <div class="saml-grow">
-          <label for="pki_bc_pathlen" title="pathLenConstraint: how many further CA certificates may appear below this one. 0 means it may only sign leaves. Empty means unlimited.">pathLenConstraint (empty = unlimited)</label>
-          <input class="stored" type="text" id="pki_bc_pathlen" name="pki_bc_pathlen" placeholder="(unlimited)" />
-        </div>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="What the certified key may be used for. RFC 5280 says this SHOULD be critical, and it is by default."><input class="stored" type="checkbox" id="pki_ext_ku" name="pki_ext_ku" /> <strong>keyUsage</strong></label>
-        <label class="pki-flag" title="RFC 5280: SHOULD be critical."><input class="stored" type="checkbox" id="pki_ku_critical" name="pki_ku_critical" /> critical</label>
-      </div>
-      <div class="pki-flags">
-        <label class="pki-flag" title="Sign data — the bit a TLS server, a code-signing certificate and an S/MIME signature all need."><input class="stored" type="checkbox" id="pki_ku_digitalSignature" name="pki_ku_digitalSignature" /> digitalSignature</label>
-        <label class="pki-flag" title="Also called contentCommitment. A signature the signer is not supposed to be able to disown."><input class="stored" type="checkbox" id="pki_ku_nonRepudiation" name="pki_ku_nonRepudiation" /> nonRepudiation</label>
-        <label class="pki-flag" title="Encrypt a symmetric key to this public key. Needed by RSA key transport; meaningless for an ECDSA key."><input class="stored" type="checkbox" id="pki_ku_keyEncipherment" name="pki_ku_keyEncipherment" /> keyEncipherment</label>
-        <label class="pki-flag" title="Encrypt data directly to this key. Almost never what is wanted."><input class="stored" type="checkbox" id="pki_ku_dataEncipherment" name="pki_ku_dataEncipherment" /> dataEncipherment</label>
-        <label class="pki-flag" title="Diffie-Hellman / ECDH. It is what makes encipherOnly and decipherOnly meaningful."><input class="stored" type="checkbox" id="pki_ku_keyAgreement" name="pki_ku_keyAgreement" /> keyAgreement</label>
-        <label class="pki-flag" title="Sign certificates. A CA needs this, and a validator refuses a CA that does not have it."><input class="stored" type="checkbox" id="pki_ku_keyCertSign" name="pki_ku_keyCertSign" /> keyCertSign</label>
-        <label class="pki-flag" title="Sign certificate revocation lists."><input class="stored" type="checkbox" id="pki_ku_cRLSign" name="pki_ku_cRLSign" /> cRLSign</label>
-        <label class="pki-flag" title="Only meaningful alongside keyAgreement."><input class="stored" type="checkbox" id="pki_ku_encipherOnly" name="pki_ku_encipherOnly" /> encipherOnly</label>
-        <label class="pki-flag" title="Only meaningful alongside keyAgreement."><input class="stored" type="checkbox" id="pki_ku_decipherOnly" name="pki_ku_decipherOnly" /> decipherOnly</label>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="The purposes this certificate is for. A TLS client refuses a server certificate without serverAuth; a server refuses a client certificate without clientAuth."><input class="stored" type="checkbox" id="pki_ext_eku" name="pki_ext_eku" /> <strong>extendedKeyUsage</strong></label>
-        <label class="pki-flag" title="Marking this critical means a validator that does not recognise one of the OIDs must reject the certificate."><input class="stored" type="checkbox" id="pki_eku_critical" name="pki_eku_critical" /> critical</label>
-      </div>
-      <div class="pki-flags">
-        <label class="pki-flag" title="TLS server — 1.3.6.1.5.5.7.3.1"><input class="stored" type="checkbox" id="pki_eku_serverAuth" name="pki_eku_serverAuth" /> serverAuth</label>
-        <label class="pki-flag" title="TLS client, the one mutual authentication needs — 1.3.6.1.5.5.7.3.2"><input class="stored" type="checkbox" id="pki_eku_clientAuth" name="pki_eku_clientAuth" /> clientAuth</label>
-        <label class="pki-flag" title="Code signing — 1.3.6.1.5.5.7.3.3"><input class="stored" type="checkbox" id="pki_eku_codeSigning" name="pki_eku_codeSigning" /> codeSigning</label>
-        <label class="pki-flag" title="S/MIME — 1.3.6.1.5.5.7.3.4"><input class="stored" type="checkbox" id="pki_eku_emailProtection" name="pki_eku_emailProtection" /> emailProtection</label>
-        <label class="pki-flag" title="Time stamping — 1.3.6.1.5.5.7.3.8"><input class="stored" type="checkbox" id="pki_eku_timeStamping" name="pki_eku_timeStamping" /> timeStamping</label>
-        <label class="pki-flag" title="OCSP responder — 1.3.6.1.5.5.7.3.9"><input class="stored" type="checkbox" id="pki_eku_ocspSigning" name="pki_eku_ocspSigning" /> ocspSigning</label>
-        <label class="pki-flag" title="IPsec end system — 1.3.6.1.5.5.7.3.5"><input class="stored" type="checkbox" id="pki_eku_ipsecEndSystem" name="pki_eku_ipsecEndSystem" /> ipsecEndSystem</label>
-        <label class="pki-flag" title="IPsec tunnel — 1.3.6.1.5.5.7.3.6"><input class="stored" type="checkbox" id="pki_eku_ipsecTunnel" name="pki_eku_ipsecTunnel" /> ipsecTunnel</label>
-        <label class="pki-flag" title="IPsec user — 1.3.6.1.5.5.7.3.7"><input class="stored" type="checkbox" id="pki_eku_ipsecUser" name="pki_eku_ipsecUser" /> ipsecUser</label>
-        <label class="pki-flag" title="IPsec IKE — 1.3.6.1.5.5.7.3.17"><input class="stored" type="checkbox" id="pki_eku_ipsecIKE" name="pki_eku_ipsecIKE" /> ipsecIKE</label>
-        <label class="pki-flag" title="Smartcard logon — 1.3.6.1.4.1.311.20.2.2"><input class="stored" type="checkbox" id="pki_eku_msSmartcardLogon" name="pki_eku_msSmartcardLogon" /> msSmartcardLogon</label>
-        <label class="pki-flag" title="Document signing — 1.3.6.1.4.1.311.10.3.12"><input class="stored" type="checkbox" id="pki_eku_msDocumentSigning" name="pki_eku_msDocumentSigning" /> msDocumentSigning</label>
-        <label class="pki-flag" title="Encrypting File System — 1.3.6.1.4.1.311.10.3.4"><input class="stored" type="checkbox" id="pki_eku_msEncryptingFileSystem" name="pki_eku_msEncryptingFileSystem" /> msEncryptingFileSystem</label>
-        <label class="pki-flag" title="Kerberos KDC, for PKINIT — 1.3.6.1.5.2.3.5"><input class="stored" type="checkbox" id="pki_eku_kdcAuthentication" name="pki_eku_kdcAuthentication" /> kdcAuthentication</label>
-        <label class="pki-flag" title="PKINIT client — 1.3.6.1.5.2.3.4"><input class="stored" type="checkbox" id="pki_eku_pkinitClientAuth" name="pki_eku_pkinitClientAuth" /> pkinitClientAuth</label>
-        <label class="pki-flag" title="Any extended key usage — 2.5.29.37.0"><input class="stored" type="checkbox" id="pki_eku_anyExtendedKeyUsage" name="pki_eku_anyExtendedKeyUsage" /> anyExtendedKeyUsage</label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="2" id="pki_eku_extra" name="pki_eku_extra" placeholder="1.3.6.1.4.1.99999.1.1"></textarea>
-        <p class="saml-note">Further purposes by OID, one per line.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="The SHA-1 of this certificate's public key, RFC 5280 section 4.2.1.2 method (1) — the same value every other implementation computes, so key identifiers match across tools."><input class="stored" type="checkbox" id="pki_ext_skid" name="pki_ext_skid" /> <strong>subjectKeyIdentifier</strong></label>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Identifies the ISSUER's key, so a validator can find the right CA certificate when several share a subject."><input class="stored" type="checkbox" id="pki_ext_akid" name="pki_ext_akid" /> <strong>authorityKeyIdentifier</strong></label>
-      </div>
-      <div class="saml-row">
-        <label class="pki-flag" title="Also name the issuer's own issuer and serial number. Rarely needed, occasionally required."><input class="stored" type="checkbox" id="pki_akid_issuer_serial" name="pki_akid_issuer_serial" /> also include authorityCertIssuer + serial</label>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="The names this certificate is for. For TLS this — not the Common Name — is what a client checks."><input class="stored" type="checkbox" id="pki_ext_san" name="pki_ext_san" /> <strong>subjectAltName</strong></label>
-        <label class="pki-flag" title="Should be critical when the subject DN is empty, and only then."><input class="stored" type="checkbox" id="pki_san_critical" name="pki_san_critical" /> critical</label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="4" id="pki_san" name="pki_san" placeholder="dns:localhost&#10;ip:127.0.0.1"></textarea>
-        <p class="saml-note">One name per line: <code>dns:example.com</code>, <code>ip:10.0.0.1</code> or <code>ip:2001:db8::1</code>, <code>email:user@example.com</code>, <code>uri:https://example.com/x</code>, <code>upn:user@EXAMPLE.COM</code> (Microsoft userPrincipalName), <code>krb5:host/x@EXAMPLE.COM</code> (RFC 4556 Kerberos principal), <code>rid:1.2.3.4</code>, <code>dirname:CN=alt,O=Example</code>, or <code>othername:&lt;oid&gt;:&lt;base64 DER&gt;</code> for anything else.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Alternative names for the issuer. Same syntax as subjectAltName."><input class="stored" type="checkbox" id="pki_ext_ian" name="pki_ext_ian" /> <strong>issuerAltName</strong></label>
-        <label class="pki-flag" title="Should not normally be critical."><input class="stored" type="checkbox" id="pki_ian_critical" name="pki_ian_critical" /> critical</label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="2" id="pki_ian" name="pki_ian" placeholder="uri:https://ca.example.com/"></textarea>
-        <p class="saml-note">Same syntax as subjectAltName above.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Where to fetch the CRL that would revoke this certificate."><input class="stored" type="checkbox" id="pki_ext_cdp" name="pki_ext_cdp" /> <strong>cRLDistributionPoints</strong></label>
-        <label class="pki-flag" title="Rarely critical."><input class="stored" type="checkbox" id="pki_cdp_critical" name="pki_cdp_critical" /> critical</label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="2" id="pki_cdp" name="pki_cdp" placeholder="http://crl.example.com/issuing.crl"></textarea>
-        <p class="saml-note">One URL per line.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Where to fetch the delta CRL. Same shape as cRLDistributionPoints."><input class="stored" type="checkbox" id="pki_ext_freshest" name="pki_ext_freshest" /> <strong>freshestCRL</strong></label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="2" id="pki_freshest" name="pki_freshest" placeholder="http://crl.example.com/delta.crl"></textarea>
-        <p class="saml-note">One URL per line.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Where to reach the issuer: its OCSP responder, and a copy of its own certificate for a client that was sent an incomplete chain."><input class="stored" type="checkbox" id="pki_ext_aia" name="pki_ext_aia" /> <strong>authorityInfoAccess</strong></label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="3" id="pki_aia" name="pki_aia" placeholder="ocsp:http://ocsp.example.com&#10;caissuers:http://example.com/issuing.cer"></textarea>
-        <p class="saml-note">One per line: <code>ocsp:&lt;url&gt;</code>, <code>caissuers:&lt;url&gt;</code>, <code>timestamping:&lt;url&gt;</code>, <code>carepository:&lt;url&gt;</code>, or <code>&lt;oid&gt;:&lt;url&gt;</code>.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Services offered by the SUBJECT of this certificate, rather than by its issuer."><input class="stored" type="checkbox" id="pki_ext_sia" name="pki_ext_sia" /> <strong>subjectInfoAccess</strong></label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="2" id="pki_sia" name="pki_sia" placeholder="carepository:http://example.com/certs/"></textarea>
-        <p class="saml-note">Same syntax as authorityInfoAccess above.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="The policies this certificate was issued under, with the two qualifiers RFC 5280 defines."><input class="stored" type="checkbox" id="pki_ext_policies" name="pki_ext_policies" /> <strong>certificatePolicies</strong></label>
-        <label class="pki-flag" title="Critical means a validator that cannot process the policy must reject the certificate."><input class="stored" type="checkbox" id="pki_policies_critical" name="pki_policies_critical" /> critical</label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="3" id="pki_policies" name="pki_policies" placeholder="1.3.6.1.4.1.99999.1.1|cps=https://example.com/cps|notice=Test certificates only"></textarea>
-        <p class="saml-note">One per line: <code>&lt;policy oid&gt;</code>, optionally followed by <code>|cps=&lt;uri&gt;</code> and <code>|notice=&lt;text&gt;</code>. <code>2.5.29.32.0</code> is anyPolicy.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Declares that one policy OID in the issuer's domain is equivalent to another in the subject's. RFC 5280 says this SHOULD be critical, and it is."><input class="stored" type="checkbox" id="pki_ext_policy_mappings" name="pki_ext_policy_mappings" /> <strong>policyMappings</strong></label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="2" id="pki_policy_mappings" name="pki_policy_mappings" placeholder="1.3.6.1.4.1.99999.1.1=1.3.6.1.4.1.88888.1.1"></textarea>
-        <p class="saml-note">One per line: <code>&lt;issuer policy oid&gt;=&lt;subject policy oid&gt;</code>.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Requires an explicit policy, or inhibits policy mapping, after a number of further certificates. RFC 5280: MUST be critical."><input class="stored" type="checkbox" id="pki_ext_policy_constraints" name="pki_ext_policy_constraints" /> <strong>policyConstraints</strong></label>
-      </div>
-      <div class="saml-row">
-        <div class="saml-grow"><label for="pki_require_explicit_policy">requireExplicitPolicy (certificates)</label><input class="stored" type="text" id="pki_require_explicit_policy" name="pki_require_explicit_policy" placeholder="(not set)" /></div>
-        <div class="saml-grow"><label for="pki_inhibit_policy_mapping">inhibitPolicyMapping (certificates)</label><input class="stored" type="text" id="pki_inhibit_policy_mapping" name="pki_inhibit_policy_mapping" placeholder="(not set)" /></div>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Limits the names a CA below this one may certify — the extension that makes a private CA safe to trust. RFC 5280: MUST be critical, and only meaningful in a CA certificate."><input class="stored" type="checkbox" id="pki_ext_name_constraints" name="pki_ext_name_constraints" /> <strong>nameConstraints</strong></label>
-        <label class="pki-flag" title="RFC 5280: MUST be critical."><input class="stored" type="checkbox" id="pki_nc_critical" name="pki_nc_critical" /> critical</label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="4" id="pki_name_constraints" name="pki_name_constraints" placeholder="permit dns:example.com&#10;permit ip:10.0.0.0/8&#10;exclude dns:bad.example.com"></textarea>
-        <p class="saml-note">One per line: <code>permit &lt;name&gt;</code> or <code>exclude &lt;name&gt;</code>, using the subjectAltName syntax. Note that an IP constraint takes a PREFIX (<code>10.0.0.0/8</code>): a name constraint's iPAddress is the address followed by its mask, which is the one place a general name is not simply an address.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="How many further certificates may still use the anyPolicy OID. RFC 5280: MUST be critical."><input class="stored" type="checkbox" id="pki_ext_inhibit_any" name="pki_ext_inhibit_any" /> <strong>inhibitAnyPolicy</strong></label>
-      </div>
-      <div class="saml-row">
-        <div class="saml-grow"><label for="pki_inhibit_any_skip">skipCerts</label><input class="stored" type="text" id="pki_inhibit_any_skip" name="pki_inhibit_any_skip" placeholder="0" /></div>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="A validity period for the PRIVATE key that is shorter than the certificate's — signatures made after it are not to be trusted, while the certificate goes on validating them."><input class="stored" type="checkbox" id="pki_ext_pkup" name="pki_ext_pkup" /> <strong>privateKeyUsagePeriod</strong></label>
-      </div>
-      <div class="saml-row">
-        <div class="saml-grow"><label for="pki_pkup_not_before">notBefore (ISO 8601)</label><input class="stored" type="text" id="pki_pkup_not_before" name="pki_pkup_not_before" /></div>
-        <div class="saml-grow"><label for="pki_pkup_not_after">notAfter (ISO 8601)</label><input class="stored" type="text" id="pki_pkup_not_after" name="pki_pkup_not_after" /></div>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="The TLS extensions a server promises to support. 5 is status_request — 'must-staple'."><input class="stored" type="checkbox" id="pki_ext_tls_feature" name="pki_ext_tls_feature" /> <strong>TLS Feature (RFC 7633)</strong></label>
-      </div>
-      <div class="saml-field">
-        <textarea class="stored" rows="2" id="pki_tls_feature" name="pki_tls_feature" placeholder="5"></textarea>
-        <p class="saml-note">One TLS extension number per line. 5 is status_request (must-staple); 17 is status_request_v2.</p>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="Tells a validator not to check the revocation status of this certificate — correct on an OCSP responder's own certificate and almost nowhere else."><input class="stored" type="checkbox" id="pki_ext_ocsp_nocheck" name="pki_ext_ocsp_nocheck" /> <strong>id-pkix-ocsp-nocheck</strong></label>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="A pre-RFC 5280 relic that some old appliances still read. Kept for the same reason SHA-1 is: this is where you find out."><input class="stored" type="checkbox" id="pki_ext_ns_cert_type" name="pki_ext_ns_cert_type" /> <strong>Netscape certificate type</strong></label>
-      </div>
-      <div class="pki-flags">
-        <label class="pki-flag" title="SSL client"><input class="stored" type="checkbox" id="pki_ns_sslClient" name="pki_ns_sslClient" /> sslClient</label>
-        <label class="pki-flag" title="SSL server"><input class="stored" type="checkbox" id="pki_ns_sslServer" name="pki_ns_sslServer" /> sslServer</label>
-        <label class="pki-flag" title="SSL CA"><input class="stored" type="checkbox" id="pki_ns_sslCA" name="pki_ns_sslCA" /> sslCA</label>
-        <label class="pki-flag" title="Email CA"><input class="stored" type="checkbox" id="pki_ns_emailCA" name="pki_ns_emailCA" /> emailCA</label>
-        <label class="pki-flag" title="Object-signing CA"><input class="stored" type="checkbox" id="pki_ns_objectSigningCA" name="pki_ns_objectSigningCA" /> objectSigningCA</label>
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head">
-        <label class="pki-flag" title="A free-text comment some tools display when showing the certificate."><input class="stored" type="checkbox" id="pki_ext_ns_comment" name="pki_ext_ns_comment" /> <strong>Netscape comment</strong></label>
-      </div>
-      <div class="saml-field">
-        <input class="stored" type="text" id="pki_ns_comment" name="pki_ns_comment" placeholder="Issued by the Identity Protocol Debugger" />
-      </div>
-    </div>
-
-    <div class="pki-ext">
-      <div class="pki-ext-head"><strong>Any other extension</strong></div>
-      <div class="saml-field">
-        <textarea class="stored" rows="3" id="pki_custom_extensions" name="pki_custom_extensions" placeholder="1.3.6.1.4.1.99999.7.7|-|DANDYWJj"></textarea>
-        <p class="saml-note">One per line: <code>&lt;oid&gt;|&lt;critical or -&gt;|&lt;base64 DER of the extension value&gt;</code>. The value is the DER of the extnValue's contents, not the OCTET STRING wrapping it. Without this the extension set would be whatever this page happens to know about, which is not what a debugger is for.</p>
-      </div>
-    </div>
-  </div>
-</fieldset>
-
-<!-- ===================== Pane 4: Keys and Certificates ===================== -->
+<!-- ===================== Pane 2: Keys and Certificates ===================== -->
 <fieldset class="saml-pane" id="pane_store">
   <legend class="saml-legend" onclick="return pki.togglePane('pane_store_body');">Keys &amp; Certificates</legend>
   <div class="saml-pane-body" id="pane_store_body">
@@ -453,7 +491,7 @@
   </div>
 </fieldset>
 
-<!-- ===================== Pane 5: Certificate Details ===================== -->
+<!-- ===================== Pane 3: Certificate Details ===================== -->
 <fieldset class="saml-pane" id="pane_details">
   <legend class="saml-legend" onclick="return pki.togglePane('pane_details_body');">Certificate Details &amp; Chain</legend>
   <div class="saml-pane-body" id="pane_details_body">
@@ -462,12 +500,16 @@
   </div>
 </fieldset>
 
-<!-- ===================== Pane 6: TLS test connection ===================== -->
+<!-- ===================== Pane 4: TLS test connection ===================== -->
 <fieldset class="saml-pane" id="pane_tls">
   <legend class="saml-legend" onclick="return pki.togglePane('pane_tls_body');">TLS / Mutual TLS Test Connection</legend>
   <div class="saml-pane-body" id="pane_tls_body">
 
-    <p class="saml-note"><strong>This test is always made by the API layer, and there is deliberately no option to make it from the browser.</strong> A page cannot choose which client certificate to present &mdash; the browser picks from its own store through its own UI, so the certificate you issued thirty seconds ago is not offered and &ldquo;present none&rdquo; is not offerable. It cannot be given a truststore, so &ldquo;does this chain verify against <em>my</em> root, and only mine&rdquo; is unaskable. It cannot read the negotiated version, cipher, ALPN protocol or the server&rsquo;s chain. And a failed handshake reaches script as a generic network error with the TLS alert &mdash; the one informative thing &mdash; discarded. So the API opens the socket and reports both sides of it.</p>
+    <p class="saml-note"><strong>This test is always made by the API layer, and there is deliberately no option to make it from the browser.</strong></p>
+    <details class="pki-more">
+      <summary>Why the browser cannot be asked to do this</summary>
+      <p class="saml-note">A page cannot choose which client certificate to present &mdash; the browser picks from its own store through its own UI, so the certificate you issued thirty seconds ago is not offered and &ldquo;present none&rdquo; is not offerable. It cannot be given a truststore, so &ldquo;does this chain verify against <em>my</em> root, and only mine&rdquo; is unaskable. It cannot read the negotiated version, cipher, ALPN protocol or the server&rsquo;s chain. And a failed handshake reaches script as a generic network error with the TLS alert &mdash; the one informative thing &mdash; discarded. So the API opens the socket and reports both sides of it.</p>
+    </details>
     <p class="saml-note" id="pki_tls_limits"></p>
 
     <div class="saml-row">
@@ -535,6 +577,20 @@
       </div>
     </div>
 
+    <div class="saml-sub">
+      <div class="saml-sub-title">Ask the server what it saw</div>
+      <p class="saml-note">Everything the report below says is <em>this</em> end&rsquo;s account of the handshake &mdash; and this end is the one that already knows what it sent. So the API can make one <code>GET</code> over <strong>the same connection</strong> and show you the answer verbatim.</p>
+      <details class="pki-more">
+        <summary>Why this end&rsquo;s report is not the whole answer</summary>
+        <p class="saml-note">What this end cannot know is which chain the server built out of what it sent, which anchor it verified against, or whether the certificate was accepted at all. Under TLS 1.3 it has not even been told: the client sends its Certificate and Finished <em>last</em>, so the handshake is complete from here before the server has said anything, and the verdict arrives afterwards &mdash; as an alert, or as a bare hang-up with no alert at all. A second connection is a different connection and proves nothing about this one, which is why the GET goes over this one. The mock STS answers this at <code>/tls/whoami</code> on 8443 and 9443; any server that will answer a GET can be asked. The method is <code>GET</code> and the path is the only part of the request you contribute &mdash; every header is built by the API, and a path containing a newline is refused rather than escaped.</p>
+      </details>
+      <div class="saml-row">
+        <label class="pki-flag" title="One GET over the connection just made, reported verbatim: status line, headers and body."><input class="stored" type="checkbox" id="pki_tls_http_probe" name="pki_tls_http_probe" /> after the handshake, ask the server for a page over the same connection</label>
+        <div class="saml-grow"><label for="pki_tls_http_path" title="An origin-form path, not a URL — the connection has already been made.">Path</label><input class="stored" type="text" id="pki_tls_http_path" name="pki_tls_http_path" value="/tls/whoami" placeholder="/tls/whoami" /></div>
+      </div>
+      <p class="saml-note" id="pki_tls_http_note"></p>
+    </div>
+
     <div class="saml-row">
       <input type="button" class="saml-btn pki-btn-primary" id="pki_tls_run" value="Open TLS connection" onclick="return pki.runTlsTest();" />
     </div>
@@ -547,7 +603,11 @@
 <fieldset class="saml-pane" id="pane_history">
   <legend class="saml-legend" onclick="return pki.togglePane('pane_history_body');" title="Click to collapse or expand this pane.">Operations History</legend>
   <div class="saml-pane-body" id="pane_history_body">
-    <p class="saml-note">Every key generated, certificate issued, keystore exported and TLS connection attempted from this page, newest first. Three of those four never leave the browser; the fourth is the only one that does. It is kept because a failing handshake ten minutes later always comes down to <em>which</em> certificate was presented &mdash; the store above holds the answer, and this holds the sequence.</p>
+    <p class="saml-note">Every key generated, certificate issued, keystore exported and TLS connection attempted from this page, newest first.</p>
+    <details class="pki-more">
+      <summary>Why a page that uploads nothing keeps a log</summary>
+      <p class="saml-note">Three of those four never leave the browser; the fourth is the only one that does. It is kept because a failing handshake ten minutes later always comes down to <em>which</em> certificate was presented &mdash; the store above holds the answer, and this holds the sequence.</p>
+    </details>
     <div class="saml-row">
       <input type="button" class="saml-btn" value="Clear History" onclick="return pki.clearOperationHistory();" title="Discard every recorded operation." />
     </div>

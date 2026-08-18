@@ -56,6 +56,14 @@
    * rather than by looking, and note that the containerized run and a host run
    * differ by a few pixels because fonts-liberation gives different metrics
    * from a host's Arial.
+   *
+   * The TWELFTH card (PKI / X.509) needed no change here and is the first one
+   * that has not: six across turns 6+5 into a filled 6+6, which is the same
+   * two rows and therefore the same height. The next one will not be free —
+   * thirteen cards are 6+6+1, a third row, and seven columns at this 10px gap
+   * need min <= 125.7 (7*125 + 6*10 = 935), which is another 23px off every
+   * card's width and so another line of wrapping on every description.
+   * Measure with landingFitsOnOneScreen() before assuming it still fits.
    */
   grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
   gap: 10px;
@@ -115,6 +123,10 @@
 .landing-card:nth-child(9) .landing-icon { color: #6b3fa0; }
 .landing-card:nth-child(10) .landing-icon { color: #8a4b2a; }
 .landing-card:nth-child(11) .landing-icon { color: #0f6b7a; }
+/* The twelfth card (PKI / X.509) fills the second row of six exactly, so
+   it cost no height at all — but it still needs its own accent rule, or
+   landingFitsOnOneScreen() fails naming the card rather than this file. */
+.landing-card:nth-child(12) .landing-icon { color: #8a1f3d; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

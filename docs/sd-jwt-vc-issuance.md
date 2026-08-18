@@ -33,12 +33,26 @@ Second, **step 4 is the one page where "the credential" is ambiguous**, and the 
 
 ## Step 0 has to fit on one screen
 
-`vc-issuance-0.html` is a chooser, and a chooser that scrolls cannot do its job — you cannot compare four options by scrolling between them. It did not start that way: four full-width cards stacked in a 1100px column came to **757px of a 1450px page against a 839px viewport** (what a 1512x982 display leaves after the browser's chrome), while all the horizontal space beyond the cards sat empty. Everything the page offers now ends **808px** in, about 30px above the fold.
+`vc-issuance-0.html` is a chooser, and a chooser that scrolls cannot do its job — you cannot compare four options by scrolling between them. It did not start that way: four full-width cards stacked in a 1100px column came to **757px of a 1450px page against a 839px viewport** (what a 1512x982 display leaves after the browser's chrome), while all the horizontal space beyond the cards sat empty. Everything the page offers now ends **795px** in, 44px above the fold — it was 808px until the shared VC Tools pane grew a second tool, which is the story at the end of this section.
 
 Two changes got it there, and the split matters. `.vc-usecases` is a **grid** — `repeat(auto-fit, minmax(400px, 1fr))`, so two readable columns in the container and one on a narrow screen with no breakpoint — which is what uses the horizontal room. And the rest is a denser vertical rhythm **scoped to `.vc-fit`** on this page's container: the return link rides on the title's line, the intro drops the 1100px reading cap (a wider paragraph is fewer lines, and here height is the scarce thing), and the card padding, inner gaps and pane legend are each trimmed a few pixels. Scoped, because the other eight workflow pages are meant to be read top to bottom and may legitimately scroll — tightening `.vc-title` globally would be a decision about all of them.
 
 Measurement notes, both of which flatter the result if got wrong: `align-items: start` on the grid, or every card in a row stretches to the tallest and the grid quietly gives the height back; and `setRect()` sets the **outer** window height, so the window is opened at 982 to get 839 inside it — measuring the window rather than the viewport overstates the space by ~143px, and headless has no toolbar to correct for.
 
 `chooserFitsOnOneScreen()` in `tests/sd_jwt_vc_issuance.js` defends all of it: a grid rather than one card per row, columns still at least 380px wide (squeezing in more columns buys height only by making every card taller — measured: four across saved just 46px), everything above the fold, and no sideways scroll gained in exchange. Run against the pre-change build it reports "still one card per row; below the fold by 397px".
+
+**The pane that breaks this page is the one that belongs to no step.** The shared **VC Tools** pane (`partials/vc_tools.html`) sits at the foot of all nine workflow pages, and it grows: it gained a second tool on 2026-08-17 (the Certificate Authority & X.509 page), which put the page at **871px against the 839px viewport** and failed that check by 32px — a page nobody edited, broken by a partial two directories away. Note what it does *not* look like: the assertion names step 0's last pane, so the first thing it suggests is the chooser, which was fine.
+
+The 32px came back from height that was never content, and the page now ends at **795px, 44px above the fold** — deliberately more than one tools row, so the next tool does not repeat this:
+
+| Reclaimed | How | Worth |
+|---|---|---|
+| The pane legend's line box | `.vc-fit .dbg-legend` had its padding trimmed already, leaving one 14px word in a 40px line box | 23px |
+| The second tool's description | Shortened to roughly the DID tool's length — this table's row is as tall as its longest cell | 19px |
+| The title's line box | 24.5px of text in a 40px line box | 9px |
+| The tools rows' leading | `.vc-fit #pane_vc_tools td` at `line-height: 1.3`; 12.6px note text does not need 20px lines | 3px now, ~11px per future row |
+| Doubled whitespace | The step row's bottom margin and the card grid's top margin were both spent on the same gap | 12px |
+
+So a third tool costs about **33px** of the 44 remaining, and a fourth needs another decision — the obvious next one being that this pane starts collapsed on `.vc-fit`, since its legend already toggles it. The trims are all scoped to `.vc-fit` (step 0 and step 1); only the shortened description is shared, and it is shorter on every page for the same reason. Checked against `stepOneFitsInOneRow()` as well, because that page carries the same class: its four metadata panes each lose the same 21px of legend, stay on one row, and the populated row measures 772px against its 1100px ceiling.
 
 One thing it does **not** require is the footer above the fold: that is 200px of shared site furniture on every page in the project, so demanding it would be a constraint on the footer rather than on this page. Related and pre-existing: every VC workflow page overflows sideways by exactly 182px below about 1200px of width — the five-item steps row's floor, present on untouched pages too and absent from `debugger.html` and the landing page.

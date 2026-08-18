@@ -23,7 +23,10 @@ jobs:
            # docker-compose.yml builds the STS image from the sts/ submodule
            # (https://github.com/rcbj/mock-sts.git), so this job cannot build
            # without it: compose would report only a missing Dockerfile.
-           submodules: true
+           # `recursive` because the mock STS has a submodule of its own
+           # (node-ldapjs); `true` stops one level short and the image then dies
+           # at startup with `Cannot find module 'ldapjs'`.
+           submodules: recursive
        - name: Compute version
          id: version
          run: |

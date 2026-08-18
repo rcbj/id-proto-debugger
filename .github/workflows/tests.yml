@@ -31,7 +31,13 @@ jobs:
           # submodule. The launcher initialises it too (requireMockStsCheckout in
           # common/common.sh); asking for it here keeps a fetch failure on the
           # checkout step, where it reads as one.
-          submodules: true
+          # `recursive`, not `true`: the mock STS has a submodule of its own
+          # (node-ldapjs, `"ldapjs": "file:node-ldapjs"` in its package.json)
+          # and `true` stops one level short of it. An uninitialised submodule
+          # is an EMPTY DIRECTORY, so the image builds, npm installs a package
+          # with no `main`, and the container dies at startup with `Cannot find
+          # module 'ldapjs'` — which names a package rather than a submodule.
+          submodules: recursive
       - name: Install docker-compose
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:
@@ -65,8 +71,9 @@ jobs:
         with:
           # The mock STS submodule — see the test job above. This run uses
           # --abort-on-container-exit, so a service that cannot be built takes the
-          # whole coverage run down with it.
-          submodules: true
+          # whole coverage run down with it. `recursive` for the mock STS's own
+          # node-ldapjs submodule — see the test job above.
+          submodules: recursive
       - name: Install docker-compose
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:

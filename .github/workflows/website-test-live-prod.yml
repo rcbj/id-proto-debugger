@@ -43,7 +43,10 @@ jobs:
           # remote-run-tests.sh builds the STS locally (keycloak-tests.yml) to run
           # the suite against the deployed site, and its source is the sts/
           # submodule — https://github.com/rcbj/mock-sts.git.
-          submodules: true
+          # `recursive` because the mock STS has a submodule of its own
+          # (node-ldapjs); `true` stops one level short and the STS then dies at
+          # startup with `Cannot find module 'ldapjs'`.
+          submodules: recursive
 
       # The script runs run-report.js and the test scripts on the runner itself,
       # not in a container, so the runner needs the node the images use.

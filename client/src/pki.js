@@ -10,8 +10,8 @@
 // worth testing lives somewhere else on purpose:
 //
 //   client/src/key_material.js  key pairs and keystore formats (shared with
-//                               jwt_tools.js — the pane on this page is that
-//                               pane, not a copy of it)
+//                               jwt_tools.js — the Key Pair block on this page
+//                               is that pane, not a copy of it)
 //   client/src/x509.js          certificates: profiles, every X.509v3
 //                               extension, issuing, describing, chain checks
 //   client/src/pki_store.js     the keys and certificates kept for reuse, and
@@ -20,6 +20,16 @@
 //
 // so tests/pki_x509.js can drive the whole issuing matrix in node against
 // OpenSSL, and tests/pki_page.js has only the page left to check.
+//
+// One thing about the markup this file drives, because nothing in here says it
+// and it is the shape everything below assumes. The page is FIVE panes, and
+// the first of them — `pane_config` — holds what were three: Key Pair, Issue a
+// Certificate and X.509v3 Extensions. They are one act, and every field in all
+// three is an input to the single Issue Certificate button at its foot. So a
+// new block of fields belongs inside that pane under a `.pki-group` heading
+// rather than in a sixth pane; tests/pki_page.js asserts the pane list by
+// name, and docs/pki.md says what the merge bought and what it costs when the
+// layout that made it possible collapses.
 //
 // ---------------------------------------------------------------------------
 // WHY THERE IS NO "RUN THE TLS TEST IN THE BROWSER" OPTION
@@ -1445,6 +1455,13 @@ async function runTlsTest() {
       includeSystemRoots: checked('pki_tls_system_roots'),
       mutualAuthProbe: checked('pki_tls_probe_mutual')
     };
+    if (checked('pki_tls_http_probe')) {
+      // One GET over the connection just made, so the far end's account of it
+      // comes back beside this one's. It is the same connection deliberately: a
+      // second one is a different connection and says nothing about this
+      // certificate on this handshake. The api refuses anything but a path.
+      body.httpRequest = { path: trimmed('pki_tls_http_path') || '/' };
+    }
     if (clientEntry) {
       if (!store.canSign(clientEntry)) {
         throw new Error('"' + clientEntry.subject + '" has no private key ' +
@@ -1611,7 +1628,182 @@ function renderTlsReport(json) {
     chain.appendChild(chainBody);
     box.appendChild(chain);
   }
+
+  if (result.httpResponse) renderServerView(box, result);
   log.debug("Leaving renderTlsReport().");
+}
+
+// The other side of the same connection: what the SERVER says it saw.
+//
+// Everything above this is what the api observed from its end. This is the far
+// end's own account, fetched over that very connection, and it is the only
+// place three things can appear at all — which chain the server built out of
+// what was sent, which anchor it verified against, and whether it considers the
+// certificate accepted. Under TLS 1.3 the client has not been told any of that
+// by the time its handshake completes.
+//
+// A body that parses as JSON and carries the sections the mock STS publishes is
+// rendered as a table; anything else is shown as text. That order matters: this
+// pane must not be useless against a server that is not the mock, so an
+// unrecognised body is displayed rather than discarded.
+function renderServerView(box, result) {
+  log.debug("Entering renderServerView().");
+  var http = result.httpResponse;
+  var heading = document.createElement('p');
+  heading.className = 'saml-note';
+  heading.id = 'pki_tls_server_view_note';
+  heading.textContent = 'What the server saw — its own account of this ' +
+      'connection, asked for over the connection itself (' +
+      (result.httpRequest ? result.httpRequest.method + ' ' +
+        result.httpRequest.path : 'GET') + ').';
+  box.appendChild(heading);
+
+  var table = document.createElement('table');
+  table.className = 'saml-table';
+  table.id = 'pki_tls_server_view';
+  var body = document.createElement('tbody');
+  body.appendChild(detailRow('Answered', http.statusLine ||
+      (http.parsed ? http.statusCode : '(not an HTTP response)')));
+  if (http.headers && http.headers['content-type']) {
+    body.appendChild(detailRow('Content type', http.headers['content-type']));
+  }
+  body.appendChild(detailRow('Read', http.bytes + ' bytes; the read ended on ' +
+      humanEndedBy(http.endedBy) +
+      (http.truncated ? ' — and was TRUNCATED at the api’s size cap' : '') +
+      (http.bodyComplete === false
+        ? ' — the body did not reach its terminating chunk' : '')));
+
+  var seen = parseJsonBody(http.body);
+  if (seen && (seen.tls || seen.clientCertificate)) {
+    if (seen.verdict) body.appendChild(detailRow('The server says',
+        seen.verdict));
+    if (seen.tls) {
+      body.appendChild(detailRow('It negotiated',
+          (seen.tls.protocol || '(unknown)') + ' / ' +
+          ((seen.tls.cipher || {}).standardName ||
+           (seen.tls.cipher || {}).name || '(unknown cipher)')));
+      body.appendChild(detailRow('It was reached as',
+          'SNI ' + (seen.tls.sniServername || '(none sent)') +
+          (seen.tls.listenerPort ? ', on port ' + seen.tls.listenerPort : '') +
+          (seen.tls.listener ? ' (' + seen.tls.listener +
+            ' client certificate)' : '')));
+    }
+    if (seen.https) {
+      body.appendChild(detailRow('It received',
+          seen.https.method + ' ' + seen.https.url + ' from ' +
+          (seen.https.remoteAddress || '(unknown)') +
+          ', Host: ' + (seen.https.host || '(none)')));
+    }
+    var cert = seen.clientCertificate || {};
+    body.appendChild(detailRow('Client certificate, as the server read it',
+        !cert.presented ? 'none was presented'
+          : (cert.subject + ' — ' + (cert.authorized
+              ? 'VERIFIED against ' +
+                ((seen.truststore || {}).anchors || 0) + ' anchor(s) it holds'
+              : 'NOT verified: ' +
+                (cert.authorizationError || 'no reason given')))));
+    if (cert.presented) {
+      // NOT a count of what was sent. It is the path the server assembled, and
+      // when verification succeeded its last entry is an anchor that server
+      // holds — which this end did not send, and for a root must not.
+      body.appendChild(detailRow('The path it built',
+          cert.chainLength + ' certificate(s), leaf first. A leaf presented ' +
+          'without its intermediates is the commonest mutual-TLS mistake ' +
+          'there is and is invisible from here; it shows there as a chain of ' +
+          'one that did not verify.'));
+    }
+    if (seen.authentication && seen.authentication.authenticated === false) {
+      body.appendChild(detailRow('And what it means to that server',
+          seen.authentication.note || 'nothing — a verified certificate is ' +
+          'not a login there.'));
+    }
+    table.appendChild(body);
+    box.appendChild(table);
+    if ((cert.chain || []).length) {
+      box.appendChild(serverChainTable(cert.chain));
+    }
+    log.debug("Leaving renderServerView(). Rendered a structured report.");
+    return;
+  }
+
+  table.appendChild(body);
+  box.appendChild(table);
+  // Not the mock, or not JSON. Show what came back rather than nothing: the
+  // point of this pane is the far end's own words.
+  var raw = document.createElement('pre');
+  raw.id = 'pki_tls_server_view_body';
+  raw.className = 'pki-server-body';
+  raw.textContent = http.body || '(the server sent no body)';
+  box.appendChild(raw);
+  log.debug("Leaving renderServerView(). Rendered the body as text.");
+}
+
+function serverChainTable(chain) {
+  log.debug("Entering serverChainTable().");
+  var table = document.createElement('table');
+  table.className = 'saml-table';
+  table.id = 'pki_tls_server_chain_table';
+  var head = document.createElement('thead');
+  var headRow = document.createElement('tr');
+  ['Depth', 'Subject (as the server read it)', 'Issuer', 'Not after']
+    .forEach(function (label) {
+      var th = document.createElement('th');
+      th.textContent = label;
+      headRow.appendChild(th);
+    });
+  head.appendChild(headRow);
+  table.appendChild(head);
+  var body = document.createElement('tbody');
+  chain.forEach(function (cert) {
+    var row = document.createElement('tr');
+    [String(cert.depth), cert.subject || '', cert.issuer || '',
+     cert.validTo || ''].forEach(function (text) {
+      var td = document.createElement('td');
+      td.textContent = text;
+      row.appendChild(td);
+    });
+    body.appendChild(row);
+  });
+  table.appendChild(body);
+  log.debug("Leaving serverChainTable().");
+  return table;
+}
+
+function humanEndedBy(reason) {
+  log.debug("Entering humanEndedBy(). reason=" + reason);
+  var text;
+  if (reason === 'close' || reason === 'end') {
+    text = 'the server closing the connection, which is what ' +
+        '"Connection: close" asked it to do';
+  } else if (reason === 'silence') {
+    text = 'the server going quiet without closing';
+  } else if (reason === 'cap') {
+    text = 'the api’s size cap';
+  } else if (reason === 'write-failed') {
+    text = 'the connection being gone before the request could be written — ' +
+        'which is a refusal arriving in its third form';
+  } else {
+    text = String(reason || 'an unrecorded reason');
+  }
+  log.debug("Leaving humanEndedBy().");
+  return text;
+}
+
+// A body that is not JSON is not an error here: the pane shows it as text.
+function parseJsonBody(text) {
+  log.debug("Entering parseJsonBody().");
+  if (!text || !String(text).trim()) {
+    log.debug("Leaving parseJsonBody(). Empty.");
+    return null;
+  }
+  try {
+    var parsed = JSON.parse(text);
+    log.debug("Leaving parseJsonBody(). Parsed.");
+    return parsed;
+  } catch (e) {
+    log.debug("Leaving parseJsonBody(). Not JSON: " + e.message);
+    return null;
+  }
 }
 
 // node hands a certificate's subject back as an object of arrays; render it as
@@ -1648,6 +1840,18 @@ async function loadTlsLimits() {
         'budget ' + limits.callTimeoutMs + ' ms; ' + limits.systemRootCount +
         ' platform root certificates are available; address policy ' +
         (limits.addressPolicyEnabled ? 'enabled' : 'disabled') + '.');
+    // An api that predates "ask the server what it saw" would accept the call
+    // and ignore the request, which reads as a server that answered nothing —
+    // exactly the wrong conclusion. So the control is turned off and says why,
+    // rather than being left to produce a silent, wrong result.
+    var ask = el('pki_tls_http_probe');
+    if (ask && limits.httpRequestAvailable !== true) {
+      ask.checked = false;
+      ask.disabled = true;
+      setText('pki_tls_http_note', 'This api is older than this page and ' +
+          'cannot make a request over the connection, so that option is off. ' +
+          'It would otherwise look like a server that said nothing.');
+    }
   } catch (e) {
     log.error('loadTlsLimits: ' + e.message);
     setText('pki_tls_limits', 'Could not read the api’s TLS limits: ' +
@@ -1753,7 +1957,7 @@ window.onload = function () {
 };
 
 module.exports = {
-  // key pane
+  // the Key Pair block of the configuration pane
   generateKeys: generateKeys,
   downloadKeys: downloadKeys,
   toggleKeyFormat: toggleKeyFormat,

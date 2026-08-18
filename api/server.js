@@ -2407,6 +2407,9 @@ app.get('/krb5/limits', function (req, res) {
  * @param {string} clientKeyPem.body - its private key, PEM
  * @param {boolean} mutualAuthProbe.body - also connect without the client
  *     certificate, to find out whether the server requires one
+ * @param {object} httpRequest.body - {path} to GET over the connection once it
+ *     is made, so the SERVER's account of it comes back too. GET only, and the
+ *     path is the only part of the request a caller contributes
  * @returns {object} 200 - the handshake report (including a failed handshake)
  * @returns {object} 400 - the request was refused (see the reason)
  * @returns {object} 502 - the server could not be reached
@@ -2434,7 +2437,16 @@ app.post('/tls/connect', function (req, res) {
     clientCertificatePem: b.clientCertificatePem,
     clientKeyPem: b.clientKeyPem,
     clientKeyPassphrase: b.clientKeyPassphrase,
-    mutualAuthProbe: b.mutualAuthProbe === true
+    mutualAuthProbe: b.mutualAuthProbe === true,
+    // Optional: one GET over the connection just made, so the far end's own
+    // account of it comes back beside this end's. The probe refuses anything
+    // but a path — the method is GET and every header is built there — so
+    // handing the caller's value straight through is the whole of this.
+    httpRequest: b.httpRequest,
+    // Named here rather than read from the configuration inside the probe,
+    // because this is the version-stamped string every other outbound call
+    // announces itself with and it is resolved once, at startup, in this file.
+    userAgent: USER_AGENT
   })
     .then(function (report) {
       log.debug('Leaving POST /tls/connect. connected=' +
@@ -2452,7 +2464,8 @@ app.post('/tls/connect', function (req, res) {
       var refusedByPolicy = ['ETLSPORTNOTALLOWED', 'EBLOCKEDADDRESS',
                              'ETLSNOHOST', 'ETLSBADPORT', 'ETLSBADVERSION',
                              'ETLSNOCLIENTKEY', 'ETLSCLIENTMATERIAL',
-                             'ETLSTRUSTTOOLARGE'].indexOf(error.code) !== -1;
+                             'ETLSTRUSTTOOLARGE',
+                             'ETLSBADHTTPPATH'].indexOf(error.code) !== -1;
       var status = refusedByPolicy ? STATUS_400 : 502;
       log.warn('POST /tls/connect failed [' + error.code + ']: ' +
           error.message);

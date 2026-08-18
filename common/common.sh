@@ -569,7 +569,17 @@ requireMockStsCheckout()
   # is precisely the state this exists to catch. The Dockerfile is what compose
   # reads and server.js is what the image runs, so between them they say the
   # checkout is real rather than merely present.
-  if [ -f "${dir}/Dockerfile" ] && [ -f "${dir}/server.js" ] && [ "${track_remote}" != "1" ];
+  #
+  # THREE files now, and the third is a level down. The mock STS has a submodule
+  # of ITS own — node-ldapjs, which its package.json takes as
+  # `"ldapjs": "file:node-ldapjs"` — so an sts/ that has a Dockerfile and a
+  # server.js can still be half-initialised. An uninitialised submodule is an
+  # empty DIRECTORY, so the image builds, npm installs a package with no `main`,
+  # and the container dies at startup with `Cannot find module 'ldapjs'`, naming
+  # a package. Checking only the first two files here would declare that state
+  # good and never run the update that fixes it.
+  if [ -f "${dir}/Dockerfile" ] && [ -f "${dir}/server.js" ] && \
+     [ -f "${dir}/node-ldapjs/package.json" ] && [ "${track_remote}" != "1" ];
   then
     echo "Leaving requireMockStsCheckout(). ${dir} is populated."
     return 0
@@ -590,12 +600,13 @@ requireMockStsCheckout()
     return 1
   fi
 
-  local update_args="--init"
+  # --recursive is not optional: see the note above the populated-check.
+  local update_args="--init --recursive"
   if [ "${track_remote}" = "1" ];
   then
     # --remote checks out the tip of the branch named in .gitmodules rather than
     # the recorded commit. Deliberately opt-in: see the note above.
-    update_args="--init --remote"
+    update_args="--init --recursive --remote"
     echo "MOCK_STS_TRACK_REMOTE=1: taking the tip of the branch .gitmodules names, not the recorded commit."
   fi
   echo "Initialising the mock STS submodule in ${dir}."
@@ -615,6 +626,16 @@ requireMockStsCheckout()
   then
     echo "ERROR: ${dir} is still empty after 'git submodule update ${update_args} -- sts'." >&2
     echo "       Run 'git submodule status sts' in ${root} to see what it thinks is there." >&2
+    return 1
+  fi
+  if [ ! -f "${dir}/node-ldapjs/package.json" ];
+  then
+    echo "ERROR: ${dir} is populated but ${dir}/node-ldapjs is not." >&2
+    echo "       The mock STS takes ldapjs as 'file:node-ldapjs', a submodule of its own," >&2
+    echo "       so this checkout would build an image whose sts container dies at startup" >&2
+    echo "       with \"Cannot find module 'ldapjs'\" — a message naming a package rather" >&2
+    echo "       than a submodule. Run:" >&2
+    echo "         git -C ${root} submodule update --init --recursive -- sts" >&2
     return 1
   fi
   echo "Leaving requireMockStsCheckout(). ${dir} is populated."

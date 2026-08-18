@@ -34,6 +34,7 @@ var WSTRUST_CARD = By.css('a.landing-card[href="/wstrust_tools.html"]');
 var SDJWTVC_CARD = By.css('a.landing-card[href="/vc-issuance-0.html"]');
 var SDJWTVP_CARD = By.css('a.landing-card[href="/vc-presentation-0.html"]');
 var WSFED_CARD = By.css('a.landing-card[href="/wsfed_request.html"]');
+var PKI_CARD = By.css('a.landing-card[href="/pki.html"]');
 // Dynamic Client Registration lives on debugger.html, so its card is told apart
 // from the OAuth2 card by the fragment naming the DCR pane. The OAuth2 locator
 // above is an EXACT href match, so it still resolves to one element.
@@ -92,12 +93,19 @@ async function checkFooterVersion(driver, where) {
 //      resolved, so nothing 404'd; the page simply rendered unstyled.
 //
 // The second is caught by a naming convention rather than a list: a class with a
-// `saml-` / `wst-` / `wsfed-` / `wa-` / `vc-` / `krb-` prefix is a styling class by definition, so
-// if a page uses one that none of its stylesheets defines, that page is missing a
-// stylesheet. Classes without those prefixes are left alone — the older debugger
-// pages use plenty of them as pure JavaScript selectors.
+// `saml-` / `wst-` / `wsfed-` / `wa-` / `vc-` / `krb-` / `pki-` prefix is a styling class by
+// definition, so if a page uses one that none of its stylesheets defines, that
+// page is missing a stylesheet. Classes without those prefixes are left alone —
+// the older debugger pages use plenty of them as pure JavaScript selectors.
+//
+// `pki-` was added on 2026-08-18. css/pki.css has said since it was written that
+// this check covers it, and it did not: pki.html is the only page using that
+// prefix, and the prefix was simply missing from the list below — so a `pki-`
+// class defined in no stylesheet rendered as nothing, silently, which is exactly
+// the failure this function exists for. The merge of that page's three
+// configuration panes into one added four such classes at a stroke.
 // ---------------------------------------------------------------------------
-var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb)-/;
+var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki)-/;
 
 async function checkStylesheetsLoaded(driver, where) {
   log.debug("Entering checkStylesheetsLoaded(). where=" + where);
@@ -412,6 +420,23 @@ async function navigationActivities(driver) {
   await checkStylesheetsLoaded(driver, "wsfed_request.html");
 
   // 17. Return to Home -> landing page.
+  log.info("Click Home -> landing page.");
+  await click(driver, HOME_LINK);
+  await waitVisible(driver, CHOICES);
+
+  // 18. Choose the PKI / X.509 card -> pki.html. The page is also reachable
+  // from other pages' Tools panes, and was ONLY reachable that way until it got
+  // a card of its own; this checks the card exists, points at the right page,
+  // and lands somewhere styled with the same build number as the rest.
+  log.info("Click the PKI / X.509 card.");
+  await click(driver, PKI_CARD);
+  await driver.wait(until.urlContains("pki.html"), waitTime);
+  await driver.wait(until.elementLocated(By.id("pki_key_alg")), waitTime);
+  log.info("Landed on pki.html.");
+  await checkFooterVersion(driver, "pki.html");
+  await checkStylesheetsLoaded(driver, "pki.html");
+
+  // 19. Return to Home -> landing page.
   log.info("Click Home -> landing page.");
   await click(driver, HOME_LINK);
   await waitVisible(driver, CHOICES);

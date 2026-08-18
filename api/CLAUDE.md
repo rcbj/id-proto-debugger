@@ -169,9 +169,38 @@ certificate, one without, reported side by side, with five verdicts (`required`,
 fourth is the case an operator hits most and the one a single connection cannot
 tell from the first.
 
+**An optional `httpRequest: {path}` asks the far end what IT saw**, and it is
+the only part of this endpoint that is not about the handshake. Everything above
+is *this end's* account, and this end already knows what it sent; which chain the
+server built, which anchor it verified against and whether it accepted the
+certificate at all exist only over there — and under TLS 1.3 the client has not
+been told by the time its handshake completes. So after the handshake one **GET**
+is written on the **same socket** (a second connection is a different connection
+and proves nothing about this one) and the response is reported verbatim as
+`result.httpResponse`. What bounds it needs no setting of its own, for the reason
+`POST /krb5/spnego` needs none: the method is GET, every header is built here,
+and the path is the only thing a caller contributes — one carrying CR, LF or
+whitespace is refused as `ETLSBADHTTPPATH` rather than escaped, because escaping
+means deciding which of two things the caller meant. `Connection: close` makes
+the end of the response an event rather than a guess; `maxContentLength` caps it;
+`HTTP_RESPONSE_GRACE_MS` (2000 ms, restarted per chunk) bounds a server that
+answers and then holds the socket open.
+
+Two things in that reader are byte-level and both were found rather than
+anticipated. **A chunked body is de-framed in BYTES** — node's own server answers
+chunked whenever it does not know the length, so this is the common path, and a
+decoder working on a JavaScript *string* walks off the end of a chunk at the
+first multi-byte character, producing valid JSON followed by a fragment of
+hexadecimal. And **a FIN with no bytes behind it is the hang-up**: `'end'` fires
+before `'close'`, so recording the peer's close only in the `'close'` handler
+leaves `usable` true for a server that answered nothing — exactly the TLS 1.3
+rejection two paragraphs up. Both are asserted, and mutation-tested, in
+`tests/api_tls_probe.js`.
+
 `GET /tls/limits` publishes the ports, the budgets, the caps and the platform
-root count, so the page can say what this service will do before a call fails
-rather than reporting its own limits as somebody else's fault. And **the
+root count — plus `httpRequestAvailable`, so a page can tell an older api from a
+server that said nothing — so the page can say what this service will do before a
+call fails rather than reporting its own limits as somebody else's fault. And **the
 no-response branch must answer**, as everywhere else here: a refusal by policy is
 a 400, a network failure is a 502, and a failed HANDSHAKE is neither — it
 resolves with a report, because the alert is the answer. See `docs/pki.md`.

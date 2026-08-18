@@ -917,7 +917,210 @@ async function truststoreInputIsSplitAndBounded() {
 }
 
 // ---------------------------------------------------------------------------
-// 11. What GET /tls/limits publishes. A page that discovers the api's limits
+// 11. Asking the server what IT saw, over the connection just made.
+//
+// Everything above is this end's account of the handshake, and this end is the
+// party that already knows what it sent. `httpRequest` is how the far end's
+// account comes back, and there are four things about it worth asserting:
+//
+//   * the response is reported verbatim — status line, headers, body;
+//   * a CHUNKED body is de-framed, in BYTES. That is not fussiness: a chunk
+//     size counts bytes and a JavaScript string is indexed in code units, so a
+//     decoder that works on text walks into the framing of the next chunk the
+//     moment the body contains a multi-byte character. It produced valid JSON
+//     followed by a fragment of hexadecimal, against a server whose only crime
+//     was writing prose with em dashes in it, and this case is that server;
+//   * a server that HANGS UP instead of answering must not read as success. It
+//     is the TLS 1.3 client-certificate rejection, arriving as a FIN with no
+//     bytes behind it — and 'end' fires before 'close', so a `usable` computed
+//     only from the 'close' handler reports a happy connection to a server that
+//     refused the certificate;
+//   * the path is the only part of the request a caller contributes, so a path
+//     carrying CR or LF is refused BY NAME rather than escaped. Escaping means
+//     deciding what the caller meant, and what a newline in a request line
+//     means is somebody else's header.
+// ---------------------------------------------------------------------------
+async function theServerIsAskedWhatItSaw() {
+  log.debug("Entering theServerIsAskedWhatItSaw().");
+  const built = await buildPki();
+  const https = require("https");
+
+  // An https server rather than the bare tls one above, because what is being
+  // tested is a real HTTP response — including the chunked framing node applies
+  // whenever it does not know the body's length in advance, which is here.
+  const options = await serverOptions({ requestCert: true,
+                                       rejectUnauthorized: false });
+  const seen = [];
+  const server = https.createServer(options, function (req, res) {
+    seen.push({ method: req.method, url: req.url, headers: req.headers });
+    if (req.url === "/plain") {
+      const body = "just text";
+      res.writeHead(200, { "Content-Type": "text/plain",
+                          "Content-Length": Buffer.byteLength(body) });
+      res.end(body);
+      return;
+    }
+    // No Content-Length, so node chunks it — and the body carries em dashes and
+    // an accented name on purpose, so a byte/character confusion in the decoder
+    // shows up as corruption rather than passing by luck.
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      sawClientCertificate: !!(req.socket.getPeerCertificate() || {}).subject,
+      authorized: req.socket.authorized === true,
+      protocol: req.socket.getProtocol(),
+      servername: req.socket.servername || null,
+      note: "a report — written by the server — about the connection it is " +
+        "travelling on, with a name like Ø and an em dash — twice"
+    }));
+  });
+  await new Promise(function (resolve) {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const port = server.address().port;
+
+  try {
+    const probe = probeFor();
+    const report = (await probe.connect({
+      host: "127.0.0.1", port: port, servername: "probe.example.test",
+      trustCertificates: [built.ourRoot.cert.pem],
+      clientCertificatePem: built.client.cert.pem,
+      clientKeyPem: built.client.key.privatePem,
+      httpRequest: { path: "/whoami?asked=1" }
+    })).result;
+
+    assert.strictEqual(report.connected, true,
+      "the handshake did not complete: " + JSON.stringify(report.error));
+    assert.ok(report.httpResponse,
+      "httpRequest was asked for and no response was reported at all");
+    assert.strictEqual(report.httpResponse.statusCode, 200,
+      "the status line was not read: " +
+      JSON.stringify(report.httpResponse.statusLine));
+    assert.strictEqual(report.httpResponse.headers["content-type"],
+      "application/json",
+      "the response headers must come back — they are half of what the far " +
+      "end said: " + JSON.stringify(report.httpResponse.headers));
+    assert.strictEqual(report.httpResponse.transferEncoding, "chunked",
+      "this server answers chunked (node does whenever it does not know the " +
+      "length), and the report must say so rather than silently hiding that " +
+      "the body was de-framed");
+    assert.strictEqual(report.httpResponse.bodyComplete, true,
+      "the chunked body did not reach its terminating zero-length chunk");
+
+    let parsed = null;
+    try {
+      parsed = JSON.parse(report.httpResponse.body);
+    } catch (e) {
+      throw new Error("the body did not survive the read: " + e.message +
+        ". The usual cause is de-framing a chunked body as a STRING — the " +
+        "chunk sizes are BYTES, so every multi-byte character shifts the end " +
+        "of the chunk and the decoder walks into the next size line. The " +
+        "body was: " + JSON.stringify(report.httpResponse.body.slice(0, 400)));
+    }
+    assert.strictEqual(parsed.authorized, true,
+      "the SERVER's own account says it did not verify the client " +
+      "certificate, which is the thing this whole feature exists to report");
+    assert.strictEqual(parsed.sawClientCertificate, true,
+      "the server saw no client certificate on a connection that presented " +
+      "one");
+    assert.ok(/em dash — twice/.test(parsed.note),
+      "the multi-byte characters were corrupted in transit: " + parsed.note);
+
+    // The request that went out is reported too, and it is built here rather
+    // than by the caller: a caller that could set a header could set any
+    // header.
+    assert.strictEqual(report.httpRequest.method, "GET",
+      "the method is GET and nothing else");
+    assert.strictEqual(report.httpRequest.path, "/whoami?asked=1",
+      "the path asked for was not the path sent");
+    assert.strictEqual(seen.length, 1,
+      "expected exactly one request to reach the server, got " + seen.length);
+    assert.strictEqual(seen[0].url, "/whoami?asked=1",
+      "the server received a different path: " + seen[0].url);
+    assert.strictEqual(seen[0].headers.host, "probe.example.test:" + port,
+      "the Host header must be the name asked to be VERIFIED, so a virtual " +
+      "host routes this request the way it routed the handshake: " +
+      seen[0].headers.host);
+    assert.strictEqual(seen[0].headers.connection, "close",
+      "Connection: close is what makes the end of the response an event " +
+      "rather than a guess");
+
+    // And a response WITH a Content-Length must come back just as whole. The
+    // two paths through the reader are different, so one working proves
+    // nothing about the other.
+    const plain = (await probe.connect({
+      host: "127.0.0.1", port: port, servername: "probe.example.test",
+      trustCertificates: [built.ourRoot.cert.pem],
+      httpRequest: "/plain"
+    })).result;
+    assert.strictEqual(plain.httpResponse.body, "just text",
+      "a Content-Length body was not read verbatim: " +
+      JSON.stringify(plain.httpResponse.body));
+    assert.strictEqual(plain.httpResponse.transferEncoding, null,
+      "an unchunked response must not claim to have been de-framed");
+    assert.strictEqual(plain.usable, true,
+      "a server that answered is a server this connection worked with");
+  } finally {
+    server.close();
+  }
+
+  // A server that hangs up rather than answering — which is exactly what a TLS
+  // 1.3 server does when it rejects the client certificate, and what node's own
+  // server does with rejectUnauthorized. The request goes out, nothing comes
+  // back, and the connection must NOT read as usable.
+  const strict = await startServer(await serverOptions({
+    requestCert: true, rejectUnauthorized: true }));
+  try {
+    const probe = probeFor();
+    const refused = (await probe.connect({
+      host: "127.0.0.1", port: strict.port, servername: "probe.example.test",
+      trustCertificates: [built.ourRoot.cert.pem],
+      clientCertificatePem: built.stranger.cert.pem,
+      clientKeyPem: built.stranger.key.privatePem,
+      httpRequest: { path: "/whoami" }
+    })).result;
+    assert.strictEqual(refused.usable, false,
+      "a server that took the request and then hung up without answering is " +
+      "refusing the client certificate, and `usable` must say so. 'end' " +
+      "fires before 'close', so recording the hang-up only in the 'close' " +
+      "handler leaves this true — which is a happy mutual-TLS report about a " +
+      "connection the server rejected.");
+    assert.ok(!refused.httpResponse || !refused.httpResponse.statusCode,
+      "nothing was answered, so there is no status to report");
+  } finally {
+    strict.close();
+  }
+
+  // The path is the only thing a caller contributes to the bytes that go out.
+  const probe = probeFor();
+  const badPaths = ["whoami", "/x HTTP/1.0", "/x\r\nX-Injected: 1",
+                    "/x\nX-Injected: 1", "/" + "a".repeat(4096)];
+  for (const bad of badPaths) {
+    let threw = null;
+    try {
+      await probe.connect({ host: "127.0.0.1", port: 443,
+                           httpRequest: { path: bad } });
+    } catch (e) {
+      threw = e;
+    }
+    assert.strictEqual(threw && threw.code, "ETLSBADHTTPPATH",
+      "the path " + JSON.stringify(bad) + " must be refused by name before a " +
+      "socket is opened, not escaped: escaping means deciding which of two " +
+      "things the caller meant, and a newline in a request line is somebody " +
+      "else's header. Got " + (threw ? threw.code : "no refusal at all"));
+  }
+
+  // And the parser itself, on a response that is not one. A far end that hangs
+  // up mid-header is a fact about the far end, not an error here.
+  const nonsense = tlsProbe.parseHttpResponse("HTTP/1.1 200 OK\r\nX-Half:");
+  assert.strictEqual(nonsense.parsed, false,
+    "a response with no blank line in it cannot have been parsed");
+  assert.ok(/X-Half/.test(nonsense.raw),
+    "what did arrive must still be reported: " + JSON.stringify(nonsense.raw));
+  log.debug("Leaving theServerIsAskedWhatItSaw().");
+}
+
+// ---------------------------------------------------------------------------
+// 12. What GET /tls/limits publishes. A page that discovers the api's limits
 //     by hitting them reports them as somebody else's fault.
 // ---------------------------------------------------------------------------
 function limitsArePublished() {
@@ -943,6 +1146,15 @@ function limitsArePublished() {
   assert.strictEqual(limits.mutualAuthProbeAvailable, true,
     "the page checks this before offering the mutual-auth checkbox, so an " +
     "older api can be told from a broken one");
+  assert.strictEqual(limits.httpRequestAvailable, true,
+    "the page checks this before offering to ask the server what it saw, for " +
+    "the same reason: a request an older api silently ignores must read as " +
+    "an older api rather than as a server that said nothing");
+  assert.strictEqual(limits.httpRequestMethod, "GET",
+    "the method is not negotiable and the page says so on the pane");
+  assert.ok(limits.httpResponseGraceMs > 0,
+    "the response grace must be published — it is what bounds a server that " +
+    "answers and then keeps the socket open");
   log.debug("Leaving limitsArePublished().");
 }
 
@@ -960,6 +1172,7 @@ async function test() {
   await mutualAuthIsMeasuredRatherThanAssumed();
   await aClientCertificateIsSentWithItsChain();
   await usableIsDecidedInOnePlace();
+  await theServerIsAskedWhatItSaw();
   await everyDeadlineIsSeparateAndArmed();
   await everyPathSettles();
   log.info("Test completed successfully.");

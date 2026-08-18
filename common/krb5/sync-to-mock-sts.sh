@@ -55,7 +55,7 @@ if [[ -z "${target}" ]]; then
     echo "  can move." >&2
   else
     echo "sync-to-mock-sts: could not find mock-sts. Pass its path, or run" >&2
-    echo "  git submodule update --init sts" >&2
+    echo "  git submodule update --init --recursive sts" >&2
     echo "  (an uninitialised submodule is an EMPTY DIRECTORY, not a missing one)." >&2
     exit 1
   fi

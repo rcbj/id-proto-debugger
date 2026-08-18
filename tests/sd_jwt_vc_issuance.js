@@ -1713,6 +1713,8 @@ async function chooserFitsOnOneScreen(driver) {
         "tops.length," +
     "         cardWidth: Math.round(cards[0].getBoundingClientRect().width)," +
     "         panesEnd: Math.max(bottom(tools), bottom(status))," +
+    "         toolsEnd: bottom(tools), toolsHeight: " +
+        "Math.round(tools.getBoundingClientRect().height)," +
     "         sideways: doc.scrollWidth > doc.clientWidth + 2 };");
 
   assert.ok(m.cards >= 4, "step 0 should offer the use cases; found " +
@@ -1727,13 +1729,26 @@ async function chooserFitsOnOneScreen(driver) {
     "and the columns must stay wide enough to read: " + m.cardWidth +
         "px per card. Squeezing in more " +
     "columns buys height back only by making every card taller.");
+  // When this fails, the page it names is usually not the page that changed:
+  // the last pane is the SHARED VC Tools pane, which every workflow page
+  // carries and which grows a row whenever a tool is added — that is how it
+  // broke on 2026-08-17, from a partial two directories away, with nothing on
+  // this page touched. So the message says whose height it is.
   assert.ok(m.panesEnd <= m.viewport,
     "everything step 0 offers must fit in one screen: its last pane ends at " +
         m.panesEnd +
     "px against a viewport of " + m.viewport + "px, so " + (m.panesEnd -
         m.viewport) +
     "px of it is below the fold. A chooser you have to scroll cannot be used " +
-        "to compare.");
+        "to compare. " +
+    (m.toolsEnd === m.panesEnd
+      ? "The pane that ends there is the SHARED VC Tools pane (" +
+        m.toolsHeight + "px, partials/vc_tools.html), which all nine " +
+        "workflow pages carry — check whether it gained a tool or a longer " +
+        "description before looking at this page. See the budget table in " +
+        "docs/sd-jwt-vc-issuance.md."
+      : "The lowest thing on the page is the use-case status line, not the " +
+        "VC Tools pane, so the chooser's own content is what grew."));
   assert.strictEqual(m.sideways, false,
     "and it must not have gained sideways scroll in exchange for the height.");
   log.info("[step 0] OK — " + m.cards + " cards on " + m.rows + " rows at " +

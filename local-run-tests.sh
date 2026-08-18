@@ -129,6 +129,17 @@ init()
   # passive endpoint at all.
   WSFED_STS_METADATA_URL=http://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml
   export WSFED_STS_METADATA_URL
+  # And it hosts the TLS / mutual-TLS endpoint the PKI page presents a client
+  # certificate to (its two HTTPS listeners, 8443 and 9443). This is its PLAIN
+  # HTTP base: the test configures the far end's truststore over it and reads
+  # the listeners' ports from the service rather than carrying a copy of them.
+  #
+  # Separate from WSTRUST_STS_URL for the same reason WSFED_STS_METADATA_URL is
+  # — that one may be pointed at a real Apache CXF STS, which has no endpoint of
+  # this kind — and it must be reachable by the API as well as by the test,
+  # since the api is what opens the socket. Both are on this host here.
+  STS_TLS_URL=http://localhost:8081
+  export STS_TLS_URL
   # walt.id's issuer-api2 (local-tests.yml, host networking) — the real
   # OpenID4VCI issuer the interoperability job runs against.
   WALTID_ISSUER_URL=http://localhost:7005

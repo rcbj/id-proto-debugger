@@ -368,7 +368,7 @@ COPY tests/api_krb5_relay.js ./
 COPY client/src/x509.js client/src/key_material.js client/src/pki_store.js ./
 COPY api/tls_probe.js ./
 COPY tests/pki_x509.js tests/pki_key_formats.js tests/api_tls_probe.js ./
-COPY tests/pki_page.js ./
+COPY tests/pki_page.js tests/pki_mutual_tls.js ./
 # The WebAuthn decoder, loaded directly by tests/webauthn_decode.js: the CBOR
 # reader, the COSE_Key decoder (which requires ./jwk_pem, copied above) and the
 # artifact parser/verifier. The vectors beside them are real ceremonies produced

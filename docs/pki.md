@@ -35,6 +35,112 @@ So `tests/pki_x509.js` drives ~240 certificates through the real encoder in node
 and hands every one of them to **OpenSSL**, and `tests/pki_page.js` is left with
 only the page.
 
+Two ways in, and both stay. The page has had a **landing card** of its own
+since 2026-08-18 (`PKI / X.509`, the twelfth) — it is a workflow rather than a
+tool of another protocol's, and being reachable only from somebody else's tools
+pane said the opposite. The **Tools** pane entries on `debugger.html`,
+`debugger2.html`, `saml_request.html`, `saml_response.html` and
+`wsfed_response.html` are deliberately kept, because they are the other journey:
+you are mid-flow and you need a certificate, rather than here because the
+certificate authority IS the task. Note that those links carry `?from=<page>`
+and this page does **not** read it — `pki.html`'s *Return* is a static link to
+the landing page, unlike `jwt_tools.js`'s `setReturnLink()`. Note too that the
+card carries **no** `data-not-on-static` marker: the CA is Web Crypto and pkijs
+in the browser and only the TLS test needs the api, which `#pki_backend_notice`
+says on the page itself. See `client/CLAUDE.md`.
+
+**Both browser tests reach the page by clicking that card** rather than by
+getting its URL — `openThePageFromTheLandingCard()` in `tests/pki_page.js` and
+`tests/pki_mutual_tls.js`, used for every load including the reloads that check
+the store survives (localStorage is per origin, so the trip through the landing
+page preserves what a direct re-get would; verified). `tests/navigation.js`
+checks the card too, but once and only against the containerized stack's base
+URL, whereas these run wherever the suite is pointed — the deployed static
+sites included. A card that stops pointing anywhere, or that something is drawn
+over, then fails here instead of being nobody's test.
+
+## The page is five panes, and it was seven
+
+This page carries more fields than any other in the tree: a key pair, sixteen
+certificate fields, a distinguished name, **twenty** X.509v3 extension cards and
+a TLS pane. On 2026-08-18 its first three panes — *Key Pair*, *Issue a
+Certificate*, *X.509v3 Extensions* — became one, `pane_config`, and the
+extension list became two columns. Nothing was removed; what changed is where it
+sits and how much margin it pays.
+
+**What it bought, measured at 1366x768 in headless Chrome.** The page went from
+**4941px** to **3323px** — a third of it — and the *Keys & Certificates* pane,
+which is where you go to look at what you just issued, moved from 3802px down
+the document to **2146px**. `tests/pki_page.js` holds a 4000px budget with ~20%
+of slack in it for font metrics (fonts-liberation in the container, the host's
+Arial on a host run), because what it is there to catch is the change that gives
+the whole saving back at once rather than the tens of pixels a font accounts
+for.
+
+**Why one pane.** Those three described one act. Every field in all three is an
+input to the single **Issue Certificate** button, which is now at the foot of the
+pane they became — you cannot issue anything from *Key Pair* alone, and the
+extensions are not a separate operation, they are arguments. Each extra pane
+costs a title bar, two borders and the gap between them before a field is drawn,
+and it made the reader collapse three things to reach the store rather than one.
+This is the same trade `kerberos_ap.html` made, for the same reasons and with the
+same consequence, and `docs/kerberos.md` measures it there at 213px.
+
+**What the lost legends became.** A pane legend can only say one thing, so *Key
+Pair* and *X.509v3 Extensions* are `.pki-group` headings over the blocks they
+named. Without them the key algorithm dropdown and the profile dropdown are two
+unlabelled selects side by side. A `div` rather than a `<label>`, because it
+labels a **group**: a `<label>` with no control to point at is one the browser
+cannot associate with anything, and pointing it at the first field would claim
+the heading belongs to that field alone.
+
+**Two traps live in that layout, and both are invisible until something is
+narrow.** `.pki-cols` is `auto-fit` with a **420px** minimum, and that minimum —
+not the design — is what decides whether the pane has two columns or one: a
+layout that looks deliberate at 1500px and stacks at 1024 is usually this number
+biting rather than a broken rule. And `.pki-col` carries `min-width: 0`, which is
+not decoration: a grid item's default minimum is its content's, and this page's
+content includes an unbreakable 64-character line of base64 in a PEM textarea.
+Without it the column refuses to be narrower than that line, the grid overflows
+its pane, and the page scrolls sideways — which reads as a broken layout rather
+than as two missing words of CSS.
+
+**The extension list is CSS columns, deliberately not a grid.** A grid lays its
+items out in **row** order, so twenty cards of wildly different heights
+(`subjectKeyIdentifier` is one checkbox; `subjectAltName` is a checkbox, a
+four-row textarea and a paragraph of syntax) leave a gap under every short one to
+the height of the tallest in its row. A column flow packs them and keeps document
+order reading **down** each column, which is the order the list is in and the
+order the page's own prose refers to. `columns: 460px 2` is a **maximum** of two:
+below about 980px of pane there is room for one and it collapses on its own, so
+no media query is needed — and, less happily, one card that stops fitting 460px
+collapses the whole list with no symptom except that you scroll further. That is
+~900px of page, which is why `tests/pki_page.js` **measures** the column count
+from where the cards actually landed rather than assuming it. `break-inside:
+avoid` is what stops a card being split across the boundary; a `subjectAltName`
+whose checkbox is at the foot of one column and whose textarea is at the head of
+the next is two half-controls, and it happens silently.
+
+**The prose is folded, not cut.** Seven long notes — the intro's enumeration of
+what is on offer, the three block explanations, the TLS pane's two, the history
+pane's — are now `<details class="pki-more">`, the same mechanism and the same
+reasoning as `.krb-more`: a debugger that omits why a thing fails is the thing
+nobody needed. Where a note has one sentence that must be read **before**
+anything is typed, that sentence stays outside the fold and only the reasoning
+goes in — which is why the TLS pane still says on its face that the API layer
+makes this connection, the sentence `tests/pki_page.js` asserts on. The rule in
+the other direction is stricter and is asserted too: **nothing anybody has to
+operate may be inside a fold.** A checkbox behind a summary is a setting nobody
+finds, and unlike missing prose that costs a certificate rather than an
+explanation.
+
+**The density overrides live in `css/pki.css` and override `css/saml_common.css`
+on purpose.** That sheet is linked by `pki.html` and by nothing else, so a bare
+`.saml-row` in it reaches this page only — which is the whole reason they are
+there rather than in the shared sheet, where they would reach five pages that do
+not want them. Nothing in that block changes a font size, a border or a colour:
+what is cut is margin and padding. A row that is hard to read is not denser.
+
 ## The key-pair pane is jwt_tools' pane
 
 `client/src/key_material.js` is not new code. It is the bottom third of
@@ -255,6 +361,65 @@ server that verifies nothing.
 The **root** is deliberately not sent: a server that does not already hold it
 will not trust it because we offered it.
 
+### Asking the server what *it* saw
+
+Everything the pane reports so far is **this end's** account of the handshake,
+and this end is the party that already knows what it sent. Three things exist
+only on the far end:
+
+* **which chain the server built** out of what arrived. The leaf-without-its-
+  intermediates mistake above is invisible from the client — it looks like a
+  refusal;
+* **which anchor it verified against**, which is the whole question a private CA
+  raises;
+* **whether it accepted the certificate at all** — which, under TLS 1.3, the
+  client has not been told by the time its own handshake finishes.
+
+So `POST /tls/connect` takes an optional `httpRequest: { path }` and, after the
+handshake, writes **one GET on the same socket** and reports the response
+verbatim: status line, headers, body. The same socket is the point — a second
+connection is a different connection and says nothing about this certificate on
+this handshake. The pane has a checkbox and a path field for it (`/tls/whoami`
+by default) and renders the answer as *"What the server saw"*, tabulated when the
+body is the JSON the mock STS publishes and shown as text otherwise, because a
+pane that discarded an unrecognised body would be useless against every server
+that is not the mock.
+
+What bounds it is narrower than the rest of the endpoint and needs no setting of
+its own, for the reason `POST /krb5/spnego` needs none: **the method is GET and
+the path is the only thing a caller contributes.** Every header is built in
+`tls_probe.js`; a path with CR, LF or whitespace in it is refused by name
+(`ETLSBADHTTPPATH`) rather than escaped, since escaping means deciding which of
+two things the caller meant and a newline in a request line is somebody else's
+header. `Connection: close` is sent so the end of the response is an event
+rather than a guess, the body is capped by `maxContentLength`, and a server that
+answers and then holds the socket open is bounded by `HTTP_RESPONSE_GRACE_MS`
+(2000 ms, restarted on every chunk, and inside `callTimeout` either way).
+
+Two things in the reader are byte-level on purpose, and both were found rather
+than anticipated:
+
+* **A chunked body is de-framed in BYTES.** Node's own HTTP server answers
+  chunked whenever it does not know the length in advance, which is most of the
+  time, so this is the common path and not an edge case. A chunk size counts
+  bytes; a JavaScript string is indexed in UTF-16 code units — so a decoder
+  working on text walks off the end of a chunk the moment the body contains a
+  multi-byte character, and the result is *valid JSON followed by a fragment of
+  hexadecimal*, from a server whose only crime was writing prose with em dashes
+  in it.
+* **A FIN with no bytes behind it is the hang-up.** `'end'` fires before
+  `'close'`, so recording the peer's close only in the `'close'` handler leaves
+  `usable` true for a server that answered nothing — which is precisely the TLS
+  1.3 client-certificate rejection this file's longest comment is about. Both
+  cases are asserted in `tests/api_tls_probe.js` and both are mutation-tested.
+
+The far end of all this in the suite is the **mock STS**, which grew two HTTPS
+listeners for it: 8443 asks for a client certificate and never refuses one (so
+it can report *why* something did not verify), 9443 requires one (so reaching it
+is itself the proof). Its client truststore starts empty and is filled at
+runtime over its plain HTTP port, because the CA in question is generated in a
+browser minutes before the connection. See `docs/mock-sts.md`.
+
 ### `usable`, not `connected`
 
 Because of the TLS 1.3 ordering above, *"did this connection actually work"* has
@@ -324,8 +489,9 @@ answer.
 |---|---|---|
 | `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles; a four-deep chain; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers | never |
 | `tests/pki_key_formats.js` | 7 algorithms × 4 formats × password on/off, read back by OpenSSL; a PKCS#12 carrying a whole chain; the refusals by name; PEM↔JWK round trips | never |
-| `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, and that **every path settles** | never |
-| `tests/pki_page.js` | the hierarchy built through the form, the store surviving a reload, the private-key opt-out in both states, the list-field syntax, the TLS test end to end, and no browser-side TLS option | needs the client; the TLS section skips without an api |
+| `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, and the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success | never |
+| `tests/pki_page.js` | the hierarchy built through the form, the store surviving a reload, the private-key opt-out in both states, the list-field syntax, the TLS test end to end, no browser-side TLS option — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, and every folded note still holding its prose and no control | needs the client; the TLS section skips without an api |
+| `tests/pki_mutual_tls.js` | the same page against a server that **answers back**: a client certificate issued through the form, presented with its chain to the mock STS's two listeners, and the **server's own account** of the connection — the chain it built, the anchor it verified against, and `required` told apart from `required-and-rejected` by trusting the CA between two otherwise identical runs | needs the client, the api and `STS_TLS_URL` |
 
 The first three are node-only and need **`openssl` on the PATH** (the tests image
 installs it); they say so rather than skipping if it is absent, because a test
@@ -347,3 +513,9 @@ that quietly stops asserting is worse than one that fails.
   expectation, and an entry in the id list `thePageOffersWhatTheModulesDefine()`
   checks. Miss the last and the extension is one nobody can set, with nothing to
   say so.
+* **A new block of fields is not a new pane.** Everything that is an input to
+  *Issue Certificate* goes inside `pane_config`, under a `.pki-group` heading if
+  it needs a name — `theConfigurationIsOnePane()` asserts the pane list by name,
+  so a fourth pane fails there rather than being noticed by somebody a month
+  later. The same section asserts that a `<details class="pki-more">` holds no
+  `input`, `select`, `textarea` or `button`: fold prose, never a control.
