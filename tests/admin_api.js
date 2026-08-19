@@ -244,6 +244,11 @@ async function everyConsoleActionIsMirrored(index) {
     { path: "/claims", probe: { set: "id_token" } },
     { path: "/credential-claims", probe: {} },
     { path: "/verifier-request", probe: {} },
+    // The configuration resource. Its probe is empty for the same reason
+    // /tokens' is: it reaches its action switch before it looks at anything
+    // else, so an unknown action comes back naming the four that exist rather
+    // than complaining about a field.
+    { path: "/config", probe: {} },
   ];
   const paths = new Set(index.operations.map(function (o) { return o.path; }));
   let checked = 0;
@@ -313,6 +318,7 @@ async function theSchemasMatchTheReplies(doc) {
     { name: "ClaimSets", body: await get("/claims") },
     { name: "CredentialClaims", body: await get("/credential-claims") },
     { name: "VerifierRequest", body: await get("/verifier-request") },
+    { name: "Config", body: await get("/config") },
     { name: "GroupDetail", body: await get("/groups?group=" + dn) },
   ];
   const detail = cases[cases.length - 1].body;
@@ -758,6 +764,139 @@ async function theExplorerIsServedUnderAScopedPolicy() {
   log.debug("Leaving theExplorerIsServedUnderAScopedPolicy().");
 }
 
+// ---------------------------------------------------------------------------
+// The configuration resource, and the one thing about it that cannot be checked
+// by reading it: that a setting changed here reaches the WIRE.
+//
+// Everything else on this resource is self-describing and could be right about
+// a service that ignored it — the value comes back, the source says "override",
+// and nothing has actually moved. So this sets a setting whose effect is
+// visible in a document the service publishes, reads that document, and puts it
+// back. The batch size was chosen because it is an integer in the OID4VCI
+// issuer metadata: an assertion about a number is not satisfiable by accident
+// the way one about a string that was echoed back would be.
+//
+// It also checks the honesty of the restart-only half. Those rows exist to say
+// "this cannot be changed and here is why", and a row that claimed it while
+// quietly accepting a change would be worse than not having the row.
+//
+// RESTORES WHAT IT CHANGES, like everything else here — through reset-all,
+// which is the operation that exists for exactly this.
+// ---------------------------------------------------------------------------
+async function configurationCanBeChangedAndPutBack(doc) {
+  log.debug("Entering configurationCanBeChangedAndPutBack().");
+  log.info("=== The configuration resource ===");
+
+  const before = await get("/config");
+  assert.ok(before.settingCount > 20 && before.groups.length > 5,
+    "the configuration resource should carry this service's whole settings " +
+    "table, grouped by protocol. Got " + before.settingCount + " setting(s) " +
+    "in " + before.groups.length + " group(s), which is too few for this " +
+    "check to mean anything.");
+  assert.deepStrictEqual(before.overridden, [],
+    "no runtime override should be in force before this check runs. The " +
+    "mock's admin state survives between jobs, so a leftover here would " +
+    "change what every later job's tokens and assertions contain. Found: " +
+    JSON.stringify(before.overridden));
+
+  const rows = before.groups.reduce(function (all, group) {
+    return all.concat(group.settings);
+  }, []);
+
+  // Every property the row schema documents must appear on at least ONE row.
+  // Per-row rather than per-property, because three of them are legitimately
+  // conditional — only enums carry enumValues, only restart-only rows carry
+  // restartReason, and only the three issuers carved out of STS_ISSUER carry
+  // legacyEnv — and a misspelt name would still appear on none of them.
+  const rowSchema = doc.components.schemas.Config
+    .properties.groups.items.properties.settings.items;
+  const never = Object.keys(rowSchema.properties).filter(function (name) {
+    return !rows.some(function (row) { return row[name] !== undefined; });
+  });
+  assert.deepStrictEqual(never, [],
+    "every property the setting schema documents should appear on at least " +
+    "one of the " + rows.length + " settings. These appear on none, which is " +
+    "what a misspelt property name looks like: " + never.join(", "));
+
+  // The restart-only half says why, and means it.
+  const fixed = rows.filter(function (row) { return !row.editable; });
+  assert.ok(fixed.length,
+    "some settings must be restart-only — the bound ports at least — or the " +
+    "refusal below is checking nothing.");
+  fixed.forEach(function (row) {
+    assert.ok(row.restartReason,
+      row.key + " is not editable and must say why: that sentence is the " +
+      "whole difference between a setting that cannot be changed and one " +
+      "that looks broken.");
+  });
+  const refused = await post("/config/set",
+                             { key: fixed[0].key, value: "1234" });
+  assert.strictEqual(refused.status, 400,
+    "setting " + fixed[0].key + " should be REFUSED rather than accepted " +
+    "and ignored: an accepted change that does nothing reads as having " +
+    "worked. Got " + refused.status);
+  assert.ok(/cannot be changed while this service is running/
+              .test((refused.body.errors || []).join(" ")),
+    "and the refusal must say so and give the reason. Got: " +
+    JSON.stringify(refused.body.errors));
+
+  // Now the half that does move, checked on the wire.
+  const metadataUrl = base + "/.well-known/openid-credential-issuer";
+  const original = await common.httpJson(metadataUrl);
+  assert.ok(original.ok, "the issuer metadata should be served; got " +
+    original.status);
+  const was = original.body.batch_credential_issuance.batch_size;
+  const wanted = was + 3;
+
+  const set = await post("/config/set",
+                         { key: "oid4vci.batchSize", value: wanted });
+  assert.ok(set.ok, "setting oid4vci.batchSize should be accepted; got " +
+    set.status + " " + JSON.stringify(set.body.errors || []));
+  assert.strictEqual(set.body.setting.source, "override",
+    "and the setting should then report its source as the runtime override.");
+
+  const after = await common.httpJson(metadataUrl);
+  assert.strictEqual(after.body.batch_credential_issuance.batch_size, wanted,
+    "the issuer metadata must carry the new batch size. It does not, which " +
+    "means this resource reported a change it did not make — the one way " +
+    "this whole page could be wrong while looking right. Expected " + wanted +
+    ", got " + after.body.batch_credential_issuance.batch_size);
+  log.info("[config] the batch size reached the issuer metadata: " + was +
+           " -> " + wanted + ".");
+
+  // set-many is all-or-nothing, which is the property a section's Save rests
+  // on: a body with one bad field must change NOTHING.
+  const partly = await post("/config/set-many",
+    { "oid4vci.offerUsername": "someone.else", "oid4vp.kbMaxAgeS": "not-a-number" });
+  assert.strictEqual(partly.status, 400,
+    "a set-many with one unusable value should be refused; got " +
+    partly.status);
+  const midway = await get("/config");
+  assert.ok(midway.overridden.indexOf("oid4vci.offerUsername") < 0,
+    "and it must have applied NONE of them. oid4vci.offerUsername was the " +
+    "good field in that body and it has been written, so the section was " +
+    "applied halfway — which is the state the console's Save must never be " +
+    "able to leave this service in.");
+
+  const cleared = await post("/config/reset-all", {});
+  assert.ok(cleared.ok, "reset-all should succeed; got " + cleared.status);
+  const restored = await common.httpJson(metadataUrl);
+  assert.strictEqual(restored.body.batch_credential_issuance.batch_size, was,
+    "and it must put the service back where it started: the batch size is " +
+    "still " + restored.body.batch_credential_issuance.batch_size +
+    " rather than " + was + ", so this test has changed what every later " +
+    "job sees.");
+  const end = await get("/config");
+  assert.deepStrictEqual(end.overridden, [],
+    "and no override should remain. Left behind: " +
+    JSON.stringify(end.overridden));
+
+  log.info("[config] OK — " + before.settingCount + " settings, " +
+           fixed.length + " of them restart-only and refused, one change " +
+           "seen on the wire and undone.");
+  log.debug("Leaving configurationCanBeChangedAndPutBack().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Running the management API checks against " + api);
@@ -775,6 +914,7 @@ async function test() {
   await customClaimsCanBeChangedAndPutBack();
   await credentialClaimsCanBeChangedAndPutBack();
   await theVerifierRequestCanBeChangedAndPutBack();
+  await configurationCanBeChangedAndPutBack(doc);
   await theBulkRevocationsWorkAndAreUndone();
   await theExplorerIsServedUnderAScopedPolicy();
   log.info("Test completed successfully.");

@@ -304,6 +304,19 @@ COPY sts/app.js sts/helpers.js sts/bbs2023.js ./sts/
 # "Cannot find module './admin_stats'" while every host run stayed green. It
 # requires ./helpers and nothing else, so it adds no further closure of its own.
 COPY sts/admin_stats.js ./sts/
+# config.js is the SECOND such recomputation and it sits UNDER helpers.js rather
+# than beside it: the mock's settings moved out of forty-odd `process.env.X ||
+# default` expressions into one table, and helpers.js, krb5_kdc.js,
+# krb5_service.js and krb5_principals.js all read it now. Missing, the failure
+# is "Cannot find module './config'" from inside the submodule at require time
+# — before any test has run, and naming a file rather than this line.
+#
+# It requires only bunyan and process.env.CONFIG_FILE, so it adds nothing to the
+# closure. Note what CONFIG_FILE is in this image: the TESTS' config file, which
+# carries none of the mock's settings — so every value falls through to the
+# built-in default, which is exactly what these jobs had before the table
+# existed, and the KRB5_* variables they set still win over it.
+COPY sts/config.js ./sts/
 COPY sts/krb5_primitives.js sts/krb5_asn1.js sts/krb5_crypto.js sts/krb5_messages.js sts/krb5_gss.js ./sts/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build

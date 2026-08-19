@@ -1833,7 +1833,8 @@ function buildJobs() {
     // behind would change what every later job's tokens contain.
     jobs.push({
       name: "STS management API (/admin-api mirrors every /admin control, " +
-          "and its OpenAPI document describes what it sends)",
+          "its OpenAPI document describes what it sends, and a " +
+          "configuration change is seen on the wire and undone)",
       script: "admin_api.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",

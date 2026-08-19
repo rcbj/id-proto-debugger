@@ -4491,6 +4491,107 @@ async function authorizationDetailsIsTheDefault(driver) {
   assert.ok(/publishes no claims member/.test(noClaims.status),
     "and the pane should say why it is empty. Got: " + noClaims.status);
   log.info("[claims] OK — no advertised claims, no change: still scope.");
+
+  // ---- and the authorization server has to be able to REDEEM it -----------
+  //
+  // The fourth bound on the default, and the one it shipped without: RFC 9396
+  // section 10 has the authorization server publish
+  // authorization_details_types_supported, and Keycloak's RFC 8414 document
+  // omits the member entirely. It accepts the authorization request and issues
+  // a code, then refuses it at the TOKEN request with
+  // invalid_authorization_details — which stopped this workflow on
+  // oauth2_oidc_2.html and failed the Keycloak leg above as a timeout waiting
+  // for step 2, naming neither the mechanism nor the parameter.
+  //
+  // So the flip is checked against BOTH servers in the same section, because a
+  // rule that only ever sees one of them is not a rule: the mock issuer's own
+  // AS advertises openid_credential and must still get the flip, and Keycloak
+  // must not — and what separates them has to be the metadata rather than the
+  // URL, which is why the positive control is here rather than implied by the
+  // sections that set the mechanism themselves.
+  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
+  await driver.executeScript("window.localStorage.clear();");
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
+  await driver.executeScript(
+    "document.getElementById('vci_metadata_endpoint').value = arguments[0];",
+    issuerMetadataUrl);
+  await click(driver, By.id("vci_retrieve_button"));
+  await waitForStatus(driver, "vci_signed_metadata_status",
+    function (s) { return /^Retrieved/.test(s); },
+    "the credential issuer metadata was not retrieved");
+  await driver.wait(async function () {
+    return (await driver.findElements(By.css("#vc_claims_table tbody tr")))
+        .length > 0;
+  }, fetchWait, "the claims pane never filled");
+  var beforeAs = await driver.executeScript(
+    "return document.getElementById('handoff_request_mechanism').value;");
+  assert.strictEqual(beforeAs, "authorization_details",
+    "with no authorization server document in hand, whether it understands " +
+    "authorization_details is unknown and the credential decides. Got: " +
+        beforeAs);
+
+  // Keycloak: the member is absent, so the request would not be redeemable.
+  var keycloakMeta = (await httpJson(asMetadataUrl)).body;
+  assert.ok(!(keycloakMeta.authorization_details_types_supported || [])
+            .includes("openid_credential"),
+    "this check needs an authorization server that does NOT advertise " +
+    "openid_credential; " + asMetadataUrl + " now advertises " +
+    JSON.stringify(keycloakMeta.authorization_details_types_supported) +
+        ", so it can no longer show the rule.");
+  await driver.executeScript(
+    "document.getElementById('oidc_discovery_endpoint').value = arguments[0];",
+    asMetadataUrl);
+  await click(driver, By.id("as_retrieve_button"));
+  await waitForStatus(driver, "as_signed_metadata_status",
+    function (s) { return /^Retrieved/.test(s); },
+    "the authorization server metadata was not retrieved");
+  var againstKeycloak = await driver.executeScript(
+    "return { mechanism: document.getElementById(" +
+    "'handoff_request_mechanism').value," +
+    "         note: document.getElementById('handoff_mechanism_note')" +
+    "                 .textContent.trim() };");
+  assert.strictEqual(againstKeycloak.mechanism, "scope",
+    "an authorization server whose own metadata does not advertise " +
+    "openid_credential cannot redeem the request, so the default must not " +
+    "flip to it. Got: " + againstKeycloak.mechanism);
+  assert.ok(/authorization_details would be the default/
+            .test(againstKeycloak.note) &&
+            /authorization_details_types_supported/
+            .test(againstKeycloak.note),
+    "and the note must say the page wanted authorization_details and what " +
+    "stopped it, or the select sits on scope while the claims pane says to " +
+    "switch. Got: " + againstKeycloak.note);
+  log.info("[claims] OK — the default stays on scope at an authorization " +
+           "server that does not advertise authorization_details, and the " +
+           "note says why.");
+
+  // The mock issuer's own AS: the member IS there, so the flip still happens.
+  var mockAsUrl = issuerBase + "/.well-known/oauth-authorization-server";
+  var mockAsMeta = (await httpJson(mockAsUrl)).body;
+  assert.ok((mockAsMeta.authorization_details_types_supported || [])
+            .includes("openid_credential"),
+    "and this half needs one that DOES advertise it; " + mockAsUrl +
+    " advertises " +
+    JSON.stringify(mockAsMeta.authorization_details_types_supported) + ".");
+  await driver.executeScript(
+    "document.getElementById('oidc_discovery_endpoint').value = arguments[0];",
+    mockAsUrl);
+  await click(driver, By.id("as_retrieve_button"));
+  await waitForStatus(driver, "as_signed_metadata_status",
+    function (s) { return /^Retrieved/.test(s); },
+    "the authorization server metadata was not retrieved");
+  var againstMock = await driver.executeScript(
+    "return document.getElementById('handoff_request_mechanism').value;");
+  assert.strictEqual(againstMock, "authorization_details",
+    "a server that advertises openid_credential must still get the default " +
+    "the claims need — otherwise this rule has simply disabled it. Got: " +
+        againstMock);
+  log.info("[claims] OK — and it flips back at a server that advertises " +
+           "openid_credential, so the metadata is what decides.");
   log.debug("Leaving authorizationDetailsIsTheDefault().");
 }
 

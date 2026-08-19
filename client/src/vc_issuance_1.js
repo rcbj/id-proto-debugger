@@ -1127,6 +1127,13 @@ function updateHandoffSummary() {
           (cfg.vct || "?") + ")"
       : "—";
   }
+  // ...and so does the DEFAULT mechanism, for the same two reasons: retrieving
+  // or clearing the authorization server's document changes whether an
+  // authorization_details request could be redeemed at all. Re-deciding it here
+  // is what makes an RFC 8414 document that arrives AFTER the claims pane was
+  // built count — the Keycloak leg retrieves the two documents in that order.
+  // It only ever fills a blank, so calling it again is free.
+  applyDefaultRequestMechanism();
   // The note depends on the credential chosen and on what the authorization
   // server advertises, so it is refreshed whenever this summary is.
   describeMechanism();
@@ -1259,10 +1266,43 @@ function renderClaimsPane() {
 //
 // A STORED choice always wins: the mechanism is configuration like everything
 // else on this page, so this only fills in what nobody has answered yet.
+//
+// And it defaults there only where the request can be REDEEMED. RFC 9396
+// section 10 has the authorization server publish
+// authorization_details_types_supported, and the two servers this workflow runs
+// against answer differently: the mock issuer's own AS advertises
+// openid_credential, Keycloak's RFC 8414 document omits the member altogether.
+// Keycloak accepts the authorization request and issues a code, then refuses it
+// at the Token Request with invalid_authorization_details ("Unsupported type
+// 'openid_credential' ... Supported values: []") — so a default that flipped on
+// the credential alone walked the whole workflow into a dead end one page after
+// the choice was made, which is what it did to the Keycloak leg of
+// tests/sd_jwt_vc_issuance.js.
+//
+// An AS document that is not in hand yet is UNKNOWN rather than unsupporting:
+// the credential decides, and describeMechanism() says the support is unknown.
+// One that is in hand and silent counts as not supporting it — the member is
+// the only thing that can say so, and a default is a guess this page has to
+// make; somebody who wants the request made anyway chooses it in the select,
+// which always wins.
 // ---------------------------------------------------------------------------
+function asAcceptsAuthorizationDetails() {
+  log.debug("Entering asAcceptsAuthorizationDetails().");
+  if (!asInfo || Object.keys(asInfo).length === 0) {
+    log.debug("Leaving asAcceptsAuthorizationDetails(). No AS document yet.");
+    return true;
+  }
+  var types = asInfo.authorization_details_types_supported;
+  var takes = !!types && types.indexOf("openid_credential") !== -1;
+  log.debug("Leaving asAcceptsAuthorizationDetails(). " + takes);
+  return takes;
+}
+
 function defaultRequestMechanism() {
   log.debug("Entering defaultRequestMechanism().");
-  var mechanism = claimRows.length ? "authorization_details" : "scope";
+  var mechanism = (claimRows.length && asAcceptsAuthorizationDetails())
+    ? "authorization_details"
+    : "scope";
   log.debug("Leaving defaultRequestMechanism(). " + mechanism);
   return mechanism;
 }
@@ -1456,6 +1496,25 @@ function describeMechanism() {
            ", and step 2 will name the credential by its configuration id.";
     if (supported && supported.indexOf("openid_credential") !== -1) {
       note += " This server also supports authorization_details of type openid_credential.";
+    } else if (claimRows.length && !sdJwtVc.get(MECHANISM_KEY)) {
+      // The other half of applyDefaultRequestMechanism()'s decision, and the
+      // one that needs saying most: this credential advertises claims, so the
+      // route those claims travel on would be the default — and it is NOT,
+      // because this authorization server's own metadata does not say it can
+      // redeem one. Without this the select sits on scope while the pane below
+      // says to switch, which is the trap in reverse.
+      note += " authorization_details would be the default for this " +
+        "credential, which advertises " + claimRows.length + " claim(s) " +
+        // An EMPTY array reads as absent here on purpose: it says the same
+        // thing about this request, and "advertises only the types " with
+        // nothing after it says nothing at all.
+        "below, but this authorization server " + ((supported &&
+          supported.length)
+          ? "advertises only the types " + supported.join(", ")
+          : "does not advertise authorization_details_types_supported at " +
+            "all") + " — Keycloak, for one, answers such a Token Request " +
+        "with invalid_authorization_details. Choose authorization_details to " +
+        "send it anyway.";
     }
     // A scope cannot carry a claims selection: the member belongs to an
     // authorization_details entry. Said here rather than in the claims pane
