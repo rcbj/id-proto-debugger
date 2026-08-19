@@ -72,6 +72,16 @@
 // protocol. That is one hook on one funnel, so it is cheap to break and cheap
 // to check — authenticate over OAuth2 and look for the entry over LDAP.
 //
+// AND, in section 9b, over WS-Trust as well — which is not redundancy. The
+// hook being installed and a protocol REACHING it are two properties, they
+// fail separately, and they present identically: a person who authenticated
+// and has no directory object. WS-Trust reached it on neither Validate nor
+// Cancel, dropped the requester of a delegated request, and read the token out
+// of a RenewTarget as though it were a credential — all while section 9 passed
+// against the OAuth2 password grant. So 9b drives all four WS-Trust
+// operations, both shapes of a delegated request, and one negative that a
+// careless fix would break.
+//
 // ---------------------------------------------------------------------------
 // **Services needed:** the api, and the mock STS (its HTTP side and its two LDAP
 // listeners — the LDAPS section skips on its own if 636 never bound, which is the
@@ -760,18 +770,36 @@ async function theApiRefusesWhatItWillNotDo() {
 async function authenticatingAnywhereCreatesAnLdapUser(described) {
   log.debug("Entering authenticatingAnywhereCreatesAnLdapUser().");
   log.info("=== An entry for whoever authenticates ===");
-  if (!described.autoCreateUsers) {
-    log.warn("LDAP_AUTOCREATE_USERS is off on this mock, so there is nothing " +
-             "to check here. It is ON by default; something set it.");
-    log.debug("Leaving authenticatingAnywhereCreatesAnLdapUser(). Off.");
-    return;
-  }
+  // ASSERTED, not skipped, and that change is the whole reason this section is
+  // worth reading. It used to warn "it is off, so there is nothing to check
+  // here" and return green — and it did exactly that on every run, because all
+  // three of the mock's env files carried `autocreateUsers: false`. An
+  // appconfig value beats the default, so the setting the header of
+  // ldap_server.js, docs/ldap.md, docs/mock-sts.md and this file all describe
+  // as ON was off everywhere it was ever run, and the check that would have
+  // said so opted out of saying anything. A test that reports OK when its
+  // subject is turned off is not a weaker test, it is a test of nothing.
+  assert.ok(described.autoCreateUsers,
+    "LDAP_AUTOCREATE_USERS is off on this mock, so no protocol here seeds a " +
+    "directory entry and everything below this line would be checking a " +
+    "feature nobody turned on. It is ON by default and all three of the " +
+    "mock's env files set it on; something in this deployment turned it " +
+    "off — look at sts/env/*.js and at LDAP_AUTOCREATE_USERS in the " +
+    "environment. " +
+    "This is asserted rather than skipped because skipping it is how it came " +
+    "to be off everywhere for as long as it was.");
   const who = "ldapuser" + stamp;
   // The OAuth2 password grant, which is the cheapest of the twelve protocol
-  // families to drive from a node test. WHICH one is not the point — the hook
-  // is on admin_stats.recordAuthentication(), the single funnel all of them go
-  // through at the moment the credential is accepted, so one is enough to show
-  // the hook is installed and any of them would do.
+  // families to drive from a node test. It shows the HOOK is installed — one
+  // protocol is enough for that, because the hook is a single line on
+  // admin_stats.recordAuthentication().
+  //
+  // What it does NOT show is that a given protocol reaches that funnel, and
+  // section 9b exists because that is a separate failure with the same
+  // symptom: WS-Trust had three paths that accepted a credential without
+  // calling it, and this section passed the whole time. A protocol added here
+  // gets its own coverage; "the hook is installed" is not an argument that it
+  // is called.
   const token = await fetch(stsUrl + "/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -815,6 +843,282 @@ async function authenticatingAnywhereCreatesAnLdapUser(described) {
     "nonsense — and this directory's own binds would grow it without bound. " +
     "Before " + before.body.entryCount + ", after " + after.body.entryCount);
   log.debug("Leaving authenticatingAnywhereCreatesAnLdapUser().");
+}
+
+
+// ---------------------------------------------------------------------------
+// 9b. AND THE SAME THING THROUGH WS-TRUST, ON ALL FOUR OF ITS OPERATIONS.
+//
+// Section 9 above says "WHICH protocol is not the point — the hook is on
+// admin_stats.recordAuthentication(), so one is enough to show it is
+// installed". That is true of the HOOK and it is not true of the FUNNEL, and
+// the difference is exactly what this section exists to catch: a protocol that
+// accepts a credential without calling recordAuthentication() produces a person
+// who authenticated here and has no directory entry, and section 9 passes
+// while it happens because section 9 drives a different protocol.
+//
+// It was happening. WS-Trust missed the funnel in three ways at once, and each
+// one is asserted separately below because each fails on its own:
+//
+//   * Validate and Cancel answered before the request was authenticated at
+//     all. HALF of this endpoint's operations authenticated nobody.
+//   * a request carrying BOTH a UsernameToken and an OnBehalfOf recorded only
+//     the delegated subject. The requester — the one party in that exchange
+//     that actually presented a credential — was recorded nowhere.
+//   * a Renew with no security header read the assertion out of its own
+//     RenewTarget and recorded THAT as if it were a credential. The token was
+//     talking, not the requester, so a name that never authenticated grew an
+//     entry.
+//
+// WS-Trust is driven straight over HTTP rather than through a browser: the RST
+// is a SOAP document and building one here costs less than a page would, which
+// is the same reason section 9 uses the password grant.
+// ---------------------------------------------------------------------------
+const WST_NS = "http://docs.oasis-open.org/ws-sx/ws-trust/200512";
+const WSSE_NS = "http://docs.oasis-open.org/wss/2004/01/" +
+  "oasis-200401-wss-wssecurity-secext-1.0.xsd";
+const SAML2_NS = "urn:oasis:names:tc:SAML:2.0:assertion";
+
+// A `wsse:Security` header carrying a UsernameToken, or "" for a request that
+// presents no credential at all.
+function securityHeader(user) {
+  log.debug("Entering securityHeader(). user=" + (user || "(none)"));
+  if (!user) {
+    log.debug("Leaving securityHeader(). No credential.");
+    return "";
+  }
+  log.debug("Leaving securityHeader().");
+  return '<wsse:Security xmlns:wsse="' + WSSE_NS + '">' +
+    '<wsse:UsernameToken><wsse:Username>' + user + '</wsse:Username>' +
+    '<wsse:Password>whatever</wsse:Password></wsse:UsernameToken>' +
+    '</wsse:Security>';
+}
+
+// A minimal SAML 2.0 assertion naming one subject. It is not signed and does
+// not need to be — the mock reads the NameID and believes it, which is the
+// behaviour under test here rather than a shortcut.
+function assertionNaming(subject) {
+  log.debug("Entering assertionNaming(). subject=" + subject);
+  log.debug("Leaving assertionNaming().");
+  return '<saml:Assertion xmlns:saml="' + SAML2_NS + '" ID="_' + stamp + '">' +
+    '<saml:Subject><saml:NameID>' + subject + '</saml:NameID>' +
+    '</saml:Subject></saml:Assertion>';
+}
+
+// One RST, posted to the mock's /sts. `body` is whatever goes inside
+// wst:RequestSecurityToken beside the RequestType.
+async function requestSecurityToken(operation, user, body) {
+  log.debug("Entering requestSecurityToken(). operation=" + operation);
+  const rst = '<?xml version="1.0" encoding="UTF-8"?>' +
+    '<s:Envelope xmlns:s="http://www.w3.org/2003/05/soap-envelope">' +
+    '<s:Header>' + securityHeader(user) + '</s:Header><s:Body>' +
+    '<wst:RequestSecurityToken xmlns:wst="' + WST_NS + '">' +
+    '<wst:RequestType>' + WST_NS + '/' + operation + '</wst:RequestType>' +
+    (body || '') +
+    '</wst:RequestSecurityToken></s:Body></s:Envelope>';
+  let response;
+  try {
+    response = await fetch(stsUrl + "/sts", {
+      method: "POST",
+      headers: { "Content-Type": "application/soap+xml; charset=utf-8" },
+      body: rst
+    });
+  } catch (e) {
+    log.debug("Leaving requestSecurityToken(). The fetch failed.");
+    throw new Error("could not reach " + stsUrl + "/sts: " +
+      (e.cause ? e.cause.message : e.message) +
+      ". Is the mock STS running, and is STS_URL right?");
+  }
+  const text = await response.text();
+  log.debug("Leaving requestSecurityToken(). status=" + response.status);
+  return { status: response.status, body: text };
+}
+
+// How many entries this directory holds for `uid`. Zero or one; the number is
+// what the assertions below compare, because "the entry is there" and "the
+// entry is NOT there" are both things this section has to be able to say.
+async function entriesFor(who) {
+  log.debug("Entering entriesFor(). who=" + who);
+  const search = connection();
+  search.baseDn = usersDn;
+  search.scope = "sub";
+  search.filter = "(uid=" + who + ")";
+  const found = await call("/ldap/search", search);
+  assertSucceeded(found, "searching for uid=" + who);
+  log.debug("Leaving entriesFor(). " + found.body.entryCount + ".");
+  return found.body.entryCount;
+}
+
+async function wsTrustSeedsAnEntryToo(described) {
+  log.debug("Entering wsTrustSeedsAnEntryToo().");
+  log.info("=== WS-Trust: an entry on every operation ===");
+  // Asserted rather than skipped, for the reason section 9 gives at length.
+  assert.ok(described.autoCreateUsers,
+    "LDAP_AUTOCREATE_USERS is off on this mock, so nothing below could pass " +
+    "for a reason worth having. See section 9.");
+
+  // Is there a WS-Trust endpoint at all? A mock that predates it answers 404,
+  // and that is a deployment to go and look at rather than a failure of this
+  // property — the same distinction the preconditions at the top of this file
+  // make about /ldap/search.
+  const probe = await fetch(stsUrl + "/sts");
+  if (probe.status === 404) {
+    log.warn("this mock has no /sts, so it has no WS-Trust. Skipping.");
+    log.debug("Leaving wsTrustSeedsAnEntryToo(). No endpoint.");
+    return;
+  }
+
+  // ---- Every operation, not just the two that mint a token ---------------
+  //
+  // Issue and Renew were always authenticated. Validate and Cancel are in this
+  // list because they were NOT, and a list holding only them would pass
+  // against an implementation that had lost the other two.
+  const operations = ["Issue", "Renew", "Validate", "Cancel"];
+  for (const operation of operations) {
+    const who = "wst" + operation.toLowerCase() + stamp;
+    // Renew, Validate and Cancel each name a target token. It is included so
+    // the request is the shape a client actually sends — and, for Renew,
+    // because a target carrying its own assertion is precisely what used to be
+    // read as the credential instead of the UsernameToken.
+    const target = operation === "Issue" ? "" :
+      "<wst:" + operation + "Target>" +
+      assertionNaming("target" + stamp) +
+      "</wst:" + operation + "Target>";
+    const answer = await requestSecurityToken(operation, who, target);
+    assert.strictEqual(answer.status, 200,
+      "a WS-Trust " + operation + " with a valid UsernameToken should " +
+      "answer 200; got " + answer.status + " " + answer.body.slice(0, 300));
+    assert.strictEqual(await entriesFor(who), 1,
+      "a UsernameToken accepted by a WS-Trust " + operation + " must seed " +
+      "uid=" + who + "," + usersDn + ". Validate and Cancel used to answer " +
+      "before the request was authenticated at all, so half of this " +
+      "endpoint's operations accepted a credential and recorded it nowhere — " +
+      "not on the users page, not in the audit log, and not here.");
+    log.info("[" + operation + "] OK — " + who + " has an entry.");
+  }
+
+  // ---- The requester AND the delegated subject, not one of the two -------
+  const requester = "wstreq" + stamp;
+  const delegated = "wstobo" + stamp;
+  const withObo = await requestSecurityToken("Issue", requester,
+    "<wst:OnBehalfOf>" + assertionNaming(delegated) + "</wst:OnBehalfOf>");
+  assert.strictEqual(withObo.status, 200,
+    "a delegated Issue should answer 200; got " + withObo.status + " " +
+    withObo.body.slice(0, 300));
+  assert.strictEqual(await entriesFor(delegated), 1,
+    "the subject named in an OnBehalfOf must get an entry. It always did.");
+  assert.strictEqual(await entriesFor(requester), 1,
+    "and so must the REQUESTER, who is the only party in that exchange who " +
+    "presented a credential. The delegation branch used to return before the " +
+    "UsernameToken had been looked at, so this was the entry that went " +
+    "missing — and it went missing on precisely the request where somebody " +
+    "would care who asked.");
+  log.info("[OnBehalfOf] OK — both " + requester + " and " + delegated +
+           " have entries.");
+
+  // ---- And a token is not a credential ----------------------------------
+  //
+  // The negative, and it is the one that keeps the fix honest: making every
+  // operation authenticate is easy to do by reading whatever identity the
+  // document happens to contain first, which would seed an entry for the
+  // subject of the token being renewed. Nobody presented that name here.
+  const renewed = "wsttarget" + stamp;
+  const noCredential = await requestSecurityToken("Renew", "",
+    "<wst:RenewTarget>" + assertionNaming(renewed) + "</wst:RenewTarget>");
+  assert.strictEqual(noCredential.status, 200,
+    "a Renew with no credential is accepted by this lenient mock; got " +
+    noCredential.status + " " + noCredential.body.slice(0, 300));
+  assert.strictEqual(await entriesFor(renewed), 0,
+    "the subject of the token in a RenewTarget must NOT get an entry. It is " +
+    "the token talking, not a requester: nothing about that name was " +
+    "presented as a credential, and an entry for it says somebody " +
+    "authenticated who did not. This mock re-mints the token FOR that " +
+    "subject, which is why the name is in the response and why reading it " +
+    "off the document is such an easy thing to do by accident.");
+  log.info("[RenewTarget] OK — " + renewed + " is a subject, not a user.");
+  log.debug("Leaving wsTrustSeedsAnEntryToo().");
+}
+
+
+// ---------------------------------------------------------------------------
+// 9c. AND THROUGH WS-FEDERATION'S SIGN-IN SCREEN.
+//
+// A third protocol, and the reason for a third is not symmetry. Sections 9 and
+// 9b cover a credential presented in a REQUEST — a form-encoded password grant,
+// a UsernameToken in a SOAP header — and WS-Federation is the other shape: a
+// person types a name at a screen, a browser session begins, and the assertion
+// is issued on a later pass that presents no credential at all. The identity is
+// recorded once, at `startSession()`, and every later `wsignin1.0` on that
+// session is single sign-on rather than a second authentication.
+//
+// So what this section pins is that the ONE moment it happens is wired to the
+// funnel. It is not driven through a browser: the sign-in screen posts
+// `signin_id` and a username to /wsfed/login, and the pending request is held
+// server-side under that id rather than in the session, so the whole exchange
+// is two ordinary HTTP calls. `wsfed_sso.js` covers the workflow through a
+// browser against both identity providers; this covers one property of the
+// mock, and keeping them apart means a failure names which of the two broke.
+// ---------------------------------------------------------------------------
+async function wsFederationSeedsAnEntryToo(described) {
+  log.debug("Entering wsFederationSeedsAnEntryToo().");
+  log.info("=== WS-Federation: an entry for whoever signs in ===");
+  assert.ok(described.autoCreateUsers,
+    "LDAP_AUTOCREATE_USERS is off on this mock, so nothing below could pass " +
+    "for a reason worth having. See section 9.");
+
+  const signInUrl = stsUrl + "/wsfed?wa=wsignin1.0&wtrealm=" +
+    encodeURIComponent("urn:api-ldap-test:" + stamp);
+  const screen = await fetch(signInUrl);
+  if (screen.status === 404) {
+    log.warn("this mock has no /wsfed, so it has no WS-Federation. Skipping.");
+    log.debug("Leaving wsFederationSeedsAnEntryToo(). No endpoint.");
+    return;
+  }
+  assert.strictEqual(screen.status, 200,
+    "a wsignin1.0 with no session should answer the sign-in screen; got " +
+    screen.status);
+  const html = await screen.text();
+
+  // The form's own hidden field. It is read out of the page rather than
+  // invented because it is what holds the interrupted request: the sign-in
+  // POST is accepted on the strength of this id and not of a cookie, which is
+  // also why this section needs no cookie jar.
+  const idMatch = html.match(/name="signin_id"[^>]*value="([^"]+)"/);
+  assert.ok(idMatch,
+    "the sign-in screen must carry a signin_id, which is the handle the " +
+    "login POST is accepted on. Without one this test would be posting a form the " +
+    "service has no pending request for, and the 400 that came back would " +
+    "read as a broken sign-in rather than as a changed page. Got: " +
+    html.slice(0, 300));
+
+  const who = "wsfed" + stamp;
+  const login = await fetch(stsUrl + "/wsfed/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: "signin_id=" + encodeURIComponent(idMatch[1]) +
+      "&username=" + encodeURIComponent(who) + "&password=whatever",
+    redirect: "manual"
+  });
+  // 302 back to the passive endpoint is the success shape: the screen is done
+  // and the request it interrupted is resumed. A 200 means the screen was sent
+  // again, which is what a refused sign-in looks like — and it would leave the
+  // assertion below failing for a reason that has nothing to do with the
+  // directory.
+  assert.strictEqual(login.status, 302,
+    "a WS-Federation sign-in should redirect back to the passive endpoint; " +
+    "got " + login.status + ", which is the screen being shown again — the " +
+    "sign-in was refused, so nothing authenticated and the check below would " +
+    "be measuring that instead.");
+
+  assert.strictEqual(await entriesFor(who), 1,
+    "signing in at the WS-Federation screen must seed uid=" + who + "," +
+    usersDn + ". That screen calls authn.js's startSession(), which is the " +
+    "one place this protocol authenticates anybody — every later wsignin1.0 " +
+    "on the session is single sign-on and authenticates nobody a second " +
+    "time — so if this is zero, the one moment that counts is not reaching " +
+    "admin_stats.recordAuthentication().");
+  log.info("[WS-Federation] OK — " + who + " has an entry.");
+  log.debug("Leaving wsFederationSeedsAnEntryToo().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1747,6 +2051,8 @@ async function test() {
   await theUserAndGroupAreDeleted();
   await theApiRefusesWhatItWillNotDo();
   await authenticatingAnywhereCreatesAnLdapUser(ready.directory);
+  await wsTrustSeedsAnEntryToo(ready.directory);
+  await wsFederationSeedsAnEntryToo(ready.directory);
   await theSameDirectoryAnswersOverLdaps(ready.directory);
   await aPopulatedDirectory(ready.limits);
   // Last, and after section 12 has taken its own thirty entries away again, so
