@@ -230,12 +230,78 @@ function headlessIsTheDefault(files) {
   log.debug("Leaving headlessIsTheDefault().");
 }
 
+// --- 3. the two flags that let Chrome START in a container ------------------
+//
+// --no-sandbox and --disable-dev-shm-usage are in the same class as --headless
+// and are missed the same way, so they are checked in the same place. The
+// containerized suite runs Chrome with no user namespaces for its sandbox to
+// use and with docker's default 64MB /dev/shm, which a renderer outgrows;
+// without these two the browser exits during startup and chromedriver reports
+//
+//   session not created: Chrome failed to start: exited normally.
+//   (session not created: DevToolsActivePort file doesn't exist)
+//
+// before the first driver.get(). That message names no flag, no page and no
+// file, and a HOST run passes — so the only place this is visible is the
+// containerized suite, which is the one that matters.
+//
+// pki_page.js and pki_mutual_tls.js were written without them and were the only
+// two of fifty driver-building tests here in that state. Both were copied from
+// a neighbour, like kerberos_delegation_page.js above; what they copied was the
+// headless line and the browserFlags call, which between them look complete.
+function everyBrowserTestCanStartInAContainer(files) {
+  log.debug("Entering everyBrowserTestCanStartInAContainer().");
+  log.info("[container] Every test that builds a driver must pass " +
+      "--no-sandbox and --disable-dev-shm-usage.");
+  const REQUIRED = ["--no-sandbox", "--disable-dev-shm-usage"];
+  const offences = [];
+  let checked = 0;
+  files.forEach(function (file) {
+    const text = fs.readFileSync(file, "utf8");
+    if (!buildsADriver(text)) {
+      return;
+    }
+    const name = path.basename(file);
+    checked += 1;
+    // As in section 1: the flag has to reach chrome through addArguments, so a
+    // mention in a comment or a log line does not count. statements() has
+    // already joined a wrapped call back into one string.
+    const args = statements(text).filter(function (line) {
+      return /addArguments\s*\(/.test(line.text);
+    });
+    const missing = REQUIRED.filter(function (flag) {
+      return !args.some(function (line) {
+        return line.text.indexOf(flag) !== -1;
+      });
+    });
+    if (missing.length > 0) {
+      offences.push(name + "  never passes " + missing.join(" or ") +
+          " to addArguments()");
+    }
+  });
+  assert.ok(checked >= MIN_BROWSER_TESTS,
+    "found only " + checked + " tests that build a Selenium driver, " +
+        "expected at least " + MIN_BROWSER_TESTS + ". As in section 1, far " +
+        "too few matches means the detection stopped working.");
+  assert.deepStrictEqual(offences, [],
+    "these tests cannot start Chrome in the tests image. The failure they " +
+        "produce is\n  session not created: Chrome failed to start: " +
+        "exited normally (DevToolsActivePort file doesn't exist)\nwhich " +
+        "names neither the flag nor this rule, and it does NOT reproduce " +
+        "on a host run:\n  " +
+    offences.join("\n  "));
+  log.info("[container] OK — all " + checked +
+      " driver-building tests pass both flags.");
+  log.debug("Leaving everyBrowserTestCanStartInAContainer().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Every browser test starts Chrome headless.");
   const files = testFiles();
   const browserTests = everyBrowserTestIsHeadless(files);
   headlessIsTheDefault(files);
+  everyBrowserTestCanStartInAContainer(files);
   log.debug("the driver-building tests are: " + browserTests.join(", "));
   log.info("Test completed successfully.");
   log.debug("Leaving test().");

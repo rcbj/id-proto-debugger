@@ -301,9 +301,16 @@ COPY sts/app.js sts/helpers.js sts/bbs2023.js ./sts/
 # app.js/krb5_kdc.js/krb5_service.js all require it, and this image did not
 # carry it — so all four in-process mock-KDC jobs (krb5_as_exchange,
 # krb5_tgs_ap, krb5_spnego_http, krb5_delegation_interop) died at load with
-# "Cannot find module './admin_stats'" while every host run stayed green. It
-# requires ./helpers and nothing else, so it adds no further closure of its own.
+# "Cannot find module './admin_stats'" while every host run stayed green.
 COPY sts/admin_stats.js ./sts/
+# audit.js is the THIRD recomputation, and it is admin_stats.js's own new
+# require — the counters module grew an audit log beside it, so the closure
+# above moved without any of these COPY lines changing. Missing, the four
+# in-process mock-KDC jobs die at load with "Cannot find module './audit'"
+# and a require stack naming sts/admin_stats.js, which is a file this image
+# HAS: the line to add is never the one the message names. It requires only
+# ./helpers and ./config, both already here, so it closes the set again.
+COPY sts/audit.js ./sts/
 # config.js is the SECOND such recomputation and it sits UNDER helpers.js rather
 # than beside it: the mock's settings moved out of forty-odd `process.env.X ||
 # default` expressions into one table, and helpers.js, krb5_kdc.js,

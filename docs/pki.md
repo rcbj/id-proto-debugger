@@ -575,6 +575,45 @@ sign with one. Both are avoidable:
 OpenSSL verifies the result, and `tests/pki_x509.js` issues a whole chain
 through it.
 
+### The browser has to have Ed25519 at all
+
+Everything above is about `pkijs`; the *browser's* own Web Crypto is the other
+half, and it is younger than this page. Chrome enabled Ed25519 in the Web
+Cryptography API by default in **Chrome 137** — before that the implementation
+is present but gated, and `generateKey`, `importKey` and `sign` naming
+`{ name: 'Ed25519' }` all reject with *Algorithm: Unrecognized name*. So on an
+older browser this page's `ed25519` key algorithm cannot produce a key, and
+node — which has had Ed25519 for years — cannot see that: `pki_x509.js` and
+`pki_key_formats.js` both pass. The tests image pins Chrome 121, so
+`tests/pki_page.js` asks for the feature by name through
+`browserFlags.addWebCryptoEd25519Flags()`, which is a no-op on a browser that
+already has it.
+
+Reading a certificate is the part that degrades gracefully rather than failing:
+`describeCertificate()` falls back to the algorithm named in the
+SubjectPublicKeyInfo when the key cannot be imported (see the bullet under
+*"View certificate details"* below), so such a browser still describes an
+Ed25519 certificate it cannot verify.
+
+What did **not** degrade gracefully was issuing, and it is worth knowing why
+the message was about the wrong call. *Generate Key Pair & Issue Certificate*
+is one button — `generateAndIssue()` — and `generateKeys()` catches its own
+error, leaving the two key fields exactly as they were. They therefore still
+held the PREVIOUS certificate's pair, of a different algorithm, since changing
+the dropdown is the only reason to generate again; the emptiness check let that
+through, and issuing imported that pair under the newly selected algorithm and
+reported
+
+```
+Could not issue the certificate: Failed to execute 'importKey' on
+'SubtleCrypto': Algorithm: Unrecognized name
+```
+
+— `importKey` rather than `generateKey`, about a key the user had not asked to
+certify. It now compares the private key field before and after (two successful
+generations never produce the same key), so a failed generation stops there and
+its own message stands.
+
 ## "View certificate details" and the page it opens
 
 The store's *View certificate details* button hands the selected PEM to

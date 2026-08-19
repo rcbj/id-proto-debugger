@@ -239,8 +239,21 @@ async function theSubjectIsAnRdnSequence() {
     extensions: x509.defaultExtensions("root-ca")
   });
   const file = writePem("rdn.pem", cert.pem);
+  // -nameopt oneline is not decoration: WITHOUT it the format of this line is
+  // whatever the installed OpenSSL defaults to, and that default is not
+  // stable. This image is FROM ubuntu:latest, so a rebuild moved it from a
+  // release printing "CN = Sequence Test, O = Example" to one printing
+  // "CN=Sequence Test, O=Example" — the same DN, in the same order, with the
+  // spaces around `=` gone. Every indexOf(name + " =") below then returned -1,
+  // all four were equal, and the order check failed claiming the attributes
+  // had been REORDERED by x509.js. They had not; nothing in the certificate
+  // had changed. `oneline` is a documented preset (esc_2253, utf8, sname,
+  // sep_comma_plus_space, space_eq, ...) so it pins both the spacing this
+  // function matches on and the ` + ` that is the multi-valued-RDN give-away
+  // the assertion below looks for.
   const subject = execFileSync("openssl",
-      ["x509", "-in", file, "-noout", "-subject"], { encoding: "utf8" });
+      ["x509", "-in", file, "-noout", "-subject", "-nameopt", "oneline"],
+      { encoding: "utf8" });
   assert.ok(subject.indexOf("+") === -1,
     "the subject is a MULTI-VALUED RDN (openssl prints '+' between the " +
     "attributes): " + subject.trim() + ". A Name is a SEQUENCE of SETs, one " +
@@ -249,8 +262,23 @@ async function theSubjectIsAnRdnSequence() {
       /O\s*=\s*Example/.test(subject) && /C\s*=\s*US/.test(subject),
     "the subject lost an attribute: " + subject.trim());
   // The order is the name. A reordered DN is a different DN.
-  const order = ["CN", "O", "OU", "C"].map(function (name) {
-    return subject.indexOf(name + " =");
+  //
+  // Each attribute is LOCATED before any two are compared, and a miss is its
+  // own assertion rather than a -1 fed into the ordering check — because -1
+  // compares perfectly happily against -1 and the failure it produces accuses
+  // the encoder of reordering a DN it got right. If this ever stops matching,
+  // the message should say the output was not understood, not that x509.js is
+  // wrong.
+  const names = ["CN", "O", "OU", "C"];
+  const order = names.map(function (name) {
+    // \b so "O" does not match the "O" of "OU"; \s* so a future default that
+    // drops the spaces again is read rather than mistaken for a reordering.
+    const at = subject.search(new RegExp("\\b" + name + "\\s*="));
+    assert.ok(at !== -1,
+      "could not find the " + name + " attribute in OpenSSL's rendering of " +
+      "the subject (" + subject.trim() + ") — this is the output format " +
+      "changing under the test, not the DN");
+    return at;
   });
   for (let i = 1; i < order.length; i++) {
     assert.ok(order[i] > order[i - 1],

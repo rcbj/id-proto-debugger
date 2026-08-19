@@ -628,7 +628,20 @@ async function test() {
   // stays undefined however carefully browser_flags.js was called. Every key
   // pair on this page needs it, and the symptom is a timeout waiting for a
   // field that never fills, naming neither crypto nor headless mode.
-  if (headless) { options.addArguments("--headless=new"); }
+  if (headless) {
+    options.addArguments("--headless=new");
+  }
+  // --no-sandbox and --disable-dev-shm-usage are what make Chrome start AT ALL
+  // in the tests image, and this file and pki_page.js were the only two of the
+  // fifty browser tests here without them. The failure is not a missing flag
+  // and does not mention one: Chrome exits during startup and chromedriver
+  // reports "session not created: Chrome failed to start: exited normally
+  // (DevToolsActivePort file doesn't exist)", before the first driver.get().
+  // The container has no user namespaces for the sandbox to use, and its
+  // /dev/shm is the docker default 64MB, which the renderer outgrows. Neither
+  // shows up on a host run, where both tests passed while the containerized
+  // suite could not open a window.
+  options.addArguments("--no-sandbox", "--disable-dev-shm-usage");
   // The secure-context and private-network hazards. This page is ALL Web
   // Crypto, so it is exactly the kind that fails without these.
   browserFlags.addBrowserAccessFlags(options, baseUrl);

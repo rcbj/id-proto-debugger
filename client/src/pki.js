@@ -347,11 +347,32 @@ async function generateAndIssue() {
   var reuse = checked('pki_reuse_key') && !!trimmed('pki_private_key') &&
       !!trimmed('pki_public_key');
   if (!reuse) {
+    // What the fields held BEFORE, because a failed generation leaves them
+    // exactly as they were rather than empty — see below.
+    var before = trimmed('pki_private_key');
     await generateKeys();
     // generateKeys() has already put its own failure in the status line. A
     // second attempt at issuing would replace that message with a vaguer one
     // about a missing key pair.
-    if (!trimmed('pki_private_key') || !trimmed('pki_public_key')) {
+    //
+    // Emptiness is not the test, and testing it that way misreported a whole
+    // class of failure. generateKeys() catches its own error and leaves the
+    // fields untouched, so after a failed generation they hold the PREVIOUS
+    // pair — which on this page is the pair of a DIFFERENT algorithm, since
+    // the only reason to generate again is that the dropdown changed. Issuing
+    // then imported that pair under the newly chosen algorithm and reported
+    // the mismatch, so a browser with no Ed25519 in Web Crypto (anything
+    // before Chrome 137) answered "Generate Key Pair & Issue Certificate"
+    // with
+    //
+    //   Could not issue the certificate: Failed to execute 'importKey' on
+    //   'SubtleCrypto': Algorithm: Unrecognized name
+    //
+    // naming the wrong call, on a key the user had not asked to certify. An
+    // unchanged private key means generation did not happen: two successful
+    // generations never produce the same one.
+    var after = trimmed('pki_private_key');
+    if (!after || !trimmed('pki_public_key') || after === before) {
       log.debug("Leaving generateAndIssue(). No key pair to certify.");
       return false;
     }

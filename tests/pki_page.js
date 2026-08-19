@@ -46,7 +46,20 @@ const browserFlags = require("./browser_flags.js");
 // compares against them rather than against a list copied into it, and
 // it is worth the require: a default changed in x509.js and not reaching
 // the form is exactly the shape of failure this whole file exists for.
-const x509 = require("../client/src/x509.js");
+//
+// Resolved through module_paths.js rather than by a bare
+// require("../client/src/x509.js"), because the tests IMAGE copies the
+// borrowed client modules FLAT beside the test scripts — so the checkout
+// path exists only in a checkout, and the literal require died in the
+// container at load with MODULE_NOT_FOUND before a browser had started,
+// while every host run stayed green. The three node-only PKI jobs already
+// resolve it this way; this browser one is the odd file out.
+const path = require("path");
+const paths = require("./module_paths.js");
+const x509 = paths.requireSharedModule(
+  [path.join(__dirname, "..", "client", "src", "x509.js"),
+   path.join(__dirname, "x509.js")],
+  "client/src/x509.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1702,10 +1715,31 @@ async function test() {
   // stays undefined however carefully browser_flags.js was called. Every key
   // pair on this page needs it, and the symptom is a timeout waiting for a
   // field that never fills, naming neither crypto nor headless mode.
-  if (headless) { options.addArguments("--headless=new"); }
+  if (headless) {
+    options.addArguments("--headless=new");
+  }
+  // --no-sandbox and --disable-dev-shm-usage are what make Chrome start AT ALL
+  // in the tests image, and this file and pki_page.js were the only two of the
+  // fifty browser tests here without them. The failure is not a missing flag
+  // and does not mention one: Chrome exits during startup and chromedriver
+  // reports "session not created: Chrome failed to start: exited normally
+  // (DevToolsActivePort file doesn't exist)", before the first driver.get().
+  // The container has no user namespaces for the sandbox to use, and its
+  // /dev/shm is the docker default 64MB, which the renderer outgrows. Neither
+  // shows up on a host run, where both tests passed while the containerized
+  // suite could not open a window.
+  options.addArguments("--no-sandbox", "--disable-dev-shm-usage");
   // The secure-context and private-network hazards. This page is ALL Web
   // Crypto, so it is exactly the kind that fails without these.
   browserFlags.addBrowserAccessFlags(options, baseUrl);
+  // And the third hazard, which is this page's alone: Chrome enabled Ed25519
+  // in Web Crypto by default only in Chrome 137, and the tests image pins 121.
+  // Without it the ed25519 case below fails as an 'importKey' error on a
+  // certificate — see the function's own comment in browser_flags.js — so a
+  // key algorithm this page offers is one the browser running the test cannot
+  // produce. No other browser test here needs this: digital_signature.js signs
+  // Ed25519 through @noble rather than through crypto.subtle.
+  browserFlags.addWebCryptoEd25519Flags(options);
 
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
