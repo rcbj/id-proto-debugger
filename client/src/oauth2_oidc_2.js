@@ -1,6 +1,6 @@
 const appconfig = require(process.env.CONFIG_FILE);
-// OpenID Provider Metadata (Discovery 1.0 s3) — shared with debugger.js so
-// both Configuration Parameters panes carry the same fields and defaults.
+// OpenID Provider Metadata (Discovery 1.0 s3) — shared with oauth2_oidc_1.js
+// so both Configuration Parameters panes carry the same fields and defaults.
 const opMetadata = require("./op_metadata");
 const sdJwtVc = require("./sd_jwt_vc");
 // DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
@@ -10,7 +10,7 @@ const vciWallet = require("./vci_wallet");
 const bunyan = require("bunyan");
 const DOMPurify = require("dompurify");
 const $ = require("jquery");
-const log = bunyan.createLogger({ name: 'debugger2',
+const log = bunyan.createLogger({ name: 'oauth2_oidc_2',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 const { convertToOAuth2Format  } = require('./data.js');
@@ -577,13 +577,13 @@ function successfulInternalTokenAPICall(data, textStatus, request)
 				   "<table>" +
 				     "<tr>" +
                                        '<td>' +
-                                         '<P><a href="/token_detail.html?type=access" onclick="debugger2.clickLink()">Access Token</a></P>' +
-                                         '<P style="font-size:50%;"><a href="/introspection.html?type=access" onclick="debugger2.clickLink()">Introspect Token</a></P>' +
+                                         '<P><a href="/token_detail.html?type=access" onclick="oauth2_oidc_2.clickLink()">Access Token</a></P>' +
+                                         '<P style="font-size:50%;"><a href="/introspection.html?type=access" onclick="oauth2_oidc_2.clickLink()">Introspect Token</a></P>' +
                                          '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="access" /></P>' + 
                                          '<P><form><input class="btn2" ' +
                                              'type="submit" ' +
                                              'value="Copy Token"' +
-                                         ' onclick="return debugger2.onClickCopyToken(\'#token_access_token\');"/></form></P>' +
+                                         ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_access_token\');"/></form></P>' +
                                        '</td>' +
                                        '<td>' +
                                          "<textarea rows=5 cols=60 readonly name=token_access_token id=token_access_token data-token-field=\"access\"></textarea>" +
@@ -592,13 +592,13 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     if(useRefreshTokenTester) {
       token_endpoint_result_html +=  '<tr>' +
                                           '<td>' +
-                                              '<P><a href="/token_detail.html?type=refresh" onclick="debugger2.clickLink()">Refresh Token</a></P>' +
-                                              '<P style="font-size:50%;"><a href="/introspection.html?type=refresh" onclick="debugger2.clickLink()">Introspect Token</a></P>' +
+                                              '<P><a href="/token_detail.html?type=refresh" onclick="oauth2_oidc_2.clickLink()">Refresh Token</a></P>' +
+                                              '<P style="font-size:50%;"><a href="/introspection.html?type=refresh" onclick="oauth2_oidc_2.clickLink()">Introspect Token</a></P>' +
                                          '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="refresh" /></P>' +
                                               '<P><form><input class="btn2" ' +
                                                   'type="submit" ' +
                                                   'value="Copy Token"' + 
-                                              ' onclick="return debugger2.onClickCopyToken(\'#token_refresh_token\');"/></form></P>' +
+                                              ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_refresh_token\');"/></form></P>' +
                                           '</td>' +
                                           '<td>' +
                                               '<textarea rows=5 cols=60 readonly name=token_refresh_token id=token_refresh_token data-token-field="refresh"></textarea>' +
@@ -607,13 +607,13 @@ function successfulInternalTokenAPICall(data, textStatus, request)
       }
       token_endpoint_result_html +=  "<tr>" +
                                           '<td>' +
-                                            '<P><a href="/token_detail.html?type=id" onclick="debugger2.clickLink()">ID Token</a></P>' +
-                                            '<P style="font-size:50%;">Get <a href="/userinfo.html?type=token_access_token" onclick="debugger2.clickLink()">UserInfo Data</a></P>' +
+                                            '<P><a href="/token_detail.html?type=id" onclick="oauth2_oidc_2.clickLink()">ID Token</a></P>' +
+                                            '<P style="font-size:50%;">Get <a href="/userinfo.html?type=token_access_token" onclick="oauth2_oidc_2.clickLink()">UserInfo Data</a></P>' +
                                             '<P><form><input ' +
                                                 'class="token_btn" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' + 
-                                            ' onclick="return debugger2.onClickCopyToken(\'#token_id_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_id_token\');"/></form></P>' +
                                           '</td>' +
                                           '<td>' +
                                             '<textarea rows=5 cols=60 readonly name=token_id_token id=token_id_token data-token-field="id"></textarea>' +
@@ -640,12 +640,12 @@ function successfulInternalTokenAPICall(data, textStatus, request)
                                       "<table>" +
                                         "<tr>" +
                                           '<td>' +
-                                            '<p><a href="/token_detail.html?type=access" onclick="debugger2.clickLink()">Access Token</a></p>' +
+                                            '<p><a href="/token_detail.html?type=access" onclick="oauth2_oidc_2.clickLink()">Access Token</a></p>' +
                                             '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="access" /></P>' +
                                             '<P><form><input class="btn2" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' +
-                                            ' onclick="return debugger2.onClickCopyToken(\'#token_access_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_access_token\');"/></form></P>' +
                                           '</td>' +
                                           "<td><textarea rows=5 cols=60 readonly name=token_access_token id=token_access_token data-token-field=\"access\"></textarea>" +
                                           "</td>" +
@@ -655,12 +655,12 @@ function successfulInternalTokenAPICall(data, textStatus, request)
                   currentRefreshToken);
         token_endpoint_result_html += "<tr>" +
                                           '<td>' +
-                                            '<a href="/token_detail.html?type=id" onclick="debugger2.clickLink()">Refresh Token</a>' +
+                                            '<a href="/token_detail.html?type=id" onclick="oauth2_oidc_2.clickLink()">Refresh Token</a>' +
                                             '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="refresh" /></P>' +
                                             '<P><form><input class="btn2" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' +
-                                            ' onclick="return debugger2.onClickCopyToken(\'#token_refresh_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_refresh_token\');"/></form></P>' +
                                           '</td>' +
                                           "<td><textarea rows=5 cols=60 readonly name=token_refresh_token id=token_refresh_token data-token-field=\"refresh\"></textarea>" +
                                           "</td>" +
@@ -916,13 +916,13 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
 				      "<table>" +
 				        "<tr>" +
                                           '<td>' +
-                                            '<P><a href="/token_detail.html?type=refresh_access" onclick="debugger2.clickLink()">Latest Access Token</a></P>' +
-                                            '<P style="font-size:50%;"><a href="/introspection.html?type=refresh_access" onclick="debugger2.clickLink()">Introspect Token</a></P>' +
+                                            '<P><a href="/token_detail.html?type=refresh_access" onclick="oauth2_oidc_2.clickLink()">Latest Access Token</a></P>' +
+                                            '<P style="font-size:50%;"><a href="/introspection.html?type=refresh_access" onclick="oauth2_oidc_2.clickLink()">Introspect Token</a></P>' +
                                             '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="refresh_access" /></P>' +
                                             '<P><form><input class="btn2" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' +
-                                            ' onclick="return debugger2.onClickCopyToken(\'#refresh_access_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#refresh_access_token\');"/></form></P>' +
                                           "</td>" +
                                           "<td>" + 
                                             "<textarea rows=5 cols=60 readonly name=refresh_access_token id=refresh_access_token data-token-field=\"access\"></textarea>" +
@@ -931,13 +931,13 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
   if(!!currentRefreshToken) {
     refresh_endpoint_result_html +=     "<tr>" +
                                           '<td>' +
-                                            '<P><a href="/token_detail.html?type=refresh_refresh" onclick="debugger2.clickLink()">Latest Refresh Token</a></P>' +
-                                            '<P style="font-size:50%;"><a href="/introspection.html?type=refresh_refresh" onclick="debugger2.clickLink()">Introspect Token</a></P>' +
+                                            '<P><a href="/token_detail.html?type=refresh_refresh" onclick="oauth2_oidc_2.clickLink()">Latest Refresh Token</a></P>' +
+                                            '<P style="font-size:50%;"><a href="/introspection.html?type=refresh_refresh" onclick="oauth2_oidc_2.clickLink()">Introspect Token</a></P>' +
                                             '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="refresh_refresh" /></P>' +
                                             '<P><form><input class="btn2" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' +
-                                            ' onclick="return debugger2.onClickCopyToken(\'#refresh_refresh_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#refresh_refresh_token\');"/></form></P>' +
                                           "</td>" +
                                           "<td><textarea rows=5 cols=60 readonly name=refresh_refresh_token id=refresh_refresh_token data-token-field=\"refresh\"></textarea>" +
                                           "</td>" +
@@ -946,12 +946,12 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
   if(displayOpenIDConnectArtifacts) {
     refresh_endpoint_result_html +=      "<tr>" +
                                           '<td>' +
-                                            '<P><a href="/token_detail.html?type=refresh_id" onclick="debugger2.clickLink()">Latest ID Token</a></P>' +
-                                            '<P style="font-size:50%;">Get <a href="/userinfo.html?type=refresh_access_token" onclick="debugger2.clickLink()">UserInfo Data</a></P>' +
+                                            '<P><a href="/token_detail.html?type=refresh_id" onclick="oauth2_oidc_2.clickLink()">Latest ID Token</a></P>' +
+                                            '<P style="font-size:50%;">Get <a href="/userinfo.html?type=refresh_access_token" onclick="oauth2_oidc_2.clickLink()">UserInfo Data</a></P>' +
                                             '<P><form><input class="btn2" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' +
-                                            ' onclick="return debugger2.onClickCopyToken(\'#refresh_id_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#refresh_id_token\');"/></form></P>' +
                                           "</td>" +
                                           "<td>" +
                                             "<textarea rows=5 cols=60 readonly name=refresh_id_token id=refresh_id_token data-token-field=\"id\"></textarea>" +
@@ -1108,7 +1108,7 @@ function resetUI(value)
       usePKCE = false;
       usePKCERFC();
       // Show and populate the device flow fields from the device authorization
-      // response stored by debugger.js.
+      // response stored by oauth2_oidc_1.js.
       $("#deviceUserCodeRow").show();
       $("#deviceVerificationUriRow").show();
       $("#deviceVerificationUriCompleteRow").show();
@@ -1447,7 +1447,7 @@ function loadValuesFromLocalStorage()
   // page can be the first one loaded, e.g. via the /callback redirect).
   opMetadata.loadFromLocalStorage();
   // Show the -->not defined<-- note for members the last loaded discovery
-  // document omitted (it is fetched on debugger.html; the log is shared).
+  // document omitted (it is fetched on oauth2_oidc_1.html; the log is shared).
   opMetadata.applyNotesFromStoredDiscovery();
   $("#logout_end_session_endpoint")
     .val(localStorage.getItem("end_session_endpoint"));
@@ -1670,10 +1670,10 @@ function renderAuthorizationEndpointResults(expected, returned) {
     html += '<tr><td>';
     if (returned.access_token) {
       html +=   '<P><a href="/token_detail.html?type=' + accessType +
-          '" onclick="debugger2.clickLink()">Access Token</a></P>' +
+          '" onclick="oauth2_oidc_2.clickLink()">Access Token</a></P>' +
                 '<P style="font-size:50%;"><a href="/introspection.html?type=' +
                     accessType +
-                    '" onclick="debugger2.clickLink()">Introspect ' +
+                    '" onclick="oauth2_oidc_2.clickLink()">Introspect ' +
                     'Token</a></P>' +
                 // UserInfo sits on the ACCESS token's row, not on the ID
                 // token's where the Token Endpoint Results pane draws it. The
@@ -1685,12 +1685,13 @@ function renderAuthorizationEndpointResults(expected, returned) {
                 // all, which is how it came to be missing here.
                 '<P style="font-size:50%;">Get <a href="/userinfo.html?type=' +
                     userinfoType +
-                    '" onclick="debugger2.clickLink()">UserInfo Data</a></P>' +
+                    '" onclick="oauth2_oidc_2.clickLink()">' +
+                    'UserInfo Data</a></P>' +
                 '<P><input class="btn2 revoke_token_btn" type="button" ' +
                     'value="Revoke Token" ' + revokeAttributes + ' /></P>' +
                 '<P><form><input class="btn2" type="submit" ' +
                     'value="Copy Token"' +
-                ' onclick="return debugger2.onClickCopyToken(\'#authz_access_token\');"/></form></P>';
+                ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#authz_access_token\');"/></form></P>';
     } else {
       html +=   '<P>Access Token</P>';
     }
@@ -1705,10 +1706,10 @@ function renderAuthorizationEndpointResults(expected, returned) {
     html += '<tr><td>';
     if (returned.id_token) {
       html +=   '<P><a href="/token_detail.html?type=' + idType +
-          '" onclick="debugger2.clickLink()">ID Token</a></P>' +
+          '" onclick="oauth2_oidc_2.clickLink()">ID Token</a></P>' +
                 '<P><form><input class="btn2" type="submit" ' +
                     'value="Copy Token"' +
-                ' onclick="return debugger2.onClickCopyToken(\'#authz_id_token\');"/></form></P>';
+                ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#authz_id_token\');"/></form></P>';
     } else {
       html +=   '<P>ID Token</P>';
     }
@@ -1762,7 +1763,7 @@ function recreateUniqueGrantFlowElements()
          agt == "oidc_hybrid_code_id_token" || 
          agt == "oidc_hybrid_code_token" || 
          agt == "oidc_hybrid_code_id_token_token" ) &&
-	pathname == "/debugger2.html")
+	pathname == "/oauth2_oidc_2.html")
   {
     log.debug("Checking for code.  agt=" + agt + ", pathname=" + pathname);
     log.debug("fragement: " + parseFragment());
@@ -1795,7 +1796,7 @@ function recreateUniqueGrantFlowElements()
   var expectedTokens = authorizationResponseTokenTypes(agt);
   var returnedTokens = { access_token: "", id_token: "" };
   if ( (expectedTokens.access || expectedTokens.id) &&
-       pathname == "/debugger2.html")
+       pathname == "/oauth2_oidc_2.html")
   {
     returnedTokens.access_token =
       expectedTokens.access ? authorizationResponseToken("access_token",
@@ -1839,7 +1840,7 @@ function recreateUniqueGrantFlowElements()
   }
   var error = getParameterByName("error",window.location.href);
   var authzGrantType = $("#authorization_grant_type").val();
-  if(	pathname == "/debugger2.html" && 
+  if(	pathname == "/oauth2_oidc_2.html" && 
 	( authzGrantType == "authorization_grant" ||
           authzGrantType == "implicit_grant" ||
           authzGrantType == "oidc_hybrid_code_id_token") &&
@@ -2159,7 +2160,7 @@ $(document).ready(function() {
     localStorage.setItem("authorization_grant_type", value);
     if (value != "client_credential") {
       writeValuesToLocalStorage();
-      window.location.href = "/debugger.html";
+      window.location.href = "/oauth2_oidc_1.html";
     }
     if( value == "oidc_authorization_code_flow" ||
        value === "authorization_grant")
@@ -2639,7 +2640,7 @@ function recalculateAuthorizationErrorDescription()
     {
       var pathname = window.location.pathname;
       log.debug("pathname=" + pathname);
-      if (pathname == "/debugger2.html")
+      if (pathname == "/oauth2_oidc_2.html")
       {
         var error = getParameterByName("error",window.location.href);
         var error_description = getParameterByName("error_description",
@@ -2659,7 +2660,7 @@ function recalculateAuthorizationErrorDescription()
       //$("#display_authz_request_form_textarea1").value = "";
       var pathname = window.location.pathname;
       log.debug("pathname=" + pathname);
-      if (pathname == "/debugger2.html")
+      if (pathname == "/oauth2_oidc_2.html")
       {
         var error = getParameterByName("error",window.location.href);
         var error_description = getParameterByName("error_description",
@@ -3093,15 +3094,15 @@ function renderCurrentlyViewing(index, entry) {
                '<table>' +
                  '<tr>' +
                    '<td>' +
-                     '<P><a href="/token_detail.html?type=history_access&generation=' + index + '" onclick="debugger2.clickLink()">Access Token</a></P>' +
-                     '<P style="font-size:50%;"><a href="/introspection.html?type=history_access&generation=' + index + '" onclick="debugger2.clickLink()">Introspect Token</a></P>' +
+                     '<P><a href="/token_detail.html?type=history_access&generation=' + index + '" onclick="oauth2_oidc_2.clickLink()">Access Token</a></P>' +
+                     '<P style="font-size:50%;"><a href="/introspection.html?type=history_access&generation=' + index + '" onclick="oauth2_oidc_2.clickLink()">Introspect Token</a></P>' +
                      '<P><input class="btn2 revoke_token_btn" type="button" ' +
                          'value="Revoke Token" ' +
                          'data-revoke-type="history_access" ' +
                          'data-revoke-generation="' + index + '" /></P>' +
                      '<P><form><input class="btn2" type="submit" ' +
                          'value="Copy Token"' +
-                     ' onclick="return debugger2.onClickCopyToken(\'#cv_access_token\');"/></form></P>' +
+                     ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#cv_access_token\');"/></form></P>' +
                    '</td>' +
                    '<td><textarea rows=5 cols=60 readonly ' +
                        'name=cv_access_token id=cv_access_token ' +
@@ -3110,15 +3111,15 @@ function renderCurrentlyViewing(index, entry) {
   if (entry.refresh_token) {
     html +=      '<tr>' +
                    '<td>' +
-                     '<P><a href="/token_detail.html?type=history_refresh&generation=' + index + '" onclick="debugger2.clickLink()">Refresh Token</a></P>' +
-                     '<P style="font-size:50%;"><a href="/introspection.html?type=history_refresh&generation=' + index + '" onclick="debugger2.clickLink()">Introspect Token</a></P>' +
+                     '<P><a href="/token_detail.html?type=history_refresh&generation=' + index + '" onclick="oauth2_oidc_2.clickLink()">Refresh Token</a></P>' +
+                     '<P style="font-size:50%;"><a href="/introspection.html?type=history_refresh&generation=' + index + '" onclick="oauth2_oidc_2.clickLink()">Introspect Token</a></P>' +
                      '<P><input class="btn2 revoke_token_btn" type="button" ' +
                          'value="Revoke Token" ' +
                          'data-revoke-type="history_refresh" ' +
                          'data-revoke-generation="' + index + '" /></P>' +
                      '<P><form><input class="btn2" type="submit" ' +
                          'value="Copy Token"' +
-                     ' onclick="return debugger2.onClickCopyToken(\'#cv_refresh_token\');"/></form></P>' +
+                     ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#cv_refresh_token\');"/></form></P>' +
                    '</td>' +
                    '<td><textarea rows=5 cols=60 readonly ' +
                        'name=cv_refresh_token id=cv_refresh_token ' +
@@ -3128,11 +3129,11 @@ function renderCurrentlyViewing(index, entry) {
   if (entry.id_token) {
     html +=      '<tr>' +
                    '<td>' +
-                     '<P><a href="/token_detail.html?type=history_id_token&generation=' + index + '" onclick="debugger2.clickLink()">ID Token</a></P>' +
-                     '<P style="font-size:50%;">Get <a href="/userinfo.html?type=history_access&generation=' + index + '" onclick="debugger2.clickLink()">UserInfo Data</a></P>' +
+                     '<P><a href="/token_detail.html?type=history_id_token&generation=' + index + '" onclick="oauth2_oidc_2.clickLink()">ID Token</a></P>' +
+                     '<P style="font-size:50%;">Get <a href="/userinfo.html?type=history_access&generation=' + index + '" onclick="oauth2_oidc_2.clickLink()">UserInfo Data</a></P>' +
                      '<P><form><input class="btn2" type="submit" ' +
                          'value="Copy Token"' +
-                     ' onclick="return debugger2.onClickCopyToken(\'#cv_id_token\');"/></form></P>' +
+                     ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#cv_id_token\');"/></form></P>' +
                    '</td>' +
                    '<td><textarea rows=5 cols=60 readonly name=cv_id_token ' +
                        'id=cv_id_token data-token-field="id"></textarea></td>' +
@@ -3197,7 +3198,7 @@ function renderTokenHistory() {
   });
 
   var html = '<div class="dbg-pane"><legend class="dbg-legend" data-target="token_history_fieldset">Token History</legend><fieldset id="token_history_fieldset">';
-  html += '<input type="button" value="Clear History" onclick="return debugger2.clearTokenHistory();" />';
+  html += '<input type="button" value="Clear History" onclick="return oauth2_oidc_2.clearTokenHistory();" />';
   html += '<div style="max-height:450px; overflow-y:auto;">';
   sessionOrder.slice().reverse().forEach(function(sid) {
     var label = sid === '__no_sid__' ?
@@ -3233,7 +3234,7 @@ function renderTokenHistory() {
         html += '<strong>Active</strong>';
       } else {
         html += '<input type="button" value="Activate" onclick="return ' +
-            'debugger2.selectTokenSet(' + idx + ');" />';
+            'oauth2_oidc_2.selectTokenSet(' + idx + ');" />';
       }
       html += '</td>';
       html += '</tr>';
@@ -3284,13 +3285,13 @@ function recreateTokenDisplay()
                                       "<table>" +
                                         "<tr>" +
                                           '<td>' +
-                                              '<P><a href="/token_detail.html?type=access" onclick="debugger2.clickLink()">Access Token</a></P>' +
-                                              '<P style="font-size:50%;"><a href="/introspection.html?type=access" onclick="debugger2.clickLink()">Introspect Token</a></P>' +
+                                              '<P><a href="/token_detail.html?type=access" onclick="oauth2_oidc_2.clickLink()">Access Token</a></P>' +
+                                              '<P style="font-size:50%;"><a href="/introspection.html?type=access" onclick="oauth2_oidc_2.clickLink()">Introspect Token</a></P>' +
                                          '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="access" /></P>' + 
                                               '<P><form><input class="btn2" ' +
                                                   'type="submit" ' +
                                                   'value="Copy Token"' +
-                                              ' onclick="return debugger2.onClickCopyToken(\'#token_access_token\');"/></form></P>' +
+                                              ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_access_token\');"/></form></P>' +
                                           "</td>" +
                                           "<td>" +
                                              "<textarea rows=5 cols=60 readonly name=token_access_token id=token_access_token data-token-field=\"access\"></textarea>" +
@@ -3300,13 +3301,13 @@ function recreateTokenDisplay()
            log.debug("Displaying refresh token.");
            token_endpoint_result_html +=  '<tr>' +
                                           '<td>' +
-                                              '<P><a href="/token_detail.html?type=refresh" onclick="debugger2.clickLink()">Refresh Token</a></P>' +
-                                              '<P style="font-size:50%;"><a href="/introspection.html?type=refresh" onclick="debugger2.clickLink()">Introspect Token</a></P>' +
+                                              '<P><a href="/token_detail.html?type=refresh" onclick="oauth2_oidc_2.clickLink()">Refresh Token</a></P>' +
+                                              '<P style="font-size:50%;"><a href="/introspection.html?type=refresh" onclick="oauth2_oidc_2.clickLink()">Introspect Token</a></P>' +
                                          '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="refresh" /></P>' +
                                               '<P><form><input class="btn2" ' +
                                                   'type="submit" ' +
                                                   'value="Copy Token"' + 
-                                              ' onclick="return debugger2.onClickCopyToken(\'#token_refresh_token\');"/></form></P>' +
+                                              ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_refresh_token\');"/></form></P>' +
                                           '</td>' +
                                           '<td>' +
                                               '<textarea rows=5 cols=60 readonly name=token_refresh_token id=token_refresh_token data-token-field="refresh"></textarea>' +
@@ -3315,13 +3316,13 @@ function recreateTokenDisplay()
          }
          token_endpoint_result_html +=  "<tr>" +
                                           '<td>' +
-                                            '<P><a href="/token_detail.html?type=id" onclick="debugger2.clickLink()">ID Token</a></P>' +
-                                            '<P style="font-size:50%;">Get <a href="/userinfo.html?type=token_access_token" onclick="debugger2.clickLink()">UserInfo Data</a></P>' +
+                                            '<P><a href="/token_detail.html?type=id" onclick="oauth2_oidc_2.clickLink()">ID Token</a></P>' +
+                                            '<P style="font-size:50%;">Get <a href="/userinfo.html?type=token_access_token" onclick="oauth2_oidc_2.clickLink()">UserInfo Data</a></P>' +
                                             '<P><form><input ' +
                                                 'class="token_btn" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' + 
-                                            ' onclick="return debugger2.onClickCopyToken(\'#token_id_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_id_token\');"/></form></P>' +
                                           '</td>' +
                                           '<td>' +
                                             '<textarea rows=5 cols=60 readonly name=token_id_token id=token_id_token data-token-field="id"></textarea>' +
@@ -3342,12 +3343,12 @@ function recreateTokenDisplay()
                                       "<table>" +
                                         "<tr>" +
                                           '<td>' +
-                                            '<p><a href="/token_detail.html?type=access" onclick="debugger2.clickLink()">Access Token</a></p>' +
+                                            '<p><a href="/token_detail.html?type=access" onclick="oauth2_oidc_2.clickLink()">Access Token</a></p>' +
                                             '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="access" /></P>' +
                                             '<P><form><input class="btn2" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' +
-                                            ' onclick="return debugger2.onClickCopyToken(\'#token_access_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_access_token\');"/></form></P>' +
                                           '</td>' +
                                           "<td><textarea rows=5 cols=60 readonly name=token_access_token id=token_access_token data-token-field=\"access\"></textarea>" +
                                           "</td>" +
@@ -3356,12 +3357,12 @@ function recreateTokenDisplay()
            log.debug("Displaying refresh token");
            token_endpoint_result_html += "<tr>" +
                                           '<td>' +
-                                            '<a href="/token_detail.html?type=refresh" onclick="debugger2.clickLink()">Refresh Token</a>' +
+                                            '<a href="/token_detail.html?type=refresh" onclick="oauth2_oidc_2.clickLink()">Refresh Token</a>' +
                                             '<P><input class="btn2 revoke_token_btn" type="button" value="Revoke Token" data-revoke-type="refresh" /></P>' +
                                             '<P><form><input class="btn2" ' +
                                                 'type="submit" ' +
                                                 'value="Copy Token"' +
-                                            ' onclick="return debugger2.onClickCopyToken(\'#token_refresh_token\');"/></form></P>' +
+                                            ' onclick="return oauth2_oidc_2.onClickCopyToken(\'#token_refresh_token\');"/></form></P>' +
                                           '</td>' +
                                           "<td>" +
                                             "<textarea rows=5 cols=60 readonly name=token_refresh_token id=token_refresh_token data-token-field=\"refresh\"></textarea>" +
@@ -3806,7 +3807,7 @@ function renderOperationHistory() {
                '<fieldset id="operation_history_fieldset">' +
                '<p><em>Chronological history of every endpoint operation ' +
                    'performed.</em></p>' +
-               '<input type="button" value="Clear History" onclick="return debugger2.clearOperationHistory();" />';
+               '<input type="button" value="Clear History" onclick="return oauth2_oidc_2.clearOperationHistory();" />';
   if (history.length === 0) {
     html += '<p><em>No operations recorded yet.</em></p></fieldset></div>';
     $("#operation-history-panel").html(html);

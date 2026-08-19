@@ -511,11 +511,12 @@ td.vc-bad, span.vc-bad { color: #b00020; }
 span.vc-part-jwt, span.vc-part-disclosure, span.vc-part-kb { font-weight: 600; }
 
 /* --- step 4: the credential history ---
-   The row for the generation in hand is marked the way debugger2.html marks the
-   active token set, so the two panes read the same way.
+   The row for the generation in hand is marked the way oauth2_oidc_2.html
+   marks the active token set, so the two panes read the same way.
 
-   The list is a FIXED-height scrolling window (debugger2's Token History scrolls
-   too): a log of up to 100 attempts would otherwise push the panes below it off
+   The list is a FIXED-height scrolling window (oauth2_oidc_2's Token History
+   scrolls too): a log of up to 100 attempts would otherwise push the panes
+   below it off
    the screen, and the pane's height would jump every time an attempt was made. */
 #vc_history_table {
   height: 420px;

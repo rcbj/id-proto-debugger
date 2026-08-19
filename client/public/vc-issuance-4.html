@@ -82,7 +82,7 @@ function vcSetAllPanes(expand) {
           <td><code id="vc_current_validity">&mdash;</code></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label id="vc_current_binding_label">Bound to</label><span class="tooltiptext">The holder key this credential is bound to — cnf.jwk for an SD-JWT VC, credentialSubject.id (a did:jwk) for a W3C credential, which has no cnf claim. Refreshing it in place needs the private half of that key, because the Credential Request has to carry a proof of possession for it.</span></div></td>
+          <td><div class="tooltip"><label id="vc_current_binding_label">Bound to</label><span class="tooltiptext">The holder key this credential is bound to — cnf.jwk for an SD-JWT VC, credentialSubject.id (a did:jwk) for a W3C credential, which has no cnf claim. Refreshing it in place needs the private half of that key, because the Credential Request has to carry a key proof for it.</span></div></td>
           <td><code id="vc_current_binding">&mdash;</code></td>
         </tr>
         <tr>
@@ -102,7 +102,7 @@ function vcSetAllPanes(expand) {
     that worked. Each access token refresh, each Credential Request, each poll of the Deferred Credential
     Endpoint, and what you then decided about what came back, is one row with what the issuer actually said. (It is
     this workflow's counterpart of the <em>Token History</em> pane on
-    <a href="/debugger2.html">debugger2.html</a>, which does the same for token sets &mdash; and it records more,
+    <a href="/oauth2_oidc_2.html">oauth2_oidc_2.html</a>, which does the same for token sets &mdash; and it records more,
     because &ldquo;I tried to refresh and it did not work&rdquo; is the case a debugger is most needed for.)</p>
     <p class="vc-note">The <code>#</code> column numbers the attempts in the order they were made, so every row
     has one; <code>Gen</code> is the generation number, which only the rows the wallet <strong>holds</strong>
@@ -242,7 +242,7 @@ function vcSetAllPanes(expand) {
           <td><code id="vc_reissue_nonce">&mdash;</code></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label>Proof of possession</label><span class="tooltiptext">typ openid4vci-proof+jwt, signed by the holder key, naming the credential issuer as its audience and carrying the c_nonce above.</span></div></td>
+          <td><div class="tooltip"><label>Key proof (openid4vci-proof+jwt)</label><span class="tooltiptext">The CREDENTIAL's key proof, the same one step 2 sends: typ openid4vci-proof+jwt, signed by the holder key, naming the credential issuer as its audience and carrying the c_nonce above. It is what binds the refreshed credential to that key, and every Credential Request carries one with or without DPoP. It is NOT the DPoP proof, which is a typ dpop+jwt header.</span></div></td>
           <td><textarea class="vc-token" rows="4" readonly id="vc_reissue_proof"></textarea></td>
         </tr>
         <tr>

@@ -37,7 +37,7 @@ using <a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-
 <strong>Authorization Server Metadata</strong> (<a href="https://www.rfc-editor.org/rfc/rfc8414.html" target="_blank" rel="noopener noreferrer">RFC 8414</a>)
 of the server that authorizes issuance, and settle the parameters both documents define. Step&nbsp;2 authenticates the
 user through the existing OIDC Authorization Code flow on the
-<a href="/debugger.html">debugger</a> pages and asks the user to approve issuance; step&nbsp;3 shows the credential the
+<a href="/oauth2_oidc_1.html">debugger</a> pages and asks the user to approve issuance; step&nbsp;3 shows the credential the
 issuer returns.</p></details>
 
 <p class="dbg-controls">
@@ -51,7 +51,7 @@ issuer returns.</p></details>
 
 <script type="text/javascript">
 function vcSetAllPanes(expand) {
-  var fieldsets = ['vci_fieldset', 'did_fieldset', 'as_fieldset', 'didcfg_fieldset', 'config_fieldset', 'handoff_fieldset', 'vc_tools_fieldset'];
+  var fieldsets = ['vci_fieldset', 'did_fieldset', 'as_fieldset', 'didcfg_fieldset', 'config_fieldset', 'claims_fieldset', 'handoff_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -253,7 +253,7 @@ function vcSetAllPanes(expand) {
     <table border="0">
       <tbody>
         <tr>
-          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="as_source_hint">An OAuth 2.0 Authorization Server Metadata endpoint uses a path that ends in <code>/.well-known/oauth-authorization-server</code>. See the <a href="https://www.rfc-editor.org/rfc/rfc8414.html" target="_blank" rel="noopener noreferrer">RFC 8414</a> spec. This document is stored under the same names <a href="/debugger.html">debugger.html</a> uses, so retrieving it here also configures the OAuth2 / OIDC workflow.</p></details></td>
+          <td><details class="vc-hint"><summary>What this document is, and why</summary><p id="as_source_hint">An OAuth 2.0 Authorization Server Metadata endpoint uses a path that ends in <code>/.well-known/oauth-authorization-server</code>. See the <a href="https://www.rfc-editor.org/rfc/rfc8414.html" target="_blank" rel="noopener noreferrer">RFC 8414</a> spec. This document is stored under the same names <a href="/oauth2_oidc_1.html">oauth2_oidc_1.html</a> uses, so retrieving it here also configures the OAuth2 / OIDC workflow.</p></details></td>
         </tr>
         <tr>
           <td>
@@ -270,7 +270,7 @@ function vcSetAllPanes(expand) {
               <input class="btn_oidc_discovery_endpoint btn2" id="as_retrieve_button" type="button" value="Retrieve" onclick="vcissuance1.retrieveAsMetadata(); return false;" />
               <div class="tooltip">
                 <input class="btn2" id="as_upload_button" type="button" value="Upload" onclick="return vcissuance1.uploadAsMetadata();" />
-                <span class="tooltiptext">Load the Authorization Server Metadata from a file on disk instead of fetching it. Use this when the authorization server sends no CORS headers, which stops a browser reading its metadata however correct the URL is: fetch the document with curl, save it, and load it here. Everything afterwards is identical to a retrieval — including what debugger.html then shows.</span>
+                <span class="tooltiptext">Load the Authorization Server Metadata from a file on disk instead of fetching it. Use this when the authorization server sends no CORS headers, which stops a browser reading its metadata however correct the URL is: fetch the document with curl, save it, and load it here. Everything afterwards is identical to a retrieval — including what oauth2_oidc_1.html then shows.</span>
               </div>
               <input type="file" id="as_metadata_file" name="as_metadata_file" accept=".json,application/json,text/plain" style="display:none;" onchange="return vcissuance1.onAsFileChange(event);" />
               <span class="tooltiptext">Fetch the authorization server metadata document from the URL above.</span>
@@ -287,7 +287,7 @@ function vcSetAllPanes(expand) {
           <td>
             <div class="tooltip">
               <input class="btn2" id="as_validate_signed_metadata_button" type="button" value="Validate Signature" onclick="return vcissuance1.validateAsSignature();" />
-              <span class="tooltiptext">Verify the signed_metadata JWT on the RFC 8414 document against the keys at its own jwks_uri, exactly as the Metadata Retrieval pane on debugger.html does.</span>
+              <span class="tooltiptext">Verify the signed_metadata JWT on the RFC 8414 document against the keys at its own jwks_uri, exactly as the Metadata Retrieval pane on oauth2_oidc_1.html does.</span>
             </div>
           </td>
           <td>
@@ -399,7 +399,7 @@ function vcSetAllPanes(expand) {
     <details class="vc-hint"><summary>What this pane is</summary><p class="vc-note">Every parameter the two metadata documents above can define, plus the client settings the
     authorization request needs. Retrieving either document fills its half of this pane; each value can then be
     overridden by hand, and <em>Populate Meta Data</em> in that pane re-applies the document. The OAuth 2.0 / OpenID Provider parameters are
-    stored under the same names <a href="/debugger.html">debugger.html</a> uses, so what is set here is what the OIDC
+    stored under the same names <a href="/oauth2_oidc_1.html">oauth2_oidc_1.html</a> uses, so what is set here is what the OIDC
     workflow will run with. A member the retrieved document leaves out is marked
     <span class="not-defined-sample">--&gt;not defined&lt;--</span>.</p></details>
     <form action="" id="config_form" name="config_form" onsubmit="return false;">
@@ -418,24 +418,66 @@ function vcSetAllPanes(expand) {
   </fieldset>
 </div>
 
-<!-- ============ Pane 4: Authenticate the user ============ -->
+<!-- ============ Pane 4: Which claims to ask for ============ -->
+<div class="step0 dbg-pane" id="pane_claims">
+  <legend class="dbg-legend" id="claims_expand_button" onclick="return vcissuance1.togglePane('claims_fieldset');">Claims to Request</legend>
+  <fieldset name="claims_fieldset" id="claims_fieldset" style="display: block;">
+    <details class="vc-hint"><summary>What this pane is</summary><p class="vc-note">Every claim the chosen credential
+    configuration says it can carry, read from <code>claims</code> in the issuer's metadata above. Clear a row to ask
+    the issuer to leave that claim out. The request travels in the OPTIONAL <code>claims</code> member of the
+    <code>authorization_details</code> entry of type <code>openid_credential</code> (OID4VCI section&nbsp;5.1.1) &mdash;
+    <em>not</em> in the Credential Request, which section&nbsp;8.2 gives no such member &mdash; so it is made when the
+    issuance is <em>authorized</em>: in the authorization request, or, for a pre-authorized offer (H.2&nbsp;/&nbsp;H.3)
+    that has no authorization request at all, in the Token Request on step&nbsp;2 (section&nbsp;6.1.1). Each row is sent
+    as a claims description object holding a claims path pointer, which is why a nested claim appears as
+    <code>address.locality</code> here and travels as <code>["address","locality"]</code>. Leaving every row checked
+    sends no <code>claims</code> member: asking for all of them is what omitting it already means. An issuer decides
+    what it issues either way &mdash; a claim it marks <em>mandatory</em> arrives whether or not it was asked for.</p></details>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Credential: </label><span class="tooltiptext">The credential configuration these claims belong to, chosen in the Configuration Parameters pane above.</span>
+            </div>
+          </td>
+          <td><code id="vc_claims_credential">&mdash;</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <div id="vc_claims_table_host">
+      <table class="vc-token-table" id="vc_claims_table">
+        <thead><tr><th>Request</th><th>Claim path</th><th>Name</th><th>Notes</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p>
+      <input class="btn2" id="vc_claims_all_button" type="button" value="Select All" onclick="return vcissuance1.selectAllClaims();" />
+      <input class="btn2" id="vc_claims_none_button" type="button" value="Select None" onclick="return vcissuance1.selectNoClaims();" />
+      <input class="btn2" id="vc_claims_use_details_button" type="button" style="display: none;" value="Ask with authorization_details" onclick="return vcissuance1.useAuthorizationDetails();" />
+      <span class="vc-status" id="vc_claims_status">&nbsp;</span>
+    </p>
+    <div class="vc-note" id="vc_claims_note">&nbsp;</div>
+  </fieldset>
+</div>
+
+<!-- ============ Pane 5: Authenticate the user ============ -->
 <div class="step0 dbg-pane" id="pane_handoff">
   <legend class="dbg-legend" id="handoff_expand_button" onclick="return vcissuance1.togglePane('handoff_fieldset');">Authorize Issuance (OIDC Authorization Code Flow)</legend>
   <fieldset name="handoff_fieldset" id="handoff_fieldset" style="display: block;">
     <p class="vc-note">OID4VCI authorizes issuance with an ordinary OAuth 2.0 / OpenID Connect Authorization Code
     flow, so this step hands over to the debugger pages that already implement it. The
-    <code>sdjwtvc=1</code> query parameter tells <a href="/debugger.html">debugger.html</a> that it is running as part
+    <code>sdjwtvc=1</code> query parameter tells <a href="/oauth2_oidc_1.html">oauth2_oidc_1.html</a> that it is running as part
     of this workflow: it starts the authorization request with the configuration above, the user authenticates at the
-    identity provider, <a href="/debugger2.html">debugger2.html</a> exchanges the code for tokens, and the browser
+    identity provider, <a href="/oauth2_oidc_2.html">oauth2_oidc_2.html</a> exchanges the code for tokens, and the browser
     then returns here &mdash; to step 2, where the tokens are shown and the user is asked to approve issuance.</p>
     <table border="0">
       <tbody>
         <tr>
           <td>
-            <div class="tooltip"><label>Hand-off URL: </label><span class="tooltiptext">Where the Start button goes. The query parameter is what puts debugger.html into SD-JWT VC issuance mode.</span>
+            <div class="tooltip"><label>Hand-off URL: </label><span class="tooltiptext">Where the Start button goes. The query parameter is what puts oauth2_oidc_1.html into SD-JWT VC issuance mode.</span>
             </div>
           </td>
-          <td><code id="handoff_url">/debugger.html?sdjwtvc=1</code></td>
+          <td><code id="handoff_url">/oauth2_oidc_1.html?sdjwtvc=1</code></td>
         </tr>
         <tr>
           <td>
@@ -469,7 +511,7 @@ function vcSetAllPanes(expand) {
           <td>
             <div class="tooltip">
               <input class="btn2" id="start_issuance_button" type="button" value="Start Issuance" onclick="return vcissuance1.startIssuance();" />
-              <span class="tooltiptext">Save the configuration and go to debugger.html?sdjwtvc=1 to authenticate the user.</span>
+              <span class="tooltiptext">Save the configuration and go to oauth2_oidc_1.html?sdjwtvc=1 to authenticate the user.</span>
             </div>
           </td>
           <td>

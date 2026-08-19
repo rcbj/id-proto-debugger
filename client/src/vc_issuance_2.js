@@ -5,13 +5,13 @@
 // Credential Request.
 //
 // By the time this page loads, the OIDC Authorization Code flow has run on
-// debugger.html / debugger2.html and left its tokens in local storage. This
-// page plays the rest of the wallet's part:
+// oauth2_oidc_1.html / oauth2_oidc_2.html and left its tokens in local storage.
+// This page plays the rest of the wallet's part:
 //
 //   1. generate a holder key pair (in the browser; the private half never
 //      leaves it),
 //   2. ask the issuer's Nonce Endpoint for a c_nonce,
-//   3. sign a proof of possession (typ openid4vci-proof+jwt) with the holder
+//   3. sign a key proof (typ openid4vci-proof+jwt) with the holder
 //      key, naming the credential issuer as its audience,
 //   4. POST the Credential Request to the Credential Endpoint with the access
 //      token as a Bearer credential,
@@ -28,6 +28,9 @@ var sdJwtVc = require("./sd_jwt_vc");
 // and reading the response — shared with step 4, which makes the same call to
 // refresh the credential (OID4VCI section 14.5).
 var vciWallet = require("./vci_wallet");
+// Which claims the wallet asked for, chosen on step 1. Shared with that page so
+// the two cannot disagree about what a full selection sends.
+var vciClaims = require("./vci_claims");
 var dpopLib = require("./dpop");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_2',
@@ -266,22 +269,23 @@ function renderDpopPane() {
   // from the checkbox alone.
   if (wantsHok && !on) {
     setText("vc_dpop_binding_note",
-      "Holder of Key needs a DPoP key to bind the credential to, and DPoP is " +
-          "off — so Proof of " +
-      "Possession is what will actually happen. Turn DPoP on above to use it.");
+      "Holder of Key needs a DPoP key to bind the credential to, and DPoP " +
+          "is off \u2014 so the " +
+      "credential will be bound to a holder key of its own. Turn DPoP on " +
+          "above to use it.");
   } else if (effective === sdJwtVc.BINDING_MODES.HOK) {
     setText("vc_dpop_binding_note",
       "Holder of Key: one key. The access token's cnf.jkt and the " +
           "credential's cnf.jwk will name " +
-      "it, and the Credential Request's proof of possession is signed by it. " +
-          "The holder has one " +
+      "it, and the Credential Request's key proof is signed by it. The " +
+          "holder has one " +
       "key to protect instead of two, and the issuer can see that whoever " +
           "presents the token is " +
       "who the credential is bound to.");
   } else {
     setText("vc_dpop_binding_note",
-      "Proof of Possession: two keys. The credential is bound to its own " +
-          "holder key, so its " +
+      "A holder key of its own: two keys. The credential is bound to that " +
+          "key, so its " +
       "lifetime is independent of the token's \u2014 which matters because " +
           "the credential outlives " +
       "the access token by months and rotating a key for OAuth reasons " +
@@ -525,7 +529,7 @@ function onBindingModeChange() {
   var hok = !!(box && box.checked);
   sdJwtVc.setCredentialBindingMode(hok ?
       sdJwtVc.BINDING_MODES.HOK : sdJwtVc.BINDING_MODES.POP);
-  // The credential's proof of possession is over a different key now, so the
+  // The credential's key proof is over a different key now, so the
   // request the pane shows is stale. Rebuild it rather than leaving a request
   // on screen that is not the one Approve would send.
   request.proof = "";
@@ -544,8 +548,8 @@ function onBindingModeChange() {
           ? "Holder of Key: the credential request below is now signed by " +
               "the DPoP key, and the " +
             "credential will be bound to it."
-          : "Proof of Possession: the credential request below is signed by " +
-              "the holder key, which " +
+          : "A holder key of its own: the credential request below is " +
+              "signed by that key, which " +
             "is what the credential will be bound to.",
         "vc-ok");
     })
@@ -583,7 +587,7 @@ function regenerateDpopKey() {
         sdJwtVc.storeDpopKeyPair(pair, jkt);
         pageDpopKey = pair;
         // A new key cannot be the key an existing token is bound to, and it
-        // invalidates a Holder of Key proof of possession, so both are rebuilt.
+        // invalidates a Holder of Key key proof, so both are rebuilt.
         request.proof = "";
         request.proofs = [];
         request.holderKeys = [];
@@ -619,8 +623,8 @@ function regenerateHolderKey() {
     return prepareRequest().then(function (ok) {
       if (ok) {
         status("vc_approval_status",
-          "A new holder key pair was generated, and the proof of possession " +
-              "rebuilt for it.", "vc-ok");
+          "A new holder key pair was generated, and the key proof rebuilt " +
+              "for it.", "vc-ok");
       }
     });
   }).catch(function (e) {
@@ -633,7 +637,7 @@ function regenerateHolderKey() {
 
 // The key the credential will be bound to, which under Holder of Key is the
 // DPoP key rather than the holder key. This is the ONE place that decision
-// turns into a key, so the proof of possession, the assembled call and the
+// turns into a key, so the key proof, the assembled call and the
 // credential's cnf cannot disagree about which key it was.
 //
 // Note what it does NOT do: it does not overwrite the stored holder key. Under
@@ -671,15 +675,15 @@ function bindingKey() {
 // Batch issuance and Holder of Key pull in opposite directions and the honest
 // answer is a partial one: there is only one DPoP key, so only the first
 // credential of a batch can be bound to it. The rest get keys of their own,
-// which is Proof of Possession for those credentials, and renderDpopPane() says
-// so.
+// which is a holder key of their own rather than the DPoP key, and
+// renderDpopPane() says so.
 function holderKeysFor(count) {
   log.debug("Entering holderKeysFor().");
   log.debug("Leaving holderKeysFor().");
   return vciWallet.holderKeysFor(bindingKey(), count);
 }
 
-// --- the proof of possession ------------------------------------------------
+// --- the key proof ----------------------------------------------------------
 // One proof per key. Every proof carries the same c_nonce — it is the ISSUER's
 // nonce for this request, not a per-key value — and each names its own key in
 // the header, which is what the issuer binds that credential to.
@@ -797,7 +801,7 @@ function prepareRequest() {
 
 // Which Credential Dataset identifiers the token response granted, if the
 // authorization used authorization_details (OID4VCI section 6.2). Stored by
-// debugger2.html when it exchanged the code.
+// oauth2_oidc_2.html when it exchanged the code.
 function grantedIdentifiers() {
   log.debug("Entering grantedIdentifiers().");
   var details = sdJwtVc.getJson("token_authorization_details");
@@ -1113,6 +1117,27 @@ function preAuthorizedOffer() {
   return { code: code, txCode: sdJwtVc.offerTxCode() };
 }
 
+// The authorization_details the Token Request should carry, or null when the
+// wallet is asking for everything this credential offers (see vci_claims.js).
+// The rows come from the metadata step 1 retrieved, so a page opened without
+// that document behind it asks for no subset rather than for nothing.
+function requestedClaimsDetails() {
+  log.debug("Entering requestedClaimsDetails().");
+  var configId = (request.config && request.config.credentialConfigurationId) ||
+      sdJwtVc.storedRequestConfig().credentialConfigurationId || "";
+  var rows = vciClaims.claimsFor(sdJwtVc.getJson("vci_info"), configId);
+  var claims = vciClaims.claimsMember(rows, sdJwtVc.getJson(vciClaims.KEY),
+                                      configId);
+  if (!claims) {
+    log.debug("Leaving requestedClaimsDetails(). No subset was asked for.");
+    return null;
+  }
+  log.debug("Leaving requestedClaimsDetails(). " + claims.length +
+            " claim(s).");
+  return [{ type: "openid_credential", credential_configuration_id: configId,
+            claims: claims }];
+}
+
 function tokenRequestBody() {
   log.debug("Entering tokenRequestBody().");
   var offer = preAuthorizedOffer();
@@ -1128,6 +1153,16 @@ function tokenRequestBody() {
   if (clientId) params.client_id = clientId;
   var typed = (el("vc_tx_code") && el("vc_tx_code").value || "").trim();
   if (typed) params.tx_code = typed;
+  // A pre-authorized issuance has no authorization request, so this is the ONLY
+  // place the claims selection can be made — OID4VCI section 6.1.1 allows
+  // authorization_details in the Token Request in both flows, and this flow has
+  // nowhere else. Sent only when step 1's pane asks for a strict subset:
+  // introducing the parameter otherwise would change nothing about the
+  // credential and everything about how it is then requested, since a token
+  // response that grants credential_identifiers forbids
+  // credential_configuration_id in the Credential Request (section 8.2).
+  var details = requestedClaimsDetails();
+  if (details) params.authorization_details = JSON.stringify(details);
   log.debug("Leaving tokenRequestBody().");
   return params;
 }
@@ -1275,15 +1310,27 @@ function sendTokenRequest() {
           response.body.id_token);
       if (response.body.refresh_token) sdJwtVc.set("token_refresh_token",
           response.body.refresh_token);
+      // Under the same name oauth2_oidc_2.html writes after the OIDC leg,
+      // because buildRequestBody() reads it either way: a Token Request
+      // carrying authorization_details is answered with credential_identifiers,
+      // and one of THOSE must then name the credential (section 8.2). Written
+      // even when absent, so a second run without a claims selection cannot
+      // inherit the identifiers the first one was granted.
+      sdJwtVc.setJson("token_authorization_details",
+                      response.body.authorization_details || null);
+      buildRequestBody();
       renderDpopPane();
       status("vc_token_status",
         "An access token was issued. The credential request below can now be " +
             "authorized with it.", "vc-ok");
-      showTokens();
+      // Through showRequestConfig(), because the token response is what says
+      // which claims were granted — the approval pane described the request
+      // this page was ABOUT to make, and now there is an answer to describe.
+      showRequestConfig(showTokens());
       renderAssembledCall();
       status("vc_approval_status",
-        "Ready: the proof of possession is signed and the request below is " +
-            "what Approve will send.", "vc-ok");
+        "Ready: the key proof is signed and the request below is what " +
+            "Approve will send.", "vc-ok");
     })
     .catch(function (e) {
       log.error("the token request failed: " + e.message);
@@ -1733,6 +1780,46 @@ function showTokens() {
   return claims;
 }
 
+// The claims the issuance was actually asked to carry, or null when nothing
+// restricted them. Two places it can come from, and both are the wire rather
+// than a preference:
+//
+//   * the token response's authorization_details, which echoes what the
+//     authorization server granted (RFC 9396 section 7) — the Authorization
+//     Code Flow's answer, and the one that is true even if step 1's selection
+//     never travelled;
+//   * this page's own Token Request, when a pre-authorized offer has not been
+//     redeemed yet: nothing has been granted, and what it is about to ask for
+//     is what the pane should be approving.
+function requestedClaimLabels(configId) {
+  log.debug("Entering requestedClaimLabels(). configId=" + configId);
+  var granted = sdJwtVc.getJson("token_authorization_details");
+  var found = null;
+  if (Object.prototype.toString.call(granted) === "[object Array]") {
+    granted.forEach(function (d) {
+      if (!d || Object.prototype.toString.call(d.claims) !== "[object Array]" ||
+          !d.claims.length) {
+        return;
+      }
+      if (configId && d.credential_configuration_id &&
+          d.credential_configuration_id !== configId) {
+        return;
+      }
+      found = d.claims;
+    });
+  }
+  if (!found && preAuthorizedOffer()) {
+    var pending = requestedClaimsDetails();
+    if (pending) found = pending[0].claims;
+  }
+  if (!found) {
+    log.debug("Leaving requestedClaimLabels(). Nothing was restricted.");
+    return null;
+  }
+  log.debug("Leaving requestedClaimLabels(). " + found.length + " claim(s).");
+  return found.map(function (c) { return vciClaims.pathLabel(c.path); });
+}
+
 function showRequestConfig(idTokenClaims) {
   log.debug("Entering showRequestConfig().");
   var cfg = sdJwtVc.storedRequestConfig();
@@ -1751,21 +1838,23 @@ function showRequestConfig(idTokenClaims) {
                                        "the authenticated user";
   setText("vc_approval_subject", subject);
 
-  // What the issuer said this credential can carry, straight from the metadata
-  // document step 1 retrieved.
-  var claimNames = [];
+  // Which claims this credential will carry. Read from what was actually
+  // ASKED — the claims the token response granted, or the ones this page's own
+  // Token Request is about to ask for — and not from step 1's pane, because a
+  // selection made there does not necessarily travel: an authorization made
+  // with a scope carries no claims member at all (see vci_claims.js). The user
+  // is approving a request, so this has to describe the request.
   var doc = sdJwtVc.getJson("vci_info");
-  var cfgs = (doc && doc.credential_configurations_supported) || {};
-  var chosen = cfgs[cfg.credentialConfigurationId];
-  if (chosen &&
-      Object.prototype.toString.call(chosen.claims) === "[object Array]") {
-    claimNames = chosen.claims.map(function (c) {
-      return Object.prototype.toString.call(c.path) === "[object Array]" ?
-                                            c.path.join(".") : String(c.path);
-    });
-  }
-  setText("vc_approval_claims", claimNames.length ?
-          claimNames.join(", ") : "not stated in the metadata");
+  var rows = vciClaims.claimsFor(doc, cfg.credentialConfigurationId);
+  var requested = requestedClaimLabels(cfg.credentialConfigurationId);
+  var advertised = rows.map(function (row) { return row.label; });
+  setText("vc_approval_claims", !rows.length
+    ? "not stated in the metadata"
+    : (!requested
+        ? advertised.join(", ") + " (every claim this issuer advertises; the " +
+          "request restricts nothing)"
+        : requested.join(", ") + " — " + requested.length + " of " +
+          rows.length + " advertised, chosen on step 1"));
   log.debug("Leaving showRequestConfig().");
 }
 
@@ -1808,8 +1897,8 @@ function onload() {
       setJson("vc_holder_jwk", pub);
       renderDpopPane();
       // Build the request now, so the pane shows what approving will send.
-      // Deliberately NOT conditional on having an access token: the proof of
-      // possession is signed with the holder key and addressed to the issuer,
+      // Deliberately NOT conditional on having an access token: the key
+      // proof is signed with the holder key and addressed to the issuer,
       // neither of which comes from the OIDC leg. Someone who opens this page
       // directly still gets to see the request the workflow would make.
       return prepareRequest();
@@ -1817,7 +1906,8 @@ function onload() {
     .then(function (ready) {
       if (!ready) return;
       status("vc_approval_status", sdJwtVc.get("token_access_token")
-        ? "Ready: the proof of possession is signed and the request below is what Approve will send."
+        ? "Ready: the key proof is signed and the request below is what " +
+            "Approve will send."
         : "The request below is ready, but there is no access token to " +
             "authorize it with — " +
           "start from step 1 and authenticate.",

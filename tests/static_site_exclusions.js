@@ -385,7 +385,7 @@ function theContainerBuildStillCarriesThem(staticSite) {
 // ---------------------------------------------------------------------------
 function anUnmarkedPageIsLeftAlone(staticSite) {
   log.debug("Entering anUnmarkedPageIsLeftAlone().");
-  const plain = '<a class="landing-card" href="/debugger.html">' +
+  const plain = '<a class="landing-card" href="/oauth2_oidc_1.html">' +
       '<span class="landing-card-title">OAuth2</span></a>';
   const result = staticSite.disableUnavailableCards(plain);
   assert.strictEqual(result.count, 0,

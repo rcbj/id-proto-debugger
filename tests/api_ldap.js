@@ -81,11 +81,18 @@
 // answered 404" reads as a broken deployment rather than as a build without the
 // endpoint, and the two send you to different places.
 //
-// Every name this test creates is UNIQUE PER RUN. A test that only passes
-// against a freshly started service is one nobody can re-run, and the mock's
-// directory lives for the life of its process — so a fixed `uid=dave` would be
-// `entryAlreadyExists` on the second run. That lesson is recorded in
+// Every name this test creates is UNIQUE PER RUN, and every entry it creates is
+// removed again — WITH ONE DELIBERATE EXCEPTION, section 13. A test that only
+// passes against a freshly started service is one nobody can re-run, and the
+// mock's directory lives for the life of its process — so a fixed `uid=dave`
+// would be `entryAlreadyExists` on the second run. That lesson is recorded in
 // tests/CLAUDE.md against webauthn_oidc_mfa.js and applies unchanged here.
+//
+// The exception is a FIXTURE and not an artifact: `cn=test_users`, holding
+// every user in the directory, left in place so that there is something to work
+// with after a suite run — which the seeded three people and two groups are
+// not. It carries the cost of a fixed name by being idempotent instead. See
+// section 13; nothing above it may copy that, and section 12 says why.
 // ---------------------------------------------------------------------------
 const assert = require("assert");
 // Both are for the LDAPS section only, and both are node's own: `tls` opens one
@@ -1562,6 +1569,161 @@ async function aPopulatedDirectory(limits) {
   log.debug("Leaving aPopulatedDirectory().");
 }
 
+// ---------------------------------------------------------------------------
+// 13. THE ONE THING THIS FILE LEAVES BEHIND: cn=test_users, holding everybody.
+//
+// Every section above cleans up after itself and section 12 says why. This one
+// is the deliberate exception, and it exists because of what that leaves: after
+// a full suite run the directory holds the three seeded people and the two
+// seeded groups, which is the right size for asserting what an operation MEANS
+// and far too small to try the LDAP page's searches, presets and membership
+// panes against by hand. So the last thing this test does is build a group that
+// is STILL THERE when it finishes, holding every entry under ou=users at the
+// moment it runs — the three seeded people plus everybody
+// LDAP_AUTOCREATE_USERS has put there by then, which is one entry per person
+// any part of the suite has authenticated as.
+//
+// Being a fixture rather than a test rearranges three things:
+//
+//  * **The name is FIXED, not stamped.** Everything else here is `dbg-<stamp>`
+//    precisely so that a re-run against a mock that is still up cannot collide
+//    — and a fixture whose name nobody can predict is not a fixture. So this
+//    one is `cn=test_users` and pays for it by being IDEMPOTENT instead: the
+//    group is added when it is absent and its `member` attribute is REPLACED
+//    when it is already there. Both paths reach the same end state, which is
+//    what the second run of the day has to reach. Replace rather than add,
+//    because the members of the previous run are not the members of this one:
+//    an `add` would accumulate the union of every run, including DNs of users
+//    that no longer exist.
+//  * **It is a SNAPSHOT, not a live group.** This file is one job of many and
+//    the jobs after it authenticate too, so a user seeded after this section
+//    runs is not in the group. That is the difference between a group and a
+//    dynamic group, and a real directory does the second with an overlay this
+//    mock does not have; nothing here can close the gap, so it is written down
+//    instead of being discovered as a missing member.
+//  * **A cap would build a SHORT group and every assertion would still pass.**
+//    The group is written from what the search returned, so a search stopped by
+//    `ldapMaxEntries` or `maxContentLength` produces a group that exactly
+//    matches the truncated list it was built from — self-consistent, quietly
+//    missing people, and indistinguishable afterwards from a directory that
+//    held that many. So `truncated` is asserted to be null BEFORE the list is
+//    used, which is the only point at which the two can still be told apart.
+// ---------------------------------------------------------------------------
+const TEST_GROUP_CN = "test_users";
+var testGroupDn = "cn=" + TEST_GROUP_CN + "," + groupsDn;
+
+async function aTestUsersGroupIsLeftBehind() {
+  log.debug("Entering aTestUsersGroupIsLeftBehind().");
+  log.info("=== Fixture: " + testGroupDn + ", holding every user ===");
+
+  // Every entry directly under ou=users. `one` rather than `sub`, so the
+  // container is not made a member of the group it contains; and a PRESENCE
+  // filter rather than `(objectClass=person)` because this directory is
+  // schemaless on purpose — an entry added through the page with no
+  // objectClass at all is still a user, and a filter naming a class would
+  // leave it out of the one group whose whole point is that it holds
+  // everybody.
+  const readUsers = connection();
+  readUsers.baseDn = usersDn;
+  readUsers.scope = "one";
+  readUsers.filter = "(objectClass=*)";
+  const foundUsers = await call("/ldap/search", readUsers);
+  assertSucceeded(foundUsers, "searching " + usersDn + " for every user");
+  assert.strictEqual(foundUsers.body.truncated, null,
+    "the list this group is built from must be the WHOLE list. A truncated " +
+    "search produces a group that matches what came back and silently omits " +
+    "the rest, and nothing downstream can tell that from a directory holding " +
+    "only that many. The api said: " + foundUsers.body.truncated);
+
+  // The DNs as the DIRECTORY spells them, not lower-cased: these are about to
+  // be written back as attribute VALUES, and while a DN is compared
+  // case-insensitively it is displayed exactly as it was stored. `dnsOf` is
+  // for comparing, which is why it is not used here.
+  const userDns = ((foundUsers.body && foundUsers.body.entries) || []).map(
+    function (entry) {
+      return String(entry.dn);
+    });
+  assert.ok(userDns.length > 0,
+    "there must be at least one user to put in it: RFC 4519 makes `member` " +
+    "MUST on a groupOfNames, so an empty group is not an empty group but a " +
+    "schema violation — and a directory with no users at all under " +
+    usersDn + " means the seed did not run, which is a bigger problem than " +
+    "this section.");
+
+  // Is it already there? A base-scoped read, whose two answers are the two
+  // paths below. `noSuchObject` (32) is the ANSWER on a first run rather than
+  // a failure — the same point section 5 makes — so it is asserted as one,
+  // and an unexpected third answer (a 500, an ok:false with some other code)
+  // stops here instead of being read as "absent".
+  const readGroup = connection();
+  readGroup.baseDn = testGroupDn;
+  readGroup.scope = "base";
+  readGroup.filter = "(objectClass=*)";
+  readGroup.attributes = ["member"];
+  const existing = await call("/ldap/search", readGroup);
+  if (existing.body && existing.body.ok === true) {
+    log.info(testGroupDn + " is already there — a previous run of this file " +
+             "against a mock that has not restarted. Its members are being " +
+             "REPLACED rather than added to, so the group holds the users " +
+             "that exist NOW.");
+    const replace = connection();
+    replace.dn = testGroupDn;
+    replace.changes = [{ operation: "replace", type: "member",
+                         values: userDns }];
+    assertSucceeded(await call("/ldap/modify", replace),
+      "replacing the members of " + testGroupDn);
+  } else {
+    assertRefused(existing, 32,
+      "reading " + testGroupDn + " before it exists");
+    const create = connection();
+    create.dn = testGroupDn;
+    create.attributes = {
+      objectClass: ["top", "groupOfNames"],
+      cn: [TEST_GROUP_CN],
+      description: ["A fixture, not a test artifact: created by " +
+        "tests/api_ldap.js section 13 and deliberately NOT removed, so " +
+        "there is a populated group to work with after a suite run. Its " +
+        "members are every entry that was under " + usersDn + " when it ran."],
+      member: userDns
+    };
+    assertSucceeded(await call("/ldap/add", create), "adding " + testGroupDn);
+  }
+
+  // Read it back. Not ceremony: the add and the modify are two code paths to
+  // one end state, this is the only assertion that says they reached the same
+  // one, and on the replace path it is the only thing that would notice a
+  // directory that appended instead of replacing — which answers success and
+  // leaves last run's departed users in the group.
+  const members = await memberDnsOf(testGroupDn);
+  const expected = userDns.map(function (dn) {
+    return dn.toLowerCase();
+  }).sort();
+  assert.deepStrictEqual(members, expected,
+    testGroupDn + " must hold exactly the " + expected.length + " users that " +
+    "are under " + usersDn + " — no more, which is what an `add` on a second " +
+    "run would give, and no fewer. Got " + members.length + ": " +
+    JSON.stringify(members));
+
+  // And it must be findable as a group, which is how anybody working with it
+  // will actually reach it: the page's all-groups preset, and every
+  // `(objectClass=groupOfNames)` search.
+  const asAGroup = connection();
+  asAGroup.baseDn = groupsDn;
+  asAGroup.scope = "one";
+  asAGroup.filter = "(objectClass=groupOfNames)";
+  const foundGroups = await call("/ldap/search", asAGroup);
+  assertSucceeded(foundGroups, "searching for groups");
+  assert.ok(dnsOf(foundGroups).includes(testGroupDn.toLowerCase()),
+    testGroupDn + " must come back from an ordinary search for groups. Got " +
+    JSON.stringify(dnsOf(foundGroups)));
+
+  log.info(testGroupDn + " holds " + expected.length + " user(s) and is " +
+           "LEFT IN PLACE on purpose — it is the fixture the rest of this " +
+           "file's entries deliberately are not. It lives as long as the " +
+           "mock's process does; the next run of this file rebuilds it.");
+  log.debug("Leaving aTestUsersGroupIsLeftBehind().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const ready = await preconditions();
@@ -1587,6 +1749,10 @@ async function test() {
   await authenticatingAnywhereCreatesAnLdapUser(ready.directory);
   await theSameDirectoryAnswersOverLdaps(ready.directory);
   await aPopulatedDirectory(ready.limits);
+  // Last, and after section 12 has taken its own thirty entries away again, so
+  // the group holds the users that are STILL there rather than twenty that are
+  // about to be deleted out from under it.
+  await aTestUsersGroupIsLeftBehind();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

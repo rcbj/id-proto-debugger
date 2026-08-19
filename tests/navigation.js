@@ -16,9 +16,9 @@ var waitTime = appconfig.waitTime;
 //
 // THREE protocols live on the OAuth2 / OIDC pages — the flows themselves,
 // Dynamic Client Registration and Token Exchange — so href alone no longer
-// identifies a card: two of them point at /debugger.html. Those two are located
-// by their title instead, which is what a person reads and what the test is
-// really about.
+// identifies a card: two of them point at /oauth2_oidc_1.html. Those two are
+// located by their title instead, which is what a person reads and what the
+// test is really about.
 var cardByTitle = function (title) {
   log.debug("Entering cardByTitle().");
   log.debug("Leaving cardByTitle().");
@@ -35,10 +35,11 @@ var SDJWTVC_CARD = By.css('a.landing-card[href="/vc-issuance-0.html"]');
 var SDJWTVP_CARD = By.css('a.landing-card[href="/vc-presentation-0.html"]');
 var WSFED_CARD = By.css('a.landing-card[href="/wsfed_request.html"]');
 var PKI_CARD = By.css('a.landing-card[href="/pki.html"]');
-// Dynamic Client Registration lives on debugger.html, so its card is told apart
-// from the OAuth2 card by the fragment naming the DCR pane. The OAuth2 locator
-// above is an EXACT href match, so it still resolves to one element.
-var DCR_CARD = By.css('a.landing-card[href="/debugger.html#dcr_fieldset"]');
+// Dynamic Client Registration lives on oauth2_oidc_1.html, so its card is told
+// apart from the OAuth2 card by the fragment naming the DCR pane. The OAuth2
+// locator above is an EXACT href match, so it still resolves to one element.
+var DCR_CARD =
+  By.css('a.landing-card[href="/oauth2_oidc_1.html#dcr_fieldset"]');
 var CHOICES = By.css('.landing-choices');
 // The header "Home" nav link (returns to the landing page).
 var HOME_LINK = By.css('.header_debugger a[href="/index.html"]');
@@ -299,15 +300,15 @@ async function navigationActivities(driver) {
   await landingFitsOnOneScreen(driver);
   await checkStylesheetsLoaded(driver, "landing page");
 
-  // 2. Choose the OAuth2 / OIDC debugger -> debugger.html.
+  // 2. Choose the OAuth2 / OIDC debugger -> oauth2_oidc_1.html.
   log.info("Click the OAuth2 / OIDC debugger card.");
   await click(driver, OAUTH2_CARD);
-  await driver.wait(until.urlContains("debugger.html"), waitTime);
+  await driver.wait(until.urlContains("oauth2_oidc_1.html"), waitTime);
   await driver.wait(until.elementLocated(By.id("authorization_grant_type")),
                     waitTime);
-  log.info("Landed on debugger.html.");
-  await checkFooterVersion(driver, "debugger.html");
-  await checkStylesheetsLoaded(driver, "debugger.html");
+  log.info("Landed on oauth2_oidc_1.html.");
+  await checkFooterVersion(driver, "oauth2_oidc_1.html");
+  await checkStylesheetsLoaded(driver, "oauth2_oidc_1.html");
 
   // 3. Click Home -> back to the landing page.
   log.info("Click Home -> landing page.");
@@ -374,39 +375,40 @@ async function navigationActivities(driver) {
   await click(driver, HOME_LINK);
   await waitVisible(driver, CHOICES);
 
-  // 12. Choose OIDC Dynamic Client Registration -> debugger.html, at the DCR
-  //     pane.
+  // 12. Choose OIDC Dynamic Client Registration -> oauth2_oidc_1.html, at the
+  // DCR     pane.
   // Same page as the OAuth2 card, reached by a different card and a fragment,
   // so what is checked is that the pane it names is really there.
   log.info("Click the OIDC Dynamic Client Registration card.");
   await click(driver, DCR_CARD);
-  await driver.wait(until.urlContains("debugger.html"), waitTime);
+  await driver.wait(until.urlContains("oauth2_oidc_1.html"), waitTime);
   await driver.wait(until.elementLocated(By.id("dcr_fieldset")), waitTime);
   var dcrUrl = await driver.getCurrentUrl();
   assert.ok(dcrUrl.indexOf("#dcr_fieldset") >= 0,
-    "the card should open debugger.html at the Dynamic Client Registration " +
-        "pane. Got: " + dcrUrl);
+    "the card should open oauth2_oidc_1.html at the Dynamic Client " +
+        "Registration pane. Got: " + dcrUrl);
   await driver.wait(until.elementLocated(By.id("dcr_registration_endpoint")),
                     waitTime);
-  log.info("Landed on debugger.html at the Dynamic Client Registration pane.");
-  await checkFooterVersion(driver, "debugger.html#dcr_fieldset");
+  log.info("Landed on oauth2_oidc_1.html at the Dynamic Client Registration " +
+           "pane.");
+  await checkFooterVersion(driver, "oauth2_oidc_1.html#dcr_fieldset");
 
   // 13. Return to Home -> landing page.
   log.info("Click Home -> landing page.");
   await click(driver, HOME_LINK);
   await waitVisible(driver, CHOICES);
 
-  // 14. Choose OAuth2 Token Exchange -> debugger.html. Its pane is on
-  // debugger2.html (an exchange needs a token to exchange), so what this checks
-  // is that the card is there, is distinct from the OAuth2 card, and lands on
-  // the page where a subject token is obtained.
+  // 14. Choose OAuth2 Token Exchange -> oauth2_oidc_1.html. Its pane is on
+  // oauth2_oidc_2.html (an exchange needs a token to exchange), so what this
+  // checks is that the card is there, is distinct from the OAuth2 card, and
+  // lands on the page where a subject token is obtained.
   log.info("Click the OAuth2 Token Exchange card.");
   await click(driver, TOKEN_EXCHANGE_CARD);
-  await driver.wait(until.urlContains("debugger.html"), waitTime);
+  await driver.wait(until.urlContains("oauth2_oidc_1.html"), waitTime);
   await driver.wait(until.elementLocated(By.id("authorization_grant_type")),
                     waitTime);
-  log.info("Landed on debugger.html from the Token Exchange card.");
-  await checkFooterVersion(driver, "debugger.html (Token Exchange card)");
+  log.info("Landed on oauth2_oidc_1.html from the Token Exchange card.");
+  await checkFooterVersion(driver, "oauth2_oidc_1.html (Token Exchange card)");
 
   // 15. Return to Home -> landing page.
   log.info("Click Home -> landing page.");

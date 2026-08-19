@@ -254,12 +254,12 @@ function buildJobs() {
     }
   }
 
-  // The UserInfo endpoint through all three of debugger2.html's "UserInfo Data"
-  // links — the token set the flow produced, the one the refresh call produced,
-  // and the one selected from Token History. The three differ only in which
-  // access token they carry, which is exactly the failure a single call cannot
-  // see: every token in the run belongs to the same user, so a link carrying
-  // the wrong one still returns a correct-looking answer.
+  // The UserInfo endpoint through all three of oauth2_oidc_2.html's "UserInfo
+  // Data" links — the token set the flow produced, the one the refresh call
+  // produced, and the one selected from Token History. The three differ only in
+  // which access token they carry, which is exactly the failure a single call
+  // cannot see: every token in the run belongs to the same user, so a link
+  // carrying the wrong one still returns a correct-looking answer.
   //
   // Runs against both OPs, like the flow matrix. Unlike it, this one exercises
   // the UserInfo page's DEFAULT configuration, which on a build that HAS the
@@ -475,8 +475,8 @@ function buildJobs() {
   // Metadata): the document the STS mock serves at
   // /.well-known/oauth-authorization-server (all 23 members, host-derived
   // issuer, verifiable signed_metadata, resolvable jwks_uri) and the Metadata
-  // Source selector on debugger.html that retrieves it. Needs the STS mock,
-  // like the WS-Trust jobs.
+  // Source selector on oauth2_oidc_1.html that retrieves it. Needs the STS
+  // mock, like the WS-Trust jobs.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "OAuth2 Authorization Server Metadata (RFC 8414 endpoint + " +
@@ -1689,9 +1689,10 @@ function buildJobs() {
 
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
   // Issuer the STS service hosts, the three vc-issuance pages, and the
-  // ?sdjwtvc=1 hand-off through debugger.html / debugger2.html. Needs both the
-  // STS mock (which is the credential issuer) and Keycloak (which authorizes
-  // the issuance), so it is gated on the STS like the other STS-backed jobs.
+  // ?sdjwtvc=1 hand-off through oauth2_oidc_1.html / oauth2_oidc_2.html. Needs
+  // both the STS mock (which is the credential issuer) and Keycloak (which
+  // authorizes the issuance), so it is gated on the STS like the other
+  // STS-backed jobs.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "VC Issuance — SD-JWT VC (OID4VCI credential issuance end to end)",
@@ -1815,6 +1816,25 @@ function buildJobs() {
       name: "STS metadata page (/sts-metadata lists exactly what the router " +
           "registers)",
       script: "sts_metadata.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // The management API beside the metadata page, and for the same reason:
+    // both are checks that a description of this service still matches the
+    // service. This one also asserts the parity the API is written under —
+    // every /admin control has an /admin-api operation — which nothing inside
+    // the mock can check for itself, because nothing there can see a form
+    // appear on a page. It RESTORES everything it changes (claim sets, the
+    // credential claim set, the verifier request, and every token its bulk
+    // revocations touched), which matters more here than usual: the mock's
+    // admin state survives between jobs, so a job that left a custom claim
+    // behind would change what every later job's tokens contain.
+    jobs.push({
+      name: "STS management API (/admin-api mirrors every /admin control, " +
+          "and its OpenAPI document describes what it sends)",
+      script: "admin_api.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",

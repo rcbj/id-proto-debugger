@@ -38,8 +38,8 @@ only the page.
 Two ways in, and both stay. The page has had a **landing card** of its own
 since 2026-08-18 (`PKI / X.509`, the twelfth) — it is a workflow rather than a
 tool of another protocol's, and being reachable only from somebody else's tools
-pane said the opposite. The **Tools** pane entries on `debugger.html`,
-`debugger2.html`, `saml_request.html`, `saml_response.html` and
+pane said the opposite. The **Tools** pane entries on `oauth2_oidc_1.html`,
+`oauth2_oidc_2.html`, `saml_request.html`, `saml_response.html` and
 `wsfed_response.html` are deliberately kept, because they are the other journey:
 you are mid-flow and you need a certificate, rather than here because the
 certificate authority IS the task. Note that those links carry `?from=<page>`

@@ -11,10 +11,10 @@
 //     retrieve the OID4VCI Credential Issuer Metadata, validate its
 //     signed_metadata, populate the Configuration Parameters pane from it;
 //     retrieve the authorization server's RFC 8414 metadata and populate the
-//     same pane from that, under the localStorage names debugger.html uses;
-//     then hand off with ?sdjwtvc=1.
+//     same pane from that, under the localStorage names oauth2_oidc_1.html
+// uses;     then hand off with ?sdjwtvc=1.
 //
-//   the OIDC leg (debugger.html -> Keycloak -> debugger2.html)
+//   the OIDC leg (oauth2_oidc_1.html -> Keycloak -> oauth2_oidc_2.html)
 //     the user authenticates and the authorization code is exchanged for
 //     tokens WITHOUT further interaction, because the workflow drives it.
 //
@@ -37,7 +37,7 @@
 //     choice and a wallet must read it rather than assume it. Keeping the
 //     refreshed credential is a decision the holder makes, so that is checked
 //     too, along with the routes that remain when the refresh token is dead.
-//     Its Credential History pane — debugger2.html's Token History, for
+//     Its Credential History pane — oauth2_oidc_2.html's Token History, for
 //     credentials — is navigated backwards and forwards, and activating a
 //     generation has to put that credential AND its holder key back in hand,
 //     not merely highlight a row.
@@ -230,6 +230,44 @@ async function stepOne(driver) {
              "the test supplies the URL itself.");
   }
 
+  // ...and a value another page left in storage does NOT become that default.
+  // `oidc_discovery_endpoint` is shared with oauth2_oidc_1.html on purpose, and
+  // that page's metadata pane offers an OpenID Connect Discovery URL — its
+  // https://localhost/oidc/.well-known placeholder on a browser that merely
+  // loaded it — under this same name. Before asMetadataUrlAtLoad() this pane
+  // adopted whatever it found, so a browser that had visited the OAuth2 / OIDC
+  // workflow once arrived here with an openid-configuration URL sitting in a
+  // field the pane says is an RFC 8414 endpoint. Whatever the deployment
+  // configures, seeding that value must leave the pane exactly where a fresh
+  // browser found it — which is why this compares against asDefault rather
+  // than against a URL of its own, and so asserts the empty case too.
+  await driver.executeScript(
+    "window.localStorage.setItem('oidc_discovery_endpoint', arguments[0]);",
+        "https://localhost/oidc/.well-known");
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
+  await driver.sleep(500);
+  var asSeeded = await value(driver, "oidc_discovery_endpoint");
+  assert.strictEqual(asSeeded, asDefault,
+    "an OIDC Discovery URL left in shared storage by oauth2_oidc_1.html must " +
+        "not become the RFC 8414 pane's value; expected " +
+        JSON.stringify(asDefault) + ", got " + JSON.stringify(asSeeded));
+  // The other page's URL is its own: this page must not have rewritten it.
+  var asStillStored = await driver.executeScript(
+    "return window.localStorage.getItem('oidc_discovery_endpoint');");
+  assert.strictEqual(asStillStored, "https://localhost/oidc/.well-known",
+    "vc-issuance-1 must leave oauth2_oidc_1.html's stored metadata URL " +
+        "alone, found " + JSON.stringify(asStillStored));
+  log.info("[step1] a foreign metadata URL in shared storage is ignored by " +
+           "the RFC 8414 pane and left in place for oauth2_oidc_1.html.");
+  // Back to the clean slate the rest of this step assumes.
+  await driver.executeScript("window.localStorage.clear();");
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
+  await driver.sleep(500);
+
   // ---- pane 1: the credential issuer metadata -----------------------------
   await driver.executeScript(
     "document.getElementById('vci_metadata_endpoint').value = arguments[0];",
@@ -253,8 +291,8 @@ async function stepOne(driver) {
             "document's members, got " + rows);
   log.info("[step1] " + note);
 
-  // Its signed_metadata must verify — the same check debugger.html runs on an
-  // RFC 8414 document, against keys resolved the SD-JWT VC way.
+  // Its signed_metadata must verify — the same check oauth2_oidc_1.html runs
+  // on an RFC 8414 document, against keys resolved the SD-JWT VC way.
   await click(driver, By.id("vci_validate_signed_metadata_button"));
   var verdict = await waitForStatus(driver, "vci_signed_metadata_status",
     function (s) { return /^(VALID|INVALID|Could not)/.test(s); },
@@ -473,7 +511,8 @@ async function stepOne(driver) {
   log.info("[step1] OK — the RFC 8414-only members are populated, and " +
            "signed_metadata is marked not defined.");
 
-  // The whole point of pane 2: this is the SAME storage debugger.html reads.
+  // The whole point of pane 2: this is the SAME storage oauth2_oidc_1.html
+  // reads.
   var shared = await driver.executeScript(
     "return { authorization_endpoint: " +
         "localStorage.getItem('authorization_endpoint')," +
@@ -483,14 +522,16 @@ async function stepOne(driver) {
   assert.strictEqual(shared.authorization_endpoint,
                      oidcValues.authorization_endpoint,
     "the authorization endpoint must be stored under the name " +
-        "debugger.html reads.");
+        "oauth2_oidc_1.html reads.");
   assert.strictEqual(shared.token_endpoint, oidcValues.token_endpoint,
-    "the token endpoint must be stored under the name debugger.html reads.");
+    "the token endpoint must be stored under the name oauth2_oidc_1.html " +
+        "reads.");
   assert.ok(shared.document, "the retrieved document must be stored under " +
-            "debugger.html's discovery_info key.");
+            "oauth2_oidc_1.html's discovery_info key.");
   assert.strictEqual(shared.source, "rfc8414",
                      "the stored metadata source should say RFC 8414.");
-  log.info("[step1] OK — the configuration is shared with debugger.html.");
+  log.info("[step1] OK — the configuration is shared with " +
+           "oauth2_oidc_1.html.");
 
   // ---- the client settings the authorization request needs ----------------
   // The redirect URI is the deployment's own /callback — the debugger pages pin
@@ -524,13 +565,13 @@ async function oidcLeg(driver) {
   log.debug("Entering oidcLeg().");
   log.info("=== The OIDC Authorization Code leg ===");
   var handoffUrl = await text(driver, "handoff_url");
-  assert.ok(handoffUrl.indexOf("/debugger.html?sdjwtvc=1") !== -1,
+  assert.ok(handoffUrl.indexOf("/oauth2_oidc_1.html?sdjwtvc=1") !== -1,
     "the hand-off pane should name the URL it goes to, got: " + handoffUrl);
   await click(driver, By.id("start_issuance_button"));
 
-  // debugger.html is only a waypoint: it marks the workflow active and issues
-  // the authorization request straight away, so the next thing to appear is
-  // the IdP's login form.
+  // oauth2_oidc_1.html is only a waypoint: it marks the workflow active and
+  // issues the authorization request straight away, so the next thing to appear
+  // is the IdP's login form.
   await driver.wait(until.elementLocated(By.id("username")), fetchWait,
     "the workflow should have started the authorization request without a " +
         "further click.");
@@ -549,11 +590,11 @@ async function oidcLeg(driver) {
   await driver.findElement(By.id("password")).sendKeys(clientId);
   await click(driver, By.id("kc-login"));
 
-  // ... through debugger2.html, which exchanges the code and comes back.
+  // ... through oauth2_oidc_2.html, which exchanges the code and comes back.
   await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
-    "debugger2.html should have exchanged the code for tokens and returned " +
-        "to step 2.");
-  log.info("[oidc] OK — debugger2.html exchanged the code and returned " +
+    "oauth2_oidc_2.html should have exchanged the code for tokens and " +
+        "returned to step 2.");
+  log.info("[oidc] OK — oauth2_oidc_2.html exchanged the code and returned " +
            "to step 2.");
   log.debug("Leaving oidcLeg().");
 }
@@ -1849,8 +1890,8 @@ async function stepLinksOnEveryPage(driver) {
 // check, while the claim-by-claim comparison is what catches a member edited
 // away from its signed claim. Validate the pristine bytes and every tampered
 // document reports clean. tests/oauth2_metadata_rfc8414.js has those controls
-// for debugger.html's pane; these two panes had none, which is how the mistake
-// got as far as a working build.
+// for oauth2_oidc_1.html's pane; these two panes had none, which is how the
+// mistake got as far as a working build.
 //
 // Both panes are pointed at the mock STS, because it emits signed_metadata on
 // both documents and Keycloak emits it on neither.
@@ -2559,7 +2600,7 @@ async function panesContainTheirContent(driver) {
 // ---------------------------------------------------------------------------
 // Step 4's Credential History pane.
 //
-// The same idea as debugger2.html's Token History, for credentials: every
+// The same idea as oauth2_oidc_2.html's Token History, for credentials: every
 // generation the wallet has held, with the one in hand marked and any of them
 // activatable. What has to be true is that activating a generation really puts
 // THAT credential in hand — with the holder key it is bound to, or the wallet
@@ -2644,7 +2685,7 @@ async function credentialHistoryNavigation(driver, generations) {
   assert.strictEqual(gens.length, 2,
     "the issuance and the kept refresh should both be generations, got " +
         gens.length + ".");
-  // Newest first, the way debugger2's Token History lists token sets.
+  // Newest first, the way oauth2_oidc_2's Token History lists token sets.
   assert.deepStrictEqual(gens.map(function (r) { return r.gen; }), ["2", "1"],
     "the newest generation should be listed first.");
   assert.strictEqual(gens[1].attempt, "Issuance (step 2)",
@@ -3029,7 +3070,7 @@ async function refreshNegatives(driver) {
 
 // ---------------------------------------------------------------------------
 // The Inspect links on step 2 lead to the JWT detail page, which has to show
-// the token step 2 is showing and come BACK to step 2 — not to debugger2.html,
+// the token step 2 is showing and come BACK to step 2 — not to oauth2_oidc_2.html,
 // which is where it goes by default.
 // ---------------------------------------------------------------------------
 async function inspectLinksReturnHere(driver) {
@@ -3085,8 +3126,8 @@ async function inspectLinksReturnHere(driver) {
              " token is decoded there and the link returns to step 2.");
   }
 
-  // Everything else still returns to debugger2.html, and the parameter cannot
-  // be turned into a redirect somewhere else.
+  // Everything else still returns to oauth2_oidc_2.html, and the parameter
+  // cannot be turned into a redirect somewhere else.
   for (const query of ["?type=access",
        "?type=access&from=https://evil.example.com",
        "?type=access&from=nope"]) {
@@ -3094,13 +3135,13 @@ async function inspectLinksReturnHere(driver) {
     await driver.wait(until.elementLocated(By.css("a.return_link")), waitTime);
     await driver.sleep(200);
     var link = (await driver.findElements(By.css("a.return_link")))[0];
-    assert.ok(/\/debugger2\.html\?redirectFromTokenDetail=true$/.test(
+    assert.ok(/\/oauth2_oidc_2\.html\?redirectFromTokenDetail=true$/.test(
               await link.getAttribute("href")),
       "with " + query + " the return link should stay on the default. Got: " +
           (await link.getAttribute("href")));
   }
   log.info("[inspect] OK — an unknown or hostile from= falls back to " +
-           "debugger2.html.");
+           "oauth2_oidc_2.html.");
   log.debug("Leaving inspectLinksReturnHere().");
 }
 
@@ -4109,6 +4150,706 @@ async function authorizationDetailsFlow(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// Asking for a SUBSET of the claims (OID4VCI section 5.1.1).
+//
+// The optional `claims` member belongs to the authorization_details entry, not
+// to the Credential Request — section 8.2 defines no such member — so this
+// section follows the selection from the pane on step 1 through the
+// authorization request, the token response and into the credential itself.
+//
+// What the issuer advertises is read OFF THE WIRE rather than assumed: which
+// claims this mock carries is configuration (/admin/vc), it survives between
+// tests, and a test that hard-coded the shipped ten would fail naming somebody
+// else's setting. The rows unchecked are chosen the same way, from what is
+// there.
+// ---------------------------------------------------------------------------
+async function claimsSelection(driver) {
+  log.debug("Entering claimsSelection().");
+  log.info("=== The claims member of authorization_details ===");
+
+  var meta = (await httpJson(issuerMetadataUrl)).body;
+  var configs = meta.credential_configurations_supported || {};
+  var config = configs[VCI_CONFIG_ID] || {};
+  var advertised = config.claims || [];
+  assert.ok(advertised.length >= 3,
+    "this section needs an issuer that advertises several claims for " +
+    VCI_CONFIG_ID + "; its metadata lists " + advertised.length + ".");
+  var advertisedLabels = advertised.map(function (c) {
+    return c.path.join(".");
+  });
+  // Only top-level claims are dropped, so that what the credential must no
+  // longer carry is a claim of its own rather than one member of a nested
+  // object — the credential-side assertion at the end is then about the
+  // presence of a disclosure rather than about its contents.
+  var droppable = advertised.filter(function (c) {
+    return c.path.length === 1;
+  });
+  assert.ok(droppable.length >= 2,
+    "this section drops two top-level claims; the issuer advertises " +
+    droppable.length + ".");
+  var dropped = droppable.slice(-2).map(function (c) {
+    return c.path.join(".");
+  });
+  var kept = advertisedLabels.filter(function (label) {
+    return dropped.indexOf(label) === -1;
+  });
+
+  await stepOneConfigured(driver, "authorization_details");
+
+  // ---- the pane -----------------------------------------------------------
+  // Deliberately not `log`ged inside: this function is serialised into the
+  // page, where bunyan does not exist.
+  var readRows = "return Array.prototype.slice.call(" +
+    "document.querySelectorAll('#vc_claims_table tbody tr')).map(" +
+    "function (tr) {" +
+    "  var td = tr.querySelectorAll('td');" +
+    "  return { checked: td[0].querySelector('input').checked," +
+    "           id: td[0].querySelector('input').id," +
+    "           label: td[1].textContent.trim()," +
+    "           name: td[2].textContent.trim() };" +
+    "});";
+  var rows = await driver.executeScript(readRows);
+  assert.deepStrictEqual(rows.map(function (r) { return r.label; }),
+                         advertisedLabels,
+    "the pane should offer exactly the claims the metadata advertises, in " +
+    "its order. Got: " +
+    JSON.stringify(rows.map(function (r) { return r.label; })));
+  assert.ok(rows.every(function (r) { return r.checked; }),
+    "every claim should be checked by default. Unchecked: " +
+    rows.filter(function (r) { return !r.checked; })
+        .map(function (r) { return r.label; }).join(", "));
+  assert.ok(rows.some(function (r) { return r.name; }),
+    "the pane should show the display names the issuer publishes for its " +
+    "claims. Got: " + JSON.stringify(rows));
+  log.info("[claims] OK — " + rows.length +
+           " advertised claims, all checked, built from the metadata.");
+
+  // With everything checked the request restricts nothing, and the pane has to
+  // say so: sending every claim is what omitting the member means, and a pane
+  // reporting "10 of 10 requested" would imply a member that is not there.
+  var note = await text(driver, "vc_claims_note");
+  assert.ok(/no claims member|none will be sent/i.test(note),
+    "with everything selected the pane should say no claims member is sent. " +
+    "Got: " + note);
+  var mechanism = await text(driver, "handoff_mechanism_note");
+  assert.ok(mechanism.indexOf("\"claims\"") === -1,
+    "and the authorization_details it is about to send should carry no " +
+    "claims member. Got: " + mechanism);
+
+  // ---- uncheck two --------------------------------------------------------
+  for (var i = 0; i < rows.length; i++) {
+    if (dropped.indexOf(rows[i].label) !== -1) {
+      await click(driver, By.id(rows[i].id));
+    }
+  }
+  var afterNote = await text(driver, "vc_claims_note");
+  kept.forEach(function (label) {
+    assert.ok(afterNote.indexOf(label) !== -1,
+      "the pane should list " + label + " as still requested. Got: " +
+          afterNote);
+  });
+  dropped.forEach(function (label) {
+    assert.ok(afterNote.indexOf(label) === -1,
+      "and should not list the unchecked " + label + ". Got: " + afterNote);
+  });
+  var sending = await text(driver, "handoff_mechanism_note");
+  var described = JSON.parse(/(\[.*\])/.exec(sending)[1]);
+  assert.ok(described[0] && described[0].claims,
+    "unchecking a claim should put a claims member into the " +
+    "authorization_details the pane says it will send. Got: " +
+        JSON.stringify(described));
+  assert.deepStrictEqual(described[0].claims.map(function (c) {
+    return c.path.join(".");
+  }), kept,
+    "the authorization_details shown should carry exactly the claims left " +
+    "checked. Got: " + JSON.stringify(described));
+  log.info("[claims] OK — unchecking " + dropped.join(" and ") +
+           " put a claims member of " + kept.length + " into " +
+           "authorization_details.");
+
+  // The selection is configuration like everything else on this page, so it
+  // has to survive the hand-off it is about to make.
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
+  var reloaded = await driver.executeScript(readRows);
+  assert.deepStrictEqual(reloaded.filter(function (r) { return !r.checked; })
+                                 .map(function (r) { return r.label; }),
+                         dropped,
+    "the selection should survive a reload. Got: " + JSON.stringify(reloaded));
+
+  // ---- the authorization request ------------------------------------------
+  await click(driver, By.id("start_issuance_button"));
+  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+    "the authorization request should reach the identity provider.");
+  var authzUrl = await driver.getCurrentUrl();
+  var sent = JSON.parse(decodeURIComponent(/authorization_details=([^&]*)/.exec(
+      authzUrl)[1]));
+  assert.ok(sent[0] && sent[0].claims,
+    "the authorization request must carry the claims member, or the issuer " +
+    "has been asked for everything. Got: " + JSON.stringify(sent));
+  assert.deepStrictEqual(sent[0].claims.map(function (c) {
+    return c.path.join(".");
+  }), kept,
+    "the authorization request should carry the selection. Got: " +
+        JSON.stringify(sent));
+  log.info("[claims] OK — the authorization request carried " +
+           JSON.stringify(sent[0].claims) + ".");
+
+  await driver.findElement(By.id("username")).sendKeys(MOCK_AS_USER);
+  await driver.findElement(By.id("password")).sendKeys("any-password");
+  await click(driver, By.id("kc-login"));
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
+    "the workflow should come back to step 2 with tokens.");
+  await driver.wait(async function () {
+    return !!(await value(driver, "vc_proof_jwt"));
+  }, fetchWait, "step 2 should assemble the request.");
+
+  // ---- what the token response granted, and what step 2 says --------------
+  var granted = await driver.executeScript(
+    "return JSON.parse(window.localStorage.getItem(" +
+    "'token_authorization_details') || 'null');");
+  assert.ok(granted && granted[0] && granted[0].claims,
+    "the token response should echo the claims it authorized (RFC 9396 " +
+    "section 7). Got: " + JSON.stringify(granted));
+  assert.deepStrictEqual(granted[0].claims.map(function (c) {
+    return c.path.join(".");
+  }), kept, "and they should be the ones asked for. Got: " +
+        JSON.stringify(granted[0].claims));
+
+  var approval = await text(driver, "vc_approval_claims");
+  kept.forEach(function (label) {
+    assert.ok(approval.indexOf(label) !== -1,
+      "the approval pane should name " + label + " as requested. Got: " +
+          approval);
+  });
+  dropped.forEach(function (label) {
+    assert.ok(approval.indexOf(label) === -1,
+      "and must not name the claim that was dropped (" + label + "), which " +
+      "is what the user is being asked to approve. Got: " + approval);
+  });
+  log.info("[claims] OK — step 2 asks approval for " + kept.length +
+           " of " + rows.length + " claims.");
+
+  // ---- the credential ------------------------------------------------------
+  await click(driver, By.id("vc_approve_button"));
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
+    "approving should issue the credential.");
+  await driver.sleep(800);
+  await assertStepThreeIsHappy(driver, "claims selection");
+  var credential = await waitForFilled(driver, "vc_credential_raw",
+      "step 3 should show the credential");
+  var carried = credential.split("~").slice(1).filter(Boolean)
+    .map(function (d) { return jsonFromB64u(d); })
+    .filter(function (a) { return a.length === 3; })
+    .map(function (a) { return a[1]; });
+  dropped.forEach(function (label) {
+    assert.ok(carried.indexOf(label) === -1,
+      "the issued credential must not carry " + label + ", which was not " +
+      "asked for. It carries: " + carried.join(", "));
+  });
+  kept.filter(function (label) { return label.indexOf(".") === -1; })
+      .forEach(function (label) {
+    assert.ok(carried.indexOf(label) !== -1,
+      "the issued credential should carry " + label + ", which was asked " +
+      "for. It carries: " + carried.join(", "));
+  });
+  log.info("[claims] OK — the credential carries " + carried.join(", ") +
+           " and neither of the two claims that were unchecked.");
+
+  // ---- and back to everything ---------------------------------------------
+  // Left as it was found, because the sections after this one issue credentials
+  // of their own and a selection nobody made would quietly narrow them.
+  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await driver.wait(until.elementLocated(By.id("vc_claims_all_button")),
+                    waitTime);
+  await click(driver, By.id("vc_claims_all_button"));
+  var restored = await driver.executeScript(readRows);
+  assert.ok(restored.length && restored.every(function (r) {
+    return r.checked;
+  }), "Select All should re-check every row. Got: " + JSON.stringify(restored));
+  log.debug("Leaving claimsSelection().");
+}
+
+// ---------------------------------------------------------------------------
+// A selection that CANNOT be sent, which is the state this pane shipped in for
+// a day and the first thing a person hit.
+//
+// `scope` is the default way of asking for the credential, and a scope request
+// has nowhere to put a claims member — it belongs to authorization_details
+// (section 5.1.1). So a subset chosen on the default route travels nowhere, the
+// issuer quite correctly returns everything, and the pane MUST say so rather
+// than reporting "9 of 10 will be asked for". The bug was not in the issuer,
+// and the report it produced was "the mock ignores my selection".
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// WHICH WAY OF ASKING THE PAGE OFFERS BEFORE ANYBODY CHOOSES ONE.
+//
+// authorization_details, whenever the chosen configuration advertises claims —
+// because that is the only route the pane below the select can travel on. The
+// section below this one covers what happens when somebody chooses scope
+// anyway; this one covers the choice nobody makes, which is the one that
+// produced two reports of "the issuer ignored my selection".
+//
+// Three things are asserted rather than one, because the cheap version of this
+// check passes on a page that has simply had the default hard-coded the other
+// way round: a STORED choice must still win, and a configuration advertising no
+// claims must still default to scope — otherwise this "fix" would quietly
+// change the plain flow for every issuer that publishes no claims member.
+// ---------------------------------------------------------------------------
+async function authorizationDetailsIsTheDefault(driver) {
+  log.debug("Entering authorizationDetailsIsTheDefault().");
+  log.info("=== the request mechanism nobody chose ===");
+  // Deliberately NOT stepOneConfigured(): that helper sets the mechanism
+  // explicitly, which is the one thing this section must not do.
+  await signOutOfMockAs(driver);
+  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
+  await driver.executeScript("window.localStorage.clear();");
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
+                    waitTime);
+  var atLoad = await driver.executeScript(
+    "return document.getElementById('handoff_request_mechanism').value;");
+  assert.strictEqual(atLoad, "scope",
+    "with no metadata retrieved there is nothing to choose from, so the " +
+    "select should still read scope. Got: " + atLoad);
+
+  await driver.executeScript(
+    "document.getElementById('vci_metadata_endpoint').value = arguments[0];",
+    issuerMetadataUrl);
+  await click(driver, By.id("vci_retrieve_button"));
+  await waitForStatus(driver, "vci_signed_metadata_status",
+    function (s) { return /^Retrieved/.test(s); },
+    "the credential issuer metadata was not retrieved");
+  await driver.wait(async function () {
+    return (await driver.findElements(By.css("#vc_claims_table tbody tr")))
+        .length > 0;
+  }, fetchWait, "the claims pane never filled");
+
+  var defaulted = await driver.executeScript(
+    "return { mechanism: " +
+    "document.getElementById('handoff_request_mechanism').value," +
+    "         note: document.getElementById('handoff_mechanism_note')" +
+    "                 .textContent.trim()," +
+    "         status: document.getElementById('vc_claims_status')" +
+    "                   .textContent.trim() };");
+  assert.strictEqual(defaulted.mechanism, "authorization_details",
+    "a credential advertising claims should default to the route those " +
+    "claims can travel on. Got: " + defaulted.mechanism);
+  assert.ok(/default/.test(defaulted.note),
+    "and the note under the select should say the page chose it rather than " +
+    "the user. Got: " + defaulted.note);
+  assert.ok(!/will NOT be sent/.test(defaulted.status),
+    "so unchecking a claim can no longer produce a selection nothing sends. " +
+    "Got: " + defaulted.status);
+  log.info("[claims] OK — the default is authorization_details, and the " +
+           "note says why.");
+
+  // A choice, once made, is the answer: this fills in a blank and must not
+  // overrule anybody.
+  await driver.executeScript(
+    "document.getElementById('handoff_request_mechanism').value = 'scope';" +
+    "vcissuance1.onRequestMechanismChange();");
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
+  var chosen = await driver.executeScript(
+    "return document.getElementById('handoff_request_mechanism').value;");
+  assert.strictEqual(chosen, "scope",
+    "a mechanism somebody chose must survive a reload — the default fills in " +
+    "a blank, it does not overrule an answer. Got: " + chosen);
+  log.info("[claims] OK — an explicit scope choice still wins.");
+
+  // And an issuer publishing no claims member gets the flow it always had.
+  // Its metadata is edited in storage rather than looked for on another
+  // service: what is under test is this page's rule, and no mock here
+  // advertises a configuration without claims.
+  await driver.executeScript(
+    "window.localStorage.removeItem('sdjwtvc_request_mechanism');" +
+    "var doc = JSON.parse(window.localStorage.getItem('vci_info'));" +
+    "var configs = doc.credential_configurations_supported;" +
+    "Object.keys(configs).forEach(function (k) {" +
+    "  delete configs[k].claims;" +
+    "});" +
+    "window.localStorage.setItem('vci_info', JSON.stringify(doc));");
+  await driver.navigate().refresh();
+  await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
+  var noClaims = await driver.executeScript(
+    "return { mechanism: " +
+    "document.getElementById('handoff_request_mechanism').value," +
+    "         rows: document.querySelectorAll(" +
+    "'#vc_claims_table tbody tr').length," +
+    "         status: document.getElementById('vc_claims_status')" +
+    "                   .textContent.trim() };");
+  assert.strictEqual(noClaims.rows, 0,
+    "this check needs a configuration advertising no claims; the pane still " +
+    "drew " + noClaims.rows + " row(s).");
+  assert.strictEqual(noClaims.mechanism, "scope",
+    "an issuer that publishes no claims member has nothing to choose, so " +
+    "the plain scope flow must be what it always was. Got: " +
+        noClaims.mechanism);
+  assert.ok(/publishes no claims member/.test(noClaims.status),
+    "and the pane should say why it is empty. Got: " + noClaims.status);
+  log.info("[claims] OK — no advertised claims, no change: still scope.");
+  log.debug("Leaving authorizationDetailsIsTheDefault().");
+}
+
+async function claimsCannotTravelOnAScope(driver) {
+  log.debug("Entering claimsCannotTravelOnAScope().");
+  log.info("=== a claims selection the scope route cannot carry ===");
+  await stepOneConfigured(driver, "scope");
+  var rows = await driver.executeScript(
+    "return Array.prototype.slice.call(" +
+    "document.querySelectorAll('#vc_claims_table tbody tr')).map(" +
+    "function (tr) {" +
+    "  var input = tr.querySelector('input');" +
+    "  return { id: input.id, label: tr.querySelectorAll('td')[1]" +
+    "    .textContent.trim() };" +
+    "});");
+  assert.ok(rows.length >= 2, "the pane should have rows to unselect. Got " +
+            rows.length + ".");
+  var dropped = rows[rows.length - 1].label;
+  await click(driver, By.id(rows[rows.length - 1].id));
+
+  var state = await driver.executeScript(
+    "return { status: " +
+    "document.getElementById('vc_claims_status').textContent.trim()," +
+    "         note: " +
+    "document.getElementById('vc_claims_note').textContent.trim()," +
+    "         fixShown: document.getElementById(" +
+    "'vc_claims_use_details_button').style.display !== 'none' };");
+  assert.ok(/will NOT be sent/.test(state.status),
+    "the claims pane itself must say the selection is not being sent — a " +
+    "sentence in the hand-off pane's note is not where anybody reads it. " +
+    "Got: " + state.status);
+  assert.ok(/scope/.test(state.status) &&
+            /authorization_details/.test(state.status),
+    "and name both halves of the reason. Got: " + state.status);
+  assert.ok(!/will be asked for/.test(state.note),
+    "and the note must not claim the claims will be asked for. Got: " +
+        state.note);
+  assert.ok(state.fixShown,
+    "the pane should offer the one-click switch to authorization_details.");
+  log.info("[claims] OK — a selection on the scope route is reported as not " +
+           "sent, with the fix beside it.");
+
+  // Nothing is sent, and the pane is right about that.
+  await click(driver, By.id("start_issuance_button"));
+  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+    "the authorization request should still reach the identity provider.");
+  var scopeUrl = await driver.getCurrentUrl();
+  assert.ok(scopeUrl.indexOf("authorization_details=") === -1,
+    "a scope request carries no authorization_details, which is exactly why " +
+    "the pane has to say so. Got: " + scopeUrl);
+
+  // And the fix works: same selection, one click, and it travels. Back to the
+  // page by URL rather than by history — the hand-off is a redirect chain, and
+  // going back through it re-issues the authorization request. Loading it
+  // afresh also proves the warning is not a one-off from the click that caused
+  // it: the selection and the mechanism both come out of storage.
+  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await driver.wait(until.elementLocated(By.id("vc_claims_use_details_button")),
+                    fetchWait);
+  await driver.wait(async function () {
+    return /will NOT be sent/.test(await text(driver, "vc_claims_status"));
+  }, fetchWait, "the warning should still be there after a reload.");
+  await click(driver, By.id("vc_claims_use_details_button"));
+  var fixed = await driver.executeScript(
+    "return { mechanism: " +
+    "document.getElementById('handoff_request_mechanism').value," +
+    "         fixShown: document.getElementById(" +
+    "'vc_claims_use_details_button').style.display !== 'none' };");
+  assert.strictEqual(fixed.mechanism, "authorization_details",
+    "the button should switch how the credential is asked for. Got: " +
+        fixed.mechanism);
+  assert.ok(!fixed.fixShown,
+    "and take itself out of the way once there is nothing to fix.");
+  await click(driver, By.id("start_issuance_button"));
+  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+    "the authorization request should reach the identity provider again.");
+  var fixedUrl = await driver.getCurrentUrl();
+  var sent = JSON.parse(decodeURIComponent(/authorization_details=([^&]*)/
+      .exec(fixedUrl)[1]));
+  assert.ok(sent[0].claims && sent[0].claims.every(function (c) {
+    return c.path.join(".") !== dropped;
+  }), "and it should now carry the same selection. Got: " +
+      JSON.stringify(sent));
+  log.info("[claims] OK — one click on the pane's own button puts the " +
+           "selection on the wire.");
+  log.debug("Leaving claimsCannotTravelOnAScope().");
+}
+
+// The issuer's cross-device offer screen, read the way a second device would:
+// the offer itself and the Transaction Code the issuer displays, which is
+// deliberately not in the offer.
+async function fetchCrossDeviceOffer() {
+  log.debug("Entering fetchCrossDeviceOffer().");
+  var page = await (await fetch(issuerBase +
+      "/issuer/offer?mode=cross-device")).text();
+  var offer = JSON.parse(decodeURIComponent(
+      /credential_offer=([^"<\s]*)/.exec(page)[1]));
+  var uri = /id="offer_uri"[^>]*>([^<]*)</.exec(page)[1].trim();
+  var txCode = /id="tx_code"[^>]*>([^<]*)</.exec(page)[1].trim();
+  log.debug("Leaving fetchCrossDeviceOffer(). tx_code=" + txCode);
+  return { offer: offer, uri: uri, txCode: txCode,
+           code: offer.grants[PRE_AUTHORIZED_GRANT]["pre-authorized_code"] };
+}
+
+// ---------------------------------------------------------------------------
+// The selection on the PRE-AUTHORIZED code flow, through the pages.
+//
+// H.2 has no authorization request, so step 2's Token Request is the only place
+// the wallet can ask — and it is the page rather than the wire that decides to
+// put an authorization_details parameter there at all. That decision has a
+// consequence worth seeing: a token response granting credential_identifiers
+// forbids credential_configuration_id in the Credential Request (section 8.2),
+// so asking for fewer claims also changes how the credential is then named.
+// ---------------------------------------------------------------------------
+async function preAuthorizedClaimsThroughThePages(driver) {
+  log.debug("Entering preAuthorizedClaimsThroughThePages().");
+  log.info("=== claims on a pre-authorized offer, through the pages ===");
+  var offered = await fetchCrossDeviceOffer();
+
+  await stepOneConfigured(driver, "scope");
+  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
+  await driver.executeScript(
+    "document.getElementById('scan_offer_input').value = arguments[0];",
+        offered.uri);
+  await click(driver, By.id("scan_offer_button"));
+  await driver.wait(async function () {
+    return (await value(driver, "vci_credential_endpoint")) === issuerBase +
+            "/oid4vci/credential";
+  }, fetchWait, "taking the offer should discover the issuer it names.");
+  await driver.sleep(400);
+
+  // The pane is rebuilt from the metadata the offer led to, so it has rows
+  // without anybody retrieving anything by hand.
+  var rows = await driver.executeScript(
+    "return Array.prototype.slice.call(" +
+    "document.querySelectorAll('#vc_claims_table tbody tr')).map(" +
+    "function (tr) {" +
+    "  var td = tr.querySelectorAll('td');" +
+    "  return { id: td[0].querySelector('input').id," +
+    "           checked: td[0].querySelector('input').checked," +
+    "           label: td[1].textContent.trim() };" +
+    "});");
+  assert.ok(rows.length >= 2,
+    "taking an offer should leave the claims pane built from the offering " +
+    "issuer's metadata. Got " + rows.length + " row(s).");
+  assert.ok(rows.every(function (r) { return r.checked; }),
+    "and every claim checked, since this wallet has chosen nothing yet.");
+  var dropped = rows[rows.length - 1].label;
+  await click(driver, By.id(rows[rows.length - 1].id));
+
+  await click(driver, By.id("start_issuance_button"));
+  await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
+    "a pre-authorized offer goes straight to the Token Request.");
+  await driver.wait(async function () {
+    return !!(await value(driver, "vc_token_request"));
+  }, fetchWait, "step 2 should assemble the Token Request.");
+  var assembled = await value(driver, "vc_token_request");
+  assert.ok(assembled.indexOf("authorization_details=") !== -1,
+    "with a claim unchecked the Token Request must carry " +
+    "authorization_details — section 6.1.1 is the only place this flow can " +
+    "ask. Got: " + assembled.slice(0, 400));
+  var carriedDetails = JSON.parse(decodeURIComponent(
+      /authorization_details=([^&\s]*)/.exec(assembled)[1]));
+  assert.ok(carriedDetails[0].claims,
+    "and a claims member. Got: " + JSON.stringify(carriedDetails));
+  assert.ok(carriedDetails[0].claims.every(function (c) {
+    return c.path.join(".") !== dropped;
+  }), "which must not name the claim that was unchecked (" + dropped +
+      "). Got: " + JSON.stringify(carriedDetails[0].claims));
+  log.info("[claims] OK — step 2's Token Request carries " +
+           carriedDetails[0].claims.length + " claims and not " + dropped +
+           ".");
+
+  await driver.executeScript(
+    "document.getElementById('vc_tx_code').value = arguments[0]; " +
+        "vcissuance2.onTxCodeChange();", offered.txCode);
+  await click(driver, By.id("vc_token_request_button"));
+  await driver.wait(async function () {
+    return !!(await value(driver, "vc_access_token"));
+  }, fetchWait, "the Transaction Code should redeem the pre-authorized code.");
+  var granted = await driver.executeScript(
+    "return JSON.parse(window.localStorage.getItem(" +
+    "'token_authorization_details') || 'null');");
+  assert.ok(granted && granted[0] && granted[0].credential_identifiers,
+    "asking with authorization_details should be answered with " +
+    "credential_identifiers. Got: " + JSON.stringify(granted));
+  var body = JSON.parse(await text(driver, "vc_request_body"));
+  assert.strictEqual(body.credential_identifier,
+                     granted[0].credential_identifiers[0],
+    "so the Credential Request must name the granted identifier rather than " +
+    "the configuration id (section 8.2). Got: " + JSON.stringify(body));
+  assert.ok(!("credential_configuration_id" in body),
+    "and must not carry both. Got: " + JSON.stringify(body));
+
+  await click(driver, By.id("vc_approve_button"));
+  await driver.wait(until.urlContains("vc-issuance-3.html"), fetchWait,
+    "approving should issue the offered credential.");
+  await driver.sleep(800);
+  await assertStepThreeIsHappy(driver, "H.2 with a claims selection");
+  var credential = await waitForFilled(driver, "vc_credential_raw",
+      "step 3 should show the credential");
+  // Keyed by claim name AND kept with its value, because the claim dropped
+  // here may be a NESTED one: an SD-JWT VC discloses `address` as a single
+  // Disclosure whose value is an object, so "address.country is not in the
+  // list of disclosed claim names" is true however much country is in there.
+  // That check passed against a credential that still carried it.
+  var carried = {};
+  credential.split("~").slice(1).filter(Boolean)
+    .map(function (d) { return jsonFromB64u(d); })
+    .filter(function (a) { return a.length === 3; })
+    .forEach(function (a) { carried[a[1]] = a[2]; });
+  var parts = dropped.split(".");
+  if (parts.length === 1) {
+    assert.ok(!(parts[0] in carried),
+      "the credential from a pre-authorized offer must not carry " + dropped +
+      ", which was unchecked before it was requested. It carries: " +
+          Object.keys(carried).join(", "));
+  } else {
+    var parent = carried[parts[0]];
+    assert.ok(!parent || !(parts[1] in parent),
+      "the credential must not carry " + dropped + ", which was unchecked " +
+      "before it was requested. Its " + parts[0] + " is: " +
+          JSON.stringify(parent));
+  }
+  log.info("[claims] OK — the offered credential carries " +
+           Object.keys(carried).join(", ") + " and not " + dropped + ".");
+  log.debug("Leaving preAuthorizedClaimsThroughThePages().");
+}
+
+// ---------------------------------------------------------------------------
+// The same member on the PRE-AUTHORIZED code flow, which has no authorization
+// request to carry it: section 6.1.1 puts authorization_details in the Token
+// Request, and that is the only route H.2 / H.3 have.
+//
+// Driven over HTTP rather than through the browser because what is under test
+// is the wire — the offer, the token request that names the claims, and the
+// credential that comes back — and the issuer's refusals go through the same
+// parser the authorization endpoint uses, so exercising them here covers both.
+// ---------------------------------------------------------------------------
+async function preAuthorizedClaimsRequest() {
+  log.debug("Entering preAuthorizedClaimsRequest().");
+  log.info("=== claims on the pre-authorized code flow ===");
+  var meta = (await httpJson(issuerMetadataUrl)).body;
+  var advertised = ((meta.credential_configurations_supported ||
+      {})[VCI_CONFIG_ID] || {}).claims || [];
+  var top = advertised.filter(function (c) { return c.path.length === 1; });
+  assert.ok(top.length >= 2,
+    "this section asks for one of several top-level claims; the issuer " +
+    "advertises " + top.length + ".");
+  var wanted = top[0].path;
+
+  var offered = await fetchCrossDeviceOffer();
+  assert.ok(offered.code,
+    "the cross-device offer should carry a pre-authorized code. Got: " +
+        JSON.stringify(offered.offer));
+
+  var form = function (params) {
+    return Object.keys(params).map(function (k) {
+      return encodeURIComponent(k) + "=" + encodeURIComponent(params[k]);
+    }).join("&");
+  };
+  var details = [{ type: "openid_credential",
+                   credential_configuration_id: VCI_CONFIG_ID,
+                   claims: [{ path: wanted }] }];
+  var token = await httpJson(meta.authorization_servers
+    ? meta.authorization_servers[0] + "/oauth2/token"
+    : issuerBase + "/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form({ grant_type: PRE_AUTHORIZED_GRANT,
+                 "pre-authorized_code": offered.code,
+                 tx_code: offered.txCode, client_id: clientId,
+                 authorization_details: JSON.stringify(details) })
+  });
+  assert.ok(token.ok && token.body.access_token,
+    "the token endpoint should accept authorization_details on the " +
+    "pre-authorized grant (OID4VCI section 6.1.1). Got HTTP " + token.status +
+    " " + token.raw.slice(0, 200));
+  assert.ok(token.body.authorization_details &&
+            token.body.authorization_details[0].credential_identifiers,
+    "and grant credential_identifiers for what it authorized. Got: " +
+        JSON.stringify(token.body.authorization_details));
+  assert.deepStrictEqual(token.body.authorization_details[0].claims,
+                         [{ path: wanted }],
+    "echoing the claims it authorized. Got: " +
+        JSON.stringify(token.body.authorization_details[0]));
+
+  var pair = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  var jwk = pair.publicKey.export({ format: "jwk" });
+  var nonce = (await httpJson(meta.nonce_endpoint,
+      { method: "POST" })).body.c_nonce;
+  var head = b64u(JSON.stringify({ typ: "openid4vci-proof+jwt", alg: "ES256",
+      jwk: jwk }));
+  var body = b64u(JSON.stringify({ iss: clientId, aud: meta.credential_issuer,
+      iat: Math.floor(Date.now() / 1000), nonce: nonce }));
+  var proof = head + "." + body + "." +
+    b64u(crypto.sign("sha256", Buffer.from(head + "." + body),
+                     { key: pair.privateKey, dsaEncoding: "ieee-p1363" }));
+  var credential = await httpJson(meta.credential_endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json",
+               "Authorization": "Bearer " + token.body.access_token },
+    body: JSON.stringify({
+      credential_identifier:
+          token.body.authorization_details[0].credential_identifiers[0],
+      proofs: { jwt: [proof] } })
+  });
+  assert.ok(credential.ok && credential.body.credentials,
+    "the credential should be issued. Got HTTP " + credential.status + " " +
+        credential.raw.slice(0, 200));
+  var carried = credential.body.credentials[0].credential.split("~").slice(1)
+    .filter(Boolean).map(function (d) { return jsonFromB64u(d); })
+    .filter(function (a) { return a.length === 3; })
+    .map(function (a) { return a[1]; });
+  assert.deepStrictEqual(carried, [wanted[0]],
+    "and it should carry only the claim the Token Request asked for. It " +
+    "carries: " + carried.join(", "));
+  log.info("[claims] OK — a pre-authorized Token Request asking for " +
+           wanted.join(".") + " produced a credential carrying exactly it.");
+
+  // The refusals. Same parser as the authorization endpoint's, which is why
+  // they are checked here where no browser session is needed.
+  var refuse = async function (claims, expected, why) {
+    var another = await fetchCrossDeviceOffer();
+    var refused = await httpJson(issuerBase + "/oauth2/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form({ grant_type: PRE_AUTHORIZED_GRANT,
+                   "pre-authorized_code": another.code,
+                   tx_code: another.txCode,
+                   client_id: clientId,
+                   authorization_details: JSON.stringify([{
+                     type: "openid_credential",
+                     credential_configuration_id: VCI_CONFIG_ID,
+                     claims: claims }]) })
+    });
+    assert.strictEqual(refused.status, 400, why + " should be refused. Got " +
+                       "HTTP " + refused.status + " " + refused.raw.slice(0,
+                       200));
+    assert.strictEqual(refused.body.error, "invalid_authorization_details",
+      "with invalid_authorization_details. Got: " + JSON.stringify(
+          refused.body));
+    assert.ok(expected.test(refused.body.error_description || ""),
+      "and a description saying why. Got: " + refused.body.error_description);
+  };
+  await refuse([{ path: ["not_a_claim_this_issuer_has"] }],
+               /does not advertise/,
+               "a claim path the issuer does not advertise");
+  await refuse([{ path: wanted }, { path: wanted }], /described twice/,
+               "the same claim described twice (Appendix A.3)");
+  await refuse([{ path: [] }], /non-empty claims path pointer/,
+               "an empty claims path pointer");
+  log.info("[claims] OK — an unadvertised path, a repeated claim and an " +
+           "empty path are each refused with invalid_authorization_details.");
+  log.debug("Leaving preAuthorizedClaimsRequest().");
+}
+
+// ---------------------------------------------------------------------------
 // The Notification Endpoint (OID4VCI section 11).
 //
 // The issuer returns a notification_id and the wallet may report what became of
@@ -4738,14 +5479,14 @@ async function issuerNegatives() {
 }
 
 // ---------------------------------------------------------------------------
-// The query parameter is what puts debugger.html into this workflow. With no
-// configuration to run on it must SAY so rather than silently doing nothing —
-// which is also the only way to observe the parameter's effect without racing
+// The query parameter is what puts oauth2_oidc_1.html into this workflow. With
+// no configuration to run on it must SAY so rather than silently doing nothing
+// — which is also the only way to observe the parameter's effect without racing
 // the redirect it normally causes.
 async function handoffParameterCheck(driver) {
   log.debug("Entering handoffParameterCheck().");
   log.info("=== The ?sdjwtvc=1 hand-off parameter ===");
-  await driver.get(baseUrl + "/debugger.html");
+  await driver.get(baseUrl + "/oauth2_oidc_1.html");
   await driver.wait(until.elementLocated(By.id("oidc_discovery_endpoint")),
                     waitTime);
   // Empty the two values the hand-off needs, but leave the page "initialized"
@@ -4757,9 +5498,9 @@ async function handoffParameterCheck(driver) {
     "localStorage.setItem('debugger_initialized', true);" +
     "localStorage.setItem('authorization_endpoint', '');" +
     "localStorage.setItem('client_id', '');");
-  await driver.get(baseUrl + "/debugger.html?sdjwtvc=1");
+  await driver.get(baseUrl + "/oauth2_oidc_1.html?sdjwtvc=1");
   await driver.wait(until.elementLocated(By.id("sdjwtvc_banner")), waitTime,
-    "debugger.html should say when it is being driven by the SD-JWT VC " +
+    "oauth2_oidc_1.html should say when it is being driven by the SD-JWT VC " +
         "workflow.");
   var banner = await waitForStatus(driver, "sdjwtvc_banner",
     function (s) { return /SD-JWT VC issuance/.test(s); },
@@ -4767,7 +5508,7 @@ async function handoffParameterCheck(driver) {
   assert.ok(/not configured|not started/.test(banner),
     "with nothing configured the banner should say the flow was not " +
         "started. Got: " + banner);
-  assert.ok((await driver.getCurrentUrl()).indexOf("debugger.html") !== -1,
+  assert.ok((await driver.getCurrentUrl()).indexOf("oauth2_oidc_1.html") !== -1,
     "an unconfigured hand-off must not redirect anywhere.");
   var flag = await driver.executeScript(
       "return localStorage.getItem('sdjwtvc_flow');");
@@ -4775,12 +5516,13 @@ async function handoffParameterCheck(driver) {
                      "the parameter should mark the workflow active.");
 
   // And with no parameter, none of it happens.
-  await driver.get(baseUrl + "/debugger.html");
+  await driver.get(baseUrl + "/oauth2_oidc_1.html");
   await driver.sleep(700);
   var banners = await driver.executeScript(
       "return document.querySelectorAll('.vc-handoff-banner').length;");
   assert.strictEqual(banners, 0,
-      "without the parameter debugger.html must behave exactly as before.");
+      "without the parameter oauth2_oidc_1.html must behave exactly as " +
+          "before.");
   await driver.executeScript("window.localStorage.clear();");
   log.info("[handoff] OK — the parameter drives the page, and its absence " +
            "changes nothing.");
@@ -4850,6 +5592,13 @@ async function test() {
     // Runs on the step 3 the previous section left behind: the notification is
     // about that credential.
     await notificationFlow(driver);
+    // After the notification section, not before it: that one reads the step 3
+    // the previous section left on screen, and this one navigates away.
+    await authorizationDetailsIsTheDefault(driver);
+    await claimsSelection(driver);
+    await claimsCannotTravelOnAScope(driver);
+    await preAuthorizedClaimsThroughThePages(driver);
+    await preAuthorizedClaimsRequest();
     await batchAndEncryptedIssuance(driver);
     // The other direction of section 10. After the batch section because both
     // start from stepOneConfigured(), and this one leaves step 3 showing a

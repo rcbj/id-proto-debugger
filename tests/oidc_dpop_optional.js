@@ -1,8 +1,8 @@
 // File: oidc_dpop_optional.js
 //
 // DPoP (RFC 9449) is OPTIONAL on the OAuth2 / OIDC workflow, and this is what
-// says so. Three states, driven through debugger.html / debugger2.html against
-// the mock STS:
+// says so. Three states, driven through oauth2_oidc_1.html / oauth2_oidc_2.html
+// against the mock STS:
 //
 //   1. OFF, which is the default — no dpop_jkt on the authorization request, no
 //      DPoP header on the Token Request, and an ordinary Bearer token back.
@@ -112,7 +112,7 @@ async function storage(driver, key) {
 
 async function openDebugger2(driver) {
   log.debug("Entering openDebugger2().");
-  await driver.get(baseUrl + "/debugger2.html");
+  await driver.get(baseUrl + "/oauth2_oidc_2.html");
   await driver.wait(until.elementLocated(By.id("dpop_enabled")), waitTime * 3);
   log.debug("Leaving openDebugger2().");
 }
@@ -146,7 +146,7 @@ async function runAuthorizationCodeFlow(driver, { expectJkt }) {
   log.debug("Entering runAuthorizationCodeFlow().");
   log.info("Entering runAuthorizationCodeFlow(). expectJkt=" + (expectJkt ||
            "(none)"));
-  await driver.get(baseUrl + "/debugger.html");
+  await driver.get(baseUrl + "/oauth2_oidc_1.html");
   await driver.wait(until.elementLocated(By.id("authorization_grant_type")),
                     waitTime * 3);
   await new Select(await driver.findElement(By.id("authorization_grant_type")))
@@ -170,7 +170,7 @@ async function runAuthorizationCodeFlow(driver, { expectJkt }) {
   await driver.findElement(By.id("redirect_uri")).sendKeys(baseUrl +
                            "/callback");
   await driver.executeScript(
-      "debug.recalculateAuthorizationRequestDescription();");
+      "oauth2_oidc_1.recalculateAuthorizationRequestDescription();");
 
   // What the authorization request is about to carry. RFC 9449 section 10:
   // dpop_jkt is what binds the CODE, and it can only travel here.
@@ -201,11 +201,12 @@ async function runAuthorizationCodeFlow(driver, { expectJkt }) {
   // decides.
   await driver.wait(async function () {
     if ((await driver.getCurrentUrl())
-        .indexOf("/debugger2.html") >= 0) return "returned";
+        .indexOf("/oauth2_oidc_2.html") >= 0) return "returned";
     return (await driver.findElements(By.id("username"))).length ?
             "login" : false;
   }, waitTime * 4,
-      "Neither the OP's login screen nor a return to debugger2.html arrived.");
+      "Neither the OP's login screen nor a return to oauth2_oidc_2.html " +
+          "arrived.");
 
   if ((await driver.findElements(By.id("username"))).length) {
     await driver.findElement(By.id("username")).clear();
@@ -216,7 +217,7 @@ async function runAuthorizationCodeFlow(driver, { expectJkt }) {
     }
     await driver.findElement(By.id("kc-login")).click();
   }
-  await driver.wait(until.urlContains("/debugger2.html"), waitTime * 5);
+  await driver.wait(until.urlContains("/oauth2_oidc_2.html"), waitTime * 5);
 
   // Browser-direct, because the api does not forward DPoP proofs — and because
   // that keeps this test off the api service entirely.
@@ -289,9 +290,9 @@ async function test() {
                       (stsBase + "/.well-known/openid-configuration");
 
     await driver.manage().deleteAllCookies();
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     await driver.executeScript("window.localStorage.clear();");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     await populateMetadata(driver, discovery);
 
     // --- 1. the default -----------------------------------------------------

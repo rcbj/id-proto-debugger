@@ -15,7 +15,7 @@ and in GitHub Actions.
    - resolves the `<!--#include ...-->` header/footer partials that `server.js`
      normally handles at request time,
    - writes a `dist/callback/` shim so the OAuth2 `redirect_uri` (`/callback`)
-     forwards to `debugger2.html` with no server.
+     forwards to `oauth2_oidc_2.html` with no server.
 2. `aws s3 sync dist s3://www.idptools.com --delete`
 3. `aws cloudfront create-invalidation --distribution-id E1C72FI2JLYGWW --paths /*`
 

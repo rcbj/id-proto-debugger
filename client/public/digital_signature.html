@@ -22,7 +22,7 @@
 <script type="text/javascript" src="/js/digital_signature.js">
 </script>
 
-<p class="ds-return"><a id="return_link" href="/debugger.html">&larr; Return to debugger</a></p>
+<p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a></p>
 
 <p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. Pane 1 uses the post-quantum <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+) scheme; pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 4 uses the post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium); pane 5 uses <strong>BBS</strong> over BLS12-381 (both ciphersuites), which signs a <em>list</em> of messages and can derive an unlinkable proof over any subset of them. The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those five panes are <strong>asymmetric</strong> digital signatures; the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
 

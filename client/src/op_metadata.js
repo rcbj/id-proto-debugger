@@ -3,9 +3,9 @@
 // ---------------------------------------------------------------------------
 // OpenID Provider Metadata — OpenID Connect Discovery 1.0 section 3.
 //
-// Shared by the Configuration Parameters pane on BOTH debugger.html and
-// debugger2.html (same element ids, same localStorage keys, same origin), so
-// the two panes cannot drift apart.
+// Shared by the Configuration Parameters pane on BOTH oauth2_oidc_1.html and
+// oauth2_oidc_2.html (same element ids, same localStorage keys, same origin),
+// so the two panes cannot drift apart.
 //
 // Every field the spec defines is shown in the Configuration Parameters pane so
 // a discovery document can be inspected (and overridden) in full. The five that
@@ -238,7 +238,7 @@ function clearOpMetadataStorage() {
 //
 // The state is derived from the stored discovery document rather than stored
 // separately, so it survives a reload and disappears when the document is
-// cleared. Both debugger.html and debugger2.html apply it on load.
+// cleared. Both oauth2_oidc_1.html and oauth2_oidc_2.html apply it on load.
 // ---------------------------------------------------------------------------
 var DISCOVERY_INFO_KEY = "discovery_info";
 var NOT_DEFINED_NOTE = "-->not defined<--";

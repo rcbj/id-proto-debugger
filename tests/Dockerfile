@@ -437,6 +437,15 @@ COPY tests/schemas ./schemas
 # schedules for it fails in the image with MODULE_NOT_FOUND in 0.0s while
 # passing on every host run, which is the failure jwk_pem_encoding.js watches
 # for and is how it was caught.
+# The mock STS's management API at /admin-api. It needs nothing of the mock's
+# own in this image — it drives the running service over HTTP, exactly as
+# tests/sts_metadata.js does — but it is COPYd on a line of its own so that the
+# reason is somewhere: its basename is also a MODULE name in the mock
+# (sts/admin_api.js), and the sts/ files above land in ./sts/ rather than flat
+# precisely so that a pair like that cannot overwrite each other. Adding it to
+# the flat list without noticing would be the collision testsImageHasNoColliding
+# Filenames() exists to catch.
+COPY tests/admin_api.js ./
 COPY tests/browser_tests_headless.js ./
 COPY tests/run-report.js ./
 # Shared test helpers (populateMetadata, ...). The test scripts require it as

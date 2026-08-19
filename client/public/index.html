@@ -25,7 +25,7 @@
   <p class="landing-sub">Which identity protocol do you want to debug?</p>
 
   <div class="landing-choices">
-    <a class="landing-card" href="/debugger.html">
+    <a class="landing-card" href="/oauth2_oidc_1.html">
       <span class="landing-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="8" cy="8" r="5"/>
@@ -94,12 +94,12 @@
       <span class="landing-card-desc">Present an SD-JWT VC over OID4VP: read the verifier&rsquo;s DCQL query, choose which Disclosures to send, sign the Key Binding JWT over its nonce, and read the verdict.</span>
     </a>
 
-    <!-- Dynamic Client Registration lives on debugger.html, beside the OAuth2 /
+    <!-- Dynamic Client Registration lives on oauth2_oidc_1.html, beside the OAuth2 /
          OIDC workflow it registers a client for. The fragment is the DCR pane's
          own fieldset, so the card opens that page AT the pane rather than at the
          top — and it keeps this card's href distinct from the OAuth2 card's,
          which the navigation test's locators depend on. -->
-    <a class="landing-card" href="/debugger.html#dcr_fieldset">
+    <a class="landing-card" href="/oauth2_oidc_1.html#dcr_fieldset">
       <span class="landing-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M14.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6.5"/>
@@ -116,11 +116,11 @@
     </a>
 
     <!-- Token Exchange is the third protocol that lives on the OAuth2 / OIDC
-         pages. Its pane is on debugger2.html, because an exchange needs a subject
-         token to exchange — so the card points at debugger.html, where you get
+         pages. Its pane is on oauth2_oidc_2.html, because an exchange needs a subject
+         token to exchange — so the card points at oauth2_oidc_1.html, where you get
          one, and the description says where the pane is. No fragment: there is
-         nothing about token exchange on debugger.html to scroll to. -->
-    <a class="landing-card" href="/debugger.html">
+         nothing about token exchange on oauth2_oidc_1.html to scroll to. -->
+    <a class="landing-card" href="/oauth2_oidc_1.html">
       <span class="landing-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 8h13"/>

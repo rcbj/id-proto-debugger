@@ -241,7 +241,7 @@ function actionCell(entry, index, kind, heldIn) {
 
 // ---------------------------------------------------------------------------
 // The pane. Numbered rows, newest at the top, a scrolling body under a sticky
-// header, and a Clear button — debugger2.html's Operation History shape, which
+// header, and a Clear button — oauth2_oidc_2.html's Operation History shape, which
 // the Operations History pane below this one also follows.
 // ---------------------------------------------------------------------------
 function render() {

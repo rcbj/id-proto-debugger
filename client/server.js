@@ -126,7 +126,7 @@ app.get('/callback', (req, res) => {
   log.info('host: ' + req.headers.host);
   log.info('queryString: ' + queryString);
   res.writeHead(302, {
-    'Location': appconfig.uiUrl + '/debugger2.html' + '?' + queryString
+    'Location': appconfig.uiUrl + '/oauth2_oidc_2.html' + '?' + queryString
   });
   res.end();
 });

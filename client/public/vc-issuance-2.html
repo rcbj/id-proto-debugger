@@ -32,7 +32,7 @@
 
 
 <p class="vc-intro">The user has authenticated through the OIDC Authorization Code flow and
-<a href="/debugger2.html">debugger2.html</a> has exchanged the code for tokens. What follows is the OID4VCI
+<a href="/oauth2_oidc_2.html">oauth2_oidc_2.html</a> has exchanged the code for tokens. What follows is the OID4VCI
 credential request: the wallet proves possession of a key it just generated, the user approves the issuance, and the
 access token is presented to the issuer's <strong>Credential Endpoint</strong>.</p>
 
@@ -110,7 +110,7 @@ function vcSetAllPanes(expand) {
 <div class="step0 dbg-pane" id="pane_tokens">
   <legend class="dbg-legend" id="tokens_expand_button" onclick="return vcissuance2.togglePane('tokens_fieldset');">Tokens from the OIDC Authorization Code Flow</legend>
   <fieldset name="tokens_fieldset" id="tokens_fieldset" style="display: block;">
-    <p class="vc-note">The token set <a href="/debugger2.html">debugger2.html</a> obtained from the authorization
+    <p class="vc-note">The token set <a href="/oauth2_oidc_2.html">oauth2_oidc_2.html</a> obtained from the authorization
     server. The <strong>access token</strong> is what authorizes the credential request below; the ID token says who
     was authenticated.</p>
     <div class="vc-status" id="tokens_status">&nbsp;</div>
@@ -181,13 +181,13 @@ function vcSetAllPanes(expand) {
         </tr>
         <tr>
           <td>
-            <div class="tooltip"><label>Credential key binding</label><span class="tooltiptext">Which key the CREDENTIAL is bound to, which is a different question from whether the TOKEN is bound. Proof of Possession generates a holder key of its own and proves it with an openid4vci-proof+jwt. Holder of Key reuses the DPoP key, so one key is both the token's cnf.jkt and the credential's cnf.jwk.</span></div>
+            <div class="tooltip"><label>Credential key binding</label><span class="tooltiptext">Which key the CREDENTIAL is bound to, which is a different question from whether the TOKEN is bound. Either way the Credential Request carries an openid4vci-proof+jwt key proof — this only decides whose key signs it. Holder of Key reuses the DPoP key, so one key is both the token's cnf.jkt and the credential's cnf.jwk. Unchecked, the credential is bound to a holder key of its own, with a lifetime independent of the token's.</span></div>
           </td>
           <td>
             <input type="checkbox" id="vc_dpop_holder_of_key" name="vc_dpop_holder_of_key"
                    onchange="return vcissuance2.onBindingModeChange();" />
             <label for="vc_dpop_holder_of_key">Holder of Key &mdash; bind the credential to the DPoP key
-            (unchecked: Proof of Possession, a holder key of its own)</label>
+            (unchecked: a holder key of its own)</label>
             <span class="vc-note" id="vc_dpop_binding_note">&nbsp;</span>
           </td>
         </tr>
@@ -242,7 +242,7 @@ function vcSetAllPanes(expand) {
   <legend class="dbg-legend" id="request_expand_button" onclick="return vcissuance2.togglePane('request_fieldset');">OID4VCI Credential Request</legend>
   <fieldset name="request_fieldset" id="request_fieldset" style="display: block;">
     <p class="vc-note">Everything the request is built from. The <strong>holder key pair</strong> is generated in this
-    browser; only its public half leaves, inside the proof of possession, and the issuer copies it into the
+    browser; only its public half leaves, inside the key proof, and the issuer copies it into the
     credential's <code>cnf</code> claim so a verifier can later demand proof that the presenter holds the private
     half.</p>
     <table class="vc-token-table">
@@ -252,7 +252,7 @@ function vcSetAllPanes(expand) {
           <td><code id="vc_credential_endpoint">&mdash;</code></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label>Credential Issuer</label><span class="tooltiptext">credential_issuer — also the audience of the proof of possession.</span></div></td>
+          <td><div class="tooltip"><label>Credential Issuer</label><span class="tooltiptext">credential_issuer — also the audience of the key proof.</span></div></td>
           <td><code id="vc_credential_issuer">&mdash;</code></td>
         </tr>
         <tr>
@@ -283,11 +283,11 @@ function vcSetAllPanes(expand) {
           <td><code id="vc_nonce">&mdash;</code></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label>Proof of possession</label><span class="tooltiptext">A JWT with typ openid4vci-proof+jwt, signed by the holder key, naming the credential issuer as its audience and carrying the c_nonce.</span></div></td>
+          <td><div class="tooltip"><label>Key proof (openid4vci-proof+jwt)</label><span class="tooltiptext">The CREDENTIAL's key proof, OID4VCI section 8.2: a JWT with typ openid4vci-proof+jwt, signed by the holder key, naming the credential issuer as its audience and carrying the c_nonce. It is what binds the credential to that key, so every Credential Request carries one whether or not DPoP is in use. It is NOT the DPoP proof — that is a typ dpop+jwt sent as a header, and the pane above shows it.</span></div></td>
           <td><textarea class="vc-token" rows="4" readonly id="vc_proof_jwt"></textarea></td>
         </tr>
         <tr>
-          <td><div class="tooltip"><label>JWT Header:</label><span class="tooltiptext">The header of the proof JWT carried in the request body's proofs.jwt, decoded. typ marks it as an OID4VCI proof of possession, alg is what it was signed with, and jwk is the holder public key the credential will be bound to.</span></div></td>
+          <td><div class="tooltip"><label>JWT Header:</label><span class="tooltiptext">The header of the proof JWT carried in the request body's proofs.jwt, decoded. typ marks it as an OID4VCI key proof, alg is what it was signed with, and jwk is the holder public key the credential will be bound to.</span></div></td>
           <td><textarea class="vc-token" rows="12" readonly id="jwt_header" name="jwt_header"></textarea></td>
         </tr>
         <tr>
@@ -372,11 +372,11 @@ function vcSetAllPanes(expand) {
         <li>Issuer: <code id="vc_approval_issuer">&mdash;</code></li>
         <li>Credential: <code id="vc_approval_credential">&mdash;</code></li>
         <li>Subject: <code id="vc_approval_subject">&mdash;</code></li>
-        <li>Claims the issuer says this credential can carry: <span id="vc_approval_claims">&mdash;</span></li>
+        <li>Claims this credential will carry, as chosen in step 1's <em>Claims to Request</em> pane: <span id="vc_approval_claims">&mdash;</span></li>
       </ul>
       <div class="tooltip vc-approval-request">
         <label for="vc_approval_request">The call this will make</label>
-        <span class="tooltiptext">The fully assembled HTTP request: the method and URL of the Credential Endpoint, the headers (including the access token presented as a Bearer credential), and the JSON body carrying the proof of possession. This is exactly what Approve sends.</span>
+        <span class="tooltiptext">The fully assembled HTTP request: the method and URL of the Credential Endpoint, the headers (including the access token presented as a Bearer credential), and the JSON body carrying the key proof. This is exactly what Approve sends.</span>
       </div>
       <textarea class="vc-token" rows="14" readonly id="vc_approval_request"></textarea>
       <p>

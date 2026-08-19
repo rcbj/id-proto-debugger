@@ -1,4 +1,4 @@
-  <a id="brand_logo" href="/debugger.html" class="logo"><img src="/images/oauth2oidcdebugger+iyasec-logo-transparent.png" alt="Identity Protocol Debugger — iyasec"></a>
+  <a id="brand_logo" href="/index.html" class="logo"><img src="/images/oauth2oidcdebugger+iyasec-logo-transparent.png" alt="Identity Protocol Debugger — iyasec"></a>
   <div class="header-right">
     <a class="active" href="/index.html">Home</a>
     <a href="/terms.html">Terms &amp; Conditions</a>
@@ -7,24 +7,10 @@
     <a href="https://github.com/rcbj/oauth2-oidc-debugger/issues" target="_blank" rel="noopener noreferrer">Contact</a>
     <a href="https://github.com/rcbj/oauth2-oidc-debugger" target="_blank" rel="noopener noreferrer">About</a>
   </div>
-  <script>
-  // The brand logo returns to the home page of the debugger family the user is
-  // currently in: SAML pages (saml_*) -> the SAML home, WS-Trust pages
-  // (wstrust_*) -> the WS-Trust home, the SD-JWT VC issuance pages
-  // (vc-issuance-* / vc-presentation-*) -> step 1 of that workflow, everything
-    // else -> the OAuth2/OIDC home.
-  // The "Home" nav link (above) goes to the landing page (index.html) so the
-  // user can switch protocols.
-  (function () {
-    var logo = document.getElementById('brand_logo');
-    if (!logo) return;
-    var p = window.location.pathname;
-    var href = '/debugger.html';
-    if (p.indexOf('/saml_') === 0) href = '/saml_request.html';
-    else if (p.indexOf('/wstrust_') === 0) href = '/wstrust_tools.html';
-    else if (p.indexOf('/vc-presentation-') === 0) href = '/vc-presentation-1.html';
-    else if (p.indexOf('/vc-issuance-') === 0) href = '/vc-issuance-1.html';
-    else if (p.indexOf('/wsfed_') === 0) href = '/wsfed_request.html';
-    logo.setAttribute('href', href);
-  })();
-  </script>
+  <!-- The brand logo and the "Home" nav link both go to the landing page
+       (index.html), which is the protocol chooser. The logo used to route to
+       the home page of whichever workflow the user was in — a script here
+       rewrote its href from window.location.pathname — but with ten workflows
+       that made the one control every page shares mean ten different things,
+       and there was no single-click way back to the chooser from a workflow's
+       first page. -->

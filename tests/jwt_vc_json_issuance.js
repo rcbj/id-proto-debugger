@@ -27,9 +27,9 @@
 //     that cannot withhold anything.
 //
 // What it deliberately does NOT re-do: the authorization leg. Getting an access
-// token through debugger.html and back is identical for both formats and is
-// covered end to end by sd_jwt_vc_issuance.js; repeating it here would double
-// the slowest part of the suite to test nothing new.
+// token through oauth2_oidc_1.html and back is identical for both formats and
+// is covered end to end by sd_jwt_vc_issuance.js; repeating it here would
+// double the slowest part of the suite to test nothing new.
 // ---------------------------------------------------------------------------
 
 const { Builder, By, until } = require("selenium-webdriver");

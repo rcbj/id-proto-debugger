@@ -111,8 +111,8 @@ select.not-defined {
   font-style: italic;
 }
 
-/* Selected by CLASS, not id: the same pane appears on debugger.html and twice
-   on vc-issuance-1.html, each with its own id but all carrying
+/* Selected by CLASS, not id: the same pane appears on oauth2_oidc_1.html
+   and twice on vc-issuance-1.html, each with its own id but all carrying
    .discovery_info_table.
    The retrieved metadata table is generated from a document we do not control:
    values are long URLs and long comma-joined lists with no break opportunities,
@@ -175,8 +175,9 @@ select.not-defined {
 }
 .discovery-info-note code { overflow-wrap: anywhere; }
 
-/* The SD-JWT VC issuance workflow drives debugger.html and debugger2.html
-   through their ordinary OIDC Authorization Code flow (?sdjwtvc=1). This banner
+/* The SD-JWT VC issuance workflow drives oauth2_oidc_1.html and
+   oauth2_oidc_2.html through their ordinary OIDC Authorization Code flow
+   (?sdjwtvc=1). This banner
    is what says so, so a page that suddenly redirects itself is not a mystery. */
 .vc-handoff-banner {
   border: 1px solid #12107c;

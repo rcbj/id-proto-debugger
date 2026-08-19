@@ -74,9 +74,9 @@ COPY common/data.js /usr/src/app/src
 # line further down.
 COPY common/krb5/ /usr/src/app/src/
 RUN browserify src/jwks.js -o public/js/jwks.js --debug --standalone jwks -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/debugger.js -o public/js/debugger.js --debug --standalone debug -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/oauth2_oidc_1.js -o public/js/oauth2_oidc_1.js --debug --standalone oauth2_oidc_1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/token_detail.js -o public/js/token_detail.js --debug --standalone token_detail -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
-RUN browserify src/debugger2.js -o public/js/debugger2.js --debug --standalone debugger2 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+RUN browserify src/oauth2_oidc_2.js -o public/js/oauth2_oidc_2.js --debug --standalone oauth2_oidc_2 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/userinfo.js -o public/js/userinfo.js --debug --standalone userinfo -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/introspection.js -o public/js/introspection.js --debug --standalone introspection -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 
@@ -145,7 +145,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "debugger:debug" "token_detail:token_detail" "debugger2:debugger2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "ldap:ldap" ; do \
+      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "ldap:ldap" ; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

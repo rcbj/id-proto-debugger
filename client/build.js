@@ -11,7 +11,7 @@
 //   3. resolves the server-side <!--#include file="..."--> directives that
 //      server.js normally handles at request time
 //   4. writes a small dist/callback/ shim so the OAuth2 redirect_uri
-//      (/callback) still forwards to debugger2.html without a server
+//      (/callback) still forwards to oauth2_oidc_2.html without a server
 //   5. leaves out the pages a backendless deployment cannot serve, and greys
 //      out their landing card (client/static_site.js — Kerberos, today)
 //
@@ -86,9 +86,9 @@ const GA_MEASUREMENT_ID = process.env.GA_MEASUREMENT_ID || '';
 // a page nobody ever registered — the failure client/CLAUDE.md warns about.
 const BUNDLES = [
   ['jwks', 'jwks'],
-  ['debugger', 'debug'],
+  ['oauth2_oidc_1', 'oauth2_oidc_1'],
   ['token_detail', 'token_detail'],
-  ['debugger2', 'debugger2'],
+  ['oauth2_oidc_2', 'oauth2_oidc_2'],
   ['userinfo', 'userinfo'],
   ['introspection', 'introspection'],
   ['logout', 'logout'],
@@ -134,7 +134,7 @@ const CALLBACK_HTML = `<!DOCTYPE html>
       // Static replacement for the Express /callback route: forward the OAuth2
       // response (query and/or fragment) on to the debugger results page.
       (function () {
-        var target = '/debugger2.html' + window.location.search + window.location.hash;
+        var target = '/oauth2_oidc_2.html' + window.location.search + window.location.hash;
         window.location.replace(target);
       })();
     </script>
@@ -229,8 +229,8 @@ const CLAIM_XML_SRC = path.join(CLIENT_DIR, '..', 'api', 'jwt.xml');
 log.info('copying api/jwt.xml -> dist/claimdescription');
 fs.copyFileSync(CLAIM_XML_SRC, path.join(DIST, 'claimdescription'));
 
-// 3. Bundle. debugger2 requires('./data.js'), so stage common/data.js into src/
-//    (the Docker build does the same COPY). Removed again afterward.
+// 3. Bundle. oauth2_oidc_2 requires('./data.js'), so stage common/data.js into
+// src/    (the Docker build does the same COPY). Removed again afterward.
 //
 //    The Kerberos codec is staged the same way and for the same reason:
 //    kerberos_decoder.js requires('./krb5_describe.js') and that module requires

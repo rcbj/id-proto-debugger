@@ -353,9 +353,9 @@ function holderKeyIsHeld(jwk) {
 // ---------------------------------------------------------------------------
 // The credential history pane.
 //
-// The same idea as the Token History pane on debugger2.html, but it records
-// more than debugger2 does: **every attempt**, not only the ones that produced
-// something the wallet kept. One row per attempt, newest first —
+// The same idea as the Token History pane on oauth2_oidc_2.html, but it records
+// more than oauth2_oidc_2 does: **every attempt**, not only the ones that
+// produced something the wallet kept. One row per attempt, newest first —
 //
 //   the issuance from step 2                       outcome: kept
 //   an access-token refresh (RFC 6749 section 6)    success / failed
@@ -2030,7 +2030,8 @@ function onload() {
     renderReissue();
     if (!ready || !state.current) return;
     status("vc_reissue_status", sdJwtVc.get("token_access_token")
-      ? "Ready: the proof of possession is signed and the request below is what will be sent."
+      ? "Ready: the key proof is signed and the request below is what will " +
+          "be sent."
       : "The request below is ready, but there is no access token to " +
           "authorize it with — refresh one above, " +
         "or start again from step 1.",

@@ -78,8 +78,9 @@ async function logout(driver) {
 }
 
 // An implicit flow has no second call to compose, so once the token is on
-// debugger2.html the page's first row of panes — Configuration Parameters,
-// Tools, and the token request — is collapsed by default, leaving the tokens
+// oauth2_oidc_2.html the page's first row of panes — Configuration
+// Parameters, Tools, and the token request — is collapsed by default,
+// leaving the tokens
 // as what the page opens on. Read off the live CSS rather than the inline
 // style attribute, so a rule that expanded a pane some other way is still
 // caught, and check each pane's legend is still there to expand it: collapsed
@@ -370,7 +371,7 @@ async function test() {
     // Run the end-to-end implicit flow: load metadata, obtain and verify the
     // access token, then log out
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");

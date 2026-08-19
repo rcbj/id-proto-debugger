@@ -1,7 +1,7 @@
 // File: oidc_flows.js
 //
 // Every OIDC authentication flow, with DPoP and without, driven through
-// debugger.html / debugger2.html against EITHER OP — the mock STS and Keycloak
+// oauth2_oidc_1.html / oauth2_oidc_2.html against EITHER OP — the mock STS and Keycloak
 // both run the whole matrix:
 //
 //   OIDC Authorization Code Flow (code)      OIDC Hybrid (code id_token)
@@ -96,11 +96,11 @@ const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
        waitTime, log, assert });
 
 // ---------------------------------------------------------------------------
-// The five flows. `label` is the option text on debugger.html (the dropdown is
-// what a user picks, so that is what the test picks); `responseType` is what
-// the authorization request must then carry; the three booleans are what the
-// authorization RESPONSE must contain, which is the same list read the other
-// way round — anything not asked for must be absent.
+// The five flows. `label` is the option text on oauth2_oidc_1.html (the
+// dropdown is what a user picks, so that is what the test picks);
+// `responseType` is what the authorization request must then carry; the three
+// booleans are what the authorization RESPONSE must contain, which is the same
+// list read the other way round — anything not asked for must be absent.
 // ---------------------------------------------------------------------------
 const FLOWS = {
   oidc_authorization_code_flow: {
@@ -358,8 +358,8 @@ function makeVerifier(jwks) {
 }
 
 // ---------------------------------------------------------------------------
-// Drive debugger.html up to the point of sending the authorization request, and
-// return what the page is about to send.
+// Drive oauth2_oidc_1.html up to the point of sending the authorization
+// request, and return what the page is about to send.
 //
 // The request preview textarea is read rather than the hidden response_type
 // input, because the preview is what triggerAuthZEndpointCall() actually
@@ -394,7 +394,7 @@ async function prepareAuthorizationRequest(driver, flow, { clientId, scope }) {
   // itself, so a blind click COLLAPSES it and every field below becomes "not
   // interactable" — which reads as a broken page rather than as a toggle
   // pressed twice. It bit once here the moment the DPoP runs added a detour to
-  // debugger2.html and back.
+  // oauth2_oidc_2.html and back.
   await driver.wait(until.elementLocated(authz_expand_button), waitTime);
   await driver.wait(until.elementLocated(client_id_), waitTime);
   if (!(await driver.findElement(client_id_).isDisplayed())) {
@@ -414,7 +414,7 @@ async function prepareAuthorizationRequest(driver, flow, { clientId, scope }) {
   // Typing does not itself redraw the preview (it is rebuilt on change/keypress
   // handlers that clear() + sendKeys() do not always fire), so ask for it.
   await driver.executeScript(
-      "debug.recalculateAuthorizationRequestDescription();");
+      "oauth2_oidc_1.recalculateAuthorizationRequestDescription();");
   const preview =
       await driver.findElement(By.id("display_authz_request_form_textarea1"))
       .getAttribute("value");
@@ -426,17 +426,18 @@ async function prepareAuthorizationRequest(driver, flow, { clientId, scope }) {
   return { preview: preview, nonce: nonce, state: state };
 }
 
-// Switch this workflow's DPoP on through its own pane on debugger2.html — the
-// only place it can be switched on, which is the point of it existing — and
+// Switch this workflow's DPoP on through its own pane on oauth2_oidc_2.html —
+// the only place it can be switched on, which is the point of it existing — and
 // return the RFC 7638 thumbprint of the key that was generated.
 //
 // It has to happen BEFORE the authorization request, because dpop_jkt travels
-// on that request and debugger.html assembles it synchronously from storage. A
-// key generated later would leave the code unbound with nothing to show for it.
+// on that request and oauth2_oidc_1.html assembles it synchronously from
+// storage. A key generated later would leave the code unbound with nothing to
+// show for it.
 async function enableDpop(driver) {
   log.debug("Entering enableDpop().");
   log.info("Entering enableDpop().");
-  await driver.get(baseUrl + "/debugger2.html");
+  await driver.get(baseUrl + "/oauth2_oidc_2.html");
   const box = By.id("dpop_enabled");
   await driver.wait(until.elementLocated(box), waitTime * 3);
   if (!(await driver.findElement(box).isSelected())) {
@@ -498,7 +499,7 @@ async function signIn(driver, user) {
 // fields: this is the wire, and the panes are checked separately against it.
 async function authorizationResponse(driver) {
   log.debug("Entering authorizationResponse().");
-  await driver.wait(until.urlContains("/debugger2.html"), waitTime * 5);
+  await driver.wait(until.urlContains("/oauth2_oidc_2.html"), waitTime * 5);
   const url = await driver.getCurrentUrl();
   const parsed = new URL(url);
   const fragment = new URLSearchParams(parsed.hash.replace(/^#/, ""));
@@ -627,11 +628,11 @@ async function checkPanesShowArtifacts(driver, flow, params) {
   log.info("Entering checkPanesShowArtifacts().");
   // Scoped to the two panes that report the authorization response, and NOT to
   // the page at large. Searching every field on the page passes for the wrong
-  // reason: debugger2 also writes the access token to localStorage, from where
-  // the revocation pane prefills its own field — so a mutation that blanked the
-  // results pane entirely was not caught until this was narrowed. The ids
-  // differ per flow (the panes are generated per grant type), so the fields are
-  // collected from the containers rather than named one by one.
+  // reason: oauth2_oidc_2 also writes the access token to localStorage, from
+  // where the revocation pane prefills its own field — so a mutation that
+  // blanked the results pane entirely was not caught until this was narrowed.
+  // The ids differ per flow (the panes are generated per grant type), so the
+  // fields are collected from the containers rather than named one by one.
   const shown = await driver.executeScript(
     "var out = { panes: [], code: null };" +
     "['authorization_endpoint_result'," +
@@ -683,7 +684,7 @@ async function checkNoTokenRequestNotice(driver, flow) {
   log.debug("Entering checkNoTokenRequestNotice().");
   log.info("Entering checkNoTokenRequestNotice().");
   const status = await driver.findElements(By.id("dpop_status"));
-  assert.ok(status.length, "debugger2.html has no DPoP status line.");
+  assert.ok(status.length, "oauth2_oidc_2.html has no DPoP status line.");
   // Read from the DOM rather than getText(): the pane sits inside the Token
   // Request fieldset, which these flows collapse, and an invisible element's
   // getText() is "" — which would pass this check by saying nothing at all.
@@ -722,14 +723,14 @@ async function exchangeCode(driver, flow, sent, expected, { dpopJkt } = {}) {
   // test needs the client and the STS and nothing else — no api service, and no
   // api CORS allow-list that has to name whichever origin the debugger is
   // served from. The second is that it is the leg that carries a DPoP proof
-  // when one is in play; the proxied call cannot, and debugger2.html says so in
-  // its banner. Clicked rather than set in storage: useFrontEnd is only
+  // when one is in play; the proxied call cannot, and oauth2_oidc_2.html says
+  // so in its banner. Clicked rather than set in storage: useFrontEnd is only
   // assigned by setInitiateFromEnd(), which runs on the radio's own click
   // handler.
   const frontEnd =
       await driver.findElements(By.id("token_initiateFromFrontEnd"));
   assert.ok(frontEnd.length,
-      "debugger2.html has no token_initiateFromFrontEnd radio to select.");
+      "oauth2_oidc_2.html has no token_initiateFromFrontEnd radio to select.");
   await driver.executeScript("arguments[0].scrollIntoView({block: 'center'});",
                              frontEnd[0]);
   await frontEnd[0].click();
@@ -948,11 +949,12 @@ async function test() {
     log.info("Running the " + flow.label + " flow against " + metadata.issuer +
              ", DPoP " + dpopSetting + ", signing in as " + user.login + ".");
     await driver.manage().deleteAllCookies();
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     // A previous flow's state in localStorage would otherwise decide which
-    // panes debugger2.html draws, which is exactly what this test is reading.
+    // panes oauth2_oidc_2.html draws, which is exactly what this test is
+    // reading.
     await driver.executeScript("window.localStorage.clear();");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
 
     await populateMetadata(driver, discovery_endpoint);
 
@@ -965,7 +967,7 @@ async function test() {
     if (dpopOn) {
       dpopJkt = await enableDpop(driver);
       // Back to the page that builds the authorization request.
-      await driver.get(baseUrl + "/debugger.html");
+      await driver.get(baseUrl + "/oauth2_oidc_1.html");
     }
     const sent = await prepareAuthorizationRequest(driver, flow,
         { clientId: clientId, scope: scope });

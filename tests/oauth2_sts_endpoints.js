@@ -151,10 +151,13 @@ function parseRedirect(location) {
 }
 
 // Start an authorization request and drive it to the client's redirect_uri,
-// which now means going through the login screen the way a browser would:
+// which means going through the AUTHENTICATION SERVICE the way a browser would.
+// The login screen is its own endpoint since 2026-08-19, so the first answer is
+// a redirect rather than a form:
 //
-//   GET  /oauth2/authorize   -> the login form
-//   POST /oauth2/login       -> back to /oauth2/authorize, with a session cookie
+//   GET  /oauth2/authorize   -> 302 to /authn/login?authn=...
+//   GET  /authn/login        -> the form
+//   POST /authn/login        -> back to /oauth2/authorize, with a session cookie
 //   GET  /oauth2/authorize   -> the authorization response
 //
 // options.username  who to sign in as (their name ends up in the tokens)
@@ -166,43 +169,61 @@ async function authorize(meta, params, options) {
   let r = await get(meta.authorization_endpoint + "?" + form(params),
     options.cookie ? { headers: { cookie: options.cookie } } : {});
 
-  // An error, or a session that skipped the prompt: already the final answer.
-  if (r.status === 302) {
-    const out = parseRedirect(r.headers.get("location"));
+  // Every answer here is a 302 now, so which one it is has to be read off the
+  // Location: the authentication service is on this origin and everything else
+  // — an error, or a session that skipped the prompt — goes to the client.
+  assert.strictEqual(r.status, 302,
+    "the authorization endpoint should redirect, either to the client or to " +
+        "the authentication service, got HTTP " + r.status + ".");
+  const first = r.headers.get("location");
+  if (first.indexOf("/authn/") !== 0 &&
+      first.indexOf(meta.issuer + "/authn/") !== 0) {
+    const out = parseRedirect(first);
     out.prompted = false;
     out.cookie = options.cookie;
     log.debug("Leaving authorize().");
     return out;
   }
-  assert.strictEqual(r.status, 200,
-    "the authorization endpoint should either redirect or show the login " +
-        "screen, got HTTP " + r.status + ".");
-  const page = await r.text();
-  const loginId = (page.match(/name="login_id" value="([^"]+)"/) || [])[1];
-  assert.ok(loginId, "the login screen carries no login_id to post back.");
 
-  r = await fetch(meta.issuer + "/oauth2/login", {
+  // The screen, at its own URL. It is a GET, which is what makes it a service
+  // rather than a page rendered inside somebody else's endpoint.
+  r = await get(first.indexOf("http") === 0 ? first : meta.issuer + first,
+    options.cookie ? { headers: { cookie: options.cookie } } : {});
+  assert.strictEqual(r.status, 200,
+    "the authentication service should show the sign-in screen, got HTTP " +
+        r.status + ".");
+  const page = await r.text();
+  const authnId = (page.match(/name="authn_id" value="([^"]+)"/) || [])[1];
+  assert.ok(authnId, "the sign-in screen carries no authn_id to post back.");
+
+  r = await fetch(meta.issuer + "/authn/login", {
     method: "POST", redirect: "manual",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form({ login_id: loginId, username: username,
+    body: form({ authn_id: authnId, username: username,
                password: options.password || "any-password",
                  action: options.action || "login" })
   });
   assert.strictEqual(r.status, 302,
-    "submitting the login form should redirect, got HTTP " + r.status + ".");
+    "submitting the sign-in form should redirect, got HTTP " + r.status + ".");
   const cookie = String(r.headers.get("set-cookie") || "").split(";")[0];
-  const next = r.headers.get("location");
+  let next = r.headers.get("location");
+  if (next.indexOf("http") !== 0) next = meta.issuer + next;
 
-  // Cancel (and any other error) goes straight back to the client.
-  if (next.indexOf(meta.authorization_endpoint) !== 0) {
-    const out = parseRedirect(next);
+  // Cancel comes back to the authorization endpoint as well, carrying
+  // authn_error rather than being answered at the screen: the service does not
+  // know what an OAuth refusal looks like, and in response_mode=form_post it is
+  // not a redirect at all. So the outcome is read from the SECOND hop, and the
+  // absence of a session cookie is what says nobody signed in.
+  const refused = /[?&]authn_error=/.test(next);
+  assert.ok(refused || cookie, "signing in should establish a session.");
+  r = await get(next, cookie ? { headers: { cookie: cookie } } : {});
+  if (refused) {
+    const out = parseRedirect(r.headers.get("location"));
     out.prompted = true;
     out.page = page;
-    log.debug("Leaving authorize().");
+    log.debug("Leaving authorize(). The user refused at the sign-in screen.");
     return out;
   }
-  assert.ok(cookie, "signing in should establish a session.");
-  r = await get(next, { headers: { cookie: cookie } });
   assert.strictEqual(r.status, 302,
     "the authorization endpoint should answer after the login, got HTTP " +
         r.status + ".");
@@ -230,28 +251,42 @@ async function testLoginScreen(meta, verify) {
     login_hint: "prefilled-user"
   };
 
-  // 1. The unauthenticated request is answered with a form, not a code.
+  // 1. The unauthenticated request is handed to the authentication service —
+  //    a redirect to an endpoint of its own, not a form in this endpoint's body.
   const first = await get(meta.authorization_endpoint + "?" + form(params));
-  assert.strictEqual(first.status, 200,
-      "an unauthenticated request should show the login screen.");
-  assert.ok(/text\/html/.test(first.headers.get("content-type") || ""),
-            "the login screen should be HTML.");
-  const page = await first.text();
-  assert.ok(/<form[^>]+action="\/oauth2\/login"/.test(page),
-            "the login screen should post to /oauth2/login.");
+  assert.strictEqual(first.status, 302,
+    "an unauthenticated request should be sent to the authentication " +
+        "service, got HTTP " + first.status + ".");
+  const toService = first.headers.get("location");
+  assert.ok(/^(https?:\/\/[^/]+)?\/authn\/login\?authn=[^&]+$/.test(toService),
+    "and the redirect should name the sign-in screen with the id of the " +
+        "request it stashed. Got: " + toService);
+  assert.ok(!/code=/.test(toService),
+    "nothing should be issued on the way to signing in.");
+
+  const screen = await get(toService.indexOf("http") === 0 ? toService
+    : meta.issuer + toService);
+  assert.strictEqual(screen.status, 200,
+      "the sign-in screen should be served at its own URL.");
+  assert.ok(/text\/html/.test(screen.headers.get("content-type") || ""),
+            "the sign-in screen should be HTML.");
+  const page = await screen.text();
+  assert.ok(/<form[^>]+action="\/authn\/login"/.test(page),
+            "the sign-in screen should post to /authn/login.");
   assert.ok(/id="username"/.test(page) && /id="password"/.test(page),
-    "the login screen should ask for a username and a password.");
-  assert.ok(/name="login_id" value="[^"]+"/.test(page),
+    "the sign-in screen should ask for a username and a password.");
+  assert.ok(/name="authn_id" value="[^"]+"/.test(page),
             "the form should carry the request it interrupted.");
   assert.ok(page.indexOf('value="prefilled-user"') !== -1,
     "login_hint should pre-fill the username field.");
   assert.ok(page.indexOf(CLIENT_ID) !== -1 && page.indexOf(REDIRECT_URI) !== -1,
-    "the login screen should say which client and redirect_uri it is " +
-        "signing in for.");
+    "the sign-in screen should say which client and redirect_uri it is " +
+    "signing in for — the service knows nothing about OAuth, so those rows " +
+        "are what the authorization endpoint passed it.");
   assert.ok(!/code=/.test(page),
             "nothing should be issued before the user signs in.");
-  log.info("[login] OK — an unauthenticated authorization request is " +
-           "answered with a login form.");
+  log.info("[login] OK — an unauthenticated authorization request is sent to " +
+           "the authentication service, which shows the form.");
 
   // 2. Signing in leads back to the authorization endpoint, then to the client.
   const username = "signed.in.user";
@@ -328,8 +363,26 @@ async function testLoginScreen(meta, verify) {
   const forced = await get(meta.authorization_endpoint + "?" +
       form(Object.assign({ prompt: "login" }, params)),
     { headers: { cookie: authz.cookie } });
-  assert.strictEqual(forced.status, 200,
-      "prompt=login should show the login screen even with a session.");
+  assert.strictEqual(forced.status, 302,
+    "prompt=login should send the person to the authentication service even " +
+        "with a session, got HTTP " + forced.status + ".");
+  assert.ok(/\/authn\/login\?authn=/.test(forced.headers.get("location")),
+    "and it is the sign-in screen it should send them to, not the client. " +
+        "Got: " + forced.headers.get("location"));
+  // …and the return URL it stashed must have had `prompt` taken off it, or the
+  // person comes back, is sent to sign in again, and never leaves.
+  const forcedScreen = await get(meta.issuer + forced.headers.get("location"));
+  const forcedId = (await forcedScreen.text())
+    .match(/name="authn_id" value="([^"]+)"/)[1];
+  const forcedDone = await fetch(meta.issuer + "/authn/login", {
+    method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form({ authn_id: forcedId, username: "prompted.user",
+                 password: "any-password", action: "login" })
+  });
+  assert.ok(!/[?&]prompt=/.test(forcedDone.headers.get("location") || ""),
+    "the return URL must drop prompt, or signing in loops for ever. Got: " +
+        forcedDone.headers.get("location"));
   const silent = await authorize(meta, Object.assign({ prompt: "none" },
       params));
   assert.strictEqual(silent.params.get("error"), "login_required",
@@ -346,27 +399,28 @@ async function testLoginScreen(meta, verify) {
   assert.strictEqual(cancelled.params.get("state"), "login-state",
                      "even the cancel keeps state.");
 
-  const noName = await get(meta.authorization_endpoint + "?" + form(params));
-  const loginId =
-      (await noName.text()).match(/name="login_id" value="([^"]+)"/)[1];
-  const blank = await fetch(meta.issuer + "/oauth2/login", {
+  const started = await get(meta.authorization_endpoint + "?" + form(params));
+  const noName = await get(meta.issuer + started.headers.get("location"));
+  const authnId =
+      (await noName.text()).match(/name="authn_id" value="([^"]+)"/)[1];
+  const blank = await fetch(meta.issuer + "/authn/login", {
     method: "POST", redirect: "manual",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form({ login_id: loginId, username: "", password: "x",
+    body: form({ authn_id: authnId, username: "", password: "x",
                action: "login" })
   });
   assert.strictEqual(blank.status, 200,
       "an empty username should re-show the form, not redirect.");
   assert.ok(/Enter a username/.test(await blank.text()),
             "the form should say what was wrong.");
-  const refused = await fetch(meta.issuer + "/oauth2/login", {
+  const refused = await fetch(meta.issuer + "/authn/login", {
     method: "POST", redirect: "manual",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form({ login_id: loginId, username: "carol", password: "invalid",
+    body: form({ authn_id: authnId, username: "carol", password: "invalid",
                action: "login" })
   });
   assert.ok(/Authentication failed for carol/.test(await refused.text()),
-    'the reserved password "invalid" should be refused at the login ' +
+    'the reserved password "invalid" should be refused at the sign-in ' +
         'screen too.');
   log.info("[login] OK — cancel, a missing username and the reserved " +
            "password are all handled.");
@@ -378,8 +432,12 @@ async function testLoginScreen(meta, verify) {
   const afterLogout = await get(meta.authorization_endpoint + "?" +
       form(params),
     { headers: { cookie: authz.cookie } });
-  assert.strictEqual(afterLogout.status, 200,
-                     "after signing out the login screen should come back.");
+  assert.strictEqual(afterLogout.status, 302,
+    "after signing out the next request should be sent to the " +
+        "authentication service again, got HTTP " + afterLogout.status + ".");
+  assert.ok(/\/authn\/login\?authn=/.test(afterLogout.headers.get("location")),
+    "and that is where it should go — a dropped session means signing in " +
+    "again, not a code. Got: " + afterLogout.headers.get("location"));
   log.info("[login] OK — signing out ends the session.");
   log.debug("Leaving testLoginScreen().");
 }

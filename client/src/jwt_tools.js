@@ -1113,10 +1113,10 @@ function populateTable(evt, tabName) {
 // ---------------------------------------------------------------------------
 function setReturnLink() {
   log.debug("Entering setReturnLink().");
-  var allowed = { 'debugger.html': '/debugger.html',
-      'debugger2.html': '/debugger2.html' };
+  var allowed = { 'oauth2_oidc_1.html': '/oauth2_oidc_1.html',
+      'oauth2_oidc_2.html': '/oauth2_oidc_2.html' };
   var from = new URLSearchParams(window.location.search).get('from');
-  var target = allowed[from] || '/debugger.html';
+  var target = allowed[from] || '/oauth2_oidc_1.html';
   var link = document.getElementById('return_link');
   if (link) link.setAttribute('href', target);
   log.debug("Leaving setReturnLink().");

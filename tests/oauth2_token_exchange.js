@@ -258,7 +258,7 @@ async function test() {
     }
 
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken() to obtain the subject token.");

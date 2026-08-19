@@ -1,6 +1,6 @@
 var appconfig = require(process.env.CONFIG_FILE);
 // OpenID Provider Metadata (Discovery 1.0 s3) — the table and its
-// defaults/persistence/populate helpers, shared with debugger2.js.
+// defaults/persistence/populate helpers, shared with oauth2_oidc_2.js.
 var opMetadata = require("./op_metadata");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
@@ -15,7 +15,7 @@ var DOMPurify = require("dompurify");
 var urlSafety = require("./url_safety");
 var $ = require("jquery");
 console.log("logLevel: " + appconfig.logLevel);
-var log = bunyan.createLogger({ name: 'debugger',
+var log = bunyan.createLogger({ name: 'oauth2_oidc_1',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 var displayOpenIDConnectArtifacts = true;
@@ -65,7 +65,7 @@ $(document).ready(function() {
     if(value == "client_credential" ||
        value === "resource_owner") {
       writeValuesToLocalStorage();
-      window.location.href = "/debugger2.html";
+      window.location.href = "/oauth2_oidc_2.html";
     }
     if( value === "oidc_authorization_code_flow" ||
         value === "authorization_grant") 
@@ -89,7 +89,7 @@ $(document).ready(function() {
   if( value == "client_credential" ||
       value === "resource_owner") {
     writeValuesToLocalStorage();
-    window.location.href = "/debugger2.html";
+    window.location.href = "/oauth2_oidc_2.html";
   }
   if( value === "oidc_authorization_code_flow" ||
       value === "authorization_grant")
@@ -888,9 +888,9 @@ function recalculateAuthorizationRequestDescription()
        //
        // WHICH workflow's DPoP, though. This page serves two, and they answer
        // the question separately: the VC workflow decides on issuance step 2,
-       // the OAuth2/OIDC workflow on debugger2.html's own DPoP pane. Reading
-       // the VC switch unconditionally — which is what this did — meant that
-       // turning DPoP on there put a dpop_jkt on every OAuth2/OIDC
+       // the OAuth2/OIDC workflow on oauth2_oidc_2.html's own DPoP pane.
+       // Reading the VC switch unconditionally — which is what this did — meant
+       // that turning DPoP on there put a dpop_jkt on every OAuth2/OIDC
        // authorization request too, with no control on these pages to stop it.
        var dpopJkt = sdJwtVc.isFlowActive()
          ? (sdJwtVc.dpopEnabled() ? (sdJwtVc.get(sdJwtVc.KEYS.DPOP_JKT) ||
@@ -1011,7 +1011,7 @@ function triggerDeviceAuthorizationCall()
       localStorage.setItem("device_expires_in", data.expires_in || "");
       localStorage.setItem("device_interval", data.interval || "");
     }
-    window.location.href = "/debugger2.html";
+    window.location.href = "/oauth2_oidc_2.html";
     log.debug("Leaving onDeviceSuccess().");
   };
   var onDeviceError = function(request, status, error) {
@@ -1215,7 +1215,7 @@ function onload() {
   if(type === "client_credential" || 
      type ==="resource_owner") {
     writeValuesToLocalStorage();
-    window.location.href = "/debugger2.html";
+    window.location.href = "/oauth2_oidc_2.html";
   }
   maybeStartSdJwtVcFlow();
   log.debug("Leaving onload().");
@@ -1228,10 +1228,10 @@ function onload() {
 // OID4VCI authorizes credential issuance with an ordinary OAuth 2.0 / OIDC
 // Authorization Code flow, so the SD-JWT VC workflow reuses this page rather
 // than reimplementing it. The query parameter is what says so: it marks the
-// workflow active (which is what tells debugger2.html to come back to it once
-// it has the tokens) and starts the authorization request with whatever the
-// Configuration Parameters pane currently holds — which step 1 of the workflow
-// has just written, since both pages keep it under the same names.
+// workflow active (which is what tells oauth2_oidc_2.html to come back to it
+// once it has the tokens) and starts the authorization request with whatever
+// the Configuration Parameters pane currently holds — which step 1 of the
+// workflow has just written, since both pages keep it under the same names.
 //
 // Without the parameter none of this runs, so every other flow on this page is
 // untouched.
@@ -1966,7 +1966,7 @@ function buildDiscoveryInfoTable(discoveryInfo) {
   var discovery_info_meta_data_html = '<table>' +
                                       '<form>' +
                                         '<td>' +
-                                          '<input class="btn_oidc_populate_meta_data" type="button" value="Populate Meta Data" onclick="return debug.onSubmitPopulateFormsWithDiscoveryInformation();"/>' +
+                                          '<input class="btn_oidc_populate_meta_data" type="button" value="Populate Meta Data" onclick="return oauth2_oidc_1.onSubmitPopulateFormsWithDiscoveryInformation();"/>' +
                                         '</td>' +
                                       '</form>' +
                                       '</table>';

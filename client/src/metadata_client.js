@@ -6,7 +6,7 @@
 //
 // Three panes in this app do the same thing to three different JSON documents:
 //
-//   debugger.html               OIDC Discovery 1.0 / RFC 8414 (authorization server)
+//   oauth2_oidc_1.html               OIDC Discovery 1.0 / RFC 8414 (authorization server)
 //   vc-issuance-1.html   OID4VCI credential issuer metadata, and a second
 //                               copy of the RFC 8414 pane
 //

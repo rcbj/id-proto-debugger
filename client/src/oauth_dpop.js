@@ -5,14 +5,14 @@
 // pair, the nonce, and what the token endpoint said about the binding.
 //
 // WHY THIS EXISTS AS A SECOND STATE HOLDER, when dpop.js is already shared.
-// debugger.html and debugger2.html are used by two workflows. DPoP arrived with
-// the VC one, and both pages read `sdJwtVc.dpopEnabled()` directly — but
-// neither read was gated on the VC workflow being ACTIVE, and the two workflows
-// share one localStorage. So switching DPoP on once in VC issuance step 2
-// silently put a `dpop_jkt` on every subsequent OAuth2/OIDC authorization
-// request and a proof on every browser-direct Token Request, with no control
-// anywhere on those pages to stop it. DPoP was, from the OAuth2/OIDC workflow's
-// point of view, mandatory.
+// oauth2_oidc_1.html and oauth2_oidc_2.html are used by two workflows. DPoP
+// arrived with the VC one, and both pages read `sdJwtVc.dpopEnabled()` directly
+// — but neither read was gated on the VC workflow being ACTIVE, and the two
+// workflows share one localStorage. So switching DPoP on once in VC issuance
+// step 2 silently put a `dpop_jkt` on every subsequent OAuth2/OIDC
+// authorization request and a proof on every browser-direct Token Request, with
+// no control anywhere on those pages to stop it. DPoP was, from the OAuth2/OIDC
+// workflow's point of view, mandatory.
 //
 // Rather than gate those reads on the VC flow (which would leave the
 // OAuth2/OIDC workflow unable to use DPoP at all), the OAuth2/OIDC workflow
@@ -49,8 +49,9 @@ var KEYS = {
   PUBLIC_JWK: "oauth_dpop_public_jwk",
   PRIVATE_JWK: "oauth_dpop_private_jwk",
   // The RFC 7638 thumbprint of the public half. Stored rather than recomputed
-  // because debugger.html needs it for the dpop_jkt authorization parameter,
-  // where hashing is asynchronous and the request is assembled synchronously.
+  // because oauth2_oidc_1.html needs it for the dpop_jkt authorization
+  // parameter, where hashing is asynchronous and the request is assembled
+  // synchronously.
   JKT: "oauth_dpop_jkt",
   // The most recent server-supplied nonce (RFC 9449 sections 8 and 9), kept so
   // the next request uses it without paying for the 401 handshake again.
