@@ -47,7 +47,8 @@ and this page does **not** read it — `pki.html`'s *Return* is a static link to
 the landing page, unlike `jwt_tools.js`'s `setReturnLink()`. Note too that the
 card carries **no** `data-not-on-static` marker: the CA is Web Crypto and pkijs
 in the browser and only the TLS test needs the api, which `#pki_backend_notice`
-says on the page itself. See `client/CLAUDE.md`.
+says on the page itself. See `client/CLAUDE.md`, and the section below for what
+the page does with that one pane when there is no api behind it.
 
 **Both browser tests reach the page by clicking that card** rather than by
 getting its URL — `openThePageFromTheLandingCard()` in `tests/pki_page.js` and
@@ -914,15 +915,69 @@ Note also that supplying trust anchors **does not** quietly add the platform
 roots. A chain that verifies for a reason the caller did not ask about is not an
 answer.
 
+### On a static deployment the pane is switched off, not left to fail
+
+The three workflows `client/static_site.js` drops from the deployed sites —
+Kerberos, SPNEGO and LDAP — are dropped whole, and their landing cards are
+greyed, because on those sites *every* button on those pages fails at the
+network. This page is not that case and its card stays a live link: the
+certificate authority, all twenty X.509v3 extensions and the whole keystore
+matrix are Web Crypto and pkijs in the browser and work on `idptools.com`
+exactly as they work here. **One pane cannot**, for the reason this whole
+section gives — a browser cannot choose which client certificate to present,
+cannot be given a truststore, and cannot read the handshake it made — so that
+one pane is switched off.
+
+`disableTlsPane()` in `client/src/pki.js` runs from `onload()` when
+`appconfig.backendAvailable === false` and does three things: it adds
+`pki-pane-disabled` to `#pane_tls`, it sets `disabled` on **every** control in
+`#pane_tls_body`, and it shows `#pki_tls_unavailable`, which says why.
+
+**All three matter and they fail independently**, which is why
+`theTlsPaneIsSwitchedOffWithoutAnApi()` in `tests/pki_page.js` asserts each
+separately rather than checking the class and calling it done:
+
+* the **class** is what you can see. The rules are at the foot of
+  `client/public/css/pki.css`, and they grey with *colours* rather than
+  `opacity` on purpose: `opacity` makes a stacking context, so the one line in
+  the pane that has to be read — the notice — could not be brought back to full
+  contrast by any rule of its own.
+* **`disabled`** is what makes it true. A pane that only looks dead still
+  submits when somebody presses Return in a text field, and `runTlsTest()`'s
+  own refusal is then the first thing that says anything: a single status line
+  at the bottom of a pane full of live-looking controls. That refusal stays —
+  it is the backstop, not the mechanism.
+* the **legend** is deliberately left alone. The pane still collapses and
+  expands, and a heading nobody can read is a pane nobody can find.
+
+One thing this uncovered and it is worth knowing, because the shape recurs.
+`show()` in `pki.js` set an inline `style.display` and nothing else, while
+`#pki_backend_notice` is hidden in the markup by `saml-hidden` — which is
+`display: none` in `saml_common.css`. So the static build asked for the banner,
+the class kept it off the page, and **nothing noticed for as long as the banner
+existed**: the check in `tests/pki_page.js` read the inline style, so it agreed
+with the caller rather than with the user. `show()` now toggles both, the way
+`saml_request.js` and `wstrust_tools.js` always did, and every check of a shown
+element on this page reads `getComputedStyle`.
+
+**The two TLS jobs are gated per target**, on `PKI_TLS_AVAILABLE`, the same way
+Kerberos and LDAP are on theirs. `remote-run-tests.sh` sets it `false` for a
+deployed target and `true` for a local dev server. `api_tls_probe.js` is the one
+that needs the gate: it is node-only and brings up its own listeners, so nothing
+would stop it running against `idptools.com` and passing — a green *TLS probe*
+line in a report about a site whose TLS pane is greyed out is the most
+misleading thing in it. The **page** job still runs, and runs the assertion
+above in place of the section it cannot run there.
+
 ## Tests
 
 | Test | Covers | Skips? |
 |---|---|---|
 | `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles; a four-deep chain; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers | never |
 | `tests/pki_key_formats.js` | 7 algorithms × 4 formats × password on/off, read back by OpenSSL; a PKCS#12 carrying a whole chain; the refusals by name; PEM↔JWK round trips | never |
-| `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, and the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success | never |
-| `tests/pki_page.js` | the hierarchy built through the form, the *View certificate details* hand-off read back on `saml_cert.html` for every key algorithm, the store surviving a reload, the private-key opt-out in both states, the serial number (shown, persisted, signed, rotated, and typed over), the subject-DN defaults and the profile subjectAltName, a tooltip on every one of the 131 controls, the validity pickers and the ISO-8601 values an older build stored, the list-field syntax, the TLS test end to end, no browser-side TLS option — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, no control drawn outside its column, and every folded note still holding its prose and no control | needs the client; the TLS section skips without an api |
-| `tests/pki_mutual_tls.js` | the same page against a server that **answers back**: a client certificate issued through the form, presented with its chain to the mock STS's two listeners, and the **server's own account** of the connection — the chain it built, the anchor it verified against, and `required` told apart from `required-and-rejected` by trusting the CA between two otherwise identical runs | needs the client, the api and `STS_TLS_URL` |
+| `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, and the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success | node-only, so it never skips for want of a service — but `PKI_TLS_AVAILABLE=false` (a deployed static target) skips it, because it would pass there and mean nothing |
+| `tests/pki_page.js` | the hierarchy built through the form, the *View certificate details* hand-off read back on `saml_cert.html` for every key algorithm, the store surviving a reload, the private-key opt-out in both states, the serial number (shown, persisted, signed, rotated, and typed over), the subject-DN defaults and the profile subjectAltName, a tooltip on every one of the 131 controls, the validity pickers and the ISO-8601 values an older build stored, the list-field syntax, the TLS test end to end, no browser-side TLS option, the pane **switched off** when the build has no api — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, no control drawn outside its column, and every folded note still holding its prose and no control | needs the client; without an api the TLS section is replaced by the switched-off assertion rather than skipped |
+| `tests/pki_mutual_tls.js` | the same page against a server that **answers back**: a client certificate issued through the form, presented with its chain to the mock STS's two listeners, and the **server's own account** of the connection — the chain it built, the anchor it verified against, and `required` told apart from `required-and-rejected` by trusting the CA between two otherwise identical runs | needs the client, the api and `STS_TLS_URL`; also gated on `PKI_TLS_AVAILABLE` |
 
 The first three are node-only and need **`openssl` on the PATH** (the tests image
 installs it); they say so rather than skipping if it is absent, because a test

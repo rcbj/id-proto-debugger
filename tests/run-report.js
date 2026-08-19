@@ -938,14 +938,17 @@ function buildJobs() {
   // dist/ and greys the landing card; without the gate the page job runs
   // against a 404 and fails naming an element on a page nobody deployed.
   //
-  // Note which job it reaches and which it does not. `ldap_page.js` is gated
-  // here. `api_ldap.js` is NOT: it needs the api and the mock rather than the
-  // site, and it already skips with its own named reason when either is
-  // missing — "the api answered 404 for GET /ldap/limits" says considerably
-  // more than a blanket "LDAP is off for this target" would. That is the
-  // opposite of the choice the Kerberos sweep makes below, and deliberately so:
-  // those jobs load code out of the sts/ submodule and so acquire a spurious
-  // failure on a remote target, while this one speaks only HTTP.
+  // It reaches BOTH LDAP jobs, and that is a change from how this started.
+  // `api_ldap.js` used to be left running on the argument that it would skip
+  // with a better reason of its own — "the api answered 404 for GET
+  // /ldap/limits" being more specific than a blanket "LDAP is off here". That
+  // is true of the sentence and wrong about the report: on a static target the
+  // 404 is not a discovery, it is the known and intended state of a deployment
+  // that has no api at all, and a line saying an endpoint was missing invites
+  // somebody to go and look for it. Both jobs now skip for the reason that is
+  // actually true — this workflow is not on this target — which is the same
+  // choice the Kerberos sweep below makes. A target that IS api-backed sets
+  // LDAP_AVAILABLE=true and gets both jobs, including that 404 message, back.
   const ldapOff = env.LDAP_AVAILABLE === "false";
   const ldapPagesSkip = ldapOff
     ? "the LDAP page is not on this deployment: RFC 4511 is BER over a TCP " +
@@ -955,6 +958,15 @@ function buildJobs() {
       "card. Run it against the containerized stack (./docker-run-tests.sh) " +
       "or a local dev server, or set LDAP_AVAILABLE=true for a remote target " +
       "that IS api-backed."
+    : null;
+  const ldapProtocolSkip = ldapOff
+    ? "LDAP is not on this deployment: RFC 4511 is BER over a TCP socket, so " +
+      "every operation is a call to the api and a static site has none. This " +
+      "job would reach the api at the site's own origin and be answered by " +
+      "the object store, so its 404 would name a missing endpoint rather " +
+      "than the absent backend it really is. Run it against the " +
+      "containerized stack (./docker-run-tests.sh) or a local dev server, or " +
+      "set LDAP_AVAILABLE=true for a remote target that IS api-backed."
     : null;
   const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
@@ -1550,7 +1562,7 @@ function buildJobs() {
   // this side. Setting LDAPS_URL in the environment still overrides the whole of
   // it, and the LDAPS section skips with its own reason when 636 never bound —
   // which is the ordinary outcome of a host run that is not root.
-  jobs.push({
+  const ldapProtocolJob = {
     name: "LDAP protocol (bind, add, modify, delete, search, compare, the " +
         "same five over LDAPS, and what a result code is)",
     script: "api_ldap.js",
@@ -1562,7 +1574,9 @@ function buildJobs() {
       LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
       LDAP_PASSWORD: env.LDAP_PASSWORD || "password!",
     },
-  });
+  };
+  if (ldapProtocolSkip) ldapProtocolJob.skip = ldapProtocolSkip;
+  jobs.push(ldapProtocolJob);
 
   // The PAGE, which covers the four things that only exist in a browser and
   // every one of which is a way for this workflow to be broken while the
@@ -2522,12 +2536,34 @@ function buildJobs() {
   // answers "client authentication not required" for every TLS 1.3 server on
   // earth. It drives the module directly, with its own throwaway listeners, so
   // it needs no running api. Node only, never skipped.
-  jobs.push({
+  //
+  // Gated per target, the way the Kerberos and LDAP workflows are. This job is
+  // node-only and self-contained — it brings up its own throwaway listeners and
+  // needs no api, no site and no network — so nothing STOPS it running against
+  // https://idptools.com, and that is precisely the problem the Kerberos sweep
+  // below was written for: it exercises LOCAL code and reports nothing whatever
+  // about the deployed site. On a target whose PKI page has its TLS pane greyed
+  // out, a green "TLS probe" line is the most misleading thing in the report.
+  const pkiTlsOff = env.PKI_TLS_AVAILABLE === "false";
+  const pkiTlsSkip = pkiTlsOff
+    ? "the TLS test is not on this deployment: it is the one pane of the PKI " +
+      "page that needs the api (a browser cannot choose a client " +
+      "certificate, cannot be given a truststore, and cannot read the " +
+      "handshake it made), and a static site has no api — so pki.js greys " +
+      "that pane and disables every control in it. The PKI page job still " +
+      "runs and checks exactly that. This job needs no api and would pass " +
+      "here, which is why it is skipped rather than left to: it measures " +
+      "local code and says nothing about the deployed site. Set " +
+      "PKI_TLS_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
+  const tlsProbeJob = {
     name: "TLS probe (address policy on raw sockets, port allowlist, " +
         "truststores, mutual-auth measurement, deadlines)",
     script: "api_tls_probe.js",
     env: {},
-  });
+  };
+  if (pkiTlsSkip) tlsProbeJob.skip = pkiTlsSkip;
+  jobs.push(tlsProbeJob);
 
   // The page itself: the root/intermediate/issuing/leaf hierarchy built
   // entirely through the form, the store surviving a reload, the private-key
@@ -2562,13 +2598,22 @@ function buildJobs() {
   // one may legitimately point at a real Apache CXF STS, which has no TLS
   // endpoint of this kind at all. The test skips without it, and skips again if
   // the service it finds is older than the endpoint.
+  //
+  // The PKI_TLS_AVAILABLE gate reaches this one too. On a static target
+  // STS_TLS_URL is not set at all, so it is already absent — but the two
+  // variables are independent (STS_TLS_URL says a TLS endpoint exists,
+  // PKI_TLS_AVAILABLE says the target has an api to reach it through), and a
+  // run that sets the first without the second would otherwise drive the whole
+  // exchange through an api that is not there.
   if (env.STS_TLS_URL) {
-    jobs.push({
+    const mutualTlsJob = {
       name: "PKI mutual TLS (a certificate issued in the browser, presented " +
           "through the api, and read back from the server's point of view)",
       script: "pki_mutual_tls.js",
       env: { STS_TLS_URL: env.STS_TLS_URL },
-    });
+    };
+    if (pkiTlsSkip) mutualTlsJob.skip = pkiTlsSkip;
+    jobs.push(mutualTlsJob);
   }
 
   // ---------------------------------------------------------------------------

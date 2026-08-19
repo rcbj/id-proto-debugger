@@ -111,6 +111,10 @@ init()
       # the API. Loopback here because on this branch the api is the local dev
       # server's own, not a container on a compose network.
       LDAP_URL="${LDAP_URL:-ldap://localhost:389}"
+      # And the PKI page's TLS / mutual-TLS pane, for the third time and the
+      # same reason: a local dev server has the api, so POST /tls/connect is
+      # there and the pane is live.
+      PKI_TLS_AVAILABLE="${PKI_TLS_AVAILABLE:-true}"
       # WS-Trust STS (mock) started on the host (keycloak-tests.yml). A local dev
       # site has the api backend, so the WS-Trust jobs can run here.
       WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://localhost:8081/sts}"
@@ -155,6 +159,25 @@ init()
       # Where the API would open the directory, if this target had one. Set only
       # so that the variable is defined; on a static target nothing uses it.
       LDAP_URL="${LDAP_URL:-ldap://localhost:389}"
+      # The PKI page is the case neither of the two above is, and it is the
+      # reason this gets a variable of its own rather than being folded into
+      # them. That page SHIPS to a static site and almost all of it works
+      # there: the Root/Intermediate/Issuing CAs, every X.509v3 extension and
+      # the whole keystore matrix are Web Crypto and pkijs in the browser. One
+      # pane is not — the TLS / mutual-TLS test connection, which goes to POST
+      # /tls/connect because a browser cannot choose a client certificate,
+      # cannot be given a truststore and cannot read the handshake it made. So
+      # the landing card stays a live link and pki.js greys that ONE PANE and
+      # disables every control in it.
+      #
+      # This switches off the two jobs that are about the connection itself:
+      # api_tls_probe.js (node-only and self-contained, so nothing would stop
+      # it running here and it would say nothing about the deployed site) and
+      # pki_mutual_tls.js. The PKI PAGE job still runs — it has to, because the
+      # greying is a property of exactly this build, and pki_page.js asserts it
+      # in place of the section it cannot run. Set this to true for a remote
+      # target that IS api-backed.
+      PKI_TLS_AVAILABLE="${PKI_TLS_AVAILABLE:-false}"
       # SAML_ACS_URL / SAML_SLO_URL are NOT decided here. Where the IdP should
       # return its response depends on whether this target has the edge landings
       # deployed, which probeEdgeLandings() finds out with a real POST before
@@ -177,6 +200,7 @@ init()
   KERBEROS_PAGES_AVAILABLE="${KERBEROS_AVAILABLE}"
   export KERBEROS_AVAILABLE KERBEROS_PAGES_AVAILABLE
   export LDAP_AVAILABLE LDAP_URL
+  export PKI_TLS_AVAILABLE
   # Only exported when set (backendless targets); otherwise common.sh derives them.
   [ -n "${SAML_ACS_URL:-}" ] && export SAML_ACS_URL
   [ -n "${SAML_SLO_URL:-}" ] && export SAML_SLO_URL

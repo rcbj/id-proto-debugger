@@ -567,3 +567,53 @@
   padding: 6px 8px;
   margin: 4px 0 8px 0;
 }
+
+/* ---------------------------------------------------------------------------
+ * The TLS pane on a deployment with no api behind it (the static sites).
+ *
+ * This page is NOT one of the three workflows client/static_site.js drops from
+ * those builds — the certificate authority, every X.509v3 extension and the
+ * whole keystore matrix are Web Crypto and pkijs in the browser and work there
+ * exactly as they do anywhere. One pane needs a back end, so one pane is
+ * greyed; the landing card stays a live link, and index.html says why beside
+ * it.
+ *
+ * pki.js's disableTlsPane() adds the class AND sets `disabled` on every control
+ * inside. These rules are the half you can see; without the other half the pane
+ * still submits on a Return keypress in a text field.
+ *
+ * Greying is done with COLOURS rather than `opacity`, and that is the one
+ * decision here worth keeping. `opacity` on the pane body makes a stacking
+ * context, so the "switched off" notice inside it cannot be brought back to
+ * full contrast by any rule of its own — the one line in the pane that has to
+ * be read would be the one dimmed along with everything else.
+ *
+ * The legend is deliberately not greyed: the pane still collapses and expands,
+ * and a heading nobody can read is a pane nobody can find. */
+.pki-pane-disabled .saml-pane-body,
+.pki-pane-disabled .saml-pane-body label,
+.pki-pane-disabled .saml-pane-body .saml-note,
+.pki-pane-disabled .saml-pane-body summary {
+  color: #8a8a8a;
+}
+
+.pki-pane-disabled .saml-pane-body input,
+.pki-pane-disabled .saml-pane-body select,
+.pki-pane-disabled .saml-pane-body textarea,
+.pki-pane-disabled .saml-pane-body .saml-btn {
+  color: #8a8a8a;
+  background-color: #f2f2f2;
+  background-image: none;
+  border-color: #ddd;
+  box-shadow: none;
+  text-shadow: none;
+  cursor: not-allowed;
+}
+
+/* The notice keeps the contrast the rest of the pane has given up. An id, so
+ * it outranks the inherited grey above outright rather than relying on source
+ * order — this file is appended to, and a rule that wins on order is a rule
+ * the next addition can lose. */
+.pki-pane-disabled #pki_tls_unavailable {
+  color: #8a4a2f;
+}

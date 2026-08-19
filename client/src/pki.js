@@ -77,6 +77,11 @@ log.info("Log initialized. logLevel=" + log.level());
 
 var STORE_PREFIX = 'pkitools_';
 
+// Added to #pane_tls on a deployment with no api behind it. The rules are in
+// client/public/css/pki.css; disableTlsPane() below is what puts it on and
+// what disables the controls underneath it.
+var DISABLED_PANE_CLASS = 'pki-pane-disabled';
+
 // ---------------------------------------------------------------------------
 // Small DOM helpers.
 //
@@ -106,9 +111,27 @@ function setChecked(id, on) {
   var e = el(id);
   if (e) e.checked = !!on;
 }
+// Both halves, because this page hides things two different ways and neither
+// alone covers it. #pki_issuer_row is hidden by an inline display and nothing
+// else; #pki_backend_notice is hidden by `saml-hidden` in the markup, which is
+// `display: none !important` in saml_common.css — so setting style.display
+// back to '' does not put it on the page. That is what happened to the backend
+// notice: the static build called this with `true`, the class kept the banner
+// off the page, and the one thing that saw a difference was
+// tests/pki_page.js, which reads the inline style rather than the rendered
+// element and therefore agreed with the caller rather than with the user.
+// saml_request.js and wstrust_tools.js toggle the class; this now does that
+// too, as well as what it already did.
 function show(id, on) {
   var e = el(id);
-  if (e) e.style.display = on ? '' : 'none';
+  if (!e) return;
+  e.style.display = on ? '' : 'none';
+  if (!e.classList) return;
+  if (on) {
+    e.classList.remove('saml-hidden');
+  } else {
+    e.classList.add('saml-hidden');
+  }
 }
 function setText(id, text) {
   var e = el(id);
@@ -1574,6 +1597,37 @@ function backendAvailable() {
   return appconfig.backendAvailable !== false;
 }
 
+// The TLS pane on a build that declares it has no api (the static sites: see
+// client/static_site.js). This workflow is NOT one of the three that are
+// dropped from those sites altogether — the certificate authority, every
+// X.509v3 extension and the whole keystore matrix are Web Crypto and pkijs in
+// the browser and work there exactly as they do here. One pane cannot, so one
+// pane is switched off rather than a card being greyed on the landing page.
+//
+// Both halves of "switched off" are needed and they do different jobs. The
+// class is what says so at a glance, and `disabled` is what makes it true: a
+// pane that only LOOKS dead still submits when somebody presses Return in a
+// text field, and runTlsTest()'s own refusal is then the first thing that says
+// anything — one status line at the bottom of a pane full of live-looking
+// controls, which is the failure this exists to replace.
+//
+// The legend is deliberately left alone: the pane still collapses and expands,
+// and a heading nobody can read is a pane nobody can find.
+function disableTlsPane() {
+  log.debug("Entering disableTlsPane().");
+  var pane = el('pane_tls');
+  if (pane && pane.classList) pane.classList.add(DISABLED_PANE_CLASS);
+  var body = el('pane_tls_body');
+  if (body) {
+    var controls = body.querySelectorAll('input, select, textarea, button');
+    for (var i = 0; i < controls.length; i++) {
+      controls[i].disabled = true;
+    }
+  }
+  show('pki_tls_unavailable', true);
+  log.debug("Leaving disableTlsPane().");
+}
+
 function refreshTlsSelectors() {
   log.debug("Entering refreshTlsSelectors().");
   var clientSelect = el('pki_tls_client_cert');
@@ -2187,6 +2241,12 @@ window.onload = function () {
   renderHistory();
   showDetails(null);
   show('pki_backend_notice', !backendAvailable());
+  // After refreshTlsSelectors(), which fills the two selects this then
+  // disables — a select disabled first is a select the fill would leave
+  // looking usable.
+  if (!backendAvailable()) {
+    disableTlsPane();
+  }
   loadTlsLimits();
   log.debug("Leaving onload().");
 };

@@ -512,6 +512,11 @@
 <fieldset class="saml-pane" id="pane_tls">
   <legend class="saml-legend" onclick="return pki.togglePane('pane_tls_body');" title="THIS TEST IS ALWAYS MADE BY THE API LAYER, and there is deliberately no option to make it from the browser — a page cannot choose which client certificate to present, cannot be given a truststore, and cannot read the handshake it made. Click to collapse or expand this pane.">TLS / Mutual TLS Test Connection</legend>
   <div class="saml-pane-body" id="pane_tls_body">
+    <!-- Shown by pki.js's disableTlsPane() on a build with no api, which also
+         greys this pane and disables every control in it. It is a saml-notice
+         rather than a saml-note so that it keeps full contrast inside a pane
+         that has none: it is the one line in here that has to be read. -->
+    <p id="pki_tls_unavailable" class="saml-notice saml-hidden">This pane is <strong>switched off on this deployment</strong>, which has no API layer. The connection can only be made by one: a browser cannot choose which client certificate to present, cannot be given a truststore, and cannot read the handshake it made. Everything else on this page runs in the browser and is unaffected &mdash; run the debugger locally, or point it at an API-backed deployment, to open a real connection.</p>
 
     <details class="pki-more">
       <summary>Why the browser cannot be asked to do this</summary>

@@ -1610,18 +1610,91 @@ async function theListFieldSyntaxIsWhatThePageDocuments(driver) {
 // of its own. A handshake that succeeds against a service this suite happens
 // to have would prove less and skip more often.
 // ---------------------------------------------------------------------------
+// The TLS pane on a build that declares it has no api — the static
+// deployments, where client/static_site.js greys the landing cards of the three
+// workflows that are not there at all and this one is deliberately NOT among
+// them: the certificate authority, every X.509v3 extension and the whole
+// keystore matrix are Web Crypto and pkijs in the browser and work there
+// exactly as they do here. One pane cannot, so one pane is switched off.
+//
+// Both halves are asserted because they fail independently and only one of
+// them can be seen: the class is what greys the pane, `disabled` is what stops
+// it being used. A pane that only looks dead still submits when somebody
+// presses Return in a text field, and runTlsTest()'s own refusal is then the
+// first thing that says anything — one status line at the bottom of a pane
+// full of live-looking controls.
+async function theTlsPaneIsSwitchedOffWithoutAnApi(driver) {
+  log.debug("Entering theTlsPaneIsSwitchedOffWithoutAnApi().");
+  // NOTE: the function body inside this executeScript string runs IN THE
+  // BROWSER, where there is no bunyan — so it carries no logging, per the
+  // repo-root CLAUDE.md. What it returns is logged out here.
+  const state = await driver.executeScript(
+    "var pane = document.getElementById('pane_tls');" +
+    "var body = document.getElementById('pane_tls_body');" +
+    "var notice = document.getElementById('pki_tls_unavailable');" +
+    "if (!pane || !body) return null;" +
+    "var controls = body.querySelectorAll(" +
+    "    'input, select, textarea, button');" +
+    "var live = [];" +
+    "for (var i = 0; i < controls.length; i++) {" +
+    "  if (!controls[i].disabled) {" +
+    "    live.push(controls[i].id || controls[i].name ||" +
+    "        controls[i].tagName); } }" +
+    "return { greyed: (' ' + pane.className + ' ')" +
+    "    .indexOf(' pki-pane-disabled ') >= 0," +
+    "  controls: controls.length," +
+    "  live: live," +
+    "  noticeShown: !!notice &&" +
+    "      window.getComputedStyle(notice).display !== 'none' };");
+  assert.ok(state, "the TLS pane is missing from the page");
+  log.info("The TLS pane on this backend-less build: greyed=" + state.greyed +
+    ", controls=" + state.controls + ", still enabled=" + state.live.length +
+    ", notice shown=" + state.noticeShown + ".");
+  assert.ok(state.greyed,
+    "this build has no api — the backend notice is on the page — but " +
+    "#pane_tls does not carry pki-pane-disabled, so the TLS pane is not " +
+    "greyed out. See disableTlsPane() in client/src/pki.js.");
+  // Without this the check below passes on a pane whose controls the markup
+  // no longer holds, which is the shape of a test that quietly does nothing.
+  assert.ok(state.controls > 0,
+    "the TLS pane has no controls at all, so the enabled-control check " +
+    "measures nothing. Either the pane was emptied or the ids moved.");
+  assert.deepStrictEqual(state.live, [],
+    "this build has no api, but " + state.live.length + " control(s) in the " +
+    "TLS pane are still enabled: " + state.live.join(", ") + ". Greying is " +
+    "not switching off — a live control still submits on a Return keypress.");
+  assert.ok(state.noticeShown,
+    "the TLS pane is greyed but #pki_tls_unavailable is not on the page, so " +
+    "nothing on it says why it is off.");
+  log.debug("Leaving theTlsPaneIsSwitchedOffWithoutAnApi().");
+}
+
 async function theTlsTestGoesThroughTheApi(driver) {
   log.debug("Entering theTlsTestGoesThroughTheApi().");
   await openThePageFromTheLandingCard(driver);
   await waitVisible(driver, By.id("pki_tls_host"));
 
+  // Is there an api behind this build? Read the RENDERED banner rather than
+  // its inline style. pki.js's show() sets an inline display AND toggles the
+  // saml-hidden class, and for a long time it set only the inline one while
+  // `.saml-notice.saml-hidden { display: none }` kept the banner off the page.
+  // A check written against the inline style cannot see that: it agrees with
+  // the caller rather than with the user, which is exactly how the banner came
+  // to be invisible on every static deployment with this test green.
   const backendNoticeShown = await driver.executeScript(
     "var e = document.getElementById('pki_backend_notice');" +
-    "return !!e && e.style.display !== 'none';");
+    "if (!e) return false;" +
+    "return window.getComputedStyle(e).display !== 'none';");
   if (backendNoticeShown) {
-    log.info("SKIPPING the TLS section: this build has no api behind it " +
-      "(backendAvailable is false), and this test is only made by an api.");
-    log.debug("Leaving theTlsTestGoesThroughTheApi(). Skipped.");
+    // Not a bare skip. On a deployment with no api this pane must be OFF, and
+    // that is a property of exactly this build — so the section that cannot
+    // run here is replaced by the assertion that belongs here instead, rather
+    // than by a log line saying nothing was checked.
+    await theTlsPaneIsSwitchedOffWithoutAnApi(driver);
+    log.info("The TLS section proper is not run here: this build has no api " +
+      "behind it (backendAvailable is false). The pane was checked to be " +
+      "switched off instead.");
+    log.debug("Leaving theTlsTestGoesThroughTheApi(). No api on this build.");
     return;
   }
 
