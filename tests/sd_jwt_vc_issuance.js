@@ -174,6 +174,68 @@ function severeErrors(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// THE AUTHORIZATION REQUEST THE BROWSER ACTUALLY MADE.
+//
+// Reading it off the address bar once the login screen is up worked for as long
+// as the authorization server rendered that screen AT the authorization URL,
+// which is what Keycloak does — the request's parameters are still in the bar,
+// so `getCurrentUrl()` is the request. The mock STS stopped doing that when it
+// grew a centralized authentication service: an unauthenticated authorization
+// request is now answered with a 302 to `/authn/login?authn=<id>` and the
+// request is held server-side, so the bar holds an opaque id and nothing else.
+// That is what failed the H.1 section — "the authorization request MUST carry
+// the offer's issuer_state ... Got: http://localhost:8081/authn/login?authn=…"
+// — and it is the more dangerous half of the same problem for the two NEGATIVE
+// assertions (`indexOf("authorization_details=") === -1`), which would have
+// gone on passing against a URL that could not have carried one either way.
+//
+// So the request is taken from the browser's own record of it. chromedriver's
+// performance log carries a Network.requestWillBeSent for every navigation,
+// including ones that were redirected away from before anything was painted;
+// test() turns that log on. The log is drained before the click, so what is
+// read afterwards is this request rather than the previous section's.
+//
+// It is the whole URL, so every existing assertion keeps its meaning, and it is
+// what the browser sent rather than what a page said it would send.
+// ---------------------------------------------------------------------------
+async function startAuthorizationRequest(driver, message) {
+  log.debug("Entering startAuthorizationRequest().");
+  var endpoint = await value(driver, "authorization_endpoint");
+  assert.ok(endpoint,
+    "step 1 must know the authorization endpoint before it can send an " +
+        "authorization request.");
+  // Empty the log, so the entries read below are this request's.
+  await driver.manage().logs().get(logging.Type.PERFORMANCE);
+  await click(driver, By.id("start_issuance_button"));
+  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+                    message);
+  var entries = await driver.manage().logs().get(logging.Type.PERFORMANCE);
+  var requests = [];
+  entries.forEach(function (entry) {
+    var event = null;
+    try {
+      event = JSON.parse(entry.message).message;
+    } catch (e) {
+      return;   // not a DevTools event; nothing this reads lives in one.
+    }
+    if (!event || event.method !== "Network.requestWillBeSent") return;
+    var params = event.params || {};
+    var url = String((params.request || {}).url || "");
+    // Document, because the authorization request is a navigation — a
+    // subresource fetched from the same origin is not the request being made.
+    if (params.type !== "Document" || url.indexOf(endpoint) !== 0) return;
+    requests.push(url);
+  });
+  assert.ok(requests.length,
+    "the browser made no navigation to " + endpoint + ", so there is no " +
+    "authorization request to read. (If chromedriver's performance log is " +
+    "off, every assertion below this line would pass while reading nothing.)");
+  log.debug("Leaving startAuthorizationRequest(). " + requests.length +
+            " request(s) to the authorization endpoint.");
+  return requests[requests.length - 1];
+}
+
+// ---------------------------------------------------------------------------
 // Step 1 — discovery and configuration
 // ---------------------------------------------------------------------------
 async function stepOne(driver) {
@@ -3490,10 +3552,8 @@ async function credentialOfferSameDevice(driver) {
                     waitTime);
   await driver.sleep(400);
 
-  await click(driver, By.id("start_issuance_button"));
-  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+  var authzUrl = await startAuthorizationRequest(driver,
     "the workflow should reach the authorization server's login screen.");
-  var authzUrl = await driver.getCurrentUrl();
   assert.ok(authzUrl.indexOf("issuer_state=" + issuerState) !== -1,
     "the authorization request MUST carry the offer's issuer_state (OID4VCI " +
         "section 4.1.1). Got: " + authzUrl);
@@ -4046,10 +4106,8 @@ async function authorizationDetailsFlow(driver) {
   log.info("[authz details] OK — step 1 offers both ways of asking, and " +
            "describes the one chosen.");
 
-  await click(driver, By.id("start_issuance_button"));
-  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+  var authzUrl = await startAuthorizationRequest(driver,
     "the authorization request should still reach the IdP.");
-  var authzUrl = await driver.getCurrentUrl();
   assert.ok(authzUrl.indexOf("authorization_details=") !== -1,
     "the authorization request should carry authorization_details. Got: " +
         authzUrl);
@@ -4278,10 +4336,8 @@ async function claimsSelection(driver) {
     "the selection should survive a reload. Got: " + JSON.stringify(reloaded));
 
   // ---- the authorization request ------------------------------------------
-  await click(driver, By.id("start_issuance_button"));
-  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+  var authzUrl = await startAuthorizationRequest(driver,
     "the authorization request should reach the identity provider.");
-  var authzUrl = await driver.getCurrentUrl();
   var sent = JSON.parse(decodeURIComponent(/authorization_details=([^&]*)/.exec(
       authzUrl)[1]));
   assert.ok(sent[0] && sent[0].claims,
@@ -4635,10 +4691,8 @@ async function claimsCannotTravelOnAScope(driver) {
            "sent, with the fix beside it.");
 
   // Nothing is sent, and the pane is right about that.
-  await click(driver, By.id("start_issuance_button"));
-  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+  var scopeUrl = await startAuthorizationRequest(driver,
     "the authorization request should still reach the identity provider.");
-  var scopeUrl = await driver.getCurrentUrl();
   assert.ok(scopeUrl.indexOf("authorization_details=") === -1,
     "a scope request carries no authorization_details, which is exactly why " +
     "the pane has to say so. Got: " + scopeUrl);
@@ -4665,10 +4719,8 @@ async function claimsCannotTravelOnAScope(driver) {
         fixed.mechanism);
   assert.ok(!fixed.fixShown,
     "and take itself out of the way once there is nothing to fix.");
-  await click(driver, By.id("start_issuance_button"));
-  await driver.wait(until.elementLocated(By.id("username")), fetchWait,
+  var fixedUrl = await startAuthorizationRequest(driver,
     "the authorization request should reach the identity provider again.");
-  var fixedUrl = await driver.getCurrentUrl();
   var sent = JSON.parse(decodeURIComponent(/authorization_details=([^&]*)/
       .exec(fixedUrl)[1]));
   assert.ok(sent[0].claims && sent[0].claims.every(function (c) {
@@ -5639,8 +5691,16 @@ async function test() {
 
   var prefs = new logging.Preferences();
   prefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
+  // The PERFORMANCE log is what startAuthorizationRequest() reads the
+  // authorization request out of, now that the mock STS answers one with a
+  // redirect to its own login screen and the address bar no longer holds it.
+  // Network events only: the page events would multiply the log for nothing,
+  // since a navigation is all this reads. It is a separate buffer from the
+  // BROWSER one, so severeErrors() sees exactly what it saw before.
+  prefs.setLevel(logging.Type.PERFORMANCE, logging.Level.ALL);
   var options = new chrome.Options().setLoggingPrefs(prefs)
     .addArguments("--window-size=1500,1400");
+  options.setPerfLoggingPrefs({ enableNetwork: true, enablePage: false });
   if (headless) {
     options.addArguments("--headless=new", "--no-sandbox",
                          "--disable-dev-shm-usage");
