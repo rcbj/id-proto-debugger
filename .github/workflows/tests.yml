@@ -31,7 +31,16 @@ jobs:
           # submodule. The launcher initialises it too (requireMockStsCheckout in
           # common/common.sh); asking for it here keeps a fetch failure on the
           # checkout step, where it reads as one.
-          submodules: true
+          # `recursive`, not `true`, and the difference is load-bearing: there
+          # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP
+          # library the api's client uses, and sts/node-ldapjs is the same
+          # library inside the mock STS, which its embedded directory is built
+          # on. `true` stops one level short of the second, and an uninitialised
+          # submodule is an EMPTY DIRECTORY — so the sts image builds, npm
+          # installs a package with no main, and the container dies at startup
+          # with `Cannot find module 'ldapjs'`, naming a package rather than a
+          # submodule.
+          submodules: recursive
       - name: Install docker-compose
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:
@@ -66,7 +75,16 @@ jobs:
           # The mock STS submodule — see the test job above. This run uses
           # --abort-on-container-exit, so a service that cannot be built takes the
           # whole coverage run down with it.
-          submodules: true
+          # `recursive`, not `true`, and the difference is load-bearing: there
+          # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP
+          # library the api's client uses, and sts/node-ldapjs is the same
+          # library inside the mock STS, which its embedded directory is built
+          # on. `true` stops one level short of the second, and an uninitialised
+          # submodule is an EMPTY DIRECTORY — so the sts image builds, npm
+          # installs a package with no main, and the container dies at startup
+          # with `Cannot find module 'ldapjs'`, naming a package rather than a
+          # submodule.
+          submodules: recursive
       - name: Install docker-compose
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:

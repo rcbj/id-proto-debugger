@@ -48,6 +48,13 @@ services:
       context: ./sts
     ports:
       - "8081:8081"
+      # The mock's TLS endpoint, which is not on the HTTP port because it is not
+      # HTTP on that listener: 8443 asks for a client certificate and never
+      # refuses one, 9443 requires it. The PKI page's TLS pane points at these,
+      # through the api — a browser cannot present a certificate it just issued.
+      # Both are in api/tls_probe.js's default port allowlist already.
+      - "8443:8443"
+      - "9443:9443"
   # Keycloak 8.0.1 + cloudtrust keycloak-wsfed module (WS-Federation IdP side-car
   # for the WS-Fed test). Included here so the Docker Image CI (dockerimage.yml,
   # which runs `docker-compose -f docker-compose.yml build`) builds it too.

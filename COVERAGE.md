@@ -3,8 +3,8 @@
 Code coverage for this project spans two domains that the Selenium suite
 exercises out-of-process:
 
-1. **Frontend (browser)** — the browserified bundles (`debugger.js`,
-   `debugger2.js`, `introspection.js`, …) running in Selenium-driven Chrome.
+1. **Frontend (browser)** — the browserified bundles (`oauth2_oidc_1.js`,
+   `oauth2_oidc_2.js`, `introspection.js`, …) running in Selenium-driven Chrome.
 2. **Backend (Node)** — the Express API (`api/server.js`, `common/data.js`).
 
 Coverage is **opt-in**. The default build and the normal test runs
@@ -20,7 +20,7 @@ is instrumented unless you explicitly enable it.
   bundle.
 - In the browser, Istanbul accumulates coverage in `window.__coverage__`. Because
   that object is reset on every full page load (and this app hops between
-  `debugger.html`, `debugger2.html`, `introspection.html`, …), the beacon ships
+  `oauth2_oidc_1.html`, `oauth2_oidc_2.html`, `introspection.html`, …), the beacon ships
   it to the client server **asynchronously on a short interval** (and on
   `visibilitychange`) while the page is alive. Shipping at page-dismissal time
   does not work: Chrome drops synchronous `XMLHttpRequest` fired during

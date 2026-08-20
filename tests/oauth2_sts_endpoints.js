@@ -19,7 +19,11 @@
 //   * every access / ID / refresh token is an RS256 JWT whose signature
 //     verifies against jwks_uri, with the claims OIDC asks for (aud, nonce,
 //     at_hash, c_hash);
-//   * an authorization code is single use and a bad code_verifier is refused;
+//   * a bad code_verifier is refused WITHOUT consuming the code, and a code
+//     that was redeemed is single use in the way this mock relaxes it: the
+//     identical request gets the identical tokens back for the rest of the
+//     code's lifetime, and any other request for that code is refused with the
+//     difference named;
 //   * introspection tells the truth, revocation takes effect, and a revoked
 //     refresh token stops working;
 //   * dynamic client registration (RFC 7591) and its management calls
@@ -147,10 +151,13 @@ function parseRedirect(location) {
 }
 
 // Start an authorization request and drive it to the client's redirect_uri,
-// which now means going through the login screen the way a browser would:
+// which means going through the AUTHENTICATION SERVICE the way a browser would.
+// The login screen is its own endpoint since 2026-08-19, so the first answer is
+// a redirect rather than a form:
 //
-//   GET  /oauth2/authorize   -> the login form
-//   POST /oauth2/login       -> back to /oauth2/authorize, with a session cookie
+//   GET  /oauth2/authorize   -> 302 to /authn/login?authn=...
+//   GET  /authn/login        -> the form
+//   POST /authn/login        -> back to /oauth2/authorize, with a session cookie
 //   GET  /oauth2/authorize   -> the authorization response
 //
 // options.username  who to sign in as (their name ends up in the tokens)
@@ -162,43 +169,61 @@ async function authorize(meta, params, options) {
   let r = await get(meta.authorization_endpoint + "?" + form(params),
     options.cookie ? { headers: { cookie: options.cookie } } : {});
 
-  // An error, or a session that skipped the prompt: already the final answer.
-  if (r.status === 302) {
-    const out = parseRedirect(r.headers.get("location"));
+  // Every answer here is a 302 now, so which one it is has to be read off the
+  // Location: the authentication service is on this origin and everything else
+  // — an error, or a session that skipped the prompt — goes to the client.
+  assert.strictEqual(r.status, 302,
+    "the authorization endpoint should redirect, either to the client or to " +
+        "the authentication service, got HTTP " + r.status + ".");
+  const first = r.headers.get("location");
+  if (first.indexOf("/authn/") !== 0 &&
+      first.indexOf(meta.issuer + "/authn/") !== 0) {
+    const out = parseRedirect(first);
     out.prompted = false;
     out.cookie = options.cookie;
     log.debug("Leaving authorize().");
     return out;
   }
-  assert.strictEqual(r.status, 200,
-    "the authorization endpoint should either redirect or show the login " +
-        "screen, got HTTP " + r.status + ".");
-  const page = await r.text();
-  const loginId = (page.match(/name="login_id" value="([^"]+)"/) || [])[1];
-  assert.ok(loginId, "the login screen carries no login_id to post back.");
 
-  r = await fetch(meta.issuer + "/oauth2/login", {
+  // The screen, at its own URL. It is a GET, which is what makes it a service
+  // rather than a page rendered inside somebody else's endpoint.
+  r = await get(first.indexOf("http") === 0 ? first : meta.issuer + first,
+    options.cookie ? { headers: { cookie: options.cookie } } : {});
+  assert.strictEqual(r.status, 200,
+    "the authentication service should show the sign-in screen, got HTTP " +
+        r.status + ".");
+  const page = await r.text();
+  const authnId = (page.match(/name="authn_id" value="([^"]+)"/) || [])[1];
+  assert.ok(authnId, "the sign-in screen carries no authn_id to post back.");
+
+  r = await fetch(meta.issuer + "/authn/login", {
     method: "POST", redirect: "manual",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form({ login_id: loginId, username: username,
+    body: form({ authn_id: authnId, username: username,
                password: options.password || "any-password",
                  action: options.action || "login" })
   });
   assert.strictEqual(r.status, 302,
-    "submitting the login form should redirect, got HTTP " + r.status + ".");
+    "submitting the sign-in form should redirect, got HTTP " + r.status + ".");
   const cookie = String(r.headers.get("set-cookie") || "").split(";")[0];
-  const next = r.headers.get("location");
+  let next = r.headers.get("location");
+  if (next.indexOf("http") !== 0) next = meta.issuer + next;
 
-  // Cancel (and any other error) goes straight back to the client.
-  if (next.indexOf(meta.authorization_endpoint) !== 0) {
-    const out = parseRedirect(next);
+  // Cancel comes back to the authorization endpoint as well, carrying
+  // authn_error rather than being answered at the screen: the service does not
+  // know what an OAuth refusal looks like, and in response_mode=form_post it is
+  // not a redirect at all. So the outcome is read from the SECOND hop, and the
+  // absence of a session cookie is what says nobody signed in.
+  const refused = /[?&]authn_error=/.test(next);
+  assert.ok(refused || cookie, "signing in should establish a session.");
+  r = await get(next, cookie ? { headers: { cookie: cookie } } : {});
+  if (refused) {
+    const out = parseRedirect(r.headers.get("location"));
     out.prompted = true;
     out.page = page;
-    log.debug("Leaving authorize().");
+    log.debug("Leaving authorize(). The user refused at the sign-in screen.");
     return out;
   }
-  assert.ok(cookie, "signing in should establish a session.");
-  r = await get(next, { headers: { cookie: cookie } });
   assert.strictEqual(r.status, 302,
     "the authorization endpoint should answer after the login, got HTTP " +
         r.status + ".");
@@ -226,28 +251,42 @@ async function testLoginScreen(meta, verify) {
     login_hint: "prefilled-user"
   };
 
-  // 1. The unauthenticated request is answered with a form, not a code.
+  // 1. The unauthenticated request is handed to the authentication service —
+  //    a redirect to an endpoint of its own, not a form in this endpoint's body.
   const first = await get(meta.authorization_endpoint + "?" + form(params));
-  assert.strictEqual(first.status, 200,
-      "an unauthenticated request should show the login screen.");
-  assert.ok(/text\/html/.test(first.headers.get("content-type") || ""),
-            "the login screen should be HTML.");
-  const page = await first.text();
-  assert.ok(/<form[^>]+action="\/oauth2\/login"/.test(page),
-            "the login screen should post to /oauth2/login.");
+  assert.strictEqual(first.status, 302,
+    "an unauthenticated request should be sent to the authentication " +
+        "service, got HTTP " + first.status + ".");
+  const toService = first.headers.get("location");
+  assert.ok(/^(https?:\/\/[^/]+)?\/authn\/login\?authn=[^&]+$/.test(toService),
+    "and the redirect should name the sign-in screen with the id of the " +
+        "request it stashed. Got: " + toService);
+  assert.ok(!/code=/.test(toService),
+    "nothing should be issued on the way to signing in.");
+
+  const screen = await get(toService.indexOf("http") === 0 ? toService
+    : meta.issuer + toService);
+  assert.strictEqual(screen.status, 200,
+      "the sign-in screen should be served at its own URL.");
+  assert.ok(/text\/html/.test(screen.headers.get("content-type") || ""),
+            "the sign-in screen should be HTML.");
+  const page = await screen.text();
+  assert.ok(/<form[^>]+action="\/authn\/login"/.test(page),
+            "the sign-in screen should post to /authn/login.");
   assert.ok(/id="username"/.test(page) && /id="password"/.test(page),
-    "the login screen should ask for a username and a password.");
-  assert.ok(/name="login_id" value="[^"]+"/.test(page),
+    "the sign-in screen should ask for a username and a password.");
+  assert.ok(/name="authn_id" value="[^"]+"/.test(page),
             "the form should carry the request it interrupted.");
   assert.ok(page.indexOf('value="prefilled-user"') !== -1,
     "login_hint should pre-fill the username field.");
   assert.ok(page.indexOf(CLIENT_ID) !== -1 && page.indexOf(REDIRECT_URI) !== -1,
-    "the login screen should say which client and redirect_uri it is " +
-        "signing in for.");
+    "the sign-in screen should say which client and redirect_uri it is " +
+    "signing in for — the service knows nothing about OAuth, so those rows " +
+        "are what the authorization endpoint passed it.");
   assert.ok(!/code=/.test(page),
             "nothing should be issued before the user signs in.");
-  log.info("[login] OK — an unauthenticated authorization request is " +
-           "answered with a login form.");
+  log.info("[login] OK — an unauthenticated authorization request is sent to " +
+           "the authentication service, which shows the form.");
 
   // 2. Signing in leads back to the authorization endpoint, then to the client.
   const username = "signed.in.user";
@@ -324,8 +363,26 @@ async function testLoginScreen(meta, verify) {
   const forced = await get(meta.authorization_endpoint + "?" +
       form(Object.assign({ prompt: "login" }, params)),
     { headers: { cookie: authz.cookie } });
-  assert.strictEqual(forced.status, 200,
-      "prompt=login should show the login screen even with a session.");
+  assert.strictEqual(forced.status, 302,
+    "prompt=login should send the person to the authentication service even " +
+        "with a session, got HTTP " + forced.status + ".");
+  assert.ok(/\/authn\/login\?authn=/.test(forced.headers.get("location")),
+    "and it is the sign-in screen it should send them to, not the client. " +
+        "Got: " + forced.headers.get("location"));
+  // …and the return URL it stashed must have had `prompt` taken off it, or the
+  // person comes back, is sent to sign in again, and never leaves.
+  const forcedScreen = await get(meta.issuer + forced.headers.get("location"));
+  const forcedId = (await forcedScreen.text())
+    .match(/name="authn_id" value="([^"]+)"/)[1];
+  const forcedDone = await fetch(meta.issuer + "/authn/login", {
+    method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form({ authn_id: forcedId, username: "prompted.user",
+                 password: "any-password", action: "login" })
+  });
+  assert.ok(!/[?&]prompt=/.test(forcedDone.headers.get("location") || ""),
+    "the return URL must drop prompt, or signing in loops for ever. Got: " +
+        forcedDone.headers.get("location"));
   const silent = await authorize(meta, Object.assign({ prompt: "none" },
       params));
   assert.strictEqual(silent.params.get("error"), "login_required",
@@ -342,27 +399,28 @@ async function testLoginScreen(meta, verify) {
   assert.strictEqual(cancelled.params.get("state"), "login-state",
                      "even the cancel keeps state.");
 
-  const noName = await get(meta.authorization_endpoint + "?" + form(params));
-  const loginId =
-      (await noName.text()).match(/name="login_id" value="([^"]+)"/)[1];
-  const blank = await fetch(meta.issuer + "/oauth2/login", {
+  const started = await get(meta.authorization_endpoint + "?" + form(params));
+  const noName = await get(meta.issuer + started.headers.get("location"));
+  const authnId =
+      (await noName.text()).match(/name="authn_id" value="([^"]+)"/)[1];
+  const blank = await fetch(meta.issuer + "/authn/login", {
     method: "POST", redirect: "manual",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form({ login_id: loginId, username: "", password: "x",
+    body: form({ authn_id: authnId, username: "", password: "x",
                action: "login" })
   });
   assert.strictEqual(blank.status, 200,
       "an empty username should re-show the form, not redirect.");
   assert.ok(/Enter a username/.test(await blank.text()),
             "the form should say what was wrong.");
-  const refused = await fetch(meta.issuer + "/oauth2/login", {
+  const refused = await fetch(meta.issuer + "/authn/login", {
     method: "POST", redirect: "manual",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form({ login_id: loginId, username: "carol", password: "invalid",
+    body: form({ authn_id: authnId, username: "carol", password: "invalid",
                action: "login" })
   });
   assert.ok(/Authentication failed for carol/.test(await refused.text()),
-    'the reserved password "invalid" should be refused at the login ' +
+    'the reserved password "invalid" should be refused at the sign-in ' +
         'screen too.');
   log.info("[login] OK — cancel, a missing username and the reserved " +
            "password are all handled.");
@@ -374,8 +432,12 @@ async function testLoginScreen(meta, verify) {
   const afterLogout = await get(meta.authorization_endpoint + "?" +
       form(params),
     { headers: { cookie: authz.cookie } });
-  assert.strictEqual(afterLogout.status, 200,
-                     "after signing out the login screen should come back.");
+  assert.strictEqual(afterLogout.status, 302,
+    "after signing out the next request should be sent to the " +
+        "authentication service again, got HTTP " + afterLogout.status + ".");
+  assert.ok(/\/authn\/login\?authn=/.test(afterLogout.headers.get("location")),
+    "and that is where it should go — a dropped session means signing in " +
+    "again, not a code. Got: " + afterLogout.headers.get("location"));
   log.info("[login] OK — signing out ends the session.");
   log.debug("Leaving testLoginScreen().");
 }
@@ -461,7 +523,22 @@ async function testAuthorizationCode(meta, verify) {
                      "a bad code_verifier should be invalid_grant.");
   log.info("[code] OK — PKCE is verified, not just accepted.");
 
-  // ... and that attempt consumed the code, so start again.
+  // ... and that refusal must NOT have consumed the code. A check that burns
+  // what it refuses answers the next attempt — the corrected one — with
+  // "already-used" instead of tokens, which is the wrong sentence at exactly
+  // the moment somebody is acting on the right one.
+  const corrected = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: code, client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI, code_verifier: verifier
+  });
+  assert.strictEqual(corrected.status, 200,
+    "a refused code_verifier must leave the code redeemable, so the same " +
+        "code with the RIGHT verifier should be exchanged. Got HTTP " +
+        corrected.status + ": " + corrected.raw);
+  log.info("[code] OK — a refused PKCE check does not consume the code.");
+
+  // A fresh one for the token assertions below, so they read against a code
+  // whose whole history is this exchange.
   const second = await authorize(meta, {
     response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
     scope: "openid profile email", state: "state-2", nonce: nonce,
@@ -503,14 +580,75 @@ async function testAuthorizationCode(meta, verify) {
   log.info("[code] OK — access / ID / refresh tokens all verify against " +
            "jwks_uri, with matching claims.");
 
-  // Single use.
+  // Single use, NON-SPEC-ally relaxed to idempotent for the rest of the code's
+  // own lifetime: the identical Token Request gets the identical token set
+  // back — the first answer, not a second one — because a debugging service
+  // that answers a reloaded page with "Unknown or already-used authorization
+  // code" has told the user nothing about which of those two it was. The
+  // relaxation is the mock's, is documented in docs/mock-sts.md, and RFC 6749
+  // section 4.1.2 permits a real server to refuse this outright.
   const replay = await postForm(meta.token_endpoint, {
     grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI, code_verifier: verifier
   });
-  assert.strictEqual(replay.body.error, "invalid_grant",
-                     "an authorization code must be single use.");
-  log.info("[code] OK — a replayed authorization code is refused.");
+  assert.strictEqual(replay.status, 200,
+    "the same Token Request for a code already redeemed should be answered " +
+        "with what it was answered the first time. Got HTTP " + replay.status +
+        ": " + replay.raw);
+  assert.deepStrictEqual(replay.body, set,
+    "a replay must return the SAME token set, not a newly minted one — " +
+        "nothing is issued twice here.");
+  log.info("[code] OK — an identical replay returns the identical tokens.");
+
+  // Everything else about that code is still refused, and the refusal says
+  // which part of the request did not match. This is what stops the relaxation
+  // from being a way to redeem somebody else's code.
+  const otherClient = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: code2,
+    client_id: CLIENT_ID + "-somebody-else",
+    redirect_uri: REDIRECT_URI, code_verifier: verifier
+  });
+  assert.strictEqual(otherClient.status, 400,
+    "a redeemed code presented by a DIFFERENT client must be refused. Got " +
+        "HTTP " + otherClient.status + ": " + otherClient.raw);
+  assert.strictEqual(otherClient.body.error, "invalid_grant",
+                     "that refusal should be invalid_grant.");
+  assert.ok(/client_id/.test(String(otherClient.body.error_description)),
+    "the refusal should name what differed from the request the code was " +
+        "redeemed with. Got: " + otherClient.body.error_description);
+  const otherVerifier = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI, code_verifier: b64u(crypto.randomBytes(32))
+  });
+  assert.strictEqual(otherVerifier.status, 400,
+    "a redeemed code presented with a different code_verifier must be " +
+        "refused. Got HTTP " + otherVerifier.status + ": " +
+        otherVerifier.raw);
+  assert.ok(/code_verifier/.test(String(otherVerifier.body.error_description)),
+    "that refusal should name the code_verifier. Got: " +
+        otherVerifier.body.error_description);
+  log.info("[code] OK — a redeemed code is replayed only for the request it " +
+           "was redeemed with; another client and another verifier are both " +
+           "refused, each told what differed.");
+
+  // And a code this server never minted is its own answer, rather than being
+  // reported as one that was used: the two are indistinguishable to a client,
+  // and only the server can tell them apart.
+  const unknown = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: "not-a-code-" + b64u(
+        crypto.randomBytes(12)),
+    client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, code_verifier: verifier
+  });
+  assert.strictEqual(unknown.status, 400,
+    "a code this server never issued must be refused. Got HTTP " +
+        unknown.status + ": " + unknown.raw);
+  assert.strictEqual(unknown.body.error, "invalid_grant",
+                     "an unknown code should be invalid_grant.");
+  assert.ok(/memory|restart/i.test(String(unknown.body.error_description)),
+    "the refusal for a code that was never issued should say so — this " +
+        "server holds codes in memory and cannot know one it never minted. " +
+        "Got: " + unknown.body.error_description);
+  log.info("[code] OK — an unknown code is reported as unknown, not as used.");
   log.debug("Leaving testAuthorizationCode().");
   return set;
 }

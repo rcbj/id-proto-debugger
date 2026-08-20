@@ -2,11 +2,16 @@
 // Author: Robert C. Broeckelmann Jr.
 // Notes:
 //
-// Standalone Digital Signature tool with three panes:
+// Standalone Digital Signature tool. Asymmetric panes:
 //   #1 SLH-DSA (FIPS 205, post-quantum)      — @noble/post-quantum
-//   #2 RSA (PKCS#1 v1.5 / PSS) + any hash     — node-forge (keygen) + pure-JS padding
+//   #2 RSA (PKCS#1 v1.5 / PSS) + any hash     — node-forge (keygen) +
+//   pure-JS padding
 //   #3 ECC (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA) + any hash —
 //   @noble/curves
+//   #4 ML-DSA (FIPS 204, post-quantum)        — @noble/post-quantum
+//   #5 BBS over BLS12-381, both ciphersuites  — ./bbs, shared with bbs-2023
+// followed by the symmetric MAC panes, which are labelled separately because a
+// MAC is not a digital signature.
 //
 // The RSA and ECC panes deliberately DO NOT use the Web Crypto API:
 // crypto.subtle only supports the SHA family, whereas these panes support a
@@ -38,6 +43,11 @@ var nobleBlake3 = require("@noble/hashes/blake3").blake3;
 var nobleHmac = require("@noble/hashes/hmac").hmac;
 var nobleKmac128 = require("@noble/hashes/sha3-addons").kmac128;
 var nobleKmac256 = require("@noble/hashes/sha3-addons").kmac256;
+// Pane #5's BBS is NOT a fifth implementation: it is the module the SD-JWT VC
+// workflow already signs bbs-2023 credentials with. Anything this pane needs
+// that it did not have — the second ciphersuite, KeyGen — belongs there rather
+// than here, so both callers get it and tests/bbs_crypto.js checks it.
+var bbs = require("./bbs");
 var log = bunyan.createLogger({ name: 'digital_signature',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -1009,6 +1019,280 @@ function eccValidate() {
 }
 
 // ===========================================================================
+// Pane #5 — BBS over BLS12-381 (draft-irtf-cfrg-bbs-signatures)
+//
+// The one pane whose signature is not over a single value: BBS signs an
+// ORDERED LIST of messages, and its point is what comes next — the holder
+// turns that signature into a derived proof revealing only the messages they
+// choose, freshly randomised each time and therefore unlinkable.
+//
+// The maths is in ./bbs, shared with the SD-JWT VC workflow's bbs-2023
+// cryptosuite, so what lives here is only the pane: reading its fields,
+// choosing a ciphersuite, and reporting. Every octet-string field is read as
+// UTF-8 text or as hex according to one selector, which is what lets a reader
+// paste the draft's own test vectors in and get the draft's own bytes out.
+// ===========================================================================
+function bbsOctetsOf(text) {
+  log.debug("Entering bbsOctetsOf().");
+  if (val('ds_bbs_encoding') !== 'hex') {
+    log.debug("Leaving bbsOctetsOf(). Text.");
+    return strBytes(text);
+  }
+  var h = String(text).replace(/\s+/g, '');
+  if (h.length % 2 !== 0 || /[^0-9a-fA-F]/.test(h)) {
+    throw new Error('"' + text + '" is not hex. Either fix it or set Input ' +
+                    'encoding to UTF-8 text.');
+  }
+  log.debug("Leaving bbsOctetsOf(). Hex.");
+  return hexToBytes(h);
+}
+function bbsOctets(id) {
+  log.debug("Entering bbsOctets().");
+  log.debug("Leaving bbsOctets().");
+  return bbsOctetsOf(val(id));
+}
+
+// One message per line, read the way a text file's lines are read: ONE
+// trailing newline is the line terminator and not an extra message, and
+// everything else is a message — including an empty line.
+//
+// That distinction is not pedantry. BBS signs zero-length messages happily and
+// binds every message to its own generator by index, so an empty message that
+// is dropped changes the whole signature; the draft's own multi-message test
+// vector ends with exactly that, an empty tenth message. Dropping every
+// trailing blank line (the obvious rule) makes that vector unreproducible
+// here, and keeping every one of them makes the ordinary textarea's trailing
+// newline into a phantom message. So: a user who wants a trailing empty
+// message types one more newline than they otherwise would.
+function bbsMessages() {
+  log.debug("Entering bbsMessages().");
+  var text = val('ds_bbs_messages').replace(/\r?\n$/, '');
+  if (text === '') {
+    log.debug("Leaving bbsMessages(). No messages.");
+    return [];
+  }
+  log.debug("Leaving bbsMessages().");
+  return text.split(/\r?\n/).map(function (line) {
+    return bbsOctetsOf(line);
+  });
+}
+
+// Zero-based indexes into the message list. An EMPTY list is legal and means
+// "disclose nothing", which is a real BBS proof and not a mistake.
+function bbsDisclosedIndexes(count) {
+  log.debug("Entering bbsDisclosedIndexes().");
+  var raw = val('ds_bbs_disclosed').trim();
+  if (!raw) {
+    log.debug("Leaving bbsDisclosedIndexes(). None disclosed.");
+    return [];
+  }
+  var out = [];
+  raw.split(/[\s,]+/).forEach(function (part) {
+    var n = parseInt(part, 10);
+    if (isNaN(n) || String(n) !== part || n < 0 || n >= count) {
+      throw new Error('Disclosed index "' + part + '" is not a message ' +
+                      'index (0…' + (count - 1) + ').');
+    }
+    if (out.indexOf(n) === -1) out.push(n);
+  });
+  out.sort(function (a, b) { return a - b; });
+  log.debug("Leaving bbsDisclosedIndexes().");
+  return out;
+}
+
+function bbsSecretKey() {
+  log.debug("Entering bbsSecretKey().");
+  var h = val('ds_bbs_private_key').replace(/\s+/g, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(h)) {
+    throw new Error('The BBS private key must be a 32-byte scalar in hex ' +
+                    '(64 characters). Generate a key pair first.');
+  }
+  log.debug("Leaving bbsSecretKey().");
+  return BigInt('0x' + h);
+}
+function bbsPublicKey() {
+  log.debug("Entering bbsPublicKey().");
+  var h = val('ds_bbs_public_key').replace(/\s+/g, '');
+  if (!/^[0-9a-fA-F]{192}$/.test(h)) {
+    throw new Error('The BBS public key must be a compressed 96-byte G2 ' +
+                    'point in hex (192 characters).');
+  }
+  log.debug("Leaving bbsPublicKey().");
+  return hexToBytes(h);
+}
+
+// KeyGen (section 3.4.1) rather than a random scalar, so the pair on screen is
+// reproducible from the key material beside it. An empty material field means
+// "make me 32 random bytes and show them", which keeps that property without
+// asking the user to invent an IKM.
+function bbsGenerateKeys() {
+  log.debug("Entering bbsGenerateKeys().");
+  var suite = val('ds_bbs_suite');
+  setVal('ds_bbs_status', 'Deriving ' + suite + ' key pair…');
+  defer(function () {
+    try {
+      var hex = val('ds_bbs_key_material').replace(/\s+/g, '');
+      if (!hex) {
+        hex = bytesToHex(randomBytes(32));
+        setVal('ds_bbs_key_material', hex);
+      }
+      if (hex.length % 2 !== 0 || /[^0-9a-fA-F]/.test(hex)) {
+        throw new Error('Key material must be hex.');
+      }
+      var sk = bbs.keyGen(hexToBytes(hex), bbsOctets('ds_bbs_key_info'),
+                          bbsOctets('ds_bbs_key_dst'), suite);
+      var pk = bbs.secretKeyToPublicKey(sk);
+      setVal('ds_bbs_private_key', bytesToHex(bbs.i2osp(sk,
+             bbs.OCTET_SCALAR_LENGTH)));
+      setVal('ds_bbs_public_key', bytesToHex(pk));
+      setVal('ds_bbs_status', 'Derived ' + suite + ' key pair (secret ' +
+        bbs.OCTET_SCALAR_LENGTH + ' B, public ' + pk.length + ' B). KeyGen ' +
+        'is deterministic: the same key material and key info always give ' +
+        'this key.');
+    } catch (e) {
+      log.error('bbsGenerateKeys: ' + e.message);
+      setVal('ds_bbs_status', 'Key generation error: ' + e.message);
+    }
+  });
+  log.debug("Leaving bbsGenerateKeys().");
+  return false;
+}
+
+function bbsSign() {
+  log.debug("Entering bbsSign().");
+  var suite = val('ds_bbs_suite');
+  setVal('ds_bbs_status', 'Signing with BBS ' + suite + '…');
+  defer(function () {
+    try {
+      var messages = bbsMessages();
+      if (!messages.length) throw new Error('Enter at least one message.');
+      var sig = bbs.sign(bbsSecretKey(), bbsPublicKey(),
+          bbsOctets('ds_bbs_header'), messages, suite);
+      setVal('ds_bbs_signature', bytesToB64(sig));
+      setVal('ds_bbs_status', 'Signed (' + suite + ') over ' +
+             messages.length + ' message(s) — signature is ' + sig.length +
+             ' bytes.');
+    } catch (e) {
+      log.error('bbsSign: ' + e.message);
+      setVal('ds_bbs_status', 'Sign error: ' + e.message);
+    }
+  });
+  log.debug("Leaving bbsSign().");
+  return false;
+}
+
+function bbsValidate() {
+  log.debug("Entering bbsValidate().");
+  var suite = val('ds_bbs_suite');
+  setVal('ds_bbs_status', 'Validating BBS signature (' + suite + ')…');
+  defer(function () {
+    try {
+      var ok = bbs.verify(bbsPublicKey(), b64ToBytes(val('ds_bbs_signature')),
+          bbsOctets('ds_bbs_header'), bbsMessages(), suite);
+      setVal('ds_bbs_status', ok
+        ? 'Signature VALID ✓ — the signature matches this message list, ' +
+          'header and public key.'
+        : 'Signature INVALID ✗ — the signature does not verify. Message ' +
+          'order and count are bound in, as is the header.');
+    } catch (e) {
+      log.error('bbsValidate: ' + e.message);
+      setVal('ds_bbs_status', 'Validation error: ' + e.message +
+             ' (does the ciphersuite match the key pair?)');
+    }
+  });
+  log.debug("Leaving bbsValidate().");
+  return false;
+}
+
+function bbsProofGen() {
+  log.debug("Entering bbsProofGen().");
+  var suite = val('ds_bbs_suite');
+  setVal('ds_bbs_status', 'Deriving a BBS proof (' + suite + ')…');
+  defer(function () {
+    try {
+      var messages = bbsMessages();
+      if (!messages.length) throw new Error('Enter at least one message.');
+      var disclosed = bbsDisclosedIndexes(messages.length);
+      var proof = bbs.proofGen(bbsPublicKey(),
+          b64ToBytes(val('ds_bbs_signature')), bbsOctets('ds_bbs_header'),
+          bbsOctets('ds_bbs_ph'), messages, disclosed, suite);
+      setVal('ds_bbs_proof', bytesToB64(proof));
+      setVal('ds_bbs_status', 'Derived a proof disclosing ' +
+        disclosed.length + ' of ' + messages.length + ' message(s) — ' +
+        proof.length + ' bytes. Derive again and the bytes differ: BBS ' +
+        'proofs are unlinkable.');
+    } catch (e) {
+      log.error('bbsProofGen: ' + e.message);
+      setVal('ds_bbs_status', 'Proof error: ' + e.message +
+             ' (is the signature the one over these messages?)');
+    }
+  });
+  log.debug("Leaving bbsProofGen().");
+  return false;
+}
+
+function bbsProofVerify() {
+  log.debug("Entering bbsProofVerify().");
+  var suite = val('ds_bbs_suite');
+  setVal('ds_bbs_status', 'Verifying the BBS proof (' + suite + ')…');
+  defer(function () {
+    try {
+      var messages = bbsMessages();
+      var disclosed = bbsDisclosedIndexes(messages.length);
+      var shown = disclosed.map(function (i) { return messages[i]; });
+      var ok = bbs.proofVerify(bbsPublicKey(), b64ToBytes(val('ds_bbs_proof')),
+          bbsOctets('ds_bbs_header'), bbsOctets('ds_bbs_ph'), shown,
+          disclosed, suite);
+      setVal('ds_bbs_status', ok
+        ? 'Proof VALID ✓ — a signature exists over all ' + messages.length +
+          ' message(s), and these ' + disclosed.length + ' are as claimed. ' +
+          'The undisclosed ones stay hidden.'
+        : 'Proof INVALID ✗ — the proof does not verify against these ' +
+          'disclosed messages, indexes, header and presentation header.');
+    } catch (e) {
+      log.error('bbsProofVerify: ' + e.message);
+      setVal('ds_bbs_status', 'Proof validation error: ' + e.message);
+    }
+  });
+  log.debug("Leaving bbsProofVerify().");
+  return false;
+}
+
+// BBS keys export as a JWK (OKP / Bls12381G2, per the COSE/JOSE BLS key
+// representations draft) with an optional PBES2 password, like the ECC pane.
+// PEM, DER and PKCS#12 have no standard BBS representation, so they say so
+// rather than emitting something nothing else can read.
+async function bbsDownloadKeys() {
+  log.debug("Entering bbsDownloadKeys().");
+  var fmt = val('ds_bbs_ks_format') || 'jwk', pw = val('ds_bbs_ks_password');
+  var priv = val('ds_bbs_private_key').replace(/\s+/g, '');
+  var pub = val('ds_bbs_public_key').replace(/\s+/g, '');
+  if (!priv && !pub) {
+    setVal('ds_bbs_status',
+           'Nothing to download — generate a key pair first.');
+    log.debug("Leaving bbsDownloadKeys().");
+    return false;
+  }
+  try {
+    if (fmt === 'jwk') {
+      var pubJwk = { kty: 'OKP', crv: 'Bls12381G2', x: b64u(hexToBytes(pub)),
+          use: 'sig' };
+      var privJwk = { kty: 'OKP', crv: 'Bls12381G2', x: b64u(hexToBytes(pub)),
+          d: b64u(hexToBytes(priv)), use: 'sig' };
+      await downloadJwkSet([pubJwk, privJwk], pw, 'bbs-keys', 'ds_bbs_status');
+    } else {
+      setVal('ds_bbs_status', fmt.toUpperCase() + ' export is not supported ' +
+             'for BBS keys. Use JWK (or copy the hex from the key fields).');
+    }
+  } catch (e) {
+    log.error('bbsDownloadKeys: ' + e.message);
+    setVal('ds_bbs_status', 'Download error: ' + e.message);
+  }
+  log.debug("Leaving bbsDownloadKeys().");
+  return false;
+}
+
+// ===========================================================================
 // Symmetric MACs (NOT digital signatures — a MAC uses one shared secret, so it
 // gives integrity + origin but no non-repudiation / public verifiability).
 // Grouped into panes by family: keyed-hash, block-cipher, universal-hash.
@@ -1355,10 +1639,10 @@ function copyField(elementId) {
 // ---------------------------------------------------------------------------
 function setReturnLink() {
   log.debug("Entering setReturnLink().");
-  var allowed = { 'debugger.html': '/debugger.html',
-      'debugger2.html': '/debugger2.html' };
+  var allowed = { 'oauth2_oidc_1.html': '/oauth2_oidc_1.html',
+      'oauth2_oidc_2.html': '/oauth2_oidc_2.html' };
   var from = new URLSearchParams(window.location.search).get('from');
-  var target = allowed[from] || '/debugger.html';
+  var target = allowed[from] || '/oauth2_oidc_1.html';
   var link = document.getElementById('return_link');
   if (link) link.setAttribute('href', target);
   log.debug("Leaving setReturnLink().");
@@ -1372,6 +1656,14 @@ window.onload = function () {
   setVal('ds_rsa_value', 'Sign me with RSA!');
   setVal('ds_ecc_value', 'Sign me with ECC!');
   setVal('ds_ml_value', 'Sign me with ML-DSA!');
+  // BBS signs a LIST, so its pane is seeded with one — plus the two octet
+  // strings the draft binds in (header, presentation header) and a disclosure
+  // selection, so "Derive Proof" does something meaningful on first use.
+  setVal('ds_bbs_messages', 'given_name:Alice\nfamily_name:Smith\n' +
+         'birthdate:1980-01-01\ncountry:US');
+  setVal('ds_bbs_header', 'BBS demo header');
+  setVal('ds_bbs_ph', 'verifier nonce 12345');
+  setVal('ds_bbs_disclosed', '0, 2');
   // Symmetric MAC panes: seed a value and an initial random key.
   setVal('ds_khmac_value',
          'MAC me with a keyed hash!'); macGenerateKey('khmac');
@@ -1410,6 +1702,12 @@ module.exports = {
   mldsaDownloadKeys,
   mldsaSign,
   mldsaValidate,
+  bbsGenerateKeys,
+  bbsDownloadKeys,
+  bbsSign,
+  bbsValidate,
+  bbsProofGen,
+  bbsProofVerify,
   macGenerateKey,
   macCompute,
   macVerify,

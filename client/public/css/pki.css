@@ -1,0 +1,619 @@
+/* File: pki.css
+ *
+ * The PKI page's own classes. Everything structural — the panes, the fields,
+ * the tables, the buttons, the collapse toggle — comes from
+ * css/saml_common.css, which this page links for the same reason the WS-Trust
+ * and WS-Federation pages do: the look is shared, and only the extras belong
+ * in a page-specific sheet beside it.
+ *
+ * Note that this file has to define every `pki-` class the page uses AND
+ * anything else the page names that saml_common.css does not have —
+ * checkStylesheetsLoaded() in tests/navigation.js fails a page that uses a
+ * prefixed class defined in no stylesheet it actually loaded, which is how the
+ * WS-Federation pages once shipped completely unstyled with nothing 404ing.
+ */
+
+/* The primary action on each pane. saml_common.css has .saml-btn and no
+ * emphasis variant, so this is the one button style that lives here. */
+.pki-btn-primary {
+  font-weight: bold;
+}
+
+/* ==========================================================================
+ * DENSITY
+ *
+ * This sheet is linked by pki.html and by nothing else, so a bare `.saml-row`
+ * here overrides css/saml_common.css for THIS PAGE ONLY — no other page in the
+ * saml- family can see these rules, and none of them wants them. That is the
+ * whole reason the overrides live here rather than in the shared sheet.
+ *
+ * They are here because this page carries more fields than any other in the
+ * tree — a key pair, sixteen certificate fields, a distinguished name, twenty
+ * X.509v3 extensions and a TLS pane — and the shared spacing was written for
+ * pages with a tenth of that. At the shared values every one of those rows
+ * paid 8px of margin it did not need, which is a whole screen of nothing
+ * between the top of the page and the Issue Certificate button.
+ *
+ * Nothing here changes a font size, a border or a colour: what is cut is
+ * margin and padding. A row that is hard to read is not denser, it is worse.
+ * ========================================================================== */
+.saml-pane {
+  padding: 4px 10px 8px;
+  margin: 0 0 8px;
+}
+
+.saml-pane > legend {
+  margin: 0 0 4px;
+}
+
+.saml-row {
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.saml-field {
+  margin: 0 0 4px;
+}
+
+.saml-pane .saml-note {
+  margin: 0 0 5px;
+}
+
+.saml-sub {
+  margin-top: 6px;
+  padding-top: 5px;
+}
+
+.saml-sub-title {
+  margin-bottom: 4px;
+}
+
+.saml-intro {
+  margin: 4px 0 6px;
+}
+
+.saml-controls {
+  margin: 4px 0 6px;
+}
+
+.saml-notice {
+  margin: 4px 0 6px;
+}
+
+/* THREE columns of one merged pane: the key pair, the certificate fields it is
+ * about to be bound into, and the subject DN. `auto-fit` with a 390px minimum
+ * rather than a fixed `1fr 1fr 1fr`, so the third column drops to a second row
+ * and then the second to a third as the window narrows, with no media query.
+ *
+ * The minimum is the whole rule, and 390 rather than 420 is not a rounding.
+ * A grid row is as tall as its tallest item, so with the DN inside the
+ * certificate column this pane was a 392px column beside a 675px one — 283px
+ * of nothing on the left, measured at 1366x768. Three blocks of about the same
+ * height spend that. At 1275px of pane (a 1366px window) three columns need
+ * 3*390 + 2*22 = 1214px and fit; at 420 they need 1304 and do not, which is
+ * how the same markup laid out in two columns and came out TALLER than what it
+ * replaced. Note that nothing on screen says which number is deciding: a
+ * layout that looks deliberate at 1500px and stacks at 1024 is usually this
+ * one rather than a broken rule. */
+.pki-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(390px, 1fr));
+  gap: 0 22px;
+  align-items: start;
+}
+
+/* The config pane's three columns are NOT equal, above the width at which
+ * three of them fit at all. The middle one holds a 235px button, a 130px
+ * select and four checkbox labels on two rows that the rest of this file
+ * exists to keep to one line each, and an equal third of the pane (410px at
+ * 1366, 478px at the container's 1478px maximum) is about 160px short of
+ * that. So the key-pair column takes what the other two do not need: the
+ * certificate column is label+input rows that lose nothing at 380px, and the
+ * DN column is eight short fields.
+ *
+ * Two steps rather than one, because the widths buy different things:
+ *
+ *   >= 1330px  three columns already fit (the auto-fit rule needs
+ *              3*390 + 2*22 = 1214px of pane, about a 1305px window), and
+ *              0.85/1.3/0.85 gives the middle ~533px — enough for both rows
+ *              to stay ONE flex line with their checkbox labels wrapped.
+ *   >= 1530px  the pane is ~1430px, so 0.8/1.4/0.8 gives the middle ~669px,
+ *              which is what the two rows need with nothing wrapped at all.
+ *
+ * Below 1330px nothing here applies: the base rule above is left to collapse
+ * to two columns and then to one, which is the behaviour its own comment
+ * describes. `.pki-cols-3` rather than `.pki-cols`, because the TLS pane
+ * lower down uses the same grid with TWO columns and a three-track template
+ * would hand it the first two tracks — a 0.8fr Connection column beside a
+ * 1.4fr Truststore one, for no reason anybody reading that pane could see. */
+@media (min-width: 1330px) {
+  .pki-cols-3 {
+    grid-template-columns: 0.85fr 1.3fr 0.85fr;
+  }
+
+  /* One line, and it SHRINKS rather than wraps. Flexbox lays items out on
+     lines by their max-content width before it shrinks anything, so a wrap
+     here does not narrow the widest item — it moves the last control to a row
+     of its own, which is exactly the two lines of white space this is meant
+     to remove. With nowrap the fixed-width controls keep their width and the
+     checkbox labels take the shortfall as wrapped TEXT. It is confined to
+     this media query because the row's un-wrappable minimum (a 130px select,
+     a 235px button and two labels) is wider than the 390px column the base
+     rule can hand it, and an overflowing flex line is a horizontal scrollbar
+     across the whole page. */
+  .pki-cols-3 .pki-actions,
+  .pki-cols-3 .pki-export-row {
+    flex-wrap: nowrap;
+  }
+}
+
+@media (min-width: 1530px) {
+  .pki-cols-3 {
+    grid-template-columns: 0.8fr 1.4fr 0.8fr;
+  }
+}
+
+/* A column of that grid. `min-width: 0` is not decoration: a grid item's
+   default minimum is its content's, and this page's content includes an
+   unbreakable 64-character line of base64 in a PEM textarea. Without it the
+   column refuses to be narrower than that line, the grid overflows its pane,
+   and the page scrolls sideways — which reads as a broken layout rather than
+   as two missing words of CSS. */
+.pki-col {
+  min-width: 0;
+}
+
+/* A field's label inside one of those columns takes the width of its own text
+   rather than the shared sheet's fixed 40%. In a full-width pane 40% is a tidy
+   left-hand column; in a 410px one it is 164px of mostly empty space beside a
+   PEM textarea that then has 240px to show a 64-character base64 line in. The
+   cap keeps a long label — "Further attributes (one NAME=value or OID=value
+   per line)" — from taking the row and leaving its textarea a slot. No height
+   is traded either way: the label stays on the same line as its control.
+
+   `:not(.saml-check)` is not tidiness. A checkbox row's label is a sentence
+   ("Save private keys in browser localStorage") and saml_common.css already
+   gives it `max-width: none` — at the SAME specificity as this rule, so
+   without the exclusion this sheet simply wins by loading later, the sentence
+   wraps to two lines, and the column grows by exactly what the wider textareas
+   were supposed to cost nothing. */
+.pki-col .saml-field:not(.saml-check) > label {
+  flex: 0 1 auto;
+  max-width: 50%;
+}
+
+/* A NUMBER input is sized like every other control on this page, which the
+   shared sheet does not do for it.
+
+   saml_common.css sizes `.saml-pane textarea, input[type="text"],
+   input[type="password"], select` at `width: 100%` with `box-sizing:
+   border-box` — a list that does not include `input[type="number"]`, so
+   bootstrap.css's `input { width: 206px }` (plus its own 4px/6px padding and
+   the border: 220px in all) survives on the two this page has. That is not a
+   difference in taste: an element with a FIXED width in a flex item whose
+   basis is `1 1 0` does not shrink with its column, it hangs out of it. In a
+   three-column pane the column to the right is not empty, and at 1366px
+   *Validity (years)* stood 49px inside the Key Pair column, over the Export
+   block's *Keystore Format* label and select. It was invisible while these
+   were three full-width panes: the overflow had nothing to land on.
+
+   Both this page's number inputs share a `.saml-row` with text inputs sized
+   by that rule — *Validity (years)* beside *Serial Number*, *Port* between
+   *Host* and *SNI* — so the declarations here are the shared sheet's, exactly,
+   rather than a second opinion about how wide a field should be.
+
+   Why here and not in saml_common.css, which is where the omission is: the
+   only other number inputs in the tree (`jwt_clock_skew` on token_detail.html,
+   `vc_batch_size` on vc-issuance-2.html) sit in TABLE CELLS carrying a `size`
+   attribute, where 100% means the width of the cell — deliberately narrow
+   fields that would be stretched by a fix in the shared sheet for a defect
+   neither of them has. */
+.saml-pane input[type="number"],
+.saml-pane input[type="datetime-local"] {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: 0.82em;
+  padding: 3px 5px;
+  margin: 0;
+}
+
+/* A datetime-local has a MINIMUM width of its own — the widget is a row of
+   spin fields plus a calendar button, and Chrome will not draw it narrower
+   than their text — so `width: 100%` alone does not make it fit a 174px half
+   column: it stops shrinking and hangs out, which is the trap two rules up.
+   `min-width: 0` lets the box shrink and the 0.78em drops the spin fields'
+   own text far enough that `01/01/2027, 00:00` still fits one at 1366px.
+   The picker itself is the browser's and opens at whatever size it likes. */
+.saml-pane input[type="datetime-local"] {
+  font-size: 0.78em;
+  min-width: 0;
+}
+
+/* A heading for one block of the merged pane.
+
+   "Key Pair", "Issue a Certificate" and "X.509v3 Extensions" were three pane
+   legends and are now three of these. A pane legend can only say one thing, so
+   what the two lost ones said has to go somewhere — without it the key
+   algorithm dropdown and the profile dropdown sit side by side as two
+   unlabelled selects. Same reasoning, and deliberately the same shape, as
+   `.krb-group` in css/kerberos.css.
+
+   A div rather than a <label>, because it labels a GROUP: a <label> with no
+   control to point at is one the browser cannot associate with anything, and
+   pointing it at the first field would claim the heading belongs to that field
+   alone. */
+.pki-group {
+  display: block;
+  font-weight: bold;
+  font-size: 0.9em;
+  color: #333;
+  margin: 0 0 3px;
+}
+
+/* The same heading over the full width of the pane rather than over a column,
+   which needs a rule of its own only because it follows a grid and would
+   otherwise sit flush against it. */
+.pki-group-wide {
+  margin-top: 8px;
+  border-top: 1px dashed #bbb;
+  padding-top: 6px;
+}
+
+/* Prose that earns its place but not its vertical space, exactly as
+   `.krb-more` in css/kerberos.css: the explanations are why this page is worth
+   using, so they are folded rather than cut. Where a note has one sentence
+   that must be read before anything is typed, that sentence stays outside the
+   fold and only the reasoning goes in. */
+.pki-more {
+  margin: 0 0 6px;
+}
+
+.pki-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 0.78em;
+  padding: 1px 0;
+}
+
+.pki-more > summary:hover {
+  text-decoration: underline;
+}
+
+/* The intro's folded half is a .saml-intro of its own, and it must not keep
+   the top margin that separates the visible intro from the return link. */
+.pki-more > .saml-intro {
+  margin: 2px 0 0;
+}
+
+/* The row carrying the one button this pane is an input to, and — since the
+   select needs 130px of the 410 it used to take — the key algorithm, the JWK
+   toggle and the reuse checkbox beside it. It is at the top of the key-pair
+   block rather than at the foot of the extensions, so the margin above it
+   separates it from a heading rather than from a thousand pixels of extension
+   cards. Both margins are small because there is no longer a row above it
+   inside this block for them to hold apart. */
+.pki-actions {
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+
+/* A labelled control that is as wide as what it holds. `flex: 0 0 auto`
+   rather than the shared sheet's `saml-grow`: half a column each is what
+   pushed the Download button and the two checkboxes onto lines of their own,
+   and what left the algorithm select 299px wide to show "RSA 2048". The three
+   widths below are the content, measured in headless Chrome at this sheet's
+   font: the keystore select has to show "PKCS#12 (.p12)" (136px natural), the
+   algorithm one "Ed25519 (EdDSA)", and the password field is a password.
+   Nothing here shrinks — these sit on a `flex-wrap: nowrap` row above 1330px,
+   where the shortfall is taken by the checkbox labels beside them, which can
+   wrap and mean the same thing on two lines.
+
+   `align-self: flex-end` rather than the `flex-start` this had while the row
+   held only these two: the row now ends in a 34px button, and a control whose
+   BOX top is aligned with a taller neighbour's has its baseline floating
+   somewhere in the middle of it. Bottoms line up; label heights differ, and
+   that is what the labels are for. */
+.pki-narrow {
+  flex: 0 0 auto;
+  width: 140px;
+  max-width: 100%;
+  align-self: flex-end;
+}
+
+.pki-narrow-alg {
+  width: 130px;
+}
+
+.pki-narrow-fmt {
+  width: 140px;
+}
+
+.pki-narrow-pw {
+  width: 100px;
+}
+
+.pki-narrow > label {
+  display: block;
+  font-size: 0.74em;
+  font-weight: 600;
+  color: #333;
+  margin: 0 0 1px;
+}
+
+.pki-narrow > select,
+.pki-narrow > input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* The password field beside the format select. A text input is ~10px shorter
+   than a select at the same font and padding — the select's height comes from
+   the UA's own box around its option list — and on a row aligned along its
+   BOTTOMS that difference does not read as a shorter control, it reads as a
+   field that has slipped below the line. 30px is what the select renders at
+   in this sheet's font, and `min-height` rather than `height` so a browser
+   that draws either of them taller keeps it.
+
+   The attribute selector is not decoration: saml_common.css reaches this
+   field as `.saml-pane input[type="password"]`, which outranks a bare
+   `.pki-narrow > input` however the two sheets are ordered. */
+.saml-pane .pki-narrow > input[type="password"] {
+  min-height: 30px;
+}
+
+/* Twenty-two extension cards in THREE columns rather than stacked rows — about
+ * 1300px of the page, and the single largest saving on it.
+ *
+ * CSS columns rather than a grid, and the difference matters here. A grid lays
+ * its items out in ROW order, so twenty cards of wildly different heights
+ * (`subjectKeyIdentifier` is one checkbox; `subjectAltName` is a checkbox, a
+ * four-row textarea and a paragraph of syntax) leave a gap under every short
+ * one to the height of the tallest in its row. A column flow packs them and
+ * keeps document order reading DOWN each column, which is the order the list
+ * is in — RFC 5280's, roughly — and the order the page's own prose refers to.
+ *
+ * `columns: 380px 3` is a maximum of three: below about 1180px of pane there is
+ * room for two and below ~780px for one, each collapse happening on its own, so
+ * this needs no media query. 380px is the width at which a `.pki-flags` grid
+ * inside a card still fits its 172px minimum twice, which is what keeps the
+ * keyUsage and extendedKeyUsage grids two-wide instead of nine and sixteen
+ * deep — raise either number and the list falls to two columns, which is the
+ * only way this rule breaks and it breaks silently. */
+.pki-ext-list {
+  columns: 380px 3;
+  column-gap: 18px;
+}
+
+/* One extension: a heading row carrying its "present" and "critical" boxes,
+ * then whatever fields it has. The left border is what makes twenty of them
+ * scannable as a list rather than reading as one continuous form.
+ *
+ * `break-inside: avoid` is what stops a card being split across the column
+ * boundary — a `subjectAltName` whose checkbox is at the foot of column one
+ * and whose textarea is at the head of column two is two half-controls, and it
+ * happens silently. The two older spellings beside it are the same instruction
+ * for engines that never learned the current one, and cost nothing where they
+ * are ignored.
+ *
+ * Note what is deliberately NOT here: the `display: inline-block; width: 100%`
+ * pair that is the usual third fallback. Inline-block items sit on line boxes,
+ * so the whitespace between two of them in the markup becomes a gap — about
+ * 4px per card, twenty times, which is a slice of exactly the space these
+ * columns were introduced to save. */
+.pki-ext {
+  border-left: 3px solid #d8d8d8;
+  padding: 4px 0 4px 9px;
+  margin: 0 0 7px 0;
+  break-inside: avoid;
+  -webkit-column-break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.pki-ext-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-bottom: 2px;
+}
+
+/* An extension's VALUE on the same line as its name and its critical box,
+ * which is the whole shape of a card here: `issuerAltName [ value ] critical`
+ * rather than a name, then a box under it, then a box under that.
+ *
+ * `rows="1"` in the markup and `min-height` here, and neither is enough on its
+ * own: a one-row textarea is still a textarea, so it holds and submits the
+ * multi-line values these extensions take (subjectAltName is one name per
+ * line, and always was) — what changed is the space an empty one occupies,
+ * which was four lines of nothing on a page carrying twenty-two of them. The
+ * user drags it taller when there is something to see; `resize: vertical`
+ * rather than `both` because horizontal resizing inside a CSS column pushes
+ * the column's own width around.
+ *
+ * The 90px floor is what stops the flex basis collapsing the box to nothing
+ * beside a long name — `cRLDistributionPoints` is 21 characters — and the row
+ * wraps instead, which is the readable failure. */
+.pki-inline {
+  flex: 1 1 130px;
+  min-width: 90px;
+  min-height: 1.9em;
+  height: 1.9em;
+  resize: vertical;
+  font-size: 0.78em;
+  padding: 2px 4px;
+  box-sizing: border-box;
+}
+
+/* A name for an inline box that has no checkbox of its own to be labelled by
+   — the extendedKeyUsage OID list, which belongs to the flags above it. */
+.pki-inline-label {
+  font-size: 0.74em;
+  font-weight: 600;
+  color: #333;
+}
+
+/* An extension's own sub-fields (pathLenConstraint, skipCerts, the
+   privateKeyUsagePeriod dates) on one line with their labels rather than
+   under them. The shared sheet stacks a `.saml-grow`'s label above its
+   control, which is right in a full-width pane and is two lines per field in
+   a 380px column. */
+.pki-ext .saml-row > .saml-grow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.pki-ext .saml-row > .saml-grow > label {
+  flex: 0 1 auto;
+  font-size: 0.74em;
+  font-weight: 600;
+  color: #333;
+  margin: 0;
+}
+
+.pki-ext .saml-row > .saml-grow > input {
+  flex: 1 1 60px;
+  min-width: 50px;
+  font-size: 0.78em;
+  padding: 2px 4px;
+}
+
+.pki-ext .saml-row {
+  margin-bottom: 3px;
+}
+
+/* The syntax notes under a card, which are now the only thing below its one
+   line. */
+.pki-ext > .saml-note {
+  font-size: 0.72em;
+  margin: 1px 0 0;
+}
+
+/* A checkbox and its label on one line, which the flag grids below are made of.
+ *
+ * Note where `nowrap` is and is not. It belongs to the GRIDS and the card
+ * headings, where the labels are single identifiers and "keyEncipherment"
+ * breaking away from its box is the only thing that can go wrong. The half
+ * dozen elsewhere are whole sentences — "also connect without it, and say
+ * whether the server requires one" — and those live beside another field in a
+ * row that is now half a pane wide: nowrap on one of them is 66px of label
+ * hanging out of the column at 900px, which the page reports as a horizontal
+ * scrollbar rather than as a label. So the default wraps and the two places
+ * that need one line ask for it. */
+.pki-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: normal;
+  margin: 0;
+}
+
+.pki-flags > .pki-flag,
+.pki-ext-head > .pki-flag {
+  white-space: nowrap;
+}
+
+.pki-flag input {
+  margin: 0;
+}
+
+/* The keyUsage / extendedKeyUsage / Netscape grids. Fixed columns rather than
+ * an inline flow: these are lists to be read down, and a flow reorders them
+ * every time the pane's width changes. The 172px minimum is what fits two of
+ * them inside a 380px extension column; the longest label here is
+ * `msEncryptingFileSystem`, which is what sets the floor. */
+.pki-flags {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  gap: 2px 12px;
+  margin: 2px 0 4px 0;
+}
+
+/* The store table. Its own class rather than a bare .saml-table so the row
+ * highlight below cannot leak into the certificate-detail tables beside it. */
+.pki-store td,
+.pki-store th {
+  vertical-align: top;
+}
+
+.pki-row-selected {
+  background-color: #f4f4ec;
+}
+
+.pki-trust-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+/* The far end's own answer, when it is not the JSON the TLS pane knows how to
+ * tabulate. It is shown rather than discarded — the point of that pane is the
+ * server's own words — so it needs a box that copes with a page of HTML
+ * arriving in it: monospaced, wrapped rather than scrolled sideways, and
+ * bounded in height so one verbose server does not push the whole report off
+ * the screen. */
+.pki-server-body {
+  font-family: ui-monospace, Menlo, Consolas, "Courier New", monospace;
+  font-size: 0.78em;
+  line-height: 1.3;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 22em;
+  overflow: auto;
+  background-color: #f7f7f4;
+  border: 1px solid #e0e0d8;
+  padding: 6px 8px;
+  margin: 4px 0 8px 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * The TLS pane on a deployment with no api behind it (the static sites).
+ *
+ * This page is NOT one of the three workflows client/static_site.js drops from
+ * those builds — the certificate authority, every X.509v3 extension and the
+ * whole keystore matrix are Web Crypto and pkijs in the browser and work there
+ * exactly as they do anywhere. One pane needs a back end, so one pane is
+ * greyed; the landing card stays a live link, and index.html says why beside
+ * it.
+ *
+ * pki.js's disableTlsPane() adds the class AND sets `disabled` on every control
+ * inside. These rules are the half you can see; without the other half the pane
+ * still submits on a Return keypress in a text field.
+ *
+ * Greying is done with COLOURS rather than `opacity`, and that is the one
+ * decision here worth keeping. `opacity` on the pane body makes a stacking
+ * context, so the "switched off" notice inside it cannot be brought back to
+ * full contrast by any rule of its own — the one line in the pane that has to
+ * be read would be the one dimmed along with everything else.
+ *
+ * The legend is deliberately not greyed: the pane still collapses and expands,
+ * and a heading nobody can read is a pane nobody can find. */
+.pki-pane-disabled .saml-pane-body,
+.pki-pane-disabled .saml-pane-body label,
+.pki-pane-disabled .saml-pane-body .saml-note,
+.pki-pane-disabled .saml-pane-body summary {
+  color: #8a8a8a;
+}
+
+.pki-pane-disabled .saml-pane-body input,
+.pki-pane-disabled .saml-pane-body select,
+.pki-pane-disabled .saml-pane-body textarea,
+.pki-pane-disabled .saml-pane-body .saml-btn {
+  color: #8a8a8a;
+  background-color: #f2f2f2;
+  background-image: none;
+  border-color: #ddd;
+  box-shadow: none;
+  text-shadow: none;
+  cursor: not-allowed;
+}
+
+/* The notice keeps the contrast the rest of the pane has given up. An id, so
+ * it outranks the inherited grey above outright rather than relying on source
+ * order — this file is appended to, and a rule that wins on order is a rule
+ * the next addition can lose. */
+.pki-pane-disabled #pki_tls_unavailable {
+  color: #8a4a2f;
+}

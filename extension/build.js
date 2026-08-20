@@ -97,6 +97,17 @@ function manifestVersion(v) {
           stamp.slice(8) % 65536 || 0].join(".");
 }
 
+// ONE run of this script emits THREE builds, and they must all carry the SAME
+// version. version() shells out to client/version.js, whose stamp is the UTC
+// SECOND, so calling it per emit made the version a property of *when each
+// directory was written*: on 2026-08-19 the three emits straddled a second
+// boundary and dist/chrome got 0.9.20260819201727 while dist/ci got
+// ...201728. tests/webauthn_extension.js reads exactly that as the CI build
+// differing from the shipped build in something other than autoarm.json — a
+// real thing to assert, failing on a clock rather than on a build. Resolve it
+// once, up here, and hand the same string to every emit.
+const VERSION = version();
+
 const FILES = ["shim.js", "relay.js", "background.js", "bridge.js",
     "popup.html", "popup.js"];
 
@@ -109,7 +120,7 @@ function emit(name, mutate) {
     fs.copyFileSync(path.join(SRC, f), path.join(out, f));
   });
   const manifest = JSON.parse(JSON.stringify(BASE));
-  const v = version();
+  const v = VERSION;
   manifest.version = manifestVersion(v);
   manifest.version_name = v;
   mutate(manifest, out);

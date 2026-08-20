@@ -10,7 +10,7 @@
 //     the section 3.1 issuer-with-path form answers, and CORS is open (the
 //     debugger fetches it from the browser).
 //
-//   Part 2 (browser) — the Metadata Source radio on debugger.html: OIDC
+//   Part 2 (browser) — the Metadata Source radio on oauth2_oidc_1.html: OIDC
 //     Discovery vs RFC 8414, the well-known suffix / hint / spec link swap,
 //     retrieving the RFC 8414 document populates the Configuration Parameters
 //     pane, members RFC 8414 does not define show the -->not defined<-- note,
@@ -37,7 +37,7 @@ var log = bunyan.createLogger({ name: 'oauth2_metadata_rfc8414',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 // The dummy URL the OIDC source offers when nothing is configured —
-// METADATA_SOURCES.oidc.defaultUrl in client/src/debugger.js. Its presence
+// METADATA_SOURCES.oidc.defaultUrl in client/src/oauth2_oidc_1.js. Its presence
 // after selecting RFC 8414 is how this test tells "this deployment configures
 // no RFC 8414 default" apart from "the selector failed to offer the one it
 // has".
@@ -270,9 +270,10 @@ async function structuredValuesActivities(driver) {
   log.info("=== A metadata member whose value is a JSON structure ===");
 
   // Only the DOCUMENT is planted; every displayed value below is produced by
-  // the page itself (Populate Meta Data, then the shared storage debugger2.html
-  // reads), so this covers the formatting and not just the field type.
-  await driver.get(baseUrl + "/debugger.html");
+  // the page itself (Populate Meta Data, then the shared storage
+  // oauth2_oidc_2.html reads), so this covers the formatting and not just the
+  // field type.
+  await driver.get(baseUrl + "/oauth2_oidc_1.html");
   await driver.wait(until.elementLocated(By.id("issuer")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -318,10 +319,10 @@ async function structuredValuesActivities(driver) {
 
   // Then let the PAGE populate the pane from it, and look at both pages.
   await driver.executeScript(
-      "debug.onSubmitPopulateFormsWithDiscoveryInformation();");
+      "oauth2_oidc_1.onSubmitPopulateFormsWithDiscoveryInformation();");
   await driver.sleep(500);
-  for (const page of ["debugger.html", "debugger2.html"]) {
-    if (page !== "debugger.html") {
+  for (const page of ["oauth2_oidc_1.html", "oauth2_oidc_2.html"]) {
+    if (page !== "oauth2_oidc_1.html") {
       await driver.get(baseUrl + "/" + page);
       await driver.wait(until.elementLocated(By.id("claims_supported")),
                         waitTime);
@@ -361,13 +362,13 @@ async function structuredValuesActivities(driver) {
   }
 
   await openDebugger(driver);
-  await driver.executeScript("debug.onClickClearAllForms();");
+  await driver.executeScript("oauth2_oidc_1.onClickClearAllForms();");
   await driver.sleep(300);
   log.debug("Leaving structuredValuesActivities().");
 }
 
 // ===========================================================================
-// Part 2 — the Metadata Source radio on debugger.html
+// Part 2 — the Metadata Source radio on oauth2_oidc_1.html
 // ===========================================================================
 async function click(driver, locator) {
   log.debug("Entering click().");
@@ -436,7 +437,7 @@ async function validateSignature(driver) {
 
 async function openDebugger(driver) {
   log.debug("Entering openDebugger().");
-  await driver.get(baseUrl + "/debugger.html");
+  await driver.get(baseUrl + "/oauth2_oidc_1.html");
   await driver.wait(until.elementLocated(By.id('metadata_source_rfc8414')),
                     waitTime);
   await driver.sleep(600);
@@ -469,7 +470,7 @@ async function metadataSourceActivities(driver, doc) {
     // The field still holds the OIDC source's own dummy default, which means
     // the RFC 8414 source had nothing to offer —
     // `METADATA_SOURCES.rfc8414.defaultUrl`
-    // in client/src/debugger.js is `appconfig.rfc8414MetadataUrlDefault || ""`, and
+    // in client/src/oauth2_oidc_1.js is `appconfig.rfc8414MetadataUrlDefault || ""`, and
     // the deployed configs (prod.js, test-idptools-com.js) set that to ""
     // because a public site has no business defaulting to somebody's localhost
     // STS. So the default-offering rules below do not apply here.
@@ -524,13 +525,14 @@ async function metadataSourceActivities(driver, doc) {
 
   // ---- Retrieve the RFC 8414 document -------------------------------------
   log.info("=== Retrieve + populate from the RFC 8414 endpoint ===");
-  await driver.executeScript("debug.OnSubmitOIDCDiscoveryEndpointForm();");
+  await driver.executeScript(
+    "oauth2_oidc_1.OnSubmitOIDCDiscoveryEndpointForm();");
   await driver.wait(async function () {
     return (await paneState(driver)).rows > 1;
   }, fetchWait,
       "the metadata table was not rendered from the RFC 8414 document.");
   await driver.executeScript(
-      "debug.onSubmitPopulateFormsWithDiscoveryInformation();");
+      "oauth2_oidc_1.onSubmitPopulateFormsWithDiscoveryInformation();");
   await driver.sleep(600);
 
   // The table says what it is showing and where it came from.
@@ -660,14 +662,14 @@ async function metadataSourceActivities(driver, doc) {
 
   // Tampering the JSON instead: the signature still verifies, but the signed
   // claim disagrees with the JSON, which is what the client must notice.
-  await driver.executeScript("debug.onClickClearAllForms();");
+  await driver.executeScript("oauth2_oidc_1.onClickClearAllForms();");
   await driver.sleep(300);
   // Clear resets the source to OIDC, which hides the button — select RFC 8414
   // again before retrieving.
   await click(driver, By.id('metadata_source_rfc8414'));
   await driver.executeScript(
     "document.getElementById('oidc_discovery_endpoint').value = arguments[0];" +
-    "debug.OnSubmitOIDCDiscoveryEndpointForm();", metadataUrl);
+    "oauth2_oidc_1.OnSubmitOIDCDiscoveryEndpointForm();", metadataUrl);
   await driver.sleep(1500);
   await driver.executeScript(
     "var doc = JSON.parse(localStorage.getItem('discovery_info'));" +
@@ -683,15 +685,15 @@ async function metadataSourceActivities(driver, doc) {
            "claim is reported.");
 
   // Restore a clean document for the checks that follow.
-  await driver.executeScript("debug.onClickClearAllForms();");
+  await driver.executeScript("oauth2_oidc_1.onClickClearAllForms();");
   await driver.sleep(300);
   await click(driver, By.id('metadata_source_rfc8414'));
   await driver.executeScript(
     "document.getElementById('oidc_discovery_endpoint').value = arguments[0];" +
-    "debug.OnSubmitOIDCDiscoveryEndpointForm();", metadataUrl);
+    "oauth2_oidc_1.OnSubmitOIDCDiscoveryEndpointForm();", metadataUrl);
   await driver.sleep(1500);
   await driver.executeScript(
-      "debug.onSubmitPopulateFormsWithDiscoveryInformation();");
+      "oauth2_oidc_1.onSubmitPopulateFormsWithDiscoveryInformation();");
   await driver.sleep(500);
 
   // ---- The choice and the document survive a reload ------------------------
@@ -745,7 +747,7 @@ async function metadataSourceActivities(driver, doc) {
   // document here — what is under test is how the retrieval is labelled.
   await driver.executeScript(
     "document.getElementById('oidc_discovery_endpoint').value = arguments[0];" +
-    "debug.OnSubmitOIDCDiscoveryEndpointForm();", metadataUrl);
+    "oauth2_oidc_1.OnSubmitOIDCDiscoveryEndpointForm();", metadataUrl);
   await driver.sleep(1500);
   s = await paneState(driver);
   assert.ok(s.note.indexOf("OpenID Connect Discovery 1.0") !== -1 &&
@@ -757,30 +759,31 @@ async function metadataSourceActivities(driver, doc) {
   log.info("[note] OK — the note follows the retrieval, not the form: " +
            s.note.trim());
 
-  // ---- The same pane on debugger2.html ------------------------------------
-  // Both debugger pages carry the identical Configuration Parameters pane over
-  // the same storage, so what was populated here must be there too.
-  await driver.get(baseUrl + "/debugger2.html");
+  // ---- The same pane on oauth2_oidc_2.html
+  // ------------------------------------ Both debugger pages carry the
+  // identical Configuration Parameters pane over the same storage, so what was
+  // populated here must be there too.
+  await driver.get(baseUrl + "/oauth2_oidc_2.html");
   await driver.wait(until.elementLocated(By.id("issuer")), waitTime);
   await driver.sleep(700);
   var onTwo = await fieldValues(driver, ["issuer"].concat(RFC8414_ONLY_FIELDS));
   var missingOnTwo =
       RFC8414_ONLY_FIELDS.filter(function (id) { return !onTwo[id]; });
   assert.strictEqual(missingOnTwo.length, 0,
-    "debugger2.html's pane is missing fields debugger.html has: " +
+    "oauth2_oidc_2.html's pane is missing fields oauth2_oidc_1.html has: " +
         missingOnTwo.join(", "));
   assert.strictEqual(onTwo.issuer.value, doc.issuer,
-    "debugger2.html should show the same populated issuer.");
+    "oauth2_oidc_2.html should show the same populated issuer.");
   assert.strictEqual(onTwo.code_challenge_methods_supported.value,
     doc.code_challenge_methods_supported.join(", "),
-    "debugger2.html should show the same RFC 8414 members. Got: " +
+    "oauth2_oidc_2.html should show the same RFC 8414 members. Got: " +
     onTwo.code_challenge_methods_supported.value);
-  log.info("[debugger2] OK — the same pane, the same values, including the " +
-           "RFC 8414-only members.");
+  log.info("[oauth2_oidc_2] OK — the same pane, the same values, including " +
+           "the RFC 8414-only members.");
   await openDebugger(driver);
 
   // ---- Clear ---------------------------------------------------------------
-  await driver.executeScript("debug.onClickClearAllForms();");
+  await driver.executeScript("oauth2_oidc_1.onClickClearAllForms();");
   await driver.sleep(400);
   s = await paneState(driver);
   assert.ok(s.oidc && !s.rfc,

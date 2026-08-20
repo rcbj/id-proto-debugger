@@ -17,9 +17,10 @@ var waitTime = appconfig.waitTime;
 const { populateMetadata } = require("../common/tests.js")({ By, until,
        waitTime, log });
 
-// On debugger.html: select the Device Authorization Grant, enter client_id and
-// scope, and click Authorize. This POSTs to the device authorization endpoint
-// and navigates to debugger2.html where the device/user codes are displayed.
+// On oauth2_oidc_1.html: select the Device Authorization Grant, enter client_id
+// and scope, and click Authorize. This POSTs to the device authorization
+// endpoint and navigates to oauth2_oidc_2.html where the device/user codes are
+// displayed.
 async function requestDeviceAuthorization(driver, client_id, scope) {
   log.debug("Entering requestDeviceAuthorization().");
   log.info("Entering requestDeviceAuthorization().");
@@ -54,7 +55,7 @@ async function requestDeviceAuthorization(driver, client_id, scope) {
     "arguments[0].scrollIntoView({ block: 'center' }); arguments[0].click();",
     authorizeEl);
 
-  // The device authorization response is shown on debugger2.html.
+  // The device authorization response is shown on oauth2_oidc_2.html.
   await driver.wait(until.elementLocated(By.id("device_user_code")), waitTime);
   await driver.wait(until.elementIsVisible(driver.findElement(By.id(
                     "device_user_code"))), waitTime);
@@ -207,7 +208,7 @@ async function test() {
     // Load the debugger, populate IdP metadata from discovery, and initiate the
     // device authorization request.
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
 
@@ -239,7 +240,7 @@ async function test() {
     // Return to the debugger (device_code persists in local storage) and poll
     // the token endpoint for the access token.
     log.info("Returning to the debugger to obtain the access token.");
-    await driver.get(baseUrl + "/debugger2.html");
+    await driver.get(baseUrl + "/oauth2_oidc_2.html");
     const token_btn = By.className("token_btn");
     await driver.wait(until.elementLocated(By.id("device_code")), waitTime);
     await driver.wait(async () => {

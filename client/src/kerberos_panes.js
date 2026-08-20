@@ -1244,7 +1244,7 @@ function wireTabs() {
 // way back to any of them.
 //
 // The STORE half. The pane over it is client/src/kerberos_tickets.js, on all
-// five pages. Modelled on debugger2.js's Operation History — same pane shape, same
+// five pages. Modelled on oauth2_oidc_2.js's Operation History — same pane shape, same
 // newest-first ordering, same numbered column, same scrolling list. Two things
 // differ, and the first is the important one.
 //

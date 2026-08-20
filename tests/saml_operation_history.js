@@ -1,7 +1,7 @@
 // File: saml_operation_history.js
 //
 // Operations History pane on the SAML request page (saml_request.html) — the
-// SAML counterpart of the Operation History pane on debugger2.html.
+// SAML counterpart of the Operation History pane on oauth2_oidc_2.html.
 //
 // It records every attempted call to the IdP with its timestamp, binding, SAML
 // version, both entity IDs, and the result — Failure (never left the browser,

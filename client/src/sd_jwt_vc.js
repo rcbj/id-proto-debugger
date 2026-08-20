@@ -4,7 +4,8 @@
 // State and parsing shared by the SD-JWT VC issuance pages.
 //
 //   vc-issuance-1.html  discovery + configuration, then hands off to the
-//                              OIDC Authorization Code flow on debugger.html
+//                              OIDC Authorization Code flow on
+// oauth2_oidc_1.html
 //   vc-issuance-2.html  the tokens that came back, the user's approval,
 //                              and the OID4VCI Credential Request
 //   vc-issuance-3.html  the issued SD-JWT VC
@@ -37,9 +38,10 @@ var metadataClient = require("./metadata_client");
 var vciMetadata = require("./vci_metadata");
 
 var KEYS = {
-  // "active" while the workflow is driving debugger.html / debugger2.html.
+  // "active" while the workflow is driving oauth2_oidc_1.html /
+  // oauth2_oidc_2.html.
   FLOW: "sdjwtvc_flow",
-  // Where debugger2.html should send the browser once it has the tokens.
+  // Where oauth2_oidc_2.html should send the browser once it has the tokens.
   RETURN: "sdjwtvc_return",
   // The compact SD-JWT VC returned by the credential endpoint. When a batch was
   // requested this is the first of them; CREDENTIALS has them all, in the order
@@ -124,10 +126,14 @@ var KEYS = {
 // How the credential's own key binding is chosen. The two are genuinely
 // different mechanisms, not two names for one:
 //
-//   pop   Proof of Possession. A holder key of the wallet's own, whose private
-//         half is proved in the Credential Request with an openid4vci-proof+jwt
-//         (OID4VCI section 8.2). The credential's cnf.jwk is that key. This is
-//         what the workflow has always done and is what SD-JWT VC assumes.
+//   pop   A holder key of the wallet's own, whose private half is proved in
+//         the Credential Request with an openid4vci-proof+jwt (OID4VCI section
+//         8.2). The credential's cnf.jwk is that key. This is what the
+//         workflow has always done and is what SD-JWT VC assumes. The stored
+//         value is still "pop" — the pane no longer CALLS this mode "Proof of
+//         Possession", because both modes send that key proof and only the
+//         signing key differs, but renaming the token would strand the
+//         preference already in every user's localStorage.
 //
 //   hok   Holder of Key. The DPoP key IS the holder key: one key appears as the
 //         access token's cnf.jkt and as the credential's cnf.jwk, and the
@@ -628,9 +634,9 @@ function setDpopEnabled(on) {
 }
 
 // Which mechanism binds the CREDENTIAL. Holder of Key needs a DPoP key to
-// reuse, so with DPoP off the answer is always Proof of Possession however the
-// checkbox was left — reported as the effective mode rather than silently
-// corrected, so the pane can say why.
+// reuse, so with DPoP off the answer is always a holder key of the wallet's
+// own however the checkbox was left — reported as the effective mode rather
+// than silently corrected, so the pane can say why.
 function credentialBindingMode() {
   log.debug("Entering credentialBindingMode().");
   var stored = get(KEYS.DPOP_BINDING);
@@ -1272,7 +1278,7 @@ function isFlowActive() {
   log.debug("Leaving isFlowActive().");
   return get(KEYS.FLOW) === FLOW_ACTIVE;
 }
-// Consumed by debugger2.html the moment it forwards, so a later, unrelated
+// Consumed by oauth2_oidc_2.html the moment it forwards, so a later, unrelated
 // token exchange on that page does not get redirected too.
 function endFlow() {
   log.debug("Entering endFlow().");

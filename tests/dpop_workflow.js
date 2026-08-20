@@ -142,10 +142,11 @@ async function paneBeforeAnythingIsSent(driver) {
   // The two checkboxes must be honest about each other.
   await driver.findElement(By.id("vc_dpop_holder_of_key")).click();
   await driver.sleep(900);
-  check("Holder of Key with DPoP off says Proof of Possession is what " +
-        "will happen",
-    /Proof of Possession is what will actually happen/.test(
-      await txt(driver, "vc_dpop_binding_note")),
+  check("Holder of Key with DPoP off says the credential gets a holder " +
+        "key of its own",
+    /needs a DPoP key/.test(await txt(driver, "vc_dpop_binding_note")) &&
+      /holder key of its own/.test(
+        await txt(driver, "vc_dpop_binding_note")),
     "a ticked box that silently does nothing is the failure this checks " +
         "for. Note: " +
     await txt(driver, "vc_dpop_binding_note"));

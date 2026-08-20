@@ -74,6 +74,11 @@ var EXPECTED_VCT = "urn:idptools:sd-jwt-vc:identity";
 var REQUESTED = (process.env.OID4VP_CLAIMS ||
     "given_name,family_name").split(",");
 var DCQL_ID = "identity_credential";
+// The credential format this file is about. Named on every request rather than
+// inherited, because the default format is configuration too — the same admin
+// page below sets it — and a request that inherits a jwt_vc_json default is one
+// this SD-JWT wallet cannot answer at all.
+var FORMAT = "dc+sd-jwt";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -197,6 +202,20 @@ async function mintCredential(label) {
                      "the credential should be the configured type.");
   assert.ok(payload.cnf && payload.cnf.jwk,
             "and be bound to the holder key generated here.");
+  // What is minted is the OTHER half of the configuration above, and a
+  // separate setting: /admin/vc chooses what a credential carries. Say so
+  // here, where the credential is, rather than let it surface as a
+  // presentation refused for a claim that was never in it.
+  var carried = credential.split("~").slice(1).filter(Boolean)
+    .map(function (d) {
+      return JSON.parse(b64uDecode(d).toString("utf8"))[1];
+    });
+  REQUESTED.forEach(function (name) {
+    assert.ok(carried.indexOf(name) !== -1,
+      "the credential must carry " + name + ", which the verifier asks for " +
+          "— /admin/vc chooses what is minted and is a separate setting " +
+          "from /admin/vc-verifier-config. Carried: " + carried.join(", "));
+  });
   log.info("[credential] minted a " + payload.vct + " for " + (label ||
            "the presentation tests") +
            " with " + credential.split("~").filter(Boolean).length +
@@ -319,8 +338,8 @@ function postPresentation(responseUri, state, presentation) {
 // receives.
 async function freshRequest(byReference) {
   log.debug("Entering freshRequest(). byReference=" + !!byReference);
-  var r = await fetch(issuerBase + "/oid4vp/start" + (byReference ?
-      "?by=reference" : ""),
+  var r = await fetch(issuerBase + "/oid4vp/start?format=" +
+      encodeURIComponent(FORMAT) + (byReference ? "&by=reference" : ""),
     { redirect: "manual" });
   var location = r.headers.get("location");
   assert.ok(location,
@@ -334,6 +353,59 @@ async function freshRequest(byReference) {
   });
   log.debug("Leaving freshRequest(). state=" + params.state);
   return { params: params, location: location };
+}
+
+// The claim names a request actually asks for, off the wire. The last element
+// of each DCQL path is the claim: dc+sd-jwt keeps claims at the top level, so
+// the path is one element long, and taking the last one works for the nested
+// formats too.
+function claimsAskedFor(request) {
+  log.debug("Entering claimsAskedFor().");
+  var dcql = JSON.parse(request.params.dcql_query);
+  var credential = (dcql.credentials || [])[0] || {};
+  var claims = credential.claims || [];
+  log.debug("Leaving claimsAskedFor(). " + claims.length + " claim(s).");
+  return claims.map(function (c) {
+    return c.path[c.path.length - 1];
+  });
+}
+
+// ---------------------------------------------------------------------------
+// What the Verifier asks for is CONFIGURATION, not a constant.
+//
+// /admin/vc-verifier-config sets the claims the mock Verifier's next
+// Authorization Request names, and the change lasts for the life of that
+// process. So a run against a stack somebody has driven by hand meets a
+// dcql_query naming five claims while this file still selects two, and every
+// presentation below is refused on "Requested claims" — the control case
+// first, with a message about claims this workflow never mentions. That is
+// what failed on 2026-08-18.
+//
+// Pin it here, then read the next request back: the answer to the POST is the
+// service's account of itself, and what a presentation is judged against is
+// the dcql_query it was sent. A setup step that quietly does nothing is worse
+// than no setup step at all.
+// ---------------------------------------------------------------------------
+async function pinVerifierRequest() {
+  log.debug("Entering pinVerifierRequest().");
+  var configured = await httpJson(issuerBase + "/admin/vc-verifier-config", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "select", claims: REQUESTED })
+  });
+  assert.ok(configured.ok,
+    "the mock verifier should accept what it is asked to ask for, got HTTP " +
+        configured.status + " " + configured.raw);
+  assert.deepStrictEqual(((configured.body || {}).requested || [])
+                         .slice().sort(), REQUESTED.slice().sort(),
+    "and should then be asking for exactly " + REQUESTED.join(", ") +
+        ". Got: " + (((configured.body || {}).requested) || []).join(", "));
+  var asked = claimsAskedFor(await freshRequest());
+  assert.deepStrictEqual(asked.slice().sort(), REQUESTED.slice().sort(),
+    "and the request it builds should name them. Got: " + asked.join(", "));
+  log.info("[setup] the verifier asks for " + asked.join(", ") +
+           " and for a " + FORMAT + " credential.");
+  log.debug("Leaving pinVerifierRequest().");
 }
 
 async function verdictFor(state) {
@@ -1096,6 +1168,7 @@ async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. issuer/verifier=" + issuerBase + ", wallet=" +
            baseUrl);
+  await pinVerifierRequest();
   var held = await mintCredential("the positive flow");
   await verifierNegatives(held);
 

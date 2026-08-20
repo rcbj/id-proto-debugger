@@ -747,25 +747,34 @@ async function authorizationCodeCanBeBoundToTheKey() {
     scope: "openid", state: "dpop-state", dpop_jkt: jkt(key)
   }).toString();
 
-  // The authorization endpoint shows a login screen first, so this drives it
-  // the way a browser would and the way oauth2_sts_endpoints.js does: GET
-  // authorize, post the form's own login_id back, then follow to the
+  // The authorization endpoint hands an unauthenticated request to the
+  // authentication service, so this drives it the way a browser would and the
+  // way oauth2_sts_endpoints.js does: GET authorize, follow the redirect to
+  // /authn/login, post the form's own authn_id back, then follow to the
   // authorization response.
-  var form1 = await fetch(authorize, { redirect: "manual" });
-  assert.strictEqual(form1.status, 200, "expected the login screen, got " +
+  var sentToService = await fetch(authorize, { redirect: "manual" });
+  assert.strictEqual(sentToService.status, 302,
+    "expected a redirect to the authentication service, got " +
+        sentToService.status);
+  var screenUrl = sentToService.headers.get("location");
+  assert.ok(/\/authn\/login\?authn=/.test(screenUrl),
+    "expected the sign-in screen, got " + screenUrl);
+  var form1 = await fetch(screenUrl.indexOf("http") === 0 ? screenUrl
+    : stsBase + screenUrl, { redirect: "manual" });
+  assert.strictEqual(form1.status, 200, "expected the sign-in screen, got " +
                      form1.status);
   var page = await form1.text();
-  var loginId = (page.match(/name="login_id" value="([^"]+)"/) || [])[1];
-  assert.ok(loginId, "the login screen carries no login_id to post back.");
-  var loggedIn = await fetch(stsBase + "/oauth2/login", {
+  var authnId = (page.match(/name="authn_id" value="([^"]+)"/) || [])[1];
+  assert.ok(authnId, "the sign-in screen carries no authn_id to post back.");
+  var loggedIn = await fetch(stsBase + "/authn/login", {
     method: "POST", redirect: "manual",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ login_id: loginId, username: "dpop-user",
+    body: new URLSearchParams({ authn_id: authnId, username: "dpop-user",
                                 password: "any-password",
                                     action: "login" }).toString()
   });
   assert.strictEqual(loggedIn.status, 302,
-                     "the login form should redirect, got " + loggedIn.status);
+                     "the sign-in form should redirect, got " + loggedIn.status);
   var cookie = String(loggedIn.headers.get("set-cookie") || "").split(";")[0];
   assert.ok(cookie, "signing in should establish a session.");
 

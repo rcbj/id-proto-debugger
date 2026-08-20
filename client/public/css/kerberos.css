@@ -642,7 +642,7 @@ ol.krb-trail li.krb-step-tool {
    Rounded so the eleventh row is CLIPPED and visibly so — a partial row is what
    tells a reader there is more below, and is worth more than a tidy edge.
 
-   The header is sticky, as debugger2.html's Operation History does it: a
+   The header is sticky, as oauth2_oidc_2.html's Operation History does it: a
    scrolling table whose header leaves is a table of unlabelled columns.
    ------------------------------------------------------------------------ */
 .krb-history-scroll {

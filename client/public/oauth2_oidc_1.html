@@ -20,11 +20,11 @@
 
     <div class="container">
 
-<script type="text/javascript" src="/js/debugger.js">
+<script type="text/javascript" src="/js/oauth2_oidc_1.js">
 </script>
-<p>This is a simple Client to use with any <a href="https://medium.com/@robert.broeckelmann/saml2-vs-jwt-understanding-oauth2-4abde9e7ec8b" onclick="return debugger.clickLink();">OAuth2</a> or <a href="https://medium.com/@robert.broeckelmann/understanding-openid-connect-series-37c93d25e92b" onclick="return debugger.clickLink();">OpenID Connect</a> compliant identity provider.
+<p>This is a simple Client to use with any <a href="https://medium.com/@robert.broeckelmann/saml2-vs-jwt-understanding-oauth2-4abde9e7ec8b" onclick="return oauth2_oidc_1.clickLink();">OAuth2</a> or <a href="https://medium.com/@robert.broeckelmann/understanding-openid-connect-series-37c93d25e92b" onclick="return oauth2_oidc_1.clickLink();">OpenID Connect</a> compliant identity provider.
 </p>
-<P><a href="https://www.rfc-editor.org/rfc/rfc6749" onclick="return debugger.clickLink();">OAuth2 RFC</a></P>
+<P><a href="https://www.rfc-editor.org/rfc/rfc6749" onclick="return oauth2_oidc_1.clickLink();">OAuth2 RFC</a></P>
 <P><a hreef="https://openid.net/specs/openid-connect-core-1_0.html#UserInfoRequest">OIDC Spec</a></P>
 <p>This page manages interaction with the OAuth2 Authorization Endpoint.</p>
 
@@ -55,10 +55,10 @@ function dbgSetAllPanes(expand) {
 </script>
 
 <div class="step0 dbg-pane" id="step0">
-    <legend class="dbg-legend" id="oidc_expand_button" onclick="return debug.onClickShowGenericFieldSet('oidc_fieldset');">Metadata Retrieval
+    <legend class="dbg-legend" id="oidc_expand_button" onclick="return oauth2_oidc_1.onClickShowGenericFieldSet('oidc_fieldset');">Metadata Retrieval
     </legend>
     <fieldset name="oidc_fieldset" id="oidc_fieldset" style="display: block;">
-    <form action="" id="oidc_discovery_endpoint_form" name="oidc_discovery_endpoint_form" method="get" onsubmit="return false;" onclick="return debug.OnSubmitOIDCDiscoveryEndpointForm();">
+    <form action="" id="oidc_discovery_endpoint_form" name="oidc_discovery_endpoint_form" method="get" onsubmit="return false;" onclick="return oauth2_oidc_1.OnSubmitOIDCDiscoveryEndpointForm();">
       <table border="0">
           <tr>
             <td>
@@ -66,13 +66,13 @@ function dbgSetAllPanes(expand) {
               </div>
             </td>
             <td>
-              <label><input type="radio" id="metadata_source_oidc" name="metadata_source" value="oidc" checked="checked" onclick="debug.onMetadataSourceChange(event);" /> OIDC Discovery 1.0</label>
-              <label><input type="radio" id="metadata_source_rfc8414" name="metadata_source" value="rfc8414" onclick="debug.onMetadataSourceChange(event);" /> OAuth 2.0 Authorization Server Metadata (RFC 8414)</label>
+              <label><input type="radio" id="metadata_source_oidc" name="metadata_source" value="oidc" checked="checked" onclick="oauth2_oidc_1.onMetadataSourceChange(event);" /> OIDC Discovery 1.0</label>
+              <label><input type="radio" id="metadata_source_rfc8414" name="metadata_source" value="rfc8414" onclick="oauth2_oidc_1.onMetadataSourceChange(event);" /> OAuth 2.0 Authorization Server Metadata (RFC 8414)</label>
             </td>
           </tr>
           <tr>
             <td>&nbsp;</td>
-            <td><p id="metadata_source_hint">An OIDC Discovery endpoint uses a path that ends in /.well-known/openid-configuration. See the <a href="https://openid.net/specs/openid-connect-discovery-1_0.html" onclick="return debugger.clickLink();">spec</a>.</p></td>
+            <td><p id="metadata_source_hint">An OIDC Discovery endpoint uses a path that ends in /.well-known/openid-configuration. See the <a href="https://openid.net/specs/openid-connect-discovery-1_0.html" onclick="return oauth2_oidc_1.clickLink();">spec</a>.</p></td>
           </tr>
           <tr>
             <td>
@@ -88,18 +88,18 @@ function dbgSetAllPanes(expand) {
               <input class="btn_oidc_discovery_endpoint" type="submit" value="Retrieve" />
             </td>
             <td>
-              <input class="btn_clear_all_forms" type="button" value="Clear" onclick="return debug.onClickClearAllForms();" />
+              <input class="btn_clear_all_forms" type="button" value="Clear" onclick="return oauth2_oidc_1.onClickClearAllForms();" />
             </td>
           </tr>
           <tr>
             <td>
-               <input class="btn2" name="clear_local_storage_button" id="clear_local_storage_button" type="submit" value="Clear Storage" onclick="return debug.onClickClearLocalStorage();"/>
+               <input class="btn2" name="clear_local_storage_button" id="clear_local_storage_button" type="submit" value="Clear Storage" onclick="return oauth2_oidc_1.onClickClearLocalStorage();"/>
             </td>
           </tr>
           <tr id="signed_metadata_row">
             <td>
               <div class="tooltip">
-                <input class="btn2" id="validate_signed_metadata_button" name="validate_signed_metadata_button" type="button" value="Validate Signature" onclick="debug.validateSignedMetadata(event);" />
+                <input class="btn2" id="validate_signed_metadata_button" name="validate_signed_metadata_button" type="button" value="Validate Signature" onclick="oauth2_oidc_1.validateSignedMetadata(event);" />
                 <span class="tooltiptext">Verify the digital signature on an RFC 8414 metadata document. RFC 8414 lets an authorization server publish a signed_metadata member — a JWT of the metadata signed by the issuer. This fetches the document's jwks_uri, verifies the JWS against those keys in the browser, checks that the iss claim is the issuer, and reports any signed claim that disagrees with the plain JSON. OIDC Discovery documents do not define signed_metadata.</span>
               </div>
             </td>
@@ -119,7 +119,7 @@ function dbgSetAllPanes(expand) {
 <!-- Configuration Parameters and Tools side by side -->
 <div style="display:flex; gap:16px; align-items:flex-start; margin-top:8px;">
   <div class="side-by-side-col dbg-pane" style="flex:1 1 0; min-width:0;">
-    <legend class="dbg-legend" id="config_expand_button" onclick="return debug.onClickShowGenericFieldSet('config_fieldset');">Configuration Parameters
+    <legend class="dbg-legend" id="config_expand_button" onclick="return oauth2_oidc_1.onClickShowGenericFieldSet('config_fieldset');">Configuration Parameters
     </legend>
     <fieldset name="config_fieldset" id="config_fieldset" style="display: block;">
     <form action="" id="endpoints" name="endpoints">
@@ -148,7 +148,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Authorization Endpoint: </label><span class="tooltiptext">Enter the Authorization Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>Authorization Endpoint: </label><span class="tooltiptext">Enter the Authorization Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -157,7 +157,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Token Endpoint: </label><span class="tooltiptext">Enter the Token Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>Token Endpoint: </label><span class="tooltiptext">Enter the Token Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -166,7 +166,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Device Authorization Endpoint: </label><span class="tooltiptext">Enter the Device Authorization Endpoint (RFC 8628) used by the debugger.</span>
+              <div class="tooltip"><label>Device Authorization Endpoint: </label><span class="tooltiptext">Enter the Device Authorization Endpoint (RFC 8628) used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -175,7 +175,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Introspection Endpoint: </label><span class="tooltiptext">Enter the Introspection Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>Introspection Endpoint: </label><span class="tooltiptext">Enter the Introspection Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -184,7 +184,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Revocation Endpoint: </label><span class="tooltiptext">Enter the Token Revocation Endpoint (RFC 7009) used by the debugger.</span>
+              <div class="tooltip"><label>Revocation Endpoint: </label><span class="tooltiptext">Enter the Token Revocation Endpoint (RFC 7009) used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -193,7 +193,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Registration Endpoint: </label><span class="tooltiptext">Enter the OIDC Dynamic Client Registration Endpoint used by the debugger. Auto-populated from the discovery metadata (registration_endpoint).</span>
+              <div class="tooltip"><label>Registration Endpoint: </label><span class="tooltiptext">Enter the OIDC Dynamic Client Registration Endpoint used by the oauth2_oidc_1. Auto-populated from the discovery metadata (registration_endpoint).</span>
               </div>
             </td>
             <td>
@@ -202,7 +202,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>OIDC UserInfo Endpoint: </label><span class="tooltiptext">Enter the OIDC UserInfo Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>OIDC UserInfo Endpoint: </label><span class="tooltiptext">Enter the OIDC UserInfo Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -211,11 +211,11 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>JWKS Endpoint: </label><span class="tooltiptext">Enter the JWKS Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>JWKS Endpoint: </label><span class="tooltiptext">Enter the JWKS Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
-              <input class="stored" id="jwks_endpoint" name="jwks_endpoint" type="text" max="150" /><a href="/jwks.html" onclick="return debugger.clickLink();">Review JWKS meta data</a>
+              <input class="stored" id="jwks_endpoint" name="jwks_endpoint" type="text" max="150" /><a href="/jwks.html" onclick="return oauth2_oidc_1.clickLink();">Review JWKS meta data</a>
             </td>
           </tr>
           <tr>
@@ -566,8 +566,8 @@ function dbgSetAllPanes(expand) {
               </div>
             </td>
             <td>Yes 
-              <input checked="true" id="yesCheckOIDCArtifacts" name="yesno" onclick="debug.displayOIDCArtifacts();" type="radio" value="true" />No 
-              <input checked="false" id="noCheckOIDCArtifacts" name="yesno" onclick="debug.displayOIDCArtifacts();" type="radio" value="false" />
+              <input checked="true" id="yesCheckOIDCArtifacts" name="yesno" onclick="oauth2_oidc_1.displayOIDCArtifacts();" type="radio" value="true" />No 
+              <input checked="false" id="noCheckOIDCArtifacts" name="yesno" onclick="oauth2_oidc_1.displayOIDCArtifacts();" type="radio" value="false" />
             </td>
           </tr>
           <tr>
@@ -586,8 +586,8 @@ function dbgSetAllPanes(expand) {
               </div>
             </td>
             <td>Yes 
-              <input checked="true" id="useRefreshToken-yes" name="useRefreshToken" onclick="debug.useRefreshTokens();" type="radio" value="true" />No 
-              <input checked="false" id="useRefreshToken-no" name="useRefreshToken" onclick="debug.useRefreshTokens();" type="radio" value="false" />
+              <input checked="true" id="useRefreshToken-yes" name="useRefreshToken" onclick="oauth2_oidc_1.useRefreshTokens();" type="radio" value="true" />No 
+              <input checked="false" id="useRefreshToken-no" name="useRefreshToken" onclick="oauth2_oidc_1.useRefreshTokens();" type="radio" value="false" />
             </td>
           </tr>
           <tr>
@@ -596,8 +596,8 @@ function dbgSetAllPanes(expand) {
               </div>
             </td>
             <td>Yes
-              <input checked="true" id="usePKCE-yes" name="usePKCE" onclick="debug.usePKCERFC();" type="radio" value="true" />No
-              <input checked="false" id="usePKCE-no" name="usePKCE" onclick="debug.usePKCERFC();" type="radio" value="false" />
+              <input checked="true" id="usePKCE-yes" name="usePKCE" onclick="oauth2_oidc_1.usePKCERFC();" type="radio" value="true" />No
+              <input checked="false" id="usePKCE-no" name="usePKCE" onclick="oauth2_oidc_1.usePKCERFC();" type="radio" value="false" />
             </td>
           </tr>
         </tbody>
@@ -615,13 +615,16 @@ function dbgSetAllPanes(expand) {
               <td><p>Standalone utilities for working with JSON Web Tokens.</p></td>
             </tr>
             <tr>
-              <td><a href="/jwt_tools.html?from=debugger.html" onclick="return debug.clickLink();">JWT Tools</a> — compose, sign (JWS), and encrypt (JWE) JWTs; generate key pairs; verify signatures and decrypt tokens.</td>
+              <td><a href="/jwt_tools.html?from=oauth2_oidc_1.html" onclick="return oauth2_oidc_1.clickLink();">JWT Tools</a> — compose, sign (JWS), and encrypt (JWE) JWTs; generate key pairs; verify signatures and decrypt tokens.</td>
             </tr>
             <tr>
-              <td><a href="/encoding_tools.html?from=debugger.html" onclick="return debug.clickLink();">Encoding / Hashing Tools</a> — Base64 and URI encode/decode, CRC-32 checksums, and SHA hashing.</td>
+              <td><a href="/encoding_tools.html?from=oauth2_oidc_1.html" onclick="return oauth2_oidc_1.clickLink();">Encoding / Hashing Tools</a> — Base64 and URI encode/decode, CRC-32 checksums, and SHA hashing.</td>
             </tr>
             <tr>
-              <td><a href="/digital_signature.html?from=debugger.html" onclick="return debug.clickLink();">Digital Signature</a> — generate an SLH-DSA (post-quantum) key pair, sign a value, and validate the signature.</td>
+              <td><a href="/digital_signature.html?from=oauth2_oidc_1.html" onclick="return oauth2_oidc_1.clickLink();">Digital Signature</a> — generate an SLH-DSA (post-quantum) key pair, sign a value, and validate the signature.</td>
+            </tr>
+            <tr>
+              <td><a href="/pki.html?from=oauth2_oidc_1.html" onclick="return oauth2_oidc_1.clickLink();">Certificate Authority &amp; X.509 Tools</a> &mdash; build a Root, Intermediate and Issuing <strong>certificate authority</strong>, issue TLS server/client, code-signing, S/MIME and other certificates with every X.509v3 extension, and test a real TLS or mutual-TLS handshake with what you issued.</td>
             </tr>
           </tbody>
         </table>
@@ -632,7 +635,7 @@ function dbgSetAllPanes(expand) {
 
 <div class="step2 dbg-pane" id="step2">
   <form name="auth_step" id="auth_step">
-    <legend class="dbg-legend" id="authz_expand_button" onclick="return debug.onClickShowGenericFieldSet('authz_fieldset');"><span id="h2_title_1" name="">Request Authorization Code</span></legend>
+    <legend class="dbg-legend" id="authz_expand_button" onclick="return oauth2_oidc_1.onClickShowGenericFieldSet('authz_fieldset');"><span id="h2_title_1" name="">Request Authorization Code</span></legend>
   <fieldset id="authz_fieldset" name="authz_fieldset" style="display: none;">
     <table>
       <tbody>
@@ -646,7 +649,7 @@ function dbgSetAllPanes(expand) {
           </td>
           <td>
             <input id="state" name="state" onchange="recalculateAuthorizationRequestDescription();" type="text" value="" />
-            <input id="regenerate_state" name="regenerate_state" type="button" value="Regenerate" onclick="return debug.regenerateState();" "/>
+            <input id="regenerate_state" name="regenerate_state" type="button" value="Regenerate" onclick="return oauth2_oidc_1.regenerateState();" "/>
           </td>
         </tr>
         <tr>
@@ -656,7 +659,7 @@ function dbgSetAllPanes(expand) {
           </td>
           <td>
             <input id="nonce_field" name="nonce" type="text" value="" />
-            <input id="regenerate_nonce" name="regenerate_nonce" type="button" value="Regenerate" onclick="return debug.regenerateNonce();" "/>
+            <input id="regenerate_nonce" name="regenerate_nonce" type="button" value="Regenerate" onclick="return oauth2_oidc_1.regenerateNonce();" "/>
           </td>
         </tr>
         <tr>
@@ -692,8 +695,8 @@ function dbgSetAllPanes(expand) {
             </div>
           </td>
           <td>Yes 
-            <input checked="true" id="yesResourceCheck" name="yesno" onclick="debug.displayResourceCheck();" type="radio" value="true"/>No 
-            <input checked="false" id="noResourceCheck" name="yesno" onclick="debug.displayResourceCheck();" type="radio" value="false"/>
+            <input checked="true" id="yesResourceCheck" name="yesno" onclick="oauth2_oidc_1.displayResourceCheck();" type="radio" value="true"/>No 
+            <input checked="false" id="noResourceCheck" name="yesno" onclick="oauth2_oidc_1.displayResourceCheck();" type="radio" value="false"/>
           </td>
         </tr>
         <tr id="authzResourceRow" style="">
@@ -711,8 +714,8 @@ function dbgSetAllPanes(expand) {
             </div>
           </td>
           <td>Yes
-            <input id="authzcustomParametersCheck-yes" name="authzcustomParametersCheck" onclick="debug.displayAuthzCustomParametersCheck();" type="radio" />No
-            <input id="authzcustomParametersCheck-no" name="authzcustomParametersCheck" onclick="debug.displayAuthzCustomParametersCheck();" type="radio" checked/>
+            <input id="authzcustomParametersCheck-yes" name="authzcustomParametersCheck" onclick="oauth2_oidc_1.displayAuthzCustomParametersCheck();" type="radio" />No
+            <input id="authzcustomParametersCheck-no" name="authzcustomParametersCheck" onclick="oauth2_oidc_1.displayAuthzCustomParametersCheck();" type="radio" checked/>
           </td>
         </tr>
         <tr id="authzCustomParametersRow" style="">
@@ -722,7 +725,7 @@ function dbgSetAllPanes(expand) {
           </td>
           <td>
             <input class="stored" id="authzNumberCustomParameters" name="authzNumberCustomParameters" type="text" maxlength="4" size="4" value="0"/>
-            <input type="button" value="Enter parameters" onclick="return debug.generateCustomParametersListUI();"/>
+            <input type="button" value="Enter parameters" onclick="return oauth2_oidc_1.generateCustomParametersListUI();"/>
           </td>
           </tr>
           <tr>
@@ -766,7 +769,7 @@ function dbgSetAllPanes(expand) {
         <tbody>
         <tr>
           <td>
-            <input class="btn2" type="submit" value="Authorize" onclick="return debug.triggerAuthZEndpointCall();" />
+            <input class="btn2" type="submit" value="Authorize" onclick="return oauth2_oidc_1.triggerAuthZEndpointCall();" />
           </td>
           <td>&nbsp;
           </td>
@@ -786,14 +789,14 @@ function dbgSetAllPanes(expand) {
 </div>
 
 <div class="step_dcr dbg-pane" id="step_dcr">
-  <legend class="dbg-legend" id="dcr_expand_button" onclick="return debug.onClickShowGenericFieldSet('dcr_fieldset');">OIDC Dynamic Client Registration</legend>
+  <legend class="dbg-legend" id="dcr_expand_button" onclick="return oauth2_oidc_1.onClickShowGenericFieldSet('dcr_fieldset');">OIDC Dynamic Client Registration</legend>
   <fieldset id="dcr_fieldset" name="dcr_fieldset" style="display: none;">
     <form action="" id="dcr_form" name="dcr_form" onsubmit="return false;">
       <table border="0">
         <tbody>
           <tr>
             <td>&nbsp;</td>
-            <td><p>Create, read, update, and delete a client on the Identity Provider using the OIDC Dynamic Client Registration protocol. See the <a href="https://openid.net/specs/openid-connect-registration-1_0.html" onclick="return debug.clickLink();">OIDC Registration spec</a> (and <a href="https://www.rfc-editor.org/rfc/rfc7591" onclick="return debug.clickLink();">RFC 7591</a> / <a href="https://www.rfc-editor.org/rfc/rfc7592" onclick="return debug.clickLink();">RFC 7592</a>).</p></td>
+            <td><p>Create, read, update, and delete a client on the Identity Provider using the OIDC Dynamic Client Registration protocol. See the <a href="https://openid.net/specs/openid-connect-registration-1_0.html" onclick="return oauth2_oidc_1.clickLink();">OIDC Registration spec</a> (and <a href="https://www.rfc-editor.org/rfc/rfc7591" onclick="return oauth2_oidc_1.clickLink();">RFC 7591</a> / <a href="https://www.rfc-editor.org/rfc/rfc7592" onclick="return oauth2_oidc_1.clickLink();">RFC 7592</a>).</p></td>
           </tr>
           <tr>
             <td>
@@ -833,7 +836,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <input class="btn2" type="submit" value="Register New Client" onclick="return debug.registerClient();" />
+              <input class="btn2" type="submit" value="Register New Client" onclick="return oauth2_oidc_1.registerClient();" />
             </td>
             <td>&nbsp;</td>
           </tr>
@@ -858,11 +861,11 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <input class="btn2" type="button" value="Read Client" onclick="return debug.readClient();" />
+              <input class="btn2" type="button" value="Read Client" onclick="return oauth2_oidc_1.readClient();" />
             </td>
             <td>
-              <input class="btn2" type="button" value="Update Client" onclick="return debug.updateClient();" />
-              <input class="btn2" type="button" value="Delete Client" onclick="return debug.deleteClient();" />
+              <input class="btn2" type="button" value="Update Client" onclick="return oauth2_oidc_1.updateClient();" />
+              <input class="btn2" type="button" value="Delete Client" onclick="return oauth2_oidc_1.deleteClient();" />
             </td>
           </tr>
           <tr>

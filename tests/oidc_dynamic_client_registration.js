@@ -149,7 +149,7 @@ async function test() {
     // Open the debugger and seed the Dynamic Client Registration pane from the
     // provider's discovery metadata, then expand the pane for editing.
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
 
     log.info("Populating metadata from discovery.");
     await populateMetadata(driver, discovery_endpoint);

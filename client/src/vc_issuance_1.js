@@ -7,15 +7,16 @@
 //
 //   1. Credential Issuer Metadata (OID4VCI) — retrieve, tabulate, validate its
 //      signed_metadata, and pick which credential to ask for.
-//   2. Authorization Server Metadata (RFC 8414) — the same pane debugger.html
-//      has, writing to the SAME localStorage keys, so what is retrieved here
-//      configures the OAuth2 / OIDC workflow that step 2 hands off to.
+//   2. Authorization Server Metadata (RFC 8414) — the same pane
+// oauth2_oidc_1.html      has, writing to the SAME localStorage keys, so what
+// is retrieved here      configures the OAuth2 / OIDC workflow that step 2
+// hands off to.
 //   3. Configuration Parameters — every member both documents can define,
 //      generated from the member lists so the pane cannot drift from them.
-//   4. The hand-off to debugger.html?sdjwtvc=1.
+//   4. The hand-off to oauth2_oidc_1.html?sdjwtvc=1.
 //
 // The fetch / table / signature-validation machinery is metadata_client.js,
-// shared with debugger.html. The member lists are op_metadata.js (OpenID
+// shared with oauth2_oidc_1.html. The member lists are op_metadata.js (OpenID
 // Provider + the RFC 8414-only members) and vci_metadata.js (credential
 // issuer).
 // ---------------------------------------------------------------------------
@@ -27,6 +28,7 @@ var metadataSchema = require("./metadata_schema");
 var opMetadata = require("./op_metadata");
 var vciMetadata = require("./vci_metadata");
 var sdJwtVc = require("./sd_jwt_vc");
+var vciClaims = require("./vci_claims");
 var didLib = require("./did");
 var urlSafety = require("./url_safety");
 
@@ -35,7 +37,7 @@ var log = bunyan.createLogger({ name: 'vc_issuance_1',
 
 // --- storage keys -----------------------------------------------------------
 // The credential issuer document is this page's own; the authorization server
-// document is deliberately the one debugger.html uses.
+// document is deliberately the one oauth2_oidc_1.html uses.
 var VCI_STORE = metadataClient.createStore("vci_info", "vci_info_source");
 var AS_STORE = metadataClient.createStore(opMetadata.DISCOVERY_INFO_KEY,
     "discovery_info_source");
@@ -60,7 +62,7 @@ var asStored = true;
 // The plain fields the Configuration Parameters pane carries besides the
 // metadata member lists: the OAuth 2.0 client settings the authorization
 // request needs, and the endpoints the debugger pane has always had under its
-// own element ids. Ids and localStorage keys match debugger.html exactly.
+// own element ids. Ids and localStorage keys match oauth2_oidc_1.html exactly.
 // ---------------------------------------------------------------------------
 var CLIENT_FIELDS = [
   { name: "client_id", dflt: "oidc-authorization-code-public",
@@ -68,7 +70,7 @@ var CLIENT_FIELDS = [
         "OID4VCI terms this is the wallet." },
   { name: "redirect_uri", dflt: "",
     desc: "Where the authorization server sends the authorization code: this " +
-        "deployment's /callback, which forwards to debugger2.html. The " +
+        "deployment's /callback, which forwards to oauth2_oidc_2.html. The " +
         "debugger pages pin this to their own configured origin, so an edit " +
         "here is only honoured if it points at that origin." },
   { name: "scope", dflt: "openid profile email",
@@ -78,15 +80,15 @@ var CLIENT_FIELDS = [
 ];
 
 // `member` is the metadata member name; `name` is the element id and storage
-// key, which for two of them is not the same thing (debugger.html has always
-// called them that, and these fields exist to stay compatible with it).
+// key, which for two of them is not the same thing (oauth2_oidc_1.html has
+// always called them that, and these fields exist to stay compatible with it).
 var ENDPOINT_FIELDS = [
   { name: "authorization_endpoint", member: "authorization_endpoint", dflt: "",
    desc: "Where the user is sent to authenticate and authorize issuance. " +
    "Populated from the authorization server metadata." },
   { name: "token_endpoint", member: "token_endpoint", dflt: "",
-   desc: "Where debugger2.html exchanges the authorization code for tokens. " +
-   "Populated from the authorization server metadata." },
+   desc: "Where oauth2_oidc_2.html exchanges the authorization code for " +
+   "tokens. Populated from the authorization server metadata." },
   { name: "oidc_userinfo_endpoint", member: "userinfo_endpoint", dflt: "",
    desc: "The OIDC userinfo endpoint (userinfo_endpoint). Not used by " +
    "issuance, but part of the metadata document." },
@@ -366,9 +368,9 @@ function loadConfiguration() {
 
 function defaultFor(f) {
   log.debug("Entering defaultFor().");
-  // The same rule debugger.html and debugger2.html apply: the redirect URI is
-  // this deployment's own /callback. They re-default anything that does not
-  // start with it, so offering a different value here would only mislead.
+  // The same rule oauth2_oidc_1.html and oauth2_oidc_2.html apply: the redirect
+  // URI is this deployment's own /callback. They re-default anything that does
+  // not start with it, so offering a different value here would only mislead.
   if (f.name === "redirect_uri") {
     log.debug("Leaving defaultFor().");
     return (appconfig.uiUrl || window.location.origin) + "/callback";
@@ -380,15 +382,16 @@ function defaultFor(f) {
 function saveConfiguration() {
   log.debug("Entering saveConfiguration().");
   plainFields().forEach(function (f) { sdJwtVc.set(f.name, val(f.name)); });
-  // debugger2.html reads the client id and scope it posts to the token endpoint
-  // from their own keys, so keep those in step with the client fields here.
+  // oauth2_oidc_2.html reads the client id and scope it posts to the token
+  // endpoint from their own keys, so keep those in step with the client fields
+  // here.
   sdJwtVc.set("token_client_id", val("client_id"));
   sdJwtVc.set("token_scope", val("scope"));
   opMetadata.writeToLocalStorage();
   vciMetadata.writeToLocalStorage();
-  // debugger.html writes ITS dummy defaults over everything on what it thinks
-  // is a first visit. This configuration is not a first visit, and the whole
-  // point of sharing the storage is that the debugger pages run on it.
+  // oauth2_oidc_1.html writes ITS dummy defaults over everything on what it
+  // thinks is a first visit. This configuration is not a first visit, and the
+  // whole point of sharing the storage is that the debugger pages run on it.
   sdJwtVc.set("initialized", true);
   sdJwtVc.set("debugger_initialized", true);
   updateHandoffSummary();
@@ -406,6 +409,8 @@ function clearConfiguration() {
   vciMetadata.clearFields();
   vciMetadata.clearStorage();
   updateHandoffSummary();
+  // No credential is named any more, so there is nothing to offer claims for.
+  renderClaimsPane();
   status("config_status",
          "Cleared — every parameter is now empty, here and in local storage.",
          "vc-ok");
@@ -425,6 +430,9 @@ function restoreDefaults() {
     metadataClient.setMetadataField(vciMetadata.idFor(m.name), m.dflt);
   });
   saveConfiguration();
+  // The credential configuration id is one of the defaults just restored, and
+  // the pane's rows belong to whichever credential it now names.
+  renderClaimsPane();
   status("config_status", "Defaults restored.", "vc-ok");
   log.debug("Leaving restoreDefaults().");
   return false;
@@ -498,7 +506,7 @@ function renderCredentialConfigurations() {
 // goes through applyVciDocument / applyAsDocument, the same functions the
 // retrieve route uses, so everything downstream is identical — the table, the
 // credential list, the Configuration Parameters, Validate Signature, and what
-// debugger.html then shows.
+// oauth2_oidc_1.html then shows.
 //
 // Following the pattern already on saml_request.html and wsfed_request.html: a
 // visible button, a hidden file input it clicks, and the input's value cleared
@@ -681,6 +689,40 @@ function defaultAuthorizationServerUrl() {
             val("oidc_discovery_endpoint"));
 }
 
+// What the RFC 8414 pane starts with, given whatever storage holds.
+//
+// `oidc_discovery_endpoint` is shared with oauth2_oidc_1.html deliberately —
+// retrieving a document here configures the OAuth2 / OIDC workflow too — and
+// the sharing runs BOTH ways: that page's metadata pane offers an OpenID
+// Connect Discovery URL by default and writes it under this same name, so a
+// browser that has visited it once arrives here with an
+// openid-configuration URL (or, on a browser that only loaded the page,
+// its https://localhost/oidc/.well-known placeholder) sitting in a field
+// this pane says ends in /.well-known/oauth-authorization-server. That value
+// was never this pane's, so the configured default wins over it — which is
+// the same rule defaultAuthorizationServerUrl() already applies to what it
+// finds in the field.
+//
+// Two stored values stand as they are: the empty string a Clear leaves behind
+// (a clear must survive a reload rather than have the default come back), and
+// any URL carrying the RFC 8414 path, the section 3.1 issuer-path form
+// included.
+function asMetadataUrlAtLoad(stored) {
+  log.debug("Entering asMetadataUrlAtLoad().");
+  var dflt = appconfig.rfc8414MetadataUrlDefault || "";
+  if (stored === null || stored === undefined) {
+    log.debug("Leaving asMetadataUrlAtLoad(). Nothing is stored.");
+    return dflt;
+  }
+  if (stored === "" || stored.indexOf(AS_WELL_KNOWN) >= 0) {
+    log.debug("Leaving asMetadataUrlAtLoad(). The stored value stands.");
+    return stored;
+  }
+  log.debug("Leaving asMetadataUrlAtLoad(). " + stored + " is not an RFC " +
+            "8414 endpoint, so the configured default is used.");
+  return dflt;
+}
+
 function clearVciMetadata() {
   log.debug("Entering clearVciMetadata().");
   vciInfo = {};
@@ -693,6 +735,9 @@ function clearVciMetadata() {
   vciMetadata.clearFields();
   vciMetadata.clearStorage();
   updateHandoffSummary();
+  // The document the claims came from is gone, so the pane goes with it —
+  // rows left behind would offer claims no retrieved metadata advertises.
+  renderClaimsPane();
   status("vci_signed_metadata_status", "Cleared.", "vc-ok");
   log.debug("Leaving clearVciMetadata().");
   return false;
@@ -706,6 +751,9 @@ function populateFromVciDocument() {
   var chosen = select && select.value ? select.value : "";
   var used = vciMetadata.populateFromMetadata(vciInfo, chosen);
   updateHandoffSummary();
+  // The claims a credential can carry come out of the document just applied, so
+  // the pane is built from it here rather than only at load.
+  renderClaimsPane();
   log.debug("Leaving populateFromVciDocument().");
   return used;
 }
@@ -791,11 +839,14 @@ function onCredentialConfigurationChange() {
   // Only re-populate the credential-configuration half; the issuer-level values
   // are unaffected by which credential is chosen.
   if (vciInfo && Object.keys(vciInfo).length) populateFromVci();
-  log.debug("Leaving onCredentialConfigurationChange().");
-  return false;
   // The format may have changed, and with it whether DIDs default on.
   renderDidEnabled();
+  // A different credential advertises different claims, and keeps its own
+  // selection — see the note on vci_claims.js's KEY.
+  renderClaimsPane();
+  describeMechanism();
   log.debug("Leaving onCredentialConfigurationChange().");
+  return false;
 }
 
 // The issuer's signing keys: a jwks_uri in the document if it has one,
@@ -873,8 +924,8 @@ function validateVciSignature() {
 // Pane 2 — the authorization server metadata document.
 //
 // Same document, same storage keys and same table markup as the Metadata
-// Retrieval pane on debugger.html, so retrieving it here configures that page
-// too.
+// Retrieval pane on oauth2_oidc_1.html, so retrieving it here configures that
+// page too.
 // ---------------------------------------------------------------------------
 function renderAsTable() {
   log.debug("Entering renderAsTable().");
@@ -895,7 +946,7 @@ function applyAsDocument(doc, provenance, verb) {
             provenance.file)));
   asInfo = doc || {};
   asStored = AS_STORE.save(asInfo, provenance);
-  // debugger.html reads this to decide which source its radio shows.
+  // oauth2_oidc_1.html reads this to decide which source its radio shows.
   sdJwtVc.set("metadata_source", "rfc8414");
   renderAsTable();
   populateFromAsDocument();
@@ -903,7 +954,7 @@ function applyAsDocument(doc, provenance, verb) {
     (verb || "Loaded") + " " + Object.keys(asInfo).length +
      " members and populated the Configuration " +
     "Parameters pane. This document — and those values — are now what " +
-        "debugger.html shows too." +
+        "oauth2_oidc_1.html shows too." +
     notStoredNote(asStored), asStored ? "vc-ok" : "vc-pending");
   log.debug("Leaving applyAsDocument().");
 }
@@ -962,7 +1013,7 @@ function populateFromAs() {
   var asCheck = metadataSchema.validateAsMetadata(asInfo);
   renderSchemaReport("as_schema_report", asCheck, metadataSchema.AS_SPEC);
   status("as_signed_metadata_status",
-    "Configuration Parameters populated. debugger.html will run with " +
+    "Configuration Parameters populated. oauth2_oidc_1.html will run with " +
         "these values. " +
     metadataSchema.summarize(asCheck, "Schema check"),
     asCheck.errors.length ? "vc-bad" : (asCheck.warnings.length ?
@@ -1076,10 +1127,293 @@ function updateHandoffSummary() {
           (cfg.vct || "?") + ")"
       : "—";
   }
+  // ...and so does the DEFAULT mechanism, for the same two reasons: retrieving
+  // or clearing the authorization server's document changes whether an
+  // authorization_details request could be redeemed at all. Re-deciding it here
+  // is what makes an RFC 8414 document that arrives AFTER the claims pane was
+  // built count — the Keycloak leg retrieves the two documents in that order.
+  // It only ever fills a blank, so calling it again is free.
+  applyDefaultRequestMechanism();
   // The note depends on the credential chosen and on what the authorization
   // server advertises, so it is refreshed whenever this summary is.
   describeMechanism();
   log.debug("Leaving updateHandoffSummary().");
+}
+
+// ---------------------------------------------------------------------------
+// Pane 4 — which claims to ask the issuer for.
+//
+// The rows are the issuer's own: credential_configurations_supported[<the
+// chosen one>].claims, so this asks in the vocabulary the metadata published.
+// What the selection becomes is the OPTIONAL `claims` member of the
+// authorization_details entry (OID4VCI section 5.1.1) — see vci_claims.js for
+// why it is that call and not the Credential Request.
+//
+// Everything checked is the default and stays the default: what is stored is
+// which claims are EXCLUDED, so a configuration nobody has touched offers all
+// of them and a claim the issuer starts advertising later is checked too.
+// ---------------------------------------------------------------------------
+var claimRows = [];
+
+function chosenConfigurationId() {
+  log.debug("Entering chosenConfigurationId().");
+  log.debug("Leaving chosenConfigurationId().");
+  return val(vciMetadata.idFor("credential_configuration_id")) || "";
+}
+
+function storedClaimSelection() {
+  log.debug("Entering storedClaimSelection().");
+  log.debug("Leaving storedClaimSelection().");
+  return sdJwtVc.getJson(vciClaims.KEY);
+}
+
+// The keys of the boxes that are ticked right now — read off the page rather
+// than off storage, because this is what the user last did.
+function checkedClaimKeys() {
+  log.debug("Entering checkedClaimKeys().");
+  var out = [];
+  claimRows.forEach(function (row, i) {
+    var box = el("vc_claim_" + i);
+    if (box && box.checked) out.push(row.key);
+  });
+  log.debug("Leaving checkedClaimKeys(). " + out.length + " checked.");
+  return out;
+}
+
+// Whether the call this selection belongs to will carry it. Two ways it can:
+// the authorization request is being made with authorization_details, or this
+// is a pre-authorized offer, whose Token Request on step 2 carries an
+// authorization_details of its own (section 6.1.1) whatever the select below
+// says — that flow makes no authorization request for the select to govern.
+function claimsCanBeSent() {
+  log.debug("Entering claimsCanBeSent().");
+  var can = requestMechanism() === "authorization_details" ||
+      !!sdJwtVc.offerPreAuthorizedCode();
+  log.debug("Leaving claimsCanBeSent(). " + can);
+  return can;
+}
+
+// Flip the request mechanism from the claims pane, since that is where somebody
+// finds out it is the wrong one. One click rather than a sentence pointing at
+// another pane: the pane said "switch to authorization_details" for a day and
+// the first person to use it read the selection as sent and the issuer as
+// ignoring it.
+function useAuthorizationDetails() {
+  log.debug("Entering useAuthorizationDetails().");
+  var select = el("handoff_request_mechanism");
+  if (select) select.value = "authorization_details";
+  onRequestMechanismChange();
+  status("vc_claims_status",
+    "Now asking with authorization_details, which is what carries the claims " +
+    "selected here.", "vc-ok");
+  log.debug("Leaving useAuthorizationDetails().");
+  return false;
+}
+
+function renderClaimsPane() {
+  log.debug("Entering renderClaimsPane().");
+  var host = el("vc_claims_table");
+  if (!host) {
+    log.debug("Leaving renderClaimsPane(). The pane is not on this page.");
+    return;
+  }
+  var configId = chosenConfigurationId();
+  claimRows = vciClaims.claimsFor(vciInfo, configId);
+  setText("vc_claims_credential", configId || "—");
+  var stored = storedClaimSelection();
+  var excluded = vciClaims.excludedFor(stored, configId);
+  var body = host.querySelector("tbody");
+  body.innerHTML = claimRows.map(function (row, i) {
+    var checked = excluded.indexOf(row.key) === -1;
+    // The issuer's own `mandatory` (Appendix A.2) says it includes the claim
+    // whatever the wallet asks, so the row stays checkable — a debugger has to
+    // be able to send the request that tests that — and says so instead.
+    var note = row.mandatory
+      ? "The issuer marks this mandatory: it is included whether or not " +
+        "it is asked for."
+      : "";
+    return '<tr><td><input type="checkbox" id="vc_claim_' + i + '"' +
+      (checked ? ' checked="checked"' : '') +
+      ' onchange="return vcissuance1.onClaimChange();" /></td>' +
+      '<td><code>' + esc(row.label) + '</code></td>' +
+      '<td>' + esc(row.name) + '</td>' +
+      '<td>' + esc(note) + '</td></tr>';
+  }).join("");
+  applyDefaultRequestMechanism();
+  renderClaimsVerdict(configId, stored);
+  log.debug("Leaving renderClaimsPane(). " + claimRows.length + " row(s).");
+}
+
+// ---------------------------------------------------------------------------
+// WHICH WAY OF ASKING THIS PAGE OFFERS WHEN NOBODY HAS CHOSEN ONE.
+//
+// authorization_details, whenever the chosen credential configuration
+// advertises claims — because then the pane below the select has something to
+// choose from, and a scope request has nowhere to put that choice. The scope
+// route stays one click away, and a configuration advertising no claims still
+// defaults to scope, so the plain flow is byte-for-byte what it was.
+//
+// This is the third attempt at the same trap, and the first two were both
+// notices. The pane said "switch to authorization_details" in a sentence, and
+// the first person to use it read the selection as sent and the issuer as
+// ignoring it; that became a `vc-bad` verdict with a one-click button beside
+// it, and the second person missed that too — it renders as inline text at the
+// end of a row of buttons, in the pane you have just finished using, about a
+// select further up the page. A notice that has failed twice at its only job is
+// not made to work by writing it a third time. So the default moves to the
+// route where the control below it does something, and the notice stays for
+// the case somebody chooses scope deliberately.
+//
+// A STORED choice always wins: the mechanism is configuration like everything
+// else on this page, so this only fills in what nobody has answered yet.
+//
+// And it defaults there only where the request can be REDEEMED. RFC 9396
+// section 10 has the authorization server publish
+// authorization_details_types_supported, and the two servers this workflow runs
+// against answer differently: the mock issuer's own AS advertises
+// openid_credential, Keycloak's RFC 8414 document omits the member altogether.
+// Keycloak accepts the authorization request and issues a code, then refuses it
+// at the Token Request with invalid_authorization_details ("Unsupported type
+// 'openid_credential' ... Supported values: []") — so a default that flipped on
+// the credential alone walked the whole workflow into a dead end one page after
+// the choice was made, which is what it did to the Keycloak leg of
+// tests/sd_jwt_vc_issuance.js.
+//
+// An AS document that is not in hand yet is UNKNOWN rather than unsupporting:
+// the credential decides, and describeMechanism() says the support is unknown.
+// One that is in hand and silent counts as not supporting it — the member is
+// the only thing that can say so, and a default is a guess this page has to
+// make; somebody who wants the request made anyway chooses it in the select,
+// which always wins.
+// ---------------------------------------------------------------------------
+function asAcceptsAuthorizationDetails() {
+  log.debug("Entering asAcceptsAuthorizationDetails().");
+  if (!asInfo || Object.keys(asInfo).length === 0) {
+    log.debug("Leaving asAcceptsAuthorizationDetails(). No AS document yet.");
+    return true;
+  }
+  var types = asInfo.authorization_details_types_supported;
+  var takes = !!types && types.indexOf("openid_credential") !== -1;
+  log.debug("Leaving asAcceptsAuthorizationDetails(). " + takes);
+  return takes;
+}
+
+function defaultRequestMechanism() {
+  log.debug("Entering defaultRequestMechanism().");
+  var mechanism = (claimRows.length && asAcceptsAuthorizationDetails())
+    ? "authorization_details"
+    : "scope";
+  log.debug("Leaving defaultRequestMechanism(). " + mechanism);
+  return mechanism;
+}
+
+function applyDefaultRequestMechanism() {
+  log.debug("Entering applyDefaultRequestMechanism().");
+  if (sdJwtVc.get(MECHANISM_KEY)) {
+    log.debug("Leaving applyDefaultRequestMechanism(). A choice was made.");
+    return;
+  }
+  var select = el("handoff_request_mechanism");
+  if (!select) {
+    log.debug("Leaving applyDefaultRequestMechanism(). No select here.");
+    return;
+  }
+  var wanted = defaultRequestMechanism();
+  if (select.value === wanted) {
+    log.debug("Leaving applyDefaultRequestMechanism(). Already " + wanted +
+              ".");
+    return;
+  }
+  select.value = wanted;
+  // Not stored: nobody chose it, and storing it would freeze today's default
+  // onto a page whose credential configuration can change under it. Saying so
+  // is describeMechanism()'s job — a control that moves on its own and does not
+  // report it is the same class of fault as the notice this replaces.
+  describeMechanism();
+  log.debug("Leaving applyDefaultRequestMechanism(). Defaulted to " + wanted +
+            ".");
+}
+
+// What the pane SAYS, separately from the rows it draws — because ticking a box
+// changes the verdict and not the rows, and rebuilding the table under somebody
+// working through it with the keyboard would take their focus with it.
+function renderClaimsVerdict(configId, stored) {
+  log.debug("Entering renderClaimsVerdict().");
+  // Whether anything will actually ask for what is ticked. A pane that reports
+  // a selection without reporting this describes a request nobody makes.
+  var restricts = vciClaims.restrictsClaims(claimRows, stored, configId);
+  var canSend = claimsCanBeSent();
+  var fixButton = el("vc_claims_use_details_button");
+  if (fixButton) fixButton.style.display = (restricts && !canSend) ? "" :
+      "none";
+  if (!claimRows.length) {
+    // Not an error: `claims` is OPTIONAL in the metadata and plenty of issuers
+    // publish none. Said here rather than left as an empty table, which reads
+    // as a pane that failed to load.
+    status("vc_claims_status", configId
+      ? "This configuration publishes no claims member, so there is " +
+        "nothing to choose from."
+      : "Retrieve the credential issuer metadata above and choose a " +
+        "credential.",
+      "vc-pending");
+  } else if (restricts && !canSend) {
+    status("vc_claims_status",
+      "This selection will NOT be sent: " + vciClaims.WHY_NOT_DELIVERABLE,
+      "vc-bad");
+  } else {
+    status("vc_claims_status", claimRows.length +
+           " claim(s) advertised for this credential.", "vc-ok");
+  }
+  setText("vc_claims_note",
+          vciClaims.summarize(claimRows, stored, configId, canSend));
+  log.debug("Leaving renderClaimsVerdict().");
+}
+
+// Remember what is ticked, and say what it will send. Both notes are refreshed:
+// the mechanism note is where the assembled authorization_details is shown, and
+// a selection that did not change it would look as though it had not taken.
+function saveClaimSelection() {
+  log.debug("Entering saveClaimSelection().");
+  var configId = chosenConfigurationId();
+  var stored = vciClaims.withSelection(storedClaimSelection(), configId,
+                                       claimRows, checkedClaimKeys());
+  sdJwtVc.setJson(vciClaims.KEY, stored);
+  // The verdict rather than the whole pane: ticking a box is what puts this
+  // pane into the state where nothing will ask for the selection, and the rows
+  // themselves have not changed.
+  renderClaimsVerdict(configId, stored);
+  describeMechanism();
+  log.debug("Leaving saveClaimSelection().");
+}
+
+function onClaimChange() {
+  log.debug("Entering onClaimChange().");
+  saveClaimSelection();
+  log.debug("Leaving onClaimChange().");
+  return true;
+}
+
+function setAllClaims(on) {
+  log.debug("Entering setAllClaims(). on=" + on);
+  claimRows.forEach(function (row, i) {
+    var box = el("vc_claim_" + i);
+    if (box) box.checked = !!on;
+  });
+  saveClaimSelection();
+  log.debug("Leaving setAllClaims().");
+  return false;
+}
+
+function selectAllClaims() {
+  log.debug("Entering selectAllClaims().");
+  log.debug("Leaving selectAllClaims().");
+  return setAllClaims(true);
+}
+
+function selectNoClaims() {
+  log.debug("Entering selectNoClaims().");
+  log.debug("Leaving selectNoClaims().");
+  return setAllClaims(false);
 }
 
 // ---------------------------------------------------------------------------
@@ -1115,6 +1449,13 @@ function authorizationDetailsForRequest() {
   }
   var details = [{ type: "openid_credential",
       credential_configuration_id: configId }];
+  // The OPTIONAL claims member (section 5.1.1), when the Claims to Request pane
+  // asks for a strict subset. Null when it does not — every claim selected is
+  // what omitting the member already means, and nothing selected cannot be
+  // expressed at all, since Appendix A.1 requires a non-empty array.
+  var claims = vciClaims.claimsMember(claimRows, storedClaimSelection(),
+                                      configId);
+  if (claims) details[0].claims = claims;
   log.debug("Leaving authorizationDetailsForRequest(). " +
             JSON.stringify(details));
   return JSON.stringify(details);
@@ -1129,6 +1470,17 @@ function describeMechanism() {
   if (mechanism === "authorization_details") {
     note = "The authorization request will carry " +
         authorizationDetailsForRequest() + ".";
+    // Said where the control is, because the control moved on its own: this is
+    // the default rather than an answer anybody gave, and a select that
+    // silently disagrees with what it was last left on is worse than the trap
+    // it was changed to close.
+    if (!sdJwtVc.get(MECHANISM_KEY) && claimRows.length) {
+      note += " This is the default for this credential because it " +
+        "advertises " + claimRows.length +
+        " claim(s) to choose from below, and a scope " +
+        "request has nowhere to carry that selection. Choose scope to send " +
+        "the plain request anyway.";
+    }
     if (supported && supported.indexOf("openid_credential") === -1) {
       note += " This authorization server advertises " +
           "authorization_details types " + supported.join(", ") +
@@ -1144,6 +1496,35 @@ function describeMechanism() {
            ", and step 2 will name the credential by its configuration id.";
     if (supported && supported.indexOf("openid_credential") !== -1) {
       note += " This server also supports authorization_details of type openid_credential.";
+    } else if (claimRows.length && !sdJwtVc.get(MECHANISM_KEY)) {
+      // The other half of applyDefaultRequestMechanism()'s decision, and the
+      // one that needs saying most: this credential advertises claims, so the
+      // route those claims travel on would be the default — and it is NOT,
+      // because this authorization server's own metadata does not say it can
+      // redeem one. Without this the select sits on scope while the pane below
+      // says to switch, which is the trap in reverse.
+      note += " authorization_details would be the default for this " +
+        "credential, which advertises " + claimRows.length + " claim(s) " +
+        // An EMPTY array reads as absent here on purpose: it says the same
+        // thing about this request, and "advertises only the types " with
+        // nothing after it says nothing at all.
+        "below, but this authorization server " + ((supported &&
+          supported.length)
+          ? "advertises only the types " + supported.join(", ")
+          : "does not advertise authorization_details_types_supported at " +
+            "all") + " — Keycloak, for one, answers such a Token Request " +
+        "with invalid_authorization_details. Choose authorization_details to " +
+        "send it anyway.";
+    }
+    // A scope cannot carry a claims selection: the member belongs to an
+    // authorization_details entry. Said here rather than in the claims pane
+    // alone, because this is where the choice that disables it was made.
+    if (vciClaims.restrictsClaims(claimRows, storedClaimSelection(),
+                                  chosenConfigurationId())) {
+      note += " The claims selected below it cannot travel on a scope, so " +
+        "switch to authorization_details to ask for them — unless this is a " +
+        "pre-authorized offer, whose Token Request on step 2 carries them " +
+        "instead.";
     }
   }
   setText("handoff_mechanism_note", note);
@@ -1155,6 +1536,9 @@ function onRequestMechanismChange() {
   log.debug("Entering onRequestMechanismChange().");
   sdJwtVc.set(MECHANISM_KEY, requestMechanism());
   describeMechanism();
+  // The claims pane's verdict depends on this choice: a scope request has
+  // nowhere to put a claims member.
+  renderClaimsPane();
   log.debug("Leaving onRequestMechanismChange().");
   return true;
 }
@@ -1166,7 +1550,7 @@ function startIssuance() {
   // A pre-authorized offer (H.2 / H.3) authorizes the issuance by itself: the
   // End-User was identified out of band and the code in the offer is the proof
   // of it. There is no authorization request, so there is nothing for
-  // debugger.html to do — the wallet goes straight to the token endpoint, which
+  // oauth2_oidc_1.html to do — the wallet goes straight to the token endpoint, which
   // step 2 does because that is where the request can be shown before it is
   // sent.
   var preAuthorized = sdJwtVc.offerPreAuthorizedCode();
@@ -1210,12 +1594,12 @@ function startIssuance() {
     log.debug("Leaving startIssuance().");
     return false;
   }
-  // debugger.html runs whichever grant its select says; this workflow needs the
-  // OIDC Authorization Code flow.
+  // oauth2_oidc_1.html runs whichever grant its select says; this workflow
+  // needs the OIDC Authorization Code flow.
   sdJwtVc.set("authorization_grant_type", "oidc_authorization_code_flow");
   // Which of the two ways of naming the credential the authorization request
-  // uses. debugger.html reads this; step 2 reads what the token response then
-  // granted, and neither has to know how the choice was made.
+  // uses. oauth2_oidc_1.html reads this; step 2 reads what the token response
+  // then granted, and neither has to know how the choice was made.
   sdJwtVc.set(MECHANISM_KEY, requestMechanism());
   sdJwtVc.set("sdjwtvc_authorization_details",
               authorizationDetailsForRequest());
@@ -1228,7 +1612,7 @@ function startIssuance() {
   sdJwtVc.startFlow();
   status("handoff_status", "Starting the OIDC Authorization Code flow …",
          "vc-pending");
-  window.location.href = "/debugger.html?sdjwtvc=1";
+  window.location.href = "/oauth2_oidc_1.html?sdjwtvc=1";
   log.debug("Leaving startIssuance().");
   return false;
 }
@@ -1576,14 +1960,13 @@ function onload() {
     ? (appconfig.oid4vciIssuerUrlDefault || "") + VCI_WELL_KNOWN
     : storedVciUrl);
   // The RFC 8414 pane defaults to the mock authorization server the STS service
-  // publishes (empty where there is no such service). A stored value wins —
-  // including the empty string a Clear leaves behind, so a clear survives a
-  // reload instead of the default coming back.
-  var storedAsUrl = sdJwtVc.get("oidc_discovery_endpoint");
+  // publishes (empty where there is no such service). A stored value wins where
+  // it is one this pane could have written — see asMetadataUrlAtLoad(), which
+  // is also where the shared-with-oauth2_oidc_1.html hazard is written down.
+  // Nothing is written BACK here: the other page's URL is its own and stays
+  // put.
   setVal("oidc_discovery_endpoint",
-    (storedAsUrl === null || storedAsUrl === undefined)
-      ? (appconfig.rfc8414MetadataUrlDefault || "")
-      : storedAsUrl);
+         asMetadataUrlAtLoad(sdJwtVc.get("oidc_discovery_endpoint")));
 
   // Whatever was retrieved last time, so the tables survive a reload.
   vciInfo = VCI_STORE.read() || {};
@@ -1623,6 +2006,9 @@ function onload() {
   if (!acceptOfferFromQuery()) renderOffer(sdJwtVc.storedOffer());
 
   updateHandoffSummary();
+  // After updateHandoffSummary(), which is what settles the chosen credential
+  // configuration this pane's rows belong to.
+  renderClaimsPane();
   log.debug("SD-JWT VC issuance step 1 ready.");
   log.debug("Leaving onload().");
 }
@@ -2489,6 +2875,11 @@ module.exports = {
   saveConfiguration: saveConfiguration,
   onRequestMechanismChange: onRequestMechanismChange,
   describeMechanism: describeMechanism,
+  renderClaimsPane: renderClaimsPane,
+  useAuthorizationDetails: useAuthorizationDetails,
+  onClaimChange: onClaimChange,
+  selectAllClaims: selectAllClaims,
+  selectNoClaims: selectNoClaims,
   authorizationDetailsForRequest: authorizationDetailsForRequest,
   clearConfiguration: clearConfiguration,
   restoreDefaults: restoreDefaults,

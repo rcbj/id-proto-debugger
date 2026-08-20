@@ -569,8 +569,27 @@ requireMockStsCheckout()
   # is precisely the state this exists to catch. The Dockerfile is what compose
   # reads and server.js is what the image runs, so between them they say the
   # checkout is real rather than merely present.
-  if [ -f "${dir}/Dockerfile" ] && [ -f "${dir}/server.js" ] && [ "${track_remote}" != "1" ];
+  #
+  # THREE files now, and the third is a level down. The mock STS has a submodule
+  # of ITS own — node-ldapjs, which its package.json takes as
+  # `"ldapjs": "file:node-ldapjs"` — so an sts/ that has a Dockerfile and a
+  # server.js can still be half-initialised. An uninitialised submodule is an
+  # empty DIRECTORY, so the image builds, npm installs a package with no `main`,
+  # and the container dies at startup with `Cannot find module 'ldapjs'`, naming
+  # a package. Checking only the first two files here would declare that state
+  # good and never run the update that fixes it.
+  if [ -f "${dir}/Dockerfile" ] && [ -f "${dir}/server.js" ] && \
+     [ -f "${dir}/node-ldapjs/package.json" ] && [ "${track_remote}" != "1" ];
   then
+    # The mock STS has a submodule OF ITS OWN — node-ldapjs, which its embedded
+    # LDAP directory is built on and which its Dockerfile COPYs before npm runs.
+    # `git submodule update --init -- sts` stops one level short of it, so a
+    # checkout can be perfectly populated here and still fail the sts image
+    # build. Handled separately below rather than by adding --recursive to every
+    # call, because the diagnosis differs: an empty sts/ is "the mock is not
+    # checked out", an empty sts/node-ldapjs is "the mock is, but its own
+    # dependency is not".
+    requireNestedLdapjsCheckout "${dir}" || return 1
     echo "Leaving requireMockStsCheckout(). ${dir} is populated."
     return 0
   fi
@@ -590,12 +609,13 @@ requireMockStsCheckout()
     return 1
   fi
 
-  local update_args="--init"
+  # --recursive is not optional: see the note above the populated-check.
+  local update_args="--init --recursive"
   if [ "${track_remote}" = "1" ];
   then
     # --remote checks out the tip of the branch named in .gitmodules rather than
     # the recorded commit. Deliberately opt-in: see the note above.
-    update_args="--init --remote"
+    update_args="--init --recursive --remote"
     echo "MOCK_STS_TRACK_REMOTE=1: taking the tip of the branch .gitmodules names, not the recorded commit."
   fi
   echo "Initialising the mock STS submodule in ${dir}."
@@ -617,7 +637,120 @@ requireMockStsCheckout()
     echo "       Run 'git submodule status sts' in ${root} to see what it thinks is there." >&2
     return 1
   fi
+  requireNestedLdapjsCheckout "${dir}" || return 1
   echo "Leaving requireMockStsCheckout(). ${dir} is populated."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# The node-ldapjs submodule INSIDE the mock STS.
+#
+# The mock's embedded LDAP directory (sts/ldap_server.js) is built on ldapjs,
+# and that dependency is `"ldapjs": "file:node-ldapjs"` — the submodule, pinned
+# by commit and used unmodified. sts/Dockerfile COPYs it into the build context
+# before npm runs.
+#
+# It needs its own function because it is a submodule of a submodule, which is
+# exactly the level `git submodule update --init -- sts` does not reach. The
+# failure without it is not "the file is missing": an UNINITIALISED SUBMODULE IS
+# AN EMPTY DIRECTORY, so the COPY succeeds, npm installs a package with no main,
+# and the container dies at startup with `Cannot find module 'ldapjs'` — naming
+# a package rather than a submodule, from a service whose other eleven protocol
+# families were about to work perfectly.
+# ---------------------------------------------------------------------------
+requireNestedLdapjsCheckout()
+{
+  echo "Entering requireNestedLdapjsCheckout()."
+  local dir="${1:-./sts}"
+  local nested="${dir}/node-ldapjs"
+
+  # A FILE, not the directory: see the note in requireMockStsCheckout() about
+  # why "the directory is there" is the state these checks exist to catch.
+  if [ -f "${nested}/package.json" ];
+  then
+    echo "Leaving requireNestedLdapjsCheckout(). ${nested} is populated."
+    return 0
+  fi
+  if [ ! -f "${dir}/.gitmodules" ];
+  then
+    # An older recorded commit of the mock STS, from before it had a directory.
+    # Not an error: that build simply has no LDAP in it, and the LDAP jobs skip
+    # with their own named reason. Saying so here is what stops it looking like
+    # a broken checkout.
+    echo "Note: ${dir} declares no submodules, so this commit of the mock STS predates"
+    echo "      its embedded LDAP directory. The LDAP jobs will skip."
+    echo "Leaving requireNestedLdapjsCheckout(). Nothing to initialise."
+    return 0
+  fi
+  echo "Initialising the node-ldapjs submodule in ${nested}."
+  git -C "${dir}" submodule update --init -- node-ldapjs
+  if [ $? -ne 0 ];
+  then
+    echo "ERROR: 'git submodule update --init -- node-ldapjs' failed in ${dir}." >&2
+    echo "       It is fetched over https from https://github.com/rcbj/node-ldapjs.git," >&2
+    echo "       so this is usually network access or a proxy rather than credentials." >&2
+    return 1
+  fi
+  if [ ! -f "${nested}/package.json" ];
+  then
+    echo "ERROR: ${nested} is still empty. The mock STS's LDAP directory cannot build" >&2
+    echo "       without it, and the failure at runtime is 'Cannot find module ldapjs'." >&2
+    return 1
+  fi
+  echo "Leaving requireNestedLdapjsCheckout(). ${nested} is populated."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# The node-ldapjs submodule the API uses, at api/node-ldapjs.
+#
+# The same library, pinned the same way, on the other side of the exchange: the
+# mock is the LDAP server and the api is the client. It is a SECOND submodule
+# rather than a shared one because npm installs a `file:` dependency as a
+# symlink and then resolves that package's own requires by walking up from where
+# the real directory lives — so a copy outside api/ never reaches
+# api/node_modules, and the failure is `Cannot find module 'abstract-logging'`
+# from inside ldapjs, naming a package nobody here has heard of.
+#
+# Called before the api image is built. Without it the build succeeds and the
+# service dies at startup with `Cannot find module 'ldapjs'`.
+# ---------------------------------------------------------------------------
+requireApiLdapjsCheckout()
+{
+  echo "Entering requireApiLdapjsCheckout()."
+  local root="${1:-.}"
+  local dir="${root}/api/node-ldapjs"
+
+  if [ -f "${dir}/package.json" ];
+  then
+    echo "Leaving requireApiLdapjsCheckout(). ${dir} is populated."
+    return 0
+  fi
+  if [ ! -d "${root}/.git" ] && [ ! -f "${root}/.git" ];
+  then
+    echo "ERROR: ${dir} is empty and ${root} is not a git working tree, so the submodule" >&2
+    echo "       cannot be initialised here. Clone it directly:" >&2
+    echo "         git clone -b master https://github.com/rcbj/node-ldapjs.git ${dir}" >&2
+    return 1
+  fi
+  echo "Initialising the node-ldapjs submodule in ${dir}."
+  git -C "${root}" submodule update --init -- api/node-ldapjs
+  if [ $? -ne 0 ];
+  then
+    echo "ERROR: 'git submodule update --init -- api/node-ldapjs' failed in ${root}." >&2
+    echo "       It is fetched over https from https://github.com/rcbj/node-ldapjs.git," >&2
+    echo "       so this is usually network access or a proxy rather than credentials." >&2
+    return 1
+  fi
+  if [ ! -f "${dir}/package.json" ];
+  then
+    echo "ERROR: ${dir} is still empty after 'git submodule update --init'." >&2
+    echo "       Run 'git submodule status api/node-ldapjs' in ${root} to see what it" >&2
+    echo "       thinks is there. The api builds without it and then dies at startup" >&2
+    echo "       with 'Cannot find module ldapjs'." >&2
+    return 1
+  fi
+  echo "Leaving requireApiLdapjsCheckout(). ${dir} is populated."
   return 0
 }
 

@@ -39,7 +39,7 @@ async function getIDToken(driver)
 {
   log.debug("Entering getIDToken().");
   log.info("Entering getIDToken().");
-  // Read the ID token value from the token_id_token field on debugger2.html
+  // Read the ID token value from the token_id_token field on oauth2_oidc_2.html
   log.info("Find token_id_token.");
   token_id_token = By.id("token_id_token");
   log.info("Find token_id_token element.");
@@ -52,7 +52,7 @@ async function getRefreshToken(driver)
   log.debug("Entering getRefreshToken().");
   log.info("Entering getRefreshToken().");
   // Read the refresh token value from the token_refresh_token field on
-  // debugger2.html
+  // oauth2_oidc_2.html
   log.info("Find token_refresh_token.");
   let token_refresh_token = By.id("token_refresh_token");
   log.info("Find token_refresh_token element.");
@@ -138,7 +138,7 @@ async function tokenDetailPage(driver, type)
       token_field = "refresh_id_token";
       link_text = "Latest ID Token";
     }
-    // Find the token detail link on the debugger2.html page.
+    // Find the token detail link on the oauth2_oidc_2.html page.
     log.info("Find token detail link.");
     tokenDetailLink = By.partialLinkText(link_text);
     log.info("Locate token detail link.");
@@ -268,13 +268,14 @@ async function tokenDetailPage(driver, type)
     returnToDebugger = By.partialLinkText('Return to debugger');
     log.info("Locate return to debugger link.");
     await driver.wait(until.elementLocated(returnToDebugger), waitTime);
-    log.info("Click link to go back to debugger2.");
+    log.info("Click link to go back to oauth2_oidc_2.");
     await driver.findElement(returnToDebugger).click();
 
-    // Make sure you see the access_token on the debugger2.html page. The click
-    // above navigates away from token_detail.html, so this must wait for the
-    // element rather than look for it once — a bare findElement() here races
-    // the navigation and fails ~100ms after the click on a loaded machine.
+    // Make sure you see the access_token on the oauth2_oidc_2.html page. The
+    // click above navigates away from token_detail.html, so this must wait for
+    // the element rather than look for it once — a bare findElement() here
+    // races the navigation and fails ~100ms after the click on a loaded
+    // machine.
     log.info("Find token_access_token.");
     token = By.id(token_field);
     log.info("Wait for " + token_field);
@@ -459,7 +460,7 @@ async function test() {
     log.info("Clear all cookies.");
     await driver.manage().deleteAllCookies();
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");

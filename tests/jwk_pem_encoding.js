@@ -540,10 +540,10 @@ function ellipticStaysOutOfTheBundles() {
       "deliberately and nothing in client/src requires it");
   });
   assert.ok(declared["create-hash"],
-    "client/package.json must declare create-hash — debugger.js requires it" +
-            "for the PKCE " +
-    "code_challenge, and it is currently only present as a transitive dependency" +
-            "of browserify");
+    "client/package.json must declare create-hash — oauth2_oidc_1.js " +
+            "requires it for the PKCE " +
+    "code_challenge, and it is currently only present as a transitive " +
+            "dependency of browserify");
   log.info("[bundles] OK — " + files.length + " files in client/src plus the staged" +
            "directories (" +
     extraDirs.map(function (d) { return path.relative(path.join(__dirname, ".."), d); }).join(", ") +

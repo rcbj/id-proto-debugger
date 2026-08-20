@@ -254,12 +254,12 @@ function buildJobs() {
     }
   }
 
-  // The UserInfo endpoint through all three of debugger2.html's "UserInfo Data"
-  // links — the token set the flow produced, the one the refresh call produced,
-  // and the one selected from Token History. The three differ only in which
-  // access token they carry, which is exactly the failure a single call cannot
-  // see: every token in the run belongs to the same user, so a link carrying
-  // the wrong one still returns a correct-looking answer.
+  // The UserInfo endpoint through all three of oauth2_oidc_2.html's "UserInfo
+  // Data" links — the token set the flow produced, the one the refresh call
+  // produced, and the one selected from Token History. The three differ only in
+  // which access token they carry, which is exactly the failure a single call
+  // cannot see: every token in the run belongs to the same user, so a link
+  // carrying the wrong one still returns a correct-looking answer.
   //
   // Runs against both OPs, like the flow matrix. Unlike it, this one exercises
   // the UserInfo page's DEFAULT configuration, which on a build that HAS the
@@ -445,12 +445,17 @@ function buildJobs() {
   // it validates, and exercises the keystore downloads. Asymmetric: SLH-DSA (12
   // sets); RSA (v1.5 & PSS × every hash × 2048/3072); ECC (ECDSA over
   // P-256/384/521/secp256k1 × every hash, EdDSA, Schnorr, BLS); ML-DSA
-  // (44/65/87). Symmetric MACs: keyed-hash (HMAC/KMAC/BLAKE), block-cipher
-  // (CMAC/CBC-MAC/ GMAC), universal-hash (Poly1305/SipHash) — compute + verify
-  // + tamper check.
+  // (44/65/87); BBS over BLS12-381 in BOTH ciphersuites — KeyGen (deterministic
+  // from the key material, with key_info bound in), sign/verify over a message
+  // LIST, every way the draft says that must fail (changed, reordered, dropped,
+  // added message; changed header), derived proofs with selective disclosure,
+  // unlinkability, replay and substituted-disclosure refusals, and the draft's
+  // own test vectors driven through the page. Symmetric MACs: keyed-hash
+  // (HMAC/KMAC/BLAKE), block-cipher (CMAC/CBC-MAC/ GMAC), universal-hash
+  // (Poly1305/SipHash) — compute + verify + tamper check.
   jobs.push({
-    name: "Digital Signature (asymmetric sigs + symmetric MACs — generate, " +
-        "sign/MAC, validate, download)",
+    name: "Digital Signature (asymmetric sigs incl. BBS + symmetric MACs — " +
+        "generate, sign/MAC, validate, download)",
     script: "digital_signature.js",
     env: {},
   });
@@ -470,8 +475,8 @@ function buildJobs() {
   // Metadata): the document the STS mock serves at
   // /.well-known/oauth-authorization-server (all 23 members, host-derived
   // issuer, verifiable signed_metadata, resolvable jwks_uri) and the Metadata
-  // Source selector on debugger.html that retrieves it. Needs the STS mock,
-  // like the WS-Trust jobs.
+  // Source selector on oauth2_oidc_1.html that retrieves it. Needs the STS
+  // mock, like the WS-Trust jobs.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "OAuth2 Authorization Server Metadata (RFC 8414 endpoint + " +
@@ -688,6 +693,13 @@ function buildJobs() {
     if (browser.capable && browser.bin) {
       // Use the binary we probed, not whatever Selenium would pick.
       extensionJob.env.CHROME_BIN = browser.bin;
+      // And, when Selenium Manager fetched the browser, the chromedriver it
+      // fetched with it: a Chrome for Testing 152 driven by the host's
+      // chromedriver for 151 fails on a version mismatch, which reads as a
+      // broken extension rather than as two halves of different releases.
+      if (browser.driver) {
+        extensionJob.env.CHROMEDRIVER_BIN = browser.driver;
+      }
     }
     if (!browser.capable) {
       extensionJob.skip =
@@ -696,9 +708,11 @@ function buildJobs() {
          ". Branded Google Chrome refuses " +
         "the flags and reports it only on stderr, so the job would fail with " +
             "every assertion timing " +
-        "out and nothing naming the cause. The containerized suite pins " +
-            "Chrome for Testing and does " +
-        "run it; to run it here, point CHROME_BIN at a Chrome-for-Testing or Chromium build.";
+        "out and nothing naming the cause. Selenium Manager could not fetch " +
+        "a Chrome for Testing either, so this host has no capable browser " +
+        "and " +
+        "no way to reach one — check the network, or point CHROME_BIN at a " +
+        "Chrome-for-Testing or Chromium build.";
     }
     jobs.push(extensionJob);
   }
@@ -908,6 +922,52 @@ function buildJobs() {
   // of this function for why the name had to change.
   const kerberosOff =
     (env.KERBEROS_AVAILABLE || env.KERBEROS_PAGES_AVAILABLE) === "false";
+
+  // The same gate for LDAP, and it is a SEPARATE variable rather than a reuse
+  // of the one above. The two protocols are absent from a static deployment for
+  // the same underlying reason — both are binary over a raw TCP socket, so both
+  // need the api and a static site has none — but they are absent
+  // independently: a remote target could perfectly well be api-backed with an
+  // LDAP directory reachable and no KDC, or the reverse. Deriving one from the
+  // other would turn "not this protocol" into a set of skipped or failing jobs
+  // about a protocol that is there.
+  //
+  // Unset — which is every containerized and every local run — means the page
+  // is there. remote-run-tests.sh sets it false per target, because
+  // client/static_site.js leaves ldap.html, its bundle and css/ldap.css out of
+  // dist/ and greys the landing card; without the gate the page job runs
+  // against a 404 and fails naming an element on a page nobody deployed.
+  //
+  // It reaches BOTH LDAP jobs, and that is a change from how this started.
+  // `api_ldap.js` used to be left running on the argument that it would skip
+  // with a better reason of its own — "the api answered 404 for GET
+  // /ldap/limits" being more specific than a blanket "LDAP is off here". That
+  // is true of the sentence and wrong about the report: on a static target the
+  // 404 is not a discovery, it is the known and intended state of a deployment
+  // that has no api at all, and a line saying an endpoint was missing invites
+  // somebody to go and look for it. Both jobs now skip for the reason that is
+  // actually true — this workflow is not on this target — which is the same
+  // choice the Kerberos sweep below makes. A target that IS api-backed sets
+  // LDAP_AVAILABLE=true and gets both jobs, including that 404 message, back.
+  const ldapOff = env.LDAP_AVAILABLE === "false";
+  const ldapPagesSkip = ldapOff
+    ? "the LDAP page is not on this deployment: RFC 4511 is BER over a TCP " +
+      "socket, so every button on that page is a call to the api and a " +
+      "static site has none — client/static_site.js leaves the page, its " +
+      "bundle and css/ldap.css out of the build and greys out the landing " +
+      "card. Run it against the containerized stack (./docker-run-tests.sh) " +
+      "or a local dev server, or set LDAP_AVAILABLE=true for a remote target " +
+      "that IS api-backed."
+    : null;
+  const ldapProtocolSkip = ldapOff
+    ? "LDAP is not on this deployment: RFC 4511 is BER over a TCP socket, so " +
+      "every operation is a call to the api and a static site has none. This " +
+      "job would reach the api at the site's own origin and be answered by " +
+      "the object store, so its 404 would name a missing endpoint rather " +
+      "than the absent backend it really is. Run it against the " +
+      "containerized stack (./docker-run-tests.sh) or a local dev server, or " +
+      "set LDAP_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
   const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
       "api's port-88 relay, which a static site has not got, so " +
@@ -1447,6 +1507,117 @@ function buildJobs() {
   if (kerberosPagesSkip) spnegoPageJob.skip = kerberosPagesSkip;
   jobs.push(spnegoPageJob);
 
+  // ---------------------------------------------------------------------------
+  // LDAP. Two jobs, and the split between them is the same one the Kerberos
+  // family has: the protocol has no browser in it, and the page has no protocol
+  // in it.
+  //
+  // `api_ldap.js` drives the eight POST /ldap/* endpoints against the mock's
+  // embedded directory over a real TCP socket, with no browser. It covers the
+  // ten operations the workflow exists for and, more usefully, the three things
+  // a happy-path test would pass without: that an LDAP RESULT CODE IS NOT AN
+  // HTTP ERROR (a noSuchObject is a completed round trip whose answer was no,
+  // and answering 500 for it would put the most useful half of this workflow
+  // behind an error page); that a one-level search is not silently answered as
+  // a subtree one (a wrong scope returns a SUPERSET, so every assertion about
+  // the contents still holds and only the count differs — it has already
+  // happened once in the mock, where ldapjs spells the scopes `single` and
+  // `subtree` rather than `one` and `sub`); and that membership is a modify on
+  // the GROUP, asserted from both ends, because an implementation that got one
+  // direction right and the other backwards looks correct until somebody asks
+  // the other question.
+  //
+  // It also checks the two properties of the mock directory that the debugger
+  // teaches: a bind succeeds with any password except the literal `invalid`, so
+  // result code 49 stays reachable; and deleting a user does NOT remove it from
+  // the groups that list it, because referential integrity is a directory
+  // feature and not a protocol rule. And the auto-created user: authenticating
+  // to the mock through ANY protocol grows an entry under ou=users, which is one
+  // hook on admin_stats.recordAuthentication() and therefore cheap to break.
+  //
+  // Every name it creates is unique per run — the mock's directory lives for the
+  // life of its process, so a fixed uid would be entryAlreadyExists on the
+  // second run and the test would only pass against a freshly started service.
+  //
+  // It also runs bind, add a user, add a group, join the group and modify the
+  // user AGAINST THE SECOND SOCKET, LDAPS on 636, and then reads the result back
+  // over 389. The mock registers one set of handlers on two ldapjs server objects
+  // — that library chooses a net.Server or a tls.Server at construction, so TLS
+  // cannot be a flag on one server — and the defect that invites is a handler on
+  // one instance and not the other, which presents as an operation that works in
+  // the clear and fails over TLS and is read as a TLS fault. The cross-socket read
+  // is the assertion: everything else in that section would pass equally against
+  // two separate directories sharing a base DN. It also pins that TLS did not make
+  // the password checked (every bind still succeeds, "invalid" is still 49) and
+  // that the api still VERIFIES certificates by default — every LDAPS call passes
+  // rejectUnauthorized: false, so without that negative an api which had stopped
+  // verifying would look identical.
+  //
+  // Needs the api and the mock STS. No browser. LDAP_URL is the API's view of
+  // the directory rather than this test's or the browser's, which on the
+  // containerized stack are three different names — it is its own variable for
+  // the same reason KRB5_SPNEGO_URL is. There is deliberately NO LDAPS_URL here:
+  // the test builds it from LDAP_URL's host and the port the mock says its LDAPS
+  // socket actually bound, so a host run that moved it to 1636 needs no change on
+  // this side. Setting LDAPS_URL in the environment still overrides the whole of
+  // it, and the LDAPS section skips with its own reason when 636 never bound —
+  // which is the ordinary outcome of a host run that is not root.
+  const ldapProtocolJob = {
+    name: "LDAP protocol (bind, add, modify, delete, search, compare, the " +
+        "same five over LDAPS, and what a result code is)",
+    script: "api_ldap.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      LDAP_URL: env.LDAP_URL || "ldap://sts:389",
+      LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
+      LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
+      LDAP_PASSWORD: env.LDAP_PASSWORD || "password!",
+    },
+  };
+  if (ldapProtocolSkip) ldapProtocolJob.skip = ldapProtocolSkip;
+  jobs.push(ldapProtocolJob);
+
+  // The PAGE, which covers the four things that only exist in a browser and
+  // every one of which is a way for this workflow to be broken while the
+  // protocol is perfect:
+  //
+  //  * the DNs the shorthand panes BUILD from four fields. Nothing in the
+  //    protocol notices a wrong composition — the operation simply happens
+  //    somewhere else and succeeds — so the page previews both and the test
+  //    reads the preview as well as the outcome.
+  //  * that membership is a modify on the GROUP, asserted against the request
+  //    the page built rather than only against the result. Putting the change
+  //    on the user looks right until somebody reads the group.
+  //  * that the four search presets FILL THE FIELDS rather than running a
+  //    hidden query. The filter is the thing worth reading, especially the one
+  //    nobody guesses: the groups a user is in are found by searching the
+  //    GROUPS for a `member` value naming the user, because there is no
+  //    attribute on the user to read.
+  //  * that a refusal is shown as a RESULT and logged as a Failure, while a
+  //    row that stays `Sent` means the api never answered — the two states
+  //    people most often confuse.
+  //
+  // Plus the one credential rule nothing else can see: the password is never
+  // written to localStorage, while every other field on the page is. And the
+  // stylesheet check tests/navigation.js makes for the pages it walks, repeated
+  // here because it cannot walk to this one (see the gate below).
+  const ldapPageJob = {
+    name: "LDAP page (the DNs it builds, the presets, the modify that is " +
+        "membership, and what it remembers)",
+    script: "ldap_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      LDAP_URL: env.LDAP_URL || "ldap://sts:389",
+      LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
+      LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
+      LDAP_PASSWORD: env.LDAP_PASSWORD || "password!",
+    },
+  };
+  if (ldapPagesSkip) ldapPageJob.skip = ldapPagesSkip;
+  jobs.push(ldapPageJob);
+
   // The DELEGATION page: S4U2Self, S4U2Proxy with both authorization routes, forwarding
   // and renewal. tests/krb5_tgs_ap.js already drives every one of those exchanges with no
   // browser, so this job covers only what needs one:
@@ -1532,9 +1703,10 @@ function buildJobs() {
 
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
   // Issuer the STS service hosts, the three vc-issuance pages, and the
-  // ?sdjwtvc=1 hand-off through debugger.html / debugger2.html. Needs both the
-  // STS mock (which is the credential issuer) and Keycloak (which authorizes
-  // the issuance), so it is gated on the STS like the other STS-backed jobs.
+  // ?sdjwtvc=1 hand-off through oauth2_oidc_1.html / oauth2_oidc_2.html. Needs
+  // both the STS mock (which is the credential issuer) and Keycloak (which
+  // authorizes the issuance), so it is gated on the STS like the other
+  // STS-backed jobs.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "VC Issuance — SD-JWT VC (OID4VCI credential issuance end to end)",
@@ -1548,14 +1720,18 @@ function buildJobs() {
   }
 
   // The BBS signatures the debugger produces, checked by a DIFFERENT BBS
-  // implementation (@digitalbazaar/bbs-signatures). No browser and no services,
-  // so it never skips. It is the foundation the bbs-2023 cryptosuite stands on:
-  // BBS has several places where a signer and verifier can share a mistake and
-  // agree perfectly with each other and with nobody else.
+  // implementation (@digitalbazaar/bbs-signatures) AND by the draft's own
+  // published test vectors (vendored as tests/bbs_vectors.json). No browser and
+  // no services, so it never skips. It is the foundation the bbs-2023
+  // cryptosuite and the Digital Signature page's BBS pane both stand on: BBS
+  // has several places where a signer and verifier can share a mistake and
+  // agree perfectly with each other and with nobody else. Covers both
+  // ciphersuites, KeyGen, and the fact that neither suite accepts the other's
+  // signature.
   {
     jobs.push({
       name: "BBS signatures (cross-checked against an independent " +
-          "implementation)",
+          "implementation and the draft's vectors)",
       script: "bbs_crypto.js",
       env: {},
     });
@@ -1654,6 +1830,26 @@ function buildJobs() {
       name: "STS metadata page (/sts-metadata lists exactly what the router " +
           "registers)",
       script: "sts_metadata.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // The management API beside the metadata page, and for the same reason:
+    // both are checks that a description of this service still matches the
+    // service. This one also asserts the parity the API is written under —
+    // every /admin control has an /admin-api operation — which nothing inside
+    // the mock can check for itself, because nothing there can see a form
+    // appear on a page. It RESTORES everything it changes (claim sets, the
+    // credential claim set, the verifier request, and every token its bulk
+    // revocations touched), which matters more here than usual: the mock's
+    // admin state survives between jobs, so a job that left a custom claim
+    // behind would change what every later job's tokens contain.
+    jobs.push({
+      name: "STS management API (/admin-api mirrors every /admin control, " +
+          "its OpenAPI document describes what it sends, and a " +
+          "configuration change is seen on the wire and undone)",
+      script: "admin_api.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
@@ -2286,6 +2482,141 @@ function buildJobs() {
   });
 
   // ---------------------------------------------------------------------------
+  // PKI: the certificate authority workflow (client/public/pki.html), its two
+  // modules, and the TLS test the api makes for it.
+  //
+  // Three of the four are node-only and never skip. That split is deliberate
+  // and it is what makes "every combination" affordable: the certificates
+  // themselves are checked in node against OPENSSL — a second implementation,
+  // which is the only kind of check that catches an encoding that is wrong and
+  // self-consistent — while the browser test is left with only the page.
+  // ---------------------------------------------------------------------------
+
+  // Certificate authoring: every signature algorithm crossed with every subject
+  // key algorithm (~240 certificates), every X.509v3 extension, a four-deep
+  // root/intermediate/issuing/leaf chain, and the enforcement of the extensions
+  // that are supposed to REFUSE something — name constraints, pathLenConstraint,
+  // and an unknown critical extension.
+  //
+  // The assertions are made by `openssl verify` and `openssl x509 -text` rather
+  // than by reading back what this codebase just wrote, because every defect
+  // this test was written for produces bytes that parse perfectly and are
+  // refused by something else: a Name built as one multi-valued RDN, an
+  // otherName wrapped in a second [0] tag (`openssl verify` says
+  // `ossl_x509v3_cache_extensions:reason(158)` and names nothing), a signature
+  // whose declared algorithm is not the one used, and a 2050+ date encoded as a
+  // UTCTime, which reads as 1950. Node only, never skipped.
+  jobs.push({
+    name: "PKI certificates (every algorithm combination, every X.509v3 " +
+        "extension, a four-deep chain — against OpenSSL)",
+    script: "pki_x509.js",
+    env: {},
+  });
+
+  // Key generation and every keystore format — PEM, DER, JWK set and PKCS#12,
+  // each with and without a password — read back by OpenSSL. This module was
+  // the bottom third of jwt_tools.js and was exercised only through that page's
+  // Download button, which can see a status line and not a file; extracting it
+  // for the PKI page is what made the matrix testable. Node only, never
+  // skipped.
+  jobs.push({
+    name: "PKI key material (7 algorithms x 4 keystore formats, encrypted " +
+        "and not — against OpenSSL)",
+    script: "pki_key_formats.js",
+    env: {},
+  });
+
+  // The TLS / mutual-TLS probe behind POST /tls/connect. Same accounting as the
+  // Kerberos relay — `tls.connect` is a raw socket, so the SSRF guard's axios
+  // installation never sees it — plus one assertion that earns its keep more
+  // than the rest: a COMPLETED HANDSHAKE IS NOT AN ACCEPTED CLIENT CERTIFICATE.
+  // Under TLS 1.3 the client is finished before the server has said anything
+  // about the certificate, and the refusal arrives afterwards as an alert or as
+  // a bare hang-up, so an implementation that resolves on `secureConnect`
+  // answers "client authentication not required" for every TLS 1.3 server on
+  // earth. It drives the module directly, with its own throwaway listeners, so
+  // it needs no running api. Node only, never skipped.
+  //
+  // Gated per target, the way the Kerberos and LDAP workflows are. This job is
+  // node-only and self-contained — it brings up its own throwaway listeners and
+  // needs no api, no site and no network — so nothing STOPS it running against
+  // https://idptools.com, and that is precisely the problem the Kerberos sweep
+  // below was written for: it exercises LOCAL code and reports nothing whatever
+  // about the deployed site. On a target whose PKI page has its TLS pane greyed
+  // out, a green "TLS probe" line is the most misleading thing in the report.
+  const pkiTlsOff = env.PKI_TLS_AVAILABLE === "false";
+  const pkiTlsSkip = pkiTlsOff
+    ? "the TLS test is not on this deployment: it is the one pane of the PKI " +
+      "page that needs the api (a browser cannot choose a client " +
+      "certificate, cannot be given a truststore, and cannot read the " +
+      "handshake it made), and a static site has no api — so pki.js greys " +
+      "that pane and disables every control in it. The PKI page job still " +
+      "runs and checks exactly that. This job needs no api and would pass " +
+      "here, which is why it is skipped rather than left to: it measures " +
+      "local code and says nothing about the deployed site. Set " +
+      "PKI_TLS_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
+  const tlsProbeJob = {
+    name: "TLS probe (address policy on raw sockets, port allowlist, " +
+        "truststores, mutual-auth measurement, deadlines)",
+    script: "api_tls_probe.js",
+    env: {},
+  };
+  if (pkiTlsSkip) tlsProbeJob.skip = pkiTlsSkip;
+  jobs.push(tlsProbeJob);
+
+  // The page itself: the root/intermediate/issuing/leaf hierarchy built
+  // entirely through the form, the store surviving a reload, the private-key
+  // opt-out in both states (read out of localStorage, because that failure is
+  // silent in the reassuring direction), and the TLS test end to end through
+  // the api. It also asserts the one thing this page's design forbids — a
+  // browser-side option for the TLS test, which a browser could not honour.
+  // Needs the client, and the api for its last section, which skips without
+  // one.
+  jobs.push({
+    name: "PKI page (CA hierarchy through the form, the store, the " +
+        "private-key opt-out, the api-only TLS test)",
+    script: "pki_page.js",
+    env: {},
+  });
+
+  // The same page against a server that ANSWERS BACK. The job above points the
+  // TLS pane at the client's own plain-HTTP port on purpose — a handshake that
+  // fails with a real alert proves the whole round trip and needs no TLS
+  // service — but it therefore proves nothing about the certificate, since
+  // nothing ever accepted one. This one issues a client certificate from a Root
+  // and an Issuing CA in the browser, presents it to the mock STS's two HTTPS
+  // listeners, and asserts on the SERVER's own account of the connection: which
+  // chain it built (a leaf sent without its intermediates is invisible from the
+  // client), which anchor it verified against, and that the mutual-auth verdict
+  // is `required` rather than `required-and-rejected` — the two an operator
+  // confuses, told apart here by trusting the CA between two otherwise
+  // identical runs.
+  //
+  // STS_TLS_URL is the mock's PLAIN HTTP base, and it is a variable of its own
+  // rather than WSTRUST_STS_URL for the reason WSFED_STS_METADATA_URL is: that
+  // one may legitimately point at a real Apache CXF STS, which has no TLS
+  // endpoint of this kind at all. The test skips without it, and skips again if
+  // the service it finds is older than the endpoint.
+  //
+  // The PKI_TLS_AVAILABLE gate reaches this one too. On a static target
+  // STS_TLS_URL is not set at all, so it is already absent — but the two
+  // variables are independent (STS_TLS_URL says a TLS endpoint exists,
+  // PKI_TLS_AVAILABLE says the target has an api to reach it through), and a
+  // run that sets the first without the second would otherwise drive the whole
+  // exchange through an api that is not there.
+  if (env.STS_TLS_URL) {
+    const mutualTlsJob = {
+      name: "PKI mutual TLS (a certificate issued in the browser, presented " +
+          "through the api, and read back from the server's point of view)",
+      script: "pki_mutual_tls.js",
+      env: { STS_TLS_URL: env.STS_TLS_URL },
+    };
+    if (pkiTlsSkip) mutualTlsJob.skip = pkiTlsSkip;
+    jobs.push(mutualTlsJob);
+  }
+
+  // ---------------------------------------------------------------------------
   // Kerberos is either present on this target or it is not, and when it is not
   // NONE of its jobs belong in the run — not just the four page ones.
   //
@@ -2537,6 +2868,85 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
 }
 
 
+// Selenium Manager, which ships inside selenium-webdriver — the same binary the
+// library shells out to for a driver. It is used here for the BROWSER, which it
+// will fetch on request.
+function seleniumManagerPath() {
+  log.debug("Entering seleniumManagerPath().");
+  const dir = process.platform === "win32" ? "windows"
+    : process.platform === "darwin" ? "macos" : "linux";
+  const name = process.platform === "win32" ? "selenium-manager.exe"
+    : "selenium-manager";
+  const out = path.join(TESTS_DIR, "node_modules", "selenium-webdriver", "bin",
+      dir, name);
+  log.debug("Leaving seleniumManagerPath().");
+  return out;
+}
+
+function browserVersionOf(bin) {
+  log.debug("Entering browserVersionOf().");
+  let out = null;
+  try {
+    out = execFileSync(bin, ["--version"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch (e) {
+    log.debug("browserVersionOf(): " + bin + " did not answer: " + e.message);
+  }
+  log.debug("Leaving browserVersionOf(). " + out);
+  return out;
+}
+
+// Fetch a Chrome for Testing (and the chromedriver that matches it) through
+// Selenium Manager, into ~/.cache/selenium.
+//
+// This is what turns "skipped: your Chrome cannot side-load an extension" into
+// a job that runs. The download is ~150MB the first time and instant every time
+// after — the cache is keyed by version and shared with anything else on this
+// host that uses Selenium Manager — so it is done here, once, while the roster
+// is being built rather than in the middle of the job.
+//
+// --force-browser-download is required, not optional: without it the manager
+// finds the branded Chrome already on PATH and reports THAT, which is the
+// browser this whole function exists to get away from.
+function fetchTestingBrowser() {
+  log.debug("Entering fetchTestingBrowser().");
+  const manager = seleniumManagerPath();
+  if (!fs.existsSync(manager)) {
+    log.debug("Leaving fetchTestingBrowser(). No Selenium Manager at " +
+        manager);
+    return null;
+  }
+  let parsed;
+  try {
+    log.info("No extension-capable browser here; asking Selenium Manager for " +
+        "a Chrome for Testing (first run downloads it).");
+    const out = execFileSync(manager,
+        ["--browser", "chrome", "--force-browser-download",
+         "--output", "JSON", "--avoid-stats"],
+        { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+          timeout: 600000 });
+    parsed = JSON.parse(out);
+  } catch (e) {
+    log.warn("fetchTestingBrowser(): " + e.message);
+    log.debug("Leaving fetchTestingBrowser(). Could not fetch.");
+    return null;
+  }
+  const result = parsed && parsed.result;
+  if (!result || !result.browser_path || !fs.existsSync(result.browser_path)) {
+    log.warn("fetchTestingBrowser(): Selenium Manager named no browser.");
+    log.debug("Leaving fetchTestingBrowser(). Nothing usable.");
+    return null;
+  }
+  const out = { bin: result.browser_path,
+                driver: result.driver_path || null,
+                version: browserVersionOf(result.browser_path),
+                fetched: true };
+  out.capable = /Chrome for Testing|Chromium/i.test(out.version || "");
+  log.info("Using " + (out.version || out.bin) + " for the extension job.");
+  log.debug("Leaving fetchTestingBrowser(). " + out.bin);
+  return out.capable ? out : null;
+}
+
 // Can the browser this run will use side-load an unpacked extension?
 //
 // BRANDED Google Chrome cannot. It refuses the flags and says so only on stderr
@@ -2545,23 +2955,32 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
 // extension job times out naming nothing. Chrome for Testing — which the tests
 // image pins — and Chromium both allow it.
 //
-// So this is an environment capability, not a defect, and the job SKIPS with
-// the browser named rather than failing. It cost a full host run of that job to
-// learn: the containerized suite passed it and local-run-tests.sh, which drives
-// the host's own Chrome, did not.
+// It used to answer with the FIRST browser it found and let the job skip when
+// that one was branded Chrome, which is what `./local-run-tests.sh` reported on
+// every host whose `google-chrome` is the real thing — a permanent skip on the
+// launcher most people run. Two things changed on 2026-08-18:
+//
+//   * every candidate is probed and a CAPABLE one wins, so a host carrying
+//     both Chromium and branded Chrome uses the Chromium rather than reporting
+//     on whichever name came first in the list;
+//   * and when none of them is capable, one is FETCHED — Selenium Manager
+//     downloads a Chrome for Testing and the chromedriver that matches it,
+//     which is the same thing the containerized suite gets by pinning it in
+//     the image.
+//
+// So the skip is now only for a host that has no capable browser AND cannot
+// reach the network to get one, which is the one case where it really is an
+// environment capability rather than something this runner can arrange.
 function extensionCapableBrowser() {
   log.debug("Entering extensionCapableBrowser().");
   const candidates = [process.env.CHROME_BIN, "chrome", "chromium",
       "chromium-browser",
                       "google-chrome"].filter(Boolean);
+  let firstFound = null;
   for (const bin of candidates) {
-    let out;
-    try {
-      out = execFileSync(bin, ["--version"],
-                         { encoding: "utf8", stdio: ["ignore", "pipe",
-                          "ignore"] }).trim();
-    } catch (e) {
-      // Not on PATH under this name; try the next.
+    const version = browserVersionOf(bin);
+    // Not on PATH under this name; try the next.
+    if (!version) {
       continue;
     }
     // Resolve to an absolute path, because the job is told to USE this exact
@@ -2579,12 +2998,22 @@ function extensionCapableBrowser() {
         resolved = bin;
       }
     }
-    log.debug("Leaving extensionCapableBrowser().");
-    return { bin: resolved, version: out,
-            capable: /Chrome for Testing|Chromium/i.test(out) };
+    const found = { bin: resolved, driver: null, version: version,
+                    capable: /Chrome for Testing|Chromium/i.test(version) };
+    if (found.capable) {
+      log.debug("Leaving extensionCapableBrowser(). " + version);
+      return found;
+    }
+    if (!firstFound) firstFound = found;
   }
-  log.debug("Leaving extensionCapableBrowser().");
-  return { bin: null, version: null, capable: false };
+  const fetched = fetchTestingBrowser();
+  if (fetched) {
+    log.debug("Leaving extensionCapableBrowser(). Fetched " + fetched.version);
+    return fetched;
+  }
+  log.debug("Leaving extensionCapableBrowser(). Nothing capable.");
+  return firstFound ||
+      { bin: null, driver: null, version: null, capable: false };
 }
 
 function renderJUnit(results, generatedAt) {

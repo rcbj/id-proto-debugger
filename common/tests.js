@@ -45,7 +45,7 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
   // ---------------------------------------------------------------------------
   // Clicking and reading on a page that is still rearranging itself.
   //
-  // debugger2.html rebuilds its panes on load, after every token call, and
+  // oauth2_oidc_2.html rebuilds its panes on load, after every token call, and
   // after any operation that writes to the Operations History — so a WebElement
   // found a moment ago can be detached before it is used
   // (StaleElementReferenceError), which is not a product fault and not
@@ -304,7 +304,7 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     await driver.findElement(keycloak_password).sendKeys(client_id);
     await driver.findElement(keycloak_kc_login).click();
 
-    // Back on debugger2.html — submit the token-endpoint form.
+    // Back on oauth2_oidc_2.html — submit the token-endpoint form.
     await driver.wait(until.elementLocated(token_client_id), waitTime);
     await driver.wait(until.elementIsVisible(driver.findElement(
                       token_client_id)), waitTime);
@@ -358,7 +358,7 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
   }
 
   // Client Credentials grant. No Keycloak login: the token-endpoint form is
-  // submitted directly on debugger2.html.
+  // submitted directly on oauth2_oidc_2.html.
   async function getAccessTokenClientCredentials(driver, client_id,
       client_secret, scope) {
     log.debug("Entering getAccessTokenClientCredentials().");
@@ -489,22 +489,23 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
                                     .getAttribute("value");
   }
 
-  // Resource Owner Password Credentials grant. Configures the debugger2.html
-  // token form (OIDC-artifacts off, PKCE off, POST auth style, back-end
-  // initiation) and submits username/password directly.
+  // Resource Owner Password Credentials grant. Configures the
+  // oauth2_oidc_2.html token form (OIDC-artifacts off, PKCE off, POST auth
+  // style, back-end initiation) and submits username/password directly.
   async function getAccessTokenPassword(driver, client_id, client_secret, scope,
                                         username, password) {
     log.debug("Entering getAccessTokenPassword().");
     log.info("Entering getAccessTokenPassword().");
 
-    // Select Resource Owner Password Credential grant type on debugger.html
+    // Select Resource Owner Password Credential grant type on
+    // oauth2_oidc_1.html
     const authorization_grant_type = By.id("authorization_grant_type");
     await driver.wait(until.elementLocated(authorization_grant_type), waitTime);
     await new Select(await driver.findElement(authorization_grant_type))
                      .selectByVisibleText('OAuth2 Resource Owner Password ' +
                      'Credential Grant');
 
-    // Wait for debugger2.html to load
+    // Wait for oauth2_oidc_2.html to load
     const token_client_id = By.id("token_client_id");
     await driver.wait(until.elementLocated(token_client_id), waitTime);
     await driver.wait(until.elementIsVisible(driver.findElement(

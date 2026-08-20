@@ -113,6 +113,67 @@ var config = {
   // it is unmistakable rather than a plausible typo.
   // Here it is the mock STS's protected service (HTTP/web.example.com).
   krb5ServicePorts: [8888],
+  // The ports the LDAP client (api/ldap_client.js) may connect to.
+  //
+  // The four assigned ones: 389 (LDAP), 636 (LDAPS), 3268 and 3269 (the Active
+  // Directory global catalogue, plain and over TLS). 1389 and 1636 are here as
+  // well because port 389 is privileged, so a directory run outside a container
+  // — which is how somebody debugging their own OpenLDAP usually has it — nearly
+  // always lands on 1389.
+  //
+  // This is a NARROWER capability than the Kerberos relay's krb5AllowedPorts and
+  // the allowlist is correspondingly a convenience rather than the only control:
+  // POST /ldap/* takes an operation described in JSON and encodes the bytes
+  // itself, so a caller cannot choose what is sent the way it can with a byte
+  // relay. What still applies unchanged is the ADDRESS policy below, which this
+  // client enforces itself because the SSRF guard is installed on axios and a
+  // raw socket walks straight past it.
+  //
+  // A malformed entry is dropped with its reason logged; an allowlist that ends
+  // up empty refuses every call. Set it to the string "any" if a deployment
+  // genuinely needs arbitrary ports — a word rather than an empty list, so that
+  // widening it cannot be a plausible typo. Omit the setting entirely to get the
+  // four assigned ports and nothing else.
+  ldapAllowedPorts: [389, 636, 1389, 1636, 3268, 3269],
+  // How many entries this service will accumulate from ONE search before it
+  // stops and says so. A NUMBER.
+  //
+  // It is a second cap beside maxContentLength above, and both are needed: a
+  // million one-attribute entries fits inside a megabyte of values and is still
+  // a million objects to build, while a single entry carrying a jpegPhoto is one
+  // object and is still megabytes. A search with no filter against a real
+  // directory reaches one or the other immediately, which is exactly when a
+  // debugger should say "there was more" rather than run out of heap. The
+  // client's own protocol-level sizeLimit may ask for fewer; it may not ask for
+  // more. Omit it for the code default of 1000.
+  ldapMaxEntries: 1000,
+  // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
+  // TLS test the PKI page (client/public/pki.html) runs.
+  //
+  // It is an allowlist for the same reason the Kerberos ports are, and for one
+  // reason more: unlike the Kerberos relay there is no PAYLOAD SHAPE bounding
+  // this endpoint. A ClientHello sent to port 22 is a perfectly well-formed
+  // ClientHello, so "it must look like the protocol" rules nothing out here and
+  // the ports have to do all the work.
+  //
+  // Omit the setting for the code default (api/tls_probe.js: 443, 636, 989,
+  // 990, 993, 995, 1433, 4443, 5061, 5432, 5671, 6697, 8443, 8843, 9443, 10443,
+  // 8883 — https, the alternate https ports, LDAPS, FTPS, the mail ports, AMQPS,
+  // SIP-TLS, PostgreSQL, MSSQL, IRC and MQTT over TLS). Set it to the string
+  // "any" for a deployment that genuinely needs arbitrary ports; as with
+  // krb5ServicePorts that is a word rather than an empty list or a 0, so
+  // switching it on cannot be a plausible typo.
+  //
+  // What this does NOT relax: the address policy below still applies (a raw
+  // socket bypasses the axios guard, so tls_probe.js asks the guard for its
+  // DECISION), and the same connectionTimeout / callTimeout / maxContentLength
+  // bound the lookup, the connect, the handshake and the certificate chain.
+  // "any" here for the same reason as local.js, plus one specific to the suite:
+  // tests/pki_page.js points the TLS pane at the CLIENT's own plain-HTTP port
+  // (3000) to prove the round trip end to end — a handshake that fails with a
+  // real alert is a better assertion than one that succeeds, and it needs no
+  // TLS service of its own.
+  tlsAllowedPorts: "any",
   // SAML Service Provider identity (this debugger acting as an SP).
   spEntityId: "http://client:3000/saml/sp",
   acsUrl: "http://api:4000/samlacs",

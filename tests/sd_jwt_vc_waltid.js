@@ -311,9 +311,10 @@ async function configureFromWaltid(driver) {
   log.debug("Leaving configureFromWaltid().");
 }
 
-// The OIDC leg: our page hands off to debugger.html, walt.id's authorization
-// endpoint bounces the browser to Keycloak, the user signs in there, and
-// walt.id issues its own authorization code which debugger2.html exchanges.
+// The OIDC leg: our page hands off to oauth2_oidc_1.html, walt.id's
+// authorization endpoint bounces the browser to Keycloak, the user signs in
+// there, and walt.id issues its own authorization code which oauth2_oidc_2.html
+// exchanges.
 async function authorizeAtWaltid(driver) {
   log.debug("Entering authorizeAtWaltid().");
   await click(driver, By.id("start_issuance_button"));

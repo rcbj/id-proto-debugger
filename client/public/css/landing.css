@@ -42,7 +42,9 @@
    * instead is not available: this grid sits inside bootstrap's 940px
    * .container, so a bigger max-width here would do nothing. */
   /*
-   * SIX across as of the eleventh card (SPNEGO), and the arithmetic is the
+   * SIX across as of the eleventh card (SPNEGO) and still six at the twelfth
+   * (LDAP), which is the first addition since the fourth card that did NOT
+   * force a change here: 6+5 and 6+6 are both two rows. The arithmetic is the
    * same one the note above describes, run again: n columns fit when
    * n*min + (n-1)*gap <= 940, so six need min <= 143.3 (6*143 + 5*16 = 938).
    * At 175px eleven cards become 5+5+1 — three rows, and the third is below
@@ -56,8 +58,26 @@
    * rather than by looking, and note that the containerized run and a host run
    * differ by a few pixels because fonts-liberation gives different metrics
    * from a host's Arial.
+   *
+   * The TWELFTH card (PKI / X.509) needed no change here and is the first one
+   * that has not: six across turns 6+5 into a filled 6+6, which is the same
+   * two rows and therefore the same height.
+   *
+   * SEVEN across as of the THIRTEENTH card (LDAP), which is the expensive one
+   * the note above predicted: at 143px thirteen cards are 6+6+1 — three rows
+   * ending at 778px against a 625px viewport, the same failure two columns had
+   * at six cards, four at nine and five at eleven. This is the fifth time the
+   * column count has had to grow for that reason. 125px is the WIDEST value
+   * that works at this 10px gap (7*125 + 6*10 = 935 <= 940), and as before
+   * anything larger fails SILENTLY by staying at six.
+   *
+   * Seven columns took 23px off every card, so every description wraps one
+   * line further and the two rows came back at 620px — inside the 625px
+   * viewport by five pixels, which is not a fit: the containerized run differs
+   * from a host run by around eight. The icon and the card padding below give
+   * that back. Measure with landingFitsOnOneScreen() rather than by looking.
    */
-  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
   gap: 10px;
   align-items: stretch;
   max-width: 940px;
@@ -69,7 +89,12 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  padding: 12px 9px 14px;
+  /* 10px/12px rather than 12px/14px, and like the icon below the pixels are
+     load-bearing rather than taste: padding costs its height once per ROW, so
+     four pixels here buy back eight over the two rows. Taken when the
+     thirteenth card forced seven columns and the extra wrapping put the grid
+     within five pixels of the fold. */
+  padding: 10px 8px 12px;
   border: 1px solid #ccc;
   border-radius: 12px;
   background: #fafafa;
@@ -102,8 +127,13 @@
    already lost a run to an 8px difference that appeared only in the container,
    where fonts-liberation gives different metrics from a host's Arial. 40px
    leaves ~16px of headroom instead of none. Measured at each step, not
-   estimated. */
-.landing-icon svg { width: 34px; height: 34px; }
+   estimated.
+   30px now, for the same arithmetic one card further on: seven columns for the
+   thirteenth card left the grid ending at 620px of 625. Four pixels off the
+   icon and four off the card padding above end it at 597px, which is ~28px of
+   headroom — more than the container/host difference that has cost a run
+   before. */
+.landing-icon svg { width: 30px; height: 30px; }
 .landing-card:nth-child(1) .landing-icon { color: #2680eb; }
 .landing-card:nth-child(2) .landing-icon { color: #5a2a8f; }
 .landing-card:nth-child(3) .landing-icon { color: #0a7d63; }
@@ -115,6 +145,17 @@
 .landing-card:nth-child(9) .landing-icon { color: #6b3fa0; }
 .landing-card:nth-child(10) .landing-icon { color: #8a4b2a; }
 .landing-card:nth-child(11) .landing-icon { color: #0f6b7a; }
+/* The twelfth card. PKI / X.509 arrived with the twelfth rule but sits TENTH
+   in index.html, ahead of Kerberos and SPNEGO, so these rules address a
+   position and not a protocol — check the order in index.html before reading a
+   name into one. Twelve filled the second row of six exactly and cost no
+   height at all. */
+.landing-card:nth-child(12) .landing-icon { color: #8a1f3d; }
+/* The thirteenth card (LDAP) is the expensive one the grid note predicted:
+   thirteen at six across is 6+6+1, and the third row is below the fold, so it
+   took the column count to seven. It still needs its own accent rule, or
+   landingFitsOnOneScreen() fails naming the card rather than this file. */
+.landing-card:nth-child(13) .landing-icon { color: #8a3d3d; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

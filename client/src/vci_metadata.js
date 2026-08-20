@@ -13,7 +13,7 @@
 //
 // Element ids and localStorage keys are prefixed vci_ so they cannot collide
 // with the OpenID Provider / authorization server members, which the issuance
-// page deliberately shares with debugger.html.
+// page deliberately shares with oauth2_oidc_1.html.
 //
 //   name  member name (the part after vci_ is the id and the storage key)
 //   type  'array' -> comma-separated in the UI, 'json' -> a JSON object/array

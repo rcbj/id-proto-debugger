@@ -129,6 +129,17 @@ init()
   # passive endpoint at all.
   WSFED_STS_METADATA_URL=http://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml
   export WSFED_STS_METADATA_URL
+  # And it hosts the TLS / mutual-TLS endpoint the PKI page presents a client
+  # certificate to (its two HTTPS listeners, 8443 and 9443). This is its PLAIN
+  # HTTP base: the test configures the far end's truststore over it and reads
+  # the listeners' ports from the service rather than carrying a copy of them.
+  #
+  # Separate from WSTRUST_STS_URL for the same reason WSFED_STS_METADATA_URL is
+  # — that one may be pointed at a real Apache CXF STS, which has no endpoint of
+  # this kind — and it must be reachable by the API as well as by the test,
+  # since the api is what opens the socket. Both are on this host here.
+  STS_TLS_URL=http://localhost:8081
+  export STS_TLS_URL
   # walt.id's issuer-api2 (local-tests.yml, host networking) — the real
   # OpenID4VCI issuer the interoperability job runs against.
   WALTID_ISSUER_URL=http://localhost:7005
@@ -161,6 +172,13 @@ init()
   # here. Checked before anything builds: without the checkout, compose reports a
   # missing Dockerfile and nothing mentions a submodule.
   requireMockStsCheckout "${CURRENT_DIR}"
+  # The api needs node-ldapjs too — the same library on the client side of
+  # the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
+  # the mock's, because npm resolves a `file:` dependency's own requires from
+  # where the real directory lives, so a copy outside api/ never reaches
+  # api/node_modules. Uninitialised, the image builds fine and the service
+  # dies at startup with `Cannot find module 'ldapjs'`.
+  requireApiLdapjsCheckout "${CURRENT_DIR}"
   check_return_code $?
   # A fresh SP key pair for this run: exported for the tests (which sign and
   # decrypt with it) and for configureKeycloak (which registers the certificate
@@ -216,9 +234,16 @@ prepTestEnv()
   # `npm ci`, not `npm install`: mock-sts commits its lock, and `npm install`
   # REWRITES it (its lock still carries the pre-rename package name), which would
   # leave the submodule with a modified file after every run.
+  #
+  # `--omit=dev` is spelled out even though sts/.npmrc says the same thing, and
+  # the reason is that it DOES NOT APPLY HERE: npm reads .npmrc from the current
+  # directory, not from --prefix, so the submodule's own file is invisible to
+  # this invocation. Without the flag npm installs the devDependencies of the
+  # mock's `file:node-ldapjs` dependency — tap, eslint and their trees, roughly
+  # 200 packages nothing in this run loads — on every launcher run.
   if [ -f sts/package.json ];
   then
-    npm ci --prefix sts
+    npm ci --omit=dev --prefix sts
   fi
 }
 

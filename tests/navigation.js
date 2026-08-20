@@ -16,9 +16,9 @@ var waitTime = appconfig.waitTime;
 //
 // THREE protocols live on the OAuth2 / OIDC pages — the flows themselves,
 // Dynamic Client Registration and Token Exchange — so href alone no longer
-// identifies a card: two of them point at /debugger.html. Those two are located
-// by their title instead, which is what a person reads and what the test is
-// really about.
+// identifies a card: two of them point at /oauth2_oidc_1.html. Those two are
+// located by their title instead, which is what a person reads and what the
+// test is really about.
 var cardByTitle = function (title) {
   log.debug("Entering cardByTitle().");
   log.debug("Leaving cardByTitle().");
@@ -34,10 +34,12 @@ var WSTRUST_CARD = By.css('a.landing-card[href="/wstrust_tools.html"]');
 var SDJWTVC_CARD = By.css('a.landing-card[href="/vc-issuance-0.html"]');
 var SDJWTVP_CARD = By.css('a.landing-card[href="/vc-presentation-0.html"]');
 var WSFED_CARD = By.css('a.landing-card[href="/wsfed_request.html"]');
-// Dynamic Client Registration lives on debugger.html, so its card is told apart
-// from the OAuth2 card by the fragment naming the DCR pane. The OAuth2 locator
-// above is an EXACT href match, so it still resolves to one element.
-var DCR_CARD = By.css('a.landing-card[href="/debugger.html#dcr_fieldset"]');
+var PKI_CARD = By.css('a.landing-card[href="/pki.html"]');
+// Dynamic Client Registration lives on oauth2_oidc_1.html, so its card is told
+// apart from the OAuth2 card by the fragment naming the DCR pane. The OAuth2
+// locator above is an EXACT href match, so it still resolves to one element.
+var DCR_CARD =
+  By.css('a.landing-card[href="/oauth2_oidc_1.html#dcr_fieldset"]');
 var CHOICES = By.css('.landing-choices');
 // The header "Home" nav link (returns to the landing page).
 var HOME_LINK = By.css('.header_debugger a[href="/index.html"]');
@@ -92,12 +94,26 @@ async function checkFooterVersion(driver, where) {
 //      resolved, so nothing 404'd; the page simply rendered unstyled.
 //
 // The second is caught by a naming convention rather than a list: a class with a
-// `saml-` / `wst-` / `wsfed-` / `wa-` / `vc-` / `krb-` prefix is a styling class by definition, so
-// if a page uses one that none of its stylesheets defines, that page is missing a
-// stylesheet. Classes without those prefixes are left alone — the older debugger
-// pages use plenty of them as pure JavaScript selectors.
-// ---------------------------------------------------------------------------
-var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb)-/;
+// `saml-` / `wst-` / `wsfed-` / `wa-` / `vc-` / `krb-` / `pki-` prefix is a styling class by
+// definition, so if a page uses one that none of its stylesheets defines, that
+// page is missing a stylesheet. Classes without those prefixes are left alone —
+// the older debugger pages use plenty of them as pure JavaScript selectors.
+//
+// `pki-` was added on 2026-08-18. css/pki.css has said since it was written that
+// this check covers it, and it did not: pki.html is the only page using that
+// prefix, and the prefix was simply missing from the list below — so a `pki-`
+// class defined in no stylesheet rendered as nothing, silently, which is exactly
+// the failure this function exists for. The merge of that page's three
+// configuration panes into one added four such classes at a stroke.
+//
+// `ldap` is here although this test never clicks that card — it is one of the
+// three that the static deployments disable (Kerberos, SPNEGO, LDAP), so it
+// cannot join the walk below without failing every run against a deployed site.
+// The prefix is listed anyway so that the day it does, or the day another page
+// borrows an `ldap-` class, the guard is already in force rather than being
+// remembered. tests/ldap_page.js makes the same check for that page directly.
+
+var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki|ldap)-/;
 
 async function checkStylesheetsLoaded(driver, where) {
   log.debug("Entering checkStylesheetsLoaded(). where=" + where);
@@ -284,15 +300,15 @@ async function navigationActivities(driver) {
   await landingFitsOnOneScreen(driver);
   await checkStylesheetsLoaded(driver, "landing page");
 
-  // 2. Choose the OAuth2 / OIDC debugger -> debugger.html.
+  // 2. Choose the OAuth2 / OIDC debugger -> oauth2_oidc_1.html.
   log.info("Click the OAuth2 / OIDC debugger card.");
   await click(driver, OAUTH2_CARD);
-  await driver.wait(until.urlContains("debugger.html"), waitTime);
+  await driver.wait(until.urlContains("oauth2_oidc_1.html"), waitTime);
   await driver.wait(until.elementLocated(By.id("authorization_grant_type")),
                     waitTime);
-  log.info("Landed on debugger.html.");
-  await checkFooterVersion(driver, "debugger.html");
-  await checkStylesheetsLoaded(driver, "debugger.html");
+  log.info("Landed on oauth2_oidc_1.html.");
+  await checkFooterVersion(driver, "oauth2_oidc_1.html");
+  await checkStylesheetsLoaded(driver, "oauth2_oidc_1.html");
 
   // 3. Click Home -> back to the landing page.
   log.info("Click Home -> landing page.");
@@ -359,39 +375,40 @@ async function navigationActivities(driver) {
   await click(driver, HOME_LINK);
   await waitVisible(driver, CHOICES);
 
-  // 12. Choose OIDC Dynamic Client Registration -> debugger.html, at the DCR
-  //     pane.
+  // 12. Choose OIDC Dynamic Client Registration -> oauth2_oidc_1.html, at the
+  // DCR     pane.
   // Same page as the OAuth2 card, reached by a different card and a fragment,
   // so what is checked is that the pane it names is really there.
   log.info("Click the OIDC Dynamic Client Registration card.");
   await click(driver, DCR_CARD);
-  await driver.wait(until.urlContains("debugger.html"), waitTime);
+  await driver.wait(until.urlContains("oauth2_oidc_1.html"), waitTime);
   await driver.wait(until.elementLocated(By.id("dcr_fieldset")), waitTime);
   var dcrUrl = await driver.getCurrentUrl();
   assert.ok(dcrUrl.indexOf("#dcr_fieldset") >= 0,
-    "the card should open debugger.html at the Dynamic Client Registration " +
-        "pane. Got: " + dcrUrl);
+    "the card should open oauth2_oidc_1.html at the Dynamic Client " +
+        "Registration pane. Got: " + dcrUrl);
   await driver.wait(until.elementLocated(By.id("dcr_registration_endpoint")),
                     waitTime);
-  log.info("Landed on debugger.html at the Dynamic Client Registration pane.");
-  await checkFooterVersion(driver, "debugger.html#dcr_fieldset");
+  log.info("Landed on oauth2_oidc_1.html at the Dynamic Client Registration " +
+           "pane.");
+  await checkFooterVersion(driver, "oauth2_oidc_1.html#dcr_fieldset");
 
   // 13. Return to Home -> landing page.
   log.info("Click Home -> landing page.");
   await click(driver, HOME_LINK);
   await waitVisible(driver, CHOICES);
 
-  // 14. Choose OAuth2 Token Exchange -> debugger.html. Its pane is on
-  // debugger2.html (an exchange needs a token to exchange), so what this checks
-  // is that the card is there, is distinct from the OAuth2 card, and lands on
-  // the page where a subject token is obtained.
+  // 14. Choose OAuth2 Token Exchange -> oauth2_oidc_1.html. Its pane is on
+  // oauth2_oidc_2.html (an exchange needs a token to exchange), so what this
+  // checks is that the card is there, is distinct from the OAuth2 card, and
+  // lands on the page where a subject token is obtained.
   log.info("Click the OAuth2 Token Exchange card.");
   await click(driver, TOKEN_EXCHANGE_CARD);
-  await driver.wait(until.urlContains("debugger.html"), waitTime);
+  await driver.wait(until.urlContains("oauth2_oidc_1.html"), waitTime);
   await driver.wait(until.elementLocated(By.id("authorization_grant_type")),
                     waitTime);
-  log.info("Landed on debugger.html from the Token Exchange card.");
-  await checkFooterVersion(driver, "debugger.html (Token Exchange card)");
+  log.info("Landed on oauth2_oidc_1.html from the Token Exchange card.");
+  await checkFooterVersion(driver, "oauth2_oidc_1.html (Token Exchange card)");
 
   // 15. Return to Home -> landing page.
   log.info("Click Home -> landing page.");
@@ -412,6 +429,23 @@ async function navigationActivities(driver) {
   await checkStylesheetsLoaded(driver, "wsfed_request.html");
 
   // 17. Return to Home -> landing page.
+  log.info("Click Home -> landing page.");
+  await click(driver, HOME_LINK);
+  await waitVisible(driver, CHOICES);
+
+  // 18. Choose the PKI / X.509 card -> pki.html. The page is also reachable
+  // from other pages' Tools panes, and was ONLY reachable that way until it got
+  // a card of its own; this checks the card exists, points at the right page,
+  // and lands somewhere styled with the same build number as the rest.
+  log.info("Click the PKI / X.509 card.");
+  await click(driver, PKI_CARD);
+  await driver.wait(until.urlContains("pki.html"), waitTime);
+  await driver.wait(until.elementLocated(By.id("pki_key_alg")), waitTime);
+  log.info("Landed on pki.html.");
+  await checkFooterVersion(driver, "pki.html");
+  await checkStylesheetsLoaded(driver, "pki.html");
+
+  // 19. Return to Home -> landing page.
   log.info("Click Home -> landing page.");
   await click(driver, HOME_LINK);
   await waitVisible(driver, CHOICES);

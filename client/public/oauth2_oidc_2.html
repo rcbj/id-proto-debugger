@@ -7,7 +7,7 @@
     <link href="/css/header.css" rel="stylesheet">
     <link href="/css/bottom.css" rel="stylesheet">
     <link href="/css/footer.css" rel="stylesheet">
-    <link href="/css/debugger2.css" rel="stylesheet">
+    <link href="/css/oauth2_oidc_2.css" rel="stylesheet">
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
     <link href="/css/debugger.css" rel="stylesheet">
   </head>
@@ -20,9 +20,9 @@
 
 <div class="container">
 
-<script type="text/javascript" src="/js/debugger2.js"></script>
+<script type="text/javascript" src="/js/oauth2_oidc_2.js"></script>
 
-<p>This is a simple Client to use with any <a href="https://medium.com/@robert.broeckelmann/saml2-vs-jwt-understanding-oauth2-4abde9e7ec8b" onclick="debugger2.clickLink();">OAuth2</a> or <a href="https://medium.com/@robert.broeckelmann/understanding-openid-connect-series-37c93d25e92b" onclick="debugger2.clickLink();">OpenID Connect</a> compliant identity provider..
+<p>This is a simple Client to use with any <a href="https://medium.com/@robert.broeckelmann/saml2-vs-jwt-understanding-oauth2-4abde9e7ec8b" onclick="oauth2_oidc_2.clickLink();">OAuth2</a> or <a href="https://medium.com/@robert.broeckelmann/understanding-openid-connect-series-37c93d25e92b" onclick="oauth2_oidc_2.clickLink();">OpenID Connect</a> compliant identity provider..
 </p>
 <p>This page manages interaction with the OAuth2 Token Endpoint.</p>
 
@@ -72,7 +72,7 @@ function dbgSetAllPanes(expand) {
 <div style="display:flex; gap:16px; align-items:flex-start; margin-top:8px;">
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="step0 dbg-pane" id="step0">
-    <legend class="dbg-legend" id="config_expand_button" onclick="return debugger2.onClickShowFieldSet('config_expand_button', 'config_fieldset');">Configuration Parameters</legend>
+    <legend class="dbg-legend" id="config_expand_button" onclick="return oauth2_oidc_2.onClickShowFieldSet('config_expand_button', 'config_fieldset');">Configuration Parameters</legend>
     <fieldset id="config_fieldset" name="config_fieldset" style="display: none;">
     <form action="" id="endpoints" name="endpoints">
       <input type="hidden" name="response_type" value="" id="response_type" />
@@ -101,7 +101,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Authorization Endpoint: </label><span class="tooltiptext">Enter the Authorization Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>Authorization Endpoint: </label><span class="tooltiptext">Enter the Authorization Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -110,7 +110,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Token Endpoint: </label><span class="tooltiptext">Enter the Token Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>Token Endpoint: </label><span class="tooltiptext">Enter the Token Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -119,7 +119,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Introspection Endpoint: </label><span class="tooltiptext">Enter the Introspection Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>Introspection Endpoint: </label><span class="tooltiptext">Enter the Introspection Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -128,7 +128,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Revocation Endpoint: </label><span class="tooltiptext">Enter the Token Revocation Endpoint (RFC 7009) used by the debugger.</span>
+              <div class="tooltip"><label>Revocation Endpoint: </label><span class="tooltiptext">Enter the Token Revocation Endpoint (RFC 7009) used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -137,7 +137,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Registration Endpoint: </label><span class="tooltiptext">Enter the OIDC Dynamic Client Registration Endpoint used by the debugger. Auto-populated from the discovery metadata (registration_endpoint).</span>
+              <div class="tooltip"><label>Registration Endpoint: </label><span class="tooltiptext">Enter the OIDC Dynamic Client Registration Endpoint used by the oauth2_oidc_1. Auto-populated from the discovery metadata (registration_endpoint).</span>
               </div>
             </td>
             <td>
@@ -146,7 +146,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Device Authorization Endpoint: </label><span class="tooltiptext">Enter the Device Authorization Endpoint (RFC 8628) used by the debugger.</span>
+              <div class="tooltip"><label>Device Authorization Endpoint: </label><span class="tooltiptext">Enter the Device Authorization Endpoint (RFC 8628) used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -155,7 +155,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>OIDC UserInfo Endpoint: </label><span class="tooltiptext">Enter the OIDC UserInfo Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>OIDC UserInfo Endpoint: </label><span class="tooltiptext">Enter the OIDC UserInfo Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
@@ -164,11 +164,11 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>JWKS Endpoint: </label><span class="tooltiptext">Enter the JWKS Endpoint used by the debugger.</span>
+              <div class="tooltip"><label>JWKS Endpoint: </label><span class="tooltiptext">Enter the JWKS Endpoint used by the oauth2_oidc_1.</span>
               </div>
             </td>
             <td>
-              <input class="stored" id="jwks_endpoint" name="jwks_endpoint" type="text" max="150" /><a href="/jwks.html" onclick="debugger2.clickLink();">Review JWKS meta data</a>
+              <input class="stored" id="jwks_endpoint" name="jwks_endpoint" type="text" max="150" /><a href="/jwks.html" onclick="oauth2_oidc_2.clickLink();">Review JWKS meta data</a>
             </td>
           </tr>
           <tr>
@@ -519,8 +519,8 @@ function dbgSetAllPanes(expand) {
               </div>
             </td>
             <td>Yes 
-              <input checked="true" id="yesCheckOIDCArtifacts" name="yesno" onclick="debugger2.displayOIDCArtifacts();" type="radio" />No 
-              <input checked="false" id="noCheckOIDCArtifacts" name="yesno" onclick="debugger2.displayOIDCArtifacts();" type="radio" />
+              <input checked="true" id="yesCheckOIDCArtifacts" name="yesno" onclick="oauth2_oidc_2.displayOIDCArtifacts();" type="radio" />No 
+              <input checked="false" id="noCheckOIDCArtifacts" name="yesno" onclick="oauth2_oidc_2.displayOIDCArtifacts();" type="radio" />
             </td>
           </tr>
           <tr>
@@ -539,8 +539,8 @@ function dbgSetAllPanes(expand) {
               </div>
             </td>
             <td>Yes 
-              <input checked="true" id="useRefreshToken-yes" name="useRefreshToken" onclick="debugger2.useRefreshTokens();" type="radio" value="true" />No 
-              <input checked="false" id="useRefreshToken-no" name="useRefreshToken" onclick="debugger2.useRefreshTokens();" type="radio" value="false" />
+              <input checked="true" id="useRefreshToken-yes" name="useRefreshToken" onclick="oauth2_oidc_2.useRefreshTokens();" type="radio" value="true" />No 
+              <input checked="false" id="useRefreshToken-no" name="useRefreshToken" onclick="oauth2_oidc_2.useRefreshTokens();" type="radio" value="false" />
             </td>
           </tr>
           <tr>
@@ -549,8 +549,8 @@ function dbgSetAllPanes(expand) {
               </div>
             </td>
             <td>Yes
-              <input checked="true" id="usePKCE-yes" name="usePKCE" onclick="debugger2.usePKCERFC();" type="radio" value="true" />No
-              <input checked="false" id="usePKCE-no" name="usePKCE" onclick="debugger2.usePKCERFC();" type="radio" value="false" />
+              <input checked="true" id="usePKCE-yes" name="usePKCE" onclick="oauth2_oidc_2.usePKCERFC();" type="radio" value="true" />No
+              <input checked="false" id="usePKCE-no" name="usePKCE" onclick="oauth2_oidc_2.usePKCERFC();" type="radio" value="false" />
             </td>
           </tr>
         </tbody>
@@ -569,13 +569,16 @@ function dbgSetAllPanes(expand) {
               <td><p>Standalone utilities for working with JSON Web Tokens.</p></td>
             </tr>
             <tr>
-              <td><a href="/jwt_tools.html?from=debugger2.html" onclick="return debugger2.clickLink();">JWT Tools</a> — compose, sign (JWS), and encrypt (JWE) JWTs; generate key pairs; verify signatures and decrypt tokens.</td>
+              <td><a href="/jwt_tools.html?from=oauth2_oidc_2.html" onclick="return oauth2_oidc_2.clickLink();">JWT Tools</a> — compose, sign (JWS), and encrypt (JWE) JWTs; generate key pairs; verify signatures and decrypt tokens.</td>
             </tr>
             <tr>
-              <td><a href="/encoding_tools.html?from=debugger2.html" onclick="return debugger2.clickLink();">Encoding / Hashing Tools</a> — Base64 and URI encode/decode, CRC-32 checksums, and SHA hashing.</td>
+              <td><a href="/encoding_tools.html?from=oauth2_oidc_2.html" onclick="return oauth2_oidc_2.clickLink();">Encoding / Hashing Tools</a> — Base64 and URI encode/decode, CRC-32 checksums, and SHA hashing.</td>
             </tr>
             <tr>
-              <td><a href="/digital_signature.html?from=debugger2.html" onclick="return debugger2.clickLink();">Digital Signature</a> — generate an SLH-DSA (post-quantum) key pair, sign a value, and validate the signature.</td>
+              <td><a href="/digital_signature.html?from=oauth2_oidc_2.html" onclick="return oauth2_oidc_2.clickLink();">Digital Signature</a> — generate an SLH-DSA (post-quantum) key pair, sign a value, and validate the signature.</td>
+            </tr>
+            <tr>
+              <td><a href="/pki.html?from=oauth2_oidc_2.html" onclick="return oauth2_oidc_2.clickLink();">Certificate Authority &amp; X.509 Tools</a> &mdash; build a Root, Intermediate and Issuing <strong>certificate authority</strong>, issue TLS server/client, code-signing, S/MIME and other certificates with every X.509v3 extension, and test a real TLS or mutual-TLS handshake with what you issued.</td>
             </tr>
           </tbody>
         </table>
@@ -584,7 +587,7 @@ function dbgSetAllPanes(expand) {
   </div>
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="step3 dbg-pane" id="step3">
-    <legend class="dbg-legend" id="token_expand_button" onclick="return debugger2.onClickShowFieldSet('token_expand_button', 'token_fieldset');"><span id="h2_title_2" name="h2_title_2">Exchange Authorization Code for Access Token</span></legend>
+    <legend class="dbg-legend" id="token_expand_button" onclick="return oauth2_oidc_2.onClickShowFieldSet('token_expand_button', 'token_fieldset');"><span id="h2_title_2" name="h2_title_2">Exchange Authorization Code for Access Token</span></legend>
     <fieldset id="token_fieldset" name="token_fieldset" style="display: none;">
     <input class="input" id="token_grant_type" name="grant_type" type="hidden" value="authorization_code" />
     <table>
@@ -658,8 +661,8 @@ function dbgSetAllPanes(expand) {
             </div>
           </td>
           <td>POST
-            <input id="token_postAuthStyleCheckToken" name="token-post-authstyle-yesno" checked="true" onclick="debugger2.setPostAuthStyleCheckToken();" type="radio" />Header
-            <input id="token_headerAuthStyleCheckToken" name="token-header-authstyle-yesno" checked="false" onclick="debugger2.setHeaderAuthStyleCheckToken();" type="radio" />
+            <input id="token_postAuthStyleCheckToken" name="token-post-authstyle-yesno" checked="true" onclick="oauth2_oidc_2.setPostAuthStyleCheckToken();" type="radio" />Header
+            <input id="token_headerAuthStyleCheckToken" name="token-header-authstyle-yesno" checked="false" onclick="oauth2_oidc_2.setHeaderAuthStyleCheckToken();" type="radio" />
           </td>
         </tr>
         <tr>
@@ -668,8 +671,8 @@ function dbgSetAllPanes(expand) {
             </div>
           </td>
           <td>Front
-            <input id="token_initiateFromFrontEnd" name="token-initiateFromFrontEnd" onclick="debugger2.setInitiateFromEnd();" type="radio" />Back
-            <input id="token_initiateFromBackEnd" name="token-initiateFromFrontEnd" checked="checked" onclick="debugger2.setInitiateFromEnd();" type="radio" />
+            <input id="token_initiateFromFrontEnd" name="token-initiateFromFrontEnd" onclick="oauth2_oidc_2.setInitiateFromEnd();" type="radio" />Back
+            <input id="token_initiateFromBackEnd" name="token-initiateFromFrontEnd" checked="checked" onclick="oauth2_oidc_2.setInitiateFromEnd();" type="radio" />
           </td>
         </tr>
         <tr>
@@ -690,10 +693,10 @@ function dbgSetAllPanes(expand) {
             </div>
           </td>
           <td>
-            <input id="dpop_enabled" name="dpop_enabled" type="checkbox" onclick="debugger2.setDpopEnabled();" />
+            <input id="dpop_enabled" name="dpop_enabled" type="checkbox" onclick="oauth2_oidc_2.setDpopEnabled();" />
             <label for="dpop_enabled">Sender-constrain the access token with DPoP</label>
             <span id="dpop_controls" style="display:none">
-              <input id="dpop_generate_key" type="button" value="Generate Key Pair" onclick="return debugger2.generateDpopKey();" />
+              <input id="dpop_generate_key" type="button" value="Generate Key Pair" onclick="return oauth2_oidc_2.generateDpopKey();" />
               <span id="dpop_key_summary"></span>
             </span>
             <div id="dpop_status"></div>
@@ -732,8 +735,8 @@ function dbgSetAllPanes(expand) {
             </div>
           </td>
           <td>Yes 
-            <input id="yesResourceCheckToken" name="token-yesno" onclick="debugger2.displayTokenResourceCheck();" type="radio" />No 
-            <input id="noResourceCheckToken" name="token-yesno" onclick="debugger2.displayTokenResourceCheck();" type="radio" />
+            <input id="yesResourceCheckToken" name="token-yesno" onclick="oauth2_oidc_2.displayTokenResourceCheck();" type="radio" />No 
+            <input id="noResourceCheckToken" name="token-yesno" onclick="oauth2_oidc_2.displayTokenResourceCheck();" type="radio" />
           </td>
         </tr>
         <tr id="authzTokenResourceRow" style="">
@@ -778,8 +781,8 @@ function dbgSetAllPanes(expand) {
             </div>
           </td>
           <td>Yes
-            <input id="customTokenParametersCheck-yes" name="customTokenParametersCheck" onclick="debugger2.displayTokenCustomParametersCheck();" type="radio" />No
-            <input id="customTokenParametersCheck-no" name="customTokenParametersCheck" onclick="debugger2.displayTokenCustomParametersCheck();" type="radio" />
+            <input id="customTokenParametersCheck-yes" name="customTokenParametersCheck" onclick="oauth2_oidc_2.displayTokenCustomParametersCheck();" type="radio" />No
+            <input id="customTokenParametersCheck-no" name="customTokenParametersCheck" onclick="oauth2_oidc_2.displayTokenCustomParametersCheck();" type="radio" />
           </td>
         </tr>
         <tr id="tokenCustomParametersRow" style="visibility:collapse">
@@ -789,7 +792,7 @@ function dbgSetAllPanes(expand) {
           </td>
           <td>
             <input class="stored" id="tokenNumberCustomParameters" name="tokenNumberCustomParameters" type="text" maxlength="4" size="4" />
-            <input type="button" value="Enter parameters" onclick="return debugger2.generateCustomParametersListUI();"/>
+            <input type="button" value="Enter parameters" onclick="return oauth2_oidc_2.generateCustomParametersListUI();"/>
           </td>
         </tr>
         <tr>
@@ -854,7 +857,7 @@ function dbgSetAllPanes(expand) {
 <div style="display:flex; gap:16px; align-items:flex-start; margin-top:8px;">
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="step4 dbg-pane" id="step4">
-        <legend class="dbg-legend" id="refresh_expand_button" onclick="return debugger2.onClickShowFieldSet('refresh_expand_button', 'refresh_fieldset');">Obtain New Access Token Using Refresh Token</legend>
+        <legend class="dbg-legend" id="refresh_expand_button" onclick="return oauth2_oidc_2.onClickShowFieldSet('refresh_expand_button', 'refresh_fieldset');">Obtain New Access Token Using Refresh Token</legend>
         <fieldset id="refresh_fieldset" name="refresh_fieldset">
         <input class="input" id="refresh_grant_type" name="refresh_grant_type" type="hidden" value="refresh_token" />
         <table>
@@ -892,8 +895,8 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>POST
-                <input id="refresh_postAuthStyleCheckToken" name="refresh-post-authstyle-yesno" checked="true" onclick="debugger2.setPostAuthStyleRefreshToken();" type="radio" />Header
-                <input id="refresh_headerAuthStyleCheckToken" name="refresh-header-authstyle-yesno" checked="false" onclick="debugger2.setHeaderAuthStyleRefreshToken();" type="radio" />
+                <input id="refresh_postAuthStyleCheckToken" name="refresh-post-authstyle-yesno" checked="true" onclick="oauth2_oidc_2.setPostAuthStyleRefreshToken();" type="radio" />Header
+                <input id="refresh_headerAuthStyleCheckToken" name="refresh-header-authstyle-yesno" checked="false" onclick="oauth2_oidc_2.setHeaderAuthStyleRefreshToken();" type="radio" />
               </td>
             </tr>
             <tr>
@@ -902,8 +905,8 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>Front
-                <input id="refresh_initiateFromFrontEnd" name="refresh-initiateFromFrontEnd" onclick="debugger2.setInitiateRefreshFromEnd();" type="radio" />Back
-                <input id="refresh_initiateFromBackEnd" name="refresh-initiateFromFrontEnd" checked="checked" onclick="debugger2.setInitiateRefreshFromEnd();" type="radio" />
+                <input id="refresh_initiateFromFrontEnd" name="refresh-initiateFromFrontEnd" onclick="oauth2_oidc_2.setInitiateRefreshFromEnd();" type="radio" />Back
+                <input id="refresh_initiateFromBackEnd" name="refresh-initiateFromFrontEnd" checked="checked" onclick="oauth2_oidc_2.setInitiateRefreshFromEnd();" type="radio" />
               </td>
             </tr>
             <tr>
@@ -945,7 +948,7 @@ function dbgSetAllPanes(expand) {
 <div style="display:flex; gap:16px; align-items:stretch; margin-top:8px;">
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0; display:flex; flex-direction:column; gap:16px;">
 <div class="step5 dbg-pane" id="step5">
-    <legend class="dbg-legend" id="logout_expand_button" onclick="return debugger2.onClickShowFieldSet('logout_expand_button', 'logout_fieldset');">RP-initiated Logout</legend>
+    <legend class="dbg-legend" id="logout_expand_button" onclick="return oauth2_oidc_2.onClickShowFieldSet('logout_expand_button', 'logout_fieldset');">RP-initiated Logout</legend>
     <fieldset id="logout_fieldset" name="logout_fieldset" style="display: block;">
     <form action="" onsubmit="return false;">
     <table>
@@ -989,7 +992,7 @@ function dbgSetAllPanes(expand) {
         </tr>
         <tr>
           <td>
-            <input id="logout_btn" class="logout_btn" type="submit" value="Logout" onclick="return debugger2.logoutButtonClick();"  />
+            <input id="logout_btn" class="logout_btn" type="submit" value="Logout" onclick="return oauth2_oidc_2.logoutButtonClick();"  />
           </td>
           <td>&nbsp;
           </td>
@@ -1005,7 +1008,7 @@ function dbgSetAllPanes(expand) {
   </div>
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="step6 dbg-pane" id="step6">
-        <legend class="dbg-legend" id="revocation_expand_button" onclick="return debugger2.onClickShowFieldSet('revocation_expand_button', 'revocation_fieldset');">Token Revocation (RFC 7009)</legend>
+        <legend class="dbg-legend" id="revocation_expand_button" onclick="return oauth2_oidc_2.onClickShowFieldSet('revocation_expand_button', 'revocation_fieldset');">Token Revocation (RFC 7009)</legend>
         <fieldset id="revocation_fieldset" name="revocation_fieldset" style="display: block;">
         <form action="" onsubmit="return false;">
         <table>
@@ -1065,8 +1068,8 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>POST
-                <input id="revocation_postAuthStyleCheckToken" name="revocation-post-authstyle-yesno" checked="true" onclick="debugger2.setPostAuthStyleRevocation();" type="radio" />Header
-                <input id="revocation_headerAuthStyleCheckToken" name="revocation-header-authstyle-yesno" checked="false" onclick="debugger2.setHeaderAuthStyleRevocation();" type="radio" />
+                <input id="revocation_postAuthStyleCheckToken" name="revocation-post-authstyle-yesno" checked="true" onclick="oauth2_oidc_2.setPostAuthStyleRevocation();" type="radio" />Header
+                <input id="revocation_headerAuthStyleCheckToken" name="revocation-header-authstyle-yesno" checked="false" onclick="oauth2_oidc_2.setHeaderAuthStyleRevocation();" type="radio" />
               </td>
             </tr>
             <tr>
@@ -1075,13 +1078,13 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>Front
-                <input id="revocation_initiateFromFrontEnd" name="revocation-initiateFromFrontEnd" onclick="debugger2.setInitiateRevocationFromEnd();" type="radio" />Back
-                <input id="revocation_initiateFromBackEnd" name="revocation-initiateFromFrontEnd" checked="checked" onclick="debugger2.setInitiateRevocationFromEnd();" type="radio" />
+                <input id="revocation_initiateFromFrontEnd" name="revocation-initiateFromFrontEnd" onclick="oauth2_oidc_2.setInitiateRevocationFromEnd();" type="radio" />Back
+                <input id="revocation_initiateFromBackEnd" name="revocation-initiateFromFrontEnd" checked="checked" onclick="oauth2_oidc_2.setInitiateRevocationFromEnd();" type="radio" />
               </td>
             </tr>
             <tr>
               <td>
-                <input id="revocation_btn" class="revocation_btn" type="submit" value="Revoke Token" onclick="return debugger2.revokeButtonClick();" />
+                <input id="revocation_btn" class="revocation_btn" type="submit" value="Revoke Token" onclick="return oauth2_oidc_2.revokeButtonClick();" />
               </td>
               <td>&nbsp;
               </td>
@@ -1108,7 +1111,7 @@ function dbgSetAllPanes(expand) {
 <div style="display:flex; gap:16px; align-items:flex-start; margin-top:8px;">
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="step7 dbg-pane" id="step7">
-        <legend class="dbg-legend" id="tokenexchange_expand_button" onclick="return debugger2.onClickShowFieldSet('tokenexchange_expand_button', 'tokenexchange_fieldset');">Token Exchange (RFC 8693)</legend>
+        <legend class="dbg-legend" id="tokenexchange_expand_button" onclick="return oauth2_oidc_2.onClickShowFieldSet('tokenexchange_expand_button', 'tokenexchange_fieldset');">Token Exchange (RFC 8693)</legend>
         <fieldset id="tokenexchange_fieldset" name="tokenexchange_fieldset" style="display: block;">
         <form action="" onsubmit="return false;">
         <table>
@@ -1137,8 +1140,8 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>Impersonation
-                <input id="tokenexchange_impersonation" name="tokenexchange-exchange-type" checked="checked" onclick="debugger2.setTokenExchangeType();" type="radio" />Delegation
-                <input id="tokenexchange_delegation" name="tokenexchange-exchange-type" onclick="debugger2.setTokenExchangeType();" type="radio" />
+                <input id="tokenexchange_impersonation" name="tokenexchange-exchange-type" checked="checked" onclick="oauth2_oidc_2.setTokenExchangeType();" type="radio" />Delegation
+                <input id="tokenexchange_delegation" name="tokenexchange-exchange-type" onclick="oauth2_oidc_2.setTokenExchangeType();" type="radio" />
               </td>
             </tr>
             <tr>
@@ -1259,8 +1262,8 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>POST
-                <input id="tokenexchange_postAuthStyle" name="tokenexchange-post-authstyle-yesno" checked="checked" onclick="debugger2.setPostAuthStyleTokenExchange();" type="radio" />Header
-                <input id="tokenexchange_headerAuthStyle" name="tokenexchange-header-authstyle-yesno" onclick="debugger2.setHeaderAuthStyleTokenExchange();" type="radio" />
+                <input id="tokenexchange_postAuthStyle" name="tokenexchange-post-authstyle-yesno" checked="checked" onclick="oauth2_oidc_2.setPostAuthStyleTokenExchange();" type="radio" />Header
+                <input id="tokenexchange_headerAuthStyle" name="tokenexchange-header-authstyle-yesno" onclick="oauth2_oidc_2.setHeaderAuthStyleTokenExchange();" type="radio" />
               </td>
             </tr>
             <tr>
@@ -1269,13 +1272,13 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>Front
-                <input id="tokenexchange_initiateFromFrontEnd" name="tokenexchange-initiateFromFrontEnd" onclick="debugger2.setInitiateTokenExchangeFromEnd();" type="radio" />Back
-                <input id="tokenexchange_initiateFromBackEnd" name="tokenexchange-initiateFromFrontEnd" checked="checked" onclick="debugger2.setInitiateTokenExchangeFromEnd();" type="radio" />
+                <input id="tokenexchange_initiateFromFrontEnd" name="tokenexchange-initiateFromFrontEnd" onclick="oauth2_oidc_2.setInitiateTokenExchangeFromEnd();" type="radio" />Back
+                <input id="tokenexchange_initiateFromBackEnd" name="tokenexchange-initiateFromFrontEnd" checked="checked" onclick="oauth2_oidc_2.setInitiateTokenExchangeFromEnd();" type="radio" />
               </td>
             </tr>
             <tr>
               <td>
-                <input id="tokenexchange_btn" class="tokenexchange_btn" type="submit" value="Exchange Token" onclick="return debugger2.tokenExchangeButtonClick();" />
+                <input id="tokenexchange_btn" class="tokenexchange_btn" type="submit" value="Exchange Token" onclick="return oauth2_oidc_2.tokenExchangeButtonClick();" />
               </td>
               <td>&nbsp;
               </td>

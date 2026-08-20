@@ -136,6 +136,9 @@ button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
   align-items: baseline;
   gap: 14px;
   flex-wrap: wrap;
+  /* One line of 24.5px text in a 40px line box was 9px of nothing. The shared
+     rhythm can afford that; a page measured against a viewport cannot. */
+  line-height: 1.25;
 }
 /* The return link rides on the title's line: two stacked blocks for one line of
    text each was the cheapest space on the page. */
@@ -151,7 +154,11 @@ button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
   margin: 0 0 6px;
   line-height: 1.4;
 }
-.vc-fit .vc-usecases { margin: 10px 0 6px; }
+/* The step row and the cards are separated by whitespace twice over — the row's
+   own bottom margin and the grid's top one. One gap is a gap; two stacked is
+   28px of it. */
+.vc-fit ol.vc-steps { margin: 4px 0 6px; }
+.vc-fit .vc-usecases { margin: 6px 0 4px; }
 .vc-fit #vc_usecase_status { margin: 4px 0 6px; }
 /* Measured: 14px of card padding and the gaps between a card's four blocks came to
    23px per card, twice over for two rows. Trimmed rather than removed — the cards
@@ -163,10 +170,24 @@ button.vc-usecase-soon .vc-usecase-spec { color: #666; background: #eee; }
 .vc-fit .vc-usecase-cta { margin-top: 6px; }
 /* The VC Tools pane belongs at the foot of the page, and on a page that must fit it
    should cost as little height as it can while staying legible: its legend was 49px
-   for one line of text. */
+   for one line of text.
+   The 40px LINE HEIGHT inside it was the rest of that: trimming the padding took the
+   legend to 45px and left a 14px word sitting in a 40px line box, which is where the
+   remaining 23px were. */
 .vc-fit .dbg-pane { margin-top: 6px; margin-bottom: 6px; }
-.vc-fit .dbg-legend { font-size: 1em; padding: 2px 0; margin-bottom: 2px; }
+.vc-fit .dbg-legend { font-size: 1em; padding: 2px 0; margin-bottom: 2px;
+  line-height: 1.4; }
 .vc-fit .dbg-pane p.vc-note { margin: 3px 0 5px; }
+/* This pane GROWS: it gained a second tool (the PKI page) on 2026-08-17, which put
+   the chooser 32px below the fold and failed chooserFitsOnOneScreen(). Each tool is
+   a row of a label and a two-line description, and at the inherited 20px line height
+   that row was 44px. The rows are the pane's content and cannot be trimmed away, so
+   what is trimmed is the leading inside them — 12.6px note text does not need a 20px
+   line box — which costs the pane ~3px per row now and ~11px per row later. Keep new
+   tool descriptions to roughly the length of the DID one for the same reason the
+   landing page keeps its card descriptions equal: the row is as tall as its longest
+   cell. See docs/sd-jwt-vc-issuance.md for what the page's budget stands at. */
+.vc-fit #pane_vc_tools td { line-height: 1.3; }
 
 /* The VC Tools pane's label column. Its table is the same two-column shape the
    other panes use, where the left cell is sized to its content — and "DID Tools"
@@ -490,11 +511,12 @@ td.vc-bad, span.vc-bad { color: #b00020; }
 span.vc-part-jwt, span.vc-part-disclosure, span.vc-part-kb { font-weight: 600; }
 
 /* --- step 4: the credential history ---
-   The row for the generation in hand is marked the way debugger2.html marks the
-   active token set, so the two panes read the same way.
+   The row for the generation in hand is marked the way oauth2_oidc_2.html
+   marks the active token set, so the two panes read the same way.
 
-   The list is a FIXED-height scrolling window (debugger2's Token History scrolls
-   too): a log of up to 100 attempts would otherwise push the panes below it off
+   The list is a FIXED-height scrolling window (oauth2_oidc_2's Token History
+   scrolls too): a log of up to 100 attempts would otherwise push the panes
+   below it off
    the screen, and the pane's height would jump every time an attempt was made. */
 #vc_history_table {
   height: 420px;

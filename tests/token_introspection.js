@@ -35,7 +35,7 @@ const { populateMetadata, getAccessTokenAuthCode } =
        assert });
 
 // Sign in via the OIDC Authorization Code Flow (with PKCE for the public
-// client) and return the access + refresh tokens. This leaves the debugger2
+// client) and return the access + refresh tokens. This leaves the oauth2_oidc_2
 // page rendered with the "Token Endpoint Results" pane, whose access/refresh
 // rows each carry an "Introspect Token" link.
 
@@ -237,18 +237,19 @@ function assertIntrospectionActive(outputText, type) {
   log.debug("Leaving assertIntrospectionActive().");
 }
 
-// Returns from introspection.html to debugger2.html via the "Return to
-// debugger" link, then confirms the debugger2 page reloaded and the access
+// Returns from introspection.html to oauth2_oidc_2.html via the "Return to
+// debugger" link, then confirms the oauth2_oidc_2 page reloaded and the access
 // token is visible in the Token Endpoint Results pane (re-rendered from local
 // storage).
 async function returnToDebugger(driver) {
   log.debug("Entering returnToDebugger().");
   log.info("Clicking the 'Return to debugger' link.");
-  const link = By.css('a[href="/debugger2.html?redirectFromTokenDetail=true"]');
+  const link =
+    By.css('a[href="/oauth2_oidc_2.html?redirectFromTokenDetail=true"]');
   await driver.wait(until.elementLocated(link), waitTime);
   await driver.findElement(link).click();
 
-  // Confirm debugger2 loaded and the access token is visible.
+  // Confirm oauth2_oidc_2 loaded and the access token is visible.
   const token_access_token = By.id("token_access_token");
   await driver.wait(until.elementLocated(token_access_token), waitTime);
   await driver.wait(until.elementIsVisible(driver.findElement(
@@ -257,7 +258,7 @@ async function returnToDebugger(driver) {
       await driver.findElement(token_access_token).getAttribute("value");
   assert(accessTokenValue && accessTokenValue.length > 0,
     "After returning to the debugger, the access token was not visible on " +
-        "the debugger2 page.");
+        "the oauth2_oidc_2 page.");
   log.info("Debugger2 page loaded and the access token is visible.");
   log.debug("Leaving returnToDebugger().");
 }
@@ -325,7 +326,7 @@ async function test() {
     // Load the debugger, populate IdP metadata from discovery, and run the
     // OIDC Authorization Code flow to obtain an access token and refresh token.
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");
@@ -338,7 +339,7 @@ async function test() {
     // The debugger renders SIX distinct "Introspect Token" links across three
     // panes. For each one: click it, confirm the Introspection Output holds
     // valid JSON with "active": true, then follow "Return to debugger" and
-    // confirm debugger2 reloads with the access token visible.
+    // confirm oauth2_oidc_2 reloads with the access token visible.
     //
     // Order matters: the initial access/refresh tokens are introspected BEFORE
     // the refresh call, because refreshing rotates the refresh token and would

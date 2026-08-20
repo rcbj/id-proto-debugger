@@ -61,6 +61,19 @@ init()
       ;;
   esac
   export WSFED_STS_METADATA_URL
+  # The same mock STS hosts the TLS / mutual-TLS endpoint the PKI page presents
+  # a client certificate to. This one is NOT browser-facing — the api opens the
+  # socket, and this test talks to the plain HTTP port itself to configure the
+  # far end's truststore — so the only requirement is that the name resolve in
+  # BOTH this container and the api's, which the compose name does on this
+  # stack and nowhere else. Unset elsewhere, so run-report.js skips that job
+  # rather than pointing a deployed api at a host on somebody's laptop.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      STS_TLS_URL="${STS_TLS_URL:-http://sts:8081}"
+      ;;
+  esac
+  export STS_TLS_URL
   # walt.id's issuer-api2 — the real OpenID4VCI issuer the interoperability job
   # runs against. Same reasoning as the STS above: the compose DNS name is only
   # valid on the containerized stack, and the BROWSER has to reach it, because

@@ -10,7 +10,7 @@ var useFrontEnd = false;
 const OPERATION_HISTORY_LIMIT = 1000;
 
 // Decodes a JWT payload (no verification) so the session nonce can be read
-// from an id_token. Mirrors the helper on the debugger2 page.
+// from an id_token. Mirrors the helper on the oauth2_oidc_2 page.
 function decodeJwtPayload(token) {
   log.debug("Entering decodeJwtPayload().");
   try {
@@ -45,7 +45,8 @@ function getCurrentSessionNonce() {
   return localStorage.getItem('nonce_field') || '';
 }
 
-// Appends an entry to the shared operation history shown on the debugger2 page.
+// Appends an entry to the shared operation history shown on the oauth2_oidc_2
+// page.
 function recordOperation(operation, detail, client_id) {
   log.debug("Entering recordOperation().");
   var history = [];

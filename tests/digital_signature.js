@@ -41,6 +41,18 @@ var ECC_EDDSA_CURVES = ['Ed25519', 'Ed448'];
 // Schemes that hash the message themselves (no Hash selection applies).
 var ECC_OTHER_SCHEMES = ['secp256k1-schnorr', 'bls12-381'];
 var ML_PARAMS = ['ML-DSA-44', 'ML-DSA-65', 'ML-DSA-87'];
+// BBS: both ciphersuites the draft defines. They are not two spellings of one
+// scheme — different expand_message, different fixed P1 — so everything below
+// is done once per suite and a signature from one must NOT verify under the
+// other.
+var BBS_SUITES = ['BLS12-381-SHA-256', 'BLS12-381-SHAKE-256'];
+// The draft's own test vectors, vendored as tests/bbs_vectors.json. Driving
+// them through the PAGE is what says the pane's field handling — its message
+// splitting, its hex mode, its KeyGen inputs — produces the draft's bytes and
+// not merely bytes the page itself agrees with.
+var BBS_VECTORS = require("./bbs_vectors.json");
+var BBS_MESSAGES = ['given_name:Alice', 'family_name:Smith',
+                    'birthdate:1980-01-01', 'country:US'];
 // RSA is the one pane with an explicit key-size dropdown; the others vary size
 // via their parameter set / curve. Two common sizes (3072 keygen is the slower,
 // pure-JS one); 4096 is available in the app but omitted here to bound runtime.
@@ -193,6 +205,15 @@ var ML = { name: 'ML-DSA', valueId: 'ds_ml_value',
   download: 'mldsaDownloadKeys', ksFormatId: 'ds_ml_ks_format',
       ksPwId: 'ds_ml_ks_password' };
 
+var BBS = { name: 'BBS', valueId: 'ds_bbs_messages',
+    signatureId: 'ds_bbs_signature',
+  privId: 'ds_bbs_private_key', pubId: 'ds_bbs_public_key',
+      statusId: 'ds_bbs_status',
+  gen: 'bbsGenerateKeys', sign: 'bbsSign', validate: 'bbsValidate',
+      wait: cryptoWait,
+  download: 'bbsDownloadKeys', ksFormatId: 'ds_bbs_ks_format',
+      ksPwId: 'ds_bbs_ks_password' };
+
 // Pane #1 — SLH-DSA: key generation depends on the parameter set, so generate
 // keys for each one, then sign + validate.
 async function testSlhDsa(driver) {
@@ -277,6 +298,390 @@ async function testMldsa(driver) {
     await signAndValidate(driver, ML, 'ML-DSA ' + ML_PARAMS[i]);
   }
   log.debug("Leaving testMldsa().");
+}
+
+// ===========================================================================
+// Pane #5 — BBS over BLS12-381
+// ===========================================================================
+// A textarea holds the message LIST, so setInput's sendKeys would have to
+// carry newlines through the browser; set the value directly and fire the
+// events a real edit would, which is both faster and unambiguous about what
+// ended up in the field. (Runs in the BROWSER: no bunyan in here.)
+async function setTextarea(driver, id, text) {
+  log.debug("Entering setTextarea().");
+  await driver.executeScript(
+    "var e = document.getElementById(arguments[0]); e.value = arguments[1]; " +
+    "e.dispatchEvent(new Event('input', { bubbles: true })); " +
+    "e.dispatchEvent(new Event('change', { bubbles: true }));", id, text);
+  log.debug("Leaving setTextarea().");
+}
+
+// Click a BBS button and wait for the status line it produces. The pane defers
+// its work so the "…" status paints first, so waiting for the *field* a button
+// fills is not enough on its own — every check here waits on the status.
+async function bbsClickAndWait(driver, fn, pred, message) {
+  log.debug("Entering bbsClickAndWait().");
+  await driver.executeScript("var e = document.getElementById('ds_bbs_" +
+                             "status'); if (e) e.value = '';");
+  await click(driver, onclickBtn(fn));
+  var status = await waitForValue(driver, By.id('ds_bbs_status'), pred,
+                                  message, cryptoWait);
+  log.debug("Leaving bbsClickAndWait().");
+  return status;
+}
+// Every one of this pane's in-progress messages ENDS with an ellipsis, and
+// only those do — testing for one anywhere in the string would also match the
+// finished messages that quote a range ("index (0…3)"), and then the wait
+// would hang on a status the page had already produced.
+function settled(v) {
+  log.debug("Entering settled().");
+  log.debug("Leaving settled().");
+  return v.length > 0 && !/…\s*$/.test(v);
+}
+function verdict(v) {
+  log.debug("Entering verdict().");
+  log.debug("Leaving verdict().");
+  return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1;
+}
+
+// Fill the pane's octet-string fields. Everything except the message list is a
+// single-line input, so a plain sendKeys is fine for those.
+async function bbsSetInputs(driver, opts) {
+  log.debug("Entering bbsSetInputs().");
+  if (opts.encoding) await selectValue(driver, 'ds_bbs_encoding',
+                                       opts.encoding);
+  if (opts.messages !== undefined) await setTextarea(driver,
+      'ds_bbs_messages', opts.messages);
+  var singles = [['header', 'ds_bbs_header'], ['ph', 'ds_bbs_ph'],
+    ['disclosed', 'ds_bbs_disclosed'], ['keyMaterial', 'ds_bbs_key_material'],
+    ['keyInfo', 'ds_bbs_key_info'], ['keyDst', 'ds_bbs_key_dst']];
+  for (var i = 0; i < singles.length; i++) {
+    var key = singles[i][0], id = singles[i][1];
+    if (opts[key] === undefined) continue;
+    if (opts[key] === '') {
+      await driver.findElement(By.id(id)).clear();
+    } else {
+      await setInput(driver, By.id(id), opts[key]);
+    }
+  }
+  log.debug("Leaving bbsSetInputs().");
+}
+
+// One suite's full round: derive a key pair, sign the list, validate it, then
+// every way the draft says it must fail, then derived proofs.
+async function testBbsSuite(driver, suite) {
+  log.debug("Entering testBbsSuite().");
+  log.info("=== Pane #5 BBS — " + suite + " ===");
+  await selectValue(driver, 'ds_bbs_suite', suite);
+  await bbsSetInputs(driver, { encoding: 'text',
+    messages: BBS_MESSAGES.join("\n"), header: 'BBS test header',
+    ph: 'verifier nonce 12345', disclosed: '0, 2', keyMaterial: '',
+    keyInfo: '', keyDst: '' });
+
+  // KeyGen. An empty key material field means "32 random bytes, and show me
+  // which", so the pair on screen stays reproducible from what is on screen.
+  var gen = await bbsClickAndWait(driver, 'bbsGenerateKeys',
+    function (v) { return v.indexOf("Derived ") !== -1 ||
+              v.indexOf("error") !== -1; },
+    "[BBS " + suite + "] key generation did not report.");
+  // Assert on the STATUS, not only on the key fields: a failed generation
+  // leaves the previous suite's key sitting in them, and a key the pane then
+  // both signs and verifies with is perfectly self-consistent.
+  assert.ok(gen.indexOf("Derived ") !== -1,
+    "[BBS " + suite + "] key generation failed. Status: " + gen);
+  var sk = (await getValue(driver, By.id('ds_bbs_private_key'))).trim();
+  var pk = (await getValue(driver, By.id('ds_bbs_public_key'))).trim();
+  var ikm = (await getValue(driver, By.id('ds_bbs_key_material'))).trim();
+  assert.ok(/^[0-9a-f]{64}$/i.test(sk),
+    "[BBS " + suite + "] private key is not a 32-byte scalar in hex: " + sk);
+  assert.ok(/^[0-9a-f]{192}$/i.test(pk),
+    "[BBS " + suite + "] public key is not a compressed 96-byte G2 point.");
+  assert.ok(/^[0-9a-f]{64}$/i.test(ikm),
+    "[BBS " + suite + "] the generated key material was not shown.");
+  log.info("[BBS " + suite + "] OK — key pair derived from shown material.");
+
+  // KeyGen is a derivation, not a random draw: the same material and key_info
+  // must give the same key, and changing key_info must change it.
+  await bbsClickAndWait(driver, 'bbsGenerateKeys', settled,
+    "[BBS " + suite + "] second key generation did not report.");
+  assert.strictEqual((await getValue(driver,
+      By.id('ds_bbs_private_key'))).trim(), sk,
+    "[BBS " + suite + "] KeyGen is not deterministic for the same material.");
+  await bbsSetInputs(driver, { keyInfo: 'some key info' });
+  await bbsClickAndWait(driver, 'bbsGenerateKeys', settled,
+    "[BBS " + suite + "] key generation with key_info did not report.");
+  assert.notStrictEqual((await getValue(driver,
+      By.id('ds_bbs_private_key'))).trim(), sk,
+    "[BBS " + suite + "] key_info was ignored — it must change the key.");
+  await bbsSetInputs(driver, { keyInfo: '' });
+  await bbsClickAndWait(driver, 'bbsGenerateKeys', settled,
+    "[BBS " + suite + "] key generation did not report.");
+  assert.strictEqual((await getValue(driver,
+      By.id('ds_bbs_private_key'))).trim(), sk,
+    "[BBS " + suite + "] clearing key_info did not restore the key.");
+  log.info("[BBS " + suite + "] OK — KeyGen deterministic; key_info bound in.");
+
+  // Sign the list, then validate it.
+  var signed = await bbsClickAndWait(driver, 'bbsSign',
+    function (v) { return v.indexOf("Signed") !== -1 ||
+              v.indexOf("error") !== -1; },
+    "[BBS " + suite + "] signing did not report.");
+  assert.ok(signed.indexOf("signature is 80 bytes") !== -1,
+    "[BBS " + suite + "] a BBS signature is 80 bytes. Status: " + signed);
+  var sig = (await getValue(driver, By.id('ds_bbs_signature'))).trim();
+  assert.ok(sig.length > 0, "[BBS " + suite + "] no signature was produced.");
+  var st = await bbsClickAndWait(driver, 'bbsValidate', verdict,
+    "[BBS " + suite + "] validation did not complete.");
+  assert.ok(st.indexOf("VALID ✓") !== -1,
+    "[BBS " + suite + "] signature did not validate. Status: " + st);
+  log.info("[BBS " + suite + "] OK — signed " + BBS_MESSAGES.length +
+           " messages and validated.");
+
+  // What the signature binds: every message, their ORDER, their COUNT, and the
+  // header. Each is a separate way a holder could otherwise cheat.
+  var refusals = [
+    { label: 'a changed message',
+      set: { messages: ['given_name:Mallory'].concat(
+          BBS_MESSAGES.slice(1)).join("\n") } },
+    { label: 'a reordered list',
+      set: { messages: [BBS_MESSAGES[1], BBS_MESSAGES[0]].concat(
+          BBS_MESSAGES.slice(2)).join("\n") } },
+    { label: 'a dropped message',
+      set: { messages: BBS_MESSAGES.slice(0, 3).join("\n") } },
+    { label: 'an added message',
+      set: { messages: BBS_MESSAGES.concat(['role:admin']).join("\n") } },
+    { label: 'a changed header', set: { header: 'a different header' } }
+  ];
+  for (var r = 0; r < refusals.length; r++) {
+    await bbsSetInputs(driver, refusals[r].set);
+    var bad = await bbsClickAndWait(driver, 'bbsValidate', verdict,
+      "[BBS " + suite + " / " + refusals[r].label +
+          "] validation did not complete.");
+    assert.ok(bad.indexOf("INVALID ✗") !== -1,
+      "[BBS " + suite + "] " + refusals[r].label +
+          " must not validate. Status: " + bad);
+    log.info("[BBS " + suite + " / " + refusals[r].label +
+             "] correctly refused.");
+    await bbsSetInputs(driver, { messages: BBS_MESSAGES.join("\n"),
+                                 header: 'BBS test header' });
+  }
+  // The control: after all that, the untouched signature still validates, so
+  // the refusals above are about the defects and not about the verifier.
+  var control = await bbsClickAndWait(driver, 'bbsValidate', verdict,
+    "[BBS " + suite + " control] validation did not complete.");
+  assert.ok(control.indexOf("VALID ✓") !== -1,
+    "[BBS " + suite + " control] the restored inputs must still validate. " +
+        "Status: " + control);
+
+  // Derived proofs — what BBS is for.
+  var proofStatus = await bbsClickAndWait(driver, 'bbsProofGen', settled,
+    "[BBS " + suite + "] proof derivation did not report.");
+  assert.ok(proofStatus.indexOf("disclosing 2 of 4") !== -1,
+    "[BBS " + suite + "] expected a proof disclosing 2 of 4. Status: " +
+        proofStatus);
+  var proof = (await getValue(driver, By.id('ds_bbs_proof'))).trim();
+  assert.ok(proof.length > 0, "[BBS " + suite + "] no proof was produced.");
+  var pv = await bbsClickAndWait(driver, 'bbsProofVerify', verdict,
+    "[BBS " + suite + "] proof verification did not complete.");
+  assert.ok(pv.indexOf("Proof VALID ✓") !== -1,
+    "[BBS " + suite + "] the derived proof did not verify. Status: " + pv);
+  log.info("[BBS " + suite + "] OK — proof over 2 of 4 messages verified.");
+
+  // Unlinkability: a second derivation of the SAME signature must differ, and
+  // must also verify. This is the property an SD-JWT cannot offer.
+  await bbsClickAndWait(driver, 'bbsProofGen', settled,
+    "[BBS " + suite + "] second proof derivation did not report.");
+  var proof2 = (await getValue(driver, By.id('ds_bbs_proof'))).trim();
+  assert.notStrictEqual(proof2, proof,
+    "[BBS " + suite + "] two derivations of one signature were IDENTICAL — " +
+        "the proofs would be linkable.");
+  var pv2 = await bbsClickAndWait(driver, 'bbsProofVerify', verdict,
+    "[BBS " + suite + "] second proof verification did not complete.");
+  assert.ok(pv2.indexOf("Proof VALID ✓") !== -1,
+    "[BBS " + suite + "] the second derived proof did not verify.");
+  log.info("[BBS " + suite + "] OK — fresh randomness per derivation, both " +
+           "proofs valid.");
+
+  // A proof must be refused when the verifier's nonce differs (replay), when a
+  // disclosed message is claimed to be something else, and when the disclosure
+  // set does not match the one the proof was derived for.
+  var proofRefusals = [
+    { label: 'replay under another presentation header',
+      set: { ph: 'a different nonce' },
+      restore: { ph: 'verifier nonce 12345' } },
+    { label: 'a substituted disclosed message',
+      set: { messages: BBS_MESSAGES.slice(0, 2).concat(['country:FR'],
+          BBS_MESSAGES.slice(3)).join("\n") },
+      restore: { messages: BBS_MESSAGES.join("\n") } },
+    { label: 'a different disclosure set',
+      set: { disclosed: '1, 3' }, restore: { disclosed: '0, 2' } }
+  ];
+  for (var p = 0; p < proofRefusals.length; p++) {
+    await bbsSetInputs(driver, proofRefusals[p].set);
+    var bad2 = await bbsClickAndWait(driver, 'bbsProofVerify', verdict,
+      "[BBS " + suite + " / " + proofRefusals[p].label +
+          "] proof verification did not complete.");
+    assert.ok(bad2.indexOf("INVALID ✗") !== -1,
+      "[BBS " + suite + "] " + proofRefusals[p].label +
+          " must be refused. Status: " + bad2);
+    log.info("[BBS " + suite + " / " + proofRefusals[p].label +
+             "] correctly refused.");
+    await bbsSetInputs(driver, proofRefusals[p].restore);
+  }
+
+  // The two ends of the disclosure range are both legal: reveal nothing (still
+  // a proof that a signature exists over the whole list) and reveal everything.
+  var extremes = [['', 'disclosing 0 of 4'], ['0 1 2 3', 'disclosing 4 of 4']];
+  for (var x = 0; x < extremes.length; x++) {
+    await bbsSetInputs(driver, { disclosed: extremes[x][0] });
+    var made = await bbsClickAndWait(driver, 'bbsProofGen', settled,
+      "[BBS " + suite + "] proof derivation did not report.");
+    assert.ok(made.indexOf(extremes[x][1]) !== -1,
+      "[BBS " + suite + "] expected \"" + extremes[x][1] + "\", got: " + made);
+    var okx = await bbsClickAndWait(driver, 'bbsProofVerify', verdict,
+      "[BBS " + suite + "] proof verification did not complete.");
+    assert.ok(okx.indexOf("Proof VALID ✓") !== -1,
+      "[BBS " + suite + "] the " + extremes[x][1] +
+          " proof did not verify. Status: " + okx);
+    log.info("[BBS " + suite + "] OK — " + extremes[x][1] + ".");
+  }
+
+  // An index that is not a message index is refused by the pane rather than
+  // handed to the library.
+  await bbsSetInputs(driver, { disclosed: '9' });
+  var refused = await bbsClickAndWait(driver, 'bbsProofGen', settled,
+    "[BBS " + suite + "] out-of-range index did not report.");
+  assert.ok(refused.indexOf("not a message index") !== -1,
+    "[BBS " + suite + "] an out-of-range disclosed index must be named. " +
+        "Status: " + refused);
+  await bbsSetInputs(driver, { disclosed: '0, 2' });
+  log.debug("Leaving testBbsSuite().");
+}
+
+// The draft's own vectors, driven through the page in hex mode. This is the
+// check that cannot be satisfied by the page agreeing with itself: BBS has
+// several constants (each suite's fixed P1, the API id the DSTs are built
+// from, the generator derivation) where a signer and a verifier can share a
+// mistake and agree perfectly with each other and with nobody else.
+async function testBbsDraftVectors(driver, suite) {
+  log.debug("Entering testBbsDraftVectors().");
+  var vectors = BBS_VECTORS.suites[suite];
+  assert.ok(vectors, "no vendored test vectors for " + suite +
+            " in tests/bbs_vectors.json.");
+  log.info("=== Pane #5 BBS — " + suite + " against the draft's vectors ===");
+  await selectValue(driver, 'ds_bbs_suite', suite);
+  var kp = vectors.keypair;
+  await bbsSetInputs(driver, { encoding: 'hex', keyMaterial: kp.keyMaterial,
+    keyInfo: kp.keyInfo, keyDst: kp.keyDst });
+  await bbsClickAndWait(driver, 'bbsGenerateKeys', settled,
+    "[BBS " + suite + " vectors] key generation did not report.");
+  assert.strictEqual((await getValue(driver,
+      By.id('ds_bbs_private_key'))).trim().toLowerCase(), kp.secretKey,
+    "[BBS " + suite + " vectors] KeyGen did not reproduce the draft's " +
+        "secret key.");
+  assert.strictEqual((await getValue(driver,
+      By.id('ds_bbs_public_key'))).trim().toLowerCase(), kp.publicKey,
+    "[BBS " + suite + " vectors] the draft's public key was not derived.");
+  log.info("[BBS " + suite + " vectors] OK — KeyGen matches the draft.");
+
+  for (var i = 0; i < vectors.signatures.length; i++) {
+    var v = vectors.signatures[i];
+    // The draft's multi-message vector ENDS with an empty message, and the
+    // pane expresses one as an extra newline (one trailing newline is the
+    // line terminator). Joining with a trailing newline covers both shapes.
+    await bbsSetInputs(driver, { encoding: 'hex',
+      messages: v.messages.join("\n") + "\n", header: v.header });
+    await setTextarea(driver, 'ds_bbs_public_key', v.publicKey);
+    await setTextarea(driver, 'ds_bbs_signature', v.signature ?
+        Buffer.from(v.signature, "hex").toString("base64") : '');
+    var st = await bbsClickAndWait(driver, 'bbsValidate', verdict,
+      "[BBS " + suite + " / " + v.name + "] validation did not complete.");
+    var expected = v.valid ? "VALID ✓" : "INVALID ✗";
+    assert.ok(st.indexOf(expected) !== -1,
+      "[BBS " + suite + " / " + v.name + "] " + v.caseName + " must be " +
+          expected + ". Status: " + st);
+    log.info("[BBS " + suite + " / " + v.name + "] OK — " + v.caseName + ".");
+
+    // For the valid ones, the page must also PRODUCE the draft's bytes:
+    // accepting a correct signature is much weaker than emitting one.
+    if (!v.valid) continue;
+    await setTextarea(driver, 'ds_bbs_private_key', v.secretKey);
+    await driver.findElement(By.id('ds_bbs_signature')).clear();
+    await bbsClickAndWait(driver, 'bbsSign', settled,
+      "[BBS " + suite + " / " + v.name + "] signing did not report.");
+    var made = (await getValue(driver, By.id('ds_bbs_signature'))).trim();
+    assert.strictEqual(Buffer.from(made, "base64").toString("hex"),
+        v.signature,
+      "[BBS " + suite + " / " + v.name + "] the page produced a different " +
+          "signature from the draft's. BBS signing is deterministic, so a " +
+          "correct implementation emits these exact bytes.");
+    log.info("[BBS " + suite + " / " + v.name +
+             "] OK — byte-identical signature.");
+  }
+
+  for (var j = 0; j < vectors.proofs.length; j++) {
+    var pv = vectors.proofs[j];
+    var disclosed = pv.disclosedIndexes.join(", ");
+    await bbsSetInputs(driver, { encoding: 'hex',
+      messages: pv.messages.join("\n") + "\n", header: pv.header,
+      ph: pv.presentationHeader, disclosed: disclosed });
+    await setTextarea(driver, 'ds_bbs_public_key', pv.publicKey);
+    await setTextarea(driver, 'ds_bbs_proof',
+        Buffer.from(pv.proof, "hex").toString("base64"));
+    var st2 = await bbsClickAndWait(driver, 'bbsProofVerify', verdict,
+      "[BBS " + suite + " / " + pv.name +
+          "] proof verification did not complete.");
+    assert.ok(st2.indexOf(pv.valid ? "Proof VALID ✓" : "INVALID ✗") !== -1,
+      "[BBS " + suite + " / " + pv.name + "] " + pv.caseName +
+          " did not get the draft's verdict. Status: " + st2);
+    log.info("[BBS " + suite + " / " + pv.name + "] OK — " + pv.caseName +
+             ".");
+  }
+  // Leave the pane on text input for whatever runs next.
+  await bbsSetInputs(driver, { encoding: 'text', keyMaterial: '',
+      keyInfo: '', keyDst: '' });
+  log.debug("Leaving testBbsDraftVectors().");
+}
+
+// A key and a signature belong to ONE ciphersuite. Nothing about the fields on
+// screen says which, so the page must refuse the pairing rather than quietly
+// verify it — this is the mistake that a self-consistent implementation makes
+// invisibly.
+async function testBbsSuiteSeparation(driver) {
+  log.debug("Entering testBbsSuiteSeparation().");
+  log.info("=== Pane #5 BBS — the two ciphersuites do not interoperate ===");
+  await selectValue(driver, 'ds_bbs_suite', BBS_SUITES[0]);
+  await bbsSetInputs(driver, { encoding: 'text',
+    messages: BBS_MESSAGES.join("\n"), header: 'BBS test header',
+    keyMaterial: '', keyInfo: '', keyDst: '' });
+  await bbsClickAndWait(driver, 'bbsGenerateKeys', settled,
+    "[BBS separation] key generation did not report.");
+  await bbsClickAndWait(driver, 'bbsSign', settled,
+    "[BBS separation] signing did not report.");
+  var ok = await bbsClickAndWait(driver, 'bbsValidate', verdict,
+    "[BBS separation] validation did not complete.");
+  assert.ok(ok.indexOf("VALID ✓") !== -1,
+    "[BBS separation] the control signature must validate. Status: " + ok);
+  await selectValue(driver, 'ds_bbs_suite', BBS_SUITES[1]);
+  var st = await bbsClickAndWait(driver, 'bbsValidate',
+    function (v) { return verdict(v) || v.indexOf("error") !== -1; },
+    "[BBS separation] cross-suite validation did not complete.");
+  assert.ok(st.indexOf("INVALID ✗") !== -1 || st.indexOf("error") !== -1,
+    "[BBS separation] a " + BBS_SUITES[0] + " signature verified under " +
+        BBS_SUITES[1] + ". Status: " + st);
+  log.info("[BBS separation] OK — " + st);
+  await selectValue(driver, 'ds_bbs_suite', BBS_SUITES[0]);
+  log.debug("Leaving testBbsSuiteSeparation().");
+}
+
+async function testBbs(driver) {
+  log.debug("Entering testBbs().");
+  for (var i = 0; i < BBS_SUITES.length; i++) {
+    await testBbsSuite(driver, BBS_SUITES[i]);
+    await testBbsDraftVectors(driver, BBS_SUITES[i]);
+  }
+  await testBbsSuiteSeparation(driver);
+  log.debug("Leaving testBbs().");
 }
 
 // Symmetric MAC panes: for every algorithm, generate a key, compute a tag, and
@@ -431,6 +836,20 @@ async function testDownloads(driver) {
                          'ML-DSA JWK+pw');
   await downloadKeystore(driver, ML, 'pkcs12', '', 'not supported',
                          'ML-DSA PKCS#12 (unsupported)');
+
+  // BBS: a JWK (OKP / Bls12381G2) with an optional PBES2 password, like the
+  // ECC pane; PEM/DER/PKCS#12 have no standard BBS representation and must say
+  // so. Reuses the key pair testBbs left in the pane.
+  await downloadKeystore(driver, BBS, 'jwk', '', 'Downloaded JWK set',
+                         'BBS JWK');
+  await downloadKeystore(driver, BBS, 'jwk', 'pw123', 'PBES2-encrypted JWK',
+                         'BBS JWK+pw');
+  await downloadKeystore(driver, BBS, 'pem', '', 'not supported',
+                         'BBS PEM (unsupported)');
+  await downloadKeystore(driver, BBS, 'der', '', 'not supported',
+                         'BBS DER (unsupported)');
+  await downloadKeystore(driver, BBS, 'pkcs12', '', 'not supported',
+                         'BBS PKCS#12 (unsupported)');
   log.debug("Leaving testDownloads().");
 }
 
@@ -452,6 +871,7 @@ async function digitalSignatureActivities(driver) {
   await testRsa(driver);
   await testEcc(driver);
   await testMldsa(driver);
+  await testBbs(driver);
   await testMacs(driver);
   await testDownloads(driver);
   log.debug("Leaving digitalSignatureActivities().");
@@ -483,9 +903,13 @@ async function test() {
   options.addArguments(
       "--disable-features=BlockInsecurePrivateNetworkRequests," +
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
-  // All three panes are pure-JS (no crypto.subtle), so a secure context is not
-  // strictly required, but keep the trustworthy-origin flags for parity with
-  // the other tool tests (harmless if unused).
+  // The signing panes are pure-JS (no crypto.subtle), and BBS proof derivation
+  // needs only crypto.getRandomValues, which every context has — so signing
+  // does not need a secure context. The KEYSTORE downloads do: a
+  // password-protected JWK is a PBES2 JWE and that is Web Crypto. These flags
+  // are what make the containerized origin (http://client:3000, plain HTTP on
+  // a DNS name) trustworthy enough for it; without them the download section
+  // fails reporting an error nothing else on the page would produce.
   var secureOrigin = baseUrl.replace(/\/+$/, "");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        secureOrigin);
@@ -526,8 +950,8 @@ async function test() {
 const program = new Command();
 program
   .name('digital_signature')
-  .description("Run Digital Signature UI test (SLH-DSA, RSA, ECC — " +
-      "all hashes).")
+  .description("Run Digital Signature UI test (SLH-DSA, RSA, ECC, ML-DSA, " +
+      "BBS — all hashes, both BBS ciphersuites, plus the symmetric MACs).")
   .addOption(new Option("-u, --url <url>",
       "Set base URL.").makeOptionMandatory())
   .addOption(new Option("-b, --browser",

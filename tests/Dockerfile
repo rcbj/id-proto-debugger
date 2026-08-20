@@ -117,8 +117,13 @@ COPY client/src/url_safety.js ./
 # on which COPY ran last, and the failure would be silent.
 COPY client/src/metadata_schema.js ./
 # The BBS implementation, loaded directly by tests/bbs_crypto.js and checked
-# there against @digitalbazaar/bbs-signatures.
+# there against @digitalbazaar/bbs-signatures — and, for the SHAKE-256
+# ciphersuite, against the draft's own published test vectors, which are
+# vendored as tests/bbs_vectors.json because a test must not need the network
+# to know what the right answer is. tests/digital_signature.js drives the same
+# vectors through the page, so BOTH tests fail at load without this file.
 COPY client/src/bbs.js ./
+COPY tests/bbs_vectors.json ./
 # The bbs-2023 cryptosuite, BOTH implementations, for tests/bbs2023_cryptosuite.js
 # — the wallet's and the STS's. They share a basename and this image copies flat,
 # so the STS's is renamed on the way in; the test resolves either layout.
@@ -296,9 +301,29 @@ COPY sts/app.js sts/helpers.js sts/bbs2023.js ./sts/
 # app.js/krb5_kdc.js/krb5_service.js all require it, and this image did not
 # carry it — so all four in-process mock-KDC jobs (krb5_as_exchange,
 # krb5_tgs_ap, krb5_spnego_http, krb5_delegation_interop) died at load with
-# "Cannot find module './admin_stats'" while every host run stayed green. It
-# requires ./helpers and nothing else, so it adds no further closure of its own.
+# "Cannot find module './admin_stats'" while every host run stayed green.
 COPY sts/admin_stats.js ./sts/
+# audit.js is the THIRD recomputation, and it is admin_stats.js's own new
+# require — the counters module grew an audit log beside it, so the closure
+# above moved without any of these COPY lines changing. Missing, the four
+# in-process mock-KDC jobs die at load with "Cannot find module './audit'"
+# and a require stack naming sts/admin_stats.js, which is a file this image
+# HAS: the line to add is never the one the message names. It requires only
+# ./helpers and ./config, both already here, so it closes the set again.
+COPY sts/audit.js ./sts/
+# config.js is the SECOND such recomputation and it sits UNDER helpers.js rather
+# than beside it: the mock's settings moved out of forty-odd `process.env.X ||
+# default` expressions into one table, and helpers.js, krb5_kdc.js,
+# krb5_service.js and krb5_principals.js all read it now. Missing, the failure
+# is "Cannot find module './config'" from inside the submodule at require time
+# — before any test has run, and naming a file rather than this line.
+#
+# It requires only bunyan and process.env.CONFIG_FILE, so it adds nothing to the
+# closure. Note what CONFIG_FILE is in this image: the TESTS' config file, which
+# carries none of the mock's settings — so every value falls through to the
+# built-in default, which is exactly what these jobs had before the table
+# existed, and the KRB5_* variables they set still win over it.
+COPY sts/config.js ./sts/
 COPY sts/krb5_primitives.js sts/krb5_asn1.js sts/krb5_crypto.js sts/krb5_messages.js sts/krb5_gss.js ./sts/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build
@@ -343,6 +368,42 @@ COPY sts/contexts ./sts/contexts
 # further down, and copying it twice is how the two lines drift apart.)
 COPY api/krb5_relay.js api/krb5_frame.js ./
 COPY tests/api_krb5_relay.js ./
+# The two LDAP tests. Unlike the Kerberos relay above, NOTHING out of api/ or
+# sts/ is copied for them: both drive the running services over HTTP — the api's
+# POST /ldap/* endpoints and the mock's GET /ldap views — rather than loading a
+# module in-process. That is deliberate, and it is what keeps the LDAP jobs out
+# of the class of failure the note above records: a test that loads a module out
+# of the sts/ submodule acquires that submodule's own CONFIG_FILE resolution and
+# its dependency closure, both of which have broken this image before.
+#
+# These two lines are not optional and their absence is silent on every host
+# run: run-report.js schedules both scripts, and without the COPY each fails in
+# the image with MODULE_NOT_FOUND in a tenth of a second while passing
+# everywhere else. testsImageHasNoCollidingFilenames() in
+# tests/jwk_pem_encoding.js is what catches that, and it caught exactly this
+# when the two tests were first written.
+COPY tests/api_ldap.js tests/ldap_page.js ./
+# The PKI workflow's four jobs, and everything they load.
+#
+# The three node-only ones drive the modules directly — the certificate
+# authoring (client/src/x509.js), the key material and keystore formats
+# (client/src/key_material.js) and the TLS probe (api/tls_probe.js) — so those
+# modules are copied FLAT beside the tests, like every other borrowed module
+# here, and the tests resolve either layout through module_paths.js.
+#
+# x509.js requires ./key_material, which requires ./jose_jwe (copied further
+# up), so the closure is those three plus what jose_jwe already needed. Both
+# need `pkijs` and `asn1js`, which is why tests/package.json declares them: a
+# borrowed module's own requires resolve from where the module LIVES, and in
+# this image that is beside the tests.
+#
+# openssl is already installed at the top of this file for the WS-Trust schema
+# work; pki_x509.js and pki_key_formats.js assert by asking it what it reads,
+# and say so rather than skipping if it is absent.
+COPY client/src/x509.js client/src/key_material.js client/src/pki_store.js ./
+COPY api/tls_probe.js ./
+COPY tests/pki_x509.js tests/pki_key_formats.js tests/api_tls_probe.js ./
+COPY tests/pki_page.js tests/pki_mutual_tls.js ./
 # The WebAuthn decoder, loaded directly by tests/webauthn_decode.js: the CBOR
 # reader, the COSE_Key decoder (which requires ./jwk_pem, copied above) and the
 # artifact parser/verifier. The vectors beside them are real ceremonies produced
@@ -396,6 +457,15 @@ COPY tests/schemas ./schemas
 # schedules for it fails in the image with MODULE_NOT_FOUND in 0.0s while
 # passing on every host run, which is the failure jwk_pem_encoding.js watches
 # for and is how it was caught.
+# The mock STS's management API at /admin-api. It needs nothing of the mock's
+# own in this image — it drives the running service over HTTP, exactly as
+# tests/sts_metadata.js does — but it is COPYd on a line of its own so that the
+# reason is somewhere: its basename is also a MODULE name in the mock
+# (sts/admin_api.js), and the sts/ files above land in ./sts/ rather than flat
+# precisely so that a pair like that cannot overwrite each other. Adding it to
+# the flat list without noticing would be the collision testsImageHasNoColliding
+# Filenames() exists to catch.
+COPY tests/admin_api.js ./
 COPY tests/browser_tests_headless.js ./
 COPY tests/run-report.js ./
 # Shared test helpers (populateMetadata, ...). The test scripts require it as

@@ -36,6 +36,19 @@
 //    profile is a throwaway. It is applied only where it is needed: an https or
 //    localhost origin is already a secure context.
 //
+// 3. WEB CRYPTO Ed25519 — needed by a page that generates, imports or signs
+//    with an Ed25519 key through `crypto.subtle`, which in this tree is the PKI
+//    page and nothing else (client/src/digital_signature.js reaches Ed25519
+//    through @noble, and is unaffected). Chrome shipped Ed25519 in the Web
+//    Cryptography API on by default in **Chrome 137**; the tests image pins
+//    **Chrome 121**, where it exists but is off, so every call naming it throws
+//
+//        Failed to execute 'generateKey' on 'SubtleCrypto':
+//        Algorithm: Unrecognized name
+//
+//    addWebCryptoEd25519Flags() turns exactly that feature on. See its own
+//    comment for why the failure arrives with 'importKey' in it instead.
+//
 // Any new browser test should call addBrowserAccessFlags(). It is required for
 // anything that signs, verifies, encrypts or hashes (client/src/jwt_tools.js,
 // jose_jwe.js, vci_wallet.js, sd_jwt_vc.js, sd_jwt_vp.js, metadata_client.js,
@@ -109,7 +122,45 @@ function addBrowserAccessFlags(options, baseUrl) {
   return options;
 }
 
+// (3) Ed25519 in Web Crypto, for the browser that has it and does not offer it.
+//
+// Chrome enabled Ed25519 in the Web Cryptography API by default in Chrome 137.
+// The tests image pins Chrome 121 (see tests/Dockerfile), where the
+// implementation is present but gated behind its Blink runtime flag, so
+// generateKey/importKey/sign naming { name: 'Ed25519' } all reject with
+//
+//   Failed to execute 'generateKey' on 'SubtleCrypto':
+//       Algorithm: Unrecognized name
+//
+// The narrow --enable-blink-features=WebCryptoCurve25519 is used rather than
+// --enable-experimental-web-platform-features, which also works: this turns on
+// ONE feature, where the broader flag turns on every unshipped web platform
+// feature Chrome 121 carries and changes far more of the page than the test is
+// about. A browser that already has Ed25519 ignores an already-enabled feature
+// name, so this is a no-op from Chrome 137 on and on a host run.
+//
+// The failure it prevents does not name Ed25519 or the missing flag, and it
+// does not name generateKey either. On the PKI page the key pair and the
+// certificate are one button (pki.js's generateAndIssue()), so generation
+// fails, its message is replaced by the next one, and what the test reports is
+//
+//   issuing Page View Ed25519 failed: Could not issue the certificate:
+//       Failed to execute 'importKey' on 'SubtleCrypto':
+//           Algorithm: Unrecognized name
+//
+// naming importKey — a call made on the key pair the page still had — on a
+// certificate that had no key of its own. That cost the containerized run of
+// 2026-08-19, where it was the only failure of 182 jobs and where a HOST run
+// with any current Chrome passes.
+function addWebCryptoEd25519Flags(options) {
+  log.debug("Entering addWebCryptoEd25519Flags().");
+  options.addArguments("--enable-blink-features=WebCryptoCurve25519");
+  log.debug("Leaving addWebCryptoEd25519Flags().");
+  return options;
+}
+
 module.exports = {
   addBrowserAccessFlags: addBrowserAccessFlags,
+  addWebCryptoEd25519Flags: addWebCryptoEd25519Flags,
   originOf: originOf
 };

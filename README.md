@@ -1,4 +1,4 @@
-![OAuth2 / OIDC / SAML2 Debugger](docs/images/oauth2oidcdebugger+iyasec-logo.png)
+![OAuth2 / OIDC / SAML2 Debugger](docs/images/oauth2oidcdebugger+iyasec-logo-black.png)
 
 # OAuth2 + OpenID Connect (OIDC) Debugger
 [This](https://github.com/rcbj/oauth2-oidc-debugger) is the official home of the community Project.
@@ -19,9 +19,9 @@ This project currently supports the following specs & features:
 * [OIDC RP-Initiated Logout v1.0](https://openid.net/specs/openid-connect-rpinitiated-1_0.html)
 * [OAuth2 Token Introspection Endpoint (RFC7662)](https://www.rfc-editor.org/rfc/rfc7662) -- client_credentials (basic auth) or bearer token [RFC6750](https://www.rfc-editor.org/rfc/rfc6750) authentication.
 * [OAuth2 Device Authorization Grant - RFC8628](https://www.rfc-editor.org/info/rfc8628/) -- Ever registered an app on your television where it jumped ot your phone? This was probably what was used.
-* [OAuth2 Token Exchange - RFC8693](https://www.rfc-editor.org/rfc/rfc8693.html) -- Exchange one token for another: impersonation or delegation, with a `subject_token`, an optional `actor_token`, and `audience` / `resource` / `scope` / `requested_token_type`. It has **its own card on the landing page**, which opens `debugger.html` — you need a subject token before you can exchange one, so the exchange pane itself is on the results page (`debugger2.html`). Currently only tested with Keycloak v26.x.
+* [OAuth2 Token Exchange - RFC8693](https://www.rfc-editor.org/rfc/rfc8693.html) -- Exchange one token for another: impersonation or delegation, with a `subject_token`, an optional `actor_token`, and `audience` / `resource` / `scope` / `requested_token_type`. It has **its own card on the landing page**, which opens `oauth2_oidc_1.html` — you need a subject token before you can exchange one, so the exchange pane itself is on the results page (`oauth2_oidc_2.html`). Currently only tested with Keycloak v26.x.
 * [OAuth2 Token Revocation - RFC7009](https://www.rfc-editor.org/info/rfc7009/)
-* [OIDC Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html) -- a Relying Party registers itself at the OP's registration endpoint, sending its client metadata and getting back a `client_id` (plus a Registration Access Token and `registration_client_uri` for reading the registration back). Read/update/delete of an existing registration follow [RFC 7592](https://www.rfc-editor.org/info/rfc7592/), and the request/response bodies are [RFC 7591](https://www.rfc-editor.org/info/rfc7591/)'s. It has **its own card on the landing page**, which opens the Dynamic Client Registration pane on `debugger.html` — the same page as the OAuth2 / OIDC workflow, because a registration is what that workflow then uses.
+* [OIDC Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html) -- a Relying Party registers itself at the OP's registration endpoint, sending its client metadata and getting back a `client_id` (plus a Registration Access Token and `registration_client_uri` for reading the registration back). Read/update/delete of an existing registration follow [RFC 7592](https://www.rfc-editor.org/info/rfc7592/), and the request/response bodies are [RFC 7591](https://www.rfc-editor.org/info/rfc7591/)'s. It has **its own card on the landing page**, which opens the Dynamic Client Registration pane on `oauth2_oidc_1.html` — the same page as the OAuth2 / OIDC workflow, because a registration is what that workflow then uses.
 * [SAML2](https://www.oasis-open.org/standard/saml/) -- SP-initiated SSO against an IdP, plus a **SAML Assertion Tool** that composes a spec-compliant SAML 1.0 / 1.1 / 2.0 assertion and signs and encrypts it in the browser. See the SAML Assertion Tool section below.
 * [WS-Federation v1.2 Passive Requestor Profile](https://docs.oasis-open.org/wsfed/federation/v1.2/os/ws-federation-1.2-spec-os.html) -- An older protocol, but still common with Microsoft ADFS.
 * [SD-JWT — Selective Disclosure for JWTs, RFC 9901](https://www.rfc-editor.org/rfc/rfc9901.html) -- the format the credential workflows below are built on: salted claim Disclosures hashed into an `_sd` array, a Combined Serialization joined by `~`, and a **Key Binding JWT** (section 4.3) whose `sd_hash` commits to exactly the bytes presented. In-browser: nothing is disclosed that you did not tick.
@@ -38,7 +38,7 @@ This project currently supports the following specs & features:
 * [XML Signature](https://www.w3.org/TR/xmldsig-core/)
 * [XML Encryption](https://www.w3.org/TR/xmlenc-core1/)
 * [Base64 Encoding](https://www.rfc-editor.org/info/rfc4648/)
-* [X.509 Public-Key and Attributes Certificate Framework](https://www.itu.int/rec/t-rec-x.509/en)
+* [X.509 Public-Key and Attributes Certificate Framework](https://www.itu.int/rec/t-rec-x.509/en) -- and, on the **Certificate Authority & X.509 Tools** page, the ability to *build* one: a Root CA, an Intermediate and an Issuing CA, then the leaf certificates any of them can sign — TLS server, TLS client for mutual authentication, code signing, S/MIME, OCSP responder, time stamping, smartcard logon and Kerberos PKINIT — with every [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280) X.509v3 extension editable including its critical flag, and any extension at all addable by OID. Then it opens a real **TLS or mutual-TLS connection** with what you issued. See the Certificate Authority & X.509 Tools section below.
 * [RFC8414]](https://www.rfc-editor.org/rfc/rfc8414.html)
 * With the ability to add custom parameters to the Authorization Endpoint call and Token Endpoint call, numerous other protocols can be supported. We'll eventually get around to adding direct support.
 * Token Endpoint calls can be initiated from the front-end or back-end depending on what the IdP requires in various use cases.
@@ -139,10 +139,27 @@ and is linked here as the `sts/` submodule. Cloned without it, `sts/` is an empt
 directory and the build fails with `failed to read dockerfile`. In a checkout that
 is already in that state:
 ```
-git submodule update --init sts
+git submodule update --init
 ```
+**`--recursive`, not plain `--init`.** The mock STS has a submodule of its own —
+[`node-ldapjs`](https://github.com/rcbj/node-ldapjs), which its `package.json`
+takes as `"ldapjs": "file:node-ldapjs"` — and `--init` alone stops one level
+short of it. An uninitialised submodule is an *empty directory* rather than a
+missing one, so the image builds perfectly well, npm installs a package with no
+`main`, and the `sts` container dies at startup with `Cannot find module
+'ldapjs'`: a message naming a package, not a submodule.
+
 The test launchers do this for you — `requireMockStsCheckout()` in
-[`common/common.sh`](common/common.sh) — but a bare `docker-compose build` does not.
+[`common/common.sh`](common/common.sh), which checks the nested one too — but a
+bare `docker-compose build` does not.
+
+There is a **second submodule**, [`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs)
+at `api/node-ldapjs/` (branch `master`): a fork of `ldapjs` for the LDAP support
+of issue #257, pinned at the final commit its maintainer left behind when the
+project was decommissioned on 2024-05-14 — which is why it is a submodule rather
+than a dependency in `api/package.json`. Nothing builds from it yet, so an
+uninitialised `api/node-ldapjs/` does not break anything today; the bare
+`git submodule update --init` above takes it along with `sts/` regardless.
 
 From a bash command prompt on Fedora or RHEL 7.x, run the following::
 ```
@@ -298,7 +315,7 @@ The **JWT Tools** page (`/jwt_tools.html`) is a standalone, browser-only workben
 
 **All cryptography runs in your browser** via the Web Crypto API (`crypto.subtle`). No key material — private keys, HMAC secrets, generated key pairs, or passwords — is ever written to `localStorage` or sent to a server. Because Web Crypto is only available in a *secure context*, use the page over `https://` or `http://localhost`.
 
-Reach it from the **Tools** pane on `debugger.html` or `debugger2.html`, or browse directly to `/jwt_tools.html`. The "← Return to debugger" link sends you back to whichever debugger page you came from. Every multi-line field has a **Copy** button, and hovering any field shows a tooltip describing it.
+Reach it from the **Tools** pane on `oauth2_oidc_1.html` or `oauth2_oidc_2.html`, or browse directly to `/jwt_tools.html`. The "← Return to debugger" link sends you back to whichever debugger page you came from. Every multi-line field has a **Copy** button, and hovering any field shows a tooltip describing it.
 
 The page is three side-by-side panes that map to the lifecycle of a token:
 
@@ -428,7 +445,7 @@ Signing (Pane #2) is a single choice, while encryption (Pane #3) is a **combinat
 ## Encoding / Hashing Tools
 The **Encoding / Hashing Tools** page (`/encoding_tools.html`) is a standalone, browser-only utility for the small conversions that come up constantly when working with tokens: Base64, URI (percent) encoding, checksums, and SHA hashing. Everything runs in your browser and **nothing is stored or sent to a server**.
 
-Reach it from the **Tools** pane on `debugger.html` or `debugger2.html`, or browse directly to `/encoding_tools.html`. The "← Return to debugger" link sends you back to whichever debugger page you came from. Every field has a **Copy** button and a hover tooltip, and on load each *Unencoded value* is pre-populated with a sample and its Encode/hash is run automatically so the *Encoded* fields are filled immediately.
+Reach it from the **Tools** pane on `oauth2_oidc_1.html` or `oauth2_oidc_2.html`, or browse directly to `/encoding_tools.html`. The "← Return to debugger" link sends you back to whichever debugger page you came from. Every field has a **Copy** button and a hover tooltip, and on load each *Unencoded value* is pre-populated with a sample and its Encode/hash is run automatically so the *Encoded* fields are filled immediately.
 
 The page has four panes. Each follows the same layout — an **Unencoded value** box, an **Encoded** box, and one or two action buttons — with a status line reporting the result or any error:
 
@@ -476,9 +493,9 @@ SHA hashing uses the Web Crypto API (`crypto.subtle.digest`), which is only avai
 ## Digital Signature
 The **Digital Signature** page (`/digital_signature.html`) is a standalone, browser-only workbench for generating keys, signing/MACing arbitrary values, and validating them across classical, elliptic-curve, and post-quantum signature schemes — plus symmetric MACs.
 
-**All cryptography runs in your browser** using pure-JavaScript libraries — [node-forge](https://github.com/digitalbazaar/forge) (RSA, AES), [`@noble/curves`](https://github.com/paulmillr/noble-curves) (ECC), [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) (SLH-DSA / ML-DSA), and [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) (hashes, HMAC, KMAC, keyed BLAKE). Signing deliberately does **not** use the Web Crypto API: `crypto.subtle` supports only the SHA family, whereas these panes let you pair RSA/ECDSA with a wide range of hashes. **No key material is stored:** keys live only in this page and are never written to local storage.
+**All cryptography runs in your browser** using pure-JavaScript libraries — [node-forge](https://github.com/digitalbazaar/forge) (RSA, AES), [`@noble/curves`](https://github.com/paulmillr/noble-curves) (ECC), [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) (SLH-DSA / ML-DSA), and [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) (hashes, HMAC, KMAC, keyed BLAKE). BBS is this project's own implementation of [`draft-irtf-cfrg-bbs-signatures`](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/) over `@noble/curves`' BLS12-381 — the same module the SD-JWT VC workflow signs `bbs-2023` credentials with. Signing deliberately does **not** use the Web Crypto API: `crypto.subtle` supports only the SHA family, whereas these panes let you pair RSA/ECDSA with a wide range of hashes. **No key material is stored:** keys live only in this page and are never written to local storage.
 
-Reach it from the **Tools** pane on `debugger.html` or `debugger2.html`, or browse directly to `/digital_signature.html`. Every field has a **Copy** button and a hover tooltip, and the "← Return to debugger" link goes back to whichever page you came from. Each pane is **collapsible** — click its title to collapse/expand it, or use the **Expand all** / **Collapse all** buttons at the top — to save screen space on this long page.
+Reach it from the **Tools** pane on `oauth2_oidc_1.html` or `oauth2_oidc_2.html`, or browse directly to `/digital_signature.html`. Every field has a **Copy** button and a hover tooltip, and the "← Return to debugger" link goes back to whichever page you came from. Each pane is **collapsible** — click its title to collapse/expand it, or use the **Expand all** / **Collapse all** buttons at the top — to save screen space on this long page.
 
 Each pane carries an **Asymmetric** or **Symmetric (MAC)** badge. The asymmetric panes are true digital signatures (public/private key pair, non-repudiation); the symmetric panes are **MACs** — a shared secret gives integrity + origin but **no** non-repudiation or public verifiability, so a MAC is *not* a digital signature.
 
@@ -490,6 +507,7 @@ Each pane carries an **Asymmetric** or **Symmetric (MAC)** badge. The asymmetric
 | RSA | PKCS#1 v1.5 & PSS, any hash | 2048/3072/4096/1024-bit keys |
 | ECC | ECDSA (P-256/384/521, secp256k1) any hash; EdDSA (Ed25519/Ed448); Schnorr (BIP-340); BLS (BLS12-381) | |
 | ML-DSA (FIPS 204, post-quantum) | lattice-based | ML-DSA-44 / 65 / 87 |
+| BBS (draft-irtf-cfrg-bbs-signatures) | pairing-based, multi-message + selective disclosure | `BLS12-381-SHA-256` and `BLS12-381-SHAKE-256` |
 
 **Symmetric — MACs:**
 
@@ -500,7 +518,7 @@ Each pane carries an **Asymmetric** or **Symmetric (MAC)** badge. The asymmetric
 | Universal-Hash MACs | universal hashing | Poly1305 (one-time key); SipHash-2-4 |
 
 ### Common layout
-Every pane has the same controls:
+Every pane has the same controls (the BBS pane adds to them — it signs a message *list* and has a proof section; see Pane #5):
 * **Value** — the message to sign or validate (any text).
 * **Signature (Base64)** — produced by *Sign*; paste one here to validate.
 * **Key Pair** — an algorithm/curve/parameter dropdown, a **Generate Keys** button, and the private + public key fields (PEM for RSA/SLH-DSA/ML-DSA; raw hex for ECC).
@@ -542,6 +560,19 @@ Keys are shown as raw hex. Signatures are Base64.
 ### Pane #4 — ML-DSA
 Post-quantum, lattice-based signatures (FIPS 204, formerly CRYSTALS-Dilithium) — the primary NIST post-quantum signature standard. Choose `ML-DSA-44`, `65`, or `87`, Generate Keys, then Sign / Validate. Unlike SLH-DSA, signing is fast.
 
+### Pane #5 — BBS
+[BBS signatures](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/) over BLS12-381 — the only pane that does not sign a single value, and the only one whose signature can be turned into something else. It signs an ordered **list** of messages; the holder can then derive a **proof** that reveals only the messages they choose, and because each derivation is freshly randomised, two proofs from one signature are **unlinkable**. That is the property selective disclosure with an SD-JWT cannot offer, where the issuer's signature is reused verbatim every time.
+
+Everything the draft parameterises is on the pane:
+
+* **Ciphersuite** — `BLS12-381-SHA-256` (the one `bbs-2023` uses) or `BLS12-381-SHAKE-256`. They are not two spellings of one scheme: they expand messages differently and each has its own fixed `P1` point, so a key, a signature and a proof all belong to **one** suite. Validating across suites fails, as it should.
+* **Input encoding** — every octet-string field (messages, header, presentation header, key info, key DST) is read as **UTF-8 text** or as **hex**. Choose hex to reproduce the draft's own test vectors byte for byte.
+* **Messages** — one per line; index 0 is the first line. Order and count are both bound into the signature. A blank line is an empty message; a single trailing newline is just the line ending, so to end the list *with* an empty message add one more newline.
+* **Header** — an octet string signed over but not a message: it cannot be selectively withheld.
+* **Key Pair** — BBS **KeyGen** rather than a random scalar: the key is derived from **Key Material** (≥ 32 bytes of hex — leave it empty and the page generates 32 random bytes and shows them), optional **Key Info**, and an optional **Key DST** (empty means the ciphersuite default, `ciphersuite_id || "KEYGEN_DST_"`). The same inputs always give the same key, so the pair on screen is reproducible from what is on screen. The private key is a 32-byte scalar and the public key a compressed 96-byte G2 point, both hex.
+* **Sign** / **Validate Signature** — an 80-byte signature (a 48-byte G1 point and a 32-byte scalar), Base64.
+* **Derived Proof** — **Disclosed Indexes** (comma- or space-separated; empty discloses nothing, which is a legitimate proof) and a **Presentation Header**, the verifier's nonce. **Derive Proof** produces the proof; **Verify Proof** checks it against the disclosed messages, their indexes, the header and the presentation header. Derive twice and the bytes differ — that is the unlinkability, not a bug.
+
 ### Symmetric MAC panes
 Three panes (badged **Symmetric (MAC)**) authenticate with a single shared secret. Each has a Value box, a MAC (Base64) box, an algorithm dropdown, a Secret Key (hex) field with **Generate Key** (which sizes the key to the algorithm; changing the algorithm re-generates it), and **Compute MAC** / **Verify MAC** buttons. *Verify* recomputes the tag over the current value + key and compares it to the MAC box.
 
@@ -560,6 +591,7 @@ An optional password encrypts the private material: PBES2 for PEM/DER (RSA), a P
 | ECC — ECDSA / EdDSA | ✗ | ✗ | ✓ | ✗ |
 | ECC — Schnorr / BLS | ✗ | ✗ | ✗ (copy the hex) | ✗ |
 | SLH-DSA / ML-DSA | ✓ (raw, unencrypted) | ✗ | ✓ | ✗ |
+| BBS | ✗ | ✗ | ✓ (OKP / `Bls12381G2`) | ✗ |
 
 ### Notes & limitations
 * **Signatures vs MACs** — the asymmetric panes are digital signatures (non-repudiation, public verifiability); the symmetric MAC panes use a shared secret and provide neither, so they are *not* signatures despite living on the same page. They're grouped and badged separately.
@@ -567,6 +599,47 @@ An optional password encrypts the private material: PBES2 for PEM/DER (RSA), a P
 * **Interoperability** — standard combinations (RSA/ECDSA with SHA-2/SHA-3, EdDSA, HMAC/KMAC) verify against other tools; exotic ones (RIPEMD-160, BLAKE2b, BLAKE3, keyed-BLAKE MACs, some curve+hash pairings) may not be accepted elsewhere, as they go beyond the JOSE/PKIX registries.
 * **Not offered** (no maintained pure-JS/CJS support): Falcon/FN-DSA, finite-field DSA, Brainpool curves, SM2, GOST (signatures); UMAC, VMAC, PMAC (MACs).
 * **No persistence** — keys, signatures, and MACs live only in the page for the current session.
+
+## Certificate Authority & X.509 Tools
+The **Certificate Authority & X.509 Tools** page (`/pki.html`) builds the PKI the other protocols on this site run on, and then tests it. Reach it from the **Tools** pane on the OAuth2/OIDC, SAML, WS-Federation and Verifiable Credential pages, or browse directly to `/pki.html`.
+
+### Building a hierarchy
+Three CA profiles, in the shape a real deployment uses:
+
+* **Root CA** — self-signed, long-lived, and the only certificate here that signs itself. Its private key signs the intermediate and then ideally never comes out again.
+* **Intermediate CA** — signed by the root, `pathLenConstraint 1`, so exactly one more CA may follow it.
+* **Issuing CA** — signed by the intermediate, `pathLenConstraint 0`, so it may sign leaves and nothing else. A validator enforces that, and the page lets you prove it by trying.
+
+Then eleven leaf profiles: TLS server, TLS client, both at once, digital signature / non-repudiation, key encipherment, code signing, S/MIME, OCSP responder (with `id-pkix-ocsp-nocheck`), time stamping, smartcard logon and Kerberos KDC (PKINIT). A profile sets the extensions that kind of certificate normally carries; every one of them is then editable, which is the point — issuing the certificate that is wrong in **exactly one way** is how you find out what refuses it and what does not.
+
+### Every algorithm combination
+The **signature algorithm** (what the issuer signs with) and the **subject key algorithm** (what is being certified) are chosen independently, and every combination works:
+
+| | |
+|---|---|
+| Signature | RSASSA-PKCS1-v1_5 and RSA-PSS over SHA-256/384/512, ECDSA over SHA-256/384/512, Ed25519 — plus SHA-1 with RSA and ECDSA, marked weak and defaulted to by nothing, because *"does my stack still accept a SHA-1 certificate?"* is a question a debugger should be able to ask |
+| Subject key | RSA 2048 / 3072 / 4096, ECDSA P-256 / P-384 / P-521, Ed25519 |
+
+The signature list is filtered to what the signing key can actually produce, since an RSA key cannot make an ECDSA signature and offering it produces a browser error that names neither.
+
+### Full X.509v3 extension control
+`basicConstraints`, `keyUsage` (all nine bits), `extendedKeyUsage` (sixteen named purposes plus any OID), `subjectAltName` and `issuerAltName` (DNS, IP v4/v6, email, URI, directory name, registered ID, Microsoft **UPN** and RFC 4556 **Kerberos principal** otherNames, and raw otherNames by OID), `subjectKeyIdentifier`, `authorityKeyIdentifier`, `cRLDistributionPoints`, `freshestCRL`, `authorityInfoAccess`, `subjectInfoAccess`, `certificatePolicies` (with CPS and user-notice qualifiers), `policyMappings`, `policyConstraints`, `nameConstraints` (permitted and excluded subtrees, with the address-plus-mask encoding an IP constraint actually requires), `inhibitAnyPolicy`, `privateKeyUsagePeriod`, RFC 7633 TLS Feature (must-staple), `id-pkix-ocsp-nocheck`, the Netscape certificate type and comment — and **any extension at all** as an OID, a critical flag and base64 DER.
+
+The **critical** flag is separately settable on each. A validator must reject a certificate carrying a critical extension it does not understand, so marking the wrong one critical is a good way to find out what your stack really implements.
+
+### Keys and certificates are kept
+Everything issued is kept in the browser, because a certificate authority is only worth having if it is still there tomorrow — the whole point of a root is that it signs an intermediate next week and an issuing CA the week after. Each object records who issued it, so the page can assemble the chain for an export, a truststore or the TLS test below.
+
+Key pairs come from the same pane, and the same code, as the [JWT Tools](#jwt-tools) page, and download in the same formats: **PEM**, **DER**, a **JWK set**, or a password-protected **PKCS#12** carrying the key with its whole certificate chain — the format `keytool`, OpenSSL, Windows and macOS all import. The private key can be encrypted (PBES2) in every format.
+
+**Private keys are saved by default and there is a checkbox to stop it**, as on every other key-generating page here. It is the private half only: clearing it strips the private keys already written and keeps the certificates and public keys, which are public documents — so the trust anchors and the chains stay usable while nothing can sign any more.
+
+### The TLS / mutual-TLS test
+The last pane opens a real TLS connection with what you issued and reports the whole handshake: negotiated version and cipher, ALPN protocol, the server's certificate chain, whether it verified against the truststore **you** chose, and the TLS alert when it did not. You choose the client certificate to present (or none), the trust anchors (yours, the platform's, both, or nothing at all), the minimum and maximum TLS version, the cipher list, the ALPN protocols and the SNI name — separately from the address dialled, so a certificate for `www.example.com` can be tested against a staging host.
+
+Ask it to and it will connect **twice**, with the client certificate and without, and tell you whether the server *requires* client authentication, does not, or refused the certificate you offered. That has to be measured rather than read: nothing exposes the server's CertificateRequest, and under TLS 1.3 the handshake completes before the server has said anything about your certificate — its refusal arrives afterwards, as an alert or as a bare hang-up.
+
+**This test is made by the API layer, and there is deliberately no option to make it from the browser.** A page cannot choose which client certificate to present (the browser picks from its own store, through its own UI), cannot be given a truststore, cannot read the negotiated version, cipher or chain, and receives a failed handshake as a generic network error with the alert — the one informative thing — discarded. So it is one of the few features here that needs the api service running.
 
 ## SAML Assertion Tool
 The **SAML Assertion Tool** page (`/saml_tools.html`) is a standalone, browser-only workbench for building a SAML assertion, signing it with [XML Signature](https://www.w3.org/TR/xmldsig-core/), and encrypting it with [XML Encryption](https://www.w3.org/TR/xmlenc-core1/). It emits a spec-compliant assertion for **SAML 1.0**, **SAML 1.1**, or **SAML 2.0** — the three schemas differ in more than a version number, and the page follows each one.
@@ -666,7 +739,7 @@ The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.
 
 ## VC Issuance (OID4VCI)
 
-Issue a **Selective Disclosure JWT Verifiable Credential** — [SD-JWT, RFC 9901](https://www.rfc-editor.org/rfc/rfc9901.html) — from a Credential Issuer using [OpenID for Verifiable Credential Issuance](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) (OID4VCI). The workflow plays the wallet's part across five pages — choose a use case, discover the issuer, authorize and approve, inspect the credential, and refresh it — and deliberately **reuses the OIDC Authorization Code flow already implemented on `debugger.html` / `debugger2.html`** to authorize the issuance, exactly as OID4VCI intends. It is reached from its own card on the landing page.
+Issue a **Selective Disclosure JWT Verifiable Credential** — [SD-JWT, RFC 9901](https://www.rfc-editor.org/rfc/rfc9901.html) — from a Credential Issuer using [OpenID for Verifiable Credential Issuance](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) (OID4VCI). The workflow plays the wallet's part across five pages — choose a use case, discover the issuer, authorize and approve, inspect the credential, and refresh it — and deliberately **reuses the OIDC Authorization Code flow already implemented on `oauth2_oidc_1.html` / `oauth2_oidc_2.html`** to authorize the issuance, exactly as OID4VCI intends. It is reached from its own card on the landing page.
 
 ### Step 0 — Choose a use case (`vc-issuance-0.html`)
 A credential reaches a wallet in more than one way, and OID4VCI's [Appendix H](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#name-use-cases) names them. They are not different protocols — they differ in **who starts**, **how the wallet learns what is on offer**, and **which grant authorizes it** — so the choice is made once, here, and the rest of the workflow follows it. Each is a card describing what it is and what it does on the wire; the two that are not implemented yet are listed anyway, plainly marked, because knowing what is coming is more useful than a shorter list.
@@ -704,13 +777,13 @@ the `transaction_id` stops working, as OID4VCI section 9 requires.
 ### Step 1 — Discover the issuer (`vc-issuance-1.html`)
 Four panes, plus a fifth — **Credential Offer** — shown only when an offer brought the End-User here:
 
-1. **Credential Issuer Metadata (OID4VCI)** — retrieve `/.well-known/openid-credential-issuer`, tabulate it (with a note saying which document it is and where it came from), pick one entry of `credential_configurations_supported`, and **Validate Signature** on the document's `signed_metadata` JWT. The issuer's keys are resolved the SD-JWT VC way, from `/.well-known/jwt-vc-issuer` under the credential issuer identifier (or a `jwks_uri` in the document itself); the rest of the check is the same code the Metadata Retrieval pane on `debugger.html` runs — signature, `iss`, and any signed claim that disagrees with the plain JSON.
-2. **Authorization Server Metadata (RFC 8414)** — the same pane as `debugger.html`'s. Its URL starts on the deployment's configured RFC 8414 endpoint (`rfc8414MetadataUrlDefault`, the mock authorization server the STS service publishes; empty where there is no such service) and is replaced by the server named in the issuer's `authorization_servers` once the issuer metadata is retrieved. It writes to the **same `localStorage` names** `debugger.html` uses (`discovery_info`, `authorization_endpoint`, `token_endpoint`, the OpenID Provider metadata members, …), so retrieving it here also configures the OAuth2 / OIDC workflow.
+1. **Credential Issuer Metadata (OID4VCI)** — retrieve `/.well-known/openid-credential-issuer`, tabulate it (with a note saying which document it is and where it came from), pick one entry of `credential_configurations_supported`, and **Validate Signature** on the document's `signed_metadata` JWT. The issuer's keys are resolved the SD-JWT VC way, from `/.well-known/jwt-vc-issuer` under the credential issuer identifier (or a `jwks_uri` in the document itself); the rest of the check is the same code the Metadata Retrieval pane on `oauth2_oidc_1.html` runs — signature, `iss`, and any signed claim that disagrees with the plain JSON.
+2. **Authorization Server Metadata (RFC 8414)** — the same pane as `oauth2_oidc_1.html`'s. Its URL starts on the deployment's configured RFC 8414 endpoint (`rfc8414MetadataUrlDefault`, the mock authorization server the STS service publishes; empty where there is no such service) and is replaced by the server named in the issuer's `authorization_servers` once the issuer metadata is retrieved. It writes to the **same `localStorage` names** `oauth2_oidc_1.html` uses (`discovery_info`, `authorization_endpoint`, `token_endpoint`, the OpenID Provider metadata members, …), so retrieving it here also configures the OAuth2 / OIDC workflow.
 3. **Configuration Parameters** — every parameter both documents can define, generated from the shared member lists (`client/src/op_metadata.js` for the OpenID Provider / RFC 8414 members, `client/src/vci_metadata.js` for the credential issuer ones) so the pane cannot drift from them. Each value is overridable; a member the retrieved document omits shows the same grayed-out `-->not defined<--` note as the debugger pane. The OAuth2 / OpenID Provider half shares its storage with the debugger pages; the OID4VCI half is prefixed `vci_`.
-4. **Authorize Issuance** — hands off to `debugger.html?sdjwtvc=1`.
+4. **Authorize Issuance** — hands off to `oauth2_oidc_1.html?sdjwtvc=1`.
 
-### The OIDC leg (`debugger.html` → IdP → `debugger2.html`)
-The `sdjwtvc=1` query parameter puts the debugger into this workflow: it shows a banner saying so, starts the Authorization Code request with the configuration from step 1, and — once the user has authenticated and `debugger2.html` has exchanged the code for tokens — sends the browser on to step 2. Without the parameter neither page behaves any differently.
+### The OIDC leg (`oauth2_oidc_1.html` → IdP → `oauth2_oidc_2.html`)
+The `sdjwtvc=1` query parameter puts the debugger into this workflow: it shows a banner saying so, starts the Authorization Code request with the configuration from step 1, and — once the user has authenticated and `oauth2_oidc_2.html` has exchanged the code for tokens — sends the browser on to step 2. Without the parameter neither page behaves any differently.
 
 ### Step 2 — Approve and request (`vc-issuance-2.html`)
 Shows the access / ID / refresh tokens the OIDC leg obtained (and the decoded ID token claims), generates an **ES256 holder key pair** in the browser (the private half never leaves it), and asks the user to approve the issuance.
@@ -785,7 +858,7 @@ an issuer mints a credential; reporting those as changes would bury the ones tha
 case it was.
 
 **Credential History.** A credential is not one object over its life, so step 4 carries the counterpart of the
-**Token History** pane on `debugger2.html` — and records more than it does: **every attempt**, not only the ones
+**Token History** pane on `oauth2_oidc_2.html` — and records more than it does: **every attempt**, not only the ones
 that worked. One row each, newest first, for every access-token refresh, every Credential Request, every poll of
 the Deferred Credential Endpoint and every decision you made about what came back, with the outcome
 (`success`, `FAILED` with the refusal, `deferred`, `returned — not kept yet`, `kept`, `discarded`) and what the

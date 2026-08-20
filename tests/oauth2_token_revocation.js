@@ -99,7 +99,7 @@ async function revokeTokenViaUI(driver, type) {
 }
 
 // Follows the "Introspect Token" link next to the given token (access or
-// refresh) on debugger2.html, runs the introspection on introspection.html
+// refresh) on oauth2_oidc_2.html, runs the introspection on introspection.html
 // (authenticating the client via HTTP Basic, through the backend to avoid
 // browser CORS restrictions), and returns the raw introspection output JSON.
 async function introspectTokenViaUI(driver, type, client_id, client_secret) {
@@ -186,13 +186,14 @@ function assertTokenInactive(outputText, type) {
   log.debug("Leaving assertTokenInactive().");
 }
 
-// Returns from introspection.html to debugger2.html via the "Return to
+// Returns from introspection.html to oauth2_oidc_2.html via the "Return to
 // debugger" link, which re-renders the token panes (and their Introspect/Revoke
 // controls) from local storage.
 async function returnToDebugger(driver) {
   log.debug("Entering returnToDebugger().");
-  log.info("Returning to debugger2.html.");
-  const link = By.css('a[href="/debugger2.html?redirectFromTokenDetail=true"]');
+  log.info("Returning to oauth2_oidc_2.html.");
+  const link =
+    By.css('a[href="/oauth2_oidc_2.html?redirectFromTokenDetail=true"]');
   await driver.wait(until.elementLocated(link), waitTime);
   await driver.findElement(link).click();
   // Wait until the token results pane (with its Introspect links) is rendered.
@@ -264,7 +265,7 @@ async function test() {
     // Load the debugger, populate IdP metadata from discovery, and run the
     // OIDC Authorization Code flow to obtain an access token and refresh token.
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");

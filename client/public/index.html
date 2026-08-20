@@ -25,7 +25,7 @@
   <p class="landing-sub">Which identity protocol do you want to debug?</p>
 
   <div class="landing-choices">
-    <a class="landing-card" href="/debugger.html">
+    <a class="landing-card" href="/oauth2_oidc_1.html">
       <span class="landing-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="8" cy="8" r="5"/>
@@ -94,12 +94,12 @@
       <span class="landing-card-desc">Present an SD-JWT VC over OID4VP: read the verifier&rsquo;s DCQL query, choose which Disclosures to send, sign the Key Binding JWT over its nonce, and read the verdict.</span>
     </a>
 
-    <!-- Dynamic Client Registration lives on debugger.html, beside the OAuth2 /
+    <!-- Dynamic Client Registration lives on oauth2_oidc_1.html, beside the OAuth2 /
          OIDC workflow it registers a client for. The fragment is the DCR pane's
          own fieldset, so the card opens that page AT the pane rather than at the
          top — and it keeps this card's href distinct from the OAuth2 card's,
          which the navigation test's locators depend on. -->
-    <a class="landing-card" href="/debugger.html#dcr_fieldset">
+    <a class="landing-card" href="/oauth2_oidc_1.html#dcr_fieldset">
       <span class="landing-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M14.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6.5"/>
@@ -116,11 +116,11 @@
     </a>
 
     <!-- Token Exchange is the third protocol that lives on the OAuth2 / OIDC
-         pages. Its pane is on debugger2.html, because an exchange needs a subject
-         token to exchange — so the card points at debugger.html, where you get
+         pages. Its pane is on oauth2_oidc_2.html, because an exchange needs a subject
+         token to exchange — so the card points at oauth2_oidc_1.html, where you get
          one, and the description says where the pane is. No fragment: there is
-         nothing about token exchange on debugger.html to scroll to. -->
-    <a class="landing-card" href="/debugger.html">
+         nothing about token exchange on oauth2_oidc_1.html to scroll to. -->
+    <a class="landing-card" href="/oauth2_oidc_1.html">
       <span class="landing-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M3 8h13"/>
@@ -156,6 +156,26 @@
       </span>
       <span class="landing-card-title">WebAuthn</span>
       <span class="landing-card-desc">Run a ceremony against a security key, or decode and verify the artifacts of somebody else's: client data, authenticator data, attestation, COSE key.</span>
+    </a>
+    <!-- PKI is an ordinary card and ships to the static sites, although half of
+         what it does needs the api: the certificate authority itself is Web
+         Crypto and pkijs in the browser, and only the TLS test at the foot of
+         the page goes to POST /tls/connect. pki.html says so itself with the
+         #pki_backend_notice banner, which is why this is not a
+         data-not-on-static card — a workflow that mostly works is not the
+         Kerberos case below, where every button would fail at the network. -->
+    <a class="landing-card" href="/pki.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="12" rx="2"/>
+          <path d="M6.5 7.5h8"/>
+          <path d="M6.5 11h5"/>
+          <circle cx="16.5" cy="16" r="3.2"/>
+          <path d="M14.4 18.4 13.7 22l2.8-1.5 2.8 1.5-.7-3.6"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">PKI / X.509</span>
+      <span class="landing-card-desc">Build a Root, Intermediate and Issuing certificate authority, issue certificates with every X.509v3 extension, and make a real TLS or mutual-TLS connection with them.</span>
     </a>
     <!-- The only card that is not on the deployed static sites. Kerberos is DER
          over port 88, so every page of it but the decoder goes through the api's
@@ -193,6 +213,23 @@
       <span class="landing-card-title">SPNEGO</span>
       <span class="landing-card-desc">Kerberos over HTTP (RFC 4559/4178): watch the Negotiate challenge, the token a browser would send, the mechanism list and its MIC, and the ticket inside.</span>
       <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: the ticket SPNEGO carries comes from a KDC on port 88, which a browser cannot reach. Run the debugger locally for it.</span>
+    </a>
+    <!-- The third card that is not on the deployed static sites, and the only
+         one of the three with no ambiguity about it at all: RFC 4511 is BER
+         over a TCP socket, so every single operation on that page is a call to
+         the api and the page has no offline half the way Kerberos has its
+         decoder. Same marker, same greying, same second description. -->
+    <a class="landing-card" href="/ldap.html" data-not-on-static>
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <ellipse cx="12" cy="5" rx="7.5" ry="2.8"/>
+          <path d="M4.5 5v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V5"/>
+          <path d="M4.5 11v6c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8v-6"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">LDAP</span>
+      <span class="landing-card-desc">LDAP v3 (RFC 4511) against a real directory: bind, search by filter and scope, create and delete users and groups, change membership, read every result code.</span>
+      <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: LDAP is BER over port 389, which a browser cannot open. Run the debugger locally for it.</span>
     </a>
   </div>
 </div>

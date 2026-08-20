@@ -22,9 +22,9 @@
 <script type="text/javascript" src="/js/digital_signature.js">
 </script>
 
-<p class="ds-return"><a id="return_link" href="/debugger.html">&larr; Return to debugger</a></p>
+<p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a></p>
 
-<p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. Pane 1 uses the post-quantum <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+) scheme; pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 4 uses the post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium). The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those four panes are <strong>asymmetric</strong> digital signatures; the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+<p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. Pane 1 uses the post-quantum <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+) scheme; pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 4 uses the post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium); pane 5 uses <strong>BBS</strong> over BLS12-381 (both ciphersuites), which signs a <em>list</em> of messages and can derive an unlinkable proof over any subset of them. The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those five panes are <strong>asymmetric</strong> digital signatures; the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
 
 <p class="ds-controls">
   <label class="ds-toggle" title="Expand or collapse every pane.">
@@ -329,6 +329,113 @@
     </div>
 
     <input class="ds-status" type="text" id="ds_ml_status" name="ds_ml_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== BBS Digital Signature ===================== -->
+  <fieldset id="pane_bbs_signature">
+    <legend>BBS Digital Signature <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-asym">Selective disclosure</span></legend>
+
+    <p class="ds-note" title="BBS signs a LIST of messages, not one value.">BBS over BLS12-381 (<code>draft-irtf-cfrg-bbs-signatures</code>), the same implementation the SD-JWT VC workflow uses for <code>bbs-2023</code>. It signs an ordered <strong>list</strong> of messages rather than one value, and the holder can then derive a <strong>proof</strong> that reveals only the messages they choose &mdash; each derivation is freshly randomised, so two proofs from one signature are <em>unlinkable</em>. Both ciphersuites the draft defines are here; they differ in more than a hash name (XMD/SHA-256 vs XOF/SHAKE-256, and each has its own fixed <code>P1</code>), so a key and a signature belong to <em>one</em> suite. Octet-string inputs &mdash; messages, header, presentation header, key info, key DST &mdash; are read as UTF-8 text or as hex, per the selector below; choose hex to reproduce the draft's own test vectors.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="One message per line. BBS signs the list, and order and count are both bound into the signature. A blank line is an empty message; one trailing newline is just the line ending.">Messages (one per line) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_bbs_messages');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="4" id="ds_bbs_messages" name="ds_bbs_messages" title="The messages to sign / verify, one per line. Index 0 is the first line. A blank line signs an empty message; to end the list with one, add an extra newline."></textarea>
+    </div>
+    <div class="ds-row">
+      <div class="ds-grow">
+        <label title="How every octet-string field in this pane is read.">Input encoding</label>
+        <select id="ds_bbs_encoding" name="ds_bbs_encoding" title="Read the messages, header, presentation header, key info and key DST as UTF-8 text or as hex octets.">
+          <option value="text" selected="selected">UTF-8 text</option>
+          <option value="hex">Hex octets</option>
+        </select>
+      </div>
+      <div class="ds-grow">
+        <label title="The header is signed over but is not a message — it cannot be selectively withheld.">Header</label>
+        <input type="text" id="ds_bbs_header" name="ds_bbs_header" title="Octet string bound into the signature. Changing it invalidates the signature." />
+      </div>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64-encoded BBS signature (80 bytes: a 48-byte G1 point and a 32-byte scalar).">Signature (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_bbs_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_bbs_signature" name="ds_bbs_signature" title="Base64 BBS signature. Populated by Sign; paste one here to Validate or to derive a proof."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key Pair</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="The draft defines two ciphersuites over BLS12-381. Keys, signatures and proofs are all suite-specific.">Ciphersuite</label>
+          <select id="ds_bbs_suite" name="ds_bbs_suite" title="BBS ciphersuite used for key generation, signing, validation and proofs.">
+            <option value="BLS12-381-SHA-256" selected="selected">BLS12-381-SHA-256</option>
+            <option value="BLS12-381-SHAKE-256">BLS12-381-SHAKE-256</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.bbsGenerateKeys();" title="Derive a BBS key pair from the key material below (KeyGen). Leave the key material empty for 32 fresh random bytes." />
+      </div>
+
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="KeyGen input: at least 32 octets, hex. Leave empty to generate 32 random bytes.">Key Material (hex, &ge; 32 bytes)</label>
+          <input type="text" id="ds_bbs_key_material" name="ds_bbs_key_material" title="IKM for KeyGen, hex. At least 32 octets. Empty means: generate 32 random bytes and show them here." />
+        </div>
+        <div class="ds-grow">
+          <label title="KeyGen's key_info: optional context mixed into the derivation.">Key Info (optional)</label>
+          <input type="text" id="ds_bbs_key_info" name="ds_bbs_key_info" title="KeyGen key_info. The same material with different key_info gives a different key." />
+        </div>
+      </div>
+      <div class="ds-field">
+        <label title="KeyGen's key_dst. Empty means the ciphersuite default, ciphersuite_id || &quot;KEYGEN_DST_&quot;.">Key DST (optional)</label>
+        <input type="text" id="ds_bbs_key_dst" name="ds_bbs_key_dst" title="KeyGen domain separation tag. Leave empty for the ciphersuite default." />
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="BBS secret key: one 32-byte scalar, hex. Used by Sign. Not stored anywhere.">Private Key (hex) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_bbs_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="2" id="ds_bbs_private_key" name="ds_bbs_private_key" title="BBS secret key (32-byte scalar, hex). Used to Sign."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="BBS public key: a compressed 96-byte G2 point, hex. Used by Validate Signature and by both proof operations.">Public Key (hex) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_bbs_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_bbs_public_key" name="ds_bbs_public_key" title="BBS public key (96-byte compressed G2 point, hex). Used to Validate Signature and to verify proofs."></textarea>
+      </div>
+
+      <div class="ds-row">
+        <select class="ds-grow" id="ds_bbs_ks_format" name="ds_bbs_ks_format" title="Keystore format. BBS keys export as a JWK (OKP / Bls12381G2); PEM/DER/PKCS#12 have no standard BBS representation.">
+          <option value="jwk" selected="selected">JWK</option>
+          <option value="pem">PEM</option>
+          <option value="der">DER</option>
+          <option value="pkcs12">PKCS#12</option>
+        </select>
+        <input class="ds-grow" type="password" id="ds_bbs_ks_password" name="ds_bbs_ks_password" placeholder="password (optional)" title="Optional password. Protects the JWK export (PBES2 JWE)." />
+        <input type="submit" value="Download Keys" onclick="return digital_signature.bbsDownloadKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.bbsSign();" title="Sign the message list with the Private Key; the Base64 signature is placed in the Signature box." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.bbsValidate();" title="Verify the Signature against the message list using the Public Key." />
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Derived Proof (selective disclosure)</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Zero-based indexes into the message list, comma- or space-separated. Empty discloses nothing, which is allowed.">Disclosed Indexes</label>
+          <input type="text" id="ds_bbs_disclosed" name="ds_bbs_disclosed" title="Which messages the proof reveals, by index. Empty = disclose none." />
+        </div>
+        <div class="ds-grow">
+          <label title="The verifier's nonce. It is bound into the proof, so a proof replayed into another session is refused.">Presentation Header</label>
+          <input type="text" id="ds_bbs_ph" name="ds_bbs_ph" title="Presentation header (the verifier's nonce), bound into the derived proof." />
+        </div>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The Base64-encoded derived proof. Produced by Derive Proof; used as input by Verify Proof.">Proof (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_bbs_proof');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="4" id="ds_bbs_proof" name="ds_bbs_proof" title="Base64 BBS derived proof. Populated by Derive Proof; paste one here to Verify Proof."></textarea>
+      </div>
+      <div class="ds-row">
+        <input type="submit" value="Derive Proof" onclick="return digital_signature.bbsProofGen();" title="Turn the signature into a fresh proof disclosing only the chosen messages." />
+        <input type="submit" value="Verify Proof" onclick="return digital_signature.bbsProofVerify();" title="Verify the proof against the disclosed messages, the header, the presentation header and the Public Key." />
+      </div>
+    </div>
+
+    <input class="ds-status" type="text" id="ds_bbs_status" name="ds_bbs_status" title="Status / result of the last operation." readonly />
   </fieldset>
 
   <!-- ===================== Keyed-Hash MACs ===================== -->

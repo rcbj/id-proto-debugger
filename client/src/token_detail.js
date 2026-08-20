@@ -790,12 +790,12 @@ $(document).on("change", "#jwt_verification_type", function() {
 // ?from= parameter (the same convention the tools pages use). Only known pages
 // are honoured, so the parameter cannot become an open redirect.
 //
-// debugger2.html additionally wants redirectFromTokenDetail=true: it is what
-// tells that page to re-render the token panes it had before the detour.
+// oauth2_oidc_2.html additionally wants redirectFromTokenDetail=true: it is
+// what tells that page to re-render the token panes it had before the detour.
 // ---------------------------------------------------------------------------
 var RETURN_TARGETS = {
-  'debugger.html': '/debugger.html',
-  'debugger2.html': '/debugger2.html?redirectFromTokenDetail=true',
+  'oauth2_oidc_1.html': '/oauth2_oidc_1.html',
+  'oauth2_oidc_2.html': '/oauth2_oidc_2.html?redirectFromTokenDetail=true',
   'vc-issuance-1.html': '/vc-issuance-1.html',
   'vc-issuance-2.html': '/vc-issuance-2.html',
   'vc-issuance-3.html': '/vc-issuance-3.html',

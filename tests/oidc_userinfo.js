@@ -1,8 +1,8 @@
 // File: oidc_userinfo.js
 //
 // The UserInfo endpoint (OIDC Core section 5.3) reached the way a user reaches
-// it: through the three "UserInfo Data" links debugger2.html puts on its three
-// token sets. Tokens come from the OIDC Authorization Code flow, then:
+// it: through the three "UserInfo Data" links oauth2_oidc_2.html puts on its
+// three token sets. Tokens come from the OIDC Authorization Code flow, then:
 //
 //   1. Token Endpoint Results          — the set the flow produced
 //   2. Token Endpoint Results for      — the set the most recent refresh call
@@ -122,10 +122,10 @@ async function obtainTokens(driver, { clientId, scope, user }) {
   // NO driver.get() here. The caller has just run discovery, and Populate fills
   // the FIELDS — storage is only written later, when something calls
   // writeValuesToLocalStorage() (Authorize, or a link click). So reloading
-  // debugger.html at this point repopulates every field FROM STORAGE, quietly
-  // restoring the seeded placeholders (`https://localhost/oidc/...`) over what
-  // discovery just found. The symptom is three pages away: the UserInfo page
-  // shows the placeholder endpoint and the call goes nowhere.
+  // oauth2_oidc_1.html at this point repopulates every field FROM STORAGE,
+  // quietly restoring the seeded placeholders (`https://localhost/oidc/...`)
+  // over what discovery just found. The symptom is three pages away: the
+  // UserInfo page shows the placeholder endpoint and the call goes nowhere.
   await driver.wait(until.elementLocated(By.id("authorization_grant_type")),
                     waitTime * 3);
   // The Configuration Parameters pane auto-collapses once discovery has run, so
@@ -159,10 +159,11 @@ async function obtainTokens(driver, { clientId, scope, user }) {
   // The OP may already have a session, in which case it answers straight away.
   await driver.wait(async function () {
     if ((await driver.getCurrentUrl())
-        .indexOf("/debugger2.html") >= 0) return true;
+        .indexOf("/oauth2_oidc_2.html") >= 0) return true;
     return (await driver.findElements(By.id("username"))).length > 0;
   }, waitTime * 4,
-      "Neither the OP's login screen nor a return to debugger2.html arrived.");
+      "Neither the OP's login screen nor a return to oauth2_oidc_2.html " +
+          "arrived.");
   if ((await driver.findElements(By.id("username"))).length) {
     await driver.findElement(By.id("username")).clear();
     await driver.findElement(By.id("username")).sendKeys(user);
@@ -170,7 +171,7 @@ async function obtainTokens(driver, { clientId, scope, user }) {
     if (pw.length) await pw[0].sendKeys(user);
     await driver.findElement(By.id("kc-login")).click();
   }
-  await driver.wait(until.urlContains("/debugger2.html"), waitTime * 5);
+  await driver.wait(until.urlContains("/oauth2_oidc_2.html"), waitTime * 5);
 
   // Browser-direct, so this job needs the client and the OP and nothing else.
   // (It is the Token Request that is switched here, not the UserInfo call —
@@ -366,7 +367,7 @@ async function exerciseUserInfoLink(driver, source, expected) {
   // ...and back, which is the other half of "exercise the page".
   await clickStable(driver, By.partialLinkText("Return to debugger"),
                     "Return to debugger");
-  await driver.wait(until.urlContains("/debugger2.html"), waitTime * 3);
+  await driver.wait(until.urlContains("/oauth2_oidc_2.html"), waitTime * 3);
   await driver.wait(until.elementLocated(By.id(source.pane)), waitTime * 3);
   log.info("[" + source.name +
            "] OK — Return to debugger came back with the pane intact.");
@@ -465,9 +466,9 @@ async function test() {
              metadata.userinfo_endpoint + ".");
 
     await driver.manage().deleteAllCookies();
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     await driver.executeScript("window.localStorage.clear();");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     await populateMetadata(driver, discovery);
 
     const originalAccessToken = await obtainTokens(driver, { clientId: clientId,
@@ -525,8 +526,8 @@ async function test() {
 const program = new Command();
 program
   .name('oidc_userinfo')
-  .description("The UserInfo endpoint through all three of debugger2.html's " +
-      "UserInfo Data links.")
+  .description("The UserInfo endpoint through all three of " +
+      "oauth2_oidc_2.html's UserInfo Data links.")
   .addOption(new Option("-u, --url <url>",
       "Set base URL.").makeOptionMandatory())
   .addOption(new Option("-b, --browser",

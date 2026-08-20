@@ -18,7 +18,7 @@
 //      would catch it — enforceStoragePreference() names each key explicitly,
 //      so a new key is exactly the kind of thing that gets forgotten there;
 //   3. the cap holds, and trims the OLDEST rather than emptying the list the
-//      way debugger2.js's Operation History does.
+//      way oauth2_oidc_2.js's Operation History does.
 //
 // Node only: the module is driven against a fake window.localStorage /
 // sessionStorage, which is all it touches. No browser, no services, never

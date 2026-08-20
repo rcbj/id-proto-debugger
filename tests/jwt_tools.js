@@ -131,14 +131,15 @@ async function addCustomClaim(driver, name, value, type) {
 // check compliance, sign + X.509-verify, and encrypt + decrypt.
 async function jwtToolsActivities(driver) {
   log.debug("Entering jwtToolsActivities().");
-  log.info("Navigate back to debugger.html.");
-  await driver.get(baseUrl + "/debugger.html");
+  log.info("Navigate back to oauth2_oidc_1.html.");
+  await driver.get(baseUrl + "/oauth2_oidc_1.html");
 
   log.info("Expand the Tools pane.");
   await click(driver, By.id("tools_expand_button"));
 
   log.info("Click the JWT Tools link.");
-  var jwtToolsLink = By.css('a[href="/jwt_tools.html?from=debugger.html"]');
+  var jwtToolsLink =
+      By.css('a[href="/jwt_tools.html?from=oauth2_oidc_1.html"]');
   await driver.wait(until.elementLocated(jwtToolsLink), waitTime);
   await driver.wait(until.elementIsVisible(driver.findElement(jwtToolsLink)),
                     waitTime);
@@ -538,7 +539,7 @@ async function test() {
     log.info("Clear all cookies.");
     await driver.manage().deleteAllCookies();
     log.info("Load the debugger and run the OIDC Authorization Code flow.");
-    await driver.get(baseUrl + "/debugger.html");
+    await driver.get(baseUrl + "/oauth2_oidc_1.html");
     await populateMetadata(driver, discovery_endpoint);
     let access_token = await getAccessTokenAuthCode(driver, client_id,
         client_secret, scope, pkce_enabled, { baseUrl });

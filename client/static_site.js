@@ -3,14 +3,16 @@
 // What the STATIC deployments (idptools.com, test.idptools.com) leave out, and
 // what the landing page says about it.
 //
-// Kerberos is the one workflow here that cannot run without a backend, and the
-// reason is not policy: it speaks DER over TCP and UDP port 88, so a browser
-// cannot open a socket to a KDC and every page but the decoder goes through
-// api/krb5_relay.js. The Lambda@Edge trick that rescued WS-Federation and SAML
-// (infra/CLAUDE.md) cannot rescue this one — there is no HTTP request to catch.
-// Shipping those pages to a site with no api gives a page whose every button
-// fails at the network, which is worse than not offering it: the failure names
-// a fetch rather than the absent backend.
+// Kerberos and LDAP are the two workflows here that cannot run without a
+// backend, and the reason is not policy: both are binary protocols over a raw
+// TCP socket — Kerberos is DER on port 88, LDAP is BER on port 389 — so a
+// browser cannot open a connection to either, and every page of both goes
+// through the api (api/krb5_relay.js, api/ldap_client.js). The Lambda@Edge
+// trick that rescued WS-Federation and SAML (infra/CLAUDE.md) cannot rescue
+// these — there is no HTTP request to catch. Shipping those pages to a site
+// with no api gives a page whose every button fails at the network, which is
+// worse than not offering it: the failure names a fetch rather than the absent
+// backend.
 //
 // So the static build drops the pages entirely and marks their landing card
 // unavailable. The DECODER is dropped with them although it needs no network:
@@ -66,7 +68,13 @@ var EXCLUDED_PAGES = [
   // carries comes from a KDC on port 88, and obtaining one is the AS and TGS
   // pages, which are not here. A SPNEGO page on a static site would be a page
   // whose only button says "no service ticket held" for ever.
-  'spnego'
+  'spnego',
+  // LDAP, for the same reason as Kerberos and with none of SPNEGO's ambiguity:
+  // RFC 4511 is BER over a TCP socket, so EVERY operation on that page is a
+  // call to the api, and there is not one thing left on it that works without
+  // one. Unlike the Kerberos family there is no decoder half to consider — the
+  // page has no offline mode at all.
+  'ldap'
 ];
 
 // Everything else those pages own, as paths relative to the site root. Only
@@ -95,7 +103,10 @@ var EXCLUDED_ASSETS = [
   // checkbox, so a surviving copy is a file linking to a page that was
   // dropped — which fails the build in
   // nothingThatShipsLinksToADroppedPage() rather than shipping.
-  'partials/krb_tickets.html'
+  'partials/krb_tickets.html',
+  // The LDAP page's own stylesheet. It has no partials — the page is one file —
+  // so this is the whole of what it owns beyond the page and the bundle.
+  'css/ldap.css'
 ];
 
 // The marker an <a class="landing-card"> carries in client/public/index.html to
