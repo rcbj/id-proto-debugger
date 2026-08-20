@@ -136,6 +136,72 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+  # THE SAME MOCK STS A SECOND TIME, IN RFC 9700 MODE.
+  #
+  # A second INSTANCE rather than a second setting, because `oauth2.rfc9700` is
+  # restart-only in that service: it derives `global.https`, and the main port's
+  # scheme is decided once when the listener is bound. One process cannot serve
+  # the permissive pass and the compliant one, so the OAuth2/OIDC matrix gets a
+  # server of its own to run against a second time. See docs/rfc9700.md.
+  #
+  # WHY EVERY PORT IS RESTATED. Under host networking there is no network
+  # namespace to hide behind — this container and `sts` above share the host's,
+  # so the seven listeners the mock binds would land on the seven the first one
+  # already holds. The main port has no error handler on its listen, so an
+  # EADDRINUSE there is an uncaught exception and the container dies at
+  # startup; the Kerberos and LDAP listeners record a bind failure instead of
+  # throwing, which is worse, because the service then comes up healthy while
+  # answering for neither. Each port is therefore moved deliberately rather
+  # than left to collide. (On the bridge stack,
+  # docker-compose-run-tests.yml, none of this applies and the second instance
+  # keeps the defaults.)
+  #
+  # 8081 IS THE ONE THAT MATTERS AND IT IS NOT SET HERE ON PURPOSE: the whole
+  # suite reaches the permissive mock on it, and anything else holding it takes
+  # out every STS-backed test at once. requireStsReachable() in
+  # local-run-tests.sh names the port when something else has it.
+  sts-rfc9700:
+    container_name: sts-rfc9700
+    hostname: sts-rfc9700
+    # The same image as `sts` — only the environment differs, so nothing is
+    # built twice and the two instances cannot drift.
+    image: rcbj/sts
+    network_mode: "host"
+    build:
+      context: ./sts
+    environment:
+      - CONFIG_FILE=./env/local.js
+      # The mode itself. It also derives global.https, which is why the URL the
+      # tests are handed (RFC9700_STS_URL) is https rather than http.
+      - STS_OAUTH2_RFC9700=true
+      # The main port. docs/rfc9700.md names 8091, and so does
+      # local-run-tests.sh.
+      - STS_PORT=8091
+      # The remaining six listeners, moved off the first instance's.
+      - STS_TLS_PORT=8453
+      - STS_MTLS_PORT=9453
+      - KRB5_KDC_PORT=8088
+      - KRB5_SERVICE_PORT=8898
+      - LDAP_PORT=3389
+      - LDAPS_PORT=3636
+    # THE SCHEME IS TRIED BOTH WAYS, and that is not hedging. With the mode on
+    # this port is HTTPS; if the sts/ submodule is pinned before the mock had
+    # the mode at all, STS_OAUTH2_RFC9700 names nothing and the same image
+    # comes up plain HTTP here. An https-only check would leave the container
+    # permanently unhealthy in that case — which on the containerized stack
+    # blocks `tests` on its depends_on and produces a compose timeout instead
+    # of a named failure. Liveness is this check's question; whether the thing
+    # is actually COMPLIANT is asked where it can be answered usefully, by
+    # requireStsReachable() on the local stack and by rfc9700_flows.js itself,
+    # which refuses a permissive STS by name.
+    # --insecure equivalent (rejectUnauthorized:false): the certificate is
+    # self-signed and regenerated every start, so nothing can have an anchor.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"var u={host:'localhost',port:8091,path:'/healthcheck',rejectUnauthorized:false};function ok(r){process.exit(r.statusCode===200?0:1)}require('https').get(u,ok).on('error',function(){require('http').get(u,ok).on('error',function(){process.exit(1)})})\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
   # WS-Federation IdP side-car (Keycloak 8.0.1 + cloudtrust keycloak-wsfed). Host
   # networking, so it uses a WildFly port-offset of 2 (HTTP -> 8082) to avoid
   # colliding with the 26.x Keycloak (8080) and the STS (8081). configureKeycloakWsfed

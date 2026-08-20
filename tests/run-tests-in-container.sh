@@ -61,6 +61,29 @@ init()
       ;;
   esac
   export WSFED_STS_METADATA_URL
+  # RFC 9700 (OAuth 2.0 Security BCP): the SECOND mock STS, the one started with
+  # STS_OAUTH2_RFC9700=true, which is a separate container here
+  # (docker-compose-run-tests.yml, service sts-rfc9700) rather than a setting on
+  # the one above — that mode derives global.https and the main port's scheme is
+  # decided once, when the listener is bound, so one process cannot serve both
+  # the permissive pass and the compliant one.
+  #
+  # https, and 8081: on this bridge stack the second instance has a namespace of
+  # its own and keeps every default port, so only the NAME distinguishes the
+  # two.
+  # (The host-networked local stack has to move all seven, and puts this one on
+  # 8091 — see local-tests.yml.)
+  #
+  # Same DNS rule as the two above, and it is browser-facing for the same
+  # reason: the page navigates to the authorization endpoint. Unset elsewhere,
+  # so run-report.js skips the five RFC 9700 jobs rather than pointing them at
+  # something that is not in that mode — which would pass while proving nothing.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      RFC9700_STS_URL="${RFC9700_STS_URL:-https://sts-rfc9700:8081}"
+      ;;
+  esac
+  export RFC9700_STS_URL
   # The same mock STS hosts the TLS / mutual-TLS endpoint the PKI page presents
   # a client certificate to. This one is NOT browser-facing — the api opens the
   # socket, and this test talks to the plain HTTP port itself to configure the

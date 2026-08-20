@@ -14,6 +14,10 @@ const log = bunyan.createLogger({ name: 'oauth2_oidc_2',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
 const { convertToOAuth2Format  } = require('./data.js');
+// RFC 9700 (OAuth 2.0 Security BCP), the client half. Every rule it holds is
+// behind the checkbox at the top of the Configuration Parameters pane; with
+// the box clear nothing in this file consults it.
+const rfc9700 = require("./rfc9700");
 
 const TOKEN_HISTORY_LIMIT = 1000;
 const OPERATION_HISTORY_LIMIT = 1000;
@@ -87,7 +91,15 @@ function getParameterByName(name, url)
   log.debug("Entering getParameterByName().");
   if (!url)
   {
-    url = window.location.search;
+    // RFC 9700 section 4.12.2 (requirement 10.1): in compliance mode the
+    // authorization response is removed from the address bar as soon as it has
+    // been read, so that neither the code nor a token survives in browser
+    // history. Everything that reads a response parameter after that point
+    // would otherwise see an empty query string, so the value taken just
+    // before the scrub is what is answered from. Out of mode the snapshot is
+    // never taken and this is the query string it always was.
+    url = rfc9700ScrubbedSearch !== null ? rfc9700ScrubbedSearch
+                                         : window.location.search;
   }
   var urlParams = new URLSearchParams(url);
   log.debug("Leaving getParameterByName().");
@@ -137,6 +149,30 @@ function tokenButtonClick() {
   recalculateRefreshRequestDescription();
   log.debug("Reset error displays.");
   resetErrorDisplays();
+  // RFC 9700 sections 4.5 and 2.4: a code is presented once, a rotated refresh
+  // token is never presented again, and the password grant is not used at all.
+  // Checked before the request is composed rather than after, because the
+  // point of each of the three is that the request is not made.
+  if (rfc9700.enabled()) {
+    var requestVerdict = rfc9700.checkTokenRequest({
+      grantType: $("#token_grant_type").val(),
+      code: $("#code").val(),
+      codeVerifier: $("#token_pkce_code_verifier").val(),
+      refreshToken: ""
+    });
+    renderRfc9700Report("rfc9700_token_report", "Token Request",
+                        requestVerdict);
+    if (!requestVerdict.ok) {
+      log.debug("Leaving tokenButtonClick(). Refused by RFC 9700 mode.");
+      return false;
+    }
+    // Recorded as presented, not as accepted: a code refused by the server is
+    // still a code that has left this browser, and presenting it again is
+    // still what section 4.5 forbids.
+    if ($("#token_grant_type").val() === "authorization_code") {
+      rfc9700.noteCodeRedeemed($("#code").val());
+    }
+  }
   log.debug("Build internal representation of token request data.");
   var formData = buildInternalTokenAPIRequestMessage();
   if (useFrontEnd) {
@@ -532,6 +568,36 @@ function successfulInternalTokenAPICall(data, textStatus, request)
           + textStatus
           + ", request=" 
           + JSON.stringify(request));
+  // RFC 9700 section 4.5.3 (requirement 3.2): the client MUST NOT use any
+  // token from this response until the ID Token's nonce has been validated.
+  // "Use" includes rendering it, writing it to Token History, and offering it
+  // to the UserInfo, introspection and refresh panes — so the refusal is here,
+  // at the top of the handler, before any of that has happened. Everything
+  // this response carried is discarded.
+  if (rfc9700.enabled()) {
+    var responseVerdict = rfc9700.checkTokenResponse({
+      data: data,
+      grantType: $("#token_grant_type").val(),
+      clientId: $("#token_client_id").val(),
+      requestedScope: $("#token_scope").val(),
+      previousRefreshToken: currentRefreshToken
+    });
+    renderRfc9700Report("rfc9700_token_report", "Token Response",
+                        responseVerdict);
+    if (!responseVerdict.ok) {
+      log.debug("Discarding the token set: RFC 9700 mode refused it.");
+      $("#display_token_error_class").html(DOMPurify.sanitize(
+        "<fieldset><legend>Token Response Refused</legend><p>The token " +
+        "endpoint answered, and RFC 9700 mode discarded what it returned. " +
+        "The reasons are in the RFC 9700 report above. Nothing from this " +
+        "response has been stored or displayed.</p></fieldset>"));
+      log.debug("Leaving successfulInternalTokenAPICall(). Refused.");
+      return;
+    }
+    // Section 4.14.2: once the server has rotated the refresh token, the one
+    // it replaced must never be sent again.
+    rfc9700.noteRefreshRotated(currentRefreshToken, data.refresh_token);
+  }
   var token_endpoint_result_html = "";
   // What the server said about the binding. Recorded rather than inferred,
   // because asking for a DPoP-bound token does not make one: a server that
@@ -809,6 +875,24 @@ function buildInternalRefreshAPIRequestMessage() {
   return formData;
 }
 
+// The RFC 9700 gate on a refresh, and on what comes back from one. Split out
+// of refreshButtonClick() and successfulInternalRefreshAPICall() so that the
+// rule is stated once for a pane that has three call paths through it.
+function rfc9700GateRefreshRequest() {
+  log.debug("Entering rfc9700GateRefreshRequest().");
+  if (!rfc9700.enabled()) {
+    log.debug("Leaving rfc9700GateRefreshRequest(). Mode off.");
+    return { ok: true, blocked: [], findings: [] };
+  }
+  var verdict = rfc9700.checkTokenRequest({
+    grantType: "refresh_token",
+    refreshToken: $("#refresh_refresh_token").val()
+  });
+  renderRfc9700Report("rfc9700_refresh_report", "Refresh Request", verdict);
+  log.debug("Leaving rfc9700GateRefreshRequest(). ok=" + verdict.ok);
+  return verdict;
+}
+
 function refreshButtonClick() {
   log.debug("Entering refreshButtonClick().");
   log.debug("Entering refresh Submit button clicked function.");
@@ -818,6 +902,13 @@ function refreshButtonClick() {
   recalculateRefreshRequestDescription();
   log.debug("Reset error displays.");
   resetErrorDisplays();
+  // RFC 9700 section 4.14.2: a refresh token the server has already replaced
+  // is not sent again. See rfc9700GateRefreshRequest().
+  var refreshRequestVerdict = rfc9700GateRefreshRequest();
+  if (!refreshRequestVerdict.ok) {
+    log.debug("Leaving refreshButtonClick(). Refused by RFC 9700 mode.");
+    return false;
+  }
   var formData = buildInternalRefreshAPIRequestMessage();
   if(useRefreshFrontEnd) {
     $.ajax({
@@ -846,6 +937,34 @@ function refreshButtonClick() {
 
 function successfulInternalRefreshAPICall(data, textStatus, request) {
   log.debug("Entering successfulInternalRefreshAPICall().");
+  // RFC 9700 section 4.14.2. The refresh response is judged on the same terms
+  // as the token response — the ID Token it may carry, whether the token came
+  // back bound, and above all whether the refresh token was ROTATED, which is
+  // the property this section is mostly about. A refusal discards the set for
+  // the same reason it does there.
+  if (rfc9700.enabled()) {
+    var refreshVerdict = rfc9700.checkTokenResponse({
+      data: data,
+      grantType: "refresh_token",
+      clientId: $("#refresh_client_id").val(),
+      requestedScope: $("#refresh_scope").val(),
+      previousRefreshToken: $("#refresh_refresh_token").val()
+    });
+    renderRfc9700Report("rfc9700_refresh_report", "Refresh Response",
+                        refreshVerdict);
+    if (!refreshVerdict.ok) {
+      log.debug("Discarding the refreshed token set: RFC 9700 mode refused " +
+                "it.");
+      $("#display_refresh_error_class").html(DOMPurify.sanitize(
+        "<fieldset><legend>Refresh Response Refused</legend><p>RFC 9700 " +
+        "mode discarded what the token endpoint returned. The reasons are " +
+        "in the RFC 9700 report above.</p></fieldset>"));
+      log.debug("Leaving successfulInternalRefreshAPICall(). Refused.");
+      return;
+    }
+    rfc9700.noteRefreshRotated($("#refresh_refresh_token").val(),
+                               data.refresh_token);
+  }
   log.debug("Entering ajax success function for Refresh Token call: data=" 
             + JSON.stringify(data)
             + ", textStatus="
@@ -1156,6 +1275,12 @@ function resetErrorDisplays()
 function writeValuesToLocalStorage()
 {
   log.debug("Entering writeValuesToLocalStorage().");
+  // The compliance switch is a configuration setting like everything else in
+  // that pane. Both pages write the same key through the same module so that
+  // one file owns the spelling and the coercion.
+  if ($("#rfc9700_mode").length) {
+    rfc9700.setEnabled($("#rfc9700_mode").is(":checked"));
+  }
   if (localStorage) {
       localStorage.setItem("token_client_id", $("#token_client_id").val());
       localStorage.setItem("token_client_secret",
@@ -1510,6 +1635,12 @@ function loadValuesFromLocalStorage()
       renderCurrentlyViewing(savedActiveIndex, cvHistory[savedActiveIndex]);
     }
   }
+  // The RFC 9700 switch, and the shape it puts this page into. Last, because
+  // applyRfc9700Ui() moves the client authentication style, the DPoP switch
+  // and the front/back-end choice — doing it any earlier would have every one
+  // of those overwritten by the stored values read above.
+  $("#rfc9700_mode").prop("checked", rfc9700.enabled());
+  applyRfc9700Ui();
   log.debug("Leaving loadValuesFromLocalStorage().");
 }
 
@@ -2203,6 +2334,45 @@ $(document).ready(function() {
 
   processStateParameter();
 
+  // RFC 9700's judgement on the authorization RESPONSE — state, the RFC 9207
+  // iss parameter, and whether this browser session started the transaction at
+  // all. It runs before the error block below because an error IS a response
+  // and section 4.10.1 has something to say about which errors a server should
+  // have redirected at all.
+  //
+  // A refusal stops the page: the token request pane is hidden, because
+  // exchanging a code from a response that failed a MUST is precisely what
+  // sections 2 and 4.5 exist to prevent.
+  if (rfc9700.enabled() && rfc9700AuthorizationResponsePresent()) {
+    var authzVerdict = rfc9700.checkAuthorizationResponse({
+      state: DOMPurify.sanitize(getParameterByName("state") ||
+                                parseFragment()["state"] || ""),
+      iss: DOMPurify.sanitize(getParameterByName("iss") ||
+                              parseFragment()["iss"] || ""),
+      code: DOMPurify.sanitize(getParameterByName("code") ||
+                               parseFragment()["code"] || ""),
+      error: DOMPurify.sanitize(getParameterByName("error") ||
+                                parseFragment()["error"] || "")
+    });
+    renderRfc9700Report("rfc9700_response_report", "Authorization Response",
+                        authzVerdict);
+    if (!authzVerdict.ok) {
+      log.debug("RFC 9700 mode refused the authorization response.");
+      $("#step3").hide();
+      $("#step4").hide();
+      $("#step5").hide();
+      $("#step6").hide();
+      $("#step7").hide();
+      rfc9700ScrubAuthorizationResponse();
+      log.debug("Leaving document.ready(). Refused by RFC 9700 mode.");
+      return;
+    }
+    // Only now, and only on a response that passed: consuming a state on a
+    // response that was rejected would make the SECOND, legitimate delivery
+    // fail for the wrong reason and cite the wrong rule.
+    rfc9700.consumeState();
+  }
+
   // an error was returned from the authorization endpoint
   var errorDescriptionParam =
       DOMPurify.sanitize(getParameterByName('error_description'));
@@ -2236,7 +2406,21 @@ $(document).ready(function() {
   resetUI();
   initFields();
   generateCustomParametersListUI();
-  $("#code").val(getParameterByName('code'));
+  // The authorization code, from wherever the response mode put it.
+  //
+  // The query string was the only place this looked until form_post: RFC 9700
+  // section 4.12.2 recommends that mode, so client/server.js accepts the POST
+  // and hands the parameters to this page in the FRAGMENT (a fragment is never
+  // sent to a server, which is the point) — and on a plain code flow the code
+  // then arrived somewhere nothing read. recreateUniqueGrantFlowElements()
+  // already had a fragment fallback, but only for the OAuth2 code grant and
+  // the three hybrids, so oidc_authorization_code_flow fell through both and
+  // the Token Request pane opened with an empty code field.
+  //
+  // Reading both places unconditionally is a no-op everywhere else: on a query
+  // response the first operand wins, and on a fragment response there was
+  // nothing in the query to lose.
+  $("#code").val(getParameterByName('code') || parseFragment()['code'] || '');
   $("#customTokenParametersCheck-yes").on("click",
     recalculateTokenRequestDescription);
   $("#customTokenParametersCheck-no").on("click",
@@ -2490,6 +2674,12 @@ $(document).ready(function() {
   }
 
   maybeContinueSdJwtVcFlow();
+  // RFC 9700 section 4.12.2 (requirement 10.1). Last thing in this handler,
+  // because everything above reads the response out of the live URL and the
+  // scrub replaces it. Out of mode the URL is left exactly as the identity
+  // provider delivered it, which is frequently the thing somebody came here to
+  // copy.
+  rfc9700ScrubAuthorizationResponse();
   log.debug("Leaving document.ready().");
 });
 
@@ -2845,15 +3035,56 @@ function parseFragment()
 {
   log.debug("Entering parseFragment().");
   log.debug("hash=" + window.location.hash);
-  var hash = window.location.hash.substr(1);
+  // As getParameterByName(): after the RFC 9700 scrub the live fragment is
+  // gone and the snapshot is the response.
+  var live = rfc9700ScrubbedHash !== null ? rfc9700ScrubbedHash
+                                          : window.location.hash;
+  var hash = live.substr(1);
 
   var result = hash.split("&").reduce(function (result, item) {
-      var parts = item.split("=");
-      result[parts[0]] = parts[1];
+      // Split on the FIRST '=' only. A base64url token has no '=' left in it
+      // (the padding is stripped), but a percent-decoded value can, and
+      // splitting on all of them silently truncated it.
+      var eq = item.indexOf("=");
+      var name = (eq === -1) ? item : item.substring(0, eq);
+      var value = (eq === -1) ? undefined : item.substring(eq + 1);
+      result[decodeFragmentComponent(name)] = decodeFragmentComponent(value);
       return result;
   }, {});
   log.debug("Leaving parseFragment().");
   return result;
+}
+
+// Percent-decode one half of a fragment parameter.
+//
+// This was not done at all until the form_post landing needed it, and the
+// reason it went unnoticed for so long is worth recording: the values that
+// have always arrived in a fragment are an implicit response's tokens, which
+// are base64url and therefore contain nothing that needs escaping — so a
+// decode was a no-op for every value this function had ever seen. iss and
+// state are not base64url. RFC 6749 section 4.2.2 requires the fragment to be
+// application/x-www-form-urlencoded, so decoding is what the specification
+// asked for the whole time.
+//
+// A malformed escape (a bare '%') makes decodeURIComponent throw, which in
+// this function would take out the whole page load for one bad character. The
+// raw text is returned instead: it is what this code did before, so the worst
+// case is the behaviour it always had.
+function decodeFragmentComponent(value) {
+  log.debug("Entering decodeFragmentComponent().");
+  if (value === undefined || value === null) {
+    log.debug("Leaving decodeFragmentComponent(). Nothing to decode.");
+    return value;
+  }
+  try {
+    var decoded = decodeURIComponent(value);
+    log.debug("Leaving decodeFragmentComponent(). Decoded.");
+    return decoded;
+  } catch (e) {
+    log.debug("Leaving decodeFragmentComponent(). Malformed escape, kept " +
+              "raw: " + e.message);
+    return value;
+  }
 }
 
 function displayOIDCArtifacts()
@@ -4539,7 +4770,185 @@ function setHeaderAuthStyleTokenExchange() {
   return false;
 }
 
+
+// ---------------------------------------------------------------------------
+// RFC 9700 compliance mode — this page's half.
+//
+// The rules are in client/src/rfc9700.js. What is here is the wiring: reading
+// the response, drawing the verdict, putting the page into the shape the mode
+// requires, and removing the authorization response from the address bar.
+// Nothing below runs unless the checkbox is ticked.
+// ---------------------------------------------------------------------------
+
+// The query string and fragment as they were when the page loaded, or null
+// while they are still live. Written by rfc9700ScrubAuthorizationResponse(),
+// read by getParameterByName() and parseFragment() — which is what lets the
+// response be taken out of the URL without taking it away from the page.
+var rfc9700ScrubbedSearch = null;
+var rfc9700ScrubbedHash = null;
+
+// True when this page load is one an identity provider sent an authorization
+// response to. The gate is asked this first because most loads of this page
+// are not: the Client Credentials grant never visits the authorization
+// endpoint at all, and the way back from the token detail page carries no
+// response of its own. Refusing those for having no transaction would make the
+// mode look broken on the two flows it has nothing to say about.
+function rfc9700AuthorizationResponsePresent() {
+  log.debug("Entering rfc9700AuthorizationResponsePresent().");
+  var fragment = parseFragment();
+  var present = !!(getParameterByName("code") || fragment["code"] ||
+      getParameterByName("state") || fragment["state"] ||
+      getParameterByName("error") || fragment["error"] ||
+      getParameterByName("access_token") || fragment["access_token"] ||
+      getParameterByName("id_token") || fragment["id_token"]);
+  log.debug("Leaving rfc9700AuthorizationResponsePresent(). present=" +
+            present);
+  return present;
+}
+
+// Requirement 10.1: take the authorization response out of the address bar and
+// out of this history entry.
+//
+// history.replaceState rather than pushState, so the response does not become
+// a second entry the back button can return to — which would put it back in
+// history, the one place this rule is about. The snapshot above is what keeps
+// every later read working.
+function rfc9700ScrubAuthorizationResponse() {
+  log.debug("Entering rfc9700ScrubAuthorizationResponse().");
+  if (!rfc9700.enabled()) {
+    log.debug("Leaving rfc9700ScrubAuthorizationResponse(). Mode off.");
+    return;
+  }
+  if (rfc9700ScrubbedSearch !== null) {
+    log.debug("Leaving rfc9700ScrubAuthorizationResponse(). Already done.");
+    return;
+  }
+  if (!window.location.search && !window.location.hash) {
+    log.debug("Leaving rfc9700ScrubAuthorizationResponse(). Nothing there.");
+    return;
+  }
+  rfc9700ScrubbedSearch = window.location.search;
+  rfc9700ScrubbedHash = window.location.hash;
+  try {
+    window.history.replaceState(null, "", window.location.pathname);
+    log.debug("Authorization response removed from the address bar.");
+  } catch (e) {
+    // replaceState throws on an opaque origin (a file: URL, a sandboxed
+    // frame). Neither is a context this page is served in, but a throw here
+    // would take out the whole ready() handler for a cosmetic rule, so it is
+    // reported and swallowed. The snapshot is already taken, so the page is
+    // consistent either way.
+    log.error("Could not scrub the authorization response from the URL: " +
+              e.message);
+  }
+  log.debug("Leaving rfc9700ScrubAuthorizationResponse().");
+}
+
+// Draw a verdict into one of the report containers. DOMPurify because the
+// findings quote values the server sent.
+function renderRfc9700Report(containerId, title, verdict) {
+  log.debug("Entering renderRfc9700Report(). containerId=" + containerId);
+  var container = $("#" + containerId);
+  if (!container.length) {
+    log.debug("Leaving renderRfc9700Report(). No container.");
+    return;
+  }
+  if (!verdict) {
+    container.html("");
+    log.debug("Leaving renderRfc9700Report(). Cleared.");
+    return;
+  }
+  container.html(DOMPurify.sanitize(rfc9700.report(title, verdict)));
+  log.debug("Leaving renderRfc9700Report().");
+}
+
+// Put the page into the shape the mode requires, or take it back out. As on
+// step 1, every change here is reversible: a control left disabled after the
+// mode is turned off is indistinguishable from a broken page.
+function applyRfc9700Ui() {
+  log.debug("Entering applyRfc9700Ui().");
+  var on = rfc9700.enabled();
+
+  // Section 1.11 and 5.1: the grants that do not survive.
+  $("#authorization_grant_type option").each(function () {
+    var value = $(this).val();
+    var refused = on && !rfc9700.grantAllowed(value);
+    $(this).prop("disabled", refused);
+    $(this).attr("title", refused ? rfc9700.grantRefusalReason(value) : null);
+  });
+
+  // Section 8.2: certificate validation.
+  if (on) {
+    $("#SSLValidate-yes").prop("checked", true);
+    $("#SSLValidate-no").prop("checked", false).prop("disabled", true);
+  } else {
+    $("#SSLValidate-no").prop("disabled", false);
+  }
+
+  // Requirement 6.2: client_secret_basic rather than client_secret_post, on
+  // all four panes that authenticate a client. The secret is not in a URL
+  // either way — the rule RFC 9700 states as MUST NOT — so this is the SHOULD
+  // half, and it is applied by selecting rather than by disabling: the point
+  // of a debugger is that the other style stays reachable.
+  if (on) {
+    var groups = ["token", "refresh", "revocation"];
+    for (var i = 0; i < groups.length; i++) {
+      $("#" + groups[i] + "_headerAuthStyleCheckToken").prop("checked", true);
+      $("#" + groups[i] + "_postAuthStyleCheckToken").prop("checked", false);
+    }
+    $("#tokenexchange_headerAuthStyle").prop("checked", true);
+    $("#tokenexchange_postAuthStyle").prop("checked", false);
+  }
+
+  // Requirement 4.1: sender-constrained access tokens. Two controls move
+  // together and they have to, which is why this is one block rather than
+  // two: a DPoP proof cannot be carried by the PROXIED token call (the api
+  // makes that request, so a proof built here would name the wrong htu), so
+  // turning DPoP on without also selecting the front end produces an unbound
+  // token and a red warning by default — the mode looking broken on its first
+  // use. Both stay reversible; turning either back off yields a SHOULD row in
+  // the report rather than a refusal, because RFC 9700 states this at SHOULD.
+  if (on && appconfig.backendAvailable !== false) {
+    $("#token_initiateFromFrontEnd").prop("checked", true);
+    $("#token_initiateFromBackEnd").prop("checked", false);
+    setInitiateFromEnd();
+  }
+  if (on && !$("#dpop_enabled").is(":checked")) {
+    $("#dpop_enabled").prop("checked", true);
+    setDpopEnabled();
+  }
+
+  $("#rfc9700_mode_status").html(DOMPurify.sanitize(on
+    ? "<span class='dbg-ok'>Client-side RFC 9700 requirements are being " +
+      "enforced on this workflow.</span>"
+    : ""));
+
+  log.debug("Leaving applyRfc9700Ui(). on=" + on);
+}
+
+// The checkbox's own handler. Returns true so the box actually toggles.
+function onRfc9700ModeChange() {
+  log.debug("Entering onRfc9700ModeChange().");
+  rfc9700.setEnabled($("#rfc9700_mode").is(":checked"));
+  if (!rfc9700.enabled()) {
+    renderRfc9700Report("rfc9700_response_report", "", null);
+    renderRfc9700Report("rfc9700_token_report", "", null);
+    renderRfc9700Report("rfc9700_refresh_report", "", null);
+  }
+  applyRfc9700Ui();
+  recalculateTokenRequestDescription();
+  recalculateRefreshRequestDescription();
+  log.debug("Leaving onRfc9700ModeChange().");
+  return true;
+}
+
 module.exports = {
+  onRfc9700ModeChange,
+  applyRfc9700Ui,
+  renderRfc9700Report,
+  rfc9700AuthorizationResponsePresent,
+  rfc9700ScrubAuthorizationResponse,
+  rfc9700GateRefreshRequest,
   OnSubmitTokenEndpointForm,
   getParameterByName,
   resetUI,

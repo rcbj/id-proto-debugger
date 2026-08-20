@@ -217,3 +217,63 @@ textarea.metadata-json-field {
   white-space: pre;
   overflow-wrap: normal;
 }
+
+/* ---------------------------------------------------------------------------
+   RFC 9700 compliance report.
+
+   Both pages of the OAuth2 / OIDC workflow load this file, which is why the
+   rules live here rather than in oauth2_oidc_2.css: the report is drawn in the
+   same shape on both, by one renderer (client/src/rfc9700.js report()).
+
+   The three status colours are declared unscoped as well as inside the report,
+   because .dbg-bad was already in use by that workflow's DPoP status line with
+   no rule anywhere to give it a colour — it read as ordinary text, which for a
+   line saying "this token came back unbound" is the wrong half of the message.
+   --------------------------------------------------------------------------- */
+.dbg-bad { color: #b00020; }
+.dbg-warn { color: #8a6d00; }
+.dbg-ok { color: #1b5e20; }
+
+.rfc9700-report {
+  margin-top: 8px;
+}
+
+.rfc9700-report table.rfc9700-findings,
+.rfc9700-report table.rfc9700-catalogue {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  word-wrap: break-word;
+  font-size: 90%;
+}
+
+.rfc9700-report table.rfc9700-findings th,
+.rfc9700-report table.rfc9700-findings td,
+.rfc9700-report table.rfc9700-catalogue th,
+.rfc9700-report table.rfc9700-catalogue td {
+  border: 1px solid #ddd;
+  padding: 4px 6px;
+  vertical-align: top;
+  text-align: left;
+}
+
+/* The level column is the one a reader scans, so it is narrow and fixed; the
+   finding text is what needs the room. */
+.rfc9700-report table.rfc9700-findings th:nth-child(1),
+.rfc9700-report table.rfc9700-findings td:nth-child(1) { width: 14%; }
+.rfc9700-report table.rfc9700-findings th:nth-child(2),
+.rfc9700-report table.rfc9700-findings td:nth-child(2) { width: 10%; }
+.rfc9700-report table.rfc9700-findings th:nth-child(3),
+.rfc9700-report table.rfc9700-findings td:nth-child(3) { width: 26%; }
+
+/* The row carries the class, so colour the cells rather than relying on
+   inheritance through the table's own rules. */
+.rfc9700-report tr.dbg-bad td { color: #b00020; }
+.rfc9700-report tr.dbg-warn td { color: #8a6d00; }
+.rfc9700-report tr.dbg-ok td { color: #1b5e20; }
+
+/* The status text beside the checkbox itself. */
+#rfc9700_mode_status {
+  margin-left: 8px;
+  font-size: 90%;
+}

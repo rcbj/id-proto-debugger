@@ -146,6 +146,50 @@ services:
       - keycloak
     ports:
       - 8081:8081
+  # THE SAME MOCK STS A SECOND TIME, IN RFC 9700 MODE — see the long note on
+  # sts-rfc9700 in local-tests.yml for why it has to be a second instance
+  # (oauth2.rfc9700 derives global.https, and the main port's scheme is decided
+  # once when the listener is bound).
+  #
+  # WHAT IS DIFFERENT HERE: nothing but the mode. This stack is a bridge
+  # network, so this container has a namespace of its own and the seven
+  # listeners keep their default ports without colliding with `sts` — only the
+  # container's NAME distinguishes them, which is also how the tests address it
+  # (RFC9700_STS_URL=https://sts-rfc9700:8081). Nothing is published to the
+  # host: only the tests container needs to reach it.
+  sts-rfc9700:
+    container_name: sts-rfc9700
+    image: rcbj/sts
+    environment:
+      - CONFIG_FILE=./env/docker-tests.js
+      # The mode. It also derives global.https, which is why the URL the tests
+      # are handed is https rather than http.
+      - STS_OAUTH2_RFC9700=true
+      # As on the permissive instance: the browser runs in the tests container,
+      # where localhost:3000 is nothing at all.
+      - OID4VCI_WALLET_URL=http://client:3000
+    build:
+      context: ./sts
+    # THE SCHEME IS TRIED BOTH WAYS, and that is not hedging. With the mode on
+    # this port is HTTPS; if the sts/ submodule is pinned before the mock had
+    # the mode at all, STS_OAUTH2_RFC9700 names nothing and the same image
+    # comes up plain HTTP here. An https-only check would leave the container
+    # permanently unhealthy in that case — which on the containerized stack
+    # blocks `tests` on its depends_on and produces a compose timeout instead
+    # of a named failure. Liveness is this check's question; whether the thing
+    # is actually COMPLIANT is asked where it can be answered usefully, by
+    # requireStsReachable() on the local stack and by rfc9700_flows.js itself,
+    # which refuses a permissive STS by name.
+    # --insecure equivalent (rejectUnauthorized:false): the certificate is
+    # self-signed and regenerated every start, so nothing can have an anchor.
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"var u={host:'localhost',port:8081,path:'/healthcheck',rejectUnauthorized:false};function ok(r){process.exit(r.statusCode===200?0:1)}require('https').get(u,ok).on('error',function(){require('http').get(u,ok).on('error',function(){process.exit(1)})})\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - keycloak
   # walt.id issuer-api2 — a REAL OpenID4VCI 1.0 Credential Issuer, run beside the
   # mock one so the SD-JWT VC workflow can be shown to work against an
   # independent implementation and not only against our own. Its configuration
@@ -303,6 +347,12 @@ services:
       keycloak:
         condition: service_healthy
       sts:
+        condition: service_healthy
+      # The RFC 9700 pass has a server of its own, and waiting on it here is
+      # what keeps the five jobs from starting against a port that is not
+      # listening yet — a compliant server that has not bound is
+      # indistinguishable, from a test, from one that refused.
+      sts-rfc9700:
         condition: service_healthy
       waltid-issuer:
         condition: service_healthy

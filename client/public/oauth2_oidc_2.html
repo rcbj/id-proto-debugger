@@ -2,6 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
+    <!-- RFC 9700 section 4.11 (requirement 10.2). The header of the same name
+         is sent by client/server.js, which covers the containerized and local
+         stacks; this element covers the DEPLOYED STATIC SITES, where the pages
+         are served by a CDN and no server of ours is in front of them. An
+         authorization response reaches this page in a URL, and a Referer
+         carrying it to any third party is the leak this suppresses. -->
+    <meta name="referrer" content="no-referrer">
     <title>OAuth2 & OpenID Connect Debugger</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
@@ -22,7 +29,7 @@
 
 <script type="text/javascript" src="/js/oauth2_oidc_2.js"></script>
 
-<p>This is a simple Client to use with any <a href="https://medium.com/@robert.broeckelmann/saml2-vs-jwt-understanding-oauth2-4abde9e7ec8b" onclick="oauth2_oidc_2.clickLink();">OAuth2</a> or <a href="https://medium.com/@robert.broeckelmann/understanding-openid-connect-series-37c93d25e92b" onclick="oauth2_oidc_2.clickLink();">OpenID Connect</a> compliant identity provider..
+<p>This is a simple Client to use with any <a rel="noopener noreferrer" href="https://medium.com/@robert.broeckelmann/saml2-vs-jwt-understanding-oauth2-4abde9e7ec8b" onclick="oauth2_oidc_2.clickLink();">OAuth2</a> or <a rel="noopener noreferrer" href="https://medium.com/@robert.broeckelmann/understanding-openid-connect-series-37c93d25e92b" onclick="oauth2_oidc_2.clickLink();">OpenID Connect</a> compliant identity provider..
 </p>
 <p>This page manages interaction with the OAuth2 Token Endpoint.</p>
 
@@ -39,6 +46,13 @@
 
 <div class="state-status" id="state-status"></div>
 <div class="authz-error-report" id="authz-error-report"></div>
+
+<!-- The RFC 9700 verdict on the authorization RESPONSE. It sits above
+     everything else on this page on purpose: when it refuses, the rest of the
+     page does not run, and a verdict below the results it suppressed would be
+     read after the reader had already concluded the page was broken. Empty
+     unless the compliance checkbox is ticked. -->
+<div class="rfc9700_report" id="rfc9700_response_report"></div>
 
 <p class="dbg-controls">
   <label class="dbg-toggle" title="Expand or collapse every pane.">
@@ -78,6 +92,26 @@ function dbgSetAllPanes(expand) {
       <input type="hidden" name="response_type" value="" id="response_type" />
       <table border="0">
         <tbody>
+          <!-- RFC 9700 (OAuth 2.0 Security Best Current Practice).
+
+               First row of this pane deliberately: it governs every control
+               below it. What it does is described at length in
+               docs/rfc9700.md and modelled in client/src/rfc9700.js; the
+               short version is that it turns fifteen sections of client-side
+               obligations from advice into enforcement, and that it is OFF by
+               default because a debugger's job is to be pointed at providers
+               that do not meet them. -->
+          <tr>
+            <td>
+              <div class="tooltip"><label>RFC 9700 compliance mode: </label><span class="tooltiptext">Enforce the CLIENT-side requirements of RFC 9700 (OAuth 2.0 Security Best Current Practice) on this workflow: exact https redirect URIs, PKCE with S256, no Implicit Grant, no Resource Owner Password Credentials, one-time state, mix-up protection through the stored issuer and RFC 9207 iss, single-use authorization codes, ID Token nonce validation before any token is used, sender-constrained tokens, audience restriction, metadata-driven configuration, TLS everywhere, refresh-token rotation, and the response scrubbed out of the address bar. OFF by default: many identity providers do not implement all of it, and seeing what they do instead is usually why you are here. A report appears beside each step saying which requirements were met.</span>
+              </div>
+            </td>
+            <td>
+              <input type="checkbox" id="rfc9700_mode" name="rfc9700_mode" onclick="return oauth2_oidc_2.onRfc9700ModeChange();" />
+              <label for="rfc9700_mode">Enforce RFC 9700 client requirements</label>
+              <span id="rfc9700_mode_status"></span>
+            </td>
+          </tr>
           <tr>
             <td>
               <div class="tooltip"><label>Authorization Grant: </label><span class="tooltiptext">Choose which Authorization Grant or OIDC Flow to test with.</span>
@@ -838,12 +872,14 @@ function dbgSetAllPanes(expand) {
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="display_token_error_class" id="display_token_error_class">&nbsp;
     </div>
+    <div class="rfc9700_report" id="rfc9700_token_report"></div>
     <div class="token_endpoint_result" id="token_endpoint_result">&nbsp;
     </div>
   </div>
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="display_refresh_error_class" id="display_refresh_error_class">&nbsp;
     </div>
+    <div class="rfc9700_report" id="rfc9700_refresh_report"></div>
     <div class="refresh_endpoint_result" id="refresh_endpoint_result">&nbsp;
     </div>
   </div>

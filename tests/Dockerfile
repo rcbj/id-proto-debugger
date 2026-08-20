@@ -324,6 +324,23 @@ COPY sts/audit.js ./sts/
 # built-in default, which is exactly what these jobs had before the table
 # existed, and the KRB5_* variables they set still win over it.
 COPY sts/config.js ./sts/
+# THE FOURTH recomputation, and it arrived the way all of them do: not by any
+# line here changing, but by the sts/ gitlink moving. Bumping the submodule to
+# the mock-sts commit that carries RFC 9700 support gave app.js a require on
+# ./oauth2_bcp, and gave admin_stats.js, krb5_kdc.js and krb5_service.js one on
+# ./applications — four files this image ALREADY copies, now reaching for four
+# it did not. oauth2_bcp.js pulls in ./client_auth and ./mtls behind it, which
+# is why this line carries four names and not two.
+#
+# The failure is the usual one and reads the usual way: "Cannot find module
+# './applications'" at require time, from inside a file this image HAS, before
+# a single test has run. The COPY to add is never the one the message names.
+#
+# The check that catches it is a closure walk, not a list: seed it with every
+# sts/*.js copied here, follow each `require("./x")`, and require the result to
+# be a subset of what is copied. Run it after every submodule bump — the set
+# moves on the mock's schedule, not on this file's.
+COPY sts/applications.js sts/client_auth.js sts/mtls.js sts/oauth2_bcp.js ./sts/
 COPY sts/krb5_primitives.js sts/krb5_asn1.js sts/krb5_crypto.js sts/krb5_messages.js sts/krb5_gss.js ./sts/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build
@@ -465,6 +482,13 @@ COPY tests/schemas ./schemas
 # precisely so that a pair like that cannot overwrite each other. Adding it to
 # the flat list without noticing would be the collision testsImageHasNoColliding
 # Filenames() exists to catch.
+# RFC 9700 (OAuth 2.0 Security BCP). Two scripts, and they need each other's
+# company here for opposite reasons. rfc9700_flows.js is Selenium and is gated
+# on RFC9700_STS_URL, so it does nothing without the second, compliant STS
+# instance; rfc9700_client.js needs no browser and no service at all and runs
+# on every job list, which is exactly why its absence from this image would
+# have shown up as MODULE_NOT_FOUND in 0.0s rather than as a skip.
+COPY tests/rfc9700_flows.js tests/rfc9700_client.js ./
 COPY tests/admin_api.js ./
 COPY tests/browser_tests_headless.js ./
 COPY tests/run-report.js ./

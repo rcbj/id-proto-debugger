@@ -9,6 +9,7 @@ This file holds what applies across the whole frontend: the shared modules, the 
 | Read | Before | Because |
 |---|---|---|
 | `docs/oidc-flows.md` | `oauth2_oidc_1.html`, `oauth2_oidc_2.js`, the grant dropdown | five of the six OIDC flows sent `response_type=code` for months; a test that only checks "a token came back" is worthless here |
+| `docs/rfc9700.md` | `rfc9700.js`, the compliance checkbox, `client/server.js`'s headers or its `/callback` | the whole of it is behind a switch that ships CLEAR, and that contract is invisible from inside any run that turns the switch on — which is every test of it |
 | `docs/sd-jwt-vc-issuance.md` | any `vc-issuance-*` page or `css/sd_jwt_vc.css` | the layout is measured and mutation-tested (a narrow pane *multiplies* height once populated), and Credential History logs every attempt, not just the kept ones |
 | `docs/sd-jwt-vc-presentation.md` | any `vc-presentation-*` page, `sd_jwt_vp.js` | `sd_hash` covers the trailing `~`, the KB-JWT must verify against the credential's own `cnf.jwk`, and `vp_token` is keyed by DCQL query id |
 | `docs/dpop.md` | `dpop.js`, `oauth_dpop.js`, `vci_wallet.js`, any protected call | the two workflows share the mechanism and **not** the state; DPoP is off by default on both, and OID4VP has none by design |

@@ -277,6 +277,32 @@ To run this project you will need to install docker.
 On other systems, the commands needed to start the debugger in a local docker container will be similar. The docker Sinatra/Ruby runtime will have to be able to establish connections to remote IdP endpoint (whether locally in other docker containers, on the host VM, or over the network/internet).  On the test system, it was necessary to add "--net=host" to the "docker run" args. The network connectivity details for docker may vary from platform-to-platform.
 
 # Additional Feature Information
+## RFC 9700 compliance mode
+
+The **Configuration Parameters** pane of the OAuth2 / OIDC workflow carries a checkbox, *Enforce RFC 9700 client requirements*, at the top — above the grant selector, because it governs every control below it. It turns the client-side half of [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700), *Best Current Practice for OAuth 2.0 Security*, from advice into enforcement on both pages of the workflow.
+
+**It ships OFF, and that is deliberate rather than cautious.** A debugger exists to be pointed at identity providers that are wrong — that is most of what anybody uses one for. An authorization response with no `state` on it is a finding worth *seeing*, and a client that refuses to send the request cannot show it to you; an OP that still only speaks the Implicit Grant is something somebody has to work with today, and a mode that removes it from the dropdown removes their reason for opening the page. With the box clear, this workflow behaves exactly as it did before the feature existed: no check runs, no report is drawn, nothing is refused.
+
+With it ticked, in outline:
+
+* the three Implicit variants, the two Hybrid flows that carry `token`, and the Resource Owner Password Credentials grant are **disabled in the selector**, each with its own reason — and refused again at the request, because `disabled` is a property of a control while the rule is a property of the request. OIDC Hybrid (`code id_token`) survives: it returns no access token from the authorization endpoint;
+* **PKCE is forced on with S256**, certificate validation is forced on, `client_secret_basic` is selected, and DPoP is switched on together with the front-end token call (a proof cannot ride on the proxied one);
+* `state`, `nonce` and the PKCE verifier are regenerated **per request** and frozen onto a transaction record in `sessionStorage` — per-tab, dying with the browsing session, which is what "bound to the user-agent transaction" means;
+* every endpoint must be **https** (with RFC 8252's loopback exception, which is what lets the mode be used against a local stack at all), and the endpoints must have come from the server's **metadata** rather than been typed;
+* `response_mode=form_post` is requested when the server advertises it *and* this build has a `/callback` to receive the POST, so the response never reaches the address bar at all; whatever does reach it is removed with `history.replaceState` as soon as it has been read;
+* on the way back, `state` must match and is **single-use**, the RFC 9207 `iss` parameter must match the stored issuer (and its absence is fatal when the server advertises support for it), and the ID Token's `iss` must match too;
+* **no token is used until the ID Token's `nonce` has been validated** — not rendered, not written to Token History, not offered to the UserInfo or refresh panes. A mismatch discards the whole set;
+* an authorization code is presented **once**, and a rotated refresh token spends the one it replaced;
+* the audience, the granted scope, the `token_type` that came back, whether the refresh token was rotated, and whether the subject is confusable with the `client_id` are **reported** rather than enforced, because a client can only observe them.
+
+A report appears beside each step naming the requirement, the level RFC 9700 states it at, and what was found.
+
+Four of the fifteen sections are **not** behind the checkbox, because they are this deployment's own posture and are invisible to any identity provider: `/callback` is not an open redirector and never takes its destination from the request, it redirects with **303** rather than 302 or 307, every response carries `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'`, and this workflow uses no browser messaging at all.
+
+One thing is deliberately **not implemented**: `private_key_jwt` and mutual-TLS client authentication. RFC 9700 recommends asymmetric client authentication and this workflow offers `client_secret_basic` and `client_secret_post` only; the mode reports the gap rather than pretending otherwise.
+
+`docs/rfc9700.md` is the full account — every requirement, what is enforced and what is only detected, and how the two tests (`tests/rfc9700_client.js`, `tests/rfc9700_flows.js`) exercise it against the mock STS running in *its* RFC 9700 mode.
+
 ## State Parameters
 * A state parameter can be submitted as part of the authorization endpoint request. The state parameter will be validated when the redirect comes back to the registered callback endpoint. A UUID is used as the state value. This is an optional, but recommended parameter.
 ## Custom Parameters

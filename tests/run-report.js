@@ -210,6 +210,69 @@ function buildJobs() {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // THE SAME MATRIX A SECOND TIME, WITH BOTH SIDES IN RFC 9700 MODE.
+  //
+  // The twelve jobs above run the debugger and the mock STS both permissive,
+  // which is what almost every identity provider this tool is pointed at
+  // actually is. These run the other pairing: the debugger's RFC 9700
+  // compliance checkbox on, and an STS started with STS_OAUTH2_RFC9700=true.
+  //
+  // The two passes ask different questions and neither substitutes for the
+  // other. Permissive asks whether the debugger still works against a server
+  // that implements none of this — the reason the checkbox exists and is off
+  // by default. Compliant asks whether, when the server DOES enforce the BCP,
+  // the client meets it: exact registered redirect URIs, PKCE it can verify,
+  // https throughout, no response type that would put an access token in the
+  // address bar. A client that quietly sent the wrong thing in the permissive
+  // pass is indistinguishable from one that did not.
+  //
+  // `refused` is a job of its own and is the important one. A compliance mode
+  // that issues a token on the happy path looks finished and can be worth
+  // nothing: what it is FOR is refusing the Implicit Grant, refusing the
+  // password grant, refusing a code presented twice — and being REVERSIBLE,
+  // which a test that only ever switches the mode on can never see.
+  //
+  // Gated on RFC9700_STS_URL, which is a SECOND STS instance. It has to be a
+  // second one: oauth2.rfc9700 binds the main port as HTTPS and is therefore
+  // restart-only, so one process cannot serve both passes. See
+  // docs/rfc9700.md for the two lines that start it, and for the submodule
+  // bump it currently waits on.
+  if (env.RFC9700_STS_URL) {
+    const RFC9700_JOBS = [
+      ["refused", "the refusals, and that the mode is reversible"],
+      ["oidc_authorization_code_flow", "OIDC Authorization Code Flow (code)"],
+      ["authorization_grant", "OAuth2 Authorization Code Grant"],
+      ["oidc_hybrid_code_id_token", "OIDC Hybrid (code id_token)"],
+      ["client_credential", "OAuth2 Client Credentials"],
+    ];
+    for (const [RFC9700_FLOW, label] of RFC9700_JOBS) {
+      jobs.push({
+        name: `RFC 9700 — ${label} (debugger AND mock STS both compliant)`,
+        script: "rfc9700_flows.js",
+        // WSTRUST_STS_URL is what the script reads, as every other STS-backed
+        // job does; RFC9700_STS_URL is what SELECTS the compliant instance.
+        // Naming them differently here is what keeps a permissive STS from
+        // being handed to a job that would then pass while proving nothing —
+        // the script refuses one by name, but the wiring should not offer it.
+        env: { WSTRUST_STS_URL: env.RFC9700_STS_URL, RFC9700_FLOW },
+      });
+    }
+  }
+
+  // The client half of RFC 9700 with no browser and no services, so it never
+  // skips: the requirement catalogue, the MODE-OFF CONTRACT (which every job
+  // above is blind to, because they all turn the mode on), each of the four
+  // check functions driven directly, and the always-on posture — no open
+  // redirector, 303 rather than 307, no framing, no browser messaging, no
+  // token in a URL — asserted over the source that holds it.
+  jobs.push({
+    name: "RFC 9700 client model (the catalogue, the mode-off contract, the " +
+        "rules, the always-on posture)",
+    script: "rfc9700_client.js",
+    env: {},
+  });
+
   // The same twelve against KEYCLOAK, which asks the other half of the
   // question: whether any of it interoperates with a real OP. Gated on the
   // client configureKeycloak() provisions for it (OIDC_ALL_FLOWS_PUBLIC) — one

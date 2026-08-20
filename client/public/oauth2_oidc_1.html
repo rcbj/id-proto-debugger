@@ -2,6 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
+    <!-- RFC 9700 section 4.11 (requirement 10.2). The header of the same name
+         is sent by client/server.js, which covers the containerized and local
+         stacks; this element covers the DEPLOYED STATIC SITES, where the pages
+         are served by a CDN and no server of ours is in front of them. An
+         authorization response reaches this page in a URL, and a Referer
+         carrying it to any third party is the leak this suppresses. -->
+    <meta name="referrer" content="no-referrer">
     <title>OAuth2 & OpenID Connect Debugger</title>
     <link href="/css/bootstrap.css" rel="stylesheet">
     <link href="/css/header.css" rel="stylesheet">
@@ -22,9 +29,9 @@
 
 <script type="text/javascript" src="/js/oauth2_oidc_1.js">
 </script>
-<p>This is a simple Client to use with any <a href="https://medium.com/@robert.broeckelmann/saml2-vs-jwt-understanding-oauth2-4abde9e7ec8b" onclick="return oauth2_oidc_1.clickLink();">OAuth2</a> or <a href="https://medium.com/@robert.broeckelmann/understanding-openid-connect-series-37c93d25e92b" onclick="return oauth2_oidc_1.clickLink();">OpenID Connect</a> compliant identity provider.
+<p>This is a simple Client to use with any <a rel="noopener noreferrer" href="https://medium.com/@robert.broeckelmann/saml2-vs-jwt-understanding-oauth2-4abde9e7ec8b" onclick="return oauth2_oidc_1.clickLink();">OAuth2</a> or <a rel="noopener noreferrer" href="https://medium.com/@robert.broeckelmann/understanding-openid-connect-series-37c93d25e92b" onclick="return oauth2_oidc_1.clickLink();">OpenID Connect</a> compliant identity provider.
 </p>
-<P><a href="https://www.rfc-editor.org/rfc/rfc6749" onclick="return oauth2_oidc_1.clickLink();">OAuth2 RFC</a></P>
+<P><a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc6749" onclick="return oauth2_oidc_1.clickLink();">OAuth2 RFC</a></P>
 <P><a hreef="https://openid.net/specs/openid-connect-core-1_0.html#UserInfoRequest">OIDC Spec</a></P>
 <p>This page manages interaction with the OAuth2 Authorization Endpoint.</p>
 
@@ -72,7 +79,7 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>&nbsp;</td>
-            <td><p id="metadata_source_hint">An OIDC Discovery endpoint uses a path that ends in /.well-known/openid-configuration. See the <a href="https://openid.net/specs/openid-connect-discovery-1_0.html" onclick="return oauth2_oidc_1.clickLink();">spec</a>.</p></td>
+            <td><p id="metadata_source_hint">An OIDC Discovery endpoint uses a path that ends in /.well-known/openid-configuration. See the <a rel="noopener noreferrer" href="https://openid.net/specs/openid-connect-discovery-1_0.html" onclick="return oauth2_oidc_1.clickLink();">spec</a>.</p></td>
           </tr>
           <tr>
             <td>
@@ -125,6 +132,26 @@ function dbgSetAllPanes(expand) {
     <form action="" id="endpoints" name="endpoints">
       <table border="0">
         <tbody>
+          <!-- RFC 9700 (OAuth 2.0 Security Best Current Practice).
+
+               First row of this pane deliberately: it governs every control
+               below it. What it does is described at length in
+               docs/rfc9700.md and modelled in client/src/rfc9700.js; the
+               short version is that it turns fifteen sections of client-side
+               obligations from advice into enforcement, and that it is OFF by
+               default because a debugger's job is to be pointed at providers
+               that do not meet them. -->
+          <tr>
+            <td>
+              <div class="tooltip"><label>RFC 9700 compliance mode: </label><span class="tooltiptext">Enforce the CLIENT-side requirements of RFC 9700 (OAuth 2.0 Security Best Current Practice) on this workflow: exact https redirect URIs, PKCE with S256, no Implicit Grant, no Resource Owner Password Credentials, one-time state, mix-up protection through the stored issuer and RFC 9207 iss, single-use authorization codes, ID Token nonce validation before any token is used, sender-constrained tokens, audience restriction, metadata-driven configuration, TLS everywhere, refresh-token rotation, and the response scrubbed out of the address bar. OFF by default: many identity providers do not implement all of it, and seeing what they do instead is usually why you are here. A report appears beside each step saying which requirements were met.</span>
+              </div>
+            </td>
+            <td>
+              <input type="checkbox" id="rfc9700_mode" name="rfc9700_mode" onclick="return oauth2_oidc_1.onRfc9700ModeChange();" />
+              <label for="rfc9700_mode">Enforce RFC 9700 client requirements</label>
+              <span id="rfc9700_mode_status"></span>
+            </td>
+          </tr>
           <tr>
             <td>
               <div class="tooltip"><label>Authorization Grant: </label><span class="tooltiptext">Choose which Authorization Grant or OIDC Flow to test with.</span>
@@ -796,7 +823,7 @@ function dbgSetAllPanes(expand) {
         <tbody>
           <tr>
             <td>&nbsp;</td>
-            <td><p>Create, read, update, and delete a client on the Identity Provider using the OIDC Dynamic Client Registration protocol. See the <a href="https://openid.net/specs/openid-connect-registration-1_0.html" onclick="return oauth2_oidc_1.clickLink();">OIDC Registration spec</a> (and <a href="https://www.rfc-editor.org/rfc/rfc7591" onclick="return oauth2_oidc_1.clickLink();">RFC 7591</a> / <a href="https://www.rfc-editor.org/rfc/rfc7592" onclick="return oauth2_oidc_1.clickLink();">RFC 7592</a>).</p></td>
+            <td><p>Create, read, update, and delete a client on the Identity Provider using the OIDC Dynamic Client Registration protocol. See the <a rel="noopener noreferrer" href="https://openid.net/specs/openid-connect-registration-1_0.html" onclick="return oauth2_oidc_1.clickLink();">OIDC Registration spec</a> (and <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7591" onclick="return oauth2_oidc_1.clickLink();">RFC 7591</a> / <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7592" onclick="return oauth2_oidc_1.clickLink();">RFC 7592</a>).</p></td>
           </tr>
           <tr>
             <td>
@@ -887,6 +914,11 @@ function dbgSetAllPanes(expand) {
 
 <div class="display_authz_error_class" id="display_authz_error_class">&nbsp;
 </div>
+
+<!-- Where the RFC 9700 verdict on the authorization REQUEST is drawn. Empty
+     and untouched unless the compliance checkbox in the Configuration
+     Parameters pane is ticked. -->
+<div class="rfc9700_report" id="rfc9700_request_report"></div>
 
 </div>
 

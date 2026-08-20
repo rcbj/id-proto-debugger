@@ -773,8 +773,20 @@ async function authorizationCodeCanBeBoundToTheKey() {
                                 password: "any-password",
                                     action: "login" }).toString()
   });
-  assert.strictEqual(loggedIn.status, 302,
-                     "the sign-in form should redirect, got " + loggedIn.status);
+  // The sign-in form is a POST and the answer to it is a redirect. WHICH
+  // redirect is the interesting part, and it is asserted the way RFC 9700
+  // section 4.12 states it rather than as one exact code: 303 is what the mock
+  // sends now and what the BCP asks for, 302 is what it sent before and what
+  // most servers send, and **307 is the one that is forbidden** — it replays
+  // the method and the body, which on this request is the username and
+  // password, onto whatever the redirect names. Pinning 302 exactly made this
+  // fail the day the mock started doing the more correct thing, and it never
+  // checked the code the specification actually cares about.
+  assert.ok(loggedIn.status === 303 || loggedIn.status === 302,
+            "the sign-in form should redirect, got " + loggedIn.status);
+  assert.notStrictEqual(loggedIn.status, 307,
+    "RFC 9700 section 4.12: a credential-bearing POST must not be answered " +
+    "with 307.");
   var cookie = String(loggedIn.headers.get("set-cookie") || "").split(";")[0];
   assert.ok(cookie, "signing in should establish a session.");
 

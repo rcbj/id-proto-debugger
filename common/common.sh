@@ -959,6 +959,114 @@ requireComposeServiceRunning()
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# Require that a mock STS is answering on a URL, IN THE SCHEME EXPECTED, and
+# fail with the reason if it is not.
+#
+# requireComposeServiceRunning() asks whether the container is there. This asks
+# the different question that a whole run turned on: whether the thing on that
+# port is OURS. Under host networking the mock binds host ports directly, so
+# anything else already holding one wins — the container throws EADDRINUSE on a
+# listen with no error handler and exits, and the suite spends twenty-five
+# minutes failing against a stranger.
+#
+# The scheme is an argument rather than something read off the URL because it is
+# the DIAGNOSIS, not a formality. `oauth2.rfc9700` derives `global.https` in
+# that service, so an instance in RFC 9700 mode answers HTTPS on the port a
+# permissive one answers HTTP on — and a plain request to it does not get an
+# error, it gets the connection closed. That failure reaches a test as "fetch
+# failed" or "other side closed", which names a socket and never names the
+# mode. So when the expected scheme does not answer, this probes the OTHER one
+# before reporting, and says which it found.
+#
+# --insecure on the https probe: the mock's certificate is self-signed and
+# regenerated on every start, so nothing can have an anchor for it. This is
+# checking that the port answers, not that it is trusted.
+#
+# $1 scheme ("http" or "https"), $2 URL, $3 the service name, for the message.
+# STS_REACHABLE_WAIT_SECONDS (default 60) bounds the wait.
+# ---------------------------------------------------------------------------
+requireStsReachable()
+{
+  echo "Entering requireStsReachable(). service=${3} url=${2}"
+  local scheme="$1"
+  local url="$2"
+  local service="$3"
+  if [ -z "${scheme}" ] || [ -z "${url}" ] || [ -z "${service}" ];
+  then
+    echo "ERROR: requireStsReachable() needs a scheme, a URL and a service" \
+         "name (got '${scheme}' '${url}' '${service}')." >&2
+    return 1
+  fi
+
+  # Trace off: the poll would otherwise print a curl line per iteration for a
+  # minute. Restored on every exit path, as requireComposeServiceRunning() does.
+  local xtrace_was_on=""
+  case "$-" in
+    *x*) xtrace_was_on="yes"; set +x ;;
+  esac
+
+  local deadline code other_url other_scheme other_code sts_port
+  # host:port from the URL, then the port alone — ${url##*:} on its own would
+  # carry the path with it ("8091/healthcheck") and match nothing in ss output.
+  sts_port="${url##*:}"
+  sts_port="${sts_port%%/*}"
+  deadline=$(( $(date +%s) + ${STS_REACHABLE_WAIT_SECONDS:-60} ))
+  while :;
+  do
+    # `|| true`, not `|| echo "000"`: curl PRINTS "000" itself when it never got
+    # a response and THEN exits non-zero, so the fallback would append a second
+    # one and report "000000". The empty case (no curl at all) is defaulted
+    # below.
+    code=$(curl -s -k -m 5 -o /dev/null -w "%{http_code}" "${url}" \
+             2>/dev/null || true)
+    code="${code:-000}"
+    if [ "${code}" = "200" ];
+    then
+      break
+    fi
+    if [ "$(date +%s)" -ge "${deadline}" ];
+    then
+      echo "ERROR: ${service} is not answering ${scheme} on ${url}" \
+           "(last status: ${code})." >&2
+      # The port may be held by an instance in the OTHER mode. That is the case
+      # this exists for, so name it rather than leaving a socket error behind.
+      case "${scheme}" in
+        http)  other_scheme="https" ;;
+        *)     other_scheme="http"  ;;
+      esac
+      other_url=$(echo "${url}" | sed "s|^${scheme}://|${other_scheme}://|")
+      other_code=$(curl -s -k -m 5 -o /dev/null -w "%{http_code}" \
+                     "${other_url}" 2>/dev/null || true)
+      other_code="${other_code:-000}"
+      if [ "${other_code}" = "200" ];
+      then
+        echo "       SOMETHING IS ANSWERING ${other_scheme} THERE INSTEAD" \
+             "(${other_url} -> ${other_code})." >&2
+        echo "       In this service the scheme follows the mode:" \
+             "oauth2.rfc9700 derives global.https, so an instance in" >&2
+        echo "       RFC 9700 mode serves HTTPS on the port a permissive one" \
+             "serves HTTP on." >&2
+        echo "       The usual cause is a mock STS started BY HAND, outside" \
+             "compose, still holding the port — under host" >&2
+        echo "       networking it binds this machine's ports directly and" \
+             "whoever got there first wins." >&2
+        echo "       Find it and stop it BY PID, never by pattern:" >&2
+        echo "         ss -ltnp | grep ':${sts_port}'   # then: kill <pid>" >&2
+      fi
+      reportContainerLog "local-tests.yml" "${service}" 2>/dev/null || true
+      [ -n "${xtrace_was_on}" ] && set -x
+      echo "Leaving requireStsReachable(). ${service} did not answer."
+      return 1
+    fi
+    sleep 3
+  done
+
+  [ -n "${xtrace_was_on}" ] && set -x
+  echo "Leaving requireStsReachable(). ${service} answers ${scheme} on ${url}."
+  return 0
+}
+
 verifyComposeServicesRunning()
 {
   echo "Entering verifyComposeServicesRunning()."

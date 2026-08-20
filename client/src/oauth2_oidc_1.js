@@ -13,6 +13,10 @@ var DOMPurify = require("dompurify");
 // URLs going into a navigation sink need a scheme allowlist instead — see
 // url_safety.js.
 var urlSafety = require("./url_safety");
+// RFC 9700 (OAuth 2.0 Security BCP), the client half. Off unless the
+// checkbox at the top of the Configuration Parameters pane is ticked; see
+// the note at the top of that module for why it has to be.
+var rfc9700 = require("./rfc9700");
 var $ = require("jquery");
 console.log("logLevel: " + appconfig.logLevel);
 var log = bunyan.createLogger({ name: 'oauth2_oidc_1',
@@ -309,6 +313,11 @@ function writeValuesToLocalStorage()
 {
   log.debug("Entering writeValuesToLocalStorage().");
   if (localStorage) {
+      // The compliance switch is a configuration setting like everything else
+      // in this pane, so it is written here and read back by
+      // loadValuesFromLocalStorage(). It is stored through the module rather
+      // than by key so that one file owns the spelling and the coercion.
+      rfc9700.setEnabled($("#rfc9700_mode").is(":checked"));
       localStorage.setItem("authorization_grant_type",
                            $("#authorization_grant_type").val());
       localStorage.setItem("yesCheck", $("#SSLValidate-yes").is(":checked"));
@@ -767,6 +776,12 @@ function loadValuesFromLocalStorage()
   localStorage.setItem('state', $("#state").val());
   $("#nonce_field").val(generateUUID());
   localStorage.setItem('nonce_field', $("#nonce_field").val());
+  // Restore the compliance switch and put the page into the shape it implies
+  // BEFORE the request description is recalculated below — applyRfc9700Ui()
+  // can force PKCE on and change the selected grant, and a description built
+  // from the state before that would be wrong until the next keystroke.
+  $("#rfc9700_mode").prop("checked", rfc9700.enabled());
+  applyRfc9700Ui();
   loadDcrValuesFromLocalStorage();
   recalculateDcrRequestDescription();
   recalculateAuthorizationRequestDescription();
@@ -862,6 +877,20 @@ function recalculateAuthorizationRequestDescription()
            "code_challenge=" + $("#authz_pkce_code_challenge").val()  + "&\n" +
                                                                                           "code_challenge_method=" + $("#authz_pkce_code_method").val());
        }
+       // RFC 9700 section 4.12.2: form_post keeps the authorization response
+       // out of the address bar and therefore out of history entirely, which
+       // is a stronger answer than scrubbing it afterwards (10.1 does that as
+       // well, because form_post is not always available). Only sent when the
+       // server advertises the mode AND this build has a backend to receive
+       // the POST — see wantsFormPost() for why the second condition is not
+       // optional.
+       if (rfc9700.enabled() &&
+           rfc9700.wantsFormPost(storedDiscoveryDocument(),
+                                 appconfig.backendAvailable)) {
+         $("#display_authz_request_form_textarea1").val(
+           $("#display_authz_request_form_textarea1").val() + "&\n" +
+           "response_mode=form_post");
+       }
        // OID4VCI: an authorization request that follows a Credential Offer
        // sends the offer's issuer_state back (section 4.1.1).
        var sdJwtVcIssuerState = sdJwtVc.get("sdjwtvc_issuer_state");
@@ -951,8 +980,32 @@ function triggerAuthZEndpointCall()
     log.debug("Leaving triggerAuthZEndpointCall().");
     return triggerDeviceAuthorizationCall();
   }
+  // RFC 9700 section 2.1: the PKCE, state and nonce values must be specific
+  // to THIS transaction. writeValuesToLocalStorage() already regenerates the
+  // PKCE pair on every call; state and nonce are otherwise regenerated once
+  // per page load, so pressing this button twice without reloading would send
+  // the same pair again. In mode they are regenerated per REQUEST, which is
+  // what "transaction-specific" means.
+  if (rfc9700.enabled()) {
+    regenerateState();
+    regenerateNonce();
+  }
   writeValuesToLocalStorage();
   recalculateAuthorizationRequestDescription();
+  // RFC 9700: everything the response will be judged against is frozen now,
+  // and the request is checked before the browser leaves the page. A MUST-level
+  // failure stops here — there is no point sending a request whose response
+  // this client would have to refuse.
+  if (rfc9700.enabled()) {
+    var verdict = rfc9700GateAuthorizationRequest(false);
+    renderRfc9700Report("rfc9700_request_report", "Authorization Request",
+                        verdict);
+    if (!verdict.ok) {
+      log.debug("Leaving triggerAuthZEndpointCall(). Refused by RFC 9700 " +
+                "mode.");
+      return false;
+    }
+  }
   // The authorization request URL is assembled from fields the user typed, so
   // it reaches this navigation sink caller-supplied. DOMPurify was applied here
   // and did nothing for it: it is an HTML sanitizer, so it returns a
@@ -983,6 +1036,18 @@ function triggerDeviceAuthorizationCall()
 {
   log.debug("Entering triggerDeviceAuthorizationCall().");
   writeValuesToLocalStorage();
+  // RFC 9700 applies to this grant too, minus everything about redirects —
+  // see the deviceFlow note in rfc9700.js checkAuthorizationRequest().
+  if (rfc9700.enabled()) {
+    var deviceVerdict = rfc9700GateAuthorizationRequest(true);
+    renderRfc9700Report("rfc9700_request_report",
+                        "Device Authorization Request", deviceVerdict);
+    if (!deviceVerdict.ok) {
+      log.debug("Leaving triggerDeviceAuthorizationCall(). Refused by RFC " +
+                "9700 mode.");
+      return false;
+    }
+  }
   recalculateAuthorizationRequestDescription();
   var sslValidate = "true";
   if ($("#SSLValidate-yes").is(":checked")) {
@@ -2840,6 +2905,246 @@ function recalculateDcrRequestDescription() {
   log.debug("Leaving recalculateDcrRequestDescription().");
 }
 
+
+// ---------------------------------------------------------------------------
+// RFC 9700 compliance mode — this page's half.
+//
+// The rules live in client/src/rfc9700.js; what is here is the wiring: reading
+// the fields, putting the page into the shape the mode requires, and drawing
+// the verdict. Nothing below runs unless the checkbox is ticked, which is the
+// contract tests/rfc9700_client.js pins — with the mode off this page behaves
+// exactly as it did before any of this existed.
+// ---------------------------------------------------------------------------
+
+// The discovery / RFC 8414 document as retrieved, or null. Several checks need
+// the document itself rather than the fields it populated, because the point
+// of section 7 is precisely the difference between the two: a field can be
+// typed and a document cannot.
+function storedDiscoveryDocument() {
+  log.debug("Entering storedDiscoveryDocument().");
+  try {
+    var raw = localStorage.getItem(opMetadata.DISCOVERY_INFO_KEY);
+    if (!raw) {
+      log.debug("Leaving storedDiscoveryDocument(). None retrieved.");
+      return null;
+    }
+    var parsed = JSON.parse(raw);
+    log.debug("Leaving storedDiscoveryDocument(). Parsed.");
+    return parsed;
+  } catch (e) {
+    // A document written by an older build, or hand-edited storage. Treating
+    // it as absent is the safe direction: section 7.1 then reports that no
+    // metadata was consumed, which is true of anything this cannot read.
+    log.debug("Leaving storedDiscoveryDocument(). Unreadable: " + e.message);
+    return null;
+  }
+}
+
+// Every endpoint this workflow is configured with, by the label the report
+// should use. Section 8.1 is about the SET of them: one http endpoint among
+// nine https ones is the interesting case, and it is exactly the one a check
+// applied per call would miss because that call is the one nobody made.
+function configuredEndpoints() {
+  log.debug("Entering configuredEndpoints().");
+  var endpoints = {
+    "The token endpoint": $("#token_endpoint").val(),
+    "The UserInfo endpoint": $("#oidc_userinfo_endpoint").val(),
+    "The JWKS endpoint": $("#jwks_endpoint").val(),
+    "The introspection endpoint": $("#introspection_endpoint").val(),
+    "The revocation endpoint": $("#revocation_endpoint").val(),
+    "The registration endpoint": $("#registration_endpoint").val(),
+    "The device authorization endpoint":
+        $("#device_authorization_endpoint").val()
+  };
+  log.debug("Leaving configuredEndpoints().");
+  return endpoints;
+}
+
+// Build the facts, start the transaction, and return the verdict.
+//
+// The transaction is started even when the verdict refuses. That is
+// deliberate: a refusal is reported against the values that were actually
+// about to be sent, and leaving the previous transaction in place would let
+// the next page load judge a response against a request nobody made.
+function rfc9700GateAuthorizationRequest(deviceFlow) {
+  log.debug("Entering rfc9700GateAuthorizationRequest(). deviceFlow=" +
+            deviceFlow);
+  // Both call sites already ask, so this is belt and braces — and it is the
+  // belt that tests/rfc9700_client.js can actually see. That test asserts the
+  // mode-off contract by requiring an rfc9700.enabled() near every check call,
+  // which is a lexical rule; a guard that lives only at the caller satisfies
+  // the contract and not the check, and the two disagreeing is how the
+  // contract stops being asserted at all.
+  if (!rfc9700.enabled()) {
+    log.debug("Leaving rfc9700GateAuthorizationRequest(). Mode off.");
+    return { ok: true, blocked: [], findings: [] };
+  }
+  var metadata = storedDiscoveryDocument();
+  var dpopOn = sdJwtVc.isFlowActive() ? sdJwtVc.dpopEnabled()
+                                      : oauthDpop.enabled();
+  var request = {
+    grant: $("#authorization_grant_type").val(),
+    responseType: $("#response_type").val(),
+    deviceFlow: !!deviceFlow,
+    authorizationEndpoint: $("#authorization_endpoint").val(),
+    deviceAuthorizationEndpoint: $("#device_authorization_endpoint").val(),
+    redirectUri: $("#redirect_uri").val(),
+    clientId: $("#client_id").val(),
+    // This page has no client secret field — it is on step 2 — so the answer
+    // to "is this a public client" is read from where step 2 stored it. An
+    // empty value means public, which is the reading that makes PKCE a MUST
+    // rather than a SHOULD, so an unreadable value fails toward the stricter
+    // rule.
+    clientSecret: localStorage.getItem("token_client_secret") || "",
+    authStyle: getLSBooleanItem("token_postAuthStyleCheckToken") ? "post"
+                                                                : "header",
+    scope: $("#scope").val(),
+    resource: $("#yesResourceCheck").is(":checked") ? $("#resource").val() : "",
+    state: $("#state").val(),
+    nonce: $("#nonce_field").val(),
+    usePKCE: usePKCE,
+    codeChallengeMethod: $("#authz_pkce_code_method").val(),
+    endpoints: configuredEndpoints(),
+    sslValidate: !$("#SSLValidate-no").is(":checked"),
+    metadata: metadata,
+    metadataUrl: $("#oidc_discovery_endpoint").val(),
+    dpopEnabled: dpopOn
+  };
+  var verdict = rfc9700.checkAuthorizationRequest(request);
+  rfc9700.beginTransaction({
+    issuer: $("#issuer").val(),
+    state: request.state,
+    nonce: request.nonce,
+    codeVerifier: $("#authz_pkce_code_verifier").val(),
+    codeChallengeMethod: request.codeChallengeMethod,
+    clientId: request.clientId,
+    redirectUri: request.redirectUri,
+    responseType: request.responseType,
+    responseMode: rfc9700.wantsFormPost(metadata, appconfig.backendAvailable)
+      ? "form_post" : "",
+    scope: request.scope,
+    resource: request.resource,
+    dpop: dpopOn,
+    // RFC 9207. Read off the document rather than off a field, because its
+    // ABSENCE is what makes a missing iss on the response a MUST failure
+    // rather than merely old-fashioned, and a field cannot express "the
+    // server said so".
+    issParameterAdvertised: !!(metadata &&
+        metadata.authorization_response_iss_parameter_supported)
+  });
+  log.debug("Leaving rfc9700GateAuthorizationRequest(). ok=" + verdict.ok);
+  return verdict;
+}
+
+// Draw a verdict into one of the report containers. DOMPurify because the
+// findings quote values the user typed and values the server sent, and this
+// page has an HTML sink for them.
+function renderRfc9700Report(containerId, title, verdict) {
+  log.debug("Entering renderRfc9700Report(). containerId=" + containerId);
+  var container = $("#" + containerId);
+  if (!container.length) {
+    log.debug("Leaving renderRfc9700Report(). No container.");
+    return;
+  }
+  if (!verdict) {
+    container.html("");
+    log.debug("Leaving renderRfc9700Report(). Cleared.");
+    return;
+  }
+  container.html(DOMPurify.sanitize(rfc9700.report(title, verdict)));
+  log.debug("Leaving renderRfc9700Report().");
+}
+
+// Put the page into the shape the mode requires, or take it back out.
+//
+// Everything here is REVERSIBLE, which is the property that makes the switch
+// usable: clearing the box re-enables every control it disabled and stops
+// forcing every value it forced. A control left disabled after the mode is
+// turned off is indistinguishable from a broken page.
+function applyRfc9700Ui() {
+  log.debug("Entering applyRfc9700Ui().");
+  var on = rfc9700.enabled();
+
+  // Section 1.11 and 5.1: the grants that do not survive. Each carries its own
+  // reason in the title attribute rather than one generic sentence on six
+  // controls — "not allowed in RFC 9700 mode" tells a reader nothing about
+  // which rule they have met.
+  $("#authorization_grant_type option").each(function () {
+    var value = $(this).val();
+    var refused = on && !rfc9700.grantAllowed(value);
+    $(this).prop("disabled", refused);
+    $(this).attr("title", refused ? rfc9700.grantRefusalReason(value) : null);
+  });
+  // If the selected grant is one of those, move to the one RFC 9700 points at.
+  // Silently leaving a disabled option selected is the worst of both: the
+  // control looks refused and the request would still be sent.
+  if (on && !rfc9700.grantAllowed($("#authorization_grant_type").val())) {
+    var was = $("#authorization_grant_type").val();
+    log.debug("Selected grant " + was + " is refused in RFC 9700 mode; " +
+              "switching to the Authorization Code Flow.");
+    $("#authorization_grant_type").val("oidc_authorization_code_flow");
+    localStorage.setItem("authorization_grant_type",
+                         "oidc_authorization_code_flow");
+    $("#rfc9700_mode_status").html(DOMPurify.sanitize(
+      "<span class='dbg-warn'>" +
+      String(rfc9700.grantRefusalReason(was)).replace(/</g, "&lt;") +
+      " Switched to the OIDC Authorization Code Flow.</span>"));
+    $("#authorization_grant_type").trigger("change");
+  } else if (on) {
+    $("#rfc9700_mode_status").html(DOMPurify.sanitize(
+      "<span class='dbg-ok'>Client-side RFC 9700 requirements are being " +
+      "enforced on this workflow.</span>"));
+  } else {
+    $("#rfc9700_mode_status").html("");
+  }
+
+  // Section 1.6: PKCE. Forced on and the "no" option disabled, rather than
+  // merely warned about — this is one of the two MUSTs a client can simply
+  // honour, and a debugger that asks you to remember it has not honoured it.
+  if (on) {
+    $("#usePKCE-yes").prop("checked", true);
+    $("#usePKCE-no").prop("checked", false).prop("disabled", true);
+    $("#usePKCE-no").attr("title",
+      "RFC 9700 section 2.1.1: PKCE is required for a public client and " +
+      "recommended for a confidential one.");
+    usePKCE = true;
+    usePKCERFC();
+  } else {
+    $("#usePKCE-no").prop("disabled", false).attr("title", null);
+  }
+
+  // Section 8.2: certificate validation. Same reasoning as PKCE.
+  if (on) {
+    $("#SSLValidate-yes").prop("checked", true);
+    $("#SSLValidate-no").prop("checked", false).prop("disabled", true);
+    $("#SSLValidate-no").attr("title",
+      "RFC 9700 section 2.5: TLS without certificate validation " +
+      "authenticates nobody.");
+  } else {
+    $("#SSLValidate-no").prop("disabled", false).attr("title", null);
+  }
+
+  log.debug("Leaving applyRfc9700Ui(). on=" + on);
+}
+
+// The checkbox's own handler. Returns true so the box actually toggles — this
+// is an onclick on an input, and returning false would undo the click.
+function onRfc9700ModeChange() {
+  log.debug("Entering onRfc9700ModeChange().");
+  rfc9700.setEnabled($("#rfc9700_mode").is(":checked"));
+  // Turning the mode OFF clears the report as well as the enforcement. Leaving
+  // a refusal on the screen beside controls that are no longer refusing is the
+  // one state that would make somebody file a bug against the switch.
+  if (!rfc9700.enabled()) {
+    renderRfc9700Report("rfc9700_request_report", "", null);
+    rfc9700.clearTransaction();
+  }
+  applyRfc9700Ui();
+  recalculateAuthorizationRequestDescription();
+  log.debug("Leaving onRfc9700ModeChange().");
+  return true;
+}
+
 module.exports = {
   OnSubmitForm,
   OnSubmitTokenEndpointForm,
@@ -2873,6 +3178,11 @@ module.exports = {
   onClickShowGenericFieldSet,
   onClickClearLocalStorage,
   usePKCERFC,
+  onRfc9700ModeChange,
+  applyRfc9700Ui,
+  rfc9700GateAuthorizationRequest,
+  renderRfc9700Report,
+  storedDiscoveryDocument,
   clickLink,
   registerClient,
   readClient,

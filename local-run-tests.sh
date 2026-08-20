@@ -140,6 +140,42 @@ init()
   # since the api is what opens the socket. Both are on this host here.
   STS_TLS_URL=http://localhost:8081
   export STS_TLS_URL
+  # RFC 9700 (OAuth 2.0 Security BCP): a SECOND mock STS, started with
+  # STS_OAUTH2_RFC9700=true, so that the OAuth2/OIDC matrix can be run a second
+  # time with BOTH sides compliant. Setting this turns on five jobs in
+  # tests/run-report.js; leaving it unset skips them.
+  #
+  # It has to be a second INSTANCE rather than a second setting: oauth2.rfc9700
+  # derives global.https, and the main port's scheme is decided once, when the
+  # listener is bound — so it is restart-only in that service and one process
+  # cannot serve both passes. It is the `sts-rfc9700` service in
+  # local-tests.yml, which is the SAME image as `sts` with a different
+  # environment.
+  #
+  # https, and 8091: with the mode on there is no plain listener in that
+  # process at all, and under host networking it shares this machine's
+  # namespace with `sts`, so all seven of its listeners are moved off the first
+  # instance's. See the note on the service. docs/rfc9700.md has the rest.
+  #
+  # SET ONLY IF THE SUBMODULE ACTUALLY HAS THE MODE. `oauth2_bcp.js` is where
+  # it lives in the mock, and sts/ may be pinned to a commit that predates it —
+  # in which case STS_OAUTH2_RFC9700 names a setting that does not exist, the
+  # second instance comes up plain HTTP, and the five jobs would run against a
+  # server that agrees with everything they ask. Skipping them says so in one
+  # line and leaves the other 179 to run; the alternative — halting the whole
+  # suite over an un-bumped gitlink — costs more than it catches, because the
+  # jobs themselves already refuse a permissive STS BY NAME.
+  if [ -f "sts/oauth2_bcp.js" ];
+  then
+    RFC9700_STS_URL=https://localhost:8091
+    export RFC9700_STS_URL
+  else
+    echo "sts/oauth2_bcp.js is absent, so this checkout of the mock STS has no"
+    echo "RFC 9700 mode and the five RFC 9700 flow jobs will be SKIPPED. Bump"
+    echo "the sts/ submodule to a mock-sts commit that carries it. See"
+    echo "docs/rfc9700.md. (tests/rfc9700_client.js is unaffected — it needs no"
+    echo "service at all and runs either way.)"
+  fi
   # walt.id's issuer-api2 (local-tests.yml, host networking) — the real
   # OpenID4VCI issuer the interoperability job runs against.
   WALTID_ISSUER_URL=http://localhost:7005
@@ -276,6 +312,35 @@ startDocker()
   # step downstream fail or skip for reasons that do not name the cause.
   CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml keycloak-wsfed
   check_return_code $?
+  # And BOTH mock STS instances, for the same reason and one more.
+  #
+  # THE ONE MORE, because it cost a whole run on 2026-08-20: 71 of 184 tests
+  # failed and not one of them named the cause. Something outside compose — a
+  # mock STS started by hand from a sibling checkout, in RFC 9700 mode, hours
+  # earlier — was holding host port 8081. Under host networking that is the
+  # port `sts` binds, its listen has no error handler, so the container threw
+  # EADDRINUSE and exited seconds after `up -d` reported success. Every
+  # STS-backed test then failed against a stranger: WS-Trust timed out waiting
+  # for a response page, Kerberos got ECONNREFUSED on 88, and the jobs that
+  # probe first (LDAP, PKI mutual-TLS, the DPoP server checks) reported PASS
+  # while quietly skipping. requireStsReachable() below is what turns that back
+  # into one line naming the port.
+  CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml sts
+  check_return_code $?
+  # Running is not answering, and on 8081 it is not even enough to know WHO is
+  # answering. This names the port and says what it found.
+  requireStsReachable http http://localhost:8081/healthcheck sts
+  check_return_code $?
+  # The compliant instance only has to be there when the five jobs that use it
+  # are scheduled, which is the same condition that sets the URL above.
+  if [ -n "${RFC9700_STS_URL:-}" ];
+  then
+    CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml \
+        sts-rfc9700
+    check_return_code $?
+    requireStsReachable https https://localhost:8091/healthcheck sts-rfc9700
+    check_return_code $?
+  fi
 }
 
 # Run the suite via the report generator instead of runTests(). It executes

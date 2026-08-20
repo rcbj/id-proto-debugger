@@ -808,7 +808,101 @@ function testsImageHasNoCollidingFilenames() {
   const total = Object.keys(flat).length;
   log.info("[collisions] OK — " + total + " files are copied flat into the tests image, every " +
     "one has a unique name, and every script run-report schedules is among them.");
+  stsModuleClosureIsCopied(dockerfile);
   log.debug("Leaving testsImageHasNoCollidingFilenames().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY sts/*.js THIS IMAGE COPIES MUST BRING ITS OWN REQUIRES WITH IT.
+//
+// Four tests load modules out of the mock STS submodule in process rather than
+// over HTTP — the mock-KDC jobs — so tests/Dockerfile copies a hand-picked set
+// of sts/*.js into ./sts/. A hand-picked set is exactly what goes stale, and it
+// goes stale WITHOUT THIS FILE OR THAT ONE CHANGING: the closure moves when the
+// sts/ GITLINK moves, because the mock gave a module it already had a new
+// `require`. It has happened four times, and tests/Dockerfile carries a
+// paragraph for each — admin_stats.js, config.js, audit.js, and then the RFC
+// 9700 bump, which gave app.js a require on ./oauth2_bcp and three others one
+// on ./applications.
+//
+// Every one of those failed the same way and none of them named the fix:
+// "Cannot find module './applications'" thrown at require time from inside a
+// file the image HAS, before a single test ran, while every host run stayed
+// green because a checkout has the whole submodule.
+//
+// So this walks it instead of listing it. Seed with what the Dockerfile copies,
+// follow each relative require, and require the result to be a subset of what
+// is copied. It reads the Dockerfile as STATEMENTS rather than lines for the
+// reason the file header gives: a check a reformat can silence is a check that
+// will be silenced.
+// ---------------------------------------------------------------------------
+function stsModuleClosureIsCopied(dockerfile) {
+  log.debug("Entering stsModuleClosureIsCopied().");
+  const stsDir = path.join(__dirname, "..", "sts");
+  if (!fs.existsSync(stsDir)) {
+    log.info("[sts-closure] skipped: sts/ is not checked out here.");
+    log.debug("Leaving stsModuleClosureIsCopied().");
+    return;
+  }
+  // What the image copies out of sts/, whatever the destination — ./sts/ for
+  // most of them, but bbs2023.js lands flat as sts_bbs2023.js and is required
+  // by that name, so the SOURCE is what matters here, not where it lands.
+  const copied = {};
+  const copyLine = /COPY\s+([^\n]+)/g;
+  fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
+    rest.split(/\s+/).forEach(function (src) {
+      if (src.indexOf("sts/") === 0 && /\.js$/.test(src)) {
+        copied[src.slice("sts/".length)] = true;
+      }
+    });
+    return _;
+  });
+  const seen = {};
+  const queue = Object.keys(copied);
+  const missing = [];
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen[name]) {
+      continue;
+    }
+    seen[name] = true;
+    const file = path.join(stsDir, name);
+    if (!fs.existsSync(file)) {
+      // A COPY naming a file the submodule does not have is the OTHER failure
+      // in this family: the image build itself stops, rather than a test.
+      missing.push(name + " (copied, but absent from the sts/ checkout)");
+      continue;
+    }
+    const src = fs.readFileSync(file, "utf8");
+    const re = /require\((['"])\.\/([A-Za-z0-9_.\/-]+)\1\)/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      let dep = m[2];
+      if (!/\.js$/.test(dep)) {
+        dep = dep + ".js";
+      }
+      if (!copied[dep]) {
+        missing.push(dep + " (required by sts/" + name + ")");
+        continue;
+      }
+      if (!seen[dep]) {
+        queue.push(dep);
+      }
+    }
+  }
+  const unique = missing.filter(function (v, i) {
+    return missing.indexOf(v) === i;
+  });
+  assert.deepStrictEqual(unique, [],
+    "tests/Dockerfile copies sts modules whose own requires it does " +
+    "not copy, so the in-process mock-KDC jobs die at load with " +
+    "\"Cannot find module\" naming a file this image HAS. This set moves " +
+    "when the sts/ GITLINK moves, not when a line here changes — add a " +
+    "COPY sts/<name> ./sts/ for each: " + unique.join(", "));
+  log.info("[sts-closure] OK — " + Object.keys(seen).length + " sts " +
+    "modules are copied and every relative require among them resolves " +
+    "inside the image.");
+  log.debug("Leaving stsModuleClosureIsCopied().");
 }
 
 async function test() {
