@@ -2,6 +2,11 @@ const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+// A page load that lands on Chrome's network-error page is retried and
+// diagnosed here rather than becoming a timeout on one of our own ids —
+// two remote runs have failed that way. See page_load.js.
+const { loadPage, describeLoad, describeToString } =
+    require("./page_load");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -71,8 +76,8 @@ async function configureAndSend(driver, stsUrl, op, opts) {
   log.info("Load the WS-Trust Test Tools page (op=" + op + ", sign=" +
            !!opts.sign + ", route=" + (opts.route || "back") + ", version=" +
            (opts.version || "default") + ").");
-  await driver.get(baseUrl + "/wstrust_tools.html");
-  await driver.wait(until.elementLocated(By.id("wst_sts_url")), waitTime);
+  await loadPage(driver, baseUrl + "/wstrust_tools.html", "wst_sts_url",
+                 { timeout: waitTime });
 
   await setField(driver, "wst_sts_url", stsUrl);
   // Select the WS-Trust version first so its option-gating (Bearer key type,
@@ -264,10 +269,22 @@ async function test() {
   } catch (error) {
     log.error(error.message);
     try {
+      // getCurrentUrl() reports the URL that was ASKED FOR even when the tab
+      // holds Chrome's error page, so it cannot be the whole diagnosis; and
+      // the first 6000 characters of that page are Chromium's stylesheet,
+      // which is what two failed remote runs logged instead of a reason. Ask
+      // the document what it is first, and dump the source only when it is a
+      // page rather than an error.
       log.error("Current URL: " + (await driver.getCurrentUrl()));
-      var src = await driver.getPageSource();
-      log.error("Page source (first 6000 chars):\n" + (src || "").substring(0,
-                6000));
+      var state = await describeLoad(driver);
+      if (state.errorPage) {
+        log.error("The browser never got the page: " +
+                  describeToString(state, await driver.getCurrentUrl()) + ".");
+      } else {
+        var src = await driver.getPageSource();
+        log.error("Page source (first 6000 chars):\n" + (src ||
+                  "").substring(0, 6000));
+      }
       var blogs = await driver.manage().logs().get("browser");
       if (blogs && blogs.length) {
         log.error("Browser console:\n" +

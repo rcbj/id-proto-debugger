@@ -592,6 +592,26 @@ function buildJobs() {
     env: {},
   });
 
+  // The page-load guard the browser tests navigate through (tests/page_load.js)
+  // against a socket that behaves like a CDN edge on a bad day. A connection
+  // that is established and then dropped is the failure driver.get() does NOT
+  // report: it resolves, getCurrentUrl() returns the URL that was asked for,
+  // and the tab holds Chromium's error page — so the test waits out its whole
+  // budget for a field that was never there and fails naming one of OUR ids.
+  // That is `WS-Trust 1.2 - Issue` on 2026-08-15 and `WS-Trust 1.4 - Validate`
+  // on 2026-08-20, both against a deployed site, both with the neighbouring
+  // cases loading the same page seconds either side. The property most likely
+  // to rot is the one that says when NOT to retry: a page that loaded without
+  // the field is a product failure and is raised on the first attempt. Its
+  // targets are sockets it opens on loopback, so it needs no service and is
+  // never skipped.
+  jobs.push({
+    name: "Page-load retry (a dropped connection is retried and named; a " +
+        "page that loaded is not)",
+    script: "page_load_retry.js",
+    env: {},
+  });
+
   // The WebAuthn decoder (client/src/cbor.js, cose.js, webauthn.js) against
   // REAL ceremonies — ES256 and RS256, registration and assertion — produced by
   // the WebDriver virtual authenticator and committed as
