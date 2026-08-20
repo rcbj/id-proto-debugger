@@ -34,6 +34,7 @@ const { VirtualAuthenticatorOptions, Transport, Protocol } =
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -58,9 +59,12 @@ const CLIENT_ID = "webauthn-mfa-test";
 // service fresh and would never show this, which is exactly why it is worth
 // fixing rather than relying on: a test that passes only against a pristine
 // service is one nobody can re-run while debugging it.
-const MFA_USER = "mfauser-" + process.pid.toString(36) + "-" +
-    Date.now().toString(36);
-const PWD_USER = "pwdonly-" + process.pid.toString(36);
+// Minted by tests/random_username.js rather than here, so that the reasoning
+// above lives in one place and every test in the suite leaves the same kind of
+// trail behind it. The prefixes still say which of the two identities a row in
+// the STS's user table belongs to.
+const MFA_USER = usernameFor("webauthn-mfa");
+const PWD_USER = usernameFor("webauthn-pwdonly");
 const REDIRECT = STS + "/oauth2/callback-sink";
 
 function authorizeUrl(extra) {

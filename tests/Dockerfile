@@ -72,6 +72,16 @@ RUN npm -v
 
 # Bundle app source
 COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js ./
+# The per-run username minter, required by tests across four protocols (OAuth2,
+# RFC 9700, Kerberos, LDAP) and by both mock-KDC page jobs. A SHARED MODULE
+# rather than a test, so nothing schedules it and the run-report cross-check in
+# jwk_pem_encoding.js cannot notice it missing — a job that requires it and does
+# not find it dies with MODULE_NOT_FOUND in a tenth of a second, naming this
+# file rather than a build. Its name does not collide with anything under
+# client/src or sts/, which is the other thing this directory being flat
+# demands.
+COPY tests/random_username.js ./
+
 # What the static deployments leave out. The test reads the list itself
 # (client/static_site.js), the landing page it greys a card on, the stylesheet
 # that greys it, and client/Dockerfile — which must still build the excluded

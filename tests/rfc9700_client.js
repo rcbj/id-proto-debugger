@@ -47,6 +47,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -97,6 +98,13 @@ function code(file) {
   log.debug("Leaving code().");
   return stripped;
 }
+
+// The subject of every fabricated ID Token below. Nothing here reaches a
+// server, so this is a literal rather than an account — but it is generated
+// like every other username in this suite so that a payload printed by a
+// failure names the file that built it, and so that a `sub` which is a PERSON
+// stays visibly distinct from the 13.1 case whose `sub` is the client_id.
+const SUBJECT = usernameFor("rfc9700-client");
 
 var failures = 0;
 function check(what, fn) {
@@ -622,19 +630,19 @@ function run() {
     startTransaction();
     var good = rfc9700.checkTokenResponse({
       data: { id_token: jwt({ iss: "https://op.example.com",
-                              nonce: "nonce-value", sub: "alice" }) },
+                              nonce: "nonce-value", sub: SUBJECT }) },
       grantType: "authorization_code", clientId: "client-1"
     });
     assertBlocking(good, [], "an ID Token carrying the nonce that was sent");
     startTransaction();
     assertBlocking(rfc9700.checkTokenResponse({
       data: { id_token: jwt({ iss: "https://op.example.com",
-                              nonce: "somebody-elses", sub: "alice" }) },
+                              nonce: "somebody-elses", sub: SUBJECT }) },
       grantType: "authorization_code", clientId: "client-1"
     }), ["3.2"], "an ID Token carrying another session's nonce");
     startTransaction();
     assertBlocking(rfc9700.checkTokenResponse({
-      data: { id_token: jwt({ iss: "https://op.example.com", sub: "alice" }) },
+      data: { id_token: jwt({ iss: "https://op.example.com", sub: SUBJECT }) },
       grantType: "authorization_code", clientId: "client-1"
     }), ["3.2"], "an ID Token with no nonce at all");
   });
@@ -643,7 +651,7 @@ function run() {
     startTransaction();
     assertBlocking(rfc9700.checkTokenResponse({
       data: { id_token: jwt({ iss: "https://evil.example.com",
-                              nonce: "nonce-value", sub: "alice" }) },
+                              nonce: "nonce-value", sub: SUBJECT }) },
       grantType: "authorization_code", clientId: "client-1"
     }), ["2.7"], "an ID Token issued by a different server");
   });

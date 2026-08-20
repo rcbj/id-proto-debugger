@@ -51,6 +51,7 @@ const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
@@ -79,6 +80,21 @@ var DCQL_ID = "identity_credential";
 // page below sets it — and a request that inherits a jwt_vc_json default is one
 // this SD-JWT wallet cannot answer at all.
 var FORMAT = "dc+sd-jwt";
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -237,6 +253,7 @@ async function mintCredential(label) {
 async function planCredentialIntoWallet(driver, held) {
   log.debug("Entering planCredentialIntoWallet().");
   await driver.get(baseUrl + "/vc-presentation-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -263,6 +280,7 @@ async function planCredentialIntoWallet(driver, held) {
                      requestedAt: new Date().toISOString() }),
     issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), waitTime);
   await driver.sleep(400);
   log.debug("Leaving planCredentialIntoWallet().");

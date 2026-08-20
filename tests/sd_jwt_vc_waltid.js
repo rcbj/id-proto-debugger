@@ -75,6 +75,23 @@ var SD_JWT_VC_TYP = "dc+sd-jwt";
 var PRE_AUTHORIZED_GRANT =
     "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 
+const waitForContent = require("./wait_for.js");
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
+
 // ---------------------------------------------------------------------------
 // helpers (same shapes as sd_jwt_vc_issuance.js, so the two read alike)
 // ---------------------------------------------------------------------------
@@ -155,6 +172,7 @@ var WRONG_ISSUER = "http://localhost:1/not-the-offering-issuer";
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -503,6 +521,7 @@ async function walletInitiated(driver) {
   log.debug("Entering walletInitiated().");
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_usecase_wallet-initiated")),
                     waitTime);
   await click(driver, By.id("vc_usecase_wallet-initiated"));
@@ -683,6 +702,7 @@ async function crossDeviceOffer(driver) {
   // ---- the wallet takes what the QR code carried --------------------------
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -794,6 +814,7 @@ async function deferredNotSupportedHere(driver) {
   // Deferred Credential Request into a 404 the moment an issuer took its time.
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -881,6 +902,7 @@ async function optionalFeaturesAbsentHere(driver) {
   // ---- the wallet's configuration pane says so ---------------------------
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -954,6 +976,7 @@ async function optionalFeaturesAbsentHere(driver) {
 
   await signOutOfKeycloak(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("start_issuance_button")),
                     waitTime);
   await authorizeAtWaltid(driver);

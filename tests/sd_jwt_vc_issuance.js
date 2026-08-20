@@ -62,6 +62,7 @@ const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({ name: 'sd_jwt_vc_issuance',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
@@ -97,6 +98,21 @@ var SD_JWT_VC_TYP = "dc+sd-jwt";
 // OID4VCI's pre-authorized code grant, used by the cross-device use cases.
 var PRE_AUTHORIZED_GRANT =
     "urn:ietf:params:oauth:grant-type:pre-authorized_code";
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -242,10 +258,12 @@ async function stepOne(driver) {
   log.debug("Entering stepOne().");
   log.info("=== Step 1: discover the issuer ===");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.sleep(500);
@@ -307,6 +325,7 @@ async function stepOne(driver) {
     "window.localStorage.setItem('oidc_discovery_endpoint', arguments[0]);",
         "https://localhost/oidc/.well-known");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.sleep(500);
@@ -326,6 +345,7 @@ async function stepOne(driver) {
   // Back to the clean slate the rest of this step assumes.
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.sleep(500);
@@ -471,6 +491,7 @@ async function stepOne(driver) {
   // ... and that survives a reload, where the values come back out of local
   // storage as plain strings.
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_display")), waitTime);
   await driver.sleep(700);
   var afterReload = await driver.executeScript(
@@ -782,6 +803,7 @@ async function stepTwo(driver) {
   // Back to step 2 to approve. The tokens are still in storage, so the page
   // stands on its own.
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.sleep(600);
   await click(driver, By.id("vc_approve_button"));
@@ -1415,12 +1437,14 @@ async function didConfigurationPane(driver) {
   log.debug("Entering didConfigurationPane().");
   log.info("=== The DID Configuration pane ===");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
   // This section needs an empty pane to measure, and the sections after it need
   // the credential the workflow issued. See preservingLocalStorage().
   var restoreStorage = await preservingLocalStorage(driver);
   await driver.executeScript("localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
 
   // The resource's path is fixed by the specification, so the pane should offer
@@ -1589,6 +1613,7 @@ async function stepOneFitsInOneRow(driver) {
   var before = await driver.manage().window().getRect();
   await driver.manage().window().setRect({ width: 1512, height: 982 });
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
   // Measured empty first and populated second, so the workflow's own state has
   // to be put back before the sections that need it. See
@@ -1596,6 +1621,7 @@ async function stepOneFitsInOneRow(driver) {
   var restoreStorage = await preservingLocalStorage(driver);
   await driver.executeScript("localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
   await driver.sleep(300);
 
@@ -1797,6 +1823,7 @@ async function chooserFitsOnOneScreen(driver) {
   var before = await driver.manage().window().getRect();
   await driver.manage().window().setRect({ width: 1512, height: 982 });
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_usecases")), waitTime * 4);
   await driver.sleep(300);
 
@@ -1991,6 +2018,7 @@ async function metadataSignatureValidation(driver) {
   var openStep1 = async function () {
     log.debug("Entering openStep1().");
     await driver.get(baseUrl + "/vc-issuance-1.html");
+    await pageBundleReady(driver);
     await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                       waitTime);
     log.debug("Leaving openStep1().");
@@ -2088,6 +2116,7 @@ async function metadataSignatureValidation(driver) {
 
     // --- THE FIX: navigate away, come back, do not retrieve ----------------
     await driver.get(baseUrl + "/vc-issuance-0.html");
+    await pageBundleReady(driver);
     await driver.sleep(400);
     await openStep1();
     await driver.sleep(600);
@@ -2638,6 +2667,7 @@ async function panesContainTheirContent(driver) {
   // own width — a <pre> and a <textarea> in the same pane must come out the
   // same.
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_request_body")), waitTime);
   await driver.sleep(700);
   var boxes = await driver.executeScript(
@@ -2676,6 +2706,7 @@ async function credentialHistoryNavigation(driver, generations) {
   log.debug("Entering credentialHistoryNavigation().");
   log.info("=== Step 4: the Credential History pane ===");
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_reissue_proof"));
@@ -2845,6 +2876,7 @@ async function credentialHistoryNavigation(driver, generations) {
     return /^generation 1 of 2/.test((await navState()).position);
   }, fetchWait, "Older should move back again.");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   // The table element is in the HTML; the pane renders into it from
   // localStorage after load. Wait for the position to say so, the same as the
@@ -2856,6 +2888,7 @@ async function credentialHistoryNavigation(driver, generations) {
   // ... and step 3 verifies whatever the history activated, including the cnf
   // binding, which is the check that would fail if the key had not travelled.
   await driver.get(baseUrl + "/vc-issuance-3.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_credential_raw")), waitTime);
   // Waiting for the RIGHT value, not just any value: this is the assertion.
   await waitForValue(driver, "vc_credential_raw",
@@ -2870,6 +2903,7 @@ async function credentialHistoryNavigation(driver, generations) {
   // Seeded rather than made by 120 real refreshes: what is under test is the
   // pane's behaviour with a long log, not the issuer's patience.
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.executeScript(
     "var real = " +
@@ -2886,6 +2920,7 @@ async function credentialHistoryNavigation(driver, generations) {
     "localStorage.setItem('sdjwtvc_credential_history', " +
         "JSON.stringify(padded.concat(real)));");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.sleep(900);
   var longLog = await driver.executeScript(
@@ -2930,6 +2965,7 @@ async function credentialHistoryNavigation(driver, generations) {
     "var one = JSON.parse(localStorage.getItem('sdjwtvc_credential_history')).slice(-1);" +
     "localStorage.setItem('sdjwtvc_credential_history', JSON.stringify(one));");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.sleep(700);
   var shortLog = await driver.executeScript(
@@ -2946,6 +2982,7 @@ async function credentialHistoryNavigation(driver, generations) {
 
   // ---- clearing forgets the list, not the credential ----------------------
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_clear_button")),
                     waitTime);
   await driver.sleep(600);
@@ -2988,11 +3025,13 @@ async function refreshNegatives(driver) {
   // than removed: "the server refused it" and "there is none" are different
   // states and the page has to distinguish them.
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_refresh_button")), waitTime);
   await driver.executeScript(
     "localStorage.setItem('token_refresh_token', arguments[0]);",
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJub3QtYS1yZWFsLXJlZnJlc2gtdG9rZW4ifQ.bm90LWEtc2lnbmF0dXJl");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_refresh_button")), waitTime);
   await driver.sleep(500);
   await click(driver, By.id("vc_refresh_button"));
@@ -3040,6 +3079,7 @@ async function refreshNegatives(driver) {
   // normally leaves behind.
   await driver.executeScript("localStorage.removeItem('token_refresh_token');");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_reissue_button")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_reissue_proof"));
@@ -3139,6 +3179,7 @@ async function inspectLinksReturnHere(driver) {
   log.debug("Entering inspectLinksReturnHere().");
   log.info("=== The Inspect links on step 2 ===");
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_access_token")), waitTime);
   // Both fields exist in the HTML before the page restores them from
   // localStorage, so wait for the values rather than for the elements.
@@ -3220,6 +3261,7 @@ async function stepTwoWithoutTokens(driver) {
     "localStorage.removeItem('token_id_token');" +
     "localStorage.removeItem('token_refresh_token');");
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
@@ -3264,6 +3306,7 @@ async function staleProofRecovery(driver) {
   log.debug("Entering staleProofRecovery().");
   log.info("=== A proof that went stale before Approve ===");
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
@@ -3337,6 +3380,7 @@ var WRONG_ISSUER = "http://localhost:8181/not-the-offering-issuer";
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -3365,6 +3409,7 @@ async function credentialOfferSameDevice(driver) {
 
   // ---- step 0: the chooser ------------------------------------------------
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")),
                     waitTime);
   // Start with no use case chosen and no offer in hand — and then say which
@@ -3378,6 +3423,7 @@ async function credentialOfferSameDevice(driver) {
     "window.localStorage.setItem('vci_metadata_endpoint', arguments[0] + " +
     "  '/.well-known/openid-credential-issuer');", issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")),
                     waitTime);
   await driver.sleep(300);
@@ -3548,6 +3594,7 @@ async function credentialOfferSameDevice(driver) {
   await driver.get(logoutUrl);
   await driver.sleep(600);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("start_issuance_button")),
                     waitTime);
   await driver.sleep(400);
@@ -3680,6 +3727,7 @@ async function crossDeviceOffer(driver) {
   // Step 0 needs to know which issuer to send the End-User to; the offer that
   // comes back is what configures everything else.
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")),
                     waitTime);
   await driver.executeScript(
@@ -3688,6 +3736,7 @@ async function crossDeviceOffer(driver) {
     "window.localStorage.setItem('vci_metadata_endpoint', arguments[0] + " +
     "  '/.well-known/openid-credential-issuer');", issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id(
                     "vc_usecase_offer-cross-device")), waitTime);
   await click(driver, By.id("vc_usecase_offer-cross-device"));
@@ -3729,6 +3778,7 @@ async function crossDeviceOffer(driver) {
   // the offer itself (see misconfigureTheWallet).
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -3904,6 +3954,7 @@ async function deferredIssuance(driver) {
         "this one should.");
 
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")),
                     waitTime);
   await driver.executeScript(
@@ -3912,6 +3963,7 @@ async function deferredIssuance(driver) {
     "window.localStorage.setItem('vci_metadata_endpoint', arguments[0] + " +
     "  '/.well-known/openid-credential-issuer');", issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_usecase_offer-deferred")),
                     waitTime);
   await click(driver, By.id("vc_usecase_offer-deferred"));
@@ -3924,6 +3976,7 @@ async function deferredIssuance(driver) {
         "document.getElementById('offer_uri').textContent.trim() };");
 
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -4328,6 +4381,7 @@ async function claimsSelection(driver) {
   // The selection is configuration like everything else on this page, so it
   // has to survive the hand-off it is about to make.
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
   var reloaded = await driver.executeScript(readRows);
   assert.deepStrictEqual(reloaded.filter(function (r) { return !r.checked; })
@@ -4416,6 +4470,7 @@ async function claimsSelection(driver) {
   // Left as it was found, because the sections after this one issue credentials
   // of their own and a selection nobody made would quietly narrow them.
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_all_button")),
                     waitTime);
   await click(driver, By.id("vc_claims_all_button"));
@@ -4459,10 +4514,12 @@ async function authorizationDetailsIsTheDefault(driver) {
   // explicitly, which is the one thing this section must not do.
   await signOutOfMockAs(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   var atLoad = await driver.executeScript(
@@ -4508,6 +4565,7 @@ async function authorizationDetailsIsTheDefault(driver) {
     "document.getElementById('handoff_request_mechanism').value = 'scope';" +
     "vcissuance1.onRequestMechanismChange();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
   var chosen = await driver.executeScript(
     "return document.getElementById('handoff_request_mechanism').value;");
@@ -4529,6 +4587,7 @@ async function authorizationDetailsIsTheDefault(driver) {
     "});" +
     "window.localStorage.setItem('vci_info', JSON.stringify(doc));");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
   var noClaims = await driver.executeScript(
     "return { mechanism: " +
@@ -4566,10 +4625,12 @@ async function authorizationDetailsIsTheDefault(driver) {
   // URL, which is why the positive control is here rather than implied by the
   // sections that set the mechanism themselves.
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -4703,6 +4764,7 @@ async function claimsCannotTravelOnAScope(driver) {
   // afresh also proves the warning is not a one-off from the click that caused
   // it: the selection and the mechanism both come out of storage.
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_use_details_button")),
                     fetchWait);
   await driver.wait(async function () {
@@ -4765,6 +4827,7 @@ async function preAuthorizedClaimsThroughThePages(driver) {
 
   await stepOneConfigured(driver, "scope");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -5283,6 +5346,7 @@ async function encryptedCredentialRequest(driver) {
   // the previous run's ciphertext at the wrong moment leaves the pane showing a
   // request that is no longer the one being sent.
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
   }, fetchWait, "step 2 should reassemble on a fresh load.");
@@ -5496,10 +5560,12 @@ async function stepOneConfigured(driver, mechanism) {
             "scope"));
   await signOutOfMockAs(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   // The ISSUER's own authorization server, not Keycloak: authorization_details
@@ -5640,6 +5706,7 @@ async function handoffParameterCheck(driver) {
   log.debug("Entering handoffParameterCheck().");
   log.info("=== The ?sdjwtvc=1 hand-off parameter ===");
   await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("oidc_discovery_endpoint")),
                     waitTime);
   // Empty the two values the hand-off needs, but leave the page "initialized"
@@ -5670,6 +5737,7 @@ async function handoffParameterCheck(driver) {
 
   // And with no parameter, none of it happens.
   await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await pageBundleReady(driver);
   await driver.sleep(700);
   var banners = await driver.executeScript(
       "return document.querySelectorAll('.vc-handoff-banner').length;");

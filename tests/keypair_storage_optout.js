@@ -109,6 +109,21 @@ var PAGES = [
 var MARKER_PRIVATE = "-----BEGIN PRIVATE KEY-----\nKEYPAIR-OPTOUT-TEST\n-----END PRIVATE KEY-----\n";
 var MARKER_PUBLIC = "-----BEGIN CERTIFICATE-----\nKEYPAIR-OPTOUT-TEST\n-----END CERTIFICATE-----\n";
 
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
+
 async function waitVisible(driver, locator) {
   log.debug("Entering waitVisible().");
   await driver.wait(until.elementLocated(locator), waitTime);
@@ -254,6 +269,7 @@ async function keyPairOptOut(driver, spec) {
   // The preference itself is configuration, so it must survive a reload — and
   // the fields must come back empty, since nothing was stored to restore.
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await waitVisible(driver, By.id(spec.checkbox));
   assert.strictEqual(await driver.findElement(By.id(spec.checkbox))
                      .isSelected(), false,
@@ -369,6 +385,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // in test(). Failing here names the cause; failing later names a missing
   // element.
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   var ctx = await read("return { secure: window.isSecureContext," +
                        "         subtle: typeof (window.crypto && " +
                            "window.crypto.subtle)," +
@@ -384,6 +401,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
         "with --headless=new.");
 
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await waitVisible(driver, By.id("vc_save_holder_key"));
 
   // A key pair in storage, and a Credential History generation carrying its own
@@ -405,6 +423,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
     "]));",
     HOLDER_PUBLIC, HOLDER_PRIVATE);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await waitVisible(driver, By.id("vc_save_holder_key"));
 
   var snapshot = function () {
@@ -438,8 +457,22 @@ async function sdJwtVcHolderKeyOptOut(driver) {
            "generation's copy are both stored.");
 
   // Clearing it purges every copy, including the per-generation ones.
+  //
+  // THE READ WAITS FOR THE PAGE RATHER THAN FOLLOWING THE CLICK STRAIGHT AWAY.
+  // `.click()` returns once the event has been dispatched, not once the change
+  // handler and the saveState() purge behind it have finished, so reading in
+  // the same breath is exactly the bet tests/CLAUDE.md's "wait on content, not
+  // elements" note is about: it wins on an idle machine and loses under a full
+  // suite run, where it failed as "[SD-JWT VC] the holder private key should be
+  // removed" — a message about the purge, on a page that had not finished being
+  // asked to purge. `sdjwtvc_save_holder_key` is the page's own record that the
+  // handler ran, so that is what the poll is on; every member below is then
+  // asserted against the SAME snapshot, which is why this takes one and reuses
+  // it rather than re-reading per assertion.
   await (await waitVisible(driver, By.id("vc_save_holder_key"))).click();
-  var after = await snapshot();
+  var after = await waitForContent.waitFor(driver, snapshot,
+    function (s) { return !!s && s.pref === "0"; },
+    "[SD-JWT VC] clearing the box should record the preference");
   assert.strictEqual(after.priv, false,
                      "[SD-JWT VC] the holder private key should be removed.");
   assert.strictEqual(after.refreshed, false,
@@ -469,6 +502,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
       "[SD-JWT VC] nothing should have re-created the private key.");
 
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await waitVisible(driver, By.id("vc_save_holder_key"));
   // Wait for the page to actually GENERATE a key before asserting it was not
   // stored. Without this the assertion passes whenever the snapshot simply
@@ -505,6 +539,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   var continueDisabled = async function (optedOut) {
     log.debug("Entering continueDisabled().");
     await driver.get(baseUrl + "/vc-presentation-1.html");
+    await pageBundleReady(driver);
     await driver.executeScript(
       "localStorage.clear();" +
       "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
@@ -512,6 +547,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
       "if (arguments[2]) localStorage.setItem('sdjwtvc_save_holder_key', '0');",
       vpCredential, vpRequest, optedOut ? 1 : 0);
     await driver.navigate().refresh();
+    await pageBundleReady(driver);
     await waitVisible(driver, By.id("vp_continue_button"));
     log.debug("Leaving continueDisabled().");
     return read("return !!(document.getElementById('vp_continue_button') || " +
@@ -532,6 +568,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // The way back: the presentation page must offer somewhere to paste the key,
   // and accept the file Download Key Pair produces.
   await driver.get(baseUrl + "/vc-presentation-2.html");
+  await pageBundleReady(driver);
   await waitVisible(driver, By.id("vp_holder_key_row"));
   var rowShown = await read(
     "var e = document.getElementById('vp_holder_key_row');" +
@@ -564,11 +601,13 @@ async function sdJwtVcHolderKeyOptOut(driver) {
                    b64u({ vct: "demo", iss: "http://issuer",
                         cnf: { jwk: HOLDER_PUBLIC } }) + ".sig~";
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.executeScript(
     "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
     "localStorage.setItem('sdjwtvc_credential_meta', JSON.stringify({ " +
         "issuer: 'http://issuer' }));", credential);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await waitVisible(driver, By.id("vc_holder_key_row"));
   var reuseState = function () {
     log.debug("Entering reuseState().");
@@ -606,10 +645,12 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // they go, and a toggle test that assumes which way the box is currently
   // pointing will flip the wrong way the moment anything is inserted before it.
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await waitVisible(driver, By.id("vc_save_holder_key"));
   await driver.executeScript(
       "localStorage.setItem('sdjwtvc_save_holder_key', '0');");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await waitVisible(driver, By.id("vc_save_holder_key"));
   assert.strictEqual(await driver.findElement(By.id("vc_save_holder_key"))
                      .isSelected(), false,

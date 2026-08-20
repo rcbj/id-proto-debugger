@@ -112,6 +112,7 @@ const assert = require("assert");
 const tls = require("tls");
 const crypto = require("crypto");
 const { Command, Option } = require("commander");
+const { usernameFor, runStamp } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -146,21 +147,24 @@ var password = process.env.LDAP_PASSWORD || "password!";
 var usersDn = "ou=users," + baseDn;
 var groupsDn = "ou=groups," + baseDn;
 
-// Unique per run — see the note above about re-runnable tests. Derived from the
-// clock and a little randomness rather than from the clock alone, because two
-// runs started in the same second on a CI matrix would collide.
-var stamp = Date.now().toString(36) +
-    Math.floor(Math.random() * 1e6).toString(36);
-var uid = "dbg-" + stamp;
-var groupCn = "dbg-group-" + stamp;
+// Unique per run — see the note above about re-runnable tests — and prefixed
+// with THIS FILE'S NAME rather than a generic one. The directory outlives the
+// run: an entry left behind by a section that died before its delete is read
+// later out of /ldap/directory or /admin/groups by somebody wondering where it
+// came from, and `dbg-…` did not tell them. tests/random_username.js mints it,
+// which is also what keeps the clock-plus-randomness reasoning (a CI matrix
+// starts several jobs in the same second) in one place instead of here.
+var uid = usernameFor("api-ldap");
+var stamp = runStamp();
+var groupCn = "api-ldap-group-" + stamp;
 var userDn = "uid=" + uid + "," + usersDn;
 var groupDn = "cn=" + groupCn + "," + groupsDn;
 // The LDAPS section's own names. Separate from the two above rather than reusing
 // them after the deletes in section 7, so that a failure names which transport
 // created the entry it is complaining about — and so the two sections do not have
 // to run in a particular order.
-var uidTls = "dbg-tls-" + stamp;
-var groupCnTls = "dbg-tls-group-" + stamp;
+var uidTls = "api-ldap-tls-" + stamp;
+var groupCnTls = "api-ldap-tls-group-" + stamp;
 var userDnTls = "uid=" + uidTls + "," + usersDn;
 var groupDnTls = "cn=" + groupCnTls + "," + groupsDn;
 
@@ -1099,16 +1103,30 @@ async function wsFederationSeedsAnEntryToo(described) {
       "&username=" + encodeURIComponent(who) + "&password=whatever",
     redirect: "manual"
   });
-  // 302 back to the passive endpoint is the success shape: the screen is done
-  // and the request it interrupted is resumed. A 200 means the screen was sent
-  // again, which is what a refused sign-in looks like — and it would leave the
-  // assertion below failing for a reason that has nothing to do with the
+  // A REDIRECT back to the passive endpoint is the success shape: the screen is
+  // done and the request it interrupted is resumed. A 200 means the screen was
+  // sent again, which is what a refused sign-in looks like — and it would leave
+  // the assertion below failing for a reason that has nothing to do with the
   // directory.
-  assert.strictEqual(login.status, 302,
+  //
+  // WHICH redirect is asserted the way RFC 9700 section 4.12 states it rather
+  // than as one exact code: 303 is what the mock sends now and what the BCP
+  // asks for, 302 is what it sent before and what most servers send, and
+  // **307 is the one that is forbidden** — it replays the method and the body,
+  // which on this request is the username and password, onto whatever the
+  // redirect names. Pinning 302 exactly made this fail the day the mock started
+  // doing the more correct thing, and it never checked the code the
+  // specification actually cares about. tests/oauth2_sts_endpoints.js and
+  // tests/sts_dpop.js say the same thing about the OIDC screen, which is a
+  // separate one for the reason WS-Federation section 13.2.1 gives.
+  assert.ok(login.status === 303 || login.status === 302,
     "a WS-Federation sign-in should redirect back to the passive endpoint; " +
     "got " + login.status + ", which is the screen being shown again — the " +
     "sign-in was refused, so nothing authenticated and the check below would " +
     "be measuring that instead.");
+  assert.notStrictEqual(login.status, 307,
+    "RFC 9700 section 4.12: a credential-bearing POST must not be answered " +
+    "with 307, which replays the method and the body onto the next hop.");
 
   assert.strictEqual(await entriesFor(who), 1,
     "signing in at the WS-Federation screen must seed uid=" + who + "," +

@@ -43,6 +43,7 @@ const http = require("http");
 const net = require("net");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -73,6 +74,12 @@ function stsModule(name) {
 const REALM = "EXAMPLE.COM";
 const SERVICE = ["HTTP", "web.example.com"];
 const USER_PASSWORD = process.env.KRB5_USER_PASSWORD || "password!";
+// Who authenticates to the protected page, generated per run with a prefix
+// naming this file. The mock KDC creates a USER account for any name on first
+// sight, so nothing here needs a configured principal — and the table it keeps
+// is never pruned, so a name shared with every other Kerberos test makes a row
+// in it say nothing about where it came from. KRB5_PRINCIPAL pins it.
+const CLIENT = process.env.KRB5_PRINCIPAL || usernameFor("krb5-spnego-http");
 
 // What a Windows client actually offers, in this order. Kerberos first, its
 // mis-typed Microsoft twin second, NTLM last as the fallback. Used as-is so
@@ -382,9 +389,9 @@ async function theOptimisticTokenAuthenticatesInOneRoundTrip(serviceTicket) {
   assert.strictEqual(resp.status, 200,
     "a valid ticket in a NegTokenInit must be accepted, got " + resp.status +
     ": " + resp.body.slice(0, 400));
-  assert.ok(/alice@EXAMPLE\.COM/.test(resp.body),
-      "and the page must name the authenticated client: " +
-      resp.body.slice(0, 400));
+  assert.ok(resp.body.indexOf(CLIENT + "@" + REALM) !== -1,
+      "and the page must name the authenticated client (" + CLIENT + "@" +
+      REALM + "): " + resp.body.slice(0, 400));
 
   assert.ok(resp.negotiate,
     "the 200 must carry the acceptor's token in WWW-Authenticate. Without it " +
@@ -1061,7 +1068,7 @@ async function test() {
       httpPort);
 
   try {
-    const tgt = await getTgt("alice");
+    const tgt = await getTgt(CLIENT);
     const serviceTicket = await getServiceTicket(tgt);
 
     await theProtectedPageIsAdvertised();

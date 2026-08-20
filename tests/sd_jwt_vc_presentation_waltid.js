@@ -40,6 +40,7 @@ const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation_waltid',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
@@ -81,6 +82,21 @@ var clientId = process.env.SD_JWT_VC_CLIENT_ID ||
 // disclosable in waltid/config's profile, so the selective part is observable.
 var REQUESTED = ["given_name", "birthdate"];
 var DCQL_ID = "identity_credential";
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -181,10 +197,12 @@ async function issueFromWaltid(driver) {
            "pages) ===");
   await signOutOfKeycloak(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.sleep(500);

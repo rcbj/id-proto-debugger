@@ -45,6 +45,7 @@ const { Command, Option } = require("commander");
 const common = require("./jwt_vc_json_common.js");
 const paths = require("./module_paths.js");
 const browserFlags = require("./browser_flags.js");
+const waitForContent = require("./wait_for.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -189,6 +190,12 @@ async function openPage(driver) {
     return await driver.executeScript(
         "return !!document.getElementById('did_identifier');");
   }, waitTime * 4, "did-tools.html did not load its DID pane");
+  // The pane above is static markup and is there as soon as the page parses.
+  // Every control on it is wired INLINE — `onclick="didtools.resolveDid()"` —
+  // so it is the bundle behind that name, not the element, that has to have
+  // arrived before anything here presses a button. See waitForBundle().
+  await waitForContent.waitForBundle(driver, "didtools",
+    "did-tools.html's bundle", waitTime * 6);
   log.debug("Leaving openPage().");
 }
 

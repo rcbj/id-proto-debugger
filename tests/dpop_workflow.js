@@ -44,10 +44,26 @@ var log = bunyan.createLogger({ name: "dpop_workflow",
 log.info("Log initialized. logLevel=" + log.level());
 
 const browserFlags = require("./browser_flags.js");
+const waitForContent = require("./wait_for.js");
 
 var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
 const STS = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/, "");
 let BASE = "http://localhost:3000";
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 async function txt(driver, id) {
   log.debug("Entering txt().");
@@ -100,6 +116,7 @@ async function paneBeforeAnythingIsSent(driver) {
   // Configured the way step 1 would configure it, so this file is about DPoP
   // rather than about discovery.
   await driver.get(BASE + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_dpop_enabled")), 20000,
     "vc-issuance-2.html has no DPoP pane");
   await driver.executeScript(
@@ -115,6 +132,7 @@ async function paneBeforeAnythingIsSent(driver) {
     "localStorage.setItem('dpop_signing_alg_values_supported', " +
         "'ES256, RS256');", STS);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_dpop_enabled")), 20000);
   await driver.sleep(1200);
 
@@ -140,21 +158,32 @@ async function paneBeforeAnythingIsSent(driver) {
     await txt(driver, "vc_dpop_server_algs"));
 
   // The two checkboxes must be honest about each other.
+  //
+  // WAIT ON THE NOTE, not on a fixed sleep after the click. `.click()` returns
+  // once the event is dispatched, not once the handler has rewritten the note,
+  // and a `sleep(900)` here is a bet that the rewrite lands inside 900ms — it
+  // wins on an idle machine and loses under a full suite run, where it failed
+  // as "a ticked box that silently does nothing", which is a statement about
+  // the product rather than about the wait. waitFor() above is what every other
+  // read in this file uses and it is faster in the normal case as well.
   await driver.findElement(By.id("vc_dpop_holder_of_key")).click();
-  await driver.sleep(900);
+  var bindingNote = await waitFor(driver, "vc_dpop_binding_note",
+    /needs a DPoP key/,
+    "ticking Holder of Key with DPoP off should rewrite the binding note");
   check("Holder of Key with DPoP off says the credential gets a holder " +
         "key of its own",
-    /needs a DPoP key/.test(await txt(driver, "vc_dpop_binding_note")) &&
-      /holder key of its own/.test(
-        await txt(driver, "vc_dpop_binding_note")),
+    /needs a DPoP key/.test(bindingNote) &&
+      /holder key of its own/.test(bindingNote),
     "a ticked box that silently does nothing is the failure this checks " +
         "for. Note: " +
     await txt(driver, "vc_dpop_binding_note"));
 
-  // Turning DPoP on must produce a key and its thumbprint.
+  // Turning DPoP on must produce a key and its thumbprint. The key is generated
+  // by Web Crypto, so it arrives on a promise: wait for the thumbprint to be
+  // there rather than for two seconds to pass.
   await driver.findElement(By.id("vc_dpop_enabled")).click();
-  await driver.sleep(2000);
-  var jkt = (await txt(driver, "vc_dpop_jkt")).trim();
+  var jkt = (await waitFor(driver, "vc_dpop_jkt", /[A-Za-z0-9_-]{43}/,
+    "turning DPoP on should generate a key pair and show its jkt")).trim();
   check("turning DPoP on generates a key pair and shows its jkt",
     /^[A-Za-z0-9_-]{43}$/.test(jkt),
     "a base64url SHA-256 is 43 characters; got " + JSON.stringify(jkt));
@@ -210,6 +239,7 @@ async function boundTokenThroughTheOfferFlow(driver) {
         screen.txCode);
 
   await driver.get(BASE + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), 20000);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -350,6 +380,7 @@ async function presentationSideKnowsWhichKey(driver) {
   log.debug("Entering presentationSideKnowsWhichKey().");
   log.info("=== The presentation side, where OpenID4VP has no DPoP ===");
   await driver.get(BASE + "/vc-presentation-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("pane_dpop_note")), 20000,
     "presentation step 2 has no Key Binding and DPoP pane");
   await driver.sleep(1200);
@@ -368,6 +399,7 @@ async function turningItOffDiscardsTheKey(driver) {
   log.debug("Entering turningItOffDiscardsTheKey().");
   log.info("=== Turning DPoP off ===");
   await driver.get(BASE + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_dpop_enabled")), 20000);
   await driver.sleep(1200);
   await driver.findElement(By.id("vc_dpop_enabled")).click();

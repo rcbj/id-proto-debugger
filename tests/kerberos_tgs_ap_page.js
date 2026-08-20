@@ -44,6 +44,8 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { usernameFor, requireKnownOrCreatable } =
+    require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -59,7 +61,11 @@ var kdcPort = process.env.KRB5_KDC_PORT || "88";
 var serviceHost = process.env.KRB5_SERVICE_HOST || kdcHost;
 var servicePort = process.env.KRB5_SERVICE_PORT || "8888";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
-var principal = process.env.KRB5_PRINCIPAL || "alice";
+// Generated per run, prefixed with this file's name. The mock KDC registers an
+// account for any username on first sight, so this need not be a configured
+// principal — and should not be, because its table is never pruned and a name
+// shared by every test makes a row in it untraceable. KRB5_PRINCIPAL pins it.
+var principal = process.env.KRB5_PRINCIPAL || usernameFor("kerberos-tgs-ap");
 // One password for every user in the mock KDC, whoever KRB5_PRINCIPAL names.
 var password = process.env.KRB5_PASSWORD || "password!";
 var spn = process.env.KRB5_SPN || "HTTP/web.example.com";
@@ -113,6 +119,16 @@ async function preconditions() {
         ok: false,
         why: "the mock KDC serves realm " + body.realm + ", not " + realm
       };
+    }
+    // Asked rather than assumed: this test signs in as a generated name, which
+    // works only because this KDC creates accounts on demand. If that ever
+    // stops being true the exchange fails as KDC_ERR_C_PRINCIPAL_UNKNOWN, an
+    // error about the KDC's table that says nothing about where the name came
+    // from.
+    const unusable = requireKnownOrCreatable(body, principal);
+    if (unusable) {
+      log.debug("Leaving preconditions().");
+      return { ok: false, why: unusable };
     }
     if ((body.implemented || []).indexOf("TGS exchange") === -1) {
       log.debug("Leaving preconditions().");

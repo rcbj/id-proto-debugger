@@ -35,6 +35,7 @@
 const assert = require("assert");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -51,6 +52,12 @@ var metadataUrl = process.env.OAUTH_METADATA_URL || (stsBase +
 // there — the redirect is read, not followed.
 var REDIRECT_URI = "http://localhost:9999/callback";
 var CLIENT_ID = "sts-endpoint-test-client";
+// The identity the password grant presents. Generated per run rather than
+// fixed: this mock checks no password (only the reserved string "invalid" is
+// refused) and records every authentication against the name presented, so a
+// name shared with every other test makes its users page and audit log
+// unreadable. The prefix names this file.
+var RO_USER = process.env.STS_RO_USER || usernameFor("oauth2-sts-endpoints");
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -775,18 +782,19 @@ async function testOtherGrants(meta, verify, codeTokens) {
             "client_credentials has no user, so no ID token.");
 
   const ro = await postForm(meta.token_endpoint, {
-    grant_type: "password", username: "alice", password: "s3cret",
+    grant_type: "password", username: RO_USER, password: "s3cret",
         scope: "openid", client_id: CLIENT_ID
   });
   assert.strictEqual(ro.status, 200, "the password grant failed: " + ro.raw);
   const roClaims = verify(ro.body.access_token,
       "the password grant access token");
-  assert.ok(/alice/.test(roClaims.sub),
-            "the password grant should describe the user who authenticated.");
+  assert.ok(roClaims.sub.indexOf(RO_USER) !== -1,
+            "the password grant should describe the user who authenticated (" +
+            RO_USER + "), not " + roClaims.sub + ".");
   verify(ro.body.id_token, "the password grant ID token");
 
   const roBad = await postForm(meta.token_endpoint, {
-    grant_type: "password", username: "alice", password: "invalid",
+    grant_type: "password", username: RO_USER, password: "invalid",
         client_id: CLIENT_ID
   });
   assert.strictEqual(roBad.status, 400,

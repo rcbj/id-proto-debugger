@@ -44,6 +44,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -65,7 +66,16 @@ var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
 var frontend = process.env.KRB5_FRONTEND || "HTTP/frontend.example.com";
 var frontendPassword = process.env.KRB5_FRONTEND_PASSWORD ||
     "frontend-service-password";
-var impersonate = process.env.KRB5_IMPERSONATE || "alice";
+// WHO IS IMPERSONATED, generated per run and prefixed with this file's name.
+// S4U2Self resolves the named account through the KDC's findOrCreateUser(), so
+// an account exists for whatever name is asked for — and the whole point of the
+// exchange is that this person is never involved in it, which makes a name
+// nothing else in the suite shares exactly the right thing to ask for: a
+// principal that turns up in the mock's table having authenticated nowhere is
+// traceable to this file rather than to whoever last signed in as alice.
+// KRB5_IMPERSONATE pins it.
+var impersonate = process.env.KRB5_IMPERSONATE ||
+    usernameFor("kerberos-delegation");
 var classicTarget = process.env.KRB5_CLASSIC_TARGET ||
     "HTTP/backend.example.com";
 var rbcdTarget = process.env.KRB5_RBCD_TARGET || "HTTP/rbcd.example.com";

@@ -34,6 +34,8 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { usernameFor, requireKnownOrCreatable } =
+    require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -51,7 +53,13 @@ var kdcHost = process.env.KRB5_KDC_HOST || null;
 var kdcPort = process.env.KRB5_KDC_PORT || "88";
 var stsUrl = process.env.STS_URL || "http://localhost:8081";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
-var principal = process.env.KRB5_PRINCIPAL || "alice";
+// Generated per run, with a prefix naming this file. The mock KDC creates an
+// account for any username on first sight (findOrCreateUser(), which
+// /krb5/principals advertises as accountPolicy.anyUsernameAuthenticates), so
+// this does not have to be an account somebody configured — and it should not
+// be, because that table is never pruned and a name every test shares makes a
+// leftover row in it untraceable. KRB5_PRINCIPAL still pins it.
+var principal = process.env.KRB5_PRINCIPAL || usernameFor("kerberos-as");
 // Every user account in the mock KDC shares one password, and any username
 // authenticates against it — so this is the password for whatever KRB5_PRINCIPAL says.
 var password = process.env.KRB5_PASSWORD || "password!";
@@ -105,15 +113,16 @@ async function kdcIsReachable() {
         why: "the mock KDC serves realm " + body.realm + ", not " + realm
       };
     }
-    const names = (body.principals ||
-        []).map(function (p) { return p.principal.split("@")[0]; });
-    if (names.indexOf(principal) === -1) {
+    // NOT "is this name in the table?". A generated name is created on first
+    // sight, so it is not in the table until this test authenticates — and a
+    // membership check would therefore skip this job, with a plausible reason,
+    // on a perfectly good stack. What is asked instead is whether the KDC can
+    // produce an account under this name at all; the endpoint publishes both
+    // halves of that answer.
+    const unusable = requireKnownOrCreatable(body, principal);
+    if (unusable) {
       log.debug("Leaving kdcIsReachable().");
-      return {
-        ok: false,
-        why: "the mock KDC has no principal named " + principal +
-        " (it has " + names.join(", ") + ")"
-      };
+      return { ok: false, why: unusable };
     }
     log.debug("Leaving kdcIsReachable().");
     return { ok: true, kdcPort: String(body.kdcPort) };
@@ -534,6 +543,10 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
     if (m.host) {
       assert.strictEqual(m.realm, "EXAMPLE.COM", "the realm should default " +
           "to the mock KDC's");
+      // "alice" and not `principal`: this asserts what the PAGE ships as its
+      // prefill (krb5PrincipalDefault in client/src/env/*.js), which is a
+      // configured account of the mock's and has nothing to do with the
+      // generated name this test signs in as.
       assert.strictEqual(m.principal, "alice", "and the principal to an " +
           "account it knows");
       assert.strictEqual(m.port, "88", "and the port");

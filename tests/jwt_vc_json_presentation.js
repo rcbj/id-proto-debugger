@@ -43,6 +43,17 @@ var log = bunyan.createLogger({ name: "jwt_vc_json_presentation",
 var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime || 15000;
+// A STEP TRANSITION IS NOT A FIELD READ, and budgeting it as one is what broke
+// this file on 2026-08-20: `waitTime` is 2000ms in tests/env/*.js — a fine
+// budget for a page filling a field it already has the data for — and it was
+// also carrying "click Continue, build a presentation, POST it to the verifier,
+// load the next page of the workflow and let its bundle run". Each of those
+// pages is a browserify bundle of a few megabytes, and the whole suite's stack
+// is on the same machine, so on a loaded box the 2 seconds went on the
+// navigation alone. It failed as a missing #vp_presentation 2146ms after the
+// click — an element that is static markup and was never absent, only not
+// arrived at yet. Four times the field budget for anything that crosses a page.
+var stepWait = waitTime * 4;
 
 var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
@@ -54,7 +65,10 @@ const { text, waitForStatus, waitForValue } = require("./wait_for");
 
 async function click(driver, locator) {
   log.debug("Entering click().");
-  await driver.wait(until.elementLocated(locator), waitTime);
+  // stepWait, not waitTime: this helper is called on pages the previous step
+  // navigated to, so the element it is looking for may still be a page load
+  // away rather than merely unfilled.
+  await driver.wait(until.elementLocated(locator), stepWait);
   var e = driver.findElement(locator);
   await driver.executeScript("arguments[0].scrollIntoView({ block: " +
                              "'center' });", e);
@@ -86,7 +100,9 @@ async function presentThroughThePages(driver, held) {
   log.debug("Entering presentThroughThePages().");
   log.info("=== jwt_vc_json presented through the four pages ===");
   await common.plantIntoWallet(driver, {
-    By: By, until: until, baseUrl: baseUrl, waitTime: waitTime,
+    // plantIntoWallet() navigates to vc-presentation-0.html and waits for it,
+    // which is a page transition and gets the transition budget.
+    By: By, until: until, baseUrl: baseUrl, waitTime: stepWait,
     credential: held.credential, publicJwk: held.publicJwk,
         privateJwk: held.privateJwk,
     verifierBase: verifierBase, issuerBase: issuerBase
@@ -106,13 +122,13 @@ async function presentThroughThePages(driver, held) {
                    request.location.split("?")[1]);
   await waitForStatus(driver, "vp_request_status",
                       function (s) { return /Request read/.test(s); },
-    "step 1 should read a jwt_vc_json request", waitTime);
+    "step 1 should read a jwt_vc_json request", stepWait);
   await click(driver, By.id("vp_continue_button"));
 
-  await driver.wait(until.elementLocated(By.id("vp_presentation")), waitTime);
+  await driver.wait(until.elementLocated(By.id("vp_presentation")), stepWait);
   const presentation = await waitForValue(driver, "vp_presentation",
     function (v) { return v.trim().length > 80; },
-              "step 2 should build a presentation", waitTime);
+              "step 2 should build a presentation", stepWait);
   assert.strictEqual(presentation.indexOf("~"), -1,
     "a jwt_vc_json presentation is a VP JWT, not an SD-JWT Combined " +
         "Serialization. Got: " +
@@ -135,18 +151,18 @@ async function presentThroughThePages(driver, held) {
     "step 2 should say why there is nothing to choose. Said: " + summary);
 
   await click(driver, By.id("vp_present_button"));
-  await driver.wait(until.urlContains("vc-presentation-3.html"), waitTime,
+  await driver.wait(until.urlContains("vc-presentation-3.html"), stepWait,
     "presenting should reach step 3.");
 
   const verdict = await waitForStatus(driver, "vp_verifier_status",
     function (s) { return /ACCEPTED|REFUSED/.test(s); },
-              "the verifier should reach a verdict", waitTime);
+              "the verifier should reach a verdict", stepWait);
   assert.ok(/ACCEPTED/.test(verdict),
     "the verifier should accept a correctly built VP JWT. Said: " + verdict);
 
   const recheck = await waitForStatus(driver, "vp_recheck_status",
       function (s) { return s.trim() !== ""; },
-    "the wallet should re-check what it sent", waitTime);
+    "the wallet should re-check what it sent", stepWait);
   assert.ok(/all pass/.test(recheck),
             "the wallet's own checks should pass. Said: " + recheck);
 

@@ -43,6 +43,7 @@ const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -116,7 +117,13 @@ async function mockTarget() {
   return {
     what: "the mock KDC",
     realm: realm,
-    impersonate: "alice",
+    // Generated, prefixed with this file's name. The mock KDC resolves an
+    // S4U2Self target through findOrCreateUser(), so the account exists on
+    // first sight; nothing below asserts anything the principal TABLE
+    // configured, only that every ticket in the chain keeps naming this
+    // person. windowsTarget() below cannot do this — dc.test_user is an
+    // account somebody provisioned in a live directory.
+    impersonate: usernameFor("krb5-delegation-interop"),
     frontend: {
       asName: "HTTP/frontend." + domain,
       spn: "HTTP/frontend." + domain,

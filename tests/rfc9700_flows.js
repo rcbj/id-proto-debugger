@@ -47,6 +47,7 @@ const https = require("https");
 const { URL } = require("url");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -62,8 +63,13 @@ const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
        waitTime, log, assert });
 
 // The identity typed at the mock's sign-in screen. The mock checks no
-// password, so this is simply the name every token then describes.
-const USER = "alice";
+// password, so this is simply the name every token then describes — which is
+// why it can be, and is, generated per run: the mock keeps a users page, an
+// authentication log and a statistics pane keyed by the name presented, and a
+// name every test shares makes all of that unattributable. The prefix names
+// this file so a row in any of them can be traced back to it. Pin it with
+// RFC9700_USER (or RANDOM_USERNAME_STAMP) to re-drive a failed run.
+const USER = process.env.RFC9700_USER || usernameFor("rfc9700-flows");
 // The mock registers no clients, so this is any string — but it must be the
 // same one throughout, because requirement 13.1 compares the token's sub
 // against it.

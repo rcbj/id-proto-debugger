@@ -25,6 +25,7 @@ const crypto = require("crypto");
 const assert = require("assert");
 
 var bunyan = require("bunyan");
+const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({
   name: "jwt_vc_json_common",
   level: (function () {
@@ -49,6 +50,21 @@ const FORMAT = "jwt_vc_json";
 // walt.id, which is exactly the kind of thing an interoperability run is for.
 const WALLET_CLIENT_ID = process.env.OID4VCI_WALLET_CLIENT_ID ||
     "idptools-debugger-tests";
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 function b64u(buf) {
   log.debug("Entering b64u().");
@@ -435,6 +451,7 @@ async function plantIntoWallet(driver, opts) {
   const By = opts.By;
   const until = opts.until;
   await driver.get(opts.baseUrl + "/vc-presentation-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), opts.waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -455,6 +472,7 @@ async function plantIntoWallet(driver, opts) {
         JSON.stringify(opts.privateJwk),
     opts.verifierBase, opts.issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), opts.waitTime);
   await driver.sleep(400);
   log.debug("Leaving plantIntoWallet().");

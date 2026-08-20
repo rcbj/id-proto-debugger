@@ -36,6 +36,7 @@ const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -81,6 +82,28 @@ const quiet = { debug() {}, info() {}, warn() {}, error() {} };
 // password to go with it. KRB5_USER_PASSWORD is the same variable the KDC reads, so
 // overriding it moves both ends together.
 const USER_PASSWORD = process.env.KRB5_USER_PASSWORD || "password!";
+
+// WHO THIS TEST AUTHENTICATES AS, and why it is not a name out of the KDC's
+// table. Every account there is a BEHAVIOUR — `noreauth`, `locked`, `aesonly`,
+// `rc4only` — and the sections that want one still name it below. This one
+// wants the ordinary case, and the ordinary case is precisely what
+// findOrCreateUser() produces on first sight: pre-authentication required (its
+// default), the etypes this KDC serves, AD's user-shaped salt, the shared
+// password. So it is generated, with a prefix naming this file, and the table
+// this run leaves behind says which test put the row in it.
+//
+// The realm and this name are what the SALT is: AD's is the realm followed by
+// the sAMAccountName with no separator, which is the shape asserted below. It
+// is derived here rather than written out, because a hardcoded
+// "EXAMPLE.COMalice" is a second definition of the same fact and only one of
+// the two would ever have been updated.
+// A constant rather than an environment read: every request built below names
+// EXAMPLE.COM outright and every assertion checks for it, so this test is
+// already fixed to that realm and a second, movable definition of it would
+// only desynchronise the salt from the request.
+const REALM = "EXAMPLE.COM";
+const CLIENT = process.env.KRB5_PRINCIPAL || usernameFor("krb5-as-exchange");
+const CLIENT_SALT = REALM + CLIENT;
 
 // ---------------------------------------------------------------------------
 // Driving the KDC.
@@ -208,7 +231,7 @@ function buildAsReq(fields) {
     reqBody: {
       kdcOptions: f.kdcOptions || [msgs.KDC_OPTION.FORWARDABLE,
           msgs.KDC_OPTION.RENEWABLE],
-      cname: f.cname || { type: msgs.NAME_TYPE.PRINCIPAL, name: ["alice"] },
+      cname: f.cname || { type: msgs.NAME_TYPE.PRINCIPAL, name: [CLIENT] },
       realm: f.realm || "EXAMPLE.COM",
       sname: f.sname || {
         type: msgs.NAME_TYPE.SRV_INST,
@@ -271,7 +294,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
       entries.length);
   const aes256 = entries.filter(function (e) { return e.etype === 18; })[0];
   assert.ok(aes256, "aes256-cts-hmac-sha1-96 must be offered");
-  assert.strictEqual(aes256.salt, "EXAMPLE.COMalice",
+  assert.strictEqual(aes256.salt, CLIENT_SALT,
     "the salt must be Active Directory's shape for a user — realm + " +
         "sAMAccountName, no separator");
   // -------------------------------------------------------------------------
@@ -330,7 +353,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
   assert.ok(pwSalt, "PA-PW-SALT should be sent alongside, as Active " +
       "Directory does");
   assert.strictEqual(asn1.decLatin1(prim.toBytes(pwSalt.value)),
-      "EXAMPLE.COMalice",
+      CLIENT_SALT,
     "and must carry the same salt");
 
   // 2. Now the real request, keyed from the salt the KDC just gave us.
@@ -343,7 +366,7 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
     "with correct pre-authentication the KDC must issue a ticket");
   const rep = second.decoded.rep;
   assert.strictEqual(rep.crealm, "EXAMPLE.COM", "the realm in the reply");
-  assert.deepStrictEqual(rep.cname.name, ["alice"], "the client named in the " +
+  assert.deepStrictEqual(rep.cname.name, [CLIENT], "the client named in the " +
       "reply");
   assert.strictEqual(rep.ticket.encPart.etype, 18,
     "the KDC must pick the client's FIRST acceptable etype, which was aes256");
@@ -376,7 +399,8 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
   assert.ok(part.renewTill && part.renewTill > part.endtime,
     "a renewable ticket must carry a renew-till beyond its endtime");
 
-  log.info("the AS exchange completed: a TGT for alice@EXAMPLE.COM using " +
+  log.info("the AS exchange completed: a TGT for " + CLIENT + "@" + REALM +
+      " using " +
     part.key.etypeName + ", flags [" + flags.join(", ") + "]");
   log.debug("Leaving theTwoMessageDanceWorksAndCarriesTheSalt().");
   return { info: aes256, preauth: preauth };
@@ -413,7 +437,7 @@ async function theTicketAndTheClientAgreeOnTheSessionKey(context) {
     "They are encrypted under different keys for different readers, and " +
         "their equality is the " +
     "whole mechanism — neither end can check it alone.");
-  assert.deepStrictEqual(ticketPart.cname.name, ["alice"], "the ticket names " +
+  assert.deepStrictEqual(ticketPart.cname.name, [CLIENT], "the ticket names " +
       "the client");
   assert.strictEqual(ticketPart.crealm, "EXAMPLE.COM", "and its realm");
   assert.strictEqual(ticketPart.endtime.getTime(), clientPart.endtime.getTime(),
@@ -545,13 +569,18 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
   const resent = msgs.readEtypeInfo2(
     failed.eDataPaData.filter(function (pa) { return pa.type === 19; })[0].value);
   assert.strictEqual(resent.filter(function (e) { return e.etype === 18; })[0].salt,
-    "EXAMPLE.COMalice", "and the salt in it must still be right");
+    CLIENT_SALT, "and the salt in it must still be right");
 
   // A pre-auth timestamp encrypted under the wrong SALT — the same password, a
   // different salt. Indistinguishable from a wrong password at the KDC, which
   // is the point being demonstrated.
+  // The right salt with its case changed. Names are compared exactly over
+  // there, so this is a DIFFERENT account's salt and derives a different key —
+  // which is the whole point, and is why it is built from the real one rather
+  // than written out beside it.
   const wrongSalt = await encTimestampPadata(USER_PASSWORD,
-    { etype: 18, salt: "EXAMPLE.COMAlice", s2kparams: context.info.s2kparams });
+    { etype: 18, salt: CLIENT_SALT.toUpperCase(),
+      s2kparams: context.info.s2kparams });
   await expectError("the right password with the wrong salt",
     buildAsReq({ padata: [wrongSalt.padata] }), 24, /PREAUTH_FAILED/);
 
@@ -559,7 +588,7 @@ async function theKdcRefusesInItsOwnVocabulary(context) {
   // clock: the padata carries the time, so a stale one is just a stale value.
   const profile = kcrypto.etypeById(18);
   const key = await profile.stringToKey(USER_PASSWORD,
-      prim.utf8("EXAMPLE.COMalice"), null);
+      prim.utf8(CLIENT_SALT), null);
   const stale = msgs.encPaEncTsEnc(new Date(Date.now() - 20 * 60 * 1000), 0);
   const skewed = await expectError("a timestamp twenty minutes old",
     buildAsReq({ padata: [{

@@ -49,6 +49,18 @@ if (typeof globalThis.btoa !== "function") {
 var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime || 20000;
+// A STEP TRANSITION IS NOT A FIELD READ, and budgeting it as one is what broke
+// this file on 2026-08-20: `waitTime` is 2000ms in tests/env/*.js — a fine
+// budget for a page filling a field it already has the data for — and it was
+// also carrying "click Present, derive a bbs-2023 proof in the browser, POST it
+// to the verifier, load the next page of the workflow and let its bundle run".
+// The BBS derivation alone is BLS12-381 arithmetic over every statement, each
+// of these pages is a browserify bundle of a few megabytes, and the whole
+// suite's stack is on the same machine — so on a loaded box 2 seconds went on
+// the navigation alone and it failed as "presenting should reach step 3" after
+// 2113ms, which reads as the wallet refusing to present. Four times the field
+// budget for anything that crosses a page or derives a proof.
+var stepWait = waitTime * 4;
 var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
@@ -57,6 +69,22 @@ const LDP_CONFIG_ID = process.env.OID4VCI_LDP_CONFIG_ID ||
     "IdentityCredentialLdpVc";
 
 const { text, waitForStatus, waitForValue } = require("./wait_for");
+const waitForContent = require("./wait_for.js");
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 function severeErrors(driver) {
   log.debug("Entering severeErrors().");
@@ -110,12 +138,14 @@ async function startsFromTheWalletsOwnPages(driver, held) {
   log.info("=== Starting a presentation from the wallet's pages, not a " +
            "hand-built URL ===");
   await driver.get(baseUrl + "/vc-presentation-0.html");
+  await pageBundleReady(driver);
   await driver.executeScript(
     "window.localStorage.clear();" +
     "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
     "localStorage.setItem('sdjwtvp_verifier_base_url', arguments[1]);",
     JSON.stringify(held.credential), verifierBase);
   await driver.get(baseUrl + "/vc-presentation-0.html");
+  await pageBundleReady(driver);
   await driver.sleep(900);
 
   // Step 0 navigates from a click handler rather than an anchor, so the only
@@ -125,6 +155,7 @@ async function startsFromTheWalletsOwnPages(driver, held) {
   var flows = ["same-device", "same-device-signed", "cross-device"];
   for (var i = 0; i < flows.length; i++) {
     await driver.get(baseUrl + "/vc-presentation-0.html");
+    await pageBundleReady(driver);
     await driver.sleep(700);
     var buttonId = "vp_usecase_" + flows[i];
     var exists = await driver.executeScript(
@@ -141,7 +172,7 @@ async function startsFromTheWalletsOwnPages(driver, held) {
     await driver.wait(async function () {
       var u = await driver.getCurrentUrl();
       return /oid4vp/.test(u) || /vc-presentation-1\.html/.test(u);
-    }, waitTime, "the " + flows[i] + " flow should leave step 0.");
+    }, stepWait, "the " + flows[i] + " flow should leave step 0.");
     var landed = await driver.getCurrentUrl();
     var askedFor = "";
     if (/[?&]format=([^&]+)/.test(landed)) {
@@ -175,13 +206,14 @@ async function startsFromTheWalletsOwnPages(driver, held) {
   // decide what to put in the request. Nothing below is constructed by this
   // test.
   await driver.get(baseUrl + "/vc-presentation-0.html");
+  await pageBundleReady(driver);
   await driver.sleep(700);
   await driver.executeScript(
       "document.getElementById('vp_usecase_same-device').click();");
   await driver.wait(async function () {
     return /oid4vp\/verifier/.test(await driver.getCurrentUrl());
-  }, waitTime, "the same-device flow should land on the verifier's page.");
-  await driver.wait(until.elementLocated(By.id("present_by_value")), waitTime,
+  }, stepWait, "the same-device flow should land on the verifier's page.");
+  await driver.wait(until.elementLocated(By.id("present_by_value")), stepWait,
     "the verifier's page should offer to start a presentation.");
   var carried = await driver.executeScript(
     "return document.getElementById('present_by_value').getAttribute('href');");
@@ -197,11 +229,11 @@ async function startsFromTheWalletsOwnPages(driver, held) {
         "this format.");
 
   await driver.findElement(By.id("present_by_value")).click();
-  await driver.wait(until.urlContains("vc-presentation-1.html"), waitTime,
+  await driver.wait(until.urlContains("vc-presentation-1.html"), stepWait,
     "the verifier should hand the request back to the wallet.");
   await waitForStatus(driver, "vp_request_status",
                       function (s) { return /Request read/.test(s); },
-    "step 1 should read the request it was handed", waitTime);
+    "step 1 should read the request it was handed", stepWait);
 
   // What actually arrived, read off the page rather than from anything this
   // test built. This is the assertion the old suite could not make.
@@ -255,6 +287,7 @@ async function refusesAFormatItCannotAnswer(driver) {
   const request = await freshRequest();
 
   await driver.get(baseUrl + "/vc-presentation-1.html");
+  await pageBundleReady(driver);
   await driver.executeScript(
     "window.localStorage.clear();" +
     "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
@@ -312,6 +345,7 @@ async function test() {
       .setChromeOptions(options).build();
   try {
     await driver.get(baseUrl + "/vc-presentation-1.html");
+    await pageBundleReady(driver);
     await driver.executeScript(
       "window.localStorage.clear();" +
       "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
@@ -320,7 +354,7 @@ async function test() {
     await driver.get(baseUrl + "/vc-presentation-1.html?" + request.query);
     await waitForStatus(driver, "vp_request_status",
                         function (s) { return /Request read/.test(s); },
-      "step 1 should read an ldp_vc request", waitTime);
+      "step 1 should read an ldp_vc request", stepWait);
     await driver.executeScript(
         "var b=document.getElementById('vp_continue_button'); if (b) " +
         "b.click();");
@@ -328,10 +362,11 @@ async function test() {
 
     log.info("=== Step 2: selection is over canonical statements ===");
     await driver.get(baseUrl + "/vc-presentation-2.html");
-    await driver.wait(until.elementLocated(By.id("vp_presentation")), waitTime);
+    await pageBundleReady(driver);
+    await driver.wait(until.elementLocated(By.id("vp_presentation")), stepWait);
     const envelope = await waitForValue(driver, "vp_presentation",
       function (v) { return v.trim().length > 100; },
-      "step 2 should derive a bbs-2023 proof", waitTime);
+      "step 2 should derive a bbs-2023 proof", stepWait);
 
     const rows = await driver.executeScript(
       "return document.querySelectorAll('#vp_disclosures_table tbody " +
@@ -366,17 +401,17 @@ async function test() {
     await driver.executeScript(
         "var b=document.getElementById('vp_present_button'); if (b) " +
         "b.click();");
-    await driver.wait(until.urlContains("vc-presentation-3.html"), waitTime,
+    await driver.wait(until.urlContains("vc-presentation-3.html"), stepWait,
       "presenting should reach step 3.");
     const verdict = await waitForStatus(driver, "vp_verifier_status",
       function (s) { return /ACCEPTED|REFUSED/.test(s); },
-                "the verifier should reach a verdict", waitTime);
+                "the verifier should reach a verdict", stepWait);
     assert.ok(/ACCEPTED/.test(verdict),
       "the verifier must accept a correctly derived bbs-2023 proof. Said: " +
           verdict);
     const recheck = await waitForStatus(driver, "vp_recheck_status",
       function (s) { return s.trim() !== ""; },
-                "the wallet should re-check what it sent", waitTime);
+                "the wallet should re-check what it sent", stepWait);
     assert.ok(/all pass/.test(recheck),
               "the wallet's own checks should pass. Said: " + recheck);
     log.info("[step3] OK — " + verdict.trim().slice(0, 90));
@@ -392,16 +427,17 @@ async function test() {
     await driver.get(baseUrl + "/vc-presentation-1.html?" + second.query);
     await waitForStatus(driver, "vp_request_status",
                         function (s) { return /Request read/.test(s); },
-      "step 1 should read the second request", waitTime);
+      "step 1 should read the second request", stepWait);
     await driver.executeScript(
         "var b=document.getElementById('vp_continue_button'); if (b) " +
         "b.click();");
     await driver.sleep(800);
     await driver.get(baseUrl + "/vc-presentation-2.html");
-    await driver.wait(until.elementLocated(By.id("vp_presentation")), waitTime);
+    await pageBundleReady(driver);
+    await driver.wait(until.elementLocated(By.id("vp_presentation")), stepWait);
     const envelope2 = await waitForValue(driver, "vp_presentation",
       function (v) { return v.trim().length > 100; }, "the second derivation",
-                waitTime);
+                stepWait);
     assert.notStrictEqual(JSON.parse(envelope2).proof, parsed.proof,
       "two presentations of the same credential must produce DIFFERENT proof " +
           "bytes. This is the " +
