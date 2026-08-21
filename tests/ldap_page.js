@@ -35,6 +35,18 @@
 //     History has to distinguish Failure (the directory said no) from Sent (the
 //     api never answered) — which are the two states people most often confuse.
 //
+//  5. **THE SEARCH PANE PAGES ITS RESULTS, AND THE PAGING IS THE BROWSER'S.**
+//     A directory answers with hundreds of entries and the pane draws them a
+//     page at a time — but nothing about that reaches the wire, and the two
+//     ways to get it wrong are both invisible from the protocol: paging that
+//     silently re-runs the search (a different answer under the same page
+//     number, and N times the load on somebody's directory), and row numbers
+//     that restart at 1 on every page, which loses the only handle a reader
+//     has on where they are in an answer of 300. It is also the one place on
+//     this page where the WORDING is load-bearing: LDAP's own paged results
+//     control (RFC 2696) is a different mechanism, and a pane that says
+//     "paged" without saying which is teaching the wrong thing.
+//
 // And one thing that is neither: **the password is never written to
 // localStorage.** Every other field on the page is remembered. That is the
 // project-wide rule and it is checked here because nothing else can see it.
@@ -80,6 +92,40 @@ var uid = "page-" + stamp;
 var groupCn = "page-group-" + stamp;
 var userDn = "uid=" + uid + ",ou=users," + baseDn;
 var groupDn = "cn=" + groupCn + ",ou=groups," + baseDn;
+
+// The subtree the paging section builds for itself, and how many entries go
+// in it. 23 plus the container is 24, which is three pages of ten and a short
+// last one — the arithmetic that a page size dividing the total exactly would
+// not check.
+var pagerOu = "page-pager-" + stamp;
+var pagerDn = "ou=" + pagerOu + "," + baseDn;
+var PAGER_ENTRIES = 23;
+var PAGER_TOTAL = PAGER_ENTRIES + 1;
+
+// One call to the api, for the entries this test creates for itself rather
+// than hunts for. The paging section needs more entries in one answer than
+// this directory is guaranteed to hold, and a section that pages only when it
+// happens to find enough is a section that reports OK for doing nothing.
+async function apiCall(path, body) {
+  log.debug("Entering apiCall(). path=" + path);
+  let response;
+  try {
+    response = await fetch(apiUrl + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+  } catch (e) {
+    log.debug("Leaving apiCall(). The fetch failed.");
+    throw new Error("could not reach " + apiUrl + path + ": " +
+      (e.cause ? e.cause.message : e.message));
+  }
+  const payload = await response.json().catch(function () {
+    return {};
+  });
+  log.debug("Leaving apiCall(). status=" + response.status);
+  return { status: response.status, body: payload };
+}
 
 // Content, not elements. Every field on this page is static markup, so
 // until.elementLocated succeeds during parsing and says nothing about whether
@@ -493,14 +539,243 @@ async function theFourPresetsFillTheFieldsAndAnswer(driver) {
 // rather than from the response textarea, because the table is what a reader
 // sees and a page that fetched correctly and rendered nothing would otherwise
 // pass.
+// Every DN the search RETURNED, which since the pane learned to page is not
+// the same thing as every DN on the screen: it draws 25 rows by default, and
+// an assertion that a particular entry came back would otherwise be an
+// assertion that it came back on page one. So this selects "All" first — the
+// pre-pagination behaviour, which is exactly what a question about the whole
+// answer wants — and reads the table after it redraws.
 async function resultDns(driver) {
   log.debug("Entering resultDns().");
+  await showEveryResultRow(driver);
   const dns = await driver.executeScript(
     "return Array.prototype.slice.call(" +
     "  document.querySelectorAll('#ldap_search_results .ldap-entry-dn')" +
     ").map(function (e) { return e.textContent.trim().toLowerCase(); });");
   log.debug("Leaving resultDns(). " + dns.length + " row(s).");
   return dns;
+}
+
+// Put the Search pane on one page. The select is a plain DOM control drawn by
+// the page itself, so this sets it and fires the event the markup listens for
+// rather than clicking through an option list.
+async function showEveryResultRow(driver) {
+  log.debug("Entering showEveryResultRow().");
+  await driver.executeScript(
+    "var s = document.getElementById('ldap_search_page_size');" +
+    "if (s && s.value !== '0') {" +
+    "  s.value = '0';" +
+    "  s.dispatchEvent(new Event('change'));" +
+    "}");
+  log.debug("Leaving showEveryResultRow().");
+}
+
+// ---------------------------------------------------------------------------
+// The Search pane pages its results, in the BROWSER.
+//
+// The entries are created here rather than looked for. This directory holds
+// whatever the run before it left behind — three seeded people on a cold start,
+// twenty-five after a full suite — so a section that pages only when it
+// happens to find enough entries is a section that quietly does nothing on the
+// day it matters. 23 entries in a container of their own, plus the container
+// itself, is 24: three pages of ten with a short one at the end.
+// ---------------------------------------------------------------------------
+async function theSearchPanePagesItsResults(driver) {
+  log.debug("Entering theSearchPanePagesItsResults().");
+  log.info("=== Search pane: paging " + PAGER_TOTAL + " entries under " +
+           pagerDn + " ===");
+  const connection = { url: ldapUrl, bindDn: bindDn, password: password };
+  const added = await apiCall("/ldap/add", Object.assign({
+    dn: pagerDn,
+    attributes: { objectClass: ["top", "organizationalUnit"], ou: [pagerOu] }
+  }, connection));
+  assert.strictEqual(added.status, 200,
+    "the api answered " + added.status + " creating " + pagerDn + ", so " +
+    "this section has nothing to page. " + JSON.stringify(added.body));
+  try {
+    for (let i = 0; i < PAGER_ENTRIES; i++) {
+      // Zero-padded, so that the order the pane draws them in is the order a
+      // reader would sort them into and an off-by-one page boundary is
+      // visible rather than plausible.
+      const cn = "pager-" + String(i + 1 + 100).slice(1);
+      const entry = await apiCall("/ldap/add", Object.assign({
+        dn: "cn=" + cn + "," + pagerDn,
+        attributes: { objectClass: ["top", "device"], cn: [cn] }
+      }, connection));
+      assert.strictEqual(entry.status, 200,
+        "the api answered " + entry.status + " creating cn=" + cn + " — " +
+        "this section needs all " + PAGER_ENTRIES + " of them. " +
+        JSON.stringify(entry.body));
+    }
+
+    // Search that subtree, ten to a page.
+    await setField(driver, "ldap_search_base", pagerDn);
+    await setField(driver, "ldap_search_filter", "(objectClass=*)");
+    await setField(driver, "ldap_search_attributes", "cn");
+    await setField(driver, "ldap_search_size_limit", "500");
+    await driver.findElement(By.id("ldap_search_scope")).sendKeys("sub");
+    await driver.executeScript(
+        "var s = document.getElementById('ldap_search_page_size');" +
+        "s.value = '10';" +
+        "s.dispatchEvent(new Event('change'));");
+    await clearStatus(driver, "ldap_search_status");
+    await click(driver, "btn_ldap_search");
+    await waitForText(driver, "ldap_search_count", /\d+ entries/, 20000,
+                      "the search to return entries");
+
+    const first = await readPager(driver);
+    log.info("Page 1: " + JSON.stringify(first));
+    assert.strictEqual(first.total, PAGER_TOTAL,
+      "the search returned " + first.total + " entries and this section " +
+      "created " + PAGER_TOTAL + " (the container and " + PAGER_ENTRIES +
+      " under it). Something else is in " + pagerDn + ", or the search did " +
+      "not run against it.");
+    assert.strictEqual(first.rows, 10,
+      "with ten rows per page the first page should draw ten of the " +
+      first.total + " entries and it drew " + first.rows + ".");
+    assert.strictEqual(first.pageOf, "Page 1 of 3",
+      "the pager should say which page of how many, and it reads \"" +
+      first.pageOf + "\".");
+    assert.strictEqual(first.numbers[0], "1",
+      "the first row on page 1 should be numbered 1 and is \"" +
+      first.numbers[0] + "\".");
+    assert.ok(first.prevDisabled,
+      "Prev should be disabled on the first page.");
+    assert.ok(!first.nextDisabled,
+      "Next should be enabled when there are three pages.");
+    assert.ok(/Showing 1\u20139 of 24|Showing 1\u201310 of 24/.test(
+                  first.range),
+      "the pager should say which entries are on screen and how many the " +
+      "SEARCH returned — never how many the directory holds. It reads \"" +
+      first.range + "\".");
+
+    // Paging must not go back to the directory. A pager that re-runs the
+    // search gives a different answer under the same page number, and does it
+    // to somebody's production directory N times.
+    const historyBefore = await historyRowCount(driver);
+    await click(driver, "ldap_search_next");
+    const second = await readPager(driver);
+    log.info("Page 2: " + JSON.stringify(second));
+    assert.strictEqual(second.pageOf, "Page 2 of 3",
+      "Next should move to page 2, and the pager reads \"" + second.pageOf +
+      "\".");
+    assert.strictEqual(second.rows, 10,
+      "page 2 should draw ten rows and drew " + second.rows + ".");
+    assert.strictEqual(second.numbers[0], "11",
+      "the rows are numbered within the ANSWER, so the first row of page 2 " +
+      "is 11. It reads \"" + second.numbers[0] + "\" — numbering that " +
+      "restarts at 1 on every page loses the reader's place in an answer of " +
+      "several hundred.");
+    assert.notStrictEqual(second.firstDn, first.firstDn,
+      "page 2 begins with the same entry as page 1 (" + second.firstDn +
+      "), so the pager moved the label and not the rows.");
+    const historyAfter = await historyRowCount(driver);
+    assert.strictEqual(historyAfter, historyBefore,
+      "paging added " + (historyAfter - historyBefore) + " row(s) to the " +
+      "Operations History, so it went back to the directory. This is " +
+      "display paging over the answer already in the browser: it must send " +
+      "nothing.");
+
+    await click(driver, "ldap_search_next");
+    const third = await readPager(driver);
+    log.info("Page 3: " + JSON.stringify(third));
+    assert.strictEqual(third.pageOf, "Page 3 of 3",
+      "the third page should be the last, and the pager reads \"" +
+      third.pageOf + "\".");
+    assert.strictEqual(third.rows, PAGER_TOTAL - 20,
+      "the last page holds the remainder, " + (PAGER_TOTAL - 20) +
+      " row(s), and drew " + third.rows + ".");
+    assert.ok(third.nextDisabled,
+      "Next should be disabled on the last page.");
+    assert.ok(!third.prevDisabled,
+      "Prev should be enabled on the last page.");
+
+    // "All" is the pre-pagination behaviour, and it stays reachable.
+    await driver.executeScript(
+        "var s = document.getElementById('ldap_search_page_size');" +
+        "s.value = '0';" +
+        "s.dispatchEvent(new Event('change'));");
+    const all = await readPager(driver);
+    log.info("All: " + JSON.stringify(all));
+    assert.strictEqual(all.rows, PAGER_TOTAL,
+      "with \"All\" selected every entry the search returned should be on " +
+      "screen: " + PAGER_TOTAL + " expected, " + all.rows + " drawn.");
+    assert.strictEqual(all.pageOf, null,
+      "with one page there is nowhere to go, so the pager should offer no " +
+      "buttons and no \"Page 1 of 1\". It reads \"" + all.pageOf + "\".");
+    assert.ok(/of 24 entries this search returned/.test(all.range),
+      "the range line stays on a single page — it is the sentence that " +
+      "separates 24 entries from 24 entries and a cap. It reads \"" +
+      all.range + "\".");
+  } finally {
+    // Whatever happened above, this directory does not keep 24 entries named
+    // after a test run. The container goes last: a directory is a tree.
+    for (let i = 0; i < PAGER_ENTRIES; i++) {
+      const cn = "pager-" + String(i + 1 + 100).slice(1);
+      await apiCall("/ldap/delete", Object.assign({
+        dn: "cn=" + cn + "," + pagerDn
+      }, { url: ldapUrl, bindDn: bindDn, password: password }));
+    }
+    await apiCall("/ldap/delete", Object.assign({ dn: pagerDn },
+        { url: ldapUrl, bindDn: bindDn, password: password }));
+    log.info("Removed " + pagerDn + " and the " + PAGER_ENTRIES +
+             " entries under it.");
+  }
+  log.debug("Leaving theSearchPanePagesItsResults().");
+}
+
+// Everything the pager and the table say, in one round trip.
+async function readPager(driver) {
+  log.debug("Entering readPager().");
+  // NOTE: the function below is serialized and evaluated IN THE BROWSER, where
+  // there is no bunyan and no `log` — see the repo-root CLAUDE.md. It and
+  // everything it declares are exempt from the Entering/Leaving convention.
+  const state = await driver.executeScript(function () {
+    function textOf(id) {
+      var el = document.getElementById(id);
+      return el ? el.textContent : null;
+    }
+    var rows = document.querySelectorAll(
+        "#ldap_search_results table.ldap-entries tbody tr");
+    var numbers = [];
+    var firstDn = null;
+    for (var i = 0; i < rows.length; i++) {
+      numbers.push(rows[i].children[0].textContent);
+      if (i === 0) {
+        firstDn = rows[i].children[1].textContent;
+      }
+    }
+    var range = textOf("ldap_search_range") || "";
+    var total = range.match(/of (\d+) entr/);
+    var prev = document.getElementById("ldap_search_prev");
+    var next = document.getElementById("ldap_search_next");
+    return {
+      rows: rows.length,
+      numbers: numbers,
+      firstDn: firstDn,
+      range: range,
+      total: total ? Number(total[1]) : null,
+      pageOf: textOf("ldap_search_page_of"),
+      prevDisabled: prev ? prev.disabled : null,
+      nextDisabled: next ? next.disabled : null,
+      capped: textOf("ldap_search_capped")
+    };
+  });
+  log.debug("Leaving readPager(). rows=" + state.rows);
+  return state;
+}
+
+// How many operations the page has recorded. The unit of "did paging go back
+// to the directory" — every call this page makes writes one row.
+async function historyRowCount(driver) {
+  log.debug("Entering historyRowCount().");
+  // NOTE: browser-side, as above. No `log` in here.
+  const count = await driver.executeScript(function () {
+    var host = document.getElementById("ldap_operation_history");
+    return host ? host.querySelectorAll("tbody tr").length : 0;
+  });
+  log.debug("Leaving historyRowCount(). " + count + " row(s).");
+  return count;
 }
 
 // ---------------------------------------------------------------------------
@@ -732,6 +1007,7 @@ async function test() {
     await theUsersAttributesAreUpdated(driver);
     await theGroupsPaneCreatesAGroupAndAddsAMember(driver);
     await theFourPresetsFillTheFieldsAndAnswer(driver);
+    await theSearchPanePagesItsResults(driver);
     await aRefusalIsShownAsAResultAndLogged(driver);
     await theEntriesAreDeletedAndTheMemberDangles(driver);
     await theEntryPaneShowsWhatTheShorthandSends(driver);

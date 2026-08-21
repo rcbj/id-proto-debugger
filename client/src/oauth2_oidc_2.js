@@ -185,11 +185,29 @@ function tokenButtonClick() {
     // an empty object and this is the request it always was.
     dpopTokenRequestHeaders(localStorage.getItem("token_endpoint"))
       .then(function (headers) {
+        var url = localStorage.getItem("token_endpoint");
+        var sentBody = convertToOAuth2Format(formData);
+        // Recorded for the HTTP tab before the request goes, so that a call
+        // which never comes back still shows what left. The headers are the
+        // ones this page CHOSE: the browser adds Origin, Referer and
+        // User-Agent itself, after script has stopped being able to look, and
+        // the pane says so rather than implying this is all of them.
+        noteTokenRequestSent({
+          via: "browser",
+          method: "POST",
+          url: url,
+          headers: $.extend({
+            "Content-Type": "application/x-www-form-urlencoded" }, headers),
+          body: sentBody,
+          bodyNote: "The browser adds Origin, Referer, User-Agent and the " +
+              "rest of its own headers to this request and does not disclose " +
+              "them to script, so they are not listed above.",
+          note: null });
         $.ajax({
           type: "POST",
           crossdomain: true,
-          url: localStorage.getItem("token_endpoint"),
-          data: convertToOAuth2Format(formData),
+          url: url,
+          data: sentBody,
           contentType: "application/x-www-form-urlencoded",
           headers: headers,
           success: successfulInternalTokenAPICall,
@@ -230,11 +248,28 @@ function tokenButtonClick() {
           proxyNote + "</span>"));
       }
     }
+    // http_trace asks the api to hand back what it saw of ITS call to the
+    // token endpoint (api/server.js, buildHttpTrace()) — the only way this
+    // page can show a proxied exchange, since the browser is not party to it.
+    // It is a flag for the api and goes no further: convertToOAuth2Format()
+    // builds the outbound form body from named parameters, so nothing here
+    // reaches the identity provider.
+    var proxiedBody = JSON.stringify($.extend({}, formData, {
+      http_trace: true }));
+    noteTokenRequestSent({
+      via: "api",
+      method: "POST",
+      url: appconfig.apiUrl + "/token",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8" },
+      body: proxiedBody,
+      bodyNote: null,
+      note: "Waiting for the api, which is making the Token Request." });
     $.ajax({
       type: "POST",
       crossdomain: true,
       url: appconfig.apiUrl + "/token",
-      data: JSON.stringify(formData),
+      data: proxiedBody,
       contentType: "application/json; charset=utf-8",
       success: successfulInternalTokenAPICall,
       error: errorInternalTokenAPICall
@@ -452,6 +487,527 @@ function renderOauthDpopStatus(accessToken) {
   log.debug("Leaving renderOauthDpopStatus(). verdict=" + verdict.state);
 }
 
+// ---------------------------------------------------------------------------
+// THE HTTP TAB on the token exchange pane.
+//
+// What the pane showed before this was a DESCRIPTION of the request, composed
+// from the form as it stood — useful, and not the same thing as the exchange:
+// it names no headers, it is written before anything is sent, and it says
+// nothing at all about what came back or how long it took. This tab shows the
+// call that was actually made.
+//
+// Where the bytes come from depends on which end made the call, and the pane
+// says which, because the difference is the whole reason this page offers the
+// choice:
+//
+//   * Front end. The browser calls the token endpoint itself, so the request
+//     is this page's own and the response is a jqXHR. What is NOT available is
+//     most of the truth about the headers: the browser adds Origin, Referer
+//     and User-Agent after script has stopped looking, and CORS hands script
+//     only the response headers the server chose to expose. The pane says so
+//     rather than presenting a partial list as though it were the whole one.
+//
+//   * Back end (the default here, because a great many identity providers
+//     refuse a browser-origin Token Request outright). The api makes the call,
+//     and only the api can see it — so it returns what it saw under
+//     `http_exchange`, which this asked for with `http_trace: true`. That is
+//     the complete exchange, headers and raw body both ways.
+//
+// Nothing here is written to localStorage. The request repeats a client
+// secret, an Authorization header and, on the password grant, a password —
+// which is precisely what this page keeps out of storage (see the state
+// persistence note in CLAUDE.md). The trace lives as long as the page does.
+// ---------------------------------------------------------------------------
+
+// The request this page last sent, and the instant it went. Module state
+// rather than a closure because jQuery hands its handlers the response and
+// never the request that produced it.
+var tokenExchangeSent = null;
+
+// One element, with its text set as TEXT.
+//
+// Everything this pane draws — header names and values, a request body, a
+// response body — is somebody else's bytes, and half of it arrives from the
+// far end. Building markup out of it and handing that to .html() is the
+// js/xss-through-dom shape that fillGeneratedFields() above exists to avoid,
+// and a sanitizer is the wrong answer to it a second time: there is no markup
+// wanted here at all, so nothing is parsed as markup.
+function httpNode(tag, className, text) {
+  log.debug("Entering httpNode().");
+  var node = document.createElement(tag);
+  if (className) {
+    node.className = className;
+  }
+  if (text !== undefined && text !== null) {
+    node.textContent = String(text);
+  }
+  log.debug("Leaving httpNode().");
+  return node;
+}
+
+// A two-column table of name/value pairs, sized to the pane rather than to its
+// content: `table-layout: fixed` in the stylesheet plus break-anywhere on the
+// cells is what keeps a 3,000-character Authorization header inside the pane's
+// border instead of widening the column it sits in. Measured with a real
+// header, not an empty table — an empty one fits anything.
+function httpHeaderTable(headers) {
+  log.debug("Entering httpHeaderTable().");
+  var table = httpNode("table", "dbg-http-table");
+  var body = document.createElement("tbody");
+  var names = Object.keys(headers || {}).sort();
+  if (names.length === 0) {
+    var empty = document.createElement("tr");
+    var only = httpNode("td", null, "(none reported)");
+    only.colSpan = 2;
+    empty.appendChild(only);
+    body.appendChild(empty);
+  }
+  names.forEach(function (name) {
+    var value = headers[name];
+    var row = document.createElement("tr");
+    row.appendChild(httpNode("td", null, name));
+    row.appendChild(httpNode("td", null,
+        Array.isArray(value) ? value.join(", ") : String(value)));
+    body.appendChild(row);
+  });
+  table.appendChild(body);
+  log.debug("Leaving httpHeaderTable(). " + names.length + " header(s).");
+  return table;
+}
+
+// One HTTP message: its first line, its headers, and its body.
+function httpMessage(host, title, firstLine, headers, body, bodyNote) {
+  log.debug("Entering httpMessage(). " + title);
+  host.appendChild(httpNode("div", "dbg-http-title", title));
+  var message = httpNode("div", "dbg-http");
+  message.appendChild(httpNode("div", "dbg-http-line", firstLine));
+  // The header table gets its own bounded, scrolling box. A header value has
+  // no length limit worth relying on — a 3,000-character one measured here
+  // took the pane to 1,882 pixels on its own — and this pane shares a screen
+  // with the rest of the workflow.
+  var headerBox = httpNode("div", "dbg-http-scroll");
+  headerBox.appendChild(httpHeaderTable(headers));
+  message.appendChild(headerBox);
+  if (bodyNote) {
+    message.appendChild(httpNode("div", "dbg-http-note", bodyNote));
+  }
+  message.appendChild(httpNode("div", "dbg-http-body",
+      (body === null || body === undefined || body === "") ?
+          "(no body)" : String(body)));
+  host.appendChild(message);
+  log.debug("Leaving httpMessage().");
+}
+
+// The headers of an XMLHttpRequest response, parsed out of the one string the
+// browser gives for all of them. CORS decides what is in that string, which is
+// why the caller labels the list rather than presenting it as complete.
+function parseXhrHeaders(raw) {
+  log.debug("Entering parseXhrHeaders().");
+  var headers = {};
+  String(raw || "").split(/\r?\n/).forEach(function (line) {
+    var at = line.indexOf(":");
+    if (at > 0) {
+      headers[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+    }
+  });
+  log.debug("Leaving parseXhrHeaders(). " + Object.keys(headers).length +
+            " header(s).");
+  return headers;
+}
+
+// Draw a view into one host. Everything above assembles one of these; this
+// and renderTokenHttpExchange() below are the only functions that touch a
+// pane.
+//
+// view = { note, request: {method, url, headers, body},
+//          response: {status, statusText, headers, body, note} | null,
+//          timing: [ "…" ], failure: string | null }
+//
+// `emptyText` is what an absent view says, and it differs by pane because the
+// absence means two different things: on the request form nothing has been
+// sent YET, while on the results pane the tokens on screen came back from
+// localStorage and the exchange that produced them was never kept — a Token
+// Request carries the client secret, so it is not written down.
+function drawHttpExchange(host, view, emptyText) {
+  log.debug("Entering drawHttpExchange().");
+  if (!host) {
+    log.debug("Leaving drawHttpExchange(). No host element.");
+    return;
+  }
+  while (host.firstChild) {
+    host.removeChild(host.firstChild);
+  }
+  if (!view) {
+    host.appendChild(httpNode("div", "dbg-http-note", emptyText));
+    log.debug("Leaving drawHttpExchange(). Nothing to show.");
+    return;
+  }
+  if (view.note) {
+    host.appendChild(httpNode("div", "dbg-http-note", view.note));
+  }
+  httpMessage(host, "Request",
+              view.request.method + " " + view.request.url,
+              view.request.headers, view.request.body, view.request.note);
+  if (view.response) {
+    httpMessage(host, "Response",
+                "HTTP " + view.response.status +
+                    (view.response.statusText ?
+                        " " + view.response.statusText : ""),
+                view.response.headers, view.response.body, view.response.note);
+  } else if (view.failure) {
+    host.appendChild(httpNode("div", "dbg-http-title", "Response"));
+    host.appendChild(httpNode("div", "dbg-http-fail",
+        "No response. " + view.failure));
+  } else {
+    host.appendChild(httpNode("div", "dbg-http-title", "Response"));
+    host.appendChild(httpNode("div", "dbg-http-note", "Waiting…"));
+  }
+  if (view.timing && view.timing.length) {
+    host.appendChild(httpNode("div", "dbg-http-title", "Timing"));
+    var timing = httpNode("div", "dbg-http");
+    view.timing.forEach(function (line) {
+      timing.appendChild(httpNode("div", "dbg-http-timing", line));
+    });
+    host.appendChild(timing);
+  }
+  log.debug("Leaving drawHttpExchange().");
+}
+
+// The two panes that show this exchange, and what each of them says when
+// there is none to show.
+//
+// The SAME exchange is drawn in both. It is composed on the request form, so
+// the form has a tab for it; but a successful call COLLAPSES that form and
+// leaves the Token Endpoint Results pane open, which is where a reader is
+// actually looking when they want to know what went over the wire. One view,
+// one renderer, two hosts — two implementations of this would drift the first
+// time the api's trace gained a field.
+var HTTP_EXCHANGE_PANES = [
+  { host: "token_http_exchange",
+    empty: "No Token Request has been sent from this page yet. Send one " +
+        "with Get Token and the whole exchange appears here." },
+  { host: "token_result_http_exchange",
+    empty: "No Token Request has been sent since this page was loaded. " +
+        "The tokens beside this tab were restored from this browser's " +
+        "storage; the exchange that produced them was not kept, because a " +
+        "Token Request carries the client secret." }
+];
+
+// The last view drawn, and the last thing the HTTP tab's label said.
+//
+// Both are kept because the Token Endpoint Results pane is REBUILT from a
+// string on every call and again on load, so its host element does not exist
+// when showTokenExchange() runs — that runs at the top of the same handler
+// that rebuilds the pane. Whichever of the two happens second fills in the
+// other: this function draws into every host that exists now, and
+// attachHttpTabToTokenResults() draws this view into the host it has just
+// created.
+var tokenExchangeView = null;
+var tokenExchangeLabel = null;
+
+// Draw the view in every pane that has somewhere to put it.
+function renderTokenHttpExchange(view) {
+  log.debug("Entering renderTokenHttpExchange().");
+  tokenExchangeView = view;
+  HTTP_EXCHANGE_PANES.forEach(function (pane) {
+    drawHttpExchange(document.getElementById(pane.host), view, pane.empty);
+  });
+  log.debug("Leaving renderTokenHttpExchange().");
+}
+
+// The tab strip. Two panels, and the form is the one that stays selected on
+// its own: a token call COLLAPSES this pane (`$("#token_fieldset").hide()`),
+// so switching tabs from a response handler would rearrange a pane nobody is
+// looking at and hand the next reader who expands it something other than the
+// form they went there for. The label carries the status instead, which is
+// visible the moment the pane is opened.
+function selectTokenTab(name) {
+  log.debug("Entering selectTokenTab(). name=" + name);
+  var picked = selectPaneTab("token", ["form", "http"], name);
+  log.debug("Leaving selectTokenTab().");
+  return picked;
+}
+
+// The same strip on the Token Endpoint Results pane. Its first tab is the
+// tokens for the same reason the form is first above: a reader who has just
+// called the token endpoint came for the token, and the exchange is the
+// second question rather than the first.
+function selectTokenResultTab(name) {
+  log.debug("Entering selectTokenResultTab(). name=" + name);
+  var picked = selectPaneTab("token_result", ["tokens", "http"], name);
+  log.debug("Leaving selectTokenResultTab().");
+  return picked;
+}
+
+// Turn one tab of a strip on and every other one off. Shared by both panes:
+// the class names and the aria attributes are the contract the stylesheet and
+// a screen reader each read, and one of the two panes having its own copy of
+// them is how they stop matching. An unknown name selects the first tab
+// rather than none — a strip with no panel showing reads as a broken pane.
+// Returns false, because a tab click must not navigate.
+function selectPaneTab(prefix, names, wanted) {
+  log.debug("Entering selectPaneTab(). prefix=" + prefix + " wanted=" +
+            wanted);
+  var pick = names.indexOf(wanted) >= 0 ? wanted : names[0];
+  names.forEach(function (which) {
+    var on = which === pick;
+    var tab = document.getElementById(prefix + "_tab_" + which);
+    var panel = document.getElementById(prefix + "_tabpanel_" + which);
+    if (tab) {
+      tab.className = "dbg-tab" + (on ? " dbg-tab-on" : "");
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+    }
+    if (panel) {
+      panel.className = "dbg-tabpanel" + (on ? "" : " dbg-tabpanel-off");
+    }
+  });
+  log.debug("Leaving selectPaneTab().");
+  return false;
+}
+
+// The tab's own label, so that a pane collapsed by a successful call still
+// says what the exchange came back as.
+function setTokenHttpTabLabel(suffix) {
+  log.debug("Entering setTokenHttpTabLabel(). suffix=" + suffix);
+  tokenExchangeLabel = suffix || null;
+  ["token_tab_http", "token_result_tab_http"].forEach(function (id) {
+    var tab = document.getElementById(id);
+    if (tab) {
+      tab.textContent = suffix ? "HTTP · " + suffix : "HTTP";
+    }
+  });
+  log.debug("Leaving setTokenHttpTabLabel().");
+}
+
+// One tab button for the results pane, wired with a listener rather than an
+// inline onclick. This strip is built BY the bundle, so the handler is in
+// scope by definition — where an inline onclick in generated markup is a call
+// into a global that may not exist when the markup lands (see the note on
+// inline handlers in client/CLAUDE.md).
+function resultTabButton(which, label, on) {
+  log.debug("Entering resultTabButton(). which=" + which);
+  var button = httpNode("button", "dbg-tab" + (on ? " dbg-tab-on" : ""),
+                        label);
+  button.type = "button";
+  button.id = "token_result_tab_" + which;
+  button.setAttribute("role", "tab");
+  button.setAttribute("aria-selected", on ? "true" : "false");
+  button.setAttribute("aria-controls", "token_result_tabpanel_" + which);
+  button.addEventListener("click", function () {
+    selectTokenResultTab(which);
+  });
+  log.debug("Leaving resultTabButton().");
+  return button;
+}
+
+// Give the Token Endpoint Results pane its HTTP tab.
+//
+// That pane is not in the page. It is built as a STRING in four branches of
+// this file and dropped into #token_endpoint_result, so there is no markup
+// here to hang a tab strip on, and putting one in each of the four branches
+// would be four copies to keep in step — one of which already builds a bare
+// <fieldset> with no pane div around it. So this wraps whatever was just
+// built: the tokens, in whichever variant they were drawn, become the first
+// panel, and the exchange becomes the second.
+//
+// Idempotent, because the pane is rebuilt on every call and this runs after
+// each rebuild: a second strip on the same fieldset would be two sets of tabs
+// driving one panel.
+function attachHttpTabToTokenResults() {
+  log.debug("Entering attachHttpTabToTokenResults().");
+  var container = document.getElementById("token_endpoint_result");
+  var fieldset = container ? container.querySelector("fieldset") : null;
+  if (!fieldset) {
+    log.debug("Leaving attachHttpTabToTokenResults(). No results pane.");
+    return;
+  }
+  if (fieldset.querySelector(".dbg-tabs")) {
+    log.debug("Leaving attachHttpTabToTokenResults(). Already tabbed.");
+    return;
+  }
+  var tokens = httpNode("div", "dbg-tabpanel");
+  tokens.id = "token_result_tabpanel_tokens";
+  while (fieldset.firstChild) {
+    tokens.appendChild(fieldset.firstChild);
+  }
+  var strip = httpNode("div", "dbg-tabs");
+  strip.setAttribute("role", "tablist");
+  strip.setAttribute("aria-label", "Token endpoint results");
+  strip.appendChild(resultTabButton("tokens", "Tokens", true));
+  strip.appendChild(resultTabButton("http", "HTTP", false));
+  var panel = httpNode("div", "dbg-tabpanel dbg-tabpanel-off");
+  panel.id = "token_result_tabpanel_http";
+  var host = httpNode("div", "dbg-http-host");
+  host.id = "token_result_http_exchange";
+  panel.appendChild(host);
+  fieldset.appendChild(strip);
+  fieldset.appendChild(tokens);
+  fieldset.appendChild(panel);
+  // The exchange was drawn before this pane existed, and the label was set
+  // before this button did, so both are put back here from what was kept.
+  drawHttpExchange(host, tokenExchangeView, HTTP_EXCHANGE_PANES[1].empty);
+  setTokenHttpTabLabel(tokenExchangeLabel);
+  log.debug("Leaving attachHttpTabToTokenResults().");
+}
+
+// Record what is about to go out, and show it while it is in flight. The
+// request is worth showing on its own: a call that never comes back is
+// precisely the one whose headers and body the reader needs.
+function noteTokenRequestSent(sent) {
+  log.debug("Entering noteTokenRequestSent(). " + sent.method + " " +
+            sent.url);
+  tokenExchangeSent = sent;
+  tokenExchangeSent.startedAt = Date.now();
+  setTokenHttpTabLabel("sending…");
+  renderTokenHttpExchange({
+    note: sent.note,
+    request: {
+      method: sent.method, url: sent.url, headers: sent.headers,
+      body: sent.body, note: sent.bodyNote },
+    response: null,
+    timing: [],
+    failure: null });
+  log.debug("Leaving noteTokenRequestSent().");
+}
+
+// The api's own account of the call it made, when it made one. Returned under
+// `http_exchange` because the api asked for it with `http_trace: true`; absent
+// when the call was made from the browser, when the token endpoint answered
+// with something that could not carry it (an HTML error page), or when the api
+// predates this. Every one of those is handled by falling back to what the
+// browser itself saw, which is why this only ever reads and never insists.
+function apiHttpExchange(jqXHR, data) {
+  log.debug("Entering apiHttpExchange().");
+  var carrier = data;
+  if (!carrier && jqXHR && jqXHR.responseJSON) {
+    carrier = jqXHR.responseJSON;
+  }
+  var trace = carrier && typeof carrier === "object" ?
+      carrier.http_exchange : null;
+  if (!trace || typeof trace !== "object" || !trace.request) {
+    log.debug("Leaving apiHttpExchange(). None returned.");
+    return null;
+  }
+  log.debug("Leaving apiHttpExchange(). Found one.");
+  return trace;
+}
+
+// The error view, with the trace taken back out of it.
+//
+// The error pane below prints `responseText` verbatim, and on a proxied call
+// that text now carries the whole HTTP trace — up to sixteen kilobytes of it,
+// in a five-row textarea, in front of the error the reader came for. The trace
+// has a pane of its own two tabs away, so this hands the error pane the
+// response WITHOUT it. The bytes as they actually arrived are in the HTTP tab;
+// this is a re-serialization either way, since the api parsed and rebuilt the
+// token endpoint's JSON before the browser ever saw it.
+function tokenErrorWithoutTrace(jqXHR) {
+  log.debug("Entering tokenErrorWithoutTrace().");
+  var view = {
+    status: jqXHR ? jqXHR.status : 0,
+    statusText: jqXHR ? jqXHR.statusText : "",
+    readyState: jqXHR ? jqXHR.readyState : 0,
+    responseText: jqXHR ? jqXHR.responseText : "" };
+  try {
+    var parsed = JSON.parse(view.responseText);
+    if (parsed && typeof parsed === "object" && parsed.http_exchange) {
+      delete parsed.http_exchange;
+      view.responseText = JSON.stringify(parsed);
+    }
+  } catch (e) {
+    // Not JSON — an HTML error page, or nothing at all. It carries no trace
+    // to remove, so it is shown exactly as it arrived.
+    log.debug("tokenErrorWithoutTrace(): the response is not JSON.");
+  }
+  log.debug("Leaving tokenErrorWithoutTrace().");
+  return view;
+}
+
+// Assemble and draw the finished exchange. Called from both ajax handlers, so
+// a refusal is drawn exactly like a success — a 400 with an error body is an
+// exchange, and the one whose headers and elapsed time are most often the
+// point.
+function showTokenExchange(jqXHR, apiTrace) {
+  log.debug("Entering showTokenExchange().");
+  var sent = tokenExchangeSent;
+  var roundTripMs = sent && sent.startedAt ? Date.now() - sent.startedAt : null;
+  var status = jqXHR && jqXHR.status ? jqXHR.status : 0;
+  var timing = [];
+  var view = null;
+  if (apiTrace) {
+    // The exchange with the TOKEN ENDPOINT, as the api saw it. That is the one
+    // being debugged; the browser's own call to the api is transport.
+    var body = apiTrace.response ? apiTrace.response.body : null;
+    var truncated = apiTrace.response && apiTrace.response.bodyTruncated;
+    view = {
+      note: "Sent by the api on this browser's behalf — " +
+            "“Initiate Token Endpoint Call” is set to Back. These " +
+            "are the bytes between the api and the token endpoint, which the " +
+            "browser cannot see.",
+      request: {
+        method: apiTrace.request.method, url: apiTrace.request.url,
+        headers: apiTrace.request.headers, body: apiTrace.request.body,
+        note: null },
+      response: apiTrace.response ? {
+        status: apiTrace.response.status,
+        statusText: apiTrace.response.statusText,
+        headers: apiTrace.response.headers,
+        body: body,
+        note: truncated ? "Body truncated for display — the first " +
+            String(body ? body.length : 0) + " of " +
+            String(apiTrace.response.bodyLength) + " characters." : null
+      } : null,
+      timing: timing,
+      failure: apiTrace.error };
+    if (apiTrace.timing && typeof apiTrace.timing.totalMs === "number") {
+      timing.push("Token endpoint call: " + apiTrace.timing.totalMs +
+                  " ms, measured by the api around its own request.");
+    }
+    if (roundTripMs !== null) {
+      timing.push("Browser round trip to the api: " + roundTripMs + " ms.");
+    }
+  } else {
+    // The browser's own call: either straight to the token endpoint, or to the
+    // api when the api returned no trace of what it did next.
+    var direct = sent && sent.via === "browser";
+    view = {
+      note: direct ?
+        "Sent by this browser — “Initiate Token Endpoint Call” " +
+        "is set to Front." :
+        "Sent by this browser to the api, which then called the token " +
+        "endpoint. The api returned no trace of that second call, so what is " +
+        "shown here is the first one.",
+      request: sent ? {
+        method: sent.method, url: sent.url, headers: sent.headers,
+        body: sent.body, note: sent.bodyNote } : {
+        method: "POST", url: "(not recorded)", headers: {}, body: "",
+        note: null },
+      response: status ? {
+        status: status,
+        statusText: jqXHR.statusText || "",
+        headers: parseXhrHeaders(jqXHR.getAllResponseHeaders ?
+            jqXHR.getAllResponseHeaders() : ""),
+        body: jqXHR.responseText,
+        note: "Only the response headers CORS exposes to script are listed. " +
+              "A cross-origin response carries more than this; the browser " +
+              "does not hand them over."
+      } : null,
+      timing: timing,
+      failure: status ? null :
+        "The browser reports no status, which is what a CORS refusal, a " +
+        "network failure or an aborted request looks like from script." };
+    if (roundTripMs !== null) {
+      timing.push("Total, measured in the browser around the request: " +
+                  roundTripMs + " ms.");
+    }
+  }
+  setTokenHttpTabLabel(view.response ? String(view.response.status) :
+                       "no response");
+  renderTokenHttpExchange(view);
+  log.debug("Leaving showTokenExchange(). status=" +
+            (view.response ? view.response.status : "none"));
+}
+
 function buildInternalTokenAPIRequestMessage() {
   log.debug("Entering buildInternalTokenAPIRequestMessage().");
   // validate and process form here
@@ -562,6 +1118,18 @@ function buildInternalTokenAPIRequestMessage() {
 function successfulInternalTokenAPICall(data, textStatus, request)
 {
   log.debug("Entering successfulInternalTokenAPICall().");
+  // The HTTP tab, first, and BEFORE anything else reads the payload: the
+  // trace the api attaches is transport, not part of the token response, so
+  // it is taken out here rather than left for token history, the RFC 9700
+  // checks and the result panes to step around. Drawn before the RFC 9700
+  // gate below, which can discard everything else this response carried — a
+  // refused response is still an exchange that happened, and hiding it would
+  // leave the reader with a verdict and no evidence.
+  var apiTrace = apiHttpExchange(request, data);
+  if (data && typeof data === "object") {
+    delete data.http_exchange;
+  }
+  showTokenExchange(request, apiTrace);
   log.debug("Entering ajax success function for Access Token call: data=" 
           + JSON.stringify(data)
           + ", textStatus="
@@ -745,6 +1313,10 @@ function successfulInternalTokenAPICall(data, textStatus, request)
                             'token');
     }
     $("#token_endpoint_result").html(token_endpoint_result_html);
+    // The pane was just rebuilt, so its HTTP tab has to be put back
+    // on it — with the exchange showTokenExchange() drew a moment ago,
+    // before this pane existed to draw it in.
+    attachHttpTabToTokenResults();
     // The token values are put in as VALUES, not concatenated into the markup
     // above — which is what CodeQL alert #43 (js/xss-through-dom) was
     // reporting: a value read out of the DOM was being reinterpreted as HTML
@@ -813,6 +1385,10 @@ function successfulInternalTokenAPICall(data, textStatus, request)
 function errorInternalTokenAPICall(request, status, error) {
   log.debug("Entering errorInternalTokenAPICall().");
   log.error("An error occurred calling the token endpoint.");
+  // A refusal is an exchange, and the one whose headers, body and elapsed
+  // time are most often the point. The api attaches its trace to the error
+  // payload as well, so the same view is drawn from the same place.
+  showTokenExchange(request, apiHttpExchange(request, null));
   if (sdJwtVc.isFlowActive()) {
     // Stay on this page — the error panes below say what went wrong — but end
     // the workflow's hold on it.
@@ -826,7 +1402,7 @@ function errorInternalTokenAPICall(request, status, error) {
   log.error("request: " + JSON.stringify(request));
   log.error("status: " + JSON.stringify(status));
   log.error("error: " + JSON.stringify(error));
-  recalculateTokenErrorDescription(request);
+  recalculateTokenErrorDescription(tokenErrorWithoutTrace(request));
   saveOperationToHistory('Token Endpoint', {
     client_id: $("#token_client_id").val(),
     detail: 'error'
@@ -2556,6 +3132,10 @@ $(document).ready(function() {
   $(".token_btn").click(tokenButtonClick);
   $(".refresh_btn").click(refreshButtonClick);
 
+  // The HTTP tab starts out saying that nothing has been sent yet, rather than
+  // empty: an empty panel behind a tab reads as a tab that does not work.
+  renderTokenHttpExchange(null);
+
   // Initialize revocation pane state and keep the request preview in sync.
   useRevocationFrontEnd = $("#revocation_initiateFromFrontEnd").is(":checked");
   $("#revocation_token, #revocation_revocation_endpoint, " +
@@ -3605,6 +4185,10 @@ function recreateTokenDisplay()
                                       "</div>";
       }
       $("#token_endpoint_result").html(token_endpoint_result_html);
+      // Rebuilt from localStorage, so there is no exchange to show:
+      // the tab says that rather than being absent, which would read
+      // as the tab having been lost.
+      attachHttpTabToTokenResults();
       fillGeneratedFields("#token_endpoint_result", {
         access: localStorage.getItem("token_access_token"),
         refresh: refreshToken,
@@ -4973,6 +5557,10 @@ module.exports = {
   displayTokenCustomParametersCheck,
   generateCustomParametersListUI,
   onClickShowFieldSet,
+  // The token exchange pane's tab strip. Exported because the markup calls it
+  // through the bundle's standalone name, like every other handler here.
+  selectTokenTab,
+  selectTokenResultTab,
   usePKCERFC,
   setPostAuthStyleCheckToken,
   setHeaderAuthStyleCheckToken,

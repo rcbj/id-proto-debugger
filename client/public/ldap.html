@@ -146,6 +146,24 @@ api runs on.</p>
              name="ldap_search_size_limit" placeholder="100"
              title="The client's own cap, sent in the request. The api applies its own on top and will not exceed it.">
     </div>
+    <!-- Rows per page is a DISPLAY setting and the only field in this pane
+         that is: it is not sent anywhere, and changing it runs no search.
+         The tooltip says so, because "paged" means RFC 2696 to anybody who
+         has administered a directory and that control is a different thing —
+         see the comment above searchPageSize() in client/src/ldap.js. -->
+    <div>
+      <label class="ldap-label" for="ldap_search_page_size">Rows per page</label>
+      <select class="ldap-field" id="ldap_search_page_size"
+              name="ldap_search_page_size"
+              onchange="return ldap.onChangePageSize();"
+              title="How many of the entries this search returned are drawn at a time. Display paging over one answer, applied in the browser: it sends nothing and re-runs nothing. LDAP's own paged results control (RFC 2696) is a different thing and is not this.">
+        <option value="10">10</option>
+        <option value="25">25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+        <option value="0">All</option>
+      </select>
+    </div>
   </div>
   <div class="ldap-row">
     <input type="button" class="ldap-btn" id="btn_ldap_search" value="Search"
@@ -154,6 +172,10 @@ api runs on.</p>
            readonly>
   </div>
   <p class="ldap-count" id="ldap_search_count">&nbsp;</p>
+  <!-- Drawn by renderSearchPager(). Above the table on purpose: it carries
+       what the row count means, and a caveat under a screen of rows is a
+       caveat read after the conclusion it was meant to prevent. -->
+  <div class="ldap-pager" id="ldap_search_pager"></div>
   <div id="ldap_search_results"></div>
 </fieldset>
 

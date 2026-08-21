@@ -114,6 +114,22 @@ function buildJobs() {
     },
   });
 
+  // The HTTP tab on the token exchange pane: the request and the response as
+  // they actually went. It runs the Client Credentials grant because the pane,
+  // the handler and the trace are the same for every grant this page sends and
+  // that one needs no login — and it takes the same four variables as the job
+  // above for exactly that reason.
+  jobs.push({
+    name: "Token exchange HTTP tab (request, response, headers, timing)",
+    script: "token_http_exchange.js",
+    env: {
+      DISCOVERY_ENDPOINT: env.CLIENT_CREDENTIALS_DISCOVERY_ENDPOINT,
+      CLIENT_ID: env.CLIENT_CREDENTIALS_CLIENT_ID,
+      CLIENT_SECRET: env.CLIENT_CREDENTIALS_CLIENT_SECRET,
+      SCOPE: env.CLIENT_CREDENTIALS_SCOPE,
+    },
+  });
+
   for (const PKCE_ENABLED of ["true", "false"]) {
     jobs.push({
       name: `OAuth2 Authorization Code (public, PKCE=${PKCE_ENABLED})`,
@@ -568,6 +584,24 @@ function buildJobs() {
   jobs.push({
     name: "JOSE JWE module (RFC 7516/7518: RSA-OAEP, ECDH-ES, Concat KDF)",
     script: "jose_jwe_encryption.js",
+    env: {},
+  });
+
+  // The Configuration Parameters pane on both OAuth2/OIDC pages, measured at
+  // seven viewport widths: nothing in it crosses the pane's content edge, and
+  // each field fills its own table cell rather than sitting at bootstrap's
+  // fixed `input, textarea { width: 206px }`. The second assertion is the one
+  // that earns the job — the same markup and stylesheet serve a ~854px pane on
+  // page 1 and a ~419px one on page 2 (three flex columns there), so a field
+  // pinned to a fixed width looks perfectly fine on the first page while
+  // hanging 25px, and at a narrower window 136px, outside the second. Needs
+  // the client alone — no IdP, no api, no STS, and every field it measures is
+  // in the served HTML rather than drawn by the bundle — so it is never
+  // skipped and runs against a deployed static site unchanged.
+  jobs.push({
+    name: "Configuration Parameters pane layout (both OAuth2/OIDC pages, " +
+        "seven viewport widths)",
+    script: "oauth2_config_pane_layout.js",
     env: {},
   });
 

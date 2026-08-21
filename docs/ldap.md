@@ -142,7 +142,7 @@ One implementation detail that is not optional: **the bind waits for the socket.
 `client/public/ldap.html` + `client/src/ldap.js`, one page, five panes. The arrangement is the teaching rather than a menu:
 
 * **Connection** — the bind on its own. It is a distinct operation and the only one whose failure is about credentials, so it gets a button rather than being a side effect of the first search somebody runs. "My credentials are wrong" and "my filter is wrong" must never look alike.
-* **Search** — the read half, with four presets that **fill the fields and then run**. Filling rather than running a hidden query is the point: the filter is the thing worth seeing.
+* **Search** — the read half, with four presets that **fill the fields and then run**. Filling rather than running a hidden query is the point: the filter is the thing worth seeing. It draws its results **a page at a time** — see *Paging the results* below, which is display paging and not RFC 2696.
 * **Users / Groups** — the write half in the vocabulary of the objects. Each button composes into an Entry-pane operation and says which.
 * **Entry** — the same operations in the protocol's own vocabulary, against any DN. This is what the two panes above are shorthand for, and *Show as a raw operation* is the bridge between the two levels.
 * **Exchange** — what was sent to the api and what came back, verbatim.
@@ -154,6 +154,21 @@ Plus the shared Operations History (`ldap_history.js` over `op_history.js`, the 
 **There is no "add user to group" operation in LDAP.** A `groupOfNames` keeps its membership in a multi-valued `member` attribute whose values are DNs, so adding a member is a `modify` with one `add` change *on the group*, and removing one is a `modify` with one `delete` change carrying the value. An implementation that put the change on the *user* looks right until somebody reads the group.
 
 Its mirror image is the fourth search preset, and almost nobody guesses it: **the groups a user is in are found from the other end.** There is no attribute on the user to read — `memberOf` is a Microsoft extension that OpenLDAP has only behind an overlay — so the question is answered by searching the *groups* for a `member` value that is the user's DN.
+
+### Paging the results, and the control this is not
+
+The Search pane draws **25 rows at a time** by default (10 / 25 / 50 / 100 / All, remembered like every other field on the page) with a bar above the table that says where you are — `‹ Prev`, `Page 2 of 3`, `Next ›` — and, always, how many entries are on screen out of how many **the search returned**.
+
+**This is display paging, applied in the browser to one answer. It is not the LDAP paged results control**, and the distinction is worth the paragraph because "paged" means RFC 2696 to anybody who has administered a directory. That control is a *conversation*: the client sends the control with a page size, the server returns that many entries plus a **cookie**, and the client sends the cookie back to ask for the next page. The cookie is state belonging to the **connection and the operation that issued it** — and `api/ldap_client.js` opens a connection per operation and closes it in a `finally` (see *What bounds it*), so by the time a second HTTP request could arrive there is nothing left to hand a cookie back to. Supporting it properly means giving the api a **session that outlives a request**: a live LDAP connection parked under an identifier, with an idle timeout, a cap on how many can be parked at once, and a way to close one when the browser tab that owned it goes away. That is a different change from this one, and a real one — it is the first piece of cross-request state this service would hold.
+
+What follows from paging in the browser is the **wording**, which is deliberate everywhere it appears and is the part to preserve if this is ever rewritten:
+
+* The bar says *"of 24 entries this search returned"* — never "of 24 entries in the directory". The answer it is paging is bounded twice already: by the **size limit** in the request, and by the api's **`ldapMaxEntries`** on top of it.
+* When the answer was **truncated**, the bar repeats it beside the row count, in addition to the result line above. Ten pages of fifty rows read as completeness, and "you have now seen everything" is the one conclusion this pane must not invite. A directory that answered `sizeLimitExceeded` (result 4) has told the client its answer is incomplete; a pager that hides that is worse than no pager.
+* Rows are numbered **within the answer**, so page 3 starts at 21 rather than at 1. The number is the reader's only handle on where they are in a result set of several hundred.
+* Changing the page size returns to page 1, and **"All" is kept as an option** — it is the pre-pagination behaviour, and it is what a reader wants when the question is "is X in here at all".
+
+Nothing about the pager touches the wire: moving between pages issues no request and writes no Operations History row. `tests/ldap_page.js` asserts exactly that, by counting history rows across a page turn — a pager that quietly re-ran the search would give a different answer under the same page number, and would do it to somebody's production directory once per click.
 
 ### Smaller things the page is deliberate about
 

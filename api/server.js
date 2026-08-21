@@ -142,6 +142,15 @@ const MAX_CONTENT_LENGTH = resolvePositiveNumber(
 // home page into a pane nobody will read.
 const SPNEGO_BODY_CHARS = 16384;
 
+// How much of a token endpoint's response body POST /token hands back in its
+// HTTP trace, for the same reason and with the same distinction as the constant
+// above: MAX_CONTENT_LENGTH bounds the TRANSFER, this bounds what is put in
+// front of a reader. A token response is JSON of a few kilobytes even when it
+// carries three JWTs, so this is generous; what it stops is an identity
+// provider answering an HTML error page — or a login page — and that page
+// arriving in a pane as a wall of markup.
+const TRACE_BODY_CHARS = 16384;
+
 /**
  * Read one non-negative integer setting out of the environment config.
  *
@@ -414,6 +423,161 @@ function withUserAgent(headers) {
   log.debug("Leaving withUserAgent().");
   return Object.assign({}, headers || {}, {
     'User-Agent': USER_AGENT });
+}
+
+// ---------------------------------------------------------------------------
+// THE HTTP TRACE: what this service saw of a call it made on the caller's
+// behalf.
+//
+// The browser cannot see any of it. When the token endpoint call is proxied —
+// which is this page's default, because a great many identity providers refuse
+// a browser-origin Token Request outright — the request that matters is the
+// one THIS process sends, and the only thing that reaches the browser is the
+// parsed token payload. So the method, the URL, the headers each way, the
+// bytes on the wire and how long the far end took are all observable here and
+// nowhere else, and a debugger that cannot show them is asking its user to
+// take the exchange on trust.
+//
+// It is OPT-IN, per call, and it rides in the response body under
+// `http_exchange` (see POST /token). Opt-in rather than always-on because the
+// trace repeats the request verbatim, credentials included: it is a debugging
+// artifact for the caller that asked for it, not a thing this service adds to
+// every answer it gives.
+//
+// The shape is deliberately the SAME as POST /krb5/spnego's, which is the
+// other endpoint here that hands an HTTP exchange back for display —
+// { request: {method, url, headers, body}, response: {status, statusText,
+// headers, body, bodyTruncated, bodyLength}, timing: {totalMs} }. Two shapes
+// for one idea would mean two renderers in the client for no reason.
+// ---------------------------------------------------------------------------
+
+// Capture the response body as it was RECEIVED, on its way through the JSON
+// parse axios would have done anyway.
+//
+// axios's default transformResponse parses a string body as JSON and silently
+// keeps the string when it is not JSON; this does exactly that and keeps the
+// raw text as well. Replacing the default is what makes the raw text reachable
+// at all: by the time a handler sees `response.data` the bytes are gone, and
+// re-serializing the parsed object gives a body the far end never sent —
+// different whitespace, different key order, and no sign of a duplicated
+// member. The sink is per-call (created in the handler), so concurrent
+// requests cannot see each other's bodies.
+function captureRawBody(sink) {
+  log.debug("Entering captureRawBody().");
+  log.debug("Leaving captureRawBody().");
+  return function (data) {
+    if (typeof data === 'string') {
+      sink.raw = data;
+      try {
+        return JSON.parse(data);
+      } catch (e) {
+        // Not JSON. Exactly what axios's own transform does with it, and the
+        // trace keeps the text either way.
+        return data;
+      }
+    }
+    sink.raw = (data === null || data === undefined) ? '' : String(data);
+    return data;
+  };
+}
+
+// The headers of an axios response, as a plain object. axios 1.x returns an
+// AxiosHeaders instance, which JSON.stringify renders as {} without toJSON().
+function traceHeaders(headers) {
+  log.debug("Entering traceHeaders().");
+  if (!headers) {
+    log.debug("Leaving traceHeaders(). None.");
+    return {};
+  }
+  if (typeof headers.toJSON === 'function') {
+    log.debug("Leaving traceHeaders(). AxiosHeaders.");
+    return headers.toJSON();
+  }
+  log.debug("Leaving traceHeaders(). Plain object.");
+  return headers;
+}
+
+/**
+ * Build one HTTP trace.
+ *
+ * @param {object} request - {method, url, headers, body} as SENT, including
+ *   whatever this service added to it, so the trace shows the request rather
+ *   than the caller's intent.
+ * @param {object|null} response - the axios response, or null when there was
+ *   none (a timeout, a refused connection, a blocked address).
+ * @param {string|null} rawBody - the response body as received.
+ * @param {number} startedAt - Date.now() from immediately before the call.
+ * @param {string|null} failure - the error message, when there was no response.
+ * @returns {object} the trace
+ */
+function buildHttpTrace(request, response, rawBody, startedAt, failure) {
+  log.debug("Entering buildHttpTrace().");
+  var body = (rawBody === null || rawBody === undefined) ? '' : String(rawBody);
+  var shown = body.slice(0, TRACE_BODY_CHARS);
+  var trace = {
+    request: {
+      method: request.method,
+      url: request.url,
+      headers: request.headers || {},
+      body: request.body === undefined ? '' : String(request.body)
+    },
+    response: response === null || response === undefined ? null : {
+      status: response.status,
+      statusText: response.statusText || '',
+      headers: traceHeaders(response.headers),
+      body: shown,
+      bodyTruncated: body.length > shown.length,
+      bodyLength: body.length
+    },
+    // Measured around the outbound call and nothing else, so it is the far
+    // end's time plus the network — not this service's own handling, and not
+    // the browser's round trip to this service, which the browser measures for
+    // itself and shows beside this one.
+    timing: {
+      totalMs: Date.now() - startedAt },
+    error: failure || null
+  };
+  log.debug("Leaving buildHttpTrace(). status=" +
+            (trace.response ? trace.response.status : 'none') + " in " +
+            trace.timing.totalMs + "ms.");
+  return trace;
+}
+
+/**
+ * Attach a trace to the payload that is about to be sent back, when the caller
+ * asked for one and the payload can carry it.
+ *
+ * A token endpoint's response is a JSON object in every case this service is
+ * built for, but nothing obliges one to be: an error page is a string and an
+ * empty 204 is nothing at all. Rather than change the shape of the reply for
+ * those — every existing caller reads `data.access_token` and an error
+ * handler reads `responseText` — the trace is simply not attached, and the
+ * client falls back to what the browser itself can see of the call. A payload
+ * that already HAS an `http_exchange` member keeps its own: it is somebody
+ * else's data and overwriting it would be a debugger lying about the response
+ * it is showing.
+ *
+ * @returns {*} the payload to send, with or without the trace
+ */
+function withHttpTrace(payload, trace, wanted) {
+  log.debug("Entering withHttpTrace(). wanted=" + !!wanted);
+  if (!wanted || !trace) {
+    log.debug("Leaving withHttpTrace(). Not wanted.");
+    return payload;
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    log.debug("Leaving withHttpTrace(). Payload cannot carry it.");
+    return payload;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'http_exchange')) {
+    log.warn('The token endpoint response has an http_exchange member of its ' +
+             'own, so the HTTP trace was not attached.');
+    log.debug("Leaving withHttpTrace(). Member taken.");
+    return payload;
+  }
+  log.debug("Leaving withHttpTrace(). Attached.");
+  return Object.assign({}, payload, {
+    http_exchange: trace });
 }
 
 log.info("Outbound call timeout: " + CALL_TIMEOUT +
@@ -1314,6 +1478,7 @@ app.post('/wstrust', function (req, res) {
  * @property {string} client_secret - The client secret for a confidential client
  * @property {object} customParams - List of key:value pairs
  * @property {string} code_verifier - PKCE RFC code_verifier parameter
+ * @property {boolean} http_trace - Also return the HTTP exchange with the token endpoint, for display
  */
 
 /**
@@ -1323,6 +1488,7 @@ app.post('/wstrust', function (req, res) {
  * @property {string} refresh_token - The OAuth2 Refresh Token
  * @property {string} expires_in.required - How long the access token is valid (seconds)
  * @property {string} token_type - The OAuth2 Access Token type
+ * @property {object} http_exchange - The HTTP exchange, when http_trace asked for it. See buildHttpTrace()
  */
 
 /**
@@ -1366,6 +1532,25 @@ app.post('/token', (req, res) => {
     }
     var tokenEndpoint = body.token_endpoint;
     var sslValidate = body.sslValidate; 
+    // The HTTP trace this call is to be shown with, if the caller asked for
+    // one. Opt-in per call: it repeats the request verbatim, Authorization
+    // header and all, so it is built for the caller that wants to read it and
+    // for nobody else. See buildHttpTrace().
+    const wantsTrace = body.http_trace === true || body.http_trace === 'true';
+    // Filled in by the transform below, on the way past axios's JSON parse.
+    // Per call, so two requests in flight cannot see each other's bodies.
+    var received = {
+      raw: null };
+    const sentHeaders = withUserAgent(headers);
+    const sentRequest = {
+      method: 'POST',
+      url: tokenEndpoint,
+      // What actually goes out, including the User-Agent this service adds and
+      // the Authorization header it may have built — the trace shows the
+      // request, not the intent behind it.
+      headers: sentHeaders,
+      body: parameterString };
+    const startedAt = Date.now();
     log.debug("Making call to Token Endpoint.");
     log.debug("POST " + tokenEndpoint);
     log.debug("Headers: " + JSON.stringify(headers));
@@ -1373,11 +1558,12 @@ app.post('/token', (req, res) => {
     axios({
       method: 'post',
       url: tokenEndpoint,
-      headers: withUserAgent(headers),
+      headers: sentHeaders,
       data: parameterString,
       timeout: CALL_TIMEOUT,
       maxContentLength: MAX_CONTENT_LENGTH,
       maxRedirects: MAX_REDIRECTS,
+      transformResponse: [captureRawBody(received)],
       httpAgent: outboundHttpAgent(),
       httpsAgent: outboundHttpsAgent(sslValidate)
     })
@@ -1386,7 +1572,10 @@ app.post('/token', (req, res) => {
                 JSON.stringify(response.data));
       log.debug('Headers: ' + response.headers);
       res.status(response.status);
-      res.json(response.data);
+      res.json(withHttpTrace(response.data,
+                             buildHttpTrace(sentRequest, response,
+                                            received.raw, startedAt, null),
+                             wantsTrace));
     })
     .catch(function (error) {
       log.error('Error from OAuth2 Token Endpoint: ' + error);
@@ -1402,7 +1591,12 @@ app.post('/token', (req, res) => {
           log.error("Error Response headers: " + error.response.headers);
         }
         res.status(error.response.status || STATUS_500);
-        res.json(error.response.data);
+        // A refusal is an exchange like any other, and the one a reader most
+        // wants the headers and the elapsed time for.
+        res.json(withHttpTrace(error.response.data,
+                               buildHttpTrace(sentRequest, error.response,
+                                              received.raw, startedAt, null),
+                               wantsTrace));
         return;
       }
       // No response: the call timed out, the connection never opened, the body
@@ -1413,9 +1607,17 @@ app.post('/token', (req, res) => {
       // waiting on a reply that was never sent. Those failures are exactly what
       // the outbound limits produce, so this is now the common path, not a rare
       // one.
-      res.status(STATUS_500).json({
+      // There is no response to trace, and that IS the trace: the request that
+      // went out, the reason nothing came back, and how long it took to fail
+      // — which is the number that tells a timeout apart from a refused
+      // connection.
+      res.status(STATUS_500).json(withHttpTrace({
         error: 'The outbound call failed: ' +
-               (error && error.message ? error.message : String(error)) });
+               (error && error.message ? error.message : String(error)) },
+        buildHttpTrace(sentRequest, null, null, startedAt,
+                       (error && error.message) ? error.message :
+                           String(error)),
+        wantsTrace));
     });
   } catch (e) {
     log.error('An error occurred: ' + e);

@@ -260,3 +260,44 @@ textarea.ldap-field {
   color: #666;
   margin: 6px 0;
 }
+
+/* ---------------------------------------------------------------------------
+   The search results pager (renderSearchPager() in client/src/ldap.js).
+
+   It is display paging over one answer, not RFC 2696 — the wording in the bar
+   says so, and this rule only has to keep the bar on one line where there is
+   room and let it wrap where there is not. The range and the cap notice are
+   text rather than controls, so they wrap with the pane; the buttons keep
+   their intrinsic width.
+   ------------------------------------------------------------------------ */
+.ldap-pager {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin: 4px 0 2px;
+  font-size: 12px;
+  color: #444;
+}
+
+.ldap-pager:empty { display: none; }
+
+.ldap-pager-btn { padding: 2px 8px; }
+
+.ldap-pager-btn:disabled {
+  color: #999;
+  background: #f7f7f7;
+  cursor: default;
+}
+
+.ldap-pager-where { font-weight: bold; color: #333; }
+
+/* Both of these are sentences, so they may take the rest of the line and wrap
+   inside the pane rather than pushing it wider. */
+.ldap-pager-range,
+.ldap-pager-capped {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ldap-pager-capped { color: #8a6d00; }

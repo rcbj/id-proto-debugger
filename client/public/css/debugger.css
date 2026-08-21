@@ -277,3 +277,204 @@ textarea.metadata-json-field {
   margin-left: 8px;
   font-size: 90%;
 }
+
+/* ---------------------------------------------------------------------------
+   The token exchange pane's tab strip, and the HTTP exchange behind its second
+   tab (client/src/oauth2_oidc_2.js, renderTokenHttpExchange()).
+   ---------------------------------------------------------------------------
+   Two rules govern everything below and they pull the same way: this pane
+   lives in a flex column that is a third of the page wide, and what it shows
+   is other people's bytes — a 3,000-character Authorization header, a JWT
+   with no space in it, an HTML error page where JSON was expected. So every
+   box here is sized to the PANE and wraps or scrolls its content, rather than
+   being sized to its content and pushing past the pane's border. The type is
+   deliberately small for the same reason: the point of the tab is that the
+   whole exchange is on the screen at once.
+   ------------------------------------------------------------------------ */
+.dbg-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 0 0 6px;
+  border-bottom: 1px solid #ddd;
+}
+.dbg-tab {
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: none;
+  padding: 2px 10px;
+  font-size: 0.8em;
+  color: #555;
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+}
+.dbg-tab:hover { background: #f2f2f2; }
+.dbg-tab-on {
+  border-color: #ddd;
+  background: #fff;
+  color: #12107c;
+  font-weight: bold;
+  margin-bottom: -1px;
+  border-bottom: 1px solid #fff;
+}
+
+/* ORDER MATTERS, exactly as it does for .krb-tabpanel in kerberos.css: both
+   selectors are (0,1,0), so source order decides `display`. A `display: block`
+   written BELOW the `-off` rule shows every panel at once, which reads as the
+   tab strip having no effect. */
+.dbg-tabpanel { display: block; }
+.dbg-tabpanel-off { display: none; }
+
+/* The host for the exchange. min-width:0 so it can be narrower than its
+   content wants to be — without it a flex/table child sizes to min-content and
+   the pane grows to fit a header value nobody needs to read in full. */
+.dbg-http-host {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* One HTTP message. */
+.dbg-http {
+  border-left: 3px solid #ddd;
+  padding-left: 8px;
+  margin: 2px 0 8px;
+  min-width: 0;
+}
+.dbg-http-title {
+  font-size: 0.8em;
+  font-weight: bold;
+  color: #333;
+  margin: 4px 0 2px;
+}
+/* The request line and the status line, monospace because they are literal
+   text off the wire, and break-anywhere because a token endpoint URL carries
+   no break opportunity at all. */
+.dbg-http-line {
+  font-family: Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 0.78em;
+  color: #12107c;
+  margin-bottom: 3px;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.dbg-http-note {
+  font-size: 0.72em;
+  color: #777;
+  margin: 2px 0 4px;
+  line-height: 1.35;
+}
+.dbg-http-timing {
+  font-size: 0.75em;
+  color: #333;
+  line-height: 1.4;
+}
+.dbg-http-fail {
+  font-size: 0.75em;
+  color: #b00020;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+/* The header tables. `table-layout: fixed` with a percentage first column is
+   what keeps them inside the pane: an auto-layout table sizes its columns to
+   their content, and one Authorization header is enough to make that wider
+   than the screen. */
+.dbg-http-table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  margin: 0 0 4px;
+}
+.dbg-http-table td {
+  border: 1px solid #e5e5e5;
+  padding: 1px 4px;
+  vertical-align: top;
+  font-family: Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 0.72em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.dbg-http-table td:first-child { width: 34%; color: #555; }
+
+/* A message body, as TEXT: pre-wrap so a JSON response keeps the shape the far
+   end sent, break-anywhere so a JWT does not widen the pane, and bounded in
+   height with its own scrollbar so an HTML error page cannot make this pane
+   taller than the page. */
+.dbg-http-body {
+  background: #f7f7f7;
+  border: 1px solid #e5e5e5;
+  border-radius: 3px;
+  padding: 4px 6px;
+  margin: 0 0 4px;
+  max-width: 100%;
+  font-family: Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 0.72em;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+  max-height: 180px;
+  overflow: auto;
+}
+
+/* ---------------------------------------------------------------------------
+   Configuration Parameters: the form, laid out to the pane it sits in.
+
+   Selected by CLASS, not id: the same table is on oauth2_oidc_1.html and
+   oauth2_oidc_2.html, both under id `config_fieldset`, and the second one is a
+   third of the width of the first.
+
+   Bootstrap gives every text input, select and textarea a FIXED
+   `width: 206px` (`input, textarea, .uneditable-input`), which outranks the
+   `size="60"` several of these fields carry and takes no notice of the box it
+   is in. In the pane on oauth2_oidc_2.html — one of THREE flex columns, so
+   ~419px at 1366 against ~854px on page 1 — that fixed width plus the label
+   column put every field's right edge on, and the four boolean `select`s 25px
+   PAST, the pane's border. It gets worse as the window narrows, because the
+   pane shrinks and the field does not: 136px past at an 820px viewport.
+
+   So the fields size to their column instead. Auto layout is kept (rather than
+   `table-layout: fixed`, which the metadata table above needs because its
+   content is unbounded and unknown) so that the label column still takes what
+   the longest label needs; `width: 45%` is a preference the browser honours
+   when the labels allow and shrinks past when they do not. A percentage-width
+   input contributes nothing to its cell's min-content, so the field column
+   takes whatever is left over and never widens the table.
+
+   The exceptions are the controls whose width is their appearance rather than
+   their content — checkboxes, radios and buttons — which stay intrinsic. */
+.dbg-config-table {
+  width: 100%;
+  max-width: 100%;
+}
+.dbg-config-table > tbody > tr > td:first-child { width: 45%; }
+.dbg-config-table input[type="text"],
+.dbg-config-table input[type="password"],
+.dbg-config-table input[type="number"],
+.dbg-config-table input[type="url"],
+.dbg-config-table select,
+.dbg-config-table textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.dbg-config-table input[type="checkbox"],
+.dbg-config-table input[type="radio"],
+.dbg-config-table input[type="button"],
+.dbg-config-table input[type="submit"] {
+  width: auto;
+  max-width: 100%;
+}
+
+/* Header tables scroll inside a bounded box rather than growing the pane. One
+   long header value is enough to need this: a 3,000-character one measured on
+   this pane took it to 1,882 pixels by itself. */
+.dbg-http-scroll {
+  max-height: 150px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-width: 100%;
+}

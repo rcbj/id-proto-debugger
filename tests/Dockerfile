@@ -500,6 +500,14 @@ COPY tests/schemas ./schemas
 # have shown up as MODULE_NOT_FOUND in 0.0s rather than as a skip.
 COPY tests/rfc9700_flows.js tests/rfc9700_client.js ./
 COPY tests/admin_api.js ./
+# The HTTP tab on the OAuth2/OIDC token exchange and Token Endpoint Results
+# panes. It is NOT covered by the `tests/oauth2_*` glob above — the name starts
+# with the thing being shown rather than with the workflow showing it — and a
+# script run-report.js schedules but this image never copies fails here with
+# MODULE_NOT_FOUND in 0.0s while passing on every host run. That is what
+# testsImageHasNoCollidingFilenames() in jwk_pem_encoding.js caught, and this
+# line is the fix it asked for.
+COPY tests/token_http_exchange.js ./
 COPY tests/browser_tests_headless.js ./
 COPY tests/run-report.js ./
 # Shared test helpers (populateMetadata, ...). The test scripts require it as

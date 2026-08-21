@@ -90,7 +90,7 @@ function dbgSetAllPanes(expand) {
     <fieldset id="config_fieldset" name="config_fieldset" style="display: none;">
     <form action="" id="endpoints" name="endpoints">
       <input type="hidden" name="response_type" value="" id="response_type" />
-      <table border="0">
+      <table border="0" class="dbg-config-table">
         <tbody>
           <!-- RFC 9700 (OAuth 2.0 Security Best Current Practice).
 
@@ -624,6 +624,17 @@ function dbgSetAllPanes(expand) {
     <legend class="dbg-legend" id="token_expand_button" onclick="return oauth2_oidc_2.onClickShowFieldSet('token_expand_button', 'token_fieldset');"><span id="h2_title_2" name="h2_title_2">Exchange Authorization Code for Access Token</span></legend>
     <fieldset id="token_fieldset" name="token_fieldset" style="display: none;">
     <input class="input" id="token_grant_type" name="grant_type" type="hidden" value="authorization_code" />
+    <!-- Two tabs: the form that composes the Token Request, and the exchange
+         that request actually produced. The form stays selected by default and
+         is never switched away from by code — a token call collapses this
+         whole pane, so a tab switched from a response handler would rearrange
+         a pane nobody is looking at. The HTTP tab's own label carries the
+         status instead. See client/src/oauth2_oidc_2.js. -->
+    <div class="dbg-tabs" role="tablist" aria-label="Token exchange">
+      <button type="button" class="dbg-tab dbg-tab-on" role="tab" id="token_tab_form" aria-selected="true" aria-controls="token_tabpanel_form" onclick="return oauth2_oidc_2.selectTokenTab('form');">Parameters</button>
+      <button type="button" class="dbg-tab" role="tab" id="token_tab_http" aria-selected="false" aria-controls="token_tabpanel_http" onclick="return oauth2_oidc_2.selectTokenTab('http');">HTTP</button>
+    </div>
+    <div class="dbg-tabpanel" id="token_tabpanel_form" role="tabpanel" aria-labelledby="token_tab_form">
     <table>
       <tbody>
         <tr id="authzCodeRow">
@@ -852,6 +863,14 @@ function dbgSetAllPanes(expand) {
         </tr>
       </tbody>
     </table>
+    </div>
+    <!-- The HTTP exchange: method, URL, headers and body each way, and how
+         long the response took. Populated by renderTokenHttpExchange(), which
+         builds it as text nodes rather than as markup — every value in it is
+         somebody else's bytes. -->
+    <div class="dbg-tabpanel dbg-tabpanel-off" id="token_tabpanel_http" role="tabpanel" aria-labelledby="token_tab_http">
+      <div id="token_http_exchange" class="dbg-http-host"></div>
+    </div>
   </fieldset>
 </div>
     </div>

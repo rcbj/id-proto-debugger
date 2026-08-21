@@ -664,11 +664,29 @@ function userAgentIsConfigured() {
         line)) return;
     sites++;
     var window_ = lines.slice(i, i + 20).join("\n");
-    assert.ok(/headers:\s*withUserAgent\(/.test(window_),
+    if (/headers:\s*withUserAgent\(/.test(window_)) {
+      return;
+    }
+    // The headers may be HOISTED rather than built at the call site, and one
+    // call site has to hoist them: POST /token puts the headers it sent into
+    // the HTTP trace it hands back, and building them a second time for the
+    // trace is how a trace comes to describe a request that was never made.
+    // So a `headers:` naming a local is followed ONE step — to the assignment
+    // that gave it its value, which must itself be withUserAgent(). A plain
+    // object, or a local assigned from anything else, still fails: what is
+    // checked is where the value came from, not how it was spelled.
+    var named = window_.match(/headers:\s*([A-Za-z_$][\w$]*)\s*[,}\n]/);
+    var above = lines.slice(Math.max(0, i - 40), i).join("\n");
+    var assigned = !!named && new RegExp("(?:var|let|const)\\s+" +
+        named[1] + "\\s*=\\s*withUserAgent\\(").test(above);
+    assert.ok(assigned,
       "the axios call at server.js:" + (i + 1) +
           " does not take its headers from " +
       "withUserAgent(), so it announces itself as axios rather than as " +
-          "this service.");
+          "this service. Write `headers: withUserAgent(...)` at the call, or " +
+          "assign one to a local in the 40 lines above it and pass that" +
+          (named ? " — `" + named[1] + "` is passed here and nothing above " +
+              "assigns it from withUserAgent()." : "."));
   });
   assert.ok(sites >= 11, "expected the api's axios call sites; found " + sites +
             ".");
