@@ -276,6 +276,24 @@ const RFC_7643_USER_MULTI = ['emails', 'phoneNumbers', 'ims', 'photos',
     'addresses', 'entitlements', 'roles', 'x509Certificates'];
 const RFC_7643_ADDRESS_SUB = ['formatted', 'streetAddress', 'locality',
     'region', 'postalCode', 'country', 'type'];
+
+// The two multi-valued attributes whose `type` the generator deliberately does
+// NOT send, and this is the list that pins it.
+//
+// RFC 7643 section 8.7.1 declares `"canonicalValues": []` on the `type`
+// sub-attribute of `roles` and of `x509Certificates` and on no other one —
+// section 4.1.2 says of roles that "no vocabulary or syntax is specified" — and
+// a strict server reads that empty list as an exhaustive one. scimmy, which
+// this project's mock STS is built on, then refuses every value there with
+// `400 invalidValue: Attribute 'type' contains non-canonical value`, which
+// fails the create before a single attribute is stored. Both carry `display`
+// instead: defined on both, constrained on neither.
+//
+// So the assertion below is inverted for these two rather than skipped. A
+// `type` re-added to either of them is a defect that fails HERE, in node, with
+// the schema rule written out — and not as a 400 from whichever server the
+// user happened to point the page at, naming a sub-attribute and not the rule.
+const RFC_7643_DISPLAY_NOT_TYPE = ['roles', 'x509Certificates'];
 const RFC_7643_ENTERPRISE = ['employeeNumber', 'costCenter', 'organization',
     'division', 'department'];
 
@@ -316,6 +334,20 @@ function theGeneratorEmitsEveryOptionalAttribute() {
           name === 'addresses',
           name + '[0] carries no `value`. Every multi-valued attribute but ' +
           'addresses is a list of {value, type, primary, display}.');
+      if (RFC_7643_DISPLAY_NOT_TYPE.indexOf(name) >= 0) {
+        assert.strictEqual(user[name][0].type, undefined,
+            name + '[0] carries a `type`. RFC 7643 section 8.7.1 gives that ' +
+            'sub-attribute an EMPTY canonicalValues list on this attribute ' +
+            'and a strict server — scimmy, which this project\'s mock is ' +
+            'built on — reads an empty list as an exhaustive one and ' +
+            'refuses every value with 400 invalidValue. Sending one fails ' +
+            'the create outright, so the generator sends `display` here.');
+        assert.ok(user[name][0].display !== undefined &&
+            user[name][0].display !== '',
+            name + '[0] carries neither `type` (which it must not) nor ' +
+            '`display` (which it must), so nothing labels the value at all.');
+        return;
+      }
       assert.ok(user[name][0].type !== undefined,
           name + '[0] carries no `type`, which is the sub-attribute a ' +
           'server uses to tell one value from another — and the one a PATCH ' +

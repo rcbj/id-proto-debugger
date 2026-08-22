@@ -97,7 +97,7 @@ This is the rule to read before anything else in `api/scim_proxy.js`:
   `scimType`.
 
 The third is the point of the endpoint. A 409 `uniqueness`, a 404 on an id that
-names nothing, a 403 from an access control policy and the 501 on `/Me` are the
+names nothing, a 403 from an access control policy and the refusal on `/Me` are the
 server **answering**, and they are the most interesting thing a SCIM server ever
 says. Collapsing them into a failure would make a provisioning debugger unable
 to show the errors it exists to show. `tests/scim_protocol.js` asserts the
@@ -148,6 +148,17 @@ credential may do what `scim:read` and `scim:write` say, and every other accepte
 credential may do both", so a caller who cannot get the scope can simply use
 Basic instead. Somebody testing a scope restriction against a Basic credential
 would conclude it works when nothing was restricted.
+
+**`/Me` is an alias here and used to be a refusal, so both legs are asked
+for.** RFC 7644 section 3.11 makes `/Me` an alias for the subject a request
+authenticated *as*. The mock answered 501 for one reason — nothing there
+authenticated, so there was never a subject — and that stopped being true when
+these endpoints started requiring a credential. So `tests/scim_protocol.js`
+asks twice: with the run's credential it must come back as **this run's own
+principal**, and with none it must refuse (401, or 501 where the server has no
+such notion). A `/Me` that resolves to *somebody else* is the failure worth
+catching, because a client that only ever provisions itself cannot tell it from
+a working one and the write that follows lands on the wrong account.
 
 **Three schemes are browser-only and selecting one LOCKS the call path.** A
 cookie is attached by the browser and the api has no cookie jar; a client
@@ -251,6 +262,24 @@ Two deliberate omissions:
   generating one would make this the only workflow here that wrote a secret
   nobody asked for.
 
+And one deliberate substitution, which looks like an omission and is not:
+
+* **`roles` and `x509Certificates` carry `display` where every other
+  multi-valued attribute carries `type`.** RFC 7643 section 8.7.1 declares
+  `"canonicalValues": []` on the `type` sub-attribute of exactly those two and
+  of no other — section 4.1.2 says of roles that "no vocabulary or syntax is
+  specified" — and a strict server reads an empty list as an *exhaustive* one.
+  scimmy, which this project's mock is built on and which is a fair share of
+  the real SCIM servers a user of this page will meet, then refuses **any**
+  value there: `400 invalidValue: Attribute 'type' contains non-canonical value
+  from complex attribute 'roles'`, which fails the create before a single
+  attribute is stored. A generated User that cannot be created is worth less
+  than a sub-attribute, and the refusal names the field rather than the schema
+  rule behind it, so it reads as a bug in the page. `display` is defined on
+  both and constrained on neither. `tests/scim_engine.js` pins it, so a `type`
+  put back here fails in node with the rule written out rather than as a 400
+  from whichever server was being debugged.
+
 **Random is seeded and therefore reproducible.** `newRng()` is a mulberry32 over
 a hash of a caller-supplied seed string, so the same seed always produces the
 same fifty users and the same random scenario. The page shows the seed. An
@@ -295,6 +324,29 @@ unsubstituted is visible in the request the page shows.
 own derived seed, because two phases that both had a step called `create` would
 resolve each other's references — a scenario deleting a user another phase is
 still using, which looks like the server losing one.
+
+**A plan belongs to the inputs it was built from, and changing any of them
+throws it away.** Run plans for itself when nothing is planned, and only then —
+so choosing a different scenario, seed, prefix or user count after pressing Plan
+and then pressing Run used to run THE OLD ONE, while the description beside the
+selector and the table on screen both described the new one. Nothing about that
+looks like a failure: the run goes green, every step passes, and it was the
+wrong scenario. `forgetPlan()` drops the plan and empties the table on any
+change to those four inputs; a run in flight keeps its own plan, because the
+steps left to run are its.
+
+**One `bulkId` reference per operation against this mock, and it is the
+server's limit rather than the page's.** RFC 7644 section 3.7.2 lets an
+operation reference a resource another operation in the same request is about
+to create. The mock delegates that to scimmy (1.3.5, the current release),
+whose substitution loop re-parses the *original* request body once per
+reference and replaces one name at a time — so each pass discards the one
+before it and only the LAST reference resolves. A group sent with three
+`bulkId` members comes back holding two literal `bulkId:uN` values stored as
+member DNs. `tests/scim_protocol.js` asks for one reference and states the rest
+as a skip; the `bulk` scenario is unaffected, because its two checks are
+`bulkAllSucceeded` and `listNotEmpty` and neither reads the group's
+membership.
 
 ## The three tests, and why they are three
 
@@ -345,6 +397,36 @@ path, the runner actually running, and what does and does not reach
 All three **skip with a stated reason** when the mock STS has no `/scim/v2`
 routes — the ordinary state of a checkout whose `sts/` gitlink predates them. A
 silent pass there would be this project's recurring defect.
+
+**Both server-facing tests run under a credential, and it is HTTP Basic in each.**
+The mock refuses an unauthenticated SCIM request (`scim.authRequired`, on by
+default there), so a test that provisioned anonymously stopped working the moment
+`scim_auth.js` landed in the mock — with a 401 on every write, naming an endpoint
+rather than the cause. `scim_protocol.js` establishes one in section 1b and
+`scim_page.js` in `useRunCredential()`; both build it with the workflow's own
+`applyAuth()`, so a header this suite gets wrong is a header the page gets wrong.
+Basic is chosen over Bearer on purpose: it is the one scheme that is a header and
+nothing else — no token endpoint, no scope, no nonce, no key — so a refusal in a
+provisioning section is about SCIM rather than about an authorization server
+having a bad day. What that leaves out is exercised properly in the
+authentication section, which is where a scheme *should* be tested rather than
+incidentally a hundred times over.
+
+Three things follow from it and each has already been got wrong once:
+
+* **The credential-less legs have to say so.** The Digest and HOBA handshakes
+  both open with a deliberate anonymous request, to collect the challenge they
+  compute over, and so does the probe that reads `WWW-Authenticate` — those pass
+  `scimCall(..., { anonymous: true })`, and without it they get a 200 and nothing
+  to sign.
+* **It is PROBED, not assumed.** `scim.authRequired` is a runtime setting and the
+  mock's `/admin` state outlives a test file, so section 1b asks for the 401
+  first; against a mock with authentication turned off nothing is attached and
+  the run passes unchanged.
+* **The Basic username is not the run's prefix.** An accepted Basic name is
+  recorded as an authentication at the mock and gains a directory entry, and the
+  deprovisioning section asserts that nothing matching the prefix is left behind.
+  A run's provisioning identity is not one of the users that run provisioned.
 
 ## What the page remembers
 

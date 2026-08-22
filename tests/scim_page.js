@@ -86,6 +86,12 @@ var prefix = "page" + stamp;
 let checks = 0;
 let skips = [];
 
+// The credential every SENDING section below runs under. Not this run's
+// prefix: a Basic username is recorded as an authentication at the mock and
+// gains a directory entry, and a run's provisioning identity is not one of the
+// users that run provisioned.
+const runnerUsername = "scim-page-runner";
+
 function check(what, fn) {
   log.debug("Entering check(). " + what);
   fn();
@@ -150,13 +156,50 @@ async function textOf(driver, id) {
 // empty is the flake this suite has lost runs to, and an unfilled readonly
 // input's `.value` is TRUTHY whitespace — see tests/wait_for.js and
 // tests/CLAUDE.md.
+//
+// AND ON A SETTLED STATUS RATHER THAN A BUSY ONE, which is the half this file
+// was missing. Every status field on the page is written TWICE for one action:
+// `statusBusy()` puts "Sending POST /Users…" there the moment the button is
+// pressed and `statusOk()`/`statusBad()` replace it when the answer arrives.
+// The text alone cannot tell the two apart — the CLASS can, `scim-pending`
+// against `scim-ok`/`scim-bad` — so a wait that stops at the first non-empty
+// text is racing the fetch, and it wins that race almost every time.
+//
+// It has cost this file twice, in both of the ways this project keeps
+// rediscovering:
+//
+//   * section 2 asserted the create against "Sending POST /scim/v2/Users…",
+//     a FAILURE that names the status field rather than what the server said;
+//   * section 0 read "Reading the ServiceProviderConfig…", concluded the
+//     server was not there and SKIPPED THE WHOLE FILE — with a confident
+//     stated reason about the sts/ gitlink predating the SCIM routes, which
+//     was not true. A run of this test that quietly did nothing reported
+//     PASS in 0.7s.
+//
+// So `pending` is what the loop waits out, and a timeout says which of the two
+// it timed out in: a status still busy after 30s is a request that never came
+// back, and a settled one that never matched `wanted` is a different bug.
+//
+// NOTE: THE FUNCTION BODY BELOW RUNS IN THE BROWSER. It and everything it
+// declares are exempt from the Entering/Leaving convention — see the note on
+// setField() above.
 async function waitForStatus(driver, id, wanted, timeoutMs) {
   log.debug("Entering waitForStatus(). id=" + id);
   const deadline = Date.now() + (timeoutMs || 30000);
   let last = "";
+  let pending = false;
   while (Date.now() < deadline) {
-    last = await textOf(driver, id);
-    if (String(last).trim() !== "" &&
+    const state = await driver.executeScript(`
+      var e = document.getElementById(arguments[0]);
+      if (!e) { return { text: '(no such element)', pending: false }; }
+      var text = (e.value !== undefined && e.tagName !== 'SELECT')
+        ? String(e.value) : String(e.textContent || '');
+      return { text: text,
+               pending: e.classList.contains('scim-pending') };
+    `, id);
+    last = state.text;
+    pending = state.pending;
+    if (!pending && String(last).trim() !== "" &&
         (!wanted || new RegExp(wanted, "i").test(last))) {
       log.debug("Leaving waitForStatus(). " + last.slice(0, 120));
       return last;
@@ -165,7 +208,48 @@ async function waitForStatus(driver, id, wanted, timeoutMs) {
   }
   log.debug("Leaving waitForStatus(). Timed out.");
   throw new Error("the status field " + id + " never said " +
-      (wanted || "anything") + "; it says: " + String(last).slice(0, 400));
+      (wanted || "anything") + "; it is still " +
+      (pending ? "BUSY" : "settled") + " and says: " +
+      String(last).slice(0, 400));
+}
+
+// ---------------------------------------------------------------------------
+// Press a button and wait for the status field that button writes — with the
+// field BLANKED first, which is the half a plain click-then-wait is missing.
+//
+// Every status here is written twice for one action (busy, then settled), and
+// it was also written by the action BEFORE. So a wait that begins the moment
+// the click returns can settle on the answer to the previous question and
+// never notice: section 6b pressed Run on the negatives scenario, read
+// section 6's "11 as planned" summary, and then looked for a step of the new
+// plan in a table still showing the old one — reporting "the
+// duplicate-userName step is not in the table" about a table that was simply
+// one scenario behind, while the scenario it was accusing ran perfectly.
+//
+// Blanking first makes the wait unambiguous: the only text that can appear in
+// that field next belongs to this action. It is done here rather than in
+// waitForStatus() because only the caller knows which click it is waiting on.
+//
+// NOTE: THE FUNCTION BODY BELOW RUNS IN THE BROWSER. It and everything it
+// declares are exempt from the Entering/Leaving convention — see the note on
+// setField() above.
+// ---------------------------------------------------------------------------
+async function clearStatus(driver, id) {
+  log.debug("Entering clearStatus(). id=" + id);
+  await driver.executeScript(`
+    var e = document.getElementById(arguments[0]);
+    if (e) { e.value = ''; }
+  `, id);
+  log.debug("Leaving clearStatus().");
+}
+
+async function clickAndWait(driver, buttonId, statusId, wanted, timeoutMs) {
+  log.debug("Entering clickAndWait(). button=" + buttonId);
+  await clearStatus(driver, statusId);
+  await driver.findElement(By.id(buttonId)).click();
+  const status = await waitForStatus(driver, statusId, wanted, timeoutMs);
+  log.debug("Leaving clickAndWait().");
+  return status;
 }
 
 async function openPage(driver) {
@@ -185,8 +269,8 @@ async function openPage(driver) {
 async function theServerIsThere(driver) {
   log.debug("Entering theServerIsThere().");
   log.info("0. Reaching the server from the browser.");
-  await driver.findElement(By.id("btn_scim_spc")).click();
-  const status = await waitForStatus(driver, "scim_discovery_status", null);
+  const status = await clickAndWait(driver, "btn_scim_spc",
+      "scim_discovery_status", null);
   if (!/Read\./i.test(status)) {
     log.debug("Leaving theServerIsThere(). Not reachable.");
     return { present: false, why: 'the browser could not read a ' +
@@ -226,6 +310,55 @@ async function theServerIsThere(driver) {
   });
   log.debug("Leaving theServerIsThere(). Present.");
   return { present: true };
+}
+
+// ---------------------------------------------------------------------------
+// THE CREDENTIAL THE SENDING SECTIONS RUN UNDER.
+//
+// The mock refuses an unauthenticated SCIM write (`scim.authRequired`, on by
+// default there), so the page has to be carrying something before any section
+// below can create anything — which is what a reader of this page does too.
+// Basic is chosen for the reason `scim_protocol.js` chooses it: it is the one
+// scheme that is a header and nothing else, so a refusal below is about SCIM
+// rather than about a token endpoint having a bad day.
+//
+// It is applied MORE THAN ONCE on purpose. Section 4 walks the whole scheme
+// selector and leaves it wherever the loop finished, and sections 5 and 5b
+// select their own — so a later section that sends has to put it back rather
+// than assume the page is still where section 2 left it. Discovery is not
+// covered by it: `scim.authDiscovery` is off at the mock and section 0 asserts
+// that the ServiceProviderConfig reads with no credential at all.
+// ---------------------------------------------------------------------------
+async function useRunCredential(driver, where) {
+  log.debug("Entering useRunCredential(). where=" + where);
+  await driver.executeScript(`
+    var select = document.getElementById('scim_auth_scheme');
+    select.value = 'basic';
+    select.dispatchEvent(new Event('change'));
+  `);
+  await setField(driver, "scim_auth_username", runnerUsername);
+  await setField(driver, "scim_auth_password", "not-the-reserved-one");
+  const applied = await driver.executeScript(`
+    return {
+      scheme: document.getElementById('scim_auth_scheme').value,
+      username: document.getElementById('scim_auth_username').value,
+      password: document.getElementById('scim_auth_password').value
+    };
+  `);
+  // Asserted rather than assumed: a selector that silently kept its old value
+  // turns every send below into a 401 naming an endpoint, which is a dozen
+  // failures for one cause and not one of them says "no credential".
+  check('the page is carrying a Basic credential ' + where, function () {
+    assert.strictEqual(applied.scheme, 'basic',
+        'The scheme selector says "' + applied.scheme + '" after being set ' +
+        'to basic.');
+    assert.strictEqual(applied.username, runnerUsername,
+        'The username field holds "' + applied.username + '".');
+    assert.ok(applied.password.length > 0,
+        'The password field is empty, and RFC 7617 has no credential ' +
+        'without one.');
+  });
+  log.debug("Leaving useRunCredential().");
 }
 
 // ---------------------------------------------------------------------------
@@ -318,8 +451,8 @@ async function theBrowserCreatesAndDeletes(driver) {
         'client tested only against userName and emails has tested nothing ' +
         'about the fields it will meet.');
   });
-  await driver.findElement(By.id("btn_scim_send")).click();
-  const status = await waitForStatus(driver, "scim_op_status", null, 30000);
+  const status = await clickAndWait(driver, "btn_scim_send",
+      "scim_op_status", null, 30000);
   check('the create succeeds from the browser', function () {
     assert.ok(/^201/.test(status),
         'The create said: ' + status);
@@ -354,8 +487,8 @@ async function theBrowserCreatesAndDeletes(driver) {
     select.dispatchEvent(new Event('change'));
     window.scim.useLastId();
   `);
-  await driver.findElement(By.id("btn_scim_send")).click();
-  const readStatus = await waitForStatus(driver, "scim_op_status", null);
+  const readStatus = await clickAndWait(driver, "btn_scim_send",
+      "scim_op_status", null);
   check('reading it back succeeds and the id was reused', function () {
     assert.ok(/^200/.test(readStatus), 'The read said: ' + readStatus);
   });
@@ -373,8 +506,8 @@ async function theBrowserCreatesAndDeletes(driver) {
     select.dispatchEvent(new Event('change'));
     window.scim.useLastId();
   `);
-  await driver.findElement(By.id("btn_scim_send")).click();
-  const deleteStatus = await waitForStatus(driver, "scim_op_status", null);
+  const deleteStatus = await clickAndWait(driver, "btn_scim_send",
+      "scim_op_status", null);
   check('the delete succeeds and 204 is reported as a SUCCESS', function () {
     assert.ok(/^204/.test(deleteStatus),
         'A delete answers 204 with no body, and reading an empty body as a ' +
@@ -421,8 +554,8 @@ async function theBackendPathAlsoWorks(driver) {
     select.dispatchEvent(new Event('change'));
     document.getElementById('scim_query_count').value = '1';
   `);
-  await driver.findElement(By.id("btn_scim_send")).click();
-  const status = await waitForStatus(driver, "scim_op_status", null);
+  const status = await clickAndWait(driver, "btn_scim_send",
+      "scim_op_status", null);
   check('a list through the api succeeds', function () {
     assert.ok(/^200/.test(status), 'It said: ' + status);
   });
@@ -594,8 +727,8 @@ async function theDpopProofIsMintedInTheBrowser(driver) {
     op.dispatchEvent(new Event('change'));
     document.getElementById('scim_query_count').value = '1';
   `);
-  await driver.findElement(By.id("btn_scim_send")).click();
-  await waitForStatus(driver, "scim_op_status", null, 30000);
+  await clickAndWait(driver, "btn_scim_send", "scim_op_status", null,
+      30000);
   const proof = await textOf(driver, "scim_dpop_proof");
   check('a DPoP proof is minted with Web Crypto and shown', function () {
     assert.ok(proof.indexOf('"typ"') >= 0 && proof.indexOf('dpop+jwt') >= 0,
@@ -639,8 +772,8 @@ async function theHobaKeyIsGeneratedAndSigns(driver) {
     select.dispatchEvent(new Event('change'));
     document.getElementById('scim_hoba_username').value = 'hoba-${prefix}';
   `);
-  await driver.findElement(By.id("btn_scim_hoba_generate")).click();
-  const status = await waitForStatus(driver, "scim_hoba_status", null, 60000);
+  const status = await clickAndWait(driver, "btn_scim_hoba_generate",
+      "scim_hoba_status", null, 60000);
   check('an RSA key is generated in the browser', function () {
     assert.ok(/generated/i.test(status),
         'RFC 7486\'s algorithm registry has one entry that matters — "0", ' +
@@ -684,11 +817,9 @@ async function theHobaKeyIsGeneratedAndSigns(driver) {
 async function aScenarioRunsEndToEnd(driver) {
   log.debug("Entering aScenarioRunsEndToEnd().");
   log.info("6. The scenario runner.");
-  await driver.executeScript(`
-    var select = document.getElementById('scim_auth_scheme');
-    select.value = 'none';
-    select.dispatchEvent(new Event('change'));
-  `);
+  // Sections 4, 5 and 5b each left the scheme selector somewhere else, and
+  // every step of a scenario is a real request.
+  await useRunCredential(driver, 'for the scenario runner');
   await setField(driver, "scim_scenario_seed", prefix + "-run");
   await setField(driver, "scim_scenario_prefix", prefix + "run");
   await setField(driver, "scim_scenario_count", "3");
@@ -697,8 +828,8 @@ async function aScenarioRunsEndToEnd(driver) {
     select.value = 'provision-team';
     select.dispatchEvent(new Event('change'));
   `);
-  await driver.findElement(By.id("btn_scim_plan")).click();
-  const planned = await waitForStatus(driver, "scim_scenario_status", null);
+  const planned = await clickAndWait(driver, "btn_scim_plan",
+      "scim_scenario_status", null);
   check('planning SENDS NOTHING and says so', function () {
     assert.ok(/Nothing has been sent/i.test(planned),
         'A plan is a set of assertions to be read before any of them runs. ' +
@@ -724,9 +855,8 @@ async function aScenarioRunsEndToEnd(driver) {
           'A step shows "' + text + '" before the run started.');
     });
   });
-  await driver.findElement(By.id("btn_scim_run")).click();
-  const summary = await waitForStatus(driver, "scim_scenario_status",
-      "as planned", 180000);
+  const summary = await clickAndWait(driver, "btn_scim_run",
+      "scim_scenario_status", "as planned", 180000);
   check('the whole scenario runs and every step goes as planned', function () {
     assert.ok(/as planned/.test(summary), 'The run said: ' + summary);
     assert.ok(!/ 0 as planned/.test(summary),
@@ -788,9 +918,8 @@ async function aNegativeScenarioFinishesGreen(driver) {
     select.value = 'negatives';
     select.dispatchEvent(new Event('change'));
   `);
-  await driver.findElement(By.id("btn_scim_run")).click();
-  const summary = await waitForStatus(driver, "scim_scenario_status",
-      "as planned", 120000);
+  const summary = await clickAndWait(driver, "btn_scim_run",
+      "scim_scenario_status", "as planned", 120000);
   const verdicts = await driver.executeScript(`
     var rows = document.querySelectorAll('#scim_runner_table tbody tr');
     var out = [];
@@ -1031,6 +1160,7 @@ async function test() {
       log.info("Test completed successfully (skipped).");
       return;
     }
+    await useRunCredential(driver, 'for the sections that send');
     await everyEndpointComposes(driver);
     await theBrowserCreatesAndDeletes(driver);
     await theBackendPathAlsoWorks(driver);

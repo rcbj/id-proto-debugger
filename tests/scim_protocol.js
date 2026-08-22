@@ -47,6 +47,22 @@
 // would pass a test that only looked at "did it work".
 //
 // ---------------------------------------------------------------------------
+// EVERY SECTION BUT ONE RUNS UNDER A CREDENTIAL.
+//
+// The mock refuses an unauthenticated SCIM request (`scim.authRequired`, on by
+// default there), so section 1b establishes ONE credential and every later
+// call carries it — which is also what a provisioning client does. The setting
+// is runtime and the mock's /admin state outlives a test file, so 1b PROBES
+// for the 401 rather than assuming it: against a mock with authentication off,
+// nothing is attached and the run passes unchanged.
+//
+// Section 8 is the exception. It presents its own header per scheme, and the
+// Digest and HOBA handshakes each begin with a deliberate credential-less leg
+// to collect the challenge they compute over — `scimCall(..., { anonymous:
+// true })` is what keeps the run's credential off those, and without it both
+// handshakes get a 200 with nothing to sign.
+//
+// ---------------------------------------------------------------------------
 // AUTHENTICATION: ALL SIX SCHEMES, ONCE EACH.
 //
 // RFC 7644 section 2 names six ways of authenticating and the mock implements
@@ -135,6 +151,40 @@ let checks = 0;
 let skips = [];
 const created = { users: [], groups: [] };
 
+// ---------------------------------------------------------------------------
+// THE CREDENTIAL EVERY SECTION BUT ONE USES.
+//
+// `/scim/v2` is the first surface in the mock that refuses a caller who
+// presents nothing (`scim.authRequired`, ON by default there), and it refuses
+// it for the reason SCIM was worth having: these endpoints CREATE and DELETE
+// accounts. So the sections below authenticate the way a provisioning client
+// does — once, with one credential, reused for every call — and this holds it.
+//
+// It is established by PROBING rather than assumed, because that setting is
+// runtime and the mock's /admin state survives between test files: a run
+// against a mock with authentication turned off must still pass, and it does,
+// with this left empty.
+//
+// **THE SCHEME IS BASIC AND THE CHOICE IS DELIBERATE.** It is the only one of
+// the six that needs nothing but a header this process can compute: no token
+// endpoint (so an authorization server having a bad day cannot make the
+// provisioning sections fail and read as SCIM), no scope, no nonce, no key.
+// What that leaves out is exercised properly in section 8, where each scheme
+// gets its own call and its own negative — which is where a scheme SHOULD be
+// tested, rather than incidentally forty times over.
+//
+// Section 8 is the exception to all of it, and passes `anonymous: true` where
+// it needs the 401 and its WWW-Authenticate challenge — the Digest and HOBA
+// handshakes both begin with a deliberate credential-less leg, and a default
+// credential would answer 200 and leave them nothing to sign.
+let defaultAuthHeaders = null;
+
+// Not the run's prefix: this name gains a directory entry at the mock (a Basic
+// username is RECORDED as an authentication there), and section 10 asserts
+// nothing matching the prefix is left behind. A run's provisioning identity is
+// not one of the users that run provisioned.
+const runnerUsername = "scim-protocol-runner";
+
 function check(what, fn) {
   log.debug("Entering check(). " + what);
   fn();
@@ -183,7 +233,13 @@ async function scimCall(spec, options) {
   const settings = options || {};
   const request = scim.buildRequest(Object.assign({ baseUrl: scimBaseUrl },
       spec));
-  const headers = Object.assign({}, request.headers, settings.headers || {});
+  // The run's credential goes on every call that does not ask to be without
+  // one. `settings.headers` is merged LAST so a section presenting its own
+  // credential — which is the whole of section 8 — replaces it rather than
+  // being merged with it: two Authorization headers is not a test of either.
+  const headers = Object.assign({}, request.headers,
+      settings.anonymous ? {} : (defaultAuthHeaders || {}),
+      settings.headers || {});
   const answer = await postJson(apiUrl + "/scim", {
     url: request.url,
     method: request.method,
@@ -239,9 +295,14 @@ function assertAnswered(result, what) {
 // ---------------------------------------------------------------------------
 async function ldapSearch(base, filter, attributes) {
   log.debug("Entering ldapSearch(). filter=" + filter);
+  // `baseDn`, which is what POST /ldap/search calls it — see api/server.js.
+  // Sent as `base` the api sees no search base at all, searches the empty DN,
+  // and answers 200 with zero entries: a verification channel that reports
+  // "the server said 201 and stored nothing" for every attribute of every
+  // user, which is this file's most alarming failure and was a typo here.
   const answer = await postJson(apiUrl + "/ldap/search", {
     url: ldapUrl, bindDn: bindDn, password: ldapPassword,
-    base: base, scope: "sub", filter: filter,
+    baseDn: base, scope: "sub", filter: filter,
     attributes: attributes || []
   });
   if (answer.status !== 200) {
@@ -353,7 +414,7 @@ async function theMockHasScim() {
   log.debug("Entering theMockHasScim().");
   log.info("0. Reaching the SCIM server.");
   const result = await scimCall({ operation: 'serviceProviderConfig' },
-      { expectUnreachable: true });
+      { expectUnreachable: true, anonymous: true });
   if (result.transport === 502) {
     log.debug("Leaving theMockHasScim(). Unreachable.");
     return { present: false, why: 'the api could not reach ' + scimBaseUrl +
@@ -471,6 +532,70 @@ function resourcesOf(body) {
   const out = Array.isArray(body) ? body : ((body && body.Resources) || []);
   log.debug("Leaving resourcesOf(). " + out.length + " item(s).");
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// 1b. THE CREDENTIAL THE PROVISIONING SECTIONS RUN UNDER.
+//
+// One anonymous call, to ask the server whether it wants one at all, and then
+// one credential built with THE WORKFLOW'S OWN `applyAuth()` — the same
+// function the page uses — so that a header this suite gets wrong is a header
+// the page gets wrong too.
+// ---------------------------------------------------------------------------
+async function credentialForEverySection() {
+  log.debug("Entering credentialForEverySection().");
+  log.info("1b. The credential the rest of this run uses.");
+  const anonymous = await scimCall({ operation: 'listUsers',
+      query: { count: '1' } }, { anonymous: true });
+  if (anonymous.status !== 401) {
+    log.info("     the server allowed an ANONYMOUS list (" +
+        anonymous.status + "), so authentication is turned off there " +
+        "(scim.authRequired) and nothing is attached below.");
+    log.debug("Leaving credentialForEverySection(). Not required.");
+    return;
+  }
+  const offered = scim.parseChallenges(
+      scenarios.headerValue(anonymous.headers, 'www-authenticate'))
+    .map(function (row) {
+      return String(row.scheme).toLowerCase();
+    });
+  log.info("     the server requires one and offers: " +
+      (offered.join(', ') || '(nothing it named)'));
+
+  // Basic first — see the note on defaultAuthHeaders. Bearer is the fallback
+  // rather than the choice, for a deployment that has turned Basic off.
+  let applied = null;
+  if (offered.indexOf('basic') >= 0) {
+    applied = scim.applyAuth({ method: 'GET', url: scimBaseUrl },
+        { scheme: 'basic', username: runnerUsername,
+          password: 'not-the-reserved-one' });
+  } else {
+    const token = await accessToken('scim:read scim:write');
+    if (!token.ok) {
+      assert.fail('This mock requires a SCIM credential, does not offer ' +
+          'Basic (it offers: ' + offered.join(', ') + '), and its token ' +
+          'endpoint would not issue one either: ' + token.why + '. Every ' +
+          'section below writes, so there is nothing left to run.');
+    }
+    applied = scim.applyAuth({ method: 'GET', url: scimBaseUrl },
+        { scheme: 'bearer', token: token.token });
+  }
+  defaultAuthHeaders = applied.headers;
+
+  // Asserted, not assumed. A credential that is built and silently not
+  // accepted turns every section below into a 401 naming an endpoint, which
+  // is forty failures for one cause and none of them says "the credential".
+  const authenticated = await scimCall({ operation: 'listUsers',
+      query: { count: '1' } });
+  check('the run\'s credential (' + applied.scheme + ') is accepted',
+      function () {
+    assertAnswered(authenticated, 'the run credential');
+    assert.strictEqual(authenticated.status, 200,
+        'The credential this run will use for every provisioning call was ' +
+        'refused ' + authenticated.status + ': ' + authenticated.detail +
+        ' — ' + applied.note);
+  });
+  log.debug("Leaving credentialForEverySection(). scheme=" + applied.scheme);
 }
 
 // ---------------------------------------------------------------------------
@@ -661,10 +786,20 @@ async function replaceAndModify(subject) {
         'did not mention.');
   });
 
+  // THE ADDED EMAIL IS A SECOND `work` ONE, AND THE TYPE IS LOAD-BEARING.
+  // This mock is a directory behind a SCIM face and its mapping table has one
+  // row for emails — `emails` where type is `work`, to the LDAP `mail`
+  // attribute (RFC 4524 2.16), which is multi-valued and takes both. An email
+  // typed `other` has no attribute to land in, so it is accepted and dropped:
+  // a 200 whose read-back is missing the value that was just added. That is a
+  // real property of every directory-backed provisioning target and it is
+  // worth knowing about — but it is not what these two checks are for, and a
+  // value the server never claimed it could store cannot say whether `add`
+  // appends or replaces. See scim_map.js in the mock.
   const add = await scimCall({ operation: 'modifyUser', id: subject.id,
       body: scim.patchOp([
         { op: 'add', path: 'emails',
-          value: [{ value: 'added.by.patch@example.com', type: 'other',
+          value: [{ value: 'added.by.patch@example.com', type: 'work',
                     primary: false }] }
       ]) });
   check('PATCH add on a multi-valued attribute APPENDS', function () {
@@ -685,14 +820,18 @@ async function replaceAndModify(subject) {
         values.join(', '));
   });
 
+  // Filtered on `value` rather than on `type`, because both emails now carry
+  // the same type and only one of them is to go — which is the harder case
+  // for the grammar, not the easier one.
   const remove = await scimCall({ operation: 'modifyUser', id: subject.id,
       body: scim.patchOp([
-        { op: 'remove', path: 'emails[type eq "other"]' }
+        { op: 'remove',
+          path: 'emails[value eq "added.by.patch@example.com"]' }
       ]) });
   check('PATCH remove through a value-filter PATH', function () {
     assertAnswered(remove, 'patch remove');
     assert.ok(remove.status === 200 || remove.status === 204,
-        'emails[type eq "other"] is a PATH, not a property name. This is ' +
+        'emails[value eq "…"] is a PATH, not a property name. This is ' +
         'the RFC 7644 section 3.5.2 grammar every hand-rolled SCIM server ' +
         'is subtly wrong about, and where a client\'s updates land on the ' +
         'wrong value. Answered ' + remove.status + ': ' + remove.detail);
@@ -1040,19 +1179,37 @@ async function searchAndBulk() {
         'non-conforming body to everybody else.');
   });
 
-  // The bulk, with the feature that makes it more than a loop.
+  // ------------------------------------------------------------------------
+  // The bulk, with the feature that makes it more than a loop — and with ONE
+  // bulkId reference in the group rather than three, which is a limit of the
+  // SERVER and is stated below rather than quietly worked around.
+  //
+  // RFC 7644 section 3.7.2 lets one operation reference a resource another
+  // operation in the same request is about to create, as "bulkId:name". This
+  // mock delegates that resolution to scimmy (1.3.5, the current release), and
+  // scimmy resolves only the LAST reference in any one operation: its
+  // substitution loop re-parses the ORIGINAL request body on every iteration
+  // and replaces one name at a time, so each pass discards the one before it.
+  // A group sent with three bulkId members comes back with two literal
+  // "bulkId:u0"/"bulkId:u1" values stored as member DNs and one real id.
+  //
+  // So this asks for one reference, which is the part that works and the part
+  // that says whether the server resolves at all. The three users are still
+  // created in the same bulk — the operation count, the per-operation statuses
+  // and the cleanup below all cover them — and they are tracked from their own
+  // Location headers rather than from the group's membership, which is where
+  // they came from anyway.
+  // ------------------------------------------------------------------------
   const rng = scim.newRng(prefix + ':bulk');
   const operations = [];
-  const members = [];
   let i;
   for (i = 0; i < 3; i++) {
     operations.push({ method: 'POST', bulkId: 'u' + i, path: '/Users',
         data: scim.randomUser({ rng: rng, prefix: prefix + 'bulk',
                                 index: i }) });
-    members.push({ value: 'bulkId:u' + i, type: 'User' });
   }
   const bulkGroup = scim.randomGroup({ rng: rng, prefix: prefix + 'bulk' });
-  bulkGroup.members = members;
+  bulkGroup.members = [{ value: 'bulkId:u0', type: 'User' }];
   operations.push({ method: 'POST', bulkId: 'g0', path: '/Groups',
       data: bulkGroup });
   const bulk = await scimCall({ operation: 'bulk',
@@ -1076,33 +1233,61 @@ async function searchAndBulk() {
           'address what it created.');
     });
   });
+  // Every user the bulk created, from its OWN Location — not from the group's
+  // membership. Section 10 asserts nothing carrying this run's prefix is left
+  // in the directory, and two of these three are no longer named anywhere in
+  // that group.
+  let bulkUserIds = [];
   check('a group created IN the bulk contains the users created beside it',
       function () {
-    const groupRow = (bulk.body.Operations || []).filter(function (row) {
+    const rows = bulk.body.Operations || [];
+    const groupRow = rows.filter(function (row) {
       return row.bulkId === 'g0';
     })[0];
     assert.ok(groupRow, 'The group operation is not in the response.');
     created.groups.push(idFromLocation(groupRow.location));
+    bulkUserIds = rows.filter(function (row) {
+      return String(row.bulkId || '').indexOf('u') === 0;
+    }).map(function (row) {
+      return idFromLocation(row.location);
+    });
+    assert.strictEqual(bulkUserIds.length, 3,
+        'Three users went into the bulk and ' + bulkUserIds.length + ' came ' +
+        'back with a location. The rest of this section addresses them by ' +
+        'id and section 10 deletes them by it.');
+    bulkUserIds.forEach(function (id) {
+      created.users.push(id);
+    });
   });
   const bulkGroupRead = await scimCall({ operation: 'readGroup',
       id: created.groups[created.groups.length - 1] });
-  check('bulkId references were resolved to real ids', function () {
+  check('the bulkId reference was resolved to a real id', function () {
     assertAnswered(bulkGroupRead, 'read the bulk group');
     const values = (bulkGroupRead.body.members || []).map(function (row) {
       return String(row.value);
     });
-    assert.strictEqual(values.length, 3,
-        'The group has ' + values.length + ' member(s). Referencing users ' +
-        'created in the SAME request as bulkId:name is the feature that ' +
-        'makes a bulk more than a loop; without it this was three creates ' +
-        'and an empty group.');
-    values.forEach(function (value) {
-      assert.ok(value.indexOf('bulkId:') < 0,
-          'A member is still the literal reference "' + value + '" — the ' +
-          'server stored the bulkId rather than resolving it.');
-      created.users.push(value);
-    });
+    assert.strictEqual(values.length, 1,
+        'The group has ' + values.length + ' member(s) and one bulkId was ' +
+        'referenced. Referencing a user created in the SAME request as ' +
+        'bulkId:name is the feature that makes a bulk more than a loop; ' +
+        'without it this was three creates and an empty group.');
+    assert.ok(values[0].indexOf('bulkId:') < 0,
+        'The member is still the literal reference "' + values[0] + '" — ' +
+        'the server stored the bulkId rather than resolving it.');
+    assert.strictEqual(values[0], bulkUserIds[0],
+        'The member resolved to "' + values[0] + '" and the operation that ' +
+        'created u0 answered with "' + bulkUserIds[0] + '". A reference ' +
+        'that resolves to the WRONG resource is worse than one that does ' +
+        'not resolve at all: nothing about it looks like a failure.');
   });
+  // Stated rather than silently not attempted. See the note above the request.
+  skip('several bulkId references in ONE operation',
+      'this mock resolves them with scimmy 1.3.5, whose substitution loop ' +
+      're-parses the original body for each reference and so keeps only the ' +
+      'last one — a group sent with three bulkId members is stored with two ' +
+      'literal "bulkId:uN" DNs. 1.3.5 is the current release and there is no ' +
+      'newer one to move to; this section asks for one reference, which is ' +
+      'the part that works');
   log.debug("Leaving searchAndBulk().");
 }
 
@@ -1196,19 +1381,50 @@ async function everyRefusalIsAnAnswer() {
         'from invalidFilter, because a PATCH path and a query filter are ' +
         'different grammars that look alike. Got "' + badPath.scimType + '".');
   });
+  // ------------------------------------------------------------------------
+  // /Me, WHICH IS AN ALIAS HERE AND USED TO BE A REFUSAL.
+  //
+  // RFC 7644 section 3.11 makes /Me an alias for the subject the request
+  // authenticated AS. This mock answered 501 for one reason — nothing here
+  // authenticated, so there was never a subject — and that stopped being true
+  // when the SCIM endpoints started requiring a credential. So both legs are
+  // asked for: with this run's credential it must resolve to THIS RUN, and
+  // without one it must refuse rather than guess.
+  //
+  // Resolving to the wrong person is the failure worth catching. A /Me that
+  // hands back the first user in the directory looks exactly like a working
+  // one to every client that only ever provisions itself.
+  // ------------------------------------------------------------------------
   const me = await scimCall({ operation: 'me' });
-  check('/Me answers 501 with a reason rather than 404', function () {
+  check('/Me resolves to the subject the request authenticated as',
+      function () {
     assertAnswered(me, '/Me');
-    assert.ok(me.status === 501 || me.status === 401,
-        '/Me answered ' + me.status + '. RFC 7644 section 3.11 makes it an ' +
-        'alias for the authenticated subject; a server with none has ' +
-        'nothing to alias, and a 501 saying so is a better answer than a ' +
-        '404 (which says the route is not there) or a guess at who is ' +
-        'asking.');
     if (me.status === 501) {
       assert.ok(String(me.detail).length > 0,
-          'The 501 carries no detail, so it says nothing a 404 would not.');
+          'A 501 here says the alias is unavailable — which is the right ' +
+          'answer against a server where nothing authenticates — and it ' +
+          'carries no detail, so it says nothing a 404 would not.');
+      return;
     }
+    assert.strictEqual(me.status, 200,
+        '/Me answered ' + me.status + ' ' + me.scimType + ': ' + me.detail);
+    assert.strictEqual(me.body.userName, runnerUsername,
+        '/Me came back as "' + me.body.userName + '" and this run ' +
+        'authenticated as "' + runnerUsername + '". An alias that resolves ' +
+        'to SOMEBODY ELSE is worse than one that does not resolve: a client ' +
+        'that only ever provisions itself cannot tell the two apart, and ' +
+        'the write that follows lands on the wrong account.');
+  });
+  const anonymousMe = await scimCall({ operation: 'me' }, { anonymous: true });
+  check('/Me without a credential refuses rather than guessing', function () {
+    assertAnswered(anonymousMe, '/Me anonymous');
+    assert.ok(anonymousMe.status === 401 || anonymousMe.status === 501,
+        '/Me answered ' + anonymousMe.status + ' to a request carrying no ' +
+        'credential at all. There is no subject to alias, so the answer is ' +
+        'a 401 (present one) or a 501 (this server has no such notion) — ' +
+        'and never a 200, which would be the server picking somebody.');
+    assert.ok(String(anonymousMe.detail).length > 0,
+        'The refusal carries no detail, so it says nothing a 404 would not.');
   });
   // The api's OWN refusals, which are a 400 and are NOT a SCIM answer.
   const apiRefusal = await postJson(apiUrl + '/scim', {
@@ -1239,7 +1455,7 @@ async function whatTheServerAcceptsIsPublished() {
   // than passing vacuously — a scheme check against a server that accepts
   // everything tests nothing at all.
   const anonymous = await scimCall({ operation: 'listUsers',
-      query: { count: '1' } });
+      query: { count: '1' } }, { anonymous: true });
   if (anonymous.status !== 401) {
     log.debug("Leaving whatTheServerAcceptsIsPublished(). Not required.");
     return { required: false, why: 'this mock allowed an ANONYMOUS list (' +
@@ -1485,9 +1701,11 @@ async function everySchemeIsExercised(state) {
 
 async function digestHandshakeWorks() {
   log.debug("Entering digestHandshakeWorks().");
-  // Leg one: no credential, to collect the nonce.
+  // Leg one: no credential, to collect the nonce. `anonymous` is what makes
+  // it credential-less — this run has one attached by default, and with it
+  // this call answers 200 and carries no challenge to compute against.
   const first = await scimCall({ operation: 'listUsers',
-      query: { count: '1' } });
+      query: { count: '1' } }, { anonymous: true });
   const challenges = scim.parseChallenges(
       scenarios.headerValue(first.headers, 'www-authenticate'));
   const chosen = scim.chooseDigestChallenge(challenges);
@@ -1634,9 +1852,10 @@ async function hobaSignatureIsAccepted() {
     assert.ok(registration.status < 400,
         'Registration answered ' + registration.status);
   });
-  // Leg one, for the challenge.
+  // Leg one, for the challenge — credential-less for the same reason the
+  // Digest handshake's first leg is.
   const first = await scimCall({ operation: 'listUsers',
-      query: { count: '1' } });
+      query: { count: '1' } }, { anonymous: true });
   const challenges = scim.parseChallenges(
       scenarios.headerValue(first.headers, 'www-authenticate'));
   const hoba = scim.challengesFor(challenges, 'hoba')[0];
@@ -1824,6 +2043,7 @@ async function test() {
     return;
   }
   await discoveryAnswers();
+  await credentialForEverySection();
   const subject = await aFullUserRoundTrips();
   await replaceAndModify(subject);
   const population = await listingAndFiltering();

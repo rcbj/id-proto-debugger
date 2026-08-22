@@ -1569,6 +1569,54 @@ function planScenario() {
   return currentPlan;
 }
 
+// ---------------------------------------------------------------------------
+// A PLAN BELONGS TO THE INPUTS IT WAS BUILT FROM, so changing any of them
+// throws it away.
+//
+// The Run button plans for itself when there is no plan, and only then — so
+// without this, choosing a different scenario (or a different seed, prefix or
+// user count) after pressing Plan and then pressing Run RAN THE OLD ONE, while
+// the description beside the selector, and the table, described the new one.
+// Nothing about that looks like a failure: the run goes green, every step
+// passes, and it was the wrong scenario. It cost a test exactly that way —
+// tests/scim_page.js looked for a step of the negatives scenario in a table
+// still showing the team-provisioning one and reported it as missing.
+//
+// The table is emptied with it, because a plan on screen that the Run button
+// would not run is the misleading half. A run in flight keeps its plan: it is
+// the thing currently executing, and the steps left to run are its own.
+// ---------------------------------------------------------------------------
+function forgetPlan() {
+  log.debug("Entering forgetPlan().");
+  if (runState.running) {
+    log.debug("Leaving forgetPlan(). A run is in flight.");
+    return;
+  }
+  if (!currentPlan) {
+    log.debug("Leaving forgetPlan(). Nothing was planned.");
+    return;
+  }
+  currentPlan = null;
+  runState = { running: false, stopRequested: false, captured: {},
+               results: [] };
+  renderPlan();
+  statusOk('scim_scenario_status', 'The scenario, the seed, the prefix or ' +
+      'the user count changed, so the plan below no longer describes what ' +
+      'would be sent and has been dropped. Press Plan to build one for what ' +
+      'is on screen now — or Run, which plans first when there is nothing ' +
+      'planned.');
+  log.debug("Leaving forgetPlan(). Dropped.");
+}
+
+// A change to the scenario selector is both: the description beside it is
+// rewritten, and whatever was planned before is no longer this scenario.
+function onScenarioSelected() {
+  log.debug("Entering onScenarioSelected().");
+  refreshScenarioControls();
+  forgetPlan();
+  log.debug("Leaving onScenarioSelected().");
+}
+
 function renderPlan() {
   log.debug("Entering renderPlan().");
   var host = el('scim_runner_table');
@@ -2138,8 +2186,18 @@ function onload() {
   }
   var scenarioSelect = el('scim_scenario');
   if (scenarioSelect) {
-    scenarioSelect.addEventListener('change', refreshScenarioControls);
+    scenarioSelect.addEventListener('change', onScenarioSelected);
   }
+  // The other three inputs a plan is built from. `input` rather than `change`,
+  // so a plan stops describing the screen the moment the screen changes rather
+  // than when the field is left.
+  ['scim_scenario_seed', 'scim_scenario_prefix',
+   'scim_scenario_count'].forEach(function (id) {
+    var e = el(id);
+    if (e) {
+      e.addEventListener('input', forgetPlan);
+    }
+  });
   ['scim_base_url', 'scim_op_id', 'scim_query_filter', 'scim_query_count',
    'scim_query_start_index', 'scim_query_sort_by', 'scim_query_sort_order',
    'scim_query_attributes', 'scim_query_excluded_attributes'].forEach(
