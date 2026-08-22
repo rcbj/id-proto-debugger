@@ -550,6 +550,29 @@ COPY tests/browser_tests_headless.js ./
 COPY tests/run-report.js ./
 # Shared test helpers (populateMetadata, ...). The test scripts require it as
 # ../common/tests.js; WORKDIR is /usr/src/app, so it must land in /usr/src/common.
+# ---------------------------------------------------------------------------
+# SCIM 2.0.
+#
+# Three test scripts and the three modules they load directly. The modules land
+# FLAT beside the test scripts, which is why each of the three tests is named
+# scim_<something> and none of them is called scim_client.js or
+# scim_proxy.js — two files of one name copied here means whichever COPY ran
+# last wins, silently, and the test would end up loading itself. Same trap
+# jwk_pem.js and metadata_schema.js above record.
+#
+# `api/scim_proxy.js` is the first module this image takes from api/ rather
+# than from client/src or common/, and it can be taken because it has no axios
+# and no network in it — it only DECIDES. That is what lets scim_engine.js
+# assert every refusal the backend call path can produce with no api running.
+#
+# Omit any of these three COPYs and the test does not fail: module_paths.js
+# looks for the checkout path first and finds nothing in the image, so the
+# whole file throws at load with "could not locate" — which names the module
+# rather than this line. Both scim_client.js and scim_scenarios.js are ALSO
+# browser bundle source, so a rename on either side has to be made here too.
+COPY client/src/scim_client.js client/src/scim_scenarios.js ./
+COPY api/scim_proxy.js ./
+COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 COPY common/tests.js /usr/src/common/tests.js
 # The SAML SP key pair reader. The pair itself is generated per run inside the
 # container (common.sh generateSpKeyPair) and passed through the environment —

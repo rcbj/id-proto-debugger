@@ -95,6 +95,35 @@ var config = {
   ldapBindDnDefault: "cn=admin,dc=example,dc=com",
   ldapPasswordDefault: "password!",
 
+  // ---------------------------------------------------------------------------
+  // SCIM 2.0 (client/public/scim.html, docs/scim.md).
+  //
+  // The service root the page opens on — the host plus the SCIM base path,
+  // which is `/scim/v2` on essentially every implementation. NOT a resource
+  // path: the page builds /Users, /Groups and the rest onto it.
+  //
+  // **THIS ONE IS RESOLVED BY THE BROWSER**, unlike `ldapUrlDefault` beside it,
+  // which the api resolves. That is the whole difference between the two
+  // workflows: SCIM is ordinary HTTPS with a JSON body, so this page calls a
+  // SCIM server directly and works with no api behind it — which is why it is
+  // NOT in client/static_site.js's exclusions and its landing card is not
+  // greyed. So `localhost` here means the machine the BROWSER runs on, and on
+  // the containerized stack that is not the same host the api sees.
+  //
+  // It is EMPTY in prod.js / test-idptools-com.js, because a public site has
+  // no business defaulting to somebody's localhost — and a test that asserts
+  // this default therefore has to read it off the page rather than assume it.
+  // See tests/CLAUDE.md.
+  // ---------------------------------------------------------------------------
+  scimBaseUrlDefault: "http://localhost:8081/scim/v2",
+  // Where the cookie scheme's "sign in at the server" button goes. Empty means
+  // the page uses the service root's own ORIGIN, which is the honest default:
+  // a service's login screen is usually reached through a protocol flow (an
+  // authorization request, a WS-Federation wsignin1.0) rather than at a URL a
+  // client can name, and a button that opened a 404 would be worse than one
+  // that opened the front door. Set it where a deployment does have one.
+  scimSignInUrlDefault: "",
+
 
 }
 

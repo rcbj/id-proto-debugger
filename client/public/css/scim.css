@@ -1,0 +1,405 @@
+/* scim.css — the SCIM 2.0 Provisioning Debugger's look.
+ *
+ * Every class here is prefixed `scim-`, and tests/navigation.js's
+ * checkStylesheetsLoaded() knows that prefix: a page using a `scim-` class this
+ * sheet does not define fails that test. That guard exists because the
+ * WS-Federation pages once linked the wrong stylesheet after a rename and
+ * rendered completely unstyled — the link resolved, so nothing 404'd and
+ * nothing noticed.
+ *
+ * THIS PAGE DOES NOT LINK css/saml_common.css, which is why a few of the
+ * classes here duplicate that sheet's. The alternative — `saml-*` names on a
+ * page with nothing to do with SAML — is what the Kerberos and LDAP pages
+ * deliberately did not do.
+ *
+ * TWO LAYOUT CONSTRAINTS ARE LOAD-BEARING HERE, and both are the same one the
+ * LDAP sheet records, worse:
+ *
+ *   * **The ids are DNs.** A SCIM id is opaque and against this project's mock
+ *     STS it is an LDAP distinguished name, percent-encoded into a URL path
+ *     segment: `/Users/uid%3Dalice%2Cou%3Dusers%2Cdc%3Dexample%2Cdc%3Dcom`.
+ *     That is a long unbroken string with no space in it, and bootstrap's
+ *     `code { white-space: nowrap }` plus an auto-layout table sized to
+ *     min-content is exactly how one of them pushes a pane past the edge of the
+ *     viewport. Everything that can hold one breaks on any character.
+ *
+ *   * **The runner table is unbounded in ROWS.** A fifty-user scenario is over
+ *     150 steps, so that table scrolls inside a fixed height rather than making
+ *     the page thousands of pixels tall — the same measure-it-populated lesson
+ *     the SD-JWT VC panes cost. A pane whose height is fine empty and enormous
+ *     once it has content is the failure mode, not the other way round.
+ */
+
+.scim-return {
+  float: right;
+  margin: 4px 0 0;
+  font-size: 0.95em;
+}
+
+.scim-title { margin-bottom: 6px; margin-top: 2px; line-height: 1.25; }
+
+.scim-intro {
+  max-width: 900px;
+  margin-bottom: 10px;
+}
+
+/* The one banner on this page that is meant to be read before anything is
+   clicked. These endpoints delete accounts. */
+.scim-warning {
+  max-width: 900px;
+  font-size: 13px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  color: #5d4200;
+}
+
+.scim-pane {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px 14px 14px;
+  margin-bottom: 14px;
+  background: #fcfcfd;
+}
+
+.scim-pane > legend {
+  width: auto;
+  border: 0;
+  margin-bottom: 4px;
+  padding: 0 6px;
+  font-size: 15px;
+  font-weight: bold;
+  color: #12107c;
+  line-height: 1.2;
+}
+
+.scim-sub {
+  border-top: 1px solid #e6e6ea;
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.scim-subhead {
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+  margin: 10px 0 4px;
+}
+
+/* THE ELEMENT-AND-ATTRIBUTE SELECTOR OUTRANKS A BARE CLASS, so the class has
+   to name the element too. Bootstrap's `input[type="text"], select, textarea
+   { margin-bottom: 10px }` is (0,1,1) and a bare `.scim-field` is (0,1,0) — the
+   4px asked for here would lose to 10px on every text input on the page, which
+   looks like generous spacing rather than a rule that is not applying. The
+   Kerberos and LDAP sheets record the same trap; it is not specific to any of
+   the three. */
+.scim-field {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+}
+
+input.scim-field,
+select.scim-field,
+textarea.scim-field {
+  margin-bottom: 4px;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.scim-body,
+.scim-token {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.scim-label {
+  display: block;
+  font-weight: bold;
+  margin-top: 6px;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+.scim-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0 14px;
+}
+
+/* A field that should take the whole row rather than a grid cell — the service
+   root, the operation select, the body. `1 / -1` spans every column the grid
+   ended up with, which is the only spelling that survives the auto-fit count
+   changing with the viewport. */
+.scim-wide { grid-column: 1 / -1; }
+
+.scim-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  flex-wrap: wrap;
+}
+
+.scim-radio {
+  font-size: 12px;
+  font-weight: normal;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+
+.scim-check {
+  font-size: 12px;
+  font-weight: normal;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 4px 0;
+  max-width: 900px;
+}
+
+/* Bootstrap gives a checkbox inside a label `float: left`, which takes it out
+   of the flex row and drops the text onto the line above it. */
+.scim-check input[type="checkbox"],
+.scim-radio input[type="radio"] {
+  float: none;
+  margin: 2px 0 0;
+}
+
+.scim-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+  align-items: center;
+}
+
+.scim-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: #f4f4f8;
+  cursor: pointer;
+}
+
+.scim-btn:hover { background: #ececf4; }
+
+/* The one button in each pane that actually sends something. */
+.scim-btn-primary {
+  border-color: #2680eb;
+  background: #eaf2fd;
+  font-weight: bold;
+}
+
+.scim-btn-primary:hover { background: #dcebfc; }
+
+.scim-status {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.scim-grow { flex: 1 1 320px; min-width: 220px; }
+
+.scim-ok { color: #2e7d32; }
+.scim-bad { color: #b00; }
+.scim-pending { color: #8a6d00; }
+
+/* Hidden by a CLASS as well as by an inline style, and both halves are needed.
+   pki.js records why: an element hidden by a class in the markup stays hidden
+   however the inline style is set, so a pane asked for by script never appeared
+   for as long as only one of the two was toggled. show() in scim.js sets
+   both. */
+.scim-hidden { display: none; }
+
+.scim-note {
+  font-size: 12px;
+  color: #555;
+  margin: 4px 0 6px;
+  max-width: 900px;
+}
+
+.scim-limits,
+.scim-challenges {
+  font-size: 12px;
+  color: #444;
+  background: #f6f6fa;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+.scim-preview {
+  font-size: 12px;
+  color: #444;
+  margin: 8px 0 4px;
+}
+
+/* The composed URL and the request line. Both carry a percent-encoded DN and
+   must be allowed to break anywhere — see the header. */
+.scim-preview code,
+.scim-request-line code {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #12107c;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.scim-request-line { margin: 2px 0 6px; }
+
+/* Every JSON readout on this page. `pre` keeps the formatting JSON.stringify
+   produced; the scroll is per-block so a wide body scrolls inside its own box
+   rather than making the page scroll sideways. */
+.scim-output {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #fbfbfd;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 4px 0 8px;
+  max-height: 420px;
+  overflow: auto;
+  white-space: pre;
+}
+
+.scim-output:empty { display: none; }
+
+.scim-short { max-height: 180px; }
+
+/* The `code` element holding the HOBA to-be-signed blob. It is one unbroken
+   length-prefixed string and there is nothing in it to break at. */
+#scim_hoba_tbs {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.scim-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.scim-table th,
+.scim-table td {
+  border: 1px solid #e0e0e6;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.scim-table th { background: #f0f0f5; }
+
+/* The ServiceProviderConfig readout: six booleans and two numbers, which is
+   what a reader actually wants from that document. */
+.scim-capability-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0 10px;
+}
+
+.scim-capability-table td {
+  border: 1px solid #e0e0e6;
+  padding: 3px 6px;
+  vertical-align: top;
+}
+
+.scim-capability-name {
+  width: 11em;
+  font-family: Menlo, Consolas, monospace;
+  font-weight: bold;
+  word-break: break-all;
+}
+
+.scim-capability-value { width: 12em; word-break: break-word; }
+.scim-capability-note { color: #555; }
+
+/* ---------------------------------------------------------------------------
+   The scenario runner.
+
+   BOUNDED IN HEIGHT AND SCROLLED, because the row count is the user's: a
+   fifty-user scenario is over 150 steps. A pane that is fine empty and
+   thousands of pixels tall once populated is the failure mode this project has
+   already paid for once on the SD-JWT VC panes, so the height is fixed here
+   rather than measured later.
+   ------------------------------------------------------------------------ */
+.scim-runner-scroll {
+  max-height: 460px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+.scim-runner { margin: 0; }
+
+.scim-runner td:first-child { width: 3em; }
+.scim-runner td:nth-child(3) { width: 9em; }
+.scim-runner td:nth-child(4) { width: 8em; }
+.scim-runner td:nth-child(5) { width: 8em; }
+
+.scim-runner td { word-break: break-word; }
+
+/* The one-line reason under a step's title. Smaller and quieter than the title
+   because it is there to be read when a step fails, not on every row. */
+.scim-step-why {
+  color: #666;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.scim-step-result {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.scim-step-verdict { font-weight: bold; }
+
+/* ---------------------------------------------------------------------------
+   The Operations History pane. op_history.js emits `<prefix>-history-scroll`,
+   `<prefix>-table`, `<prefix>-history`, `<prefix>-history-time` and
+   `<prefix>-history-empty` with the prefix this workflow passes it (`scim`), so
+   all five have to be defined here or checkStylesheetsLoaded() fails the page —
+   which is exactly the mistake the Kerberos pages made when they first reused
+   that module.
+   ------------------------------------------------------------------------ */
+.scim-history-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+.scim-history { margin: 0; }
+
+.scim-history-time {
+  white-space: nowrap;
+  color: #666;
+  width: 6.5em;
+}
+
+.scim-history-empty {
+  font-size: 12px;
+  color: #666;
+  margin: 6px 0;
+}
+
+.scim-history-target,
+.scim-history-uri {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}

@@ -4,7 +4,7 @@ Scope: everything under `api/`. Cross-cutting matters — versioning, `CONFIG_FI
 
 It proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It also speaks two protocols the browser cannot: it relays Kerberos to a KDC (`POST /krb5/*`) and it IS the LDAP client (`POST /ldap/*`). Both are raw TCP, so both enforce the address policy themselves — see the two sections below.
 
-## Outbound calls: the address policy and the ten settings
+## Outbound calls: the address policy and the twelve settings
 
 It fetches URLs its **caller** chooses (token, introspection, revocation, device-authorization and userinfo endpoints, the SAML ArtifactResolve back-channel, the WS-Trust STS, the generic proxy), so `api/ssrf_guard.js` refuses outbound calls to loopback and private networks — otherwise anyone who can reach the api can use it to probe `127.0.0.1`, the deployment's private neighbours, or `169.254.169.254` (cloud metadata, which hands out credentials). It is installed **once** on the shared axios instance in `server.js`, so every call site present and future is covered, and it works in two layers: a request interceptor for a readable error, plus the http/https **agents** — which is what catches **redirects** (axios follows them, so a public host answering `302 → http://127.0.0.1` walks past a URL-only check) and closes most of the DNS-rebinding window. The agent needs **two** hooks, not one: a custom DNS `lookup` for hosts given as names, and a wrapped `createConnection` for hosts given as literal addresses — Node never calls `lookup` for a literal, and a redirect `Location` usually is one. That gap was real and is what `tests/api_ssrf_guard.js` caught on its first run. Hostnames are judged by what they RESOLVE to, so `localtest.me` and `127.0.0.1.nip.io` are caught by the same rule, and IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is reduced to its IPv4 form because that is the address the socket reaches.
 
@@ -102,6 +102,68 @@ The four existing limits are reused unchanged, and **a tenth setting is new**: `
 Two refusals are published rather than left to be discovered: **a referral is recorded and NOT followed** — chasing one means opening a connection to a URL the *directory* chose, which is a server-side request forgery with a specification citation attached, the same reason WS-Federation's `wreqptr` is never dereferenced — and there is no StartTLS and no SASL, simple bind only.
 
 One implementation detail that is not optional: **the bind waits for the socket.** ldapjs's client is created not-yet-connected, and an operation issued before its `connect` event is refused with result code 80 and the message "connection unavailable" when `queueDisable` is set — which looks exactly like a directory answering `other`. The first working version of this file reported a healthy local server as a failed bind with a code that has nothing to do with credentials. `reconnect` is off for a related reason: a silent retry turns an intermittent failure into a report saying everything worked. See `docs/ldap.md`.
+
+## SCIM: an ordinary HTTP proxy, and the one workflow that does not need it
+
+`POST /scim` (`api/scim_proxy.js`) performs one SCIM 2.0 request on the caller's
+behalf. It is the shortest of the four capabilities in this file and the only one
+whose page **works without it**: RFC 7644 is ordinary HTTPS with a JSON body, so
+`client/public/scim.html` calls a SCIM server directly by default and is on the
+static deployments. That is the opposite of LDAP and Kerberos, where the api
+exists because a browser *cannot* speak the protocol.
+
+So this endpoint is here for three things a browser cannot do, and the page names
+which is which rather than presenting one as a fallback for the other:
+essentially no real SCIM endpoint sends `Access-Control-Allow-Origin` (it is the
+most dangerous URL an identity provider exposes); a staging server's certificate
+is self-signed; and a browser withholds the headers it adds while CORS hides most
+of those that come back, so only the api can report the whole exchange.
+
+**THE THREE OUTCOMES ARE `POST /ldap/*`'s THREE, and the third is the point.** A
+refusal by this service is a **400**; a network failure is a **502**; and **a SCIM
+error from the far end is a 200**, with the status and its `scimType` inside it. A
+409 `uniqueness` on a duplicate `userName`, a 404 on an id that names nothing, a
+403 from an access control policy and the 501 on `/Me` are the server *answering*
+— the most interesting thing a SCIM server ever says — and collapsing them into a
+failure would make a provisioning debugger unable to show the errors it exists to
+show. `tests/scim_protocol.js` asserts the transport status on every negative.
+
+**The address policy is NOT re-implemented here, and adding a copy would be the
+mistake.** This is an axios call like `/token` and `/wstrust`, so the guard
+installed once on the shared instance already covers it — request interceptor,
+DNS `lookup` hook, wrapped `createConnection`, redirects included. The two places
+that *do* carry their own copy (`ldap_client.js`, `tls_probe.js`) are raw sockets
+axios never sees. For the same reason there is **no `scimAllowedPorts`**: a port
+allowlist for HTTP would have to carry 80, 443 and every alternate somebody runs a
+service on, and one that has to be edited per deployment is one that gets set to
+`"any"`.
+
+**Headers are refused by SHAPE rather than by an allowlist**, which is the one
+design decision worth arguing with before changing. A debugger has to be able to
+send the header a server it has never met asks for — a vendor's `X-Tenant-Id`, an
+`If-Match`, a `DPoP` proof — so the forwarded set is not enumerated. What is
+refused is the set that changes the *shape* of the request: `Host` (which would
+make this an open proxy), `Content-Length` and `Transfer-Encoding` (the smuggling
+pair), the hop-by-hop headers of RFC 7230 section 6.1, and anything whose name is
+not a token or whose value carries CR or LF. Five methods only, and **a body on a
+GET or a DELETE is refused rather than dropped** — a proxy that silently discards
+one makes the wrong method invisible.
+
+**The twelfth setting is `scimMaxRequestBytes`** (default 1048576), and it is a
+second cap beside `maxContentLength` rather than a copy of it: a BulkRequest
+creating fifty users with every optional attribute is a large *request* and a
+small *response*, so one number standing for both would either refuse that or
+leave the response unbounded. It is not the far end's limit either — a SCIM server
+publishes `bulk.maxPayloadSize` in its ServiceProviderConfig and it is usually
+smaller.
+
+**`api/scim_proxy.js` has no axios and no network in it.** It validates and
+sanitises; `server.js` makes the call. That split is what lets
+`tests/scim_engine.js` assert every refusal this endpoint can produce with no
+server on the other end — so a rule that stopped being enforced fails a test
+naming the rule rather than timing out against a host. `GET /scim/limits`
+publishes the methods, the refused headers, the caps and the status rule, and is
+also how the page discovers whether there is an api at all. See `docs/scim.md`.
 
 ## The TLS probe: a second raw socket, and the ninth setting
 

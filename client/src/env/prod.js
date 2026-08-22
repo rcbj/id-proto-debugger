@@ -118,6 +118,21 @@ var config = {
   ldapBindDnDefault: "",
   ldapPasswordDefault: "",
 
+  // ---------------------------------------------------------------------------
+  // SCIM 2.0 (client/public/scim.html, docs/scim.md).
+  //
+  // EMPTY here, like every other endpoint default on this build: a public site
+  // has no business defaulting to somebody's localhost. Note that unlike the
+  // LDAP and Kerberos workflows this page STILL WORKS on this deployment —
+  // SCIM is ordinary HTTPS with a JSON body, so the browser calls a SCIM
+  // server directly and needs no api. What is missing here is the api call
+  // path, and with it the ability to reach a server that sends no CORS
+  // headers; the page says so itself in its Connection pane rather than being
+  // greyed out on the landing page.
+  // ---------------------------------------------------------------------------
+  scimBaseUrlDefault: "",
+  scimSignInUrlDefault: "",
+
 
 };
 

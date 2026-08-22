@@ -124,6 +124,7 @@ const BUNDLES = [
   ['spnego', 'spnego'],
   ['ldap', 'ldap'],
   ['pki', 'pki'],
+  ['scim', 'scim'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>

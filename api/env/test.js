@@ -148,6 +148,36 @@ var config = {
   // client's own protocol-level sizeLimit may ask for fewer; it may not ask for
   // more. Omit it for the code default of 1000.
   ldapMaxEntries: 1000,
+
+  // How large a request body POST /scim will forward, in BYTES. A NUMBER.
+  //
+  // A SEPARATE number from maxContentLength above, which bounds what comes
+  // BACK — and both are needed because a SCIM bulk is the asymmetric case: a
+  // BulkRequest creating fifty users with every optional attribute is a large
+  // request and a small response, so one limit standing for both would either
+  // refuse that or leave the response unbounded.
+  //
+  // It is not the same thing as the far end's own limit either. A SCIM server
+  // publishes `bulk.maxPayloadSize` in its ServiceProviderConfig and it is
+  // usually SMALLER than this; that one is the server's promise and this one
+  // exists so a caller cannot make this service buffer an unbounded body on
+  // its way to somewhere that would have refused it anyway.
+  //
+  // Omit it for the code default of 1048576 (1 MiB). A value that is not a
+  // positive number is logged and ignored.
+  //
+  // What this does NOT bound, because nothing here needs to: the ADDRESS
+  // policy already covers this endpoint without a line of its own. POST /scim
+  // is an axios call like /token and /wstrust, so the guard installed once on
+  // the shared instance already applies to it — request interceptor, DNS hook,
+  // wrapped createConnection, redirects included. The two settings that DO
+  // name a transport (krb5AllowedPorts, ldapAllowedPorts) exist because those
+  // are raw sockets that axios never sees. There is deliberately no
+  // scimAllowedPorts: SCIM is HTTP, a port allowlist for HTTP would have to
+  // carry 80, 443 and every alternate somebody runs a service on, and an
+  // allowlist that has to be edited per deployment is one that gets set to
+  // "any".
+  scimMaxRequestBytes: 1048576,
   // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
   // TLS test the PKI page (client/public/pki.html) runs.
   //

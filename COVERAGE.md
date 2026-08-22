@@ -93,3 +93,21 @@ docker compose -f docker-compose-run-tests.yml -f docker-compose-coverage.yml do
   output.
 - **Vendored libraries** (`jquery`, `dompurify`, …) are not instrumented:
   `babel-plugin-istanbul`/`babelify` skip `node_modules` by default.
+- **A bundle missing from the coverage loop reports nothing, silently — and
+  seven were.** The instrumented bundles are listed a THIRD time in
+  `client/Dockerfile`'s `COVERAGE` block, separately from the `RUN browserify`
+  lines above it and from `BUNDLES` in `client/build.js`. Missing from the first
+  two is loud (a page whose `<script>` 404s fails its own suite); missing from
+  the third is not — the page builds, ships, works and passes everything, and
+  the only symptom is a number in this report. Until 2026-08-22 all six Kerberos
+  bundles and `pki` were absent from it, and the Dockerfile had carried a
+  comment *saying so* about six of them for months.
+
+  They are all in it now, and `coverageListCoversEveryBundle()` in
+  `tests/jwk_pem_encoding.js` compares the three lists on every **ordinary**
+  suite run — not just under `./run-coverage.sh`, which is the point, since the
+  plain launchers never execute that block and so cannot see a gap in it. It
+  fails naming the bundle and which list it is missing from, and it also catches
+  a `--standalone` name that disagrees between the two builds, because that
+  global is what every inline `onclick` on the page calls: a mismatch makes
+  every click on that page a `ReferenceError` under coverage and nowhere else.

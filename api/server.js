@@ -2607,6 +2607,9 @@ app.get('/krb5/limits', function (req, res) {
 //     behind an error page.
 // ---------------------------------------------------------------------------
 const ldapClient = require('./ldap_client.js');
+// The SCIM proxy's decision half. It has no axios and no network — see the top
+// of that file — so requiring it here moves nothing and it cannot join a cycle.
+const scimProxy = require('./scim_proxy.js');
 // The LDAP client reuses the guard's address DECISION for the same reason the
 // Kerberos relay does: the guard's INSTALLATION is hooks on the axios agents,
 // and this transport is a raw socket with no axios in the path. Two
@@ -2930,6 +2933,116 @@ app.get('/tls/limits', function (req, res) {
   log.debug('Entering GET /tls/limits.');
   log.debug('Leaving GET /tls/limits.');
   return res.status(STATUS_200).json(tlsProbe.limits());
+});
+
+// ---------------------------------------------------------------------------
+// SCIM 2.0 (RFC 7644) — the second way the SCIM workflow can make a call.
+//
+// Unlike LDAP and Kerberos, this endpoint is NOT here because a browser cannot
+// speak the protocol: SCIM is ordinary HTTPS with a JSON body and
+// `client/public/scim.html` calls it directly by default — which is what makes
+// that page work on the static deployments, where there is no api at all. It
+// is here for the three things the browser path cannot do: reach a server that
+// sends no CORS headers (which is essentially every real SCIM endpoint), reach
+// one with a self-signed certificate, and report the exchange in full, since a
+// browser withholds the headers it adds and CORS withholds most of those that
+// come back.
+//
+// The decisions — the five methods, the framing headers it will not forward,
+// the request size cap, and how an answer is read — are in `api/scim_proxy.js`
+// with no axios in it, so `tests/scim_protocol.js` can drive every refusal
+// without a server on the other end. This handler is the call.
+//
+// **THE STATUS RULE IS THE ONE `POST /ldap/*` DRAWS AND IT IS THE POINT OF THE
+// ENDPOINT.** A refusal by this service is a 400; a network failure is a 502;
+// and a SCIM error from the far end is a **200** carrying that status and its
+// `scimType`. A 409 `uniqueness`, a 404 on an id that names nothing, a 403 from
+// an access control policy and the 501 on `/Me` are the server ANSWERING, and
+// they are the most interesting thing a SCIM server ever says. Collapsing them
+// into a failure would make a provisioning debugger unable to show the errors
+// it exists to show.
+// ---------------------------------------------------------------------------
+/**
+ * Perform one SCIM request on the caller's behalf.
+ * @route POST /scim
+ * @group SCIM - SCIM 2.0 provisioning support
+ * @param {object} request.body.required - {url, method, headers, body,
+ *     sslValidate, http_trace}
+ * @returns {object} 200 - {ok, status, headers, body, rawBody, scimType,
+ *     detail, http_exchange} — including a SCIM error, which is an answer
+ * @returns {object} 400 - this service refused to send it (see the reason)
+ * @returns {object} 502 - the SCIM server could not be reached
+ */
+app.post('/scim', function (req, res) {
+  log.debug('Entering POST /scim.');
+  var described = scimProxy.describeRequest(req.body || {}, appconfig);
+  if (!described.ok) {
+    log.debug('Leaving POST /scim. Refused: ' + described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  var wantsTrace = (req.body || {}).http_trace === true ||
+      (req.body || {}).http_trace === 'true';
+  var sink = {};
+  var startedAt = Date.now();
+  var sentHeaders = withUserAgent(described.headers);
+  axios({
+    method: described.method.toLowerCase(),
+    url: described.url,
+    data: described.body === null ? undefined : described.body,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    // A 4xx from a SCIM server is an ANSWER, so it must not throw. See the
+    // status rule above.
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      var answer = scimProxy.readResponse(response.status,
+          traceHeaders(response.headers), sink.raw);
+      var trace = buildHttpTrace({ method: described.method,
+          url: described.url, headers: sentHeaders,
+          body: described.body === null ? '' : described.body },
+          response, sink.raw, startedAt, null);
+      log.debug('Leaving POST /scim. The server answered ' + answer.status +
+          (answer.scimType ? ' ' + answer.scimType : '') + '.');
+      return res.status(STATUS_200).json(withHttpTrace(answer, trace,
+          wantsTrace));
+    })
+    .catch(function (error) {
+      // THE NO-RESPONSE BRANCH MUST ANSWER. There is no response here at all —
+      // a refused connection, a timeout, a blocked address, a body past
+      // maxContentLength — so this is a 502 and NOT a SCIM status, because
+      // nothing SCIM-shaped happened.
+      var message = (error && error.message) ? error.message : String(error);
+      log.warn('POST /scim to ' + described.url + ' failed: ' + message);
+      var trace = buildHttpTrace({ method: described.method,
+          url: described.url, headers: sentHeaders,
+          body: described.body === null ? '' : described.body },
+          null, sink.raw, startedAt, message);
+      log.debug('Leaving POST /scim. 502.');
+      return res.status(502).json(withHttpTrace({
+        error: 'The SCIM server could not be reached: ' + message,
+        code: (error && error.code) || '' }, trace, wantsTrace));
+    });
+});
+
+/**
+ * What the SCIM proxy will and will not do, so the page can say so before a
+ * call fails rather than reporting its own limits as somebody else's fault.
+ * It is also how the page knows there is an api at all.
+ * @route GET /scim/limits
+ * @returns {object} 200 - the methods, refused headers, caps and status rule
+ */
+app.get('/scim/limits', function (req, res) {
+  log.debug('Entering GET /scim/limits.');
+  log.debug('Leaving GET /scim/limits.');
+  return res.status(STATUS_200).json(scimProxy.limits(appconfig));
 });
 
 expressSwagger(options)

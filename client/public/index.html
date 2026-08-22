@@ -231,6 +231,32 @@
       <span class="landing-card-desc">LDAP v3 (RFC 4511) against a real directory: bind, search by filter and scope, create and delete users and groups, change membership, read every result code.</span>
       <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: LDAP is BER over port 389, which a browser cannot open. Run the debugger locally for it.</span>
     </a>
+    <!-- The FOURTEENTH card, and the first addition since the twelfth that
+         costs no layout change at all: seven across turns 7+6 into a filled
+         7+7, which is the same two rows and therefore the same height. It
+         still needs its own :nth-child(14) accent rule in css/landing.css, or
+         landingFitsOnOneScreen() fails naming this card rather than that file.
+
+         NO data-not-on-static MARKER, and that is the deliberate part. SCIM is
+         ordinary HTTPS with a JSON body, so scim.html calls a SCIM server
+         directly from the browser and works with no api behind it — which is
+         what separates it from the three cards above. What it loses on a static
+         deployment is the api call path, and with it the ability to reach a
+         server that sends no CORS headers; the page says so itself in the
+         Connection pane rather than the card being greyed. Same trade PKI
+         makes. -->
+    <a class="landing-card" href="/scim.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8.5" cy="8" r="3"/>
+          <path d="M3 19v-1.2c0-2 2.5-3.3 5.5-3.3 1 0 2 .15 2.8.42"/>
+          <circle cx="17.5" cy="15.5" r="4"/>
+          <path d="M17.5 13.6v3.8M15.6 15.5h3.8"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">SCIM</span>
+      <span class="landing-card-desc">SCIM 2.0 (RFC 7644) provisioning: every endpoint by hand, or scenario batches that create, modify and deprovision users and groups and check every step.</span>
+    </a>
   </div>
 </div>
 

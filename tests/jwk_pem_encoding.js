@@ -905,6 +905,218 @@ function stsModuleClosureIsCopied(dockerfile) {
   log.debug("Leaving stsModuleClosureIsCopied().");
 }
 
+// ---------------------------------------------------------------------------
+// EVERY BUNDLE MUST BE IN ALL THREE LISTS, AND THE THIRD ONE FAILS SILENTLY.
+//
+// A page's bundle is named in three places that are not near each other:
+//
+//   1. the `BUNDLES` array in `client/build.js`   — the static deployments,
+//   2. a `RUN browserify` line in `client/Dockerfile` — the container image,
+//   3. the `for entry in "src:standalone"` loop in that same Dockerfile's
+//      COVERAGE block — `./run-coverage.sh`, and nothing else.
+//
+// Miss (1) and the deployed static site is fine while the containerized page's
+// <script> 404s. Miss (2) and the reverse. Both of those are loud: a page that
+// does nothing fails its own suite immediately.
+//
+// **MISS (3) AND NOTHING ANYWHERE FAILS.** The page builds, ships, works and
+// passes every test it has; it simply reports no coverage. The only symptom is
+// a number in a report nobody diffs, and the plain launchers never execute that
+// block at all — so an ordinary run cannot see the gap even in principle.
+//
+// That is not hypothetical. On 2026-08-22 SEVEN bundles were missing from it —
+// all six Kerberos pages plus `pki` — and the Dockerfile had carried a comment
+// SAYING six of them were missing for months. A comment is not a check, which
+// is the whole reason this function exists rather than a longer comment.
+//
+// It reads the loop as a STATEMENT rather than as a line, for the reason
+// tests/CLAUDE.md records about source-inspection tests: a regex written
+// against one line stops seeing the thing it checks the moment somebody wraps
+// it, and it then fails by naming the property rather than the formatting.
+// ---------------------------------------------------------------------------
+function coverageListCoversEveryBundle() {
+  log.debug("Entering coverageListCoversEveryBundle().");
+  log.info("[bundle lists] Comparing client/build.js's BUNDLES, the " +
+           "RUN browserify lines and the coverage loop.");
+  const dockerfile = path.join(__dirname, "..", "client", "Dockerfile");
+  const buildJs = path.join(__dirname, "..", "client", "build.js");
+  if (!fs.existsSync(dockerfile) || !fs.existsSync(buildJs)) {
+    // The tests image copies client/Dockerfile in as `client_Dockerfile` and
+    // does not carry build.js, so this cannot run there. Say so rather than
+    // pass quietly — a check that skips silently is the defect this file is
+    // full of notes about.
+    log.info("[bundle lists] SKIPPED — client/Dockerfile and/or " +
+             "client/build.js are not both present in this layout (running " +
+             "from the tests image).");
+    log.debug("Leaving coverageListCoversEveryBundle().");
+    return;
+  }
+  const docker = fs.readFileSync(dockerfile, "utf8");
+  const build = fs.readFileSync(buildJs, "utf8");
+
+  // (2) The plain build. One RUN per bundle, each naming its source file and
+  // its --standalone global.
+  const plain = {};
+  // Built from a string rather than written as a literal only so it fits in
+  // eighty columns; a regex literal cannot be broken across lines.
+  const runLine = new RegExp(
+    "^RUN browserify src\\/([A-Za-z0-9_]+)\\.js" +
+    "[^\\n]*?--standalone ([A-Za-z0-9_]+)", "gm");
+  let match = runLine.exec(docker);
+  while (match !== null) {
+    plain[match[1]] = match[2];
+    match = runLine.exec(docker);
+  }
+  assert.ok(Object.keys(plain).length > 20,
+    "Only " + Object.keys(plain).length + " RUN browserify lines were found " +
+    "in client/Dockerfile, which cannot be right — this check's own regex " +
+    "has probably stopped matching, which would make it pass while testing " +
+    "nothing.");
+
+  // (3) The coverage loop, read as a statement: everything between
+  // `for entry in` and the `;` that closes it, however it is wrapped.
+  const loop = docker.match(/for entry in([\s\S]*?);\s*do/);
+  assert.ok(loop,
+    "The COVERAGE block's `for entry in ... ; do` loop was not found in " +
+    "client/Dockerfile at all. Either it has been removed — in which case " +
+    "./run-coverage.sh now instruments nothing — or this check can no longer " +
+    "see it.");
+  const coverage = {};
+  (loop[1].match(/"([^"]+)"/g) || []).forEach(function (quoted) {
+    const parts = quoted.slice(1, -1).split(":");
+    coverage[parts[0]] = parts[1];
+  });
+
+  // (1) build.js's BUNDLES.
+  const bundlesBlock = build.match(/const BUNDLES = \[([\s\S]*?)\n\];/);
+  assert.ok(bundlesBlock,
+    "The BUNDLES array was not found in client/build.js.");
+  const bundles = {};
+  (bundlesBlock[1].match(/\['([^']+)',\s*'([^']+)'\]/g) || [])
+    .forEach(function (entry) {
+      const parts = entry.match(/\['([^']+)',\s*'([^']+)'\]/);
+      bundles[parts[1]] = parts[2];
+    });
+
+  const problems = [];
+  Object.keys(plain).forEach(function (name) {
+    if (coverage[name] === undefined) {
+      problems.push("`" + name + "` is built by client/Dockerfile and is NOT " +
+        "in the COVERAGE loop, so ./run-coverage.sh reports nothing for that " +
+        "page — silently, because the page still builds and still works.");
+    }
+    if (bundles[name] === undefined) {
+      problems.push("`" + name + "` is built by client/Dockerfile and is NOT " +
+        "in client/build.js's BUNDLES, so the static deployments ship a page " +
+        "whose <script> 404s.");
+    }
+  });
+  Object.keys(bundles).forEach(function (name) {
+    if (plain[name] === undefined) {
+      problems.push("`" + name + "` is in client/build.js's BUNDLES and has " +
+        "no RUN browserify line in client/Dockerfile, so the containerized " +
+        "page's <script> 404s while the static site is fine.");
+    }
+  });
+  Object.keys(coverage).forEach(function (name) {
+    if (plain[name] === undefined) {
+      problems.push("`" + name + "` is in the COVERAGE loop and is not built " +
+        "by any RUN browserify line, so ./run-coverage.sh fails building it.");
+    } else if (coverage[name] !== plain[name]) {
+      // The --standalone name IS the global the page's inline onclick
+      // handlers call, so a disagreement means every click on that page is a
+      // silent no-op under coverage and works everywhere else.
+      problems.push("`" + name + "` is built --standalone " + plain[name] +
+        " normally and --standalone " + coverage[name] + " under coverage. " +
+        "That global is what every inline onclick on the page calls, so " +
+        "under ./run-coverage.sh every click there is a ReferenceError.");
+    }
+  });
+  assert.deepStrictEqual(problems, [],
+    "A page's bundle has to be named in THREE places — client/build.js's " +
+        "BUNDLES,\n" +
+    "a RUN browserify line in client/Dockerfile, and that file's COVERAGE " +
+        "loop.\n" +
+    "The third fails SILENTLY, which is why this check exists:\n  " +
+    problems.join("\n  "));
+  log.info("[bundle lists] OK — " + Object.keys(plain).length +
+           " bundle(s), all three lists agree.");
+  log.debug("Leaving coverageListCoversEveryBundle().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY SCHEDULED JOB MUST DECLARE `--url`, OR IT DIES BEFORE ITS FIRST LINE.
+//
+// run-report.js spawns each job as `node <script>.js --url <BASE_URL>`, and
+// commander exit(1)s on an option it was not told about. A test that has no use
+// for a base url — it reads source, or drives modules in process — still has to
+// ACCEPT one, or the report carries a job that failed in 0.06s with
+// `error: unknown option '--url'` and not one line of the test's own output.
+// That reads as a broken runner rather than as a missing option, and it has now
+// cost two runs: page_load_retry.js on 2026-08-20, then both SCIM node jobs on
+// 2026-08-22. tests/CLAUDE.md has said so since the first one, which is exactly
+// why this is a check rather than another paragraph.
+//
+// A job that parses no arguments at all is fine and is why this looks for
+// commander rather than for the option alone: node ignores the pair when
+// nothing reads it (crypto_engines.js relies on that, and says so).
+// ---------------------------------------------------------------------------
+function everyJobDeclaresTheUrlOption() {
+  log.debug("Entering everyJobDeclaresTheUrlOption().");
+  const report = path.join(__dirname, "run-report.js");
+  if (!fs.existsSync(report)) {
+    log.info("[--url] skipped: no run-report.js beside this test.");
+    log.debug("Leaving everyJobDeclaresTheUrlOption().");
+    return;
+  }
+  const scripts = [];
+  fs.readFileSync(report, "utf8").replace(/script:\s*"([^"]+)"/g,
+      function (_, name) {
+        if (scripts.indexOf(name) === -1) scripts.push(name);
+        return _;
+      });
+  // The first argument of `.option(...)` / `new Option(...)` is the flag spec,
+  // and it is read as a STATEMENT rather than a line: these declarations wrap
+  // at 80 columns, and a check a reformat can silence is a check that will be
+  // silenced.
+  const SPEC = /(?:\.option|new\s+Option)\s*\(\s*(["'])((?:\\.|(?!\1).)*)\1/g;
+  const undeclared = [];
+  scripts.forEach(function (name) {
+    const file = path.join(__dirname, name);
+    if (!fs.existsSync(file)) {
+      // Absence is somebody else's check — testsImageHasNoCollidingFilenames()
+      // asserts every scheduled script reaches the image.
+      return;
+    }
+    const src = fs.readFileSync(file, "utf8");
+    if (!/require\(\s*["']commander["']\s*\)/.test(src)) {
+      return;
+    }
+    var takesUrl = false;
+    var m;
+    SPEC.lastIndex = 0;
+    while ((m = SPEC.exec(src)) !== null) {
+      if (m[2].split(/[\s,|]+/).indexOf("--url") !== -1) {
+        takesUrl = true;
+      }
+    }
+    if (!takesUrl) {
+      undeclared.push(name);
+    }
+  });
+  assert.deepStrictEqual(undeclared, [],
+    "run-report.js hands every job `--url <BASE_URL>` and these scripts use " +
+    "commander without declaring it, so each exits 1 in ~0.06s with " +
+    "`error: unknown option '--url'` before running a single check: " +
+    undeclared.join(", ") + ". Add the option and say it is ignored:\n" +
+    '  // Accepted and ignored: run-report.js passes --url to every job.\n' +
+    '  .addOption(new Option("-u, --url <url>",\n' +
+    '      "base url (unused: this test needs no browser)"))');
+  log.info("[--url] OK — " + scripts.length + " scheduled script(s), every " +
+    "one that parses arguments accepts --url.");
+  log.debug("Leaving everyJobDeclaresTheUrlOption().");
+}
+
 async function test() {
   log.debug("Entering test().");
   rsaKeys();
@@ -917,7 +1129,9 @@ async function test() {
   ellipticStaysOutOfTheBundles();
   bigIntLiteralsStayOutOfTheBundles();
   appendedBeaconNeedsNoModuleSystem();
+  coverageListCoversEveryBundle();
   testsImageHasNoCollidingFilenames();
+  everyJobDeclaresTheUrlOption();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

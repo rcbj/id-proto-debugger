@@ -1122,6 +1122,39 @@ function buildJobs() {
       "containerized stack (./docker-run-tests.sh) or a local dev server, or " +
       "set LDAP_AVAILABLE=true for a remote target that IS api-backed."
     : null;
+  // SCIM's gate is NOT the LDAP one and must not be derived from it, even
+  // though both workflows lean on the same mock. The difference is the whole
+  // shape of this page: SCIM is ordinary HTTPS with a JSON body, so
+  // `scim.html` calls a SCIM server DIRECTLY from the browser and is on the
+  // static deployments — it carries no `data-not-on-static` marker and
+  // client/static_site.js does not drop it. What a static target loses is the
+  // api call path, which the page reports for itself in its Connection pane.
+  //
+  // So there are two different gates rather than one:
+  //
+  //   * `scim_protocol.js` needs the api (it drives POST /scim) and the mock's
+  //     directory, exactly as the LDAP protocol job does, so it rides
+  //     LDAP_AVAILABLE — the same fact, that this target has a backend.
+  //   * `scim_page.js` needs neither and runs against a static target, because
+  //     the browser call path is the one that exists there. Its own
+  //     backend-path section skips itself when the api is absent, which is the
+  //     right granularity: the rest of that file is still worth running.
+  //
+  // Both additionally skip THEMSELVES, with a reason, when the mock STS has no
+  // /scim/v2 routes at all — the ordinary state of a checkout whose sts/
+  // gitlink predates them. That is deliberately not a gate here: the reason is
+  // discovered by asking the server, and it names the submodule rather than
+  // the deployment.
+  const scimProtocolSkip = ldapOff
+    ? "the SCIM protocol job drives POST /scim on the debugger's api, and a " +
+      "static site has no api at all. The SCIM PAGE still runs against such " +
+      "a target — SCIM is ordinary HTTPS with a JSON body, so the browser " +
+      "calls the server directly — and it is only this backend-path job that " +
+      "cannot. Run it against the containerized stack " +
+      "(./docker-run-tests.sh) or a local dev server, or set " +
+      "LDAP_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
+
   const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
       "api's port-88 relay, which a static site has not got, so " +
@@ -1771,6 +1804,92 @@ function buildJobs() {
   };
   if (ldapPagesSkip) ldapPageJob.skip = ldapPagesSkip;
   jobs.push(ldapPageJob);
+
+  // ------------------------------------------------------------------------
+  // SCIM 2.0 — three jobs, split by what each one NEEDS rather than by what it
+  // covers. That split is the point: a failure in the first names a field, a
+  // failure in the second names a server, and a failure in the third names a
+  // page. Collapsing them would make every SCIM defect present as the same
+  // thing.
+  // ------------------------------------------------------------------------
+
+  // THE ENGINES, with no server and no browser. It needs NOTHING — not the
+  // api, not the mock, not Chrome — so it is never gated and never skipped,
+  // and it is the one SCIM job that runs on every target including the static
+  // ones. It asserts the endpoint catalogue against RFC 7644's own list, the
+  // generator against every optional attribute RFC 7643 section 4.1 defines,
+  // the Digest credential against the arithmetic node's crypto produces (which
+  // is what the mock uses), the length-prefixed HOBA blob, and every refusal
+  // the api's SCIM proxy can produce.
+  //
+  // It is FIRST of the three deliberately: a broken request builder makes the
+  // other two fail in ways that look like a broken server.
+  jobs.push({
+    name: "SCIM engines (the endpoint catalogue against RFC 7644, every " +
+        "optional attribute RFC 7643 defines, the Digest and HOBA " +
+        "credentials, the scenario planner, and the api proxy's refusals)",
+    script: "scim_engine.js",
+    env: {},
+  });
+
+  // THE PROTOCOL, through the api at the mock, then read back out of the
+  // DIRECTORY the mock wrote to. That second read is why this job exists at
+  // all: a SCIM 201 says the request was accepted, and only the directory says
+  // what was stored — so a field accepted and silently dropped, which is the
+  // most common real defect in a provisioning integration, is visible here and
+  // nowhere else.
+  //
+  // It also exercises all six RFC 7644 section 2 authentication schemes and
+  // the scope policy. Two of the six skip with a reason rather than passing
+  // vacuously: a session cookie needs a browser that has signed in, and a
+  // client certificate is chosen in a TLS handshake the api would make with
+  // its OWN key.
+  //
+  // SCIM_BASE_URL is the API's view of the mock rather than this test's — the
+  // same distinction LDAP_URL draws above, and on the containerized stack a
+  // different answer. It is its own variable for exactly that reason.
+  const scimProtocolJob = {
+    name: "SCIM protocol (every endpoint through the api, every optional " +
+        "attribute checked in the directory, and all six authentication " +
+        "schemes)",
+    script: "scim_protocol.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      SCIM_BASE_URL: env.SCIM_BASE_URL || "http://sts:8081/scim/v2",
+      LDAP_URL: env.LDAP_URL || "ldap://sts:389",
+      LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
+      LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
+      LDAP_PASSWORD: env.LDAP_PASSWORD || "password!",
+    },
+  };
+  if (scimProtocolSkip) scimProtocolJob.skip = scimProtocolSkip;
+  jobs.push(scimProtocolJob);
+
+  // THE PAGE, which covers only what needs a browser — and unlike the LDAP
+  // page job it is NOT gated on the api, because the browser call path is the
+  // one the static deployments have and the one no other job exercises. Five
+  // things live here and nowhere else: that browser-direct call, the DPoP
+  // proof and the HOBA key signed with Web Crypto (scim_protocol.js signs with
+  // node's crypto, a different implementation), the two schemes that lock the
+  // call path because the api can carry neither, the scenario runner actually
+  // running, and what does and does not reach localStorage.
+  //
+  // SCIM_BROWSER_URL is the BROWSER's view of the mock — a third answer again,
+  // and the one that has cost this suite a run before on the LDAP and SPNEGO
+  // workflows.
+  jobs.push({
+    name: "SCIM page (the browser call path the hosted site depends on, the " +
+        "credentials signed with Web Crypto, the scenario runner, and what " +
+        "it remembers)",
+    script: "scim_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      SCIM_BROWSER_URL: env.SCIM_BROWSER_URL ||
+          (env.STS_URL || "http://localhost:8081") + "/scim/v2",
+    },
+  });
 
   // The DELEGATION page: S4U2Self, S4U2Proxy with both authorization routes, forwarding
   // and renewal. tests/krb5_tgs_ap.js already drives every one of those exchanges with no
