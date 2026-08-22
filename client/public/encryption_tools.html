@@ -1,0 +1,769 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger &mdash; Encryption / Decryption</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/tool_panes.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/encryption_tools.js">
+</script>
+
+<p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a> &nbsp;|&nbsp; <a href="/digital_signature.html?from=encryption_tools.html">Digital Signature &rarr;</a></p>
+
+<p class="ds-intro">Encrypt and decrypt with every mechanism, entirely in your browser &mdash; one pane per mechanism. <strong>Symmetric:</strong> <strong>AES</strong> in every mode (GCM, CBC, CTR, CFB, OFB, ECB) at every key size, <strong>ChaCha20-Poly1305</strong> (RFC 8439), the legacy <strong>3DES / DES</strong>, and <strong>password-based</strong> encryption through PBKDF2, scrypt or PBES2. <strong>Asymmetric:</strong> <strong>RSA</strong> (OAEP and PKCS#1 v1.5, direct or hybrid), <strong>ECC</strong> as ECIES over five curves, the post-quantum <strong>ML-KEM</strong> (FIPS 203) alone or hybridised with X25519, and the finite-field family <strong>DSA</strong> belongs to &mdash; ElGamal and DHIES. <strong>Protocol:</strong> <strong>JWE</strong> compact serialization, the same code the rest of this debugger reads tokens with. One thing is worth knowing before you start: <strong>only RSA encrypts a message directly</strong>, and only a short one &mdash; every other asymmetric mechanism here agrees a key and encrypts the message symmetrically under it, which is what ECIES, HPKE, JWE and TLS all do. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+
+<p class="ds-controls">
+  <label class="ds-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="ds_toggle_all" onchange="this.checked ? encryption_tools.expandAll() : encryption_tools.collapseAll(); document.querySelector('.ds-toggle-text').textContent = this.checked ? 'Collapse all panes' : 'Expand all panes';" />
+    <span class="ds-toggle-slider" id="ds_toggle_all_switch"></span>
+    <span class="ds-toggle-text">Expand all panes</span>
+  </label>
+  <span class="ds-controls-hint">Tip: click a pane's title to collapse/expand it.</span>
+</p>
+
+<div class="ds-grid">
+
+  <!-- ===================== AES ===================== -->
+  <fieldset id="pane_aes">
+    <legend>AES <span class="ds-badge ds-sym">Symmetric</span></legend>
+    <p class="ds-note">The block cipher almost everything uses. <strong>GCM</strong> is authenticated — it produces a tag, and a modified ciphertext is detected. The others are not: <code>CBC</code>, <code>CTR</code>, <code>CFB</code> and <code>OFB</code> give confidentiality only, and <code>ECB</code> does not even give that properly, because identical plaintext blocks produce identical ciphertext blocks. <strong>Never reuse a GCM nonce under one key</strong> — two messages with the same key and nonce lose both.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_aes_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_aes_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_aes_plaintext" name="enc_aes_plaintext" title="The value to encrypt, or where a decrypted value is put."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Key</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="Cipher and mode. The key length and the IV length follow from it.">Algorithm / Mode</label>
+          <select id="enc_aes_alg" name="enc_aes_alg" onchange="return encryption_tools.symAlgChanged('aes');" title="Cipher and mode used to encrypt and decrypt.">
+            <option value="AES-256-GCM" selected="selected">AES-256-GCM (authenticated)</option>
+            <option value="AES-192-GCM">AES-192-GCM (authenticated)</option>
+            <option value="AES-128-GCM">AES-128-GCM (authenticated)</option>
+            <option value="AES-256-CBC">AES-256-CBC</option>
+            <option value="AES-192-CBC">AES-192-CBC</option>
+            <option value="AES-128-CBC">AES-128-CBC</option>
+            <option value="AES-256-CTR">AES-256-CTR</option>
+            <option value="AES-256-CFB">AES-256-CFB</option>
+            <option value="AES-256-OFB">AES-256-OFB</option>
+            <option value="AES-256-ECB">AES-256-ECB (insecure — leaks structure)</option>
+          </select>
+          </div>
+          <input type="submit" value="Generate Key" onclick="return encryption_tools.symGenerateKey('aes');" title="Generate a random key of the length this cipher needs, and a fresh IV to go with it." />
+          <input type="submit" value="New IV" onclick="return encryption_tools.symGenerateIv('aes');" title="Generate a fresh IV / nonce only, leaving the key alone." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The shared secret key, in hexadecimal. Both sides need this and nobody else may have it.">Secret Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_aes_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_aes_key" name="enc_aes_key" title="The shared secret key, in hexadecimal. Both sides need this and nobody else may have it."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The initialisation vector or nonce, in hexadecimal. Public, but it must never repeat under one key.">IV / Nonce (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_aes_iv');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_aes_iv" name="enc_aes_iv" title="The initialisation vector or nonce, in hexadecimal. Public, but it must never repeat under one key."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Covered by the tag but NOT encrypted — it travels in the clear and cannot be changed without the tag failing. Authenticated modes only.">Additional Authenticated Data <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_aes_aad');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_aes_aad" name="enc_aes_aad" title="Covered by the tag but NOT encrypted — it travels in the clear and cannot be changed without the tag failing. Authenticated modes only."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The encrypted value. Produced by Encrypt; paste one here to Decrypt.">Ciphertext (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_aes_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_aes_ciphertext" name="enc_aes_ciphertext" title="The encrypted value. Produced by Encrypt; paste one here to Decrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The 16-byte tag an authenticated cipher produces. Empty for modes that authenticate nothing.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_aes_tag');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_aes_tag" name="enc_aes_tag" title="The 16-byte tag an authenticated cipher produces. Empty for modes that authenticate nothing."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.symEncrypt('aes');" title="Encrypt the Plaintext with the Secret Key and IV." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.symDecrypt('aes');" title="Decrypt the Ciphertext with the Secret Key and IV." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_aes_status" name="enc_aes_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== ChaCha20-Poly1305 ===================== -->
+  <fieldset id="pane_chacha">
+    <legend>ChaCha20-Poly1305 <span class="ds-badge ds-sym">Symmetric</span> <span class="ds-badge ds-badge-note">AEAD</span></legend>
+    <p class="ds-note">RFC 8439. A stream cipher with a one-time Poly1305 authenticator, and the AEAD TLS 1.3 offers beside AES-GCM — it is faster than AES wherever there is no AES hardware. <code>ChaCha20</code> on its own is the raw keystream with <em>no</em> authentication, offered so the difference is visible; the nonce there must not repeat either. The counter starts at 1, because block 0 generates the Poly1305 key.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_cc_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_cc_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_cc_plaintext" name="enc_cc_plaintext" title="The value to encrypt, or where a decrypted value is put."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Key</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="Cipher and mode. The key length and the IV length follow from it.">Algorithm / Mode</label>
+          <select id="enc_cc_alg" name="enc_cc_alg" onchange="return encryption_tools.symAlgChanged('cc');" title="Cipher and mode used to encrypt and decrypt.">
+            <option value="CHACHA20-POLY1305" selected="selected">ChaCha20-Poly1305 (authenticated)</option>
+            <option value="CHACHA20">ChaCha20 raw keystream (no tag)</option>
+          </select>
+          </div>
+          <input type="submit" value="Generate Key" onclick="return encryption_tools.symGenerateKey('cc');" title="Generate a random key of the length this cipher needs, and a fresh IV to go with it." />
+          <input type="submit" value="New IV" onclick="return encryption_tools.symGenerateIv('cc');" title="Generate a fresh IV / nonce only, leaving the key alone." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The shared secret key, in hexadecimal. Both sides need this and nobody else may have it.">Secret Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_cc_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_cc_key" name="enc_cc_key" title="The shared secret key, in hexadecimal. Both sides need this and nobody else may have it."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The initialisation vector or nonce, in hexadecimal. Public, but it must never repeat under one key.">IV / Nonce (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_cc_iv');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_cc_iv" name="enc_cc_iv" title="The initialisation vector or nonce, in hexadecimal. Public, but it must never repeat under one key."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Covered by the tag but NOT encrypted — it travels in the clear and cannot be changed without the tag failing. Authenticated modes only.">Additional Authenticated Data <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_cc_aad');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_cc_aad" name="enc_cc_aad" title="Covered by the tag but NOT encrypted — it travels in the clear and cannot be changed without the tag failing. Authenticated modes only."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The encrypted value. Produced by Encrypt; paste one here to Decrypt.">Ciphertext (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_cc_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_cc_ciphertext" name="enc_cc_ciphertext" title="The encrypted value. Produced by Encrypt; paste one here to Decrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The 16-byte tag an authenticated cipher produces. Empty for modes that authenticate nothing.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_cc_tag');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_cc_tag" name="enc_cc_tag" title="The 16-byte tag an authenticated cipher produces. Empty for modes that authenticate nothing."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.symEncrypt('cc');" title="Encrypt the Plaintext with the Secret Key and IV." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.symDecrypt('cc');" title="Decrypt the Ciphertext with the Secret Key and IV." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_cc_status" name="enc_cc_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== 3DES / DES ===================== -->
+  <fieldset id="pane_des">
+    <legend>3DES / DES <span class="ds-badge ds-sym">Symmetric</span> <span class="ds-badge ds-legacy">Legacy</span></legend>
+    <p class="ds-note"><strong>Do not encrypt anything real with these.</strong> Single <code>DES</code> has a 56-bit key and was broken in public in 1998; <code>3DES</code> has a 64-bit block, which makes it vulnerable to Sweet32 after about 32 GB under one key, and NIST disallowed it after 2023. They are here to <em>read</em> what a legacy system wrote, which is a real and ordinary thing to need. Two-key 3DES (128-bit) is the same algorithm with K3 = K1.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_des_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_des_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_des_plaintext" name="enc_des_plaintext" title="The value to encrypt, or where a decrypted value is put."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Key</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="Cipher and mode. The key length and the IV length follow from it.">Algorithm / Mode</label>
+          <select id="enc_des_alg" name="enc_des_alg" onchange="return encryption_tools.symAlgChanged('des');" title="Cipher and mode used to encrypt and decrypt.">
+            <option value="3DES-192-CBC" selected="selected">3DES-CBC, three-key (192-bit)</option>
+            <option value="3DES-128-CBC">3DES-CBC, two-key (128-bit)</option>
+            <option value="3DES-192-ECB">3DES-ECB, three-key (insecure mode)</option>
+            <option value="DES-CBC">DES-CBC (broken — 56-bit key)</option>
+            <option value="DES-ECB">DES-ECB (broken)</option>
+          </select>
+          </div>
+          <input type="submit" value="Generate Key" onclick="return encryption_tools.symGenerateKey('des');" title="Generate a random key of the length this cipher needs, and a fresh IV to go with it." />
+          <input type="submit" value="New IV" onclick="return encryption_tools.symGenerateIv('des');" title="Generate a fresh IV / nonce only, leaving the key alone." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The shared secret key, in hexadecimal. Both sides need this and nobody else may have it.">Secret Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_des_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_des_key" name="enc_des_key" title="The shared secret key, in hexadecimal. Both sides need this and nobody else may have it."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The initialisation vector or nonce, in hexadecimal. Public, but it must never repeat under one key.">IV / Nonce (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_des_iv');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_des_iv" name="enc_des_iv" title="The initialisation vector or nonce, in hexadecimal. Public, but it must never repeat under one key."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The encrypted value. Produced by Encrypt; paste one here to Decrypt.">Ciphertext (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_des_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_des_ciphertext" name="enc_des_ciphertext" title="The encrypted value. Produced by Encrypt; paste one here to Decrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The 16-byte tag an authenticated cipher produces. Empty for modes that authenticate nothing.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_des_tag');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_des_tag" name="enc_des_tag" title="The 16-byte tag an authenticated cipher produces. Empty for modes that authenticate nothing."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.symEncrypt('des');" title="Encrypt the Plaintext with the Secret Key and IV." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.symDecrypt('des');" title="Decrypt the Ciphertext with the Secret Key and IV." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_des_status" name="enc_des_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== RSA ===================== -->
+  <fieldset id="pane_rsa">
+    <legend>RSA <span class="ds-badge ds-asym">Asymmetric</span></legend>
+    <p class="ds-note">The only mechanism here that encrypts a message <em>directly</em> — and only a very short one: a 2048-bit key carries at most 190 bytes under OAEP-SHA-256. That is not a limit to work around by splitting the message; <strong>Hybrid</strong> is what every real protocol does, and what CMS, S/MIME and JWE all mean by "RSA". <code>PKCS#1 v1.5</code> is offered for interoperability and is vulnerable to Bleichenbacher padding-oracle attacks in any setting where an attacker can tell a padding failure from another failure.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_rsa_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_rsa_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_rsa_plaintext" name="enc_rsa_plaintext" title="The value to encrypt, or where a decrypted value is put."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Scheme</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="Direct RSA, or RSA wrapping a symmetric key.">Mode</label>
+          <select id="enc_rsa_mode" name="enc_rsa_mode" onchange="return encryption_tools.rsaOptionsChanged();" title="Direct RSA (short messages only) or hybrid (any length).">
+            <option value="hybrid" selected="selected">Hybrid — RSA wraps a symmetric key</option>
+            <option value="direct">Direct — RSA encrypts the message itself</option>
+          </select>
+          </div>
+          <div class="ds-grow">
+            <label title="RSA encryption padding.">Padding</label>
+          <select id="enc_rsa_padding" name="enc_rsa_padding" onchange="return encryption_tools.rsaOptionsChanged();" title="RSA encryption padding scheme.">
+            <option value="oaep" selected="selected">RSA-OAEP (PKCS#1 v2.2)</option>
+            <option value="v1_5">RSAES-PKCS#1 v1.5 (legacy)</option>
+          </select>
+          </div>
+        </div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="OAEP's hash, used for both the label digest and MGF1. Ignored by PKCS#1 v1.5.">OAEP Hash</label>
+          <select id="enc_rsa_hash" name="enc_rsa_hash" onchange="return encryption_tools.rsaOptionsChanged();" title="Hash used by OAEP and its MGF1.">
+            <option value="SHA-256" selected="selected">SHA-256</option>
+            <option value="SHA-1">SHA-1 (OAEP default)</option>
+            <option value="SHA-384">SHA-384</option>
+            <option value="SHA-512">SHA-512</option>
+          </select>
+          </div>
+          <div class="ds-grow">
+            <label title="The symmetric cipher a hybrid encryption wraps the message in. Ignored in Direct mode.">Hybrid Cipher</label>
+          <select id="enc_rsa_cipher" name="enc_rsa_cipher" title="Symmetric cipher used in hybrid mode.">
+            <option value="AES-256-GCM" selected="selected">AES-256-GCM</option>
+            <option value="AES-128-GCM">AES-128-GCM</option>
+            <option value="CHACHA20-POLY1305">ChaCha20-Poly1305</option>
+          </select>
+          </div>
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Covered by the hybrid cipher's tag but not encrypted. Ignored in Direct mode.">Additional Authenticated Data <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_rsa_aad');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_rsa_aad" name="enc_rsa_aad" title="Covered by the hybrid cipher's tag but not encrypted. Ignored in Direct mode."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-sub">
+        <div class="ds-sub-title">Key Pair</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="RSA modulus size. Larger keys are slower to generate in pure JS.">Key Size</label>
+          <select id="enc_rsa_bits" name="enc_rsa_bits" onchange="return encryption_tools.rsaOptionsChanged();" title="RSA key size in bits.">
+            <option value="2048" selected="selected">2048</option>
+            <option value="3072">3072</option>
+            <option value="4096">4096</option>
+          </select>
+          </div>
+          <input type="submit" value="Generate Keys" onclick="return encryption_tools.rsaGenerateKeys();" title="Generate a fresh RSA key pair of the selected size." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's private key, used by Decrypt. PKCS#1 or PKCS#8 PEM.">Private Key (PEM) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_rsa_private_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_rsa_private_key" name="enc_rsa_private_key" title="The recipient's private key, used by Decrypt. PKCS#1 or PKCS#8 PEM."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's public key, used by Encrypt. SPKI PEM.">Public Key (PEM) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_rsa_public_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_rsa_public_key" name="enc_rsa_public_key" title="The recipient's public key, used by Encrypt. SPKI PEM."></textarea>
+      </div>
+      <div class="ds-row">
+        <select class="ds-grow" id="enc_rsa_ks_format" name="enc_rsa_ks_format" title="Keystore format for the download. PKCS#12 requires a password.">
+          <option value="pem" selected="selected">PEM</option>
+          <option value="der">DER</option>
+          <option value="jwk">JWK</option>
+          <option value="pkcs12">PKCS#12</option>
+        </select>
+        <input class="ds-grow" type="password" id="enc_rsa_ks_password" name="enc_rsa_ks_password" placeholder="password (optional)" title="Optional password. It encrypts the private half of the download." />
+        <input type="submit" value="Download Keys" onclick="return encryption_tools.downloadRsaKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Hybrid mode: the symmetric key, encrypted with RSA. Empty in Direct mode.">Wrapped Key (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_rsa_encapsulation');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_rsa_encapsulation" name="enc_rsa_encapsulation" title="Hybrid mode: the symmetric key, encrypted with RSA. Empty in Direct mode."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Hybrid mode: the IV of the symmetric cipher.">IV (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_rsa_iv');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_rsa_iv" name="enc_rsa_iv" title="Hybrid mode: the IV of the symmetric cipher."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The encrypted value.">Ciphertext (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_rsa_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_rsa_ciphertext" name="enc_rsa_ciphertext" title="The encrypted value."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Hybrid mode: the symmetric cipher's tag.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_rsa_tag');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_rsa_tag" name="enc_rsa_tag" title="Hybrid mode: the symmetric cipher's tag."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.rsaEncrypt();" title="Encrypt the Plaintext to the Public Key." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.rsaDecrypt();" title="Decrypt with the Private Key." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_rsa_status" name="enc_rsa_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== ECC (ECIES) ===================== -->
+  <fieldset id="pane_ecc">
+    <legend>ECC (ECIES) <span class="ds-badge ds-asym">Asymmetric</span></legend>
+    <p class="ds-note">There is no "ECC encryption" primitive — an elliptic-curve key agrees a secret, it does not encrypt. <strong>ECIES</strong> is what is always meant: a fresh ephemeral key pair, ECDH against the recipient's public key, HKDF-SHA256 over the agreed secret, and an AEAD under the result. Encrypting the same message twice gives different ciphertext, because the ephemeral key is new each time. <code>X25519</code> is a key-agreement curve only and cannot sign, which is the mirror image of Ed25519 on the Digital Signature page.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_ecc_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ecc_plaintext" name="enc_ecc_plaintext" title="The value to encrypt, or where a decrypted value is put."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Scheme</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="The curve the ephemeral ECDH runs over.">Curve</label>
+          <select id="enc_ecc_curve" name="enc_ecc_curve" title="Curve used for key agreement.">
+            <option value="P-256" selected="selected">P-256 (secp256r1)</option>
+            <option value="P-384">P-384 (secp384r1)</option>
+            <option value="P-521">P-521 (secp521r1)</option>
+            <option value="secp256k1">secp256k1</option>
+            <option value="X25519">X25519 (key agreement only)</option>
+          </select>
+          </div>
+          <div class="ds-grow">
+            <label title="The symmetric cipher the message is wrapped in.">Cipher</label>
+          <select id="enc_ecc_cipher" name="enc_ecc_cipher" title="Symmetric cipher used for the message.">
+            <option value="AES-256-GCM" selected="selected">AES-256-GCM</option>
+            <option value="AES-128-GCM">AES-128-GCM</option>
+            <option value="CHACHA20-POLY1305">ChaCha20-Poly1305</option>
+          </select>
+          </div>
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Mixed into HKDF, so that two protocols agreeing the same secret still derive different keys. Both sides must use the same string.">KDF info (context binding) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_info');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_ecc_info" name="enc_ecc_info" title="Mixed into HKDF, so that two protocols agreeing the same secret still derive different keys. Both sides must use the same string."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Covered by the tag but not encrypted.">Additional Authenticated Data <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_aad');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_ecc_aad" name="enc_ecc_aad" title="Covered by the tag but not encrypted."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-sub">
+        <div class="ds-sub-title">Key Pair</div>
+        <div class="ds-row">
+          <input type="submit" value="Generate Keys" onclick="return encryption_tools.eccGenerateKeys();" title="Generate a fresh key pair." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's private key, used by Decrypt.">Private Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_private_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ecc_private_key" name="enc_ecc_private_key" title="The recipient's private key, used by Decrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's public key, used by Encrypt.">Public Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_public_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ecc_public_key" name="enc_ecc_public_key" title="The recipient's public key, used by Encrypt."></textarea>
+      </div>
+      <div class="ds-row">
+        <select class="ds-grow" id="enc_ecc_ks_format" name="enc_ecc_ks_format" title="PEM here is raw-byte framing; JWK is a real EC or OKP key with use="enc".">
+          <option value="jwk" selected="selected">JWK</option>
+          <option value="pem">PEM (raw framing)</option>
+        </select>
+        <input class="ds-grow" type="password" id="enc_ecc_ks_password" name="enc_ecc_ks_password" placeholder="password (optional)" title="Optional password. It encrypts the private half of the download." />
+        <input type="submit" value="Download Keys" onclick="return encryption_tools.downloadEccKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="What the recipient needs in order to agree the same secret. Produced by Encrypt.">Ephemeral Public Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_encapsulation');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ecc_encapsulation" name="enc_ecc_encapsulation" title="What the recipient needs in order to agree the same secret. Produced by Encrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The IV of the symmetric cipher the message is wrapped in.">IV (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_iv');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_ecc_iv" name="enc_ecc_iv" title="The IV of the symmetric cipher the message is wrapped in."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The encrypted value.">Ciphertext (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ecc_ciphertext" name="enc_ecc_ciphertext" title="The encrypted value."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The symmetric cipher's tag.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ecc_tag');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_ecc_tag" name="enc_ecc_tag" title="The symmetric cipher's tag."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.eccEncrypt();" title="Encrypt the Plaintext to the Public Key." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.eccDecrypt();" title="Decrypt with the Private Key." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_ecc_status" name="enc_ecc_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== ML-KEM ===================== -->
+  <fieldset id="pane_kem">
+    <legend>ML-KEM <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-pq">Post-quantum</span></legend>
+    <p class="ds-note">FIPS 203, formerly CRYSTALS-Kyber — the post-quantum key encapsulation mechanism NIST standardised in 2024, and the one to reach for against "harvest now, decrypt later". A KEM takes <em>no message</em>: it produces a ciphertext and a fresh shared secret together, which is why this pane has no direct mode. <strong>Hybrid</strong> concatenates an X25519 secret with the ML-KEM one so that a break of either leaves the other holding — the arrangement TLS ships as X25519MLKEM768, and the default here. Note the key sizes: an ML-KEM-768 public key is 1,184 bytes against P-256's 33.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_kem_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_kem_plaintext" name="enc_kem_plaintext" title="The value to encrypt, or where a decrypted value is put."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Scheme</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="ML-KEM parameter set (FIPS 203).">Parameter Set</label>
+          <select id="enc_kem_set" name="enc_kem_set" title="ML-KEM parameter set.">
+            <option value="ML-KEM-768" selected="selected">ML-KEM-768 (category 3)</option>
+            <option value="ML-KEM-512">ML-KEM-512 (category 1)</option>
+            <option value="ML-KEM-1024">ML-KEM-1024 (category 5)</option>
+          </select>
+          </div>
+          <div class="ds-grow">
+            <label title="Post-quantum alone, or concatenated with a classical X25519 secret.">Mode</label>
+          <select id="enc_kem_mode" name="enc_kem_mode" title="Whether a classical X25519 secret is mixed in.">
+            <option value="hybrid" selected="selected">Hybrid — ML-KEM + X25519</option>
+            <option value="pq">ML-KEM alone</option>
+          </select>
+          </div>
+        </div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="The symmetric cipher the message is wrapped in.">Cipher</label>
+          <select id="enc_kem_cipher" name="enc_kem_cipher" title="Symmetric cipher used for the message.">
+            <option value="AES-256-GCM" selected="selected">AES-256-GCM</option>
+            <option value="CHACHA20-POLY1305">ChaCha20-Poly1305</option>
+          </select>
+          </div>
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Mixed into HKDF, so that two protocols agreeing the same secret still derive different keys. Both sides must use the same string.">KDF info (context binding) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_info');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_kem_info" name="enc_kem_info" title="Mixed into HKDF, so that two protocols agreeing the same secret still derive different keys. Both sides must use the same string."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Covered by the tag but not encrypted.">Additional Authenticated Data <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_aad');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_kem_aad" name="enc_kem_aad" title="Covered by the tag but not encrypted."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-sub">
+        <div class="ds-sub-title">Key Pair</div>
+        <div class="ds-row">
+          <input type="submit" value="Generate Keys" onclick="return encryption_tools.kemGenerateKeys();" title="Generate a fresh key pair." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's private key, used by Decrypt.">Private Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_private_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_kem_private_key" name="enc_kem_private_key" title="The recipient's private key, used by Decrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's public key, used by Encrypt.">Public Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_public_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_kem_public_key" name="enc_kem_public_key" title="The recipient's public key, used by Encrypt."></textarea>
+      </div>
+      <div class="ds-row">
+        <select class="ds-grow" id="enc_kem_ks_format" name="enc_kem_ks_format" title="ML-KEM keys are opaque byte strings with no registered JWK key type, so PEM framing is the only export.">
+          <option value="pem" selected="selected">PEM (raw framing)</option>
+        </select>
+        <input class="ds-grow" type="password" id="enc_kem_ks_password" name="enc_kem_ks_password" placeholder="password (optional)" title="Optional password. It encrypts the private half of the download." />
+        <input type="submit" value="Download Keys" onclick="return encryption_tools.downloadKemKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="What the recipient needs in order to agree the same secret. Produced by Encrypt.">Encapsulation (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_encapsulation');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_kem_encapsulation" name="enc_kem_encapsulation" title="What the recipient needs in order to agree the same secret. Produced by Encrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The IV of the symmetric cipher the message is wrapped in.">IV (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_iv');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_kem_iv" name="enc_kem_iv" title="The IV of the symmetric cipher the message is wrapped in."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The encrypted value.">Ciphertext (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_kem_ciphertext" name="enc_kem_ciphertext" title="The encrypted value."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The symmetric cipher's tag.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_tag');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_kem_tag" name="enc_kem_tag" title="The symmetric cipher's tag."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.kemEncrypt();" title="Encrypt the Plaintext to the Public Key." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.kemDecrypt();" title="Decrypt with the Private Key." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_kem_status" name="enc_kem_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== DSA family (finite field) ===================== -->
+  <fieldset id="pane_ffc">
+    <legend>DSA family (finite field) <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-legacy">Read the note</span></legend>
+    <p class="ds-note"><strong>DSA cannot encrypt.</strong> It is a signature algorithm and its private-key operation produces a signature, not a decryption — so there is no "DSA encryption" pane to build, and any tool offering one is mislabelling something else. What a DSA-shaped key's <em>group</em> does is this: <code>ElGamal</code>, the encryption scheme DSA's key structure comes from, and <code>DHIES</code>, ephemeral Diffie-Hellman over the same group. Textbook ElGamal is <em>malleable</em> — multiply c2 by t and the plaintext becomes m·t, and the scheme itself does not object — which is exactly why the hybrid exists. (This page marks the message with a length byte, so an arbitrary mauling is usually caught on the way back; that is an encoding check, not integrity protection.) To <em>sign</em> with DSA, use the Digital Signature page.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_ffc_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ffc_plaintext" name="enc_ffc_plaintext" title="The value to encrypt, or where a decrypted value is put."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Scheme</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="The MODP group. Public and fixed — that is what a named group is.">Group</label>
+          <select id="enc_ffc_group" name="enc_ffc_group" onchange="return encryption_tools.ffcModeChanged();" title="Finite-field group.">
+            <option value="modp-2048" selected="selected">RFC 3526 group 14 (2048-bit)</option>
+            <option value="modp-3072">RFC 3526 group 15 (3072-bit)</option>
+          </select>
+          </div>
+          <div class="ds-grow">
+            <label title="Textbook ElGamal, or the hybrid everything real uses.">Scheme</label>
+          <select id="enc_ffc_mode" name="enc_ffc_mode" onchange="return encryption_tools.ffcModeChanged();" title="Which finite-field scheme to use.">
+            <option value="hybrid" selected="selected">DHIES — any length, authenticated</option>
+            <option value="elgamal">Textbook ElGamal — short, unauthenticated</option>
+          </select>
+          </div>
+        </div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="The symmetric cipher the message is wrapped in. DHIES only.">Cipher</label>
+          <select id="enc_ffc_cipher" name="enc_ffc_cipher" title="Symmetric cipher used by DHIES.">
+            <option value="AES-256-GCM" selected="selected">AES-256-GCM</option>
+            <option value="CHACHA20-POLY1305">ChaCha20-Poly1305</option>
+          </select>
+          </div>
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Mixed into HKDF, so that two protocols agreeing the same secret still derive different keys. Both sides must use the same string.">KDF info (context binding) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_info');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_ffc_info" name="enc_ffc_info" title="Mixed into HKDF, so that two protocols agreeing the same secret still derive different keys. Both sides must use the same string."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Covered by the tag but not encrypted.">Additional Authenticated Data <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_aad');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_ffc_aad" name="enc_ffc_aad" title="Covered by the tag but not encrypted."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-sub">
+        <div class="ds-sub-title">Key Pair</div>
+        <div class="ds-row">
+          <input type="submit" value="Generate Keys" onclick="return encryption_tools.ffcGenerateKeys();" title="Generate a fresh key pair." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's private key, used by Decrypt.">Private Key x (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_private_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ffc_private_key" name="enc_ffc_private_key" title="The recipient's private key, used by Decrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's public key, used by Encrypt.">Public Key y = g^x mod p (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_public_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ffc_public_key" name="enc_ffc_public_key" title="The recipient's public key, used by Encrypt."></textarea>
+      </div>
+      <div class="ds-row">
+        <select class="ds-grow" id="enc_ffc_ks_format" name="enc_ffc_ks_format" title="A finite-field key is a bare integer with no registered JWK type, so PEM framing is the only export.">
+          <option value="pem" selected="selected">PEM (raw framing)</option>
+        </select>
+        <input class="ds-grow" type="password" id="enc_ffc_ks_password" name="enc_ffc_ks_password" placeholder="password (optional)" title="Optional password. It encrypts the private half of the download." />
+        <input type="submit" value="Download Keys" onclick="return encryption_tools.downloadFfcKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="What the recipient needs in order to agree the same secret. Produced by Encrypt.">Ephemeral Public Key / ElGamal c1 (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_encapsulation');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ffc_encapsulation" name="enc_ffc_encapsulation" title="What the recipient needs in order to agree the same secret. Produced by Encrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The IV of the symmetric cipher the message is wrapped in.">IV (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_iv');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_ffc_iv" name="enc_ffc_iv" title="The IV of the symmetric cipher the message is wrapped in."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The encrypted value.">Ciphertext (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_ffc_ciphertext" name="enc_ffc_ciphertext" title="The encrypted value."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The symmetric cipher's tag.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_ffc_tag');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_ffc_tag" name="enc_ffc_tag" title="The symmetric cipher's tag."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.ffcEncrypt();" title="Encrypt the Plaintext to the Public Key." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.ffcDecrypt();" title="Decrypt with the Private Key." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_ffc_status" name="enc_ffc_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== JWE (JSON Web Encryption) ===================== -->
+  <fieldset id="pane_jwe">
+    <legend>JWE (JSON Web Encryption) <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-badge-note">RFC 7516</span></legend>
+    <p class="ds-note">The one pane whose output is a <em>protocol artifact</em> rather than raw bytes, and the reason it belongs in this debugger: a compact JWE is what an encrypted ID Token, a JAR request object and an OID4VCI encrypted credential response all are. It is the same module (<code>jose_jwe.js</code>) the VC issuance panes and JWT Tools use, so what this pane produces is what the rest of the debugger consumes. Note <code>A192GCM</code>: the RFC defines it and Chrome refuses every AES-192 operation, so the status line will say so rather than failing with an OperationError.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt. Usually a JSON object — a JWE carrying JWT claims is what an encrypted ID Token is.">Payload <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_jwe_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="4" id="enc_jwe_plaintext" name="enc_jwe_plaintext" title="The value to encrypt. Usually a JSON object — a JWE carrying JWT claims is what an encrypted ID Token is."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Header</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="How the content encryption key is determined (JWE alg).">alg (key management)</label>
+          <select id="enc_jwe_alg" name="enc_jwe_alg" onchange="return encryption_tools.jweAlgChanged();" title="JWE key management algorithm.">
+            <option value="RSA-OAEP-256" selected="selected">RSA-OAEP-256</option>
+            <option value="RSA-OAEP">RSA-OAEP</option>
+            <option value="ECDH-ES">ECDH-ES (direct agreement)</option>
+            <option value="ECDH-ES+A128KW">ECDH-ES+A128KW</option>
+            <option value="ECDH-ES+A192KW">ECDH-ES+A192KW</option>
+            <option value="ECDH-ES+A256KW">ECDH-ES+A256KW</option>
+          </select>
+          </div>
+          <div class="ds-grow">
+            <label title="How the payload itself is encrypted (JWE enc).">enc (content encryption)</label>
+          <select id="enc_jwe_enc" name="enc_jwe_enc" onchange="return encryption_tools.jweAlgChanged();" title="JWE content encryption algorithm.">
+            <option value="A256GCM" selected="selected">A256GCM</option>
+            <option value="A192GCM">A192GCM</option>
+            <option value="A128GCM">A128GCM</option>
+          </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="ds-sub">
+        <div class="ds-sub-title">Key Pair</div>
+        <div class="ds-row">
+          <input type="submit" value="Generate Keys" onclick="return encryption_tools.jweGenerateKeys();" title="Generate a key pair of the kind the selected alg needs — RSA for the RSA-OAEP algs, P-256 EC for the ECDH-ES ones." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's private key, used by Decrypt.">Private Key (PEM or JWK) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_jwe_private_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_jwe_private_key" name="enc_jwe_private_key" title="The recipient's private key, used by Decrypt."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The recipient's public key, used by Encrypt. A JWK straight out of a JWKS works here.">Public Key (PEM or JWK) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_jwe_public_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_jwe_public_key" name="enc_jwe_public_key" title="The recipient's public key, used by Encrypt. A JWK straight out of a JWKS works here."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Five dot-separated base64url segments: protected header, encrypted key, IV, ciphertext, tag.">JWE (compact serialization) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_jwe_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="5" id="enc_jwe_ciphertext" name="enc_jwe_ciphertext" title="Five dot-separated base64url segments: protected header, encrypted key, IV, ciphertext, tag."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.jweEncrypt();" title="Encrypt the Payload to the Public Key as a compact JWE." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.jweDecrypt();" title="Decrypt the JWE with the Private Key." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_jwe_status" name="enc_jwe_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== Password-Based Encryption ===================== -->
+  <fieldset id="pane_pbe">
+    <legend>Password-Based Encryption <span class="ds-badge ds-sym">Symmetric</span> <span class="ds-badge ds-badge-note">KDF</span></legend>
+    <p class="ds-note">A password is not a key: it is short, it is guessable, and it has to be stretched. <code>PBKDF2</code> stretches by iteration count alone, so a GPU closes the gap; <code>scrypt</code> is memory-hard, which is what makes custom hardware expensive. The time the status line reports is the point — you pay it once and an attacker pays it per guess. <code>HKDF</code> is in the list to show what happens when the wrong tool is used: it is fast by design, and fast is exactly wrong here. <strong>As PBES2 JWE</strong> is the JOSE form (RFC 7518 section 4.8) and the same function that password-protects a downloaded key set on this page and the Digital Signature one.</p>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_pbe_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_plaintext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="3" id="enc_pbe_plaintext" name="enc_pbe_plaintext" title="The value to encrypt, or where a decrypted value is put."></textarea>
+      </div>
+      <div class="ds-sub">
+        <div class="ds-sub-title">Password and KDF</div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="The password-based key derivation function.">KDF</label>
+          <select id="enc_pbe_kdf" name="enc_pbe_kdf" title="Password-based key derivation function.">
+            <option value="PBKDF2-SHA256" selected="selected">PBKDF2-HMAC-SHA256</option>
+            <option value="PBKDF2-SHA512">PBKDF2-HMAC-SHA512</option>
+            <option value="scrypt">scrypt (memory-hard)</option>
+            <option value="HKDF-SHA256">HKDF-SHA256 (NOT for passwords)</option>
+          </select>
+          </div>
+          <div class="ds-grow">
+            <label title="The cipher the derived key is used with.">Cipher</label>
+          <select id="enc_pbe_cipher" name="enc_pbe_cipher" title="Cipher used with the derived key.">
+            <option value="AES-256-GCM" selected="selected">AES-256-GCM</option>
+            <option value="CHACHA20-POLY1305">ChaCha20-Poly1305</option>
+          </select>
+          </div>
+        </div>
+        <div class="ds-field">
+          <label title="The password. Not stored anywhere and not written to local storage.">Password</label>
+          <input type="password" id="enc_pbe_password" name="enc_pbe_password" title="The password the key is derived from." />
+        </div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="PBKDF2 iteration count, or scrypt's N (which must be a power of two). Ignored by HKDF.">Iterations / N</label>
+            <input type="text" id="enc_pbe_iterations" name="enc_pbe_iterations" title="PBKDF2 iterations, or scrypt N." />
+          </div>
+          <input type="submit" value="New Salt" onclick="return encryption_tools.pbeGenerateSalt();" title="Generate a fresh random salt." />
+          <input type="submit" value="Derive Key" onclick="return encryption_tools.pbeDeriveOnly();" title="Run the KDF and show the derived key, without encrypting anything." />
+        </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Public, and it travels with the ciphertext. What it stops is one precomputed table attacking every password at once.">Salt (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_salt');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_pbe_salt" name="enc_pbe_salt" title="Public, and it travels with the ciphertext. What it stops is one precomputed table attacking every password at once."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The key the KDF produced. Shown so it can be checked against another implementation.">Derived Key (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_key');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_pbe_key" name="enc_pbe_key" title="The key the KDF produced. Shown so it can be checked against another implementation."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-out">
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The cipher's IV.">IV (hex) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_iv');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_pbe_iv" name="enc_pbe_iv" title="The cipher's IV."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The encrypted value. "As PBES2 JWE" writes a compact JWE here instead, which carries its own salt and iteration count.">Ciphertext (Base64, or a compact JWE) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="4" id="enc_pbe_ciphertext" name="enc_pbe_ciphertext" title="The encrypted value. "As PBES2 JWE" writes a compact JWE here instead, which carries its own salt and iteration count."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The cipher's tag. Empty for the JWE form, which carries its tag inside.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_tag');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="2" id="enc_pbe_tag" name="enc_pbe_tag" title="The cipher's tag. Empty for the JWE form, which carries its tag inside."></textarea>
+      </div>
+      </div>
+
+      <div class="ds-row">
+        <input type="submit" value="Encrypt" onclick="return encryption_tools.pbeEncrypt();" title="Derive a key from the password and encrypt." />
+        <input type="submit" value="Decrypt" onclick="return encryption_tools.pbeDecrypt();" title="Derive the key again and decrypt." />
+        <input type="submit" value="As PBES2 JWE" onclick="return encryption_tools.pbeToJwe();" title="Wrap the plaintext as a compact PBES2 JWE — the JOSE form, which carries its own salt and iteration count." />
+      </div>
+
+    <input class="ds-status" type="text" id="enc_pbe_status" name="enc_pbe_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>
