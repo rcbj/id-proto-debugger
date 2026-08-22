@@ -1463,9 +1463,32 @@ function randomUser(options) {
       { value: 'entitlement-' + pickInt(rng, 1, 99), type: 'license',
         primary: true }
     ],
+    // ---------------------------------------------------------------------
+    // THE TWO THAT CARRY `display` WHERE EVERY OTHER MULTI-VALUED ATTRIBUTE
+    // CARRIES `type`, AND IT IS DELIBERATE.
+    //
+    // RFC 7643 section 8.7.1 declares `"canonicalValues": []` on the `type`
+    // sub-attribute of `roles` and of `x509Certificates` and on no other one
+    // — section 4.1.2 says of roles that "no vocabulary or syntax is
+    // specified" — and a strict server reads that empty list as an exhaustive
+    // one. scimmy, which this project's mock STS is built on and which a
+    // fair number of real SCIM servers are built on too, then refuses ANY
+    // value there: `400 invalidValue: Attribute 'type' contains non-canonical
+    // value from complex attribute 'roles'`, before a single attribute is
+    // stored. A generator whose full User cannot be created is a generator
+    // nobody can use, and the refusal names a sub-attribute rather than the
+    // schema rule behind it.
+    //
+    // `display` is defined on both, is constrained on neither, and is the
+    // sub-attribute a reader wanted from that field in the first place. The
+    // `type`-selecting PATCH paths the scenarios exercise are on `emails` and
+    // `phoneNumbers`, which keep theirs. tests/scim_engine.js pins this so
+    // that re-adding a `type` here fails in node with the reason rather than
+    // as a 400 from whichever server is being debugged. See docs/scim.md.
+    // ---------------------------------------------------------------------
     roles: [
-      { value: pick(rng, ['reader', 'writer', 'approver']), type: 'app',
-        primary: true }
+      { value: pick(rng, ['reader', 'writer', 'approver']),
+        display: 'Application role', primary: true }
     ],
     x509Certificates: [
       // A DER-shaped placeholder rather than a real certificate: this is a
@@ -1473,7 +1496,7 @@ function randomUser(options) {
       // where a real one comes from, and pasting one here is a supported
       // manual edit rather than something a generator should mint.
       { value: 'MIIBkTCB+wIJAKZ' + String(tag) + 'PLACEHOLDER',
-        type: 'work', primary: true }
+        display: 'Workstation certificate', primary: true }
     ]
   };
   // `formatted` is built from the parts rather than generated independently,
