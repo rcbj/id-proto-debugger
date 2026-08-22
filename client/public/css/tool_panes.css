@@ -1,6 +1,21 @@
-/* Compact layout for the Digital Signature (SLH-DSA) page. Mirrors the sizing
-   used on the JWT Tools and Encoding / Hashing Tools pages. Loaded last so it
-   overrides the shared container/legend/textarea rules. */
+/* The pane grid the standalone tool pages are built out of — a grid of
+   collapsible fieldsets, each with a Copy button on every label, an optional
+   Key Pair sub-section, action buttons and a one-line status readout.
+
+   Loaded by BOTH client/public/digital_signature.html and
+   client/public/encryption_tools.html, which is why it is no longer called
+   digital_signature.css: the two pages are the same page with different
+   cryptography in it, and a second copy of these rules would have drifted in
+   the small ways nobody reviews. The behavioural half is
+   client/src/tool_panes.js.
+
+   The class prefix stays `ds-` although the sheet was renamed. Renaming the
+   classes as well would have touched every id and selector on a page whose
+   967-line Selenium test passes, for no gain a reader can see — and the
+   prefix is still accurate in the sense that matters: it is the sheet the
+   Digital Signature page established.
+
+   Loaded last, so it overrides the shared container/legend/textarea rules. */
 
 /* Widen the shared (otherwise narrow) bootstrap container for this page only */
 .container {
@@ -196,4 +211,56 @@
   background: #f0f0f0;
   border: 1px solid #ddd;
   margin-bottom: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Badges beyond the two the Digital Signature page needed.
+
+   `ds-asym` / `ds-sym` say what a scheme IS; these three say how much you
+   should trust it, and they are deliberately loud. A page that offers DES has
+   to make "this is broken" impossible to miss while still offering it — the
+   whole reason it is there is to read something a legacy system wrote.
+   --------------------------------------------------------------------------- */
+.ds-legacy  { background: #fff4e5; color: #8a4b00; border: 1px solid #f0c48a; }
+.ds-insecure { background: #ffefef; color: #a11; border: 1px solid #f0a8a8; }
+.ds-broken  { background: #a11; color: #fff; border: 1px solid #800; }
+.ds-pq      { background: #e8f7ee; color: #1c6b3a; border: 1px solid #a8dcbd; }
+/* A neutral badge for a fact about the pane that is neither "what it is" nor
+   "how much to trust it" — an RFC number, or that a cipher is an AEAD. */
+.ds-badge-note { background: #eee; color: #555; border: 1px solid #ccc; }
+
+/* A pane's output block: the four fields an asymmetric mechanism produces
+   (encapsulation, IV, ciphertext, tag). Grouped so it reads as one artifact
+   rather than four unrelated boxes. */
+.ds-out {
+  border-top: 1px dashed #bbb;
+  margin-top: 8px;
+  padding-top: 6px;
+}
+
+/* The right-hand end of a field label: the Copy button, and on a plaintext box
+   the Hex toggle beside it. `ds-has-copy` is a flex row with space-between, so
+   this span keeps the two together at the right rather than pushing them
+   apart. */
+.ds-label-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* An inline checkbox on a field label (the Hex toggle). It has to sit next to
+   the Copy button without pushing it out of the row. */
+.ds-inline-check {
+  font-size: 10px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+.ds-inline-check input {
+  width: auto;
+  margin: 0;
 }

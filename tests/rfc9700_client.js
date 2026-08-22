@@ -55,6 +55,18 @@ var log = bunyan.createLogger({ name: "rfc9700_client",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
+// ---------------------------------------------------------------------------
+// THE SUBJECT OF THIS TEST IS A SOURCE TREE, not a module, which is why it
+// needs paths rather than requires.
+//
+// Two thirds of the checks below read `client/src`, `client/public` and
+// `client/server.js` as text — an iframe anywhere, a postMessage with '*', a
+// token in a query string, the headers on the callback. So the tests image
+// cannot satisfy this one by copying a file next to the test the way it does
+// for every other borrowed module: it copies the TREE, to /usr/src/client,
+// which is where these three paths resolve from /usr/src/app. See
+// tests/Dockerfile.
+// ---------------------------------------------------------------------------
 const REPO = path.resolve(__dirname, "..");
 const SRC = path.join(REPO, "client", "src");
 const PUBLIC = path.join(REPO, "client", "public");
@@ -62,7 +74,15 @@ const PUBLIC = path.join(REPO, "client", "public");
 // The module under test. Required from tests/, which has no CONFIG_FILE of the
 // client's shape — rfc9700.js falls back to "info" for exactly this case, and
 // the storage stand-ins it carries are what let it run with no browser.
-const rfc9700 = require(path.join(SRC, "rfc9700.js"));
+//
+// Through module_paths.js rather than a bare require(), for the reason
+// tests/CLAUDE.md gives: node resolves a module's own requires from where THAT
+// module lives, so rfc9700.js's `require("bunyan")` is looked for under
+// client/node_modules — which neither the tests image nor a checkout that
+// installed only the tests' dependencies has.
+const paths = require("./module_paths.js");
+const rfc9700 = paths.requireSharedModule([path.join(SRC, "rfc9700.js")],
+                                          "client/src/rfc9700.js");
 
 function read(file) {
   log.debug("Entering read(). file=" + file);

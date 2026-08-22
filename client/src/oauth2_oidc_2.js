@@ -1994,6 +1994,20 @@ function setAuthorizationGrantType()
   log.debug("Leaving setAuthorizationGrantType().");
 }
 
+// Whether a stored redirect_uri is one the Token Request could carry at all.
+// Deliberately a scheme test and nothing more: RFC 8252 section 7.1's
+// private-use scheme (com.example.app:/cb) is a redirect URI a native-app
+// client legitimately registers, so requiring "://" would reject one. What
+// this is here to catch is the empty or relative value an older build could
+// leave behind, where the field would come up blank and the exchange would
+// fail without saying why.
+function isAbsoluteRedirectUri(value) {
+  log.debug("Entering isAbsoluteRedirectUri().");
+  var ok = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(String(value || ""));
+  log.debug("Leaving isAbsoluteRedirectUri(). ok=" + ok);
+  return ok;
+}
+
 function loadValuesFromLocalStorage()
 {
   log.debug("Entering loadValuesFromLocalStorage().");
@@ -2081,12 +2095,27 @@ function loadValuesFromLocalStorage()
   }
   $("#token_client_id").val(localStorage.getItem("client_id"));
   $("#token_client_secret").val(localStorage.getItem("client_secret"));
-  // Match this deployment's origin (appconfig.uiUrl); heal a stale/empty/
-  // cross-origin value persisted by an earlier build or a different origin.
+  // THIS ONE IS NOT A SETTING, WHICH IS WHY IT IS NOT HEALED THE WAY STEP 1
+  // HEALS ITS OWN FIELD.
+  //
+  // It is the redirect_uri the authorization request has ALREADY SENT, and RFC
+  // 6749 section 4.1.3 requires the Token Request's copy to be identical to
+  // it. Re-pointing it at this deployment's origin is step 1's job, on the
+  // field a user configures and before anything has been sent; doing it HERE
+  // sends a redirect_uri the code was not issued for, and a conforming
+  // authorization server answers that with invalid_grant — which is what the
+  // mock STS does in RFC 9700 mode, where the comparison is mandatory rather
+  // than only made when the client volunteered the value.
+  //
+  // The mismatch is ordinary rather than exotic: RFC 8252 — and therefore RFC
+  // 9700 requirement 1.3 — puts the callback on a loopback origin, and that is
+  // not where the pages are served from when they are served from a container
+  // or a deployed site. So what is healed here is only a value that could not
+  // be sent at all.
   var redirectBase = (appconfig.uiUrl ?
       appconfig.uiUrl : "http://localhost:3000");
   var storedRedirectUri = localStorage.getItem("redirect_uri");
-  if (!storedRedirectUri || storedRedirectUri.indexOf(redirectBase) !== 0) {
+  if (!isAbsoluteRedirectUri(storedRedirectUri)) {
     storedRedirectUri = redirectBase + "/callback";
     localStorage.setItem("redirect_uri", storedRedirectUri);
   }

@@ -2028,8 +2028,16 @@ async function metadataSignatureValidation(driver) {
   // finished verdict from a pane still working. Waiting on content rather than
   // sleeping also means a hung promise fails HERE, naming the pane, instead of
   // somewhere downstream.
+  // The status line is EMPTIED before the click, so what comes back can only
+  // be the verdict this click produced. Every one of these calls follows a page
+  // load, where the line is empty anyway — but "anyway" is the assumption that
+  // makes a stale read indistinguishable from a real verdict, and this pane
+  // states four verdicts in a row that differ only in their text.
   var verdictOf = async function (pane, why) {
     log.debug("Entering verdictOf().");
+    await driver.executeScript(
+      "var e = document.getElementById(arguments[0]);" +
+      "if (e) { e.textContent = ''; }", pane.statusId);
     await click(driver, By.id(pane.buttonId));
     log.debug("Leaving verdictOf().");
     return await waitForStatus(driver, pane.statusId,
@@ -2037,15 +2045,58 @@ async function metadataSignatureValidation(driver) {
       "the " + pane.name + " pane never reached a verdict " + why);
   };
   // Rewrite the stored document, then reload so the page picks it up.
+  //
+  // AND THEN PROVE THE REWRITE IS STILL THERE, which is the point of the last
+  // half of this function. The page validates the document it is USING, and it
+  // takes that from storage on load — so anything that puts the pristine
+  // document back between the write and the read turns every assertion below
+  // into a statement about a document nobody tampered with. That is not
+  // hypothetical: the containerized run of 2026-08-21 reported "a tampered
+  // signed_metadata must be rejected. Got: VALID — signature verified", which
+  // reads as the product accepting a broken signature and is equally
+  // consistent with the tamper never having survived the reload. Nothing in
+  // that failure could tell the two apart. This can: the setup is asserted
+  // where it is made, so a lost write fails HERE, naming the pane and the key.
   var tamperStored = async function (pane, mutate) {
     log.debug("Entering tamperStored().");
-    await driver.executeScript(
-      "var doc = JSON.parse(localStorage.getItem(arguments[0]));" +
+    var written = await driver.executeScript(
+      "var before = localStorage.getItem(arguments[0]);" +
+      "var doc = JSON.parse(before);" +
       "(" + mutate + ")(doc);" +
-      "localStorage.setItem(arguments[0], JSON.stringify(doc));",
-          pane.storeKey);
+      "var after = JSON.stringify(doc);" +
+      "localStorage.setItem(arguments[0], after);" +
+      "return { before: before, after: after };", pane.storeKey);
+    // A mutation that changed nothing would leave every check below asserting
+    // against a pristine document and passing or failing for its own reasons.
+    assert.notStrictEqual(written.after, written.before,
+      pane.name + ": the mutation left " + pane.storeKey +
+          " byte-for-byte unchanged, so nothing below is testing a tampered " +
+      "document.");
+    // A marker on THIS document, which a real navigation destroys. The page
+    // validates the copy it is HOLDING — documentForValidation() prefers the
+    // in-memory document over the stored one — so a `get()` that did not
+    // actually replace the document would go on validating the pristine copy
+    // this page read at load while storage says something else entirely, and
+    // the storage check below would pass while the verdict was about the wrong
+    // bytes.
+    await driver.executeScript("window.__tamperMarker = 'set';");
     await openStep1();
     await driver.sleep(500);
+    var stale = await driver.executeScript(
+      "return window.__tamperMarker || null;");
+    assert.strictEqual(stale, null,
+      pane.name + ": vc-issuance-1.html was not reloaded after the tamper — " +
+      "the document from before it is still in the tab, so the page is still " +
+      "holding the untampered copy it read at load.");
+    var reloaded = await driver.executeScript(
+      "return localStorage.getItem(arguments[0]);", pane.storeKey);
+    assert.strictEqual(reloaded, written.after,
+      pane.name + ": " + pane.storeKey + " no longer holds the tampered " +
+      "document after reloading vc-issuance-1.html, so the page is " +
+      "validating something this test did not write and every verdict below " +
+      "is about the wrong bytes. Something on that page put a document back " +
+      "into storage — look for a retrieval that ran on load. Stored now:\n" +
+      String(reloaded).slice(0, 400));
     log.debug("Leaving tamperStored().");
   };
 

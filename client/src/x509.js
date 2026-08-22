@@ -1424,6 +1424,78 @@ async function issueCertificate(spec) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// A DER INTEGER, minimally encoded — which is what an ECDSA signature in a
+// certificate has to carry and what pkijs does not always produce.
+//
+// Web Crypto returns an ECDSA signature as FIXED-WIDTH r||s, and pkijs turns
+// that into `SEQUENCE { INTEGER r, INTEGER s }` through asn1js's
+// `Integer.toDER()`, which strips exactly ONE leading zero octet. A value small
+// enough to have TWO — about one P-521 signature in 256, because that curve's r
+// and s are 66 octets for a 521-bit order — therefore comes out as `00 1d f9 …`
+// where DER requires `1d f9 …`.
+//
+// The certificate is otherwise perfect and verifies against this codebase's own
+// verifyChain(), because pkijs's reader right-aligns whatever length it finds.
+// OPENSSL refuses it, because ECDSA_verify re-encodes what it parsed and
+// compares the bytes:
+//
+//     error 7 at 0 depth lookup: certificate signature failure
+//     ...asn1 encoding routines:ASN1_item_verify_ctx:EVP lib
+//
+// — a message that names neither the encoding nor the curve, on one certificate
+// in a few hundred. tests/pki_x509.js caught it as an intermittent failure of
+// one cell of its algorithm matrix.
+// ---------------------------------------------------------------------------
+function minimalDerInteger(bytes) {
+  log.debug("Entering minimalDerInteger().");
+  var start = 0;
+  while (start + 1 < bytes.length && bytes[start] === 0 &&
+         (bytes[start + 1] & 0x80) === 0) {
+    start = start + 1;
+  }
+  var trimmed = bytes.slice(start);
+  // The other half of the same rule: a value whose top bit is set needs a
+  // leading zero octet so the INTEGER stays positive. asn1js gets this one
+  // right; it is here so that this function alone defines the encoding.
+  if ((trimmed[0] & 0x80) !== 0) {
+    var padded = new Uint8Array(trimmed.length + 1);
+    padded.set(trimmed, 1);
+    trimmed = padded;
+  }
+  log.debug("Leaving minimalDerInteger().");
+  return trimmed;
+}
+
+// `SEQUENCE { INTEGER r, INTEGER s }` in, the same pair minimally encoded out.
+// Anything that is not that pair is returned untouched: this runs on bytes
+// another library produced, and a signature it cannot read is not one to
+// rewrite.
+function minimalEcdsaSignature(der) {
+  log.debug("Entering minimalEcdsaSignature().");
+  var bytes = new Uint8Array(der);
+  var parsed = asn1js.fromBER(bytes.slice().buffer);
+  var seq = parsed.result;
+  var pair = (parsed.offset !== -1 && seq && seq.valueBlock &&
+              seq.valueBlock.value) ? seq.valueBlock.value : [];
+  if (pair.length !== 2) {
+    log.debug("Leaving minimalEcdsaSignature(). Not an (r, s) pair.");
+    return bytes;
+  }
+  var rebuilt = new asn1js.Sequence({
+    value: pair.map(function (part) {
+      var value = minimalDerInteger(
+        new Uint8Array(part.valueBlock.valueHexView));
+      return new asn1js.Integer({
+        valueHex: value.buffer.slice(value.byteOffset,
+                                     value.byteOffset + value.byteLength)
+      });
+    })
+  });
+  log.debug("Leaving minimalEcdsaSignature(). Re-encoded.");
+  return new Uint8Array(rebuilt.toBER(false));
+}
+
 // Sign the TBS. Everything but Ed25519 goes through pkijs; Ed25519 is done by
 // hand because pkijs's engine does not know the algorithm at all — see the
 // header. Both paths set the SAME two AlgorithmIdentifiers, which is what
@@ -1432,6 +1504,18 @@ async function signCertificate(cert, privateKey, sig) {
   log.debug("Entering signCertificate(). alg=" + sig.id);
   if (sig.kind !== 'okp') {
     await cert.sign(privateKey, sig.hash);
+    // ECDSA only, and only because pkijs's (r, s) encoding is not always
+    // minimal — see minimalDerInteger() above. RSA signatures are a single
+    // octet string and are left exactly as they were produced.
+    if (sig.kind === 'ec') {
+      var normalized = minimalEcdsaSignature(
+        cert.signatureValue.valueBlock.valueHexView);
+      cert.signatureValue = new asn1js.BitString({
+        valueHex: normalized.buffer.slice(
+          normalized.byteOffset,
+          normalized.byteOffset + normalized.byteLength)
+      });
+    }
     log.debug("Leaving signCertificate(). Signed by pkijs.");
     return cert;
   }
@@ -1920,12 +2004,50 @@ async function verifySignature(cert, issuerCert) {
   return verified;
 }
 
+// ---------------------------------------------------------------------------
+// A SELF-SIGNED CERTIFICATE FOR A KEY PAIR THAT NEEDS ONE ONLY AS A WRAPPER.
+//
+// PKCS#12 cannot carry a bare private key: the format's whole shape is a key
+// bag beside a certificate bag, so key_material.js's buildPkcs12() takes the
+// certificates it is to wrap and deliberately does not mint one — that would
+// make it depend on this module, and this module already depends on it.
+//
+// Which leaves each PAGE to mint the throwaway. jwt_tools.js had the only copy
+// (buildSelfSignedCertPem), and the Encryption / Decryption page's RSA pane
+// needs exactly the same thing for exactly the same reason — its Download Keys
+// button offers PKCS#12, and without a certificate that download fails with
+// "PKCS#12 needs at least one certificate to wrap the private key in".
+//
+// So it is here, once. `subject` is the caller's, because the CN is the only
+// part of this that says which page produced the file, and the validity window
+// is fixed rather than relative to now: a keystore's dates are not the point
+// of the exercise on either page, and a fixed window makes the output
+// reproducible.
+async function selfSignedCertPem(options) {
+  log.debug("Entering selfSignedCertPem().");
+  var opts = options || {};
+  var issued = await issueCertificate({
+    subject: opts.subject || 'CN=generated key',
+    subjectPublicKey: opts.publicPem,
+    issuerPrivateKey: opts.privatePem,
+    signatureAlg: opts.signatureAlg ||
+        defaultSignatureAlgorithm(opts.desc),
+    serial: opts.serial || '01',
+    notBefore: new Date(Date.UTC(2020, 0, 1)),
+    notAfter: new Date(Date.UTC(2035, 0, 1)),
+    extensions: defaultExtensions(opts.profile || 'tls-server')
+  });
+  log.debug("Leaving selfSignedCertPem().");
+  return issued.pem;
+}
+
 module.exports = {
   // algorithms
   SIG_ALGS: SIG_ALGS,
   sigAlg: sigAlg,
   signatureAlgorithmsFor: signatureAlgorithmsFor,
   defaultSignatureAlgorithm: defaultSignatureAlgorithm,
+  selfSignedCertPem: selfSignedCertPem,
   signerDescriptor: signerDescriptor,
   // names
   DN_ATTRS: DN_ATTRS,
@@ -1960,6 +2082,10 @@ module.exports = {
   extensionValueText: extensionValueText,
   verifyChain: verifyChain,
   verifySignature: verifySignature,
+  // Exported for tests/pki_x509.js: the case it guards against appears in
+  // roughly one P-521 signature in 256, so a check that waits for a real one
+  // is a check that reports green most of the time.
+  minimalEcdsaSignature: minimalEcdsaSignature,
   bytesToHex: bytesToHex,
   colonHex: colonHex
 };

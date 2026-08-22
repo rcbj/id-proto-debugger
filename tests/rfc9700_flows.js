@@ -59,6 +59,28 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime || 20000;
 
+// ---------------------------------------------------------------------------
+// THE REDIRECT URI IS NOT ALWAYS baseUrl + "/callback", AND THE REASON IS
+// REQUIREMENT 1.3 RATHER THAN THE TEST.
+//
+// In mode the client refuses to send a redirect_uri that is neither https nor
+// on the loopback interface — RFC 8252's exception, which is what lets the
+// debugger's own `http://localhost:3000/callback` be used against a local
+// stack. A HOST run is already there and this is unset.
+//
+// The CONTAINERIZED stack is not: it serves the debugger at
+// `http://client:3000`, a plain-http name that is not loopback, so the mode
+// correctly refused every authorization request and all three flow jobs failed
+// at the sign-in screen that never appeared. That is the product being right,
+// so what moves is the redirect URI: RFC9700_REDIRECT_URI names a loopback one
+// (run-tests-in-container.sh sets it), and buildDriver() adds the Chrome
+// host-resolver rule that makes the browser's `localhost:3000` reach the client
+// container. Only the /callback hop is on that origin, and it is stateless —
+// the landing 303s straight back to appconfig.uiUrl, which is where every page
+// this test drives lives and where the transaction's state is kept.
+// ---------------------------------------------------------------------------
+var redirectUri = process.env.RFC9700_REDIRECT_URI || "";
+
 const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
        waitTime, log, assert });
 
@@ -263,6 +285,40 @@ async function requireCompliantSts(stsUrl) {
   return parsed;
 }
 
+// Which redirect URI this run sends, settled once the base URL is known — the
+// -u option is parsed after this file's top-level runs, so this cannot be a
+// constant. See the note on `redirectUri` above for why it is not always the
+// base URL's own /callback.
+function resolveRedirectUri() {
+  log.debug("Entering resolveRedirectUri().");
+  if (!redirectUri) {
+    redirectUri = baseUrl + "/callback";
+  }
+  log.info("redirect_uri for this run: " + redirectUri);
+  log.debug("Leaving resolveRedirectUri().");
+  return redirectUri;
+}
+
+// The Chrome rule that makes a redirect URI on another name reachable, or null
+// when there is nothing to map (every host run, and any deployment whose pages
+// and callback share an origin).
+//
+// `MAP <host>:<port> <host>:<port>` is resolution only: the browser still sends
+// the loopback ORIGIN it was given, which is what RFC 8252 — and therefore
+// requirement 1.3 — is about, and what makes `localhost` a secure context.
+function hostResolverRule() {
+  log.debug("Entering hostResolverRule().");
+  const from = new URL(redirectUri);
+  const to = new URL(baseUrl);
+  if (from.host === to.host) {
+    log.debug("Leaving hostResolverRule(). Same origin, nothing to map.");
+    return null;
+  }
+  const rule = "MAP " + from.host + " " + to.host;
+  log.debug("Leaving hostResolverRule(). " + rule);
+  return rule;
+}
+
 // An RFC 9700 authorization server compares redirect_uri by exact string
 // match against URIs it was given, so the debugger's callback has to be one of
 // them. This is not a workaround for the test: it is the registration step the
@@ -270,7 +326,7 @@ async function requireCompliantSts(stsUrl) {
 async function registerRedirectUri(stsUrl) {
   log.debug("Entering registerRedirectUri().");
   const body = JSON.stringify({ key: "oauth2.redirectUris",
-                                value: baseUrl + "/callback" });
+                                value: redirectUri });
   const res = await request(stsUrl + "/admin-api/config/set", {
     method: "POST",
     headers: { "Content-Type": "application/json",
@@ -278,9 +334,9 @@ async function registerRedirectUri(stsUrl) {
     body: body
   });
   assert.strictEqual(res.status, 200,
-    "Could not register " + baseUrl + "/callback with the STS: " +
+    "Could not register " + redirectUri + " with the STS: " +
     res.status + " " + res.body.slice(0, 300));
-  log.info("Registered " + baseUrl + "/callback with the STS.");
+  log.info("Registered " + redirectUri + " with the STS.");
   log.debug("Leaving registerRedirectUri().");
 }
 
@@ -302,6 +358,13 @@ async function buildDriver() {
   // STS is plain http and every one of these runs happily without it.
   options.addArguments("--ignore-certificate-errors");
   options.setAcceptInsecureCerts(true);
+  // Where a loopback redirect URI actually resolves to. Nothing on a host run,
+  // where the pages and the callback share an origin already.
+  const rule = hostResolverRule();
+  if (rule) {
+    log.info("Chrome host resolution: " + rule);
+    options.addArguments("--host-resolver-rules=" + rule);
+  }
   browserFlags.addBrowserAccessFlags(options, baseUrl);
   const prefs = new logging.Preferences();
   prefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
@@ -369,7 +432,7 @@ async function prepareRequest(driver, flow) {
 
   for (const [id, value] of [["client_id", CLIENT_ID],
                              ["scope", flow.scope],
-                             ["redirect_uri", baseUrl + "/callback"]]) {
+                             ["redirect_uri", redirectUri]]) {
     await driver.findElement(By.id(id)).clear();
     await driver.findElement(By.id(id)).sendKeys(value);
   }
@@ -757,6 +820,7 @@ async function test() {
     "WSTRUST_STS_URL is not set. This job needs the mock STS, started in " +
     "RFC 9700 mode (STS_OAUTH2_RFC9700=true).");
   const flowKey = process.env.RFC9700_FLOW || "oidc_authorization_code_flow";
+  resolveRedirectUri();
 
   // Everything that needs no browser, first: it is cheap, and a failure here
   // explains every browser failure that would have followed it.

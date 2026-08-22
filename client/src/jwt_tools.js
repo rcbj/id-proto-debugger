@@ -951,20 +951,21 @@ async function syncVerificationKey() {
 // import an Ed25519 public key and cannot sign with one, so this page gained
 // Ed25519 certificates by deleting code. The subject and the fixed validity are
 // this page's, because this certificate exists only to carry a key.
+// The throwaway certificate a PKCS#12 has to wrap the key in, and the one the
+// View certificate button shows. It is x509.js's now — the Encryption /
+// Decryption page's key panes need the same thing for the same reason, and a
+// second copy of a certificate profile is a second set of extensions to get
+// wrong. Only the subject differs between the two callers.
 async function buildSelfSignedCertPem(privPem, pubPem, desc) {
   log.debug("Entering buildSelfSignedCertPem().");
-  var issued = await x509.issueCertificate({
+  var pem = await x509.selfSignedCertPem({
     subject: 'CN=jwt-tools generated key',
-    subjectPublicKey: pubPem,
-    issuerPrivateKey: privPem,
-    signatureAlg: x509.defaultSignatureAlgorithm(desc),
-    serial: '01',
-    notBefore: new Date(Date.UTC(2020, 0, 1)),
-    notAfter: new Date(Date.UTC(2035, 0, 1)),
-    extensions: x509.defaultExtensions('tls-server')
+    publicPem: pubPem,
+    privatePem: privPem,
+    desc: desc
   });
   log.debug("Leaving buildSelfSignedCertPem().");
-  return issued.pem;
+  return pem;
 }
 
 // Build a self-signed cert from the current signing key pair and open the

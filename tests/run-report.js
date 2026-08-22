@@ -539,6 +539,43 @@ function buildJobs() {
     env: {},
   });
 
+  // The Encryption / Decryption page, its sibling. Nine panes, one per
+  // mechanism, and like the page above it needs no IdP and no api: AES in
+  // every mode and key size, ChaCha20-Poly1305, the legacy 3DES/DES,
+  // password-based encryption through PBKDF2 / scrypt / HKDF / PBES2, RSA in
+  // both paddings both directly and hybrid, ECIES over five curves, ML-KEM at
+  // three parameter sets alone and hybridised with X25519, ElGamal and DHIES
+  // over both RFC 3526 groups, and JWE compact serialization. Drives every
+  // round trip, every refusal (a modified ciphertext, a changed AAD, the wrong
+  // key, the wrong password, an over-long direct-mode message, a key of the
+  // wrong length), the keystore downloads, and the Tools-pane links that reach
+  // the page.
+  jobs.push({
+    name: "Encryption / Decryption (AES, ChaCha20-Poly1305, 3DES/DES, RSA, " +
+        "ECIES, ML-KEM, ElGamal/DHIES, JWE, password-based — encrypt, " +
+        "decrypt, refuse, download)",
+    script: "encryption_tools.js",
+    env: {},
+  });
+
+  // The same page's cryptography, in node with no browser, against things
+  // that are NOT this code: RFC 8439's ChaCha20/Poly1305/AEAD vectors, RFC
+  // 4493's AES-CMAC vectors, the SipHash reference vectors, NIST SP 800-38A's
+  // AES-mode vectors, the FIPS 81 DES vector, node's own OpenSSL in both
+  // directions for thirteen ciphers and for RSA-OAEP, node's ECDH for the
+  // P-256 agreed secret, FIPS 203's key sizes for ML-KEM, and a Miller-Rabin
+  // check that RFC 3526's transcribed primes really are safe primes. It is
+  // deliberately separate from the browser job above: a round trip through the
+  // page agrees with itself whatever the implementation does, so only these
+  // can say the bytes are right. Also asserts that the three modules under
+  // test reach no DOM, which is what lets this job exist at all.
+  jobs.push({
+    name: "Encryption engines (RFC 8439 / 4493 / SP 800-38A / FIPS 81 & 203 " +
+        "vectors, cross-checked against OpenSSL, in node)",
+    script: "crypto_engines.js",
+    env: {},
+  });
+
   // SAML Assertion Tool. Another fully client-side page needing no IdP: compose
   // an assertion for each SAML version (2.0 / 1.1 / 1.0) with its
   // version-specific structure, toggle the optional elements, add typed +

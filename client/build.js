@@ -95,6 +95,7 @@ const BUNDLES = [
   ['jwt_tools', 'jwt_tools'],
   ['encoding_tools', 'encoding_tools'],
   ['digital_signature', 'digital_signature'],
+  ['encryption_tools', 'encryption_tools'],
   ['saml_request', 'saml_request'],
   ['saml_cert', 'saml_cert'],
   ['saml_tools', 'saml_tools'],

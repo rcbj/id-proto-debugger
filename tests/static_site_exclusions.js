@@ -97,15 +97,24 @@ const CLIENT_DOCKERFILE_PATH = locate([
 // and the dead-link sweep would have swept five files it had already excluded
 // and reported a clean site it never read.
 //
-// index.html is what separates the two. It is the landing page this whole test
-// is about, so a checkout cannot lack it, and the image copies it FLAT beside
-// the test (never into the mirror) because that is the one file the other
-// checks here need. Identify the checkout by that file, not by the directory.
+// **`client/package.json` is what separates the two, and the marker moved here
+// once because the first one did not survive a new COPY line.** It was
+// `client/public/index.html`, on the reasoning that the image copies that file
+// FLAT and never into the mirror — true until rfc9700_client.js needed the
+// whole page set mirrored (`COPY client/public/*.html`, tests/Dockerfile) and
+// index.html went with them. The manifest is the durable choice for the reason
+// jwk_pem_encoding.js and xml_parse_inert.js already use it: it sits OUTSIDE
+// the directory being mirrored, so no copy of `client/public` or `client/src`
+// can ever come to contain it, whereas any file inside one of them is a single
+// COPY line away from being there. Pick a marker the mirror cannot reach, not
+// merely one it does not hold today.
 function checkoutPublicDir() {
   log.debug("Entering checkoutPublicDir().");
   const dir = path.join(__dirname, "..", "client", "public");
-  if (!fs.existsSync(path.join(dir, "index.html"))) {
-    log.debug("Leaving checkoutPublicDir(). No index.html under " + dir + ".");
+  const manifest = path.join(__dirname, "..", "client", "package.json");
+  if (!fs.existsSync(manifest)) {
+    log.debug("Leaving checkoutPublicDir(). No client/package.json, so this " +
+              "is not a checkout.");
     return undefined;
   }
   log.debug("Leaving checkoutPublicDir(). " + dir);
@@ -122,7 +131,7 @@ function everyExclusionNamesSomethingThatExists(staticSite) {
   log.debug("Entering everyExclusionNamesSomethingThatExists().");
   if (!PUBLIC_DIR) {
     log.info("[exclusions] skipped the existence check: there is no " +
-      "client/public/index.html here, so this is the tests image (which " +
+      "client/package.json here, so this is the tests image (which " +
       "carries only a partial mirror of client/public) rather than a " +
       "checkout. The build throws on the same condition (client/build.js " +
       "step 2a).");
@@ -292,11 +301,11 @@ function nothingThatShipsLinksToADroppedPage(staticSite) {
   log.debug("Entering nothingThatShipsLinksToADroppedPage().");
   if (!PUBLIC_DIR) {
     log.info("[exclusions] skipped the dead-link sweep: there is no " +
-      "client/public/index.html here, so this is the tests image (which " +
+      "client/package.json here, so this is the tests image (which " +
       "carries only a partial mirror of client/public) rather than a " +
       "checkout. Sweeping that mirror would report a clean site having read " +
-      "five Kerberos pages. client/build.js runs the same sweep over dist/ " +
-      "on every deploy.");
+      "a page set with no bundles behind it. client/build.js runs the same " +
+      "sweep over dist/ on every deploy.");
     log.debug("Leaving nothingThatShipsLinksToADroppedPage().");
     return;
   }

@@ -71,7 +71,7 @@ RUN node -v
 RUN npm -v
 
 # Bundle app source
-COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js ./
+COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js ./
 # The per-run username minter, required by tests across four protocols (OAuth2,
 # RFC 9700, Kerberos, LDAP) and by both mock-KDC page jobs. A SHARED MODULE
 # rather than a test, so nothing schedules it and the run-report cross-check in
@@ -158,6 +158,18 @@ COPY client/src/contexts ./contexts
 # directly — they are what these two require at load time, and a missing one is
 # a MODULE_NOT_FOUND at require, i.e. a hard failure rather than a silent skip.
 COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
+# The Encryption / Decryption page's cryptography, loaded directly by
+# tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
+# browser. All three, because the closure matters: symmetric_crypto.js requires
+# ./crypto_bytes and pk_encryption.js requires both — and an uncopied one is a
+# MODULE_NOT_FOUND at require rather than a silently smaller run.
+#
+# Note the NAMES. tests/crypto_engines.js is called that, rather than
+# encryption.js or crypto_bytes.js, precisely because these land FLAT beside
+# the test scripts: a test sharing a name with a module here means whichever
+# COPY ran last wins, silently. Same trap as jwk_pem.js above.
+COPY client/src/crypto_bytes.js client/src/symmetric_crypto.js ./
+COPY client/src/pk_encryption.js ./
 # DPoP (RFC 9449), loaded directly by tests/dpop_vectors.js so the thumbprint, htu, ath and
 # proof can be checked against the RFCs' own published vectors without a browser.
 # Omit this COPY and that test vanishes from the image rather than failing, which is
@@ -499,6 +511,32 @@ COPY tests/schemas ./schemas
 # on every job list, which is exactly why its absence from this image would
 # have shown up as MODULE_NOT_FOUND in 0.0s rather than as a skip.
 COPY tests/rfc9700_flows.js tests/rfc9700_client.js ./
+# ...AND THE CLIENT SOURCE TREE, because rfc9700_client.js is the one test here
+# whose subject IS that tree. Two thirds of its checks are lexical — no iframe
+# anywhere under client/src or client/public, no postMessage with a '*' target
+# origin, no token in a query string, /callback building its Location from
+# configuration alone — so a file copied flat beside the test cannot answer any
+# of them. It walks directories, and the directories have to be here.
+#
+# /usr/src/client, because the script computes them as ../client/{src,public}
+# from /usr/src/app; the kerberos COPYs further up already land in that
+# directory for the same reason. The FLAT copies above are unaffected and stay
+# — other tests require those modules by their own name.
+#
+# What is deliberately NOT copied is client/public/js: those are the browserify
+# bundles, they are gitignored, they are 90 MB, and a fresh checkout (CI) does
+# not have them either — so leaving them out is what makes this image see the
+# same tree a clone sees. The partials are copied because the walk recurses and
+# they are markup this application wrote.
+#
+# Without this the job failed in 0.0s with
+#   Error: Cannot find module '/usr/src/client/src/rfc9700.js'
+# on a run where every host run had been green: the script was in the image and
+# its subject was not.
+COPY client/src /usr/src/client/src
+COPY client/public/*.html /usr/src/client/public/
+COPY client/public/partials /usr/src/client/public/partials
+COPY client/server.js /usr/src/client/server.js
 COPY tests/admin_api.js ./
 # The HTTP tab on the OAuth2/OIDC token exchange and Token Endpoint Results
 # panes. It is NOT covered by the `tests/oauth2_*` glob above — the name starts

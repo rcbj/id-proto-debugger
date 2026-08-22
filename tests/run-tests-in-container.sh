@@ -84,6 +84,34 @@ init()
       ;;
   esac
   export RFC9700_STS_URL
+  # THE REDIRECT URI THOSE JOBS SEND, and it is loopback ON PURPOSE.
+  #
+  # RFC 9700 requirement 1.3 (RFC 8252's loopback exception) is that a
+  # redirect_uri is https, or http on 127.0.0.1 / [::1] / localhost. The
+  # debugger enforces it in mode and refuses to send anything else — so on THIS
+  # stack, where the pages are served from the plain-http name
+  # http://client:3000, the client correctly refused every authorization
+  # request and the three flow jobs failed at a sign-in screen that never
+  # appeared. The product was right; the address was wrong.
+  #
+  # So the callback alone moves to loopback, and rfc9700_flows.js gives Chrome
+  # `--host-resolver-rules=MAP localhost:3000 client:3000` so the browser can
+  # actually reach it. That hop is stateless — /callback reads nothing and 303s
+  # to appconfig.uiUrl, which is http://client:3000 — so every page the test
+  # drives, and the transaction state in that origin's localStorage, stay
+  # exactly where they were. It is also what a real user does: the debugger's
+  # own callback IS http://localhost:3000/callback, which is the case
+  # requirement 1.3 exists to permit.
+  #
+  # Unset everywhere else: a host run is already on localhost, and a deployed
+  # target is https, so both satisfy 1.3 with their own /callback and the test
+  # defaults to it.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      RFC9700_REDIRECT_URI="${RFC9700_REDIRECT_URI:-http://localhost:3000/callback}"
+      ;;
+  esac
+  export RFC9700_REDIRECT_URI
   # The same mock STS hosts the TLS / mutual-TLS endpoint the PKI page presents
   # a client certificate to. This one is NOT browser-facing — the api opens the
   # socket, and this test talks to the plain HTTP port itself to configure the

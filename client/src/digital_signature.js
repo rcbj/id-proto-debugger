@@ -80,108 +80,53 @@ var ML_PARAM_SETS = {
 };
 
 // ---------------------------------------------------------------------------
-// Small DOM helpers
+// THE HELPERS THIS PAGE USED TO OWN NOW LIVE IN THREE SHARED MODULES.
+//
+// The byte, base64, hex and PEM-framing conversions are crypto_bytes.js; the
+// DOM accessors, the clipboard, the collapse/expand behaviour and the download
+// are tool_panes.js; the AES/Poly1305/SipHash MAC primitives are
+// symmetric_crypto.js. Each of them was written here first and then wanted by
+// the Encryption / Decryption page, which is the same page with different
+// cryptography in it — see the header of each module for what a second copy
+// would have cost.
+//
+// They are aliased to their old local names rather than rewritten at every
+// call site: this file has about two hundred of them, and a rename touching
+// all two hundred is a diff nobody can review against a 967-line Selenium test
+// that already passes.
+//
+// ONE BEHAVIOURAL CHANGE, and it is an improvement the MAC panes already cope
+// with: crypto_bytes' hexToBytes() REFUSES a non-hex character or an odd digit
+// count instead of reading it as zero. macCompute() and macVerify() wrap their
+// work in a try/catch and report the message, so a mistyped key field now says
+// "Value is not hexadecimal" where it used to compute a tag under a key that
+// was not the one on the screen.
 // ---------------------------------------------------------------------------
-function val(id) {
-  log.debug("Entering val().");
-  var el = document.getElementById(id);
-  log.debug("Leaving val().");
-  return el ? el.value : '';
-}
-function setVal(id, v) {
-  log.debug("Entering setVal().");
-  var el = document.getElementById(id);
-  if (el) el.value = v;
-  log.debug("Leaving setVal().");
-}
+var bytesLib = require("./crypto_bytes");
+var symmetric = require("./symmetric_crypto");
+var panes = require("./tool_panes");
+var jose = require("./jose_jwe");
+var keyMaterial = require("./key_material");
+var pkEncryption = require("./pk_encryption");
+var x509 = require("./x509");
 
-// ---------------------------------------------------------------------------
-// Byte / base64 / hex helpers
-// ---------------------------------------------------------------------------
-function strBytes(s) {
-  log.debug("Entering strBytes().");
-  log.debug("Leaving strBytes().");
-  return new TextEncoder().encode(s);
-}
+var val = panes.val;
+var setVal = panes.setVal;
+var triggerDownload = panes.triggerDownload;
+var defer = panes.defer;
 
-function bytesToB64(bytes) {
-  log.debug("Entering bytesToB64().");
-  var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  var bin = '';
-  for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
-  log.debug("Leaving bytesToB64().");
-  return btoa(bin);
-}
-function b64ToBytes(b64) {
-  log.debug("Entering b64ToBytes().");
-  var bin = atob(String(b64).replace(/\s+/g, ''));
-  var bytes = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  log.debug("Leaving b64ToBytes().");
-  return bytes;
-}
-function bytesToHex(bytes) {
-  log.debug("Entering bytesToHex().");
-  var s = '';
-  for (var i = 0; i < bytes.length; i++) s += ('0' +
-       bytes[i].toString(16)).slice(-2);
-  log.debug("Leaving bytesToHex().");
-  return s;
-}
-function hexToBytes(hex) {
-  log.debug("Entering hexToBytes().");
-  var h = String(hex).replace(/\s+/g, '');
-  var a = new Uint8Array(h.length >> 1);
-  for (var i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16);
-  log.debug("Leaving hexToBytes().");
-  return a;
-}
-function concatBytes() {
-  log.debug("Entering concatBytes().");
-  var total = 0, i;
-  for (i = 0; i < arguments.length; i++) total += arguments[i].length;
-  var out = new Uint8Array(total), off = 0;
-  for (i = 0; i < arguments.length; i++) { out.set(arguments[i],
-       off); off += arguments[i].length; }
-  log.debug("Leaving concatBytes().");
-  return out;
-}
-function bytesEqual(a, b) {
-  log.debug("Entering bytesEqual().");
-  if (a.length !== b.length) {
-    log.debug("Leaving bytesEqual().");
-    return false;
-  }
-  var diff = 0;
-  for (var i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  log.debug("Leaving bytesEqual().");
-  return diff === 0;
-}
-function randomBytes(n) {
-  log.debug("Entering randomBytes().");
-  var a = new Uint8Array(n);
-  crypto.getRandomValues(a);
-  log.debug("Leaving randomBytes().");
-  return a;
-}
-
-// PEM framing over raw bytes (used by SLH-DSA, whose keys are opaque bytes).
-function rawToPem(bytes, label) {
-  log.debug("Entering rawToPem().");
-  var b64 = bytesToB64(bytes);
-  var lines = b64.match(/.{1,64}/g).join('\n');
-  log.debug("Leaving rawToPem().");
-  return '-----BEGIN ' + label + '-----\n' + lines + '\n-----END ' + label +
-      '-----\n';
-}
-function pemToRaw(pem) {
-  log.debug("Entering pemToRaw().");
-  var b64 = String(pem).split(/\r?\n/)
-    .filter(function (line) { return line.indexOf('-----') === -1; })
-    .join('').replace(/\s+/g, '');
-  log.debug("Leaving pemToRaw().");
-  return b64ToBytes(b64);
-}
+var strBytes = bytesLib.strBytes;
+var bytesToB64 = bytesLib.bytesToB64;
+var b64ToBytes = bytesLib.b64ToBytes;
+var bytesToHex = bytesLib.bytesToHex;
+var hexToBytes = bytesLib.hexToBytes;
+var concatBytes = bytesLib.concatBytes;
+var bytesEqual = bytesLib.bytesEqual;
+var randomBytes = bytesLib.randomBytes;
+var rawToPem = bytesLib.rawToPem;
+var pemToRaw = bytesLib.pemToRaw;
+var b64u = bytesLib.bytesToB64u;
+var bigToBytes = bytesLib.bigToBytes;
 
 // ---------------------------------------------------------------------------
 // Hash registry (shared by the RSA and ECC panes). `oid` is the DER-encoded
@@ -246,14 +191,6 @@ var CURVES = {
   'bls12-381':         { kind: 'bls',     curve: bls12_381 }
 };
 
-// SLH-DSA / RSA key generation can block for a moment; defer so the "…" status
-// paints first.
-function defer(fn) {
-  log.debug("Entering defer().");
-  setTimeout(fn, 15);
-  log.debug("Leaving defer().");
-}
-
 // ===========================================================================
 // Pane #1 — SLH-DSA (post-quantum)
 // ===========================================================================
@@ -264,20 +201,6 @@ function currentAlg() {
   if (!alg) throw new Error('Unknown parameter set: ' + name);
   log.debug("Leaving currentAlg().");
   return alg;
-}
-
-function triggerDownload(filename, data, mime) {
-  log.debug("Entering triggerDownload().");
-  var blob = new Blob([data], { type: mime || 'application/octet-stream' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-  log.debug("Leaving triggerDownload().");
 }
 
 function generateKeys() {
@@ -313,75 +236,10 @@ function generateKeys() {
 // the panes' deliberate avoidance of crypto.subtle for *signing* (which exists
 // only to allow non-SHA hashes); PBES2 here is standard and hash-agnostic.
 // ---------------------------------------------------------------------------
-function b64u(bytes) {
-  log.debug("Entering b64u().");
-  var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  var bin = '';
-  for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
-  log.debug("Leaving b64u().");
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function forgeBnB64u(bn) {
-  log.debug("Entering forgeBnB64u().");
-  var h = bn.toString(16); if (h.length % 2) h = '0' + h;
-  log.debug("Leaving forgeBnB64u().");
-  return b64u(hexToBytes(h));
-}
-function derBytes(asn1) {
-  log.debug("Entering derBytes().");
-  log.debug("Leaving derBytes().");
-  return new Uint8Array(forge.util.binary.raw.decode(forge.asn1.toDer(asn1)
-                        .getBytes()));
-}
-// A native BigInt (from @noble affine coords) as fixed-length big-endian bytes.
-function bigToBytes(x, len) {
-  log.debug("Entering bigToBytes().");
-  var h = x.toString(16); while (h.length < len * 2) h = '0' + h;
-  log.debug("Leaving bigToBytes().");
-  return hexToBytes(h);
-}
-
-// Password-protect a string as a compact PBES2 JWE (RFC 7518 §4.8), via subtle.
-async function pbes2JweEncrypt(plaintext, password) {
-  log.debug("Entering pbes2JweEncrypt().");
-  var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
-  var p2s = randomBytes(16), p2c = 100000;
-  var pwKey = await crypto.subtle.importKey('raw', strBytes(password), 'PBKDF2',
-      false, ['deriveKey']);
-  var salt = concatBytes(strBytes(alg), new Uint8Array([0]), p2s);
-  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: salt,
-      iterations: p2c, hash: 'SHA-256' },
-    pwKey, { name: 'AES-KW', length: 128 }, false, ['wrapKey']);
-  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 },
-      true, ['encrypt']);
-  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey,
-      'AES-KW'));
-  var ph = { alg: alg, enc: enc, p2s: b64u(p2s), p2c: p2c };
-  var phB64 = b64u(strBytes(JSON.stringify(ph)));
-  var iv = randomBytes(12);
-  var full = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv, additionalData: strBytes(phB64),
-     tagLength: 128 }, cek, strBytes(plaintext)));
-  log.debug("Leaving pbes2JweEncrypt().");
-  return [phB64, b64u(wrapped), b64u(iv), b64u(full.slice(0, full.length - 16)),
-          b64u(full.slice(full.length - 16))].join('.');
-}
-
-// Emit a JWK set (public + private), optionally PBES2-encrypted, as a download.
-async function downloadJwkSet(jwks, password, baseName, statusId) {
-  log.debug("Entering downloadJwkSet().");
-  var text = JSON.stringify({ keys: jwks }, null, 2);
-  if (password) {
-    triggerDownload(baseName + '.jwe', await pbes2JweEncrypt(text, password),
-                    'application/jose');
-    setVal(statusId, 'Downloaded PBES2-encrypted JWK set (' + baseName +
-           '.jwe).');
-  } else {
-    triggerDownload(baseName + '.jwk.json', text, 'application/jwk+json');
-    setVal(statusId, 'Downloaded JWK set (' + baseName + '.jwk.json).');
-  }
-  log.debug("Leaving downloadJwkSet().");
-}
+// Password-protecting a JWK set is jose_jwe.js's PBES2 and tool_panes.js's
+// download — the same two functions the Encryption / Decryption page's key
+// panes call, so a .jwe written by either page is the same artifact.
+var downloadJwkSet = panes.downloadJwkSet;
 
 // ---------------------------------------------------------------------------
 // Pane #1 SLH-DSA download: PEM (raw, unencrypted) and JWK (+password) are
@@ -702,19 +560,23 @@ function rsaPaddingLabel(p) {
   return p === 'pss' ? 'PSS' : 'PKCS#1 v1.5';
 }
 
-// Generate a 2048-bit RSA key pair with node-forge (pure JS); display as PEM.
+// An RSA key pair, through pk_encryption.js — the same function the Encryption
+// / Decryption page's RSA pane calls, and the reason it is shared rather than
+// repeated is the PRIVATE KEY'S ENCODING. forge's privateKeyToPem() emits
+// PKCS#1 (`BEGIN RSA PRIVATE KEY`); key_material.js, jose_jwe.js and Web
+// Crypto's importKey('pkcs8', …) all want PKCS#8, so the keystore matrix below
+// refuses a PKCS#1 key with a bare `DataError` and no message. That defect was
+// found on the other page and fixed in one place.
 function rsaGenerateKeys() {
   log.debug("Entering rsaGenerateKeys().");
   var bits = parseInt(val('ds_rsa_bits'), 10) || 2048;
   setVal('ds_rsa_status', 'Generating RSA ' + bits +
-         '-bit key pair… (pure JS — larger sizes take longer)');
+         '-bit key pair — pure JS, so larger sizes take longer…');
   defer(function () {
     try {
-      var kp = forge.pki.rsa.generateKeyPair({ bits: bits, e: 0x10001 });
-      setVal('ds_rsa_private_key',
-             forge.pki.privateKeyToPem(kp.privateKey).trim() + '\n');
-      setVal('ds_rsa_public_key',
-             forge.pki.publicKeyToPem(kp.publicKey).trim() + '\n');
+      var pair = pkEncryption.rsaGenerateKeyPair(bits);
+      setVal('ds_rsa_private_key', pair.privatePem);
+      setVal('ds_rsa_public_key', pair.publicPem);
       setVal('ds_rsa_status', 'Generated RSA ' + bits + '-bit key pair.');
     } catch (e) {
       log.error('rsaGenerateKeys: ' + e.message);
@@ -725,18 +587,21 @@ function rsaGenerateKeys() {
   return false;
 }
 
-function rsaSelfSignedCert(privateKey, publicKey) {
-  log.debug("Entering rsaSelfSignedCert().");
-  var cert = forge.pki.createCertificate();
-  cert.publicKey = publicKey;
-  cert.serialNumber = '01';
-  cert.validity.notBefore = new Date(Date.UTC(2020, 0, 1));
-  cert.validity.notAfter = new Date(Date.UTC(2035, 0, 1));
-  var attrs = [{ name: 'commonName', value: 'digital-signature-tool' }];
-  cert.setSubject(attrs); cert.setIssuer(attrs);
-  cert.sign(privateKey, forge.md.sha256.create());
-  log.debug("Leaving rsaSelfSignedCert().");
-  return cert;
+// The throwaway certificate a PKCS#12 wraps the key in, and the one View
+// certificate shows. x509.js's, shared with jwt_tools and the Encryption /
+// Decryption page — a certificate profile written three times is three sets of
+// extensions to get wrong, and this tree already records five defects that
+// produced certificates which parse, display plausibly and are then refused.
+async function rsaSelfSignedCertPem() {
+  log.debug("Entering rsaSelfSignedCertPem().");
+  var pem = await x509.selfSignedCertPem({
+    subject: 'CN=digital-signature-tool',
+    privatePem: val('ds_rsa_private_key'),
+    publicPem: val('ds_rsa_public_key'),
+    desc: { kind: 'rsa', hash: 'SHA-256' }
+  });
+  log.debug("Leaving rsaSelfSignedCertPem().");
+  return pem;
 }
 
 // Build a self-signed X.509 cert from the current RSA key pair and open the
@@ -750,80 +615,61 @@ function viewRsaCert() {
     log.debug("Leaving viewRsaCert().");
     return false;
   }
-  try {
-    var cert = rsaSelfSignedCert(forge.pki.privateKeyFromPem(privPem),
-        forge.pki.publicKeyFromPem(pubPem));
-    var pem = forge.pki.certificateToPem(cert);
+  rsaSelfSignedCertPem().then(function (pem) {
     if (window.localStorage) localStorage.setItem('saml_cert_view', pem);
     window.open('/saml_cert.html?from=digital_signature.html', '_blank');
-  } catch (e) {
+  }).catch(function (e) {
     log.error('viewRsaCert: ' + e.message);
     setVal('ds_rsa_status', 'Certificate error: ' + e.message);
-  }
+  });
   log.debug("Leaving viewRsaCert().");
   return false;
 }
 
+// THE KEYSTORE MATRIX IS key_material.js's, NOT THIS FILE'S.
+//
+// This pane had its own node-forge implementation of PEM / DER / JWK /
+// PKCS#12 — a second reading of four wire formats, which is exactly what
+// key_material.js's own header says must not exist twice: these encodings are
+// read by OpenSSL, keytool and somebody else's TLS stack, and two
+// implementations can agree with each other and both be wrong. It is now the
+// one the PKI page, JWT Tools and the Encryption / Decryption page all use,
+// and tests/pki_key_formats.js checks all 49 cells of it against OpenSSL in
+// node.
+//
+// The only thing this function still decides is the CERTIFICATE a PKCS#12
+// wraps the key in, which key_material deliberately does not mint.
 async function rsaDownloadKeys() {
   log.debug("Entering rsaDownloadKeys().");
-  var fmt = val('ds_rsa_ks_format') || 'pem', pw = val('ds_rsa_ks_password');
-  var privPem = val('ds_rsa_private_key'), pubPem = val('ds_rsa_public_key');
-  if (!privPem.trim() || !pubPem.trim()) {
+  var format = val('ds_rsa_ks_format') || 'pem';
+  var password = val('ds_rsa_ks_password');
+  var privatePem = val('ds_rsa_private_key');
+  var publicPem = val('ds_rsa_public_key');
+  if (!privatePem.trim() || !publicPem.trim()) {
     setVal('ds_rsa_status',
            'No key pair to export. Generate a key pair first.');
-    log.debug("Leaving rsaDownloadKeys().");
+    log.debug("Leaving rsaDownloadKeys(). Nothing to export.");
     return false;
   }
   try {
-    var key = forge.pki.privateKeyFromPem(privPem);
-    var pub = forge.pki.publicKeyFromPem(pubPem);
-    var pkcs8 = forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(
-        key)); // PrivateKeyInfo
-
-    if (fmt === 'pem') {
-      var privBlock = pw
-        ? forge.pki.encryptedPrivateKeyToPem(forge.pki.encryptPrivateKeyInfo(
-            pkcs8, pw, { algorithm: 'aes256' }))
-        : forge.pki.privateKeyInfoToPem(pkcs8);
-      triggerDownload('rsa-keys.pem', privBlock.trim() + '\n' +
-                      forge.pki.publicKeyToPem(pub).trim() + '\n',
-                      'application/x-pem-file');
-      setVal('ds_rsa_status', pw ? 'Downloaded PEM (encrypted private key + public key).' : 'Downloaded PEM (private + public key).');
-    } else if (fmt === 'der') {
-      var privDer = pw ? derBytes(forge.pki.encryptPrivateKeyInfo(pkcs8, pw,
-          { algorithm: 'aes256' })) : derBytes(pkcs8);
-      triggerDownload('rsa-private.der', privDer, 'application/pkcs8');
-      triggerDownload('rsa-public.der',
-                      derBytes(forge.pki.publicKeyToAsn1(pub)),
-                      'application/octet-stream');
-      setVal('ds_rsa_status', pw ? 'Downloaded DER (encrypted private + public), two files.' : 'Downloaded DER (private + public), two files.');
-    } else if (fmt === 'jwk') {
-      var pubJwk = { kty: 'RSA', n: forgeBnB64u(key.n), e: forgeBnB64u(key.e),
-          use: 'sig' };
-      var privJwk = { kty: 'RSA', n: forgeBnB64u(key.n), e: forgeBnB64u(key.e),
-          d: forgeBnB64u(key.d),
-        p: forgeBnB64u(key.p), q: forgeBnB64u(key.q), dp: forgeBnB64u(key.dP),
-                       dq: forgeBnB64u(key.dQ), qi: forgeBnB64u(key.qInv),
-                       use: 'sig' };
-      await downloadJwkSet([pubJwk, privJwk], pw, 'rsa-keys', 'ds_rsa_status');
-    } else if (fmt === 'pkcs12') {
-      if (!pw) {
-        setVal('ds_rsa_status',
-               'PKCS#12 requires a password. Enter one in the password field.');
-        log.debug("Leaving rsaDownloadKeys().");
-        return false;
-      }
-      var p12 = forge.pkcs12.toPkcs12Asn1(key, [rsaSelfSignedCert(key, pub)],
-          pw, { algorithm: '3des' });
-      triggerDownload('rsa-keys.p12', derBytes(p12), 'application/x-pkcs12');
-      setVal('ds_rsa_status',
-             'Downloaded password-protected PKCS#12 (rsa-keys.p12).');
-    } else {
-      setVal('ds_rsa_status', 'Unknown keystore format: ' + fmt);
-    }
+    var descriptor = { kind: 'rsa', hash: 'SHA-256' };
+    var certs = format === 'pkcs12' ? [await rsaSelfSignedCertPem()] : [];
+    var result = await keyMaterial.exportKeyPair({
+      privatePem: privatePem,
+      publicPem: publicPem,
+      desc: descriptor,
+      format: format,
+      password: password,
+      friendlyName: 'digital-signature-tool',
+      use: 'sig',
+      certs: certs,
+      baseName: 'rsa-keys'
+    });
+    keyMaterial.downloadFiles(result.files);
+    setVal('ds_rsa_status', result.status);
   } catch (e) {
     log.error('rsaDownloadKeys: ' + e.message);
-    setVal('ds_rsa_status', 'Download error: ' + e.message);
+    setVal('ds_rsa_status', e.message);
   }
   log.debug("Leaving rsaDownloadKeys().");
   return false;
@@ -1298,147 +1144,15 @@ async function bbsDownloadKeys() {
 // Grouped into panes by family: keyed-hash, block-cipher, universal-hash.
 // ===========================================================================
 
-// --- AES single 16-byte block (raw ECB via forge), for CMAC/CBC-MAC ---
-function aesBlock(keyBytes, block16) {
-  log.debug("Entering aesBlock().");
-  var c = forge.cipher.createCipher('AES-ECB',
-      forge.util.createBuffer(forge.util.binary.raw.encode(keyBytes)));
-  c.start(); c.update(forge.util.createBuffer(forge.util.binary.raw.encode(
-          block16))); c.finish();
-  log.debug("Leaving aesBlock().");
-  return forge.util.binary.raw.decode(c.output.getBytes()).slice(0, 16);
-}
-function xorBytes(a, b) {
-  log.debug("Entering xorBytes().");
-  var o = new Uint8Array(a.length);
-  for (var i = 0; i < a.length; i++) o[i] = a[i] ^ b[i];
-  log.debug("Leaving xorBytes().");
-  return o;
-}
-function shl1(b) {
-  log.debug("Entering shl1().");
-  var o = new Uint8Array(16), carry = 0;
-  for (var i = 15; i >= 0; i--) { o[i] = ((b[i] << 1) | carry) & 0xff; carry =
-       (b[i] & 0x80) ? 1 : 0; }
-  log.debug("Leaving shl1().");
-  return o;
-}
-
-// AES-CMAC (RFC 4493), verified against the RFC test vectors.
-function aesCmac(key, msg) {
-  log.debug("Entering aesCmac().");
-  var Rb = new Uint8Array(16); Rb[15] = 0x87;
-  var L = aesBlock(key, new Uint8Array(16));
-  var K1 = shl1(L); if (L[0] & 0x80) K1 = xorBytes(K1, Rb);
-  var K2 = shl1(K1); if (K1[0] & 0x80) K2 = xorBytes(K2, Rb);
-  var n = Math.ceil(msg.length / 16) || 1;
-  var complete = msg.length > 0 && msg.length % 16 === 0;
-  var last;
-  if (complete) { last = xorBytes(msg.slice((n - 1) * 16), K1); }
-  else { var pad = new Uint8Array(16); var rem = msg.slice((n -
-        1) * 16); pad.set(rem); pad[rem.length] = 0x80; last = xorBytes(pad,
-        K2); }
-  var x = new Uint8Array(16);
-  for (var i = 0; i < n - 1; i++) x = aesBlock(key, xorBytes(x,
-       msg.slice(i * 16, i * 16 + 16)));
-  log.debug("Leaving aesCmac().");
-  return aesBlock(key, xorBytes(x, last));
-}
-
-// AES-CBC-MAC (legacy; zero IV, last block). Insecure for variable-length msgs.
-function aesCbcMac(key, msg) {
-  log.debug("Entering aesCbcMac().");
-  var n = Math.ceil(msg.length / 16) || 1;
-  var x = new Uint8Array(16);
-  for (var i = 0; i < n; i++) {
-    var blk = new Uint8Array(16); blk.set(msg.slice(i * 16, i * 16 + 16));
-    x = aesBlock(key, xorBytes(x, blk));
-  }
-  log.debug("Leaving aesCbcMac().");
-  return x;
-}
-
-// AES-GMAC via forge GCM (empty plaintext, message as AAD). DEMO NOTE: uses a
-// fixed all-zero nonce for a deterministic key+value->tag; real GMAC needs a
-// unique nonce per message per key.
-function aesGmac(key, msg) {
-  log.debug("Entering aesGmac().");
-  var g = forge.cipher.createCipher('AES-GCM',
-      forge.util.createBuffer(forge.util.binary.raw.encode(key)));
-  g.start({ iv: forge.util.binary.raw.encode(new Uint8Array(12)),
-          additionalData: forge.util.binary.raw.encode(msg), tagLength: 128 });
-  g.finish();
-  log.debug("Leaving aesGmac().");
-  return forge.util.binary.raw.decode(g.mode.tag.getBytes()).slice(0, 16);
-}
-
-// Poly1305 (RFC 8439), verified against the RFC vector. One-time authenticator:
-// the 32-byte key MUST be unique per message.
-function poly1305(key, msg) {
-  log.debug("Entering poly1305().");
-  var P = (BigInt(1) << BigInt(130)) - BigInt(5), M128 =
-      (BigInt(1) << BigInt(128)) - BigInt(1);
-  var r = BigInt(0), i;
-  for (i = 15; i >= 0; i--) r = (r << BigInt(8)) | BigInt(key[i]);
-  r &= BigInt('0x0ffffffc0ffffffc0ffffffc0fffffff');
-  var s = BigInt(0); for (i = 15; i >= 0; i--) s =
-      (s << BigInt(8)) | BigInt(key[16 + i]);
-  var acc = BigInt(0);
-  for (i = 0; i < msg.length; i += 16) {
-    var ch = msg.slice(i, i + 16), n = BigInt(0), j;
-    for (j = ch.length - 1; j >= 0; j--) n = (n << BigInt(8)) | BigInt(ch[j]);
-    n += (BigInt(1) << BigInt(8 * ch.length));
-    acc = ((acc + n) * r) % P;
-  }
-  acc = (acc + s) & M128;
-  var out = new Uint8Array(16); for (i = 0; i < 16; i++) { out[i] =
-      Number(acc & BigInt(0xff)); acc >>= BigInt(8); }
-  log.debug("Leaving poly1305().");
-  return out;
-}
-
-// SipHash-2-4 (reference), verified against the reference vector.
-function siphash24(key, msg) {
-  log.debug("Entering siphash24().");
-  var M = (BigInt(1) << BigInt(64)) - BigInt(1);
-  function rotl(x, b) {
-    log.debug("Entering rotl().");
-    log.debug("Leaving rotl().");
-    return ((x << BigInt(b)) | (x >> BigInt(64 - b))) & M;
-  }
-  function rd(b, o) {
-    log.debug("Entering rd().");
-    var v = BigInt(0);
-    for (var i = 7; i >= 0; i--) v = (v << BigInt(8)) | BigInt(b[o + i]);
-    log.debug("Leaving rd().");
-    return v;
-  }
-  var k0 = rd(key, 0), k1 = rd(key, 8);
-  var v0 = BigInt('0x736f6d6570736575') ^ k0, v1 =
-      BigInt('0x646f72616e646f6d') ^ k1,
-      v2 = BigInt('0x6c7967656e657261') ^ k0, v3 =
-          BigInt('0x7465646279746573') ^ k1;
-  function round() {
-    log.debug("Entering round().");
-    v0 = (v0 + v1) & M; v1 = rotl(v1, 13); v1 ^= v0; v0 = rotl(v0, 32);
-    v2 = (v2 + v3) & M; v3 = rotl(v3, 16); v3 ^= v2;
-    v0 = (v0 + v3) & M; v3 = rotl(v3, 21); v3 ^= v0;
-    v2 = (v2 + v1) & M; v1 = rotl(v1, 17); v1 ^= v2; v2 = rotl(v2, 32);
-    log.debug("Leaving round().");
-  }
-  var len = msg.length, end = len - (len % 8), off, i;
-  for (off = 0; off < end; off += 8) { var m = rd(msg,
-       off); v3 ^= m; round(); round(); v0 ^= m; }
-  var b = BigInt(len & 0xff) << BigInt(56);
-  for (i = 0; i < (len % 8); i++) b |= BigInt(msg[end + i]) << BigInt(8 * i);
-  v3 ^= b; round(); round(); v0 ^= b;
-  v2 ^= BigInt(0xff); round(); round(); round(); round();
-  var outv = (v0 ^ v1 ^ v2 ^ v3) & M;
-  var o = new Uint8Array(8); for (i = 0; i < 8; i++) { o[i] =
-      Number(outv & BigInt(0xff)); outv >>= BigInt(8); }
-  log.debug("Leaving siphash24().");
-  return o;
-}
+// The five primitives these three panes are built on are symmetric_crypto.js's
+// now. Poly1305 is the one that forced the move: ChaCha20-Poly1305 on the
+// Encryption page needs the same RFC 8439 section 2.5 implementation, and two
+// readings of that section can agree with each other and be wrong together.
+var aesCmac = symmetric.aesCmac;
+var aesCbcMac = symmetric.aesCbcMac;
+var aesGmac = symmetric.aesGmac;
+var poly1305 = symmetric.poly1305;
+var siphash24 = symmetric.siphash24;
 
 // MAC registry. fn(keyBytes, msgBytes) -> tag bytes; keyBytes = length to
 // generate with "Generate Key".
@@ -1583,68 +1297,39 @@ function macVerify(prefix) {
 }
 
 // ---------------------------------------------------------------------------
-// Collapse / expand all panes.
+// Page chrome — collapse/expand, the clipboard, and the "Return to" link.
+// All three are tool_panes.js's, shared with the Encryption / Decryption page.
 // ---------------------------------------------------------------------------
-function setAllCollapsed(collapsed) {
-  log.debug("Entering setAllCollapsed().");
-  var panes = document.querySelectorAll('.ds-grid > fieldset');
-  for (var i = 0; i < panes.length; i++) {
-    if (collapsed) panes[i].classList.add('ds-collapsed');
-    else panes[i].classList.remove('ds-collapsed');
-  }
-  log.debug("Leaving setAllCollapsed().");
-  return false;
-}
 function expandAll() {
   log.debug("Entering expandAll().");
   log.debug("Leaving expandAll().");
-  return setAllCollapsed(false);
+  return panes.expandAll();
 }
+
 function collapseAll() {
   log.debug("Entering collapseAll().");
   log.debug("Leaving collapseAll().");
-  return setAllCollapsed(true);
+  return panes.collapseAll();
 }
 
-// ---------------------------------------------------------------------------
-// Copy a field's contents to the clipboard.
-// ---------------------------------------------------------------------------
 function copyField(elementId) {
   log.debug("Entering copyField().");
-  var el = document.getElementById(elementId);
-  if (!el) {
-    log.error('copyField: element not found: ' + elementId);
-    log.debug("Leaving copyField().");
-    return false;
-  }
-  var text = el.value || '';
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error(
-                                  'copyField: ' + err); });
-  } else {
-    try {
-      el.focus();
-      el.select();
-      document.execCommand('copy');
-    } catch (e) {
-      log.error('copyField fallback: ' + e.message);
-    }
-  }
   log.debug("Leaving copyField().");
-  return false;
+  return panes.copyField(elementId);
 }
 
-// ---------------------------------------------------------------------------
-// "Return to debugger" link — point back at whichever page sent us here.
-// ---------------------------------------------------------------------------
+// The pages that may send you here. A whitelist rather than a redirect — see
+// the note on setReturnLink() in tool_panes.js.
+var RETURN_TARGETS = {
+  'oauth2_oidc_1.html': { href: '/oauth2_oidc_1.html' },
+  'oauth2_oidc_2.html': { href: '/oauth2_oidc_2.html' },
+  'encryption_tools.html': { href: '/encryption_tools.html',
+                             label: 'Encryption / Decryption' }
+};
+
 function setReturnLink() {
   log.debug("Entering setReturnLink().");
-  var allowed = { 'oauth2_oidc_1.html': '/oauth2_oidc_1.html',
-      'oauth2_oidc_2.html': '/oauth2_oidc_2.html' };
-  var from = new URLSearchParams(window.location.search).get('from');
-  var target = allowed[from] || '/oauth2_oidc_1.html';
-  var link = document.getElementById('return_link');
-  if (link) link.setAttribute('href', target);
+  panes.setReturnLink(RETURN_TARGETS, '/oauth2_oidc_1.html');
   log.debug("Leaving setReturnLink().");
 }
 
@@ -1673,11 +1358,7 @@ window.onload = function () {
          'MAC me with a universal hash!'); macGenerateKey('uhmac');
 
   // Make each pane collapsible: clicking its legend toggles the fieldset.
-  var legends = document.querySelectorAll('.ds-grid > fieldset > legend');
-  for (var i = 0; i < legends.length; i++) {
-    legends[i].addEventListener('click',
-            function () { this.parentNode.classList.toggle('ds-collapsed'); });
-  }
+  panes.wireCollapsibleLegends();
 
   // Default to all panes minimized on load; the user expands the ones they need
   // (or clicks "Expand all"). Clicking a pane's title toggles it individually.
