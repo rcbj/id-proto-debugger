@@ -28,6 +28,7 @@
 //
 const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const bunyan = require("bunyan");
 
@@ -69,6 +70,186 @@ const RUN_DIR = path.join(REPORT_DIR, RUN_ID);
 const LOGS_DIR = path.join(RUN_DIR, "logs");
 const BASE_URL = process.env.DEBUGGER_BASE_URL || "http://localhost:3000";
 const env = process.env;
+
+// ---------------------------------------------------------------------------
+// Coverage (opt-in), the THIRD domain.
+//
+// COVERAGE.md describes two: the browser bundles (Istanbul, shipped by the page
+// to the client server) and the api process (c8). Neither of them sees THIS
+// container, and about thirty jobs here never touch a browser at all — they
+// load the real client/src and api modules in-process through
+// module_paths.requireSharedModule() and drive them against the RFCs' own
+// vectors. Every branch those jobs cover was reported as UNCOVERED, because the
+// only instrumented copy of the module was the one running in Chrome.
+//
+// The cost of that was not a low number; it was a low number that pointed the
+// wrong way. On the 2026-08-23 report, 336 of the api's 474 own-code missing
+// branches and roughly 2,935 of the frontend's 10,092 sat in modules that
+// already had a node test — api/krb5_frame.js read 29.7% while
+// api_krb5_relay.js asserts every one of its malformed-frame rejections by
+// name. Anybody writing tests off that report would have written the ones that
+// already existed.
+//
+// The mechanism is node's own: NODE_V8_COVERAGE names a directory, and the
+// child writes raw V8 coverage into it as it exits. No wrapper binary in the
+// spawn path, nothing for a test to opt into, and it applies to EVERY job
+// rather than only the browserless ones — a page test that also loads a shared
+// module in-process (pki_page.js does, with client/src/x509.js) contributes
+// what it ran there too. c8 renders the pile at the end of the run, in this
+// container, where the paths those files were loaded from still resolve.
+// ---------------------------------------------------------------------------
+const COVERAGE = String(process.env.COVERAGE || "") === "true";
+const NODE_COVERAGE_DIR = process.env.NODE_COVERAGE_DIR || "/coverage/node";
+const NODE_COVERAGE_TMP = path.join(NODE_COVERAGE_DIR, "tmp");
+// Flipped off by prepareNodeCoverage() when the directory cannot be made — a
+// COVERAGE=true run with no ./coverage mounted, say. Collecting coverage is
+// never worth failing a test run over, so that case degrades to an ordinary
+// run with a warning rather than to a suite that dies before the first job.
+let nodeCoverageOn = COVERAGE;
+
+// How long the run actually took, which stopped being the sum of the job times
+// the day the jobs started overlapping. Set by main() before the reports are
+// written; 0 on a --demo run, where the report says so itself.
+let runWallMs = 0;
+
+// ---------------------------------------------------------------------------
+// unit or browser.
+//
+// Reported, not scheduled: a unit job is spawned, timed, logged and counted
+// exactly as it was before this existed. The label is there so the report says
+// which half of the suite a failure came from, and so `classname` in the JUnit
+// XML separates the two for a CI dashboard.
+//
+// It is DERIVED rather than listed. A hand-kept list of browserless scripts is
+// a list that goes stale on the next test added, silently and in the direction
+// that mislabels rather than fails — so the classification asks the only
+// question that decides it: does the script require selenium-webdriver? An
+// unreadable script is called a browser job, because that is the label that
+// costs nothing if it is wrong.
+// ---------------------------------------------------------------------------
+const SELENIUM_REQUIRE = /require\(\s*["']selenium-webdriver/;
+
+function jobTypeOf(script) {
+  log.debug("Entering jobTypeOf(). script=" + script);
+  let source;
+  try {
+    source = fs.readFileSync(path.join(TESTS_DIR, script), "utf8");
+  } catch (e) {
+    // Not readable from here (a script this image did not COPY, say). The job
+    // will fail to spawn and say so; the label is not the interesting part.
+    log.debug("Leaving jobTypeOf(). Unreadable, calling it browser.");
+    return "browser";
+  }
+  const type = SELENIUM_REQUIRE.test(source) ? "browser" : "unit";
+  log.debug("Leaving jobTypeOf(). " + type);
+  return type;
+}
+
+
+// ---------------------------------------------------------------------------
+// HOW MANY JOBS RUN AT ONCE, and what stops two of them colliding.
+//
+// These jobs are independent processes: each spawns its own browser, writes its
+// own log, returns its own result, and nothing in buildJobs() declares an order
+// between any two of them. The loop that ran them was sequential all the same,
+// and the price was the whole suite's wall clock — on the 2026-08-23 run, 196
+// jobs and 20.6 minutes, of which the MEDIAN job is 3.2 seconds and the ten
+// longest are 54% of the total. A pool is most of that time back.
+//
+// Size is TEST_CONCURRENCY, and it defaults to one less than this machine's
+// cores, held between 2 and 4. The cap is not politeness: the longest jobs here
+// are CPU-bound in-browser crypto (SLH-DSA and RSA on the Digital Signature
+// page) rather than waiting on a network, a GitHub Actions runner has 2 to 4
+// cores, and on the containerized stack every OTHER service — Keycloak,
+// Postgres, two mock STS instances, two walt.id containers, the WS-Fed
+// side-car — is on that same machine. The floor is 2 rather than 1 so that a
+// two-core runner still overlaps the waiting, which is what most of a browser
+// job is.
+//
+// TEST_CONCURRENCY=1 restores the old behaviour EXACTLY, live streamed output
+// included. That is the first thing to try when a job fails here and passes on
+// its own. Note what changes above 1: a child's output is buffered and written
+// as one block when it finishes, because interleaving the lines of four
+// browsers makes all four unreadable. The per-job LOG FILE is still written as
+// the bytes arrive, so `tail -f report/latest/logs/NN-*.log` follows a running
+// job either way.
+//
+// WHAT MUST NOT OVERLAP is declared below in one table rather than at the ~200
+// call sites, because it is a property of the SERVICE a script drives and not
+// of the script. The mock STS keeps its /admin configuration in memory and it
+// SURVIVES BETWEEN JOBS — that is the hazard the sequential loop hid, and it
+// surfaces as somebody else's assertion failing about a claim set, not as a
+// collision.
+//
+//   * A lock name means "no two of these run at the same time". `sts-vc` is the
+//     mock's credential and verifier configuration (/admin/vc and
+//     /admin/vc-verifier-config: the claims a credential carries and the ones
+//     the Verifier asks for, which sd_jwt_vc_presentation.js pins and the rest
+//     of that family reads off the wire). `waltid` is the same argument for
+//     walt.id's own issuer and verifier containers. `sts-rfc9700` is the second
+//     mock instance, which rfc9700_flows.js reconfigures through
+//     /admin-api/config/set. `sts-tls` is the mock's client TRUSTSTORE, which
+//     pki_mutual_tls.js fills and empties on a live process.
+//   * EXCLUSIVE means the job runs alone, and admin_api.js is the only one: it
+//     changes claim sets globally and compares the count of every artifact the
+//     mock is holding against the same count read through the console, so any
+//     other job minting a token between those two reads flips it. It costs 0.3
+//     seconds and it restores everything it changes — which is what lets it run
+//     FIRST, before the pool starts, instead of draining the pool later.
+//
+// A script that is not in the table runs unlocked, which is the right default:
+// nearly every test here mints an identity of its own (random_username.js, and
+// the `stamp` prefixes in scim_page.js and ldap_page.js) and asserts on what it
+// created rather than on a total. A NEW test that configures a shared service
+// belongs in this table, and the symptom of forgetting is a failure in a job
+// that has nothing to do with it.
+// ---------------------------------------------------------------------------
+const EXCLUSIVE = "*";
+const JOB_LOCKS = {
+  "admin_api.js": EXCLUSIVE,
+  // The mock's credential + verifier configuration.
+  "sd_jwt_vc_issuance.js": "sts-vc",
+  "sd_jwt_vc_presentation.js": "sts-vc",
+  "ldp_vc_issuance.js": "sts-vc",
+  "ldp_vc_presentation.js": "sts-vc",
+  "ldp_vc_refresh.js": "sts-vc",
+  "jwt_vc_json_issuance.js": "sts-vc",
+  "jwt_vc_json_presentation.js": "sts-vc",
+  "vc_did.js": "sts-vc",
+  "oid4vci_request_encryption.js": "sts-vc",
+  "dpop_workflow.js": "sts-vc",
+  "metadata_schema_validation.js": "sts-vc",
+  // walt.id's issuer-api2 and verifier-api2.
+  "sd_jwt_vc_waltid.js": "waltid",
+  "sd_jwt_vc_presentation_waltid.js": "waltid",
+  "jwt_vc_json_issuance_waltid.js": "waltid",
+  "jwt_vc_json_presentation_waltid.js": "waltid",
+  // The second mock STS, the one started in RFC 9700 mode.
+  "rfc9700_flows.js": "sts-rfc9700",
+  "rfc9700_client.js": "sts-rfc9700",
+  // The mock's TLS client truststore, which is process state over there.
+  "pki_mutual_tls.js": "sts-tls",
+  "api_tls_probe.js": "sts-tls",
+};
+
+const CONCURRENCY = (function () {
+  const asked = parseInt(process.env.TEST_CONCURRENCY || "", 10);
+  if (Number.isFinite(asked) && asked > 0) {
+    return asked;
+  }
+  const cores = (os.cpus() || []).length || 1;
+  return Math.max(2, Math.min(4, cores - 1));
+})();
+
+// The lock a job holds while it runs, or null. A job may name its own (`lock`
+// on the descriptor) for a case the table cannot see; otherwise it is the
+// script's.
+function lockOf(job) {
+  log.debug("Entering lockOf().");
+  const lock = job.lock || JOB_LOCKS[job.script] || null;
+  log.debug("Leaving lockOf(). " + (lock || "none"));
+  return lock;
+}
 
 // Mirror of the *active* (non-commented) test invocations in
 // common/common.sh runTests(). Each job maps the suite's config vars onto the
@@ -431,6 +612,40 @@ function buildJobs() {
       // Keycloak reports active=true for both.
       INTROSPECTION_CLIENT_ID: env.TOKEN_INTROSPECTION_CLIENT_ID,
       INTROSPECTION_CLIENT_SECRET: env.TOKEN_INTROSPECTION_CLIENT_SECRET,
+    },
+  });
+
+  // The JWKS page — the "Review JWKS meta data" link on both debugger pages,
+  // and until 2026-08-23 the one page in this tree that no test had ever
+  // opened. It was found by the COVERAGE report rather than by a failure, and
+  // the way it hid is worth keeping: the bundle is built by client/build.js,
+  // browserified by client/Dockerfile, and named in that file's COVERAGE list,
+  // so every check that guards the build was satisfied. It was simply ABSENT
+  // from the frontend report — not at 0%, absent — because Istanbul reports on
+  // files that were loaded, and nothing loaded this one.
+  //
+  // Four things need a browser here and nothing else covers any of them: the
+  // fetch is the PAGE'S OWN (jQuery straight to the identity provider, no api
+  // in the path, so CORS and Private Network Access apply and it is what makes
+  // the page work on the static deployments); the PEM column is a per-key try,
+  // so a key this encoder does not cover — an OKP key, increasingly common —
+  // must not empty the table; every string in the table came out of a fetched
+  // document, member NAMES included; and one branch writes into a <textarea>,
+  // where a value carrying "</textarea>" closes the element early and the rest
+  // is parsed as markup.
+  //
+  // Only the live-fetch section needs the mock STS, and it skips with a named
+  // reason without it. Everything else drives the page's own exported
+  // functions with fixtures — in the browser, which is what keeps the Istanbul
+  // instrumentation counting.
+  jobs.push({
+    name: "JWKS page (the page's own fetch, the per-key PEM, nothing " +
+        "fetched reaching the DOM as markup)",
+    script: "jwks_page.js",
+    env: {
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      JWKS_BROWSER_URL: env.JWKS_BROWSER_URL ||
+          (env.STS_URL || "http://localhost:8081") + "/oauth2/jwks",
     },
   });
 
@@ -2954,6 +3169,15 @@ function buildJobs() {
       " further job(s) beyond the pages.");
   }
 
+  // Label every job unit or browser. Done as a sweep for the same reason the
+  // Kerberos skip above is: a job pushed later inherits it without anybody
+  // remembering, and there are roughly a hundred push sites.
+  for (const job of jobs) {
+    job.type = jobTypeOf(job.script);
+  }
+  log.info("Roster: " + jobs.filter((j) => j.type === "unit").length +
+    " unit, " + jobs.filter((j) => j.type === "browser").length + " browser.");
+
   log.debug("Leaving buildJobs().");
   return jobs;
 }
@@ -2990,7 +3214,7 @@ function logHeader(name, script, startedAt) {
 // opened and the header written before the child starts, and flushed as
 // output arrives, so the full output survives even if the suite is killed
 // or a test hangs. Returns a Promise resolving to the result.
-function runJob(job, index) {
+function runJob(job, index, live) {
   log.debug("Entering runJob().");
   log.debug("Leaving runJob().");
   return new Promise((resolve) => {
@@ -3007,7 +3231,9 @@ function runJob(job, index) {
       const s = chunk.toString();
       output += s;
       logStream.write(s); // capture
-      process.stdout.write(s); // live echo
+      if (live) {
+        process.stdout.write(s); // live echo
+      }
       log.debug("Leaving tee().");
     };
 
@@ -3019,9 +3245,21 @@ function runJob(job, index) {
         `\n===== RESULT: ${passed ? "PASS" : "FAIL"} ` +
           `(exit ${codeLabel}, ${(durationMs / 1000).toFixed(1)}s) =====\n`
       );
+      // Buffered rather than echoed as it arrived (see CONCURRENCY), so write
+      // the whole of it now, in ONE call, as one block. Anything less and four
+      // browsers' lines arrive shuffled together.
+      if (!live) {
+        const secs = (durationMs / 1000).toFixed(1);
+        process.stdout.write(
+          `\n===== [${index + 1}] ${job.name} — ` +
+          `${passed ? "PASS" : "FAIL"} (${secs}s) =====\n` +
+          output +
+          `===== end of ${job.name} =====\n`);
+      }
       resolve({
         name: job.name,
         script: job.script,
+        type: job.type || "browser",
         passed,
         code: codeLabel,
         durationMs,
@@ -3031,9 +3269,18 @@ function runJob(job, index) {
       log.debug("Leaving finish().");
     };
 
+    // NODE_V8_COVERAGE makes the child write its own raw V8 coverage on exit;
+    // see the coverage block at the top of this file. It is set for EVERY job,
+    // not only the browserless ones, because a page test that also loads a
+    // shared module in-process covers real branches in it. Off unless
+    // COVERAGE=true, so an ordinary run is byte-for-byte what it was.
+    const childEnv = { ...process.env, ...job.env };
+    if (nodeCoverageOn) {
+      childEnv.NODE_V8_COVERAGE = NODE_COVERAGE_TMP;
+    }
     const child = spawn("node", [path.join(TESTS_DIR, job.script), "--url",
         BASE_URL], {
-      env: { ...process.env, ...job.env },
+      env: childEnv,
     });
     child.stdout.on("data", tee);
     child.stderr.on("data", tee);
@@ -3065,6 +3312,7 @@ function makeSkipResult(job, index) {
   return {
     name: job.name,
     script: job.script,
+    type: job.type || "browser",
     passed: true, // not a failure
     skipped: true,
     reason,
@@ -3073,6 +3321,144 @@ function makeSkipResult(job, index) {
     output: "SKIPPED: " + reason,
     logFile: path.relative(TESTS_DIR, logPath),
   };
+}
+
+// ---- scheduling ------------------------------------------------------------
+
+// One finished job's line in the runner's own log. Written when the job
+// FINISHES rather than when it starts, so with a pool the order of these lines
+// is the order things completed; the report itself is written in job order.
+function reportOne(result, index, total) {
+  log.debug("Entering reportOne().");
+  log.info(`----- [${index + 1}/${total}] ` +
+      `${result.passed ? "PASS" : "FAIL"} ` +
+      `(${(result.durationMs / 1000).toFixed(1)}s) → ${result.logFile} ` +
+      `— ${result.name}`);
+  log.debug("Leaving reportOne().");
+}
+
+// The first job that has not started and whose lock nothing is holding, or -1.
+// Called once per free slot rather than once per job, so it is not a hot path.
+function nextRunnableJob(jobs, started, held) {
+  log.debug("Entering nextRunnableJob().");
+  for (let i = 0; i < jobs.length; i++) {
+    if (started[i]) {
+      continue;
+    }
+    const lock = lockOf(jobs[i]);
+    if (lock && held.has(lock)) {
+      continue;
+    }
+    log.debug("Leaving nextRunnableJob(). " + i);
+    return i;
+  }
+  log.debug("Leaving nextRunnableJob(). Nothing runnable.");
+  return -1;
+}
+
+// The pool itself. It cannot deadlock: a lock is only ever held by a RUNNING
+// job, so when nothing is running nothing is held and the next job is always
+// runnable — which is also why `remaining` reaching 0 with nothing active is
+// the only exit.
+function runPool(jobs, results, started, total) {
+  log.debug("Entering runPool().");
+  return new Promise(function (resolve) {
+    const held = new Set();
+    let active = 0;
+    let remaining = started.filter(function (done) {
+      return !done;
+    }).length;
+
+    const pump = function () {
+      log.debug("Entering pump().");
+      while (active < CONCURRENCY) {
+        const i = nextRunnableJob(jobs, started, held);
+        if (i < 0) {
+          break;
+        }
+        const job = jobs[i];
+        const lock = lockOf(job);
+        started[i] = true;
+        if (lock) {
+          held.add(lock);
+        }
+        active = active + 1;
+        log.info(`===== [${i + 1}/${total}] ${job.name} — started` +
+            `${lock ? " (lock: " + lock + ")" : ""} =====`);
+        // runJob() resolves for every outcome a child can have, including a
+        // spawn that failed — so a REJECTION here is the runner itself
+        // breaking. Caught all the same: an unhandled one would leave this
+        // slot occupied and the pool would hang with no line saying why.
+        const settle = function (result) {
+          results[i] = result;
+          if (lock) {
+            held.delete(lock);
+          }
+          active = active - 1;
+          remaining = remaining - 1;
+          reportOne(result, i, total);
+          pump();
+        };
+        runJob(job, i, CONCURRENCY === 1).then(settle, function (err) {
+          settle({
+            name: job.name,
+            script: job.script,
+            type: job.type || "browser",
+            passed: false,
+            code: "runner error: " + (err && err.message),
+            durationMs: 0,
+            output: "the runner failed to run this job: " + (err && err.stack),
+            logFile: "",
+          });
+        });
+      }
+      if (active === 0 && remaining === 0) {
+        resolve();
+      }
+      log.debug("Leaving pump().");
+    };
+
+    pump();
+  });
+}
+
+// Skips first (they cost nothing and hold nothing), then the EXCLUSIVE jobs
+// alone, then everything else in the pool. The exclusive pass is first rather
+// than in its place in the list because draining a pool to make room for a
+// 0.3-second job means waiting out whatever longest job is in flight; the one
+// job in that class restores everything it changes, which is what makes its
+// position free to choose. See JOB_LOCKS.
+async function runAllJobs(jobs, results) {
+  log.debug("Entering runAllJobs().");
+  const total = jobs.length;
+  const started = jobs.map(function () {
+    return false;
+  });
+
+  for (const [i, job] of jobs.entries()) {
+    if (!job.skip) {
+      continue;
+    }
+    log.info(`===== [${i + 1}/${total}] ${job.name} — SKIPPED =====`);
+    log.info(`----- SKIP: ${job.skip}`);
+    results[i] = makeSkipResult(job, i);
+    started[i] = true;
+  }
+
+  for (const [i, job] of jobs.entries()) {
+    if (started[i] || lockOf(job) !== EXCLUSIVE) {
+      continue;
+    }
+    log.info(`===== [${i + 1}/${total}] ${job.name} — alone =====`);
+    started[i] = true;
+    // Live output: nothing else is running, so there is nothing to interleave
+    // with, and this pass is where a stack that came up wrong shows first.
+    results[i] = await runJob(job, i, true);
+    reportOne(results[i], i, total);
+  }
+
+  await runPool(jobs, results, started, total);
+  log.debug("Leaving runAllJobs().");
 }
 
 // ---- report rendering ------------------------------------------------------
@@ -3094,6 +3480,7 @@ function renderHtml(results, generatedAt, demo) {
   const passed = results.filter((r) => r.passed && !r.skipped).length;
   const failed = total - passed - skipped;
   const totalMs = results.reduce((a, r) => a + r.durationMs, 0);
+  const units = results.filter((r) => r.type === "unit").length;
 
   const rows = results
     .map((r, i) => {
@@ -3104,9 +3491,11 @@ function renderHtml(results, generatedAt, demo) {
         ? `<br><a href="logs/${esc(path.basename(r.logFile))}"><code>${esc(
             r.logFile)}</code></a>`
         : "";
+      const type = r.type === "unit" ? "unit" : "browser";
       return `
       <tr class="${cls}">
         <td><span class="badge ${cls}">${badge}</span></td>
+        <td><span class="type ${type}">${type}</span></td>
         <td>${esc(r.name)}<br><code>${esc(r.script)}</code></td>
         <td class="num">${(r.durationMs / 1000).toFixed(1)}s</td>
         <td class="num">${esc(r.code)}</td>
@@ -3134,6 +3523,8 @@ function renderHtml(results, generatedAt, demo) {
   tr.fail{background:#fff5f5}tr.skip{background:#fbfbf5}
   .badge{font-weight:700;font-size:.75rem;padding:.15rem .5rem;border-radius:4px;color:#fff}
   .badge.pass{background:#1a7f37}.badge.fail{background:#c1121f}.badge.skip{background:#8a6d00}
+  .type{font-size:.7rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #d0d0d0;color:#555;white-space:nowrap}
+  .type.unit{background:#eef4ff;border-color:#c3d4f5;color:#274b8f}
   code{background:#f3f3f3;padding:.05rem .3rem;border-radius:3px}
   pre{background:#0d1117;color:#e6edf3;padding:.8rem;border-radius:6px;overflow:auto;max-height:360px;font-size:.8rem}
   summary{cursor:pointer;color:#0969da}
@@ -3147,11 +3538,14 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
   <div class="card ok"><div class="n">${passed}</div><div>passed</div></div>
   <div class="card bad"><div class="n">${failed}</div><div>failed</div></div>
   ${skipped ? `<div class="card"><div class="n">${skipped}</div><div>skipped</div></div>` : ""}
+  ${runWallMs ? `<div class="card"><div class="n">${(runWallMs / 1000)
+      .toFixed(1)}s</div><div>wall clock</div></div>` : ""}
   <div class="card"><div class="n">${(totalMs / 1000)
-      .toFixed(1)}s</div><div>duration</div></div>
+      .toFixed(1)}s</div><div>job time</div></div>
+  <div class="card"><div class="n">${units}</div><div>unit (no browser)</div></div>
 </div>
 <table>
-  <thead><tr><th>Result</th><th>Test</th><th>Time</th><th>Exit</th><th>Output</th></tr></thead>
+  <thead><tr><th>Result</th><th>Type</th><th>Test</th><th>Time</th><th>Exit</th><th>Output</th></tr></thead>
   <tbody>${rows}</tbody>
 </table>
 </body></html>`;
@@ -3323,7 +3717,10 @@ function renderJUnit(results, generatedAt) {
         ? ""
         : `<failure message="exit ${esc(r.code)}">Test exited with status ${esc(
                                         r.code)}</failure>`;
-      return `    <testcase classname="selenium" name="${esc(r.name)}" time="${time}">${body}<system-out>${sys}</system-out></testcase>`;
+      // classname is what a CI dashboard groups by, so the two halves of the
+      // suite are told apart there rather than only in report.html.
+      const cls = r.type === "unit" ? "unit" : "selenium";
+      return `    <testcase classname="${cls}" name="${esc(r.name)}" time="${time}">${body}<system-out>${sys}</system-out></testcase>`;
     })
     .join("\n");
   log.debug("Leaving renderJUnit().");
@@ -3334,6 +3731,136 @@ ${cases}
   </testsuite>
 </testsuites>
 `;
+}
+
+// ---- node coverage ---------------------------------------------------------
+
+// Make (and empty) the directory the children will write raw V8 coverage into.
+//
+// Emptying it is not tidiness. NODE_V8_COVERAGE appends a file per process and
+// c8 reads whatever it finds, so a leftover pile from the previous run would be
+// merged into this one's numbers — a report that improves every time it is
+// rendered and never says why.
+function prepareNodeCoverage() {
+  log.debug("Entering prepareNodeCoverage().");
+  if (!nodeCoverageOn) {
+    log.debug("Leaving prepareNodeCoverage(). Not collecting.");
+    return;
+  }
+  try {
+    fs.rmSync(NODE_COVERAGE_TMP, { recursive: true, force: true });
+    fs.mkdirSync(NODE_COVERAGE_TMP, { recursive: true });
+  } catch (e) {
+    nodeCoverageOn = false;
+    log.warn("Node coverage is off: " + NODE_COVERAGE_TMP + " is not " +
+      "writable (" + e.message + "). Mount ./coverage into this container " +
+      "(docker-compose-coverage.yml) or set NODE_COVERAGE_DIR.");
+    log.debug("Leaving prepareNodeCoverage(). Disabled.");
+    return;
+  }
+  log.info("Node coverage: children will write V8 data to " +
+    NODE_COVERAGE_TMP + "; the report lands in " + NODE_COVERAGE_DIR + ".");
+  log.debug("Leaving prepareNodeCoverage().");
+}
+
+// What c8 must NOT report on: the test scripts themselves.
+//
+// The tests image copies the shared modules FLAT beside the test scripts, so
+// /usr/src/app holds both scim_engine.js (the test) and scim_client.js (the
+// module it drives) — there is no directory to separate them by, only the name.
+// The names are safe to exclude by: tests/jwk_pem_encoding.js already asserts
+// that no shared module collides with a test script in that flat copy, which is
+// what makes "exclude every job's script" mean "exclude the tests" and nothing
+// else.
+//
+// The helpers are named too. They are modules rather than jobs, so no job's
+// script names them and the sweep above would leave them in the report as
+// though they were product code.
+function coverageExcludes(jobs) {
+  log.debug("Entering coverageExcludes().");
+  const names = new Set(jobs.map((job) => job.script));
+  ["run-report.js", "module_paths.js", "wait_for.js", "random_username.js",
+    "common.sh"].forEach(function (name) {
+    names.add(name);
+  });
+  // Every pattern is `**/`-prefixed, and that is not cosmetic: a bare
+  // `scim_engine.js` matches NOTHING here. c8 reports on files above its own
+  // cwd (the modules live in ../client/src and ../api on a host run), so it
+  // resolves paths against a common ancestor rather than against cwd, and a
+  // pattern with no directory part never lines up with the relative path it is
+  // matched against. It fails silently — the report simply lists the test
+  // scripts as though they were product code.
+  //
+  // The mock STS is somebody else's checkout (a submodule), and node-ldapjs is
+  // vendored unmodified. A test that starts either one in-process would
+  // otherwise drag its files into this repository's report.
+  const out = Array.from(names).sort().map((name) => "**/" + name)
+    .concat(["**/node_modules/**", "**/sts/**", "**/node-ldapjs/**"]);
+  log.debug("Leaving coverageExcludes(). " + out.length + " pattern(s).");
+  return out;
+}
+
+// Render the pile the children left behind. Runs HERE, in the tests container,
+// for the same reason COVERAGE.md gives for rendering the frontend report
+// inside the client image: the paths recorded in the raw data are the paths the
+// modules were loaded from, and only this filesystem still has them.
+function renderNodeCoverage(jobs) {
+  log.debug("Entering renderNodeCoverage().");
+  if (!nodeCoverageOn) {
+    log.debug("Leaving renderNodeCoverage(). Not collecting.");
+    return;
+  }
+  let files = [];
+  try {
+    files = fs.readdirSync(NODE_COVERAGE_TMP);
+  } catch (e) {
+    log.warn("renderNodeCoverage(): cannot read " + NODE_COVERAGE_TMP + ": " +
+      e.message);
+  }
+  if (files.length === 0) {
+    // Not an error worth failing on, but it is never expected: every job is a
+    // node process and node writes this on exit. Say so loudly enough that a
+    // silently empty report is not read as "nothing is covered".
+    log.warn("Node coverage: no V8 data was written to " + NODE_COVERAGE_TMP +
+      ". No report rendered.");
+    log.debug("Leaving renderNodeCoverage(). Nothing collected.");
+    return;
+  }
+  const c8 = path.join(TESTS_DIR, "node_modules", ".bin", "c8");
+  if (!fs.existsSync(c8)) {
+    log.warn("Node coverage: c8 is not installed at " + c8 + ". The raw V8 " +
+      "data is still in " + NODE_COVERAGE_TMP + "; `npx c8 report " +
+      "--temp-directory " + NODE_COVERAGE_TMP + "` renders it.");
+    log.debug("Leaving renderNodeCoverage(). No c8.");
+    return;
+  }
+  // --allowExternal is required, not decorative: c8 drops every file outside
+  // its cwd by default, and on a HOST run the modules under test live in
+  // ../client/src and ../api. Without it that run renders an empty report and
+  // says nothing about why.
+  const args = ["report", "--temp-directory", NODE_COVERAGE_TMP,
+    "--reports-dir", NODE_COVERAGE_DIR, "--allowExternal",
+    "--reporter=html", "--reporter=lcov", "--reporter=text-summary"];
+  coverageExcludes(jobs).forEach(function (pattern) {
+    args.push("--exclude", pattern);
+  });
+  log.info("Node coverage: rendering " + files.length + " V8 file(s) with c8.");
+  try {
+    const out = execFileSync(c8, args, { cwd: TESTS_DIR, encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"] });
+    String(out || "").split(/\r?\n/).forEach(function (line) {
+      if (line.trim() !== "") {
+        log.info("c8: " + line);
+      }
+    });
+  } catch (e) {
+    log.warn("renderNodeCoverage(): c8 failed: " + e.message);
+    log.debug("Leaving renderNodeCoverage(). c8 failed.");
+    return;
+  }
+  log.info("Node coverage report written to " + NODE_COVERAGE_DIR +
+    "/index.html (and lcov.info).");
+  log.debug("Leaving renderNodeCoverage().");
 }
 
 function writeReports(results, demo) {
@@ -3385,6 +3912,7 @@ function demoResults() {
     const result = {
       name: j.name,
       script: j.script,
+      type: j.type || "browser",
       passed,
       code: passed ? 0 : 1,
       durationMs: 3000 + i * 1500,
@@ -3413,23 +3941,23 @@ async function main() {
     results = demoResults();
     log.info("Writing SAMPLE report (--demo); no tests executed.");
   } else {
-    results = [];
     const jobs = buildJobs();
-    log.info(`Running ${jobs.length} test(s) against ${BASE_URL}`);
-    for (const [i, job] of jobs.entries()) {
-      if (job.skip) {
-        log.info(`===== [${i + 1}/${jobs.length}] ${job.name} — SKIPPED =====`);
-        log.info(`----- SKIP: ${job.skip}`);
-        results.push(makeSkipResult(job, i));
-        continue;
-      }
-      log.info(`===== [${i + 1}/${jobs.length}] ${job.name} =====`);
-      const r = await runJob(job,
-          i); // sequential: keep streamed output readable
-      results.push(r);
-      log.info(`----- ${r.passed ? "PASS" : "FAIL"} (${(r.durationMs / 1000)
-               .toFixed(1)}s) → ${r.logFile}`);
-    }
+    // Filled BY INDEX rather than pushed: with a pool the jobs finish out of
+    // order, and the report is written in the order they were built.
+    results = new Array(jobs.length);
+    prepareNodeCoverage();
+    log.info(`Running ${jobs.length} test(s) against ${BASE_URL}, ` +
+        `${CONCURRENCY} at a time.`);
+    const wallStart = Date.now();
+    await runAllJobs(jobs, results);
+    runWallMs = Date.now() - wallStart;
+    const jobMs = results.reduce(function (sum, r) {
+      return sum + ((r && r.durationMs) || 0);
+    }, 0);
+    log.info(`Wall clock ${(runWallMs / 1000).toFixed(1)}s, for ` +
+        `${(jobMs / 1000).toFixed(1)}s of job time ` +
+        `(${(jobMs / Math.max(runWallMs, 1)).toFixed(1)}x).`);
+    renderNodeCoverage(jobs);
   }
 
   writeReports(results, demo);
@@ -3441,7 +3969,10 @@ async function main() {
   log.info(`Report written to ${rel}/report.html (and report.xml, logs/)`);
   log.info(`Latest run also at ${path.relative(process.cwd(),
            path.join(REPORT_DIR, "latest"))}`);
+  const units = results.filter((r) => r.type === "unit").length;
   log.info(`Summary: ${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`);
+  log.info(`Of those, ${units} are unit jobs (no browser) and ` +
+    `${results.length - units} drive one.`);
 
   // Don't fail the demo run; otherwise signal failures to the caller/CI.
   process.exit(demo ? 0 : failed > 0 ? 1 : 0);

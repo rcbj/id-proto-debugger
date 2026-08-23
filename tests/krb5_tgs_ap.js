@@ -2459,7 +2459,7 @@ async function test() {
   const servicePath = stsModule("krb5_service.js");
   if (!kdcPath || !servicePath) {
     throw new Error("could not find the mock KDC and service " +
-        "(sts/krb5_kdc.js, sts/krb5_service.js). " +
+        "(sts/kerberos/krb5_kdc.js, sts/kerberos/krb5_service.js). " +
       "sts/ is a SUBMODULE — run `git submodule update --init sts`; an " +
           "uninitialised submodule is an " +
       "EMPTY DIRECTORY rather than a missing one.");

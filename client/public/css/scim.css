@@ -258,25 +258,19 @@ textarea.scim-field {
 
 .scim-request-line { margin: 2px 0 6px; }
 
-/* Every JSON readout on this page. `pre` keeps the formatting JSON.stringify
-   produced; the scroll is per-block so a wide body scrolls inside its own box
-   rather than making the page scroll sideways. */
-.scim-output {
-  font-family: Menlo, Consolas, monospace;
-  font-size: 12px;
-  background: #fbfbfd;
-  border: 1px solid #e4e4ec;
-  border-radius: 3px;
-  padding: 6px 8px;
-  margin: 4px 0 8px;
-  max-height: 420px;
-  overflow: auto;
-  white-space: pre;
-}
-
-.scim-output:empty { display: none; }
-
-.scim-short { max-height: 180px; }
+/* THE `pre`-BASED READOUT THAT USED TO BE HERE IS GONE, and the reason is
+   worth keeping because it looks like a style change and is not.
+   `.scim-output` was a `pre` with `overflow: auto` and a max-height, which is
+   the obvious shape for a JSON readout and does not work in a `fieldset`: a
+   pre's min-content width is its longest line, a SCIM response is full of
+   percent-encoded DNs and base64 certificates with no space in them, and a
+   fieldset carries `min-inline-size: min-content` in the UA stylesheet — so
+   the PANE was made wide enough to avoid the overflow and the `overflow: auto`
+   never scrolled anything. The text went past the pane and past the page.
+   Every readout is now a `textarea.scim-box`, defined below: an intrinsic size
+   content cannot change, scrolling in both directions by construction, and
+   draggable or Expand-able by the reader. See `.scim-pane`'s `min-inline-size`
+   too — both halves are needed. */
 
 /* The `code` element holding the HOBA to-be-signed blob. It is one unbroken
    length-prefixed string and there is nothing in it to break at. */
@@ -403,3 +397,338 @@ textarea.scim-field {
   font-family: Menlo, Consolas, monospace;
   word-break: break-all;
 }
+
+/* ---------------------------------------------------------------------------
+   THE TOP ROW: Connection, Authentication and Discovery side by side.
+
+   Three panes across, because none of the three is a step — they are the
+   settings every other pane on this page reads, and stacking them put the
+   thing somebody actually came here to press (Send, Run) two screens down.
+
+   `minmax(0, 1fr)` and not `1fr`: a grid item's automatic minimum size is its
+   MIN-CONTENT size, so a column holding a percent-encoded DN — a long unbroken
+   string with no space in it — grows the track rather than scrolling inside
+   it, and the whole page then scrolls sideways. That is the same failure the
+   header of this sheet records, one level further out.
+
+   The single-column fallback is a real one and not a nicety: this page is on
+   the static deployments, where it is read on whatever the reader has.
+   ------------------------------------------------------------------------ */
+.scim-topgrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 14px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .scim-topgrid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* A `fieldset` carries `min-inline-size: min-content` in the UA stylesheet,
+   which is why a pane holding one long unbreakable token grows past its
+   container instead of letting the box inside it scroll — the `overflow: auto`
+   on the readout never gets the chance, because the fieldset around it has
+   already been made wide enough to avoid the overflow. This is the rule that
+   makes every `max-width`, `overflow` and `word-break` below actually bind.
+   Both spellings: `min-width` for the browsers that do not honour the logical
+   property on a fieldset. */
+.scim-pane {
+  min-width: 0;
+  min-inline-size: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   TOOLTIPS ON A FIELD LABEL.
+
+   The shared `.tooltip` / `.tooltiptext` pair (css/bootstrap.css, customised
+   long ago) is 120 characters wide, centred over its own middle, and carries a
+   dotted underline — it was written for a hoverable WORD IN A SENTENCE. A page
+   whose every field label is one needs the opposite of all three: a readable
+   column of text, left-aligned with the field it describes, and no dotted rule
+   under every label on the page.
+
+   THE `pointer-events: none` IS NOT DECORATION AND MUST NOT BE REMOVED.
+   Bootstrap hides `.tooltiptext` with `visibility: hidden` rather than
+   `display: none`, so the span still occupies layout and the browser will
+   report it as the topmost element at a nearby control's position — which is
+   `element click intercepted: ... <span class="tooltiptext">` from Selenium,
+   on a click at coordinates that look perfectly correct in a screenshot.
+   css/common.css already carries the same rule for the debugger pages and this
+   page loads it; the copy here is deliberate, because this page puts a tooltip
+   on EVERY field and the guard should not depend on which other sheet happened
+   to be linked. See tests/scim_page.js, which asserts it in the browser rather
+   than trusting either copy.
+   ------------------------------------------------------------------------ */
+.scim-tip {
+  display: block;
+  border-bottom: 0;
+  position: relative;
+}
+
+.scim-tip > .scim-label,
+.scim-tip > .scim-check,
+.scim-tip > .scim-radio { margin-bottom: 1px; }
+
+.scim-tip .tooltiptext {
+  pointer-events: none;
+  width: 280px;
+  max-width: 90vw;
+  margin-left: 0;
+  left: 0;
+  bottom: 118%;
+  text-align: left;
+  white-space: normal;
+  font-size: 11px;
+  font-weight: normal;
+  line-height: 1.35;
+  padding: 6px 8px;
+  z-index: 5;
+}
+
+/* The arrow bootstrap draws under the box is centred on the box; with the box
+   moved to the left edge it has to move with it, or it points at nothing. */
+.scim-tip .tooltiptext::after {
+  left: 18px;
+  margin-left: 0;
+}
+
+/* A tooltip on the LAST pane column would hang off the right of the viewport,
+   which is the one place `max-width` cannot help — so those open leftwards.
+   `right: 0` rather than a negative offset, so the box is inside the pane
+   whatever the pane's width turned out to be. */
+.scim-tip-left .tooltiptext {
+  left: auto;
+  right: 0;
+}
+
+.scim-tip-left .tooltiptext::after {
+  left: auto;
+  right: 18px;
+}
+
+/* ---------------------------------------------------------------------------
+   TABS INSIDE A PANE — the same shape the Kerberos pages use, and deliberately
+   plain: the pane's own title is already a heading, and a second heavy control
+   beside it makes one pane read as two.
+
+   `.scim-tabpanel` MUST STAY ABOVE `.scim-tabpanel-off`. Both selectors are
+   (0,1,0), so source order decides `display`, and a `display: block` written
+   below the `-off` rule shows every panel at once — which reads as the tab
+   strip having no effect rather than as a CSS precedence problem.
+   ------------------------------------------------------------------------ */
+.scim-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 6px 0 8px;
+  border-bottom: 1px solid #ddd;
+  flex-wrap: wrap;
+}
+
+.scim-tab {
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: none;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #555;
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+}
+
+.scim-tab:hover { background: #f2f2f2; }
+
+.scim-tab-on {
+  border-color: #ddd;
+  background: #fff;
+  color: #12107c;
+  font-weight: bold;
+  margin-bottom: -1px;
+  border-bottom: 1px solid #fff;
+}
+
+.scim-tabpanel { display: block; }
+.scim-tabpanel-off { display: none; }
+
+/* ---------------------------------------------------------------------------
+   THE READOUT BOXES.
+
+   A `<textarea>` rather than a `<pre>`, and the difference is not cosmetic. A
+   pre is a block box whose min-content width is its longest line, so a SCIM
+   response — which carries percent-encoded DNs, base64 certificates and
+   Location URLs, none of which has a space in it — makes the box, the pane and
+   then the page as wide as its widest line. `overflow: auto` does not save it,
+   because the fieldset above has already been sized to avoid the overflow (see
+   `.scim-pane` at the top of this section). A textarea has an intrinsic size of
+   its own that content cannot change, scrolls in BOTH directions by
+   construction, and can be dragged taller by the reader.
+
+   `resize: vertical` and not `both`: dragging one of these wider is how the
+   pane gets pushed past the edge again by hand.
+   ------------------------------------------------------------------------ */
+textarea.scim-box {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  background: #fbfbfd;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 2px 0 6px;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+}
+
+/* What the Expand button toggles. A height rather than a row count, because
+   the button has to be able to put it back and `rows` is the markup's. */
+textarea.scim-box-tall {
+  height: 560px;
+  max-height: 80vh;
+}
+
+.scim-boxhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.scim-boxlabel {
+  font-weight: bold;
+  font-size: 12px;
+  color: #333;
+}
+
+.scim-expand {
+  padding: 1px 8px;
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+   THE EXCHANGE PANE: request beside response.
+
+   Two columns, because they are read against each other — a header sent and a
+   header that came back, a body posted and the resource it produced. Stacked,
+   the pair is a screen apart and the comparison is done from memory.
+   ------------------------------------------------------------------------ */
+.scim-exchange-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .scim-exchange-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.scim-exchange-col { min-width: 0; }
+
+/* ---------------------------------------------------------------------------
+   THE CONFIGURATION PARAMETERS PANE.
+
+   One table, every setting this workflow has, and the SOURCE of each — because
+   the question that pane exists to answer is not "what is the value" (which is
+   in the field it came from) but "did I choose this, or did the server say
+   it". A parameter the reader typed and one read out of a ServiceProviderConfig
+   behave identically until the server changes its mind, and then only one of
+   them is stale.
+   ------------------------------------------------------------------------ */
+/* BOUNDED AND SCROLLED, for the reason the runner table records: this table
+   has forty rows in it and a pane that is fine empty and thirteen hundred
+   pixels tall once populated is the failure mode, not the other way round.
+   Everything below it — the endpoint pane, the generator, the scenarios — is
+   what somebody came to this page to use, and a settings table is not worth a
+   screen and a half of scrolling past. */
+.scim-config-scroll {
+  max-height: 520px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+.scim-config-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.scim-config-table th,
+.scim-config-table td {
+  border: 1px solid #e0e0e6;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.scim-config-table th { background: #f0f0f5; }
+
+.scim-config-group td {
+  background: #f6f6fa;
+  font-weight: bold;
+  color: #12107c;
+}
+
+.scim-config-name {
+  width: 15em;
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.scim-config-source { width: 12em; color: #555; }
+
+.scim-config-value input,
+.scim-config-value select {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* A value the reader has changed away from what discovery said. Not an error —
+   an override is the point of the pane — but it must be visible, because a
+   parameter that no longer matches the server is the one that will produce the
+   next inexplicable 404. */
+.scim-config-overridden input,
+.scim-config-overridden select {
+  background: #fffbe6;
+  border-color: #e0c97a;
+}
+
+.scim-config-was {
+  display: block;
+  color: #8a6d00;
+  font-size: 11px;
+  margin-top: 2px;
+  word-break: break-all;
+}
+
+.scim-config-empty {
+  font-size: 12px;
+  color: #666;
+  margin: 6px 0;
+}
+
+/* ---------------------------------------------------------------------------
+   The described views of the two discovery documents that were previously
+   dumped as JSON and nothing else.
+   ------------------------------------------------------------------------ */
+.scim-described-name {
+  width: 9em;
+  font-family: Menlo, Consolas, monospace;
+  font-weight: bold;
+  word-break: break-all;
+}
+
+.scim-described-value {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.scim-described-note { color: #555; }

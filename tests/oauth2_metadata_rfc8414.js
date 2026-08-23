@@ -823,7 +823,12 @@ async function test() {
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        baseUrl.replace(/\/+$/, ""));
-  options.addArguments("--user-data-dir=/tmp/rfc8414-chrome-" + Date.now());
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
+  options.addArguments("--user-data-dir=/tmp/rfc8414-chrome-" +
+                       Date.now() + "-" + process.pid);
   try {
     const prefs = new logging.Preferences();
     prefs.setLevel(logging.Type.BROWSER, logging.Level.SEVERE);

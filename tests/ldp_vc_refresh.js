@@ -66,8 +66,13 @@ var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
 const ROOT = path.join(__dirname, "..");
 const paths = require("./module_paths.js");
 const stsSuite = paths.requireSharedModule(
-  [path.join(__dirname, "sts_bbs2023.js"), path.join(ROOT, "sts",
-   "bbs2023.js")],
+  // The tests image's flattened copy first, then wherever the submodule keeps
+  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: mock-sts 0f986b3
+  // ("Reorganizing source code.") moved every module into a subdirectory, and
+  // this one is in common/vendored/. mockStsModule() is the single place that
+  // answers that question — see tests/module_paths.js.
+  [path.join(__dirname, "sts_bbs2023.js"),
+   paths.mockStsModule("bbs2023.js") || ""],
   "the STS's bbs-2023 cryptosuite");
 // The wallet's own module — the one both issuance step 2 and step 4 use.
 // Driving it is the point: it is the code under test, not a stand-in for it.

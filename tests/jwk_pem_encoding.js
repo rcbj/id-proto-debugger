@@ -836,6 +836,18 @@ function testsImageHasNoCollidingFilenames() {
 // is copied. It reads the Dockerfile as STATEMENTS rather than lines for the
 // reason the file header gives: a check a reformat can silence is a check that
 // will be silenced.
+//
+// **AND IT FOLLOWS `../` AS WELL AS `./`, WHICH IT DID NOT USED TO NEED TO.**
+// Every module in that repository sat in its root until mock-sts 0f986b3
+// ("Reorganizing source code."), so every intra-mock require was `./x` and a
+// walker that only understood `./` saw the whole graph. After the move, the
+// cross-directory ones are `../common/app` — and a `./`-only walker would have
+// followed NOTHING between directories, reported "OK, every require resolves"
+// over a set it never traversed, and let exactly the failure it exists for
+// through. That is this project's recurring defect (a check that quietly does
+// nothing) hiding inside the check written to prevent another one, so the
+// names below are kept as PATHS relative to the mock's root and resolved the
+// way node resolves them.
 // ---------------------------------------------------------------------------
 function stsModuleClosureIsCopied(dockerfile) {
   log.debug("Entering stsModuleClosureIsCopied().");
@@ -849,7 +861,15 @@ function stsModuleClosureIsCopied(dockerfile) {
   // most of them, but bbs2023.js lands flat as sts_bbs2023.js and is required
   // by that name, so the SOURCE is what matters here, not where it lands.
   const copied = {};
-  const copyLine = /COPY\s+([^\n]+)/g;
+  // ANCHORED AT THE START OF A LINE, and that is not tidiness. An unanchored
+  // /COPY\s+/ also matches the word COPY inside a COMMENT — and this file is
+  // full of comments quoting the build error a missing COPY produces — so a
+  // sentence like `so \`COPY sts/krb5_kdc.js … ./sts/\` put a file next to` was
+  // read as an instruction and reported as a copied module that the submodule
+  // does not have. Docker requires the instruction at the start of a line and
+  // no COPY here uses a backslash continuation, so this is also the correct
+  // reading of the file.
+  const copyLine = /^COPY\s+([^\n]+)/gm;
   fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
     rest.split(/\s+/).forEach(function (src) {
       if (src.indexOf("sts/") === 0 && /\.js$/.test(src)) {
@@ -875,12 +895,24 @@ function stsModuleClosureIsCopied(dockerfile) {
       continue;
     }
     const src = fs.readFileSync(file, "utf8");
-    const re = /require\((['"])\.\/([A-Za-z0-9_.\/-]+)\1\)/g;
+    // Both `./x` and `../dir/x`, resolved against the requiring file's own
+    // directory and normalised back to a path relative to the mock's root —
+    // which is the form the COPY sources above are in.
+    const re = /require\((['"])(\.\.?\/[A-Za-z0-9_.\/-]+)\1\)/g;
     let m;
     while ((m = re.exec(src)) !== null) {
-      let dep = m[2];
+      let dep = path.posix.normalize(
+        path.posix.join(path.posix.dirname(name), m[2]));
       if (!/\.js$/.test(dep)) {
         dep = dep + ".js";
+      }
+      if (dep.indexOf("..") === 0) {
+        // A require reaching outside the mock's own tree. There is none today
+        // and one would not be copyable at all, so it is reported rather than
+        // silently normalised away.
+        missing.push(dep + " (required by sts/" + name + ", and it points " +
+          "outside the mock's own tree)");
+        continue;
       }
       if (!copied[dep]) {
         missing.push(dep + " (required by sts/" + name + ")");
@@ -899,7 +931,9 @@ function stsModuleClosureIsCopied(dockerfile) {
     "not copy, so the in-process mock-KDC jobs die at load with " +
     "\"Cannot find module\" naming a file this image HAS. This set moves " +
     "when the sts/ GITLINK moves, not when a line here changes — add a " +
-    "COPY sts/<name> ./sts/ for each: " + unique.join(", "));
+    "COPY sts/<dir>/<name> ./sts/<dir>/ for each (the destination has to " +
+    "MIRROR the mock's own folder, or a require of ../common/x lands " +
+    "outside the image's sts/ tree): " + unique.join(", "));
   log.info("[sts-closure] OK — " + Object.keys(seen).length + " sts " +
     "modules are copied and every relative require among them resolves " +
     "inside the image.");

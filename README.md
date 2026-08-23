@@ -241,7 +241,7 @@ Two things build from it, and both fail unhelpfully if the submodule was never i
 | What | Where | What it says when `sts/` is empty |
 |---|---|---|
 | the STS image | `context: ./sts` in all four compose files | `failed to read dockerfile` |
-| the tests image | `COPY sts/bbs2023.js` in `tests/Dockerfile`, so `tests/bbs2023_cryptosuite.js` can check the wallet's cryptosuite against the issuer's | `COPY sts/bbs2023.js: not found` |
+| the tests image | `COPY sts/common/vendored/bbs2023.js` in `tests/Dockerfile`, so `tests/bbs2023_cryptosuite.js` can check the wallet's cryptosuite against the issuer's | `COPY sts/common/vendored/bbs2023.js: not found` |
 
 Neither message mentions a submodule, so every launcher (`./docker-run-tests.sh`, `./local-run-tests.sh`, `./remote-run-tests.sh`, `./run-coverage.sh`) calls `requireMockStsCheckout()` from [`common/common.sh`](common/common.sh) before building: it initialises the submodule if it can and stops the run with the reason if it cannot. The CI workflows that build the stack check out with `submodules: true` for the same reason.
 

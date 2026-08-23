@@ -27,7 +27,7 @@ jobs:
           # sts/ is a submodule (https://github.com/rcbj/mock-sts.git). The STS
           # image is built from it and tests/Dockerfile copies a module out of it,
           # so without it both builds fail — saying "failed to read dockerfile"
-          # and "COPY sts/bbs2023.js: not found", neither of which names a
+          # and "COPY sts/common/vendored/bbs2023.js: not found", neither of which names a
           # submodule. The launcher initialises it too (requireMockStsCheckout in
           # common/common.sh); asking for it here keeps a fetch failure on the
           # checkout step, where it reads as one.

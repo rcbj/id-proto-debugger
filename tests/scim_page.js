@@ -291,7 +291,8 @@ async function theServerIsThere(driver) {
     var rows = document.querySelectorAll('.scim-capability-table tr');
     var out = [];
     for (var i = 0; i < rows.length; i++) {
-      out.push(rows[i].cells[0].textContent + '=' + rows[i].cells[1].textContent);
+      out.push(rows[i].cells[0].textContent + '=' +
+          rows[i].cells[1].textContent);
     }
     return out;
   `);
@@ -796,7 +797,8 @@ async function theHobaKeyIsGeneratedAndSigns(driver) {
     for (var i = 0; i < localStorage.length; i++) {
       var key = localStorage.key(i);
       var value = localStorage.getItem(key) || '';
-      if (value.indexOf('PRIVATE KEY') >= 0 || key.indexOf('hoba_private') >= 0) {
+      if (value.indexOf('PRIVATE KEY') >= 0 ||
+          key.indexOf('hoba_private') >= 0) {
         out.push(key);
       }
     }
@@ -962,6 +964,322 @@ async function aNegativeScenarioFinishesGreen(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 6c. THE DISCOVERY PANE'S TWO VIEWS.
+//
+// A discovery document is read for two different reasons and one rendering
+// cannot serve both: nine times in ten what is wanted is "where do Users live
+// and does this server do PATCH", and the tenth time it is "show me exactly
+// what it said", because somebody is arguing about it. So the pane has a
+// Described tab over a table and a Document tab over the bytes, and BOTH are
+// kept — the table is a reading of the document, and hiding the original would
+// make a disagreement between the two undiscoverable.
+//
+// The endpoint in that table is the one row that is not merely informative:
+// the page composes its requests onto it. See section 6d.
+// ---------------------------------------------------------------------------
+async function theDiscoveryPaneHasBothViews(driver) {
+  log.debug("Entering theDiscoveryPaneHasBothViews().");
+  log.info("6c. The discovery pane's Described and Document tabs.");
+  await clickAndWait(driver, "btn_scim_resource_types",
+      "scim_discovery_status", null);
+  const described = await driver.executeScript(`
+    var rows = document.querySelectorAll('#scim_capabilities tr');
+    var out = [];
+    for (var i = 0; i < rows.length; i++) {
+      var cells = rows[i].cells, line = [];
+      for (var c = 0; c < cells.length; c++) {
+        line.push(cells[c].textContent);
+      }
+      out.push(line.join(' | '));
+    }
+    return out;
+  `);
+  check('a ResourceTypes document is TABULATED and not only dumped',
+      function () {
+    const text = described.join('\n');
+    assert.ok(described.length >= 2,
+        'The described view has ' + described.length + ' row(s). Finding an ' +
+        'endpoint in a nested ListResponse is a scroll and a squint, which ' +
+        'is the whole reason this tab exists.');
+    assert.ok(/Endpoint/i.test(text),
+        'The table has no Endpoint column. /Users and /Groups are ' +
+        'CONVENTIONS — RFC 7643 section 6 has each ResourceType publish its ' +
+        'own endpoint — and that column is the one this page acts on. Got: ' +
+        text.slice(0, 300));
+    assert.ok(/User/.test(text) && /Group/.test(text),
+        'The table names neither User nor Group. Got: ' + text.slice(0, 300));
+  });
+  // The other tab, and the panel switch that goes with it.
+  await driver.findElement(By.id("scim_tab_discovery_document")).click();
+  const tabs = await driver.executeScript(`
+    var out = { document: '', described: '', text: '' };
+    var panels = document.querySelectorAll('.scim-tabpanel');
+    for (var i = 0; i < panels.length; i++) {
+      out[panels[i].getAttribute('data-scim-tab')] =
+        panels[i].className.indexOf('scim-tabpanel-off') < 0 ? 'on' : 'off';
+    }
+    out.text = document.getElementById('scim_discovery_output').value || '';
+    out.buttonOn = document.getElementById('scim_tab_discovery_document')
+      .className.indexOf('scim-tab-on') >= 0;
+    return out;
+  `);
+  check('the Document tab shows the bytes the server actually sent',
+      function () {
+    assert.strictEqual(tabs.document, 'on',
+        'Pressing the Document tab did not show its panel.');
+    assert.strictEqual(tabs.described, 'off',
+        'Both panels are showing at once, which reads as the tab strip ' +
+        'having no effect. Source order decides display between ' +
+        '.scim-tabpanel and .scim-tabpanel-off — both selectors are (0,1,0).');
+    assert.ok(tabs.buttonOn,
+        'The panel switched and the tab strip did not follow it.');
+    assert.ok(/"Resources"|"schemas"|endpoint/i.test(tabs.text),
+        'The Document panel is empty or does not hold the document. It has ' +
+        'to be a TEXTAREA read by .value: assigning textContent to one works ' +
+        'exactly once, and a readout that silently stops updating still ' +
+        'shows the right text in an inspector. Got: ' +
+        String(tabs.text).slice(0, 200));
+  });
+  await driver.findElement(By.id("scim_tab_discovery_described")).click();
+  log.debug("Leaving theDiscoveryPaneHasBothViews().");
+}
+
+// ---------------------------------------------------------------------------
+// 6d. THE CONFIGURATION PARAMETERS PANE.
+//
+// One table holding every setting this workflow has, with the SOURCE of each —
+// which is the question it exists to answer, because a value somebody typed
+// and a value read out of a discovery document behave identically until the
+// server changes its mind.
+//
+// Three things are asserted and each is a way the pane could be decorative
+// rather than real:
+//
+//   * it MIRRORS the fields in the other panes rather than copying them, in
+//     both directions. A "central settings pane" that is a second store is a
+//     second store to drift;
+//   * a discovered endpoint is APPLIED — the request the page would compose
+//     changes with it. That is the row the page acts on, and a settings pane
+//     implying it applies a value it does not is worse than no pane, because
+//     it makes the server's 404 look like a bug here;
+//   * NO CREDENTIAL is in it. The password is never written anywhere and the
+//     token has its own opt-in one pane up; a settings table that quietly
+//     became the fourth place a bearer token is written would defeat that
+//     opt-in without changing a word of it.
+// ---------------------------------------------------------------------------
+async function theConfigurationPaneCentralizesTheSettings(driver) {
+  log.debug("Entering theConfigurationPaneCentralizesTheSettings().");
+  log.info("6d. The Configuration Parameters pane.");
+  const present = await driver.executeScript(`
+    var out = { rows: [], missing: [] };
+    var wanted = ['baseUrl', 'sslValidate', 'callPath', 'authScheme',
+                  'authUsername', 'authRealm', 'userEndpoint',
+                  'groupEndpoint', 'patchSupported', 'bulkMaxOperations',
+                  'filterSupported', 'challengeSchemes', 'genSeed',
+                  'scenarioPrefix'];
+    for (var i = 0; i < wanted.length; i++) {
+      if (!document.getElementById('scim_cfg_' + wanted[i])) {
+        out.missing.push(wanted[i]);
+      }
+    }
+    var controls = document.querySelectorAll('#scim_config input,' +
+        ' #scim_config select');
+    for (var c = 0; c < controls.length; c++) {
+      out.rows.push(controls[c].id);
+    }
+    return out;
+  `);
+  check('every parameter this workflow has is in one table', function () {
+    assert.deepStrictEqual(present.missing, [],
+        'These parameters have no row: ' + present.missing.join(', ') + '. ' +
+        'A pane that centralizes SOME of the settings leaves the reader ' +
+        'hunting for the rest in exactly the panes it was meant to replace.');
+  });
+  // The credential check is about VALUES and not about the names somebody
+  // happened to choose for the rows — a table with a row called `secret` and
+  // one called `apiKey` would pass a name-based check perfectly. So a
+  // distinctive credential goes into the Authentication pane first and the
+  // whole table is then searched for it. (A name check on its own also has a
+  // false positive waiting in it: `changePassword.supported` is a
+  // ServiceProviderConfig capability and contains the word `password`.)
+  const marker = 'never-in-the-config-pane-' + stamp;
+  await driver.executeScript(`
+    var select = document.getElementById('scim_auth_scheme');
+    select.value = 'basic';
+    select.dispatchEvent(new Event('change'));
+  `);
+  await setField(driver, "scim_auth_password", marker);
+  await setField(driver, "scim_auth_token", marker + '-token');
+  const leaked = await driver.executeScript(`
+    var out = { values: [], named: [] };
+    var controls = document.querySelectorAll('#scim_config input,' +
+        ' #scim_config select');
+    for (var i = 0; i < controls.length; i++) {
+      if (String(controls[i].value).indexOf(arguments[0]) >= 0) {
+        out.values.push(controls[i].id);
+      }
+    }
+    var forbidden = ['authPassword', 'password', 'authToken', 'token',
+                     'hobaPrivateKey', 'privateKey'];
+    for (var f = 0; f < forbidden.length; f++) {
+      if (document.getElementById('scim_cfg_' + forbidden[f])) {
+        out.named.push(forbidden[f]);
+      }
+    }
+    return out;
+  `, marker);
+  check('no credential is in that table', function () {
+    assert.deepStrictEqual(leaked.values, [],
+        'The credential typed into the Authentication pane is showing in ' +
+        'these configuration rows: ' + leaked.values.join(', ') + '.');
+    assert.deepStrictEqual(leaked.named, [],
+        'These credential rows exist in the configuration table: ' +
+        leaked.named.join(', ') + '. The password is never written anywhere ' +
+        'and the access token is governed by its own opt-in checkbox in the ' +
+        'Authentication pane — a settings table that became a fourth place ' +
+        'one is written would defeat that opt-in without changing a word of ' +
+        'it.');
+  });
+  await setField(driver, "scim_auth_token", "");
+  await useRunCredential(driver, 'after the credential check');
+  // Two-way: the config table drives the field, and the field drives it back.
+  await driver.executeScript(`
+    var e = document.getElementById('scim_cfg_authRealm');
+    e.value = 'REALM-FROM-THE-CONFIG-PANE';
+    e.dispatchEvent(new Event('change'));
+  `);
+  const forward = await textOf(driver, "scim_auth_realm");
+  check('editing a row edits the field it mirrors', function () {
+    assert.strictEqual(forward, 'REALM-FROM-THE-CONFIG-PANE',
+        'The Authentication pane\'s realm still says "' + forward + '". A ' +
+        'settings pane whose values do not reach the request is a settings ' +
+        'pane nobody can trust.');
+  });
+  await setField(driver, "scim_auth_realm", "REALM-FROM-THE-FIELD");
+  const back = await driver.executeScript(
+      "return document.getElementById('scim_cfg_authRealm').value;");
+  check('editing the field edits the row, so there is one value and not two',
+      function () {
+    assert.strictEqual(back, 'REALM-FROM-THE-FIELD',
+        'The configuration row still says "' + back + '", so it is a COPY ' +
+        'of the field rather than a view of it — and a copy is a thing to ' +
+        'drift.');
+  });
+  await setField(driver, "scim_auth_realm", "SCIM");
+  // The discovered endpoint, and the fact that the page composes onto it.
+  // The wanted text is the SUCCESS sentence and not the word "Read": the
+  // failure message is "The documents could not all be read", which a /Read/
+  // match would settle on happily.
+  await clickAndWait(driver, "btn_scim_config_read_all", "scim_config_status",
+      "Read\\. Every row", 60000);
+  const discovered = await driver.executeScript(`
+    return { user: document.getElementById('scim_cfg_userEndpoint').value,
+             group: document.getElementById('scim_cfg_groupEndpoint').value,
+             patch: document.getElementById('scim_cfg_patchSupported').value,
+             schemas: document.getElementById('scim_cfg_schemaIds').value };
+  `);
+  check('reading the three documents fills the discovered rows', function () {
+    // What is asserted is that the row names the type, not the exact string:
+    // the endpoint is the SERVER's to choose and a test that pinned it to
+    // /Users would be asserting the convention this whole row exists to stop
+    // the page assuming. That it is APPLIED is the check below.
+    assert.ok(/Users/i.test(discovered.user),
+        'The User endpoint row says "' + discovered.user + '" after the ' +
+        'ResourceTypes document was read. A discovered row that stays empty ' +
+        'is a row nobody will notice is not being applied.');
+    assert.ok(/Groups/i.test(discovered.group),
+        'The Group endpoint row says "' + discovered.group + '".');
+    assert.ok(/^(yes|no)$/.test(discovered.patch),
+        'patch.supported says "' + discovered.patch + '" rather than yes or ' +
+        'no, so the ServiceProviderConfig was not read into the table.');
+    assert.ok(discovered.schemas.indexOf('urn:ietf:params:scim:schemas') >= 0,
+        'The schema list is "' + discovered.schemas.slice(0, 120) + '".');
+  });
+  // Override it, and assert the REQUEST changes — not the table.
+  await driver.executeScript(`
+    var e = document.getElementById('scim_cfg_userEndpoint');
+    e.value = '/people';
+    e.dispatchEvent(new Event('change'));
+    var op = document.getElementById('scim_op');
+    op.value = 'listUsers';
+    op.dispatchEvent(new Event('change'));
+  `);
+  const overridden = await driver.executeScript(`
+    var built = window.scim.currentRequest();
+    return { url: built.ok ? built.request.url : ('(not built: ' +
+                 built.error + ')'),
+             endpoints: JSON.stringify(window.scim.endpointsForRequests()),
+             marked: !!document.querySelector(
+                 '#scim_cfg_row_userEndpoint .scim-config-overridden'),
+             was: (document.querySelector(
+                 '#scim_cfg_row_userEndpoint .scim-config-was') || {})
+                 .textContent || '' };
+  `);
+  check('an overridden endpoint changes the URL the page would send',
+      function () {
+    assert.ok(/\/people(\?|$)/.test(overridden.url),
+        'The request the page would send is ' + overridden.url + '. /Users ' +
+        'is a CONVENTION: a server publishing /people in its ResourceTypes ' +
+        'is conformant, and a client that hard codes the convention meets ' +
+        'it with a 404 on every operation — a failure that names an id ' +
+        'nobody has rather than a path nobody serves.');
+    assert.ok(overridden.endpoints.indexOf('/people') >= 0,
+        'endpointsForRequests() says ' + overridden.endpoints);
+  });
+  check('an override is visibly an override, with what the server said beside '
+      + 'it', function () {
+    assert.ok(overridden.marked,
+        'The overridden row is not marked. A parameter that no longer ' +
+        'matches the server is the one that will produce the next ' +
+        'inexplicable 404, and it has to look different from one that does.');
+    assert.ok(/\/Users/.test(overridden.was),
+        'The row does not say what the server had said, so the override ' +
+        'has replaced the original rather than sitting over it. It says: "' +
+        overridden.was + '"');
+  });
+  // And Restore puts it back — a "you can override this" affordance with no
+  // way back is a trap rather than a feature.
+  await clickAndWait(driver, "btn_scim_config_restore", "scim_config_status",
+      null);
+  const restored = await driver.executeScript(
+      "return document.getElementById('scim_cfg_userEndpoint').value;");
+  check('Restore puts a discovered row back to what the server said',
+      function () {
+    assert.strictEqual(restored, discovered.user,
+        'The endpoint is "' + restored + '" after Restore and the server ' +
+        'had said "' + discovered.user + '". An override with no way back ' +
+        'is a trap rather than a feature.');
+  });
+  // Save, reload, and the value has to still be there — the pane's button
+  // says Save and this is the whole of what that means.
+  await driver.executeScript(`
+    var e = document.getElementById('scim_cfg_groupEndpoint');
+    e.value = '/teams';
+    e.dispatchEvent(new Event('change'));
+  `);
+  await driver.findElement(By.id("btn_scim_config_save")).click();
+  await driver.navigate().refresh();
+  await waitForPageBundle(driver, "the SCIM page");
+  const survived = await driver.executeScript(
+      "return document.getElementById('scim_cfg_groupEndpoint').value;");
+  check('a saved parameter survives a reload', function () {
+    assert.strictEqual(survived, '/teams',
+        'The saved value is "' + survived + '" after a reload, so Save ' +
+        'applied it and did not persist it.');
+  });
+  // Leave the page as the rest of this run expects to find it — the sections
+  // after this one send real requests, and a Group endpoint left at /teams
+  // would 404 every one of them with a message about an id.
+  await driver.executeScript(`
+    var e = document.getElementById('scim_cfg_groupEndpoint');
+    e.value = arguments[0];
+    e.dispatchEvent(new Event('change'));
+  `, discovered.group);
+  await setField(driver, "scim_base_url", scimBaseUrl);
+  log.debug("Leaving theConfigurationPaneCentralizesTheSettings().");
+}
+
+// ---------------------------------------------------------------------------
 // 7. WHAT THE PAGE REMEMBERS — invisible from anywhere but a browser.
 // ---------------------------------------------------------------------------
 async function credentialsAreNotRemembered(driver) {
@@ -1049,6 +1367,356 @@ async function credentialsAreNotRemembered(driver) {
         'The token reappeared: "' + tokenAfterReload + '".');
   });
   log.debug("Leaving credentialsAreNotRemembered().");
+}
+
+// ---------------------------------------------------------------------------
+// 7b. THE EXCHANGE PANE: the headers, and staying inside the pane.
+//
+// TWO THINGS, AND THE SECOND ONE IS A REGRESSION TEST FOR A LAYOUT BUG THAT
+// COULD NOT BE SEEN UNTIL SOMETHING LONG CAME BACK.
+//
+// The readouts here used to be `pre` elements with `overflow: auto` and a
+// max-height, which is the obvious shape and does not work inside a
+// `fieldset`. A pre's min-content width is its longest line; a SCIM response
+// is full of percent-encoded DNs, Location URLs and base64 certificates with
+// no space in them; and a fieldset carries `min-inline-size: min-content` in
+// the UA stylesheet. So the PANE was made wide enough to avoid the overflow
+// and the `overflow: auto` never scrolled anything — measured on the page
+// before this change, one long id took the Exchange pane to 7511px and the
+// document to 7627px in a 1400px viewport.
+//
+// Section 8's existing "the page does not scroll sideways" check could not see
+// it, and that is the point worth keeping: by the time it runs, this file has
+// deleted what it created and every readout holds a short body or nothing.
+// A geometry check that only ever measures an empty box measures nothing, so
+// this one PLANTS the pathological value first.
+// ---------------------------------------------------------------------------
+const A_LONG_UNBROKEN_ID =
+    'uid%3Dalice%2Cou%3Dusers%2Cdc%3Dexample%2Cdc%3Dcom'.repeat(20);
+
+async function theExchangePaneShowsHeadersAndStaysInside(driver) {
+  log.debug("Entering theExchangePaneShowsHeadersAndStaysInside().");
+  log.info("7b. The Exchange pane.");
+  await useRunCredential(driver, 'for the exchange section');
+  await driver.executeScript(`
+    var select = document.getElementById('scim_op');
+    select.value = 'listUsers';
+    select.dispatchEvent(new Event('change'));
+    document.getElementById('scim_query_count').value = '1';
+  `);
+  await clickAndWait(driver, "btn_scim_send", "scim_op_status", null);
+  const headers = await driver.executeScript(`
+    return { request: document.getElementById('scim_exchange_request_headers')
+               .value || '',
+             response: document.getElementById('scim_exchange_response_headers')
+               .value || '' };
+  `);
+  check('the request headers are shown in WIRE form, not as JSON', function () {
+    assert.ok(/^\s*Accept:\s*application\/scim\+json\s*$/m
+        .test(headers.request),
+        'The request headers box says: ' + headers.request.slice(0, 200) +
+        '. What a reader compares these against is a header in an RFC, a ' +
+        'curl -v transcript or a server log, and none of those is quoted, ' +
+        'braced or comma-separated — a JSON object of headers has to be ' +
+        'translated in the head before it can be compared with any of them.');
+  });
+  check('the response headers are shown too', function () {
+    assert.ok(/:/.test(headers.response) && headers.response.trim() !== '',
+        'The response headers box is empty. A browser-direct call can only ' +
+        'read the seven simple headers unless the server exposes more, and ' +
+        'the pane says so — but "restricted" is not "none". It says: ' +
+        headers.response.slice(0, 200));
+  });
+  // Now the pathological body, planted rather than waited for.
+  const geometry = await driver.executeScript(`
+    var ids = ['scim_exchange_request_headers',
+               'scim_exchange_response_headers',
+               'scim_exchange_request_body', 'scim_exchange_response_body',
+               'scim_op_result', 'scim_discovery_output'];
+    for (var i = 0; i < ids.length; i++) {
+      document.getElementById(ids[i]).value =
+        'Location: http://h/scim/v2/Users/' + arguments[0] + '\\n' +
+        JSON.stringify({ id: arguments[0] }, null, 2);
+    }
+    var box = document.getElementById('scim_exchange_response_body');
+    var pane = document.getElementById('pane_exchange');
+    return { doc: document.documentElement.scrollWidth,
+             win: window.innerWidth,
+             paneWidth: Math.round(pane.getBoundingClientRect().width),
+             boxRight: Math.round(box.getBoundingClientRect().right),
+             paneRight: Math.round(pane.getBoundingClientRect().right),
+             scrollW: box.scrollWidth, clientW: box.clientWidth };
+  `, A_LONG_UNBROKEN_ID);
+  check('a response with no space in it does not push the pane past the page',
+      function () {
+    assert.ok(geometry.doc <= geometry.win + 2,
+        'With one long unbroken id in the readouts the document is ' +
+        geometry.doc + 'px wide in a ' + geometry.win + 'px viewport and ' +
+        'the Exchange pane is ' + geometry.paneWidth + 'px. That is the ' +
+        'fieldset\'s min-inline-size: min-content pulling the pane out to ' +
+        'the width of the longest line — every max-width, overflow and ' +
+        'word-break inside it is powerless until the pane itself is allowed ' +
+        'to shrink.');
+    assert.ok(geometry.boxRight <= geometry.paneRight + 2,
+        'The readout ends at ' + geometry.boxRight + 'px and its pane at ' +
+        geometry.paneRight + 'px, so the text is outside the pane it ' +
+        'belongs to.');
+  });
+  check('it scrolls INSIDE its own box instead', function () {
+    assert.ok(geometry.scrollW > geometry.clientW + 50,
+        'The readout is ' + geometry.clientW + 'px wide and its content ' +
+        'scrolls to ' + geometry.scrollW + 'px — if those were equal the ' +
+        'content would have been allowed to size the box, which is the ' +
+        'failure this check exists for rather than the fix.');
+  });
+  // The Expand button: the boxes are deliberately small, so there has to be a
+  // way to open one without dragging it.
+  const expanded = await driver.executeScript(`
+    var box = document.getElementById('scim_exchange_response_body');
+    var before = Math.round(box.getBoundingClientRect().height);
+    document.getElementById('btn_scim_expand_response_body').click();
+    var after = Math.round(box.getBoundingClientRect().height);
+    var label = document.getElementById('btn_scim_expand_response_body').value;
+    document.getElementById('btn_scim_expand_response_body').click();
+    return { before: before, after: after, label: label,
+             back: Math.round(box.getBoundingClientRect().height),
+             backLabel:
+               document.getElementById('btn_scim_expand_response_body').value };
+  `);
+  check('Expand opens a readout and closes it again', function () {
+    assert.ok(expanded.after > expanded.before + 100,
+        'Expand took the box from ' + expanded.before + 'px to ' +
+        expanded.after + 'px, which is not an expansion.');
+    assert.strictEqual(expanded.label, 'Collapse',
+        'The button still says "' + expanded.label + '" after expanding, so ' +
+        'nothing on screen says how to put it back.');
+    assert.strictEqual(expanded.back, expanded.before,
+        'Collapsing left the box at ' + expanded.back + 'px rather than the ' +
+        expanded.before + 'px it started at.');
+    assert.strictEqual(expanded.backLabel, 'Expand');
+  });
+  log.debug("Leaving theExchangePaneShowsHeadersAndStaysInside().");
+}
+
+// ---------------------------------------------------------------------------
+// 8b. THE TOP ROW IS ONE ROW.
+//
+// Connection, Authentication and Discovery are not steps — they are the
+// settings every pane below them reads — so they sit across the top rather
+// than stacked, and the Configuration Parameters pane sits under all three.
+// Asserted by GEOMETRY rather than by the presence of a class, because a grid
+// that has silently fallen back to one column still has every class it had.
+// ---------------------------------------------------------------------------
+async function theTopRowIsOneRow(driver) {
+  log.debug("Entering theTopRowIsOneRow().");
+  log.info("8b. The top row.");
+  await driver.manage().window().setRect({ width: 1400, height: 1000 });
+  const boxes = await driver.executeScript(`
+    var wanted = ['pane_connection', 'pane_auth', 'pane_discovery',
+                  'pane_config'];
+    var out = {};
+    for (var i = 0; i < wanted.length; i++) {
+      var e = document.getElementById(wanted[i]);
+      if (!e) { out[wanted[i]] = null; continue; }
+      var b = e.getBoundingClientRect();
+      out[wanted[i]] = { top: Math.round(b.top + window.scrollY),
+                         left: Math.round(b.left),
+                         width: Math.round(b.width) };
+    }
+    return out;
+  `);
+  check('Connection, Authentication and Discovery are on one row', function () {
+    ['pane_connection', 'pane_auth', 'pane_discovery'].forEach(function (id) {
+      assert.ok(boxes[id], 'There is no ' + id + ' on the page.');
+    });
+    const tops = ['pane_connection', 'pane_auth', 'pane_discovery']
+      .map(function (id) {
+        return boxes[id].top;
+      });
+    assert.ok(Math.max.apply(null, tops) - Math.min.apply(null, tops) <= 4,
+        'The three panes start at ' + tops.join(', ') + 'px, so they are ' +
+        'stacked rather than side by side — which is what a grid looks like ' +
+        'when it has fallen back to one column, with every class still in ' +
+        'place.');
+    assert.ok(boxes.pane_connection.left < boxes.pane_auth.left &&
+        boxes.pane_auth.left < boxes.pane_discovery.left,
+        'The three are on one row and out of order: ' +
+        boxes.pane_connection.left + ', ' + boxes.pane_auth.left + ', ' +
+        boxes.pane_discovery.left + '.');
+  });
+  check('the Configuration Parameters pane spans the row beneath them',
+      function () {
+    assert.ok(boxes.pane_config.top > boxes.pane_discovery.top,
+        'The configuration pane is not below the top row.');
+    assert.ok(boxes.pane_config.width > boxes.pane_connection.width * 2,
+        'The configuration pane is ' + boxes.pane_config.width + 'px wide ' +
+        'against a top-row pane\'s ' + boxes.pane_connection.width + 'px, so ' +
+        'it is in the grid rather than under it.');
+  });
+  log.debug("Leaving theTopRowIsOneRow().");
+}
+
+// ---------------------------------------------------------------------------
+// 8c. EVERY FIELD HAS A TOOLTIP, AND NO TOOLTIP CAN EVER TAKE A CLICK.
+//
+// The tooltips are what let this page's prose come down to a few sentences per
+// pane, so a field without one has simply lost its documentation.
+//
+// THE SECOND HALF IS THE ONE THAT HAS COST RUNS ELSEWHERE IN THIS TREE.
+// bootstrap hides `.tooltiptext` with `visibility: hidden` and NOT with
+// `display: none`, so the span still occupies layout and the browser will
+// report it as the topmost element at a nearby control's position — which
+// Selenium raises as `element click intercepted: ... <span
+// class="tooltiptext">`, at coordinates that look perfectly correct in a
+// screenshot. `pointer-events: none` is what prevents it, in css/common.css
+// and again in css/scim.css.
+//
+// A test that merely clicked the buttons would pass whether or not that rule
+// were there, because a tooltip is only over a control while something is
+// hovering it. So this one MAKES EVERY TOOLTIP VISIBLE FIRST and then asks the
+// browser what is on top of each button — which fails if the rule is removed,
+// and is the difference between testing the fix and testing the weather.
+// ---------------------------------------------------------------------------
+async function tooltipsAreEverywhereAndCannotTakeAClick(driver) {
+  log.debug("Entering tooltipsAreEverywhereAndCannotTakeAClick().");
+  log.info("8c. Tooltips.");
+  const documented = await driver.executeScript(`
+    var out = { fields: 0, missing: [], inert: true, notInert: [] };
+    var controls = document.querySelectorAll(
+        '.scim-pane input, .scim-pane select, .scim-pane textarea');
+    for (var i = 0; i < controls.length; i++) {
+      var e = controls[i];
+      // Buttons carry a title rather than a hover tooltip (a tooltip over the
+      // thing you are about to click is the interception hazard below), and a
+      // status line is an output rather than a field. The radios are covered
+      // by the tooltip on the label they live inside.
+      if (e.type === 'button' || e.type === 'radio') { continue; }
+      if (e.className.indexOf('scim-status') >= 0) { continue; }
+      out.fields += 1;
+      // Three shapes, and each is the markup as written rather than a loose
+      // search: a wide net here would let a NEIGHBOUR's tooltip stand in for
+      // a missing one, which is how this check would come to pass vacuously.
+      //   1. the label wrapper or the box header immediately BEFORE it;
+      //   2. an ancestor that is itself the tooltip (a checkbox inside its
+      //      own label);
+      //   3. the configuration table's row, where the tooltip is on the
+      //      parameter's name in the first cell.
+      var before = e.previousElementSibling;
+      var described = !!(before && (before.querySelector('.tooltiptext') ||
+          (before.className &&
+           String(before.className).indexOf('tooltiptext') >= 0)));
+      var wrapper = e.parentNode;
+      while (!described && wrapper && wrapper !== document.body) {
+        if (wrapper.className &&
+            String(wrapper.className).indexOf('tooltip') >= 0 &&
+            wrapper.querySelector('.tooltiptext')) {
+          described = true;
+        }
+        if (wrapper.tagName === 'TR' && wrapper.querySelector('.tooltiptext')) {
+          described = true;
+        }
+        wrapper = wrapper.parentNode;
+      }
+      if (!described && !e.getAttribute('title')) {
+        out.missing.push(e.id || e.name || e.tagName);
+      }
+    }
+    var tips = document.querySelectorAll('.tooltiptext');
+    for (var t = 0; t < tips.length; t++) {
+      if (window.getComputedStyle(tips[t]).pointerEvents !== 'none') {
+        out.inert = false;
+        out.notInert.push(tips[t].textContent.slice(0, 40));
+      }
+    }
+    out.tips = tips.length;
+    return out;
+  `);
+  check('every field on the page carries a tooltip', function () {
+    assert.ok(documented.fields >= 20,
+        'Only ' + documented.fields + ' fields were examined, so this check ' +
+        'is close to vacuous — the selector has stopped matching.');
+    assert.deepStrictEqual(documented.missing, [],
+        'These fields have no tooltip and no title: ' +
+        documented.missing.join(', ') + '. The tooltips are what let this ' +
+        'page\'s prose come down to a few sentences per pane, so a field ' +
+        'without one has lost its documentation rather than merely its ' +
+        'decoration.');
+  });
+  check('no tooltip is a pointer target', function () {
+    assert.ok(documented.tips >= 20,
+        'Only ' + documented.tips + ' tooltips are on the page.');
+    assert.ok(documented.inert,
+        'These tooltips have pointer-events other than none: ' +
+        documented.notInert.join(' | ') + '. bootstrap hides .tooltiptext ' +
+        'with visibility:hidden rather than display:none, so the span still ' +
+        'occupies layout and becomes the topmost element at a nearby ' +
+        'control\'s position — "element click intercepted", at coordinates ' +
+        'that look correct in a screenshot.');
+  });
+  // Now the adversarial half: every tooltip visible at once, and then ask the
+  // browser what is on top of each button. Undone at the end, because the
+  // stylesheet check that follows measures the page's width.
+  const shadowed = await driver.executeScript(`
+    var style = document.createElement('style');
+    style.id = 'scim-tooltip-stress';
+    style.textContent = '.tooltiptext { visibility: visible !important;' +
+        ' opacity: 1 !important; }';
+    document.head.appendChild(style);
+    var out = [];
+    var buttons = document.querySelectorAll(
+        '.scim-btn, .scim-tab, input[type="checkbox"], select');
+    for (var i = 0; i < buttons.length; i++) {
+      var e = buttons[i];
+      var b = e.getBoundingClientRect();
+      if (b.width === 0 || b.height === 0) { continue; }
+      e.scrollIntoView({ block: 'center' });
+      b = e.getBoundingClientRect();
+      var top = document.elementFromPoint(b.left + b.width / 2,
+                                          b.top + b.height / 2);
+      if (top && top !== e && !e.contains(top) &&
+          top.className && String(top.className).indexOf('tooltiptext') >= 0) {
+        out.push((e.id || e.value || e.tagName) + ' is under "' +
+            top.textContent.slice(0, 40) + '"');
+      }
+    }
+    return out;
+  `);
+  check('with EVERY tooltip on screen at once, none of them covers a control',
+      function () {
+    assert.deepStrictEqual(shadowed, [],
+        'These controls are behind a tooltip: ' + shadowed.join('; ') + '. ' +
+        'This is the state a Selenium click puts the page in — the mouse ' +
+        'moves to the control and whatever it passes over on the way lights ' +
+        'up — and it is where "element click intercepted" comes from.');
+  });
+  // And a real click on each of the buttons a test presses, in that state.
+  const clicks = [];
+  for (const id of ['btn_scim_spc', 'btn_scim_resource_types',
+                    'btn_scim_schemas', 'btn_scim_probe_auth',
+                    'btn_scim_config_save', 'btn_scim_config_restore',
+                    'btn_scim_gen_users', 'btn_scim_plan',
+                    'scim_tab_discovery_document',
+                    'scim_tab_discovery_described']) {
+    try {
+      const element = await driver.findElement(By.id(id));
+      await driver.executeScript(
+          "arguments[0].scrollIntoView({ block: 'center' });", element);
+      await element.click();
+    } catch (e) {
+      clicks.push(id + ': ' + e.message.split("\n")[0]);
+    }
+  }
+  check('and every button a test presses is still clickable in it',
+      function () {
+    assert.deepStrictEqual(clicks, [],
+        'These clicks were refused with every tooltip visible: ' +
+        clicks.join('; ') + '.');
+  });
+  await driver.executeScript(`
+    var style = document.getElementById('scim-tooltip-stress');
+    if (style) { style.parentNode.removeChild(style); }
+  `);
+  log.debug("Leaving tooltipsAreEverywhereAndCannotTakeAClick().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1169,7 +1837,12 @@ async function test() {
     await theHobaKeyIsGeneratedAndSigns(driver);
     await aScenarioRunsEndToEnd(driver);
     await aNegativeScenarioFinishesGreen(driver);
+    await theDiscoveryPaneHasBothViews(driver);
+    await theConfigurationPaneCentralizesTheSettings(driver);
     await credentialsAreNotRemembered(driver);
+    await theExchangePaneShowsHeadersAndStaysInside(driver);
+    await theTopRowIsOneRow(driver);
+    await tooltipsAreEverywhereAndCannotTakeAClick(driver);
     await everyStyleClassIsDefined(driver);
     await theConsoleIsClean(driver);
     log.info(checks + " checks passed.");
@@ -1179,7 +1852,7 @@ async function test() {
         log.warn("  - " + why);
       });
     }
-    assert.ok(checks >= 40,
+    assert.ok(checks >= 55,
         'Only ' + checks + ' checks ran; a section has stopped being called.');
     log.info("Test completed successfully.");
   } finally {

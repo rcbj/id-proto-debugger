@@ -121,7 +121,8 @@ async function startKdc() {
   log.debug("Entering startKdc().");
   const modulePath = stsModule("krb5_kdc.js");
   if (!modulePath) {
-    throw new Error("could not find the mock KDC (sts/krb5_kdc.js). The sts/ " +
+    throw new Error("could not find the mock KDC (sts/kerberos/krb5_kdc.js). " +
+        "The sts/ " +
         "directory is a " +
       "SUBMODULE — run `git submodule update --init sts`, and note that an " +
           "uninitialised " +

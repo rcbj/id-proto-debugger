@@ -16,6 +16,7 @@ set -x
 # Usage:
 #   ./docker-run-tests.sh
 #   CONFIG_FILE=./env/docker-tests.js ./docker-run-tests.sh
+#   STS_LOG_LEVEL=info ./docker-run-tests.sh   # quieten the mock STS; see below
 #
 
 # CONFIG_FILE selects the api/client build-time config baked into their images.
@@ -32,6 +33,43 @@ set -x
 # no SAML env exports are needed (or reachable) from this host launcher.
 CONFIG_FILE="${CONFIG_FILE:-./env/docker-tests.js}"
 export CONFIG_FILE
+
+# ---------------------------------------------------------------------------
+# THE MOCK STS'S LOG LEVEL, exposed here so a run can turn it down.
+#
+# `STS_LOG_LEVEL` is a setting of the mock (see sts/common/config.js), and an
+# environment variable there OUTRANKS the appconfig file `CONFIG_FILE` selects
+# — so this one variable overrides whatever env/local.js or env/docker-tests.js
+# says without either file being edited. The compose files pass it through to
+# every sts service in the BARE form, which means "only if the shell that ran
+# this launcher has it": unset here, unset in the container, and the appconfig
+# file's own level applies exactly as it did before this existed.
+#
+# WHY YOU WOULD SET IT. The mock logs every request, every response and every
+# token or assertion both before and after signing, and it does that at DEBUG,
+# which is its default and the point of a mock — when a test fails, that log is
+# the only record of what was issued. It is also expensive: it is about half of
+# that service's CPU, and a benchmark of it wrote 156MB in sixteen seconds. With
+# several test jobs driving ONE instance at once, `STS_LOG_LEVEL=info` roughly
+# doubles what that instance can answer.
+#
+# DEBUG IS DELIBERATELY STILL THE DEFAULT. Turning it down trades the record of
+# what the mock did for throughput, and that is a choice a run makes rather than
+# one that should be made for it.
+#
+#   STS_LOG_LEVEL=info ./docker-run-tests.sh
+#
+# EXPORTED ONLY WHEN IT HAS A VALUE, and the guard is not decoration. `export`
+# on an unset variable does leave it unset, so the `if` changes nothing today —
+# it is here to stop this being "simplified" later into a plain assignment with
+# an empty default. An empty STS_LOG_LEVEL is not a harmless default: bunyan
+# throws `unknown level name: ""` while the mock is still loading its modules,
+# so the service does not start, and on the containerized stack that arrives as
+# a compose healthcheck timeout rather than as anything naming a log level.
+# ---------------------------------------------------------------------------
+if [ -n "${STS_LOG_LEVEL:-}" ]; then
+  export STS_LOG_LEVEL
+fi
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose-run-tests.yml}"
 

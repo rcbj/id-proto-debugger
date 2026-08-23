@@ -499,6 +499,68 @@ function normalizeBaseUrl(url) {
   return text;
 }
 
+// ---------------------------------------------------------------------------
+// THE RESOURCE ENDPOINT, WHICH IS DISCOVERED AND NOT ASSUMED.
+//
+// Every path template above carries `/Users` or `/Groups`, and both are
+// conventions rather than requirements: RFC 7643 section 6 defines a
+// ResourceType's `endpoint` as "the resource's HTTP-addressable endpoint
+// relative to the Base URL", RFC 7644 section 4 has the server publish one per
+// type, and a server answering on `/user` is conformant. A client that hard
+// codes the convention meets that server with a 404 on every operation — a
+// failure that names an id nobody has rather than a path nobody serves.
+//
+// So `buildRequest` takes an OPTIONAL `endpoints` map, `{ User: '/Users',
+// Group: '/Groups' }`, which the page fills from the ResourceTypes document
+// and lets the user override in the Configuration Parameters pane. Absent, or
+// naming the default, nothing changes — the swap is a prefix substitution on
+// the rows that name a resource type, and the discovery, `/.search`, `/Bulk`
+// and `/Me` paths carry none and are left exactly as they are.
+// ---------------------------------------------------------------------------
+var DEFAULT_ENDPOINTS = { User: '/Users', Group: '/Groups' };
+
+function normalizeEndpoint(text) {
+  log.debug("Entering normalizeEndpoint().");
+  var value = String(text === undefined || text === null ? '' : text).trim();
+  if (value === '') {
+    log.debug("Leaving normalizeEndpoint(). Empty.");
+    return '';
+  }
+  if (value.charAt(0) !== '/') {
+    value = '/' + value;
+  }
+  while (value.length > 1 && value.charAt(value.length - 1) === '/') {
+    value = value.slice(0, value.length - 1);
+  }
+  log.debug("Leaving normalizeEndpoint(). " + value);
+  return value;
+}
+
+function resourcePath(row, endpoints) {
+  log.debug("Entering resourcePath(). operation=" + row.id);
+  var fallback = DEFAULT_ENDPOINTS[row.resourceType || ''];
+  var wanted = (endpoints && row.resourceType)
+    ? normalizeEndpoint(endpoints[row.resourceType]) : '';
+  if (!fallback || wanted === '' || wanted === fallback) {
+    log.debug("Leaving resourcePath(). The default.");
+    return row.path;
+  }
+  if (row.path.indexOf(fallback) !== 0) {
+    // A row naming a resource type whose path does not begin with that
+    // type's endpoint. There is no such row today, and one added later is a
+    // defect in the catalogue rather than an override to apply blindly — a
+    // silent substitution here would produce a URL nobody wrote.
+    log.warn('the ' + row.id + ' operation names the ' + row.resourceType +
+        ' resource type but its path (' + row.path + ') does not begin with ' +
+        fallback + ', so the discovered endpoint was not applied');
+    log.debug("Leaving resourcePath(). Not a prefix.");
+    return row.path;
+  }
+  var swapped = wanted + row.path.slice(fallback.length);
+  log.debug("Leaving resourcePath(). " + swapped);
+  return swapped;
+}
+
 // The one place an id becomes a path segment. See the header: exactly once,
 // and nowhere else.
 function idPathSegment(id) {
@@ -529,6 +591,9 @@ function queryString(params) {
 // Returns a plain object — method, url, headers, body — and performs nothing.
 // The page hands it to `fetch` or to the api; `tests/scim_engine.js` reads it.
 //
+// `endpoints` is optional and is the discovered `/Users` / `/Groups` override
+// described above; absent, the catalogue's own paths are used unchanged.
+//
 // `body` is returned as an OBJECT and not as a string, and the serialization
 // happens at the edge. Two reasons: the api's proxy wants JSON it can forward
 // as JSON, and a test asserting the shape of a PatchOp should not have to parse
@@ -543,7 +608,7 @@ function buildRequest(spec) {
     throw new Error('Unknown SCIM operation: ' + (spec && spec.operation));
   }
   var base = normalizeBaseUrl(spec.baseUrl);
-  var path = row.path;
+  var path = resourcePath(row, spec.endpoints);
   if (path.indexOf('{id}') >= 0) {
     if (spec.id === undefined || String(spec.id) === '') {
       log.debug("Leaving buildRequest(). This operation needs an id.");
@@ -1688,6 +1753,9 @@ module.exports = {
   operationsInGroup: operationsInGroup,
   authScheme: authScheme,
   normalizeBaseUrl: normalizeBaseUrl,
+  DEFAULT_ENDPOINTS: DEFAULT_ENDPOINTS,
+  normalizeEndpoint: normalizeEndpoint,
+  resourcePath: resourcePath,
   idPathSegment: idPathSegment,
   queryString: queryString,
   buildRequest: buildRequest,

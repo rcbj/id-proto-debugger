@@ -143,11 +143,18 @@ COPY tests/bbs_vectors.json ./
 # The STS's copy comes out of the sts/ SUBMODULE
 # (https://github.com/rcbj/mock-sts.git) — the one place outside the compose files
 # where this repository reaches into it. An uninitialised submodule fails this
-# build with "COPY sts/bbs2023.js: not found", which says nothing about the cause;
-# the launchers run requireMockStsCheckout() (common/common.sh) before building so
-# it is explained before it happens.
+# build with "COPY sts/common/vendored/bbs2023.js: not found", which says nothing
+# about the cause; the launchers run requireMockStsCheckout() (common/common.sh)
+# before building so it is explained before it happens.
+#
+# NOTE THE PATH. Every module in that repository sat in its root until mock-sts
+# 0f986b3 ("Reorganizing source code."), which moved them into subdirectories —
+# so every `COPY sts/…` line in this file names a folder now, and a bump across
+# that commit fails the build on the first of them. This one is still copied
+# FLAT and renamed, because it is loaded on its own and has no relative
+# requires; the ones below cannot be, and say why.
 COPY client/src/bbs2023.js ./
-COPY sts/bbs2023.js ./sts_bbs2023.js
+COPY sts/common/vendored/bbs2023.js ./sts_bbs2023.js
 COPY client/src/contexts ./contexts
 # The wallet's side of OID4VCI, loaded directly by tests/ldp_vc_issuance.js so
 # that it covers what the PAGE does with a Credential Response and not only what
@@ -296,15 +303,25 @@ COPY tests/captures ./captures
 # krb5_as_exchange.js and krb5_tgs_ap.js can start them in-process and drive the real
 # exchanges with no docker and no running service.
 #
-# They come in under sts/ rather than flat because krb5_kdc.js requires ./app and
-# ./helpers — the submodule's own modules — and those resolve relative to where the
-# file sits. Flattening it would break those requires in a way that reads as a missing
-# dependency rather than a misplaced file.
+# They come in under sts/ rather than flat because krb5_kdc.js requires
+# ../common/app and ../common/helpers — the submodule's own modules — and those
+# resolve relative to where the file sits. Flattening it would break those
+# requires in a way that reads as a missing dependency rather than a misplaced
+# file.
+#
+# **AND THE DIRECTORY STRUCTURE IS MIRRORED, not flattened into ./sts/.** Until
+# mock-sts 0f986b3 ("Reorganizing source code.") every module in that repository
+# was in its root, so `COPY sts/krb5_kdc.js … ./sts/` put a file next to the
+# `./app` it asked for. After it, krb5_kdc.js asks for `../common/app` — so a
+# copy landing flat in ./sts/ would look for tests/common/app.js, a directory
+# belonging to a different repository, and fail with "Cannot find module
+# '../common/app'". Each COPY below therefore names the mock's folder on BOTH
+# sides.
 #
 # **This COPY can only exist once the sts/ gitlink points at a commit containing these
-# files.** Added before the bump it fails the build with "COPY sts/krb5_kdc.js: not
-# found", which says nothing about submodules; the launchers call
-# requireMockStsCheckout() (common/common.sh) for the same reason.
+# files.** Added before the bump it fails the build with "COPY
+# sts/kerberos/krb5_kdc.js: not found", which says nothing about submodules; the
+# launchers call requireMockStsCheckout() (common/common.sh) for the same reason.
 # The set below is the TRANSITIVE closure of what krb5_kdc.js and krb5_service.js
 # require, computed rather than guessed: they pull in app.js (the shared express app,
 # because requiring a module registers its routes) and helpers.js, and helpers.js pulls
@@ -316,15 +333,26 @@ COPY tests/captures ./captures
 # If this set is ever short, the failure is "Cannot find module './bbs2023.js'" from
 # inside the submodule, which names the file but not the reason; tests/krb5_as_exchange.js
 # catches that and says which COPY is missing.
-COPY sts/krb5_kdc.js sts/krb5_service.js sts/krb5_principals.js ./sts/
-COPY sts/app.js sts/helpers.js sts/bbs2023.js ./sts/
+COPY sts/kerberos/krb5_kdc.js sts/kerberos/krb5_service.js sts/kerberos/krb5_principals.js ./sts/kerberos/
+COPY sts/common/app.js sts/common/helpers.js ./sts/common/
+COPY sts/common/vendored/bbs2023.js ./sts/common/vendored/
+# config_file.js is what the reorganisation itself made necessary, and it is
+# required at LOAD by both helpers.js and config.js below. Fourteen modules in
+# that service do `require(process.env.CONFIG_FILE)` for their log level, and a
+# relative CONFIG_FILE ('./env/test.js') used to resolve against the package
+# root because every module was IN the root; after the move it would resolve
+# against common/, kerberos/ and so on. This module normalises it in one place.
+# Without it the four in-process mock-KDC jobs die at load with "Cannot find
+# module './config_file'" — from inside a file this image HAS, which is the
+# shape every entry in this section has taken.
+COPY sts/common/config_file.js ./sts/common/
 # admin_stats.js is the recomputation that paragraph asks for, and the one that
 # proves it is not optional: the mock's admin console grew a counters module,
 # app.js/krb5_kdc.js/krb5_service.js all require it, and this image did not
 # carry it — so all four in-process mock-KDC jobs (krb5_as_exchange,
 # krb5_tgs_ap, krb5_spnego_http, krb5_delegation_interop) died at load with
 # "Cannot find module './admin_stats'" while every host run stayed green.
-COPY sts/admin_stats.js ./sts/
+COPY sts/common/admin_stats.js ./sts/common/
 # audit.js is the THIRD recomputation, and it is admin_stats.js's own new
 # require — the counters module grew an audit log beside it, so the closure
 # above moved without any of these COPY lines changing. Missing, the four
@@ -332,7 +360,7 @@ COPY sts/admin_stats.js ./sts/
 # and a require stack naming sts/admin_stats.js, which is a file this image
 # HAS: the line to add is never the one the message names. It requires only
 # ./helpers and ./config, both already here, so it closes the set again.
-COPY sts/audit.js ./sts/
+COPY sts/common/audit.js ./sts/common/
 # config.js is the SECOND such recomputation and it sits UNDER helpers.js rather
 # than beside it: the mock's settings moved out of forty-odd `process.env.X ||
 # default` expressions into one table, and helpers.js, krb5_kdc.js,
@@ -345,7 +373,7 @@ COPY sts/audit.js ./sts/
 # carries none of the mock's settings — so every value falls through to the
 # built-in default, which is exactly what these jobs had before the table
 # existed, and the KRB5_* variables they set still win over it.
-COPY sts/config.js ./sts/
+COPY sts/common/config.js ./sts/common/
 # THE FOURTH recomputation, and it arrived the way all of them do: not by any
 # line here changing, but by the sts/ gitlink moving. Bumping the submodule to
 # the mock-sts commit that carries RFC 9700 support gave app.js a require on
@@ -362,12 +390,13 @@ COPY sts/config.js ./sts/
 # sts/*.js copied here, follow each `require("./x")`, and require the result to
 # be a subset of what is copied. Run it after every submodule bump — the set
 # moves on the mock's schedule, not on this file's.
-COPY sts/applications.js sts/client_auth.js sts/mtls.js sts/oauth2_bcp.js ./sts/
-COPY sts/krb5_primitives.js sts/krb5_asn1.js sts/krb5_crypto.js sts/krb5_messages.js sts/krb5_gss.js ./sts/
+COPY sts/common/applications.js ./sts/common/
+COPY sts/oauth-oidc/client_auth.js sts/oauth-oidc/mtls.js sts/oauth-oidc/oauth2_bcp.js ./sts/oauth-oidc/
+COPY sts/kerberos/krb5_primitives.js sts/kerberos/krb5_asn1.js sts/kerberos/krb5_crypto.js sts/kerberos/krb5_messages.js sts/kerberos/krb5_gss.js ./sts/kerberos/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build
 # until the sts/ gitlink points at a mock-sts commit that has both files.
-COPY sts/krb5_ndr.js sts/krb5_pac.js ./sts/
+COPY sts/kerberos/krb5_ndr.js sts/kerberos/krb5_pac.js ./sts/kerberos/
 # SPNEGO: the mock's protected page (spnego.js) and the RFC 4178 codec it and
 # the browser share (krb5_spnego.js, vendored). Both are loaded by
 # tests/krb5_spnego_http.js, which requires spnego.js to REGISTER its routes on
@@ -377,8 +406,9 @@ COPY sts/krb5_ndr.js sts/krb5_pac.js ./sts/
 #
 # **These two COPY lines can only exist once the sts/ gitlink points at a
 # commit containing both files.** Added before the bump the image build fails
-# with "COPY sts/spnego.js: not found", which says nothing about submodules.
-COPY sts/spnego.js sts/krb5_spnego.js ./sts/
+# with "COPY sts/kerberos/spnego.js: not found", which says nothing about
+# submodules.
+COPY sts/kerberos/spnego.js sts/kerberos/krb5_spnego.js ./sts/kerberos/
 # And the submodule's own env/, which is NOT optional: helpers.js does
 # require(process.env.CONFIG_FILE), and a RELATIVE CONFIG_FILE ('./env/test.js')
 # resolves against the requiring file's own directory — so it means sts/env/test.js
@@ -398,7 +428,7 @@ COPY sts/env ./sts/env
 # lazily (its only use is already lazy — `if (!bbsKeys) ... generateKeyPair()`), or
 # bbs2023.js could read its contexts on first use. Recorded here rather than done,
 # because it is a change to a separate repository for a test-plumbing reason.
-COPY sts/contexts ./sts/contexts
+COPY sts/common/vendored/contexts ./sts/common/vendored/contexts
 # The Kerberos relay's modules, loaded directly by tests/api_krb5_relay.js: it
 # drives them rather than going over HTTP, so every refusal can be checked with no
 # running service. Copied FLAT, like api/ssrf_guard.js below, and the test resolves
@@ -453,14 +483,15 @@ COPY client/src/cbor.js client/src/cose.js client/src/webauthn.js ./
 # way in because its basename collides with the client's module copied on the
 # line above — the same arrangement sts/bbs2023.js is in, and for the same
 # reason. It comes out of the sts/ SUBMODULE, so an uninitialised checkout fails
-# this build with "COPY sts/webauthn.js: not found", which says nothing about the
+# this build with "COPY sts/authn/webauthn.js: not found", which says nothing
+# about the
 # cause; requireMockStsCheckout() in common/common.sh explains it first.
 # NOT copied flat, unlike sts/bbs2023.js above: this module has a relative
 # require of its own, so it goes in a directory of its own and keeps its name.
 # (It falls back to a silent logger when ./helpers is absent, which it is here —
 # staging the service's helpers.js instead would drag in its CONFIG_FILE, read
 # relative to ITS directory, and the service's dependencies with it.)
-COPY sts/webauthn.js ./sts/webauthn.js
+COPY sts/authn/webauthn.js ./sts/authn/webauthn.js
 COPY tests/webauthn_decode.js tests/webauthn_vectors.json tests/webauthn_analyzer_page.js tests/webauthn_lab_page.js tests/webauthn_cross_impl.js tests/webauthn_oidc_mfa.js tests/webauthn_extension.js ./
 # The browser extension's CI build, side-loaded by tests/webauthn_extension.js.
 # It is GENERATED, not committed: build.js stamps the version in and bakes the
@@ -500,7 +531,8 @@ COPY tests/schemas ./schemas
 # own in this image — it drives the running service over HTTP, exactly as
 # tests/sts_metadata.js does — but it is COPYd on a line of its own so that the
 # reason is somewhere: its basename is also a MODULE name in the mock
-# (sts/admin_api.js), and the sts/ files above land in ./sts/ rather than flat
+# (sts/mgmt-api/admin_api.js), and the sts/ files above land in ./sts/<dir>/
+# rather than flat
 # precisely so that a pair like that cannot overwrite each other. Adding it to
 # the flat list without noticing would be the collision testsImageHasNoColliding
 # Filenames() exists to catch.
@@ -573,6 +605,18 @@ COPY tests/run-report.js ./
 COPY client/src/scim_client.js client/src/scim_scenarios.js ./
 COPY api/scim_proxy.js ./
 COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
+# ---------------------------------------------------------------------------
+# The JWKS page. Named jwks_PAGE.js for the same reason as the three above:
+# client/src/jwks.js is bundle source and could one day be copied here, and two
+# files of one name means whichever COPY ran last wins.
+#
+# The page had no test at all until 2026-08-23. It was found by the coverage
+# report rather than by a failure — the bundle is built and is in the
+# Dockerfile's COVERAGE list, so every check that guards the BUILD passed; the
+# file was simply absent from the report, because Istanbul reports on files
+# that were loaded and nothing had ever loaded this one.
+# ---------------------------------------------------------------------------
+COPY tests/jwks_page.js ./
 COPY common/tests.js /usr/src/common/tests.js
 # The SAML SP key pair reader. The pair itself is generated per run inside the
 # container (common.sh generateSpKeyPair) and passed through the environment —

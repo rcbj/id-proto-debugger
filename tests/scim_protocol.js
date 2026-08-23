@@ -314,6 +314,35 @@ async function ldapSearch(base, filter, attributes) {
   return entries;
 }
 
+// The other two directions of that channel, used by section 4b only: it has to
+// put an entry in the tree that SCIM could not have created, so it goes in the
+// way the mock's own TLS listener puts one there — over LDAP, around SCIM
+// entirely. Both assert the LDAP result code rather than only the transport,
+// because `ok: false` with HTTP 200 is what a refusal from the directory looks
+// like and a test that reads only the status treats one as a success.
+async function ldapAdd(dn, attributes) {
+  log.debug("Entering ldapAdd(). dn=" + dn);
+  const answer = await postJson(apiUrl + "/ldap/add", {
+    url: ldapUrl, bindDn: bindDn, password: ldapPassword,
+    dn: dn, attributes: attributes
+  });
+  if (answer.status !== 200 || !(answer.payload && answer.payload.ok)) {
+    throw new Error("Adding " + dn + " failed: HTTP " + answer.status + " " +
+        JSON.stringify(answer.payload).slice(0, 300));
+  }
+  log.debug("Leaving ldapAdd().");
+}
+
+async function ldapDelete(dn) {
+  log.debug("Entering ldapDelete(). dn=" + dn);
+  const answer = await postJson(apiUrl + "/ldap/delete", {
+    url: ldapUrl, bindDn: bindDn, password: ldapPassword, dn: dn
+  });
+  const ok = answer.status === 200 && answer.payload && answer.payload.ok;
+  log.debug("Leaving ldapDelete(). " + (ok ? "Gone." : "It did not go."));
+  return ok;
+}
+
 // An entry's attribute, case-insensitively, as an ARRAY. ldap_server.js hands
 // attributes back canonically spelled while the store holds them lower-cased,
 // and a caller may have either in hand — the same reason the mock's own
@@ -993,6 +1022,143 @@ async function listingAndFiltering() {
   }
   log.debug("Leaving listingAndFiltering().");
   return page;
+}
+
+// ---------------------------------------------------------------------------
+// 4b. ONE ENTRY THAT SCIM COULD NOT HAVE CREATED MUST NOT HIDE EVERY OTHER
+// PERSON.
+//
+// `userName` is the ONE required attribute in RFC 7643's User schema, and the
+// mock is built on scimmy, which enforces that on the way OUT as well as in. A
+// list maps every person in `ou=users` in a single pass, so a resource that
+// cannot produce a `userName` does not come back as a bad row — it throws, and
+// the whole list is a 400 naming an attribute and naming no entry, on a request
+// that had nothing wrong with it.
+//
+// **THE ENTRY THAT DOES THAT IS ORDINARY AND THIS SERVICE MAKES ONE ITSELF.**
+// The mock's mutual-TLS listener records the client certificate it was shown by
+// seeding a directory entry for the subject — named `cn=<CN>,ou=users`, with no
+// `uid` on it, because the certificate is the identity. So on 2026-08-23 a
+// single mutual-TLS connection made by tests/api_tls.js left `cn=Mutual TLS
+// Client,ou=users` behind, and from then until somebody deleted it every
+// `GET /Users` in this suite answered:
+//
+//     400 invalidValue — Required attribute 'userName' is missing
+//
+// which reads exactly like a bad request and names neither TLS nor the entry.
+// The suite runs its jobs in a POOL, so whether the SCIM jobs go before or
+// after the TLS one is a coin toss — which is what makes this a flake rather
+// than a failure, and what makes it worth a test rather than a note.
+//
+// This drives the mapping and not the producer: the entry is added over LDAP,
+// around SCIM entirely, which is both quicker than presenting a certificate and
+// a better statement of the rule — the directory enforces no schema on purpose,
+// so an `ldapadd` may put an entry with no `uid` under `ou=users` at any time
+// and SCIM has to cope rather than to be lucky.
+// ---------------------------------------------------------------------------
+async function anEntryWithNoUidStillMaps(population) {
+  log.debug("Entering anEntryWithNoUidStillMaps().");
+  log.info("4b. A person entry with no uid.");
+  // The RDN VALUE is what this entry's userName has to become, so it is the
+  // name asserted below. Prefixed like everything else this file creates, so
+  // section 10's sweep reports it if a failure here leaves it behind.
+  const rdnValue = prefix + "nouid";
+  const dn = "cn=" + rdnValue + "," + usersDn;
+  await ldapAdd(dn, {
+    objectClass: ["top", "person", "organizationalPerson", "inetOrgPerson"],
+    cn: [rdnValue],
+    sn: ["Mock"],
+    displayName: [rdnValue + " (client certificate)"]
+  });
+  try {
+    // THE SETUP IS ASSERTED, because everything below it passes trivially
+    // against an entry that has a `uid` after all — and something putting one
+    // there (a fold in the directory, a default in the api's client) is
+    // exactly the kind of change that would turn this section into a test of
+    // nothing while it went on reporting OK.
+    const seeded = await ldapSearch(usersDn, "(cn=" + rdnValue + ")",
+        ["cn", "uid"]);
+    check('the entry really is there and really has NO uid', function () {
+      assert.strictEqual(seeded.length, 1,
+          'The search for (cn=' + rdnValue + ') under ' + usersDn +
+          ' found ' + seeded.length + ' entry(ies).');
+      assert.deepStrictEqual(attr(seeded[0], "uid"), [],
+          'The entry carries uid=' + attr(seeded[0], "uid").join(', ') +
+          '. This section is about the entries that have none — a client ' +
+          'certificate\'s — so with a uid on it every check below would ' +
+          'pass without exercising anything.');
+    });
+
+    const list = await scimCall({ operation: 'listUsers',
+        query: { count: '200' } });
+    check('an UNFILTERED list still answers, with that entry in the tree',
+        function () {
+      assertAnswered(list, 'the unfiltered list');
+      assert.strictEqual(list.status, 200,
+          'GET /Users answered ' + list.status + ' ' + list.scimType + ': ' +
+          list.detail + '. One entry under ' + usersDn + ' has no uid, and ' +
+          'if that is what this is, the mapping threw part-way through the ' +
+          'list and took every other person with it — the failure names an ' +
+          'attribute, the cause is an entry, and the request was fine.');
+    });
+
+    const others = await scimCall({ operation: 'listUsers',
+        query: { filter: 'userName sw "' + prefix + 'page."', count: '50' } });
+    check('the five users from section 4 are still readable beside it',
+        function () {
+      assertAnswered(others, 'the filtered list');
+      assert.strictEqual(Number(others.body.totalResults),
+          (population || []).length,
+          'The five users section 4 created answered ' +
+          others.body.totalResults + ' this time. A list is one pass over ' +
+          'the whole container, so an entry it cannot map is not one row ' +
+          'missing — it is every row missing.');
+    });
+
+    const mine = await scimCall({ operation: 'listUsers',
+        query: { filter: 'userName eq "' + rdnValue + '"' } });
+    check('the entry itself is a User whose userName is its RDN value',
+        function () {
+      assertAnswered(mine, 'the filter on the RDN value');
+      assert.strictEqual(mine.status, 200,
+          'It answered ' + mine.status + ': ' + mine.detail);
+      assert.strictEqual(Number(mine.body.totalResults), 1,
+          'The filter userName eq "' + rdnValue + '" matched ' +
+          mine.body.totalResults + '. The RDN value is what the directory ' +
+          'itself calls this person — it is what existingUserEntry() ' +
+          'matches a typed name against — so a SCIM create of that name ' +
+          'collides with this entry, and SCIM reporting them under any ' +
+          'other name would be this service disagreeing with itself about ' +
+          'who is already here.');
+      assert.strictEqual(mine.body.Resources[0].id, dn,
+          'The resource that came back has id ' + mine.body.Resources[0].id +
+          ' and the entry is at ' + dn + '.');
+    });
+
+    const read = await scimCall({ operation: 'readUser', id: dn });
+    check('and it can be read back one resource at a time', function () {
+      assertAnswered(read, 'the read');
+      assert.strictEqual(read.status, 200,
+          'GET /Users/{id} on it answered ' + read.status + ' ' +
+          read.scimType + ': ' + read.detail);
+      assert.strictEqual(read.body.userName, rdnValue,
+          'It came back as "' + read.body.userName + '" and the list called ' +
+          'it "' + rdnValue + '". One resource has one userName however it ' +
+          'is fetched.');
+    });
+  } finally {
+    // In a `finally` because the checks above throw on failure and an entry
+    // left in `ou=users` is not this section's business alone: while it is
+    // there it is exactly the state that broke every OTHER SCIM job in the
+    // pool, which would turn one failure here into several elsewhere naming
+    // something else.
+    const gone = await ldapDelete(dn);
+    if (!gone) {
+      log.warn("  4b left " + dn + " behind — it could not be deleted. " +
+               "Section 10's sweep will report it.");
+    }
+  }
+  log.debug("Leaving anEntryWithNoUidStillMaps().");
 }
 
 // ---------------------------------------------------------------------------
@@ -2047,6 +2213,7 @@ async function test() {
   const subject = await aFullUserRoundTrips();
   await replaceAndModify(subject);
   const population = await listingAndFiltering();
+  await anEntryWithNoUidStillMaps(population);
   await groupsAndMembership(population);
   await searchAndBulk();
   await everyRefusalIsAnAnswer();

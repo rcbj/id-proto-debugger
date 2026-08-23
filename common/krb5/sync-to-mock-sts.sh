@@ -66,10 +66,44 @@ if [[ ! -f "${target}/package.json" ]]; then
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# WHERE IN THE MOCK THE COPIES GO, which stopped being "the root" at mock-sts
+# 0f986b3 ("Reorganizing source code.").
+#
+# That commit moved every module into a subdirectory; the Kerberos ones are in
+# kerberos/, beside the KDC that reads this codec. Writing to the root after it
+# would have left eight orphans nobody requires and the REAL copies untouched —
+# a sync that reports "8 file(s) updated" and changes nothing that runs, which
+# is the worst possible outcome for a script whose whole job is to stop two
+# copies drifting.
+#
+# The directory is found rather than named: whichever one holds krb5_kdc.js is
+# where the codec belongs, because the KDC is the mock's own file and is never
+# copied from here. That keeps working across the next reshuffle, and falls
+# back to the root for a checkout older than the reorg.
+# ---------------------------------------------------------------------------
+dest_dir="${target}"
+for candidate in "${target}"/*/; do
+  if [[ -f "${candidate}krb5_kdc.js" ]]; then
+    dest_dir="${candidate%/}"
+    break
+  fi
+done
+if [[ ! -f "${dest_dir}/krb5_kdc.js" ]]; then
+  echo "sync-to-mock-sts: could not find krb5_kdc.js anywhere in ${target}, so" >&2
+  echo "  there is no way to tell where the vendored codec belongs. Is this a" >&2
+  echo "  mock-sts checkout, and is it initialised? (An uninitialised submodule" >&2
+  echo "  is an EMPTY DIRECTORY, not a missing one.)" >&2
+  exit 1
+fi
+if [[ "${dest_dir}" != "${target}" ]]; then
+  echo "sync-to-mock-sts: writing into ${dest_dir#"${target}"/}/ (where krb5_kdc.js lives)."
+fi
+
 changed=0
 for module in "${MODULES[@]}"; do
   src="${HERE}/${module}"
-  dest="${target}/${module}"
+  dest="${dest_dir}/${module}"
   if [[ ! -f "${src}" ]]; then
     echo "sync-to-mock-sts: ${src} is missing." >&2
     exit 1
@@ -83,7 +117,7 @@ for module in "${MODULES[@]}"; do
   fi
 done
 
-echo "sync-to-mock-sts: ${changed} file(s) updated in ${target}."
+echo "sync-to-mock-sts: ${changed} file(s) updated in ${dest_dir}."
 if [[ ${changed} -gt 0 ]]; then
   echo
   echo "Next: run tests/krb5_codec_sync.js to confirm the two copies still agree, then commit and"

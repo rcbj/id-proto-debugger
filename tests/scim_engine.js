@@ -238,6 +238,99 @@ function theIdIsEncodedExactlyOnce() {
         'Composing /Users/undefined would produce a 404 that reads as a ' +
         'deleted user rather than as a missing field.');
   });
+  // ---------------------------------------------------------------------
+  // THE DISCOVERED RESOURCE ENDPOINT.
+  //
+  // `/Users` and `/Groups` are conventions and nothing more. RFC 7643 section
+  // 6 defines a ResourceType's `endpoint` as "the resource's HTTP-addressable
+  // endpoint relative to the Base URL" and RFC 7644 section 4 has the server
+  // publish one per type — so a server answering on `/user` is conformant, and
+  // a client that hard codes the convention meets it with a 404 on every
+  // operation. That failure names an id nobody has rather than a path nobody
+  // serves, which is why it is worth a test in node rather than a discovery in
+  // a browser.
+  //
+  // The page reads these out of the ResourceTypes document and lets them be
+  // overridden in the Configuration Parameters pane; this is the half that
+  // decides what the URL becomes.
+  // ---------------------------------------------------------------------
+  check('a discovered endpoint replaces the conventional one', function () {
+    const request = scim.buildRequest({
+      operation: 'listUsers', baseUrl: 'https://h/scim/v2',
+      endpoints: { User: '/user', Group: '/group' } });
+    assert.strictEqual(request.url, 'https://h/scim/v2/user',
+        'The User endpoint the server published was not used, so this ' +
+        'client is addressing a path that server does not serve.');
+  });
+  check('it survives the rest of the path template', function () {
+    const read = scim.buildRequest({
+      operation: 'readUser', baseUrl: 'https://h/scim/v2', id: 'abc',
+      endpoints: { User: '/user' } });
+    assert.strictEqual(read.url, 'https://h/scim/v2/user/abc',
+        'The id segment was lost when the endpoint was swapped.');
+    const search = scim.buildRequest({
+      operation: 'searchUsers', baseUrl: 'https://h/scim/v2',
+      endpoints: { User: '/user' },
+      body: { schemas: [scim.SEARCH_REQUEST_SCHEMA] } });
+    assert.strictEqual(search.url, 'https://h/scim/v2/user/.search',
+        'The /.search suffix was lost when the endpoint was swapped.');
+  });
+  check('each resource type is swapped independently', function () {
+    const group = scim.buildRequest({
+      operation: 'listGroups', baseUrl: 'https://h/scim/v2',
+      endpoints: { User: '/user' } });
+    assert.strictEqual(group.url, 'https://h/scim/v2/Groups',
+        'A User endpoint override changed the GROUP path. The two types ' +
+        'publish their endpoints separately and a server may move one and ' +
+        'not the other.');
+  });
+  check('an endpoint is normalized, not pasted', function () {
+    ['user', '/user', '/user/'].forEach(function (written) {
+      const request = scim.buildRequest({
+        operation: 'listUsers', baseUrl: 'https://h/scim/v2',
+        endpoints: { User: written } });
+      assert.strictEqual(request.url, 'https://h/scim/v2/user',
+          'The endpoint "' + written + '" composed to ' + request.url + '. ' +
+          'A missing leading slash gives scim/v2user and a trailing one ' +
+          'gives //Users — and //Users is a different URL from /Users to a ' +
+          'server that routes on the literal path.');
+    });
+  });
+  check('an absent or empty override leaves the catalogue alone', function () {
+    const none = scim.buildRequest({
+      operation: 'listUsers', baseUrl: 'https://h/scim/v2' });
+    const blank = scim.buildRequest({
+      operation: 'listUsers', baseUrl: 'https://h/scim/v2',
+      endpoints: { User: '', Group: '' } });
+    assert.strictEqual(none.url, 'https://h/scim/v2/Users');
+    assert.strictEqual(blank.url, 'https://h/scim/v2/Users',
+        'An empty endpoint — which is what the page holds before any ' +
+        'ResourceTypes document has been read — composed a URL onto ' +
+        'nothing. An unread document must change nothing at all.');
+  });
+  check('the operations that name no resource type are untouched',
+      function () {
+    // /.search, /Bulk and /Me are rooted at the service root itself and
+    // belong to no type, so no ResourceType endpoint can move them. A prefix
+    // substitution that reached them would silently relocate the three
+    // operations most implementations already get wrong.
+    [['searchAll', '/.search'], ['bulk', '/Bulk'], ['me', '/Me']].forEach(
+      function (pair) {
+        const request = scim.buildRequest({
+          operation: pair[0], baseUrl: 'https://h/scim/v2',
+          endpoints: { User: '/user', Group: '/group' },
+          body: pair[0] === 'me' ? null : { schemas: [] } });
+        assert.strictEqual(request.url, 'https://h/scim/v2' + pair[1],
+            pair[0] + ' was moved by a resource endpoint override.');
+      });
+    const spc = scim.buildRequest({
+      operation: 'serviceProviderConfig', baseUrl: 'https://h/scim/v2',
+      endpoints: { User: '/user' } });
+    assert.strictEqual(spc.url, 'https://h/scim/v2/ServiceProviderConfig',
+        'A discovery document moved with the User endpoint. The document ' +
+        'that PUBLISHES the endpoints cannot be addressed by them, or a ' +
+        'wrong override makes itself unfixable.');
+  });
   check('a body-carrying operation sets the SCIM content type', function () {
     const request = scim.buildRequest({
       operation: 'createUser', baseUrl: 'https://h/scim/v2',
