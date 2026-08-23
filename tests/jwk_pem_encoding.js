@@ -809,6 +809,7 @@ function testsImageHasNoCollidingFilenames() {
   log.info("[collisions] OK — " + total + " files are copied flat into the tests image, every " +
     "one has a unique name, and every script run-report schedules is among them.");
   stsModuleClosureIsCopied(dockerfile);
+  flatCopiedModulesHaveTheirPackages(dockerfile);
   log.debug("Leaving testsImageHasNoCollidingFilenames().");
 }
 
@@ -903,6 +904,135 @@ function stsModuleClosureIsCopied(dockerfile) {
     "modules are copied and every relative require among them resolves " +
     "inside the image.");
   log.debug("Leaving stsModuleClosureIsCopied().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY MODULE COPIED FLAT MUST HAVE ITS PACKAGES IN tests/package.json.
+//
+// The check above walks RELATIVE requires; this one walks the other kind, and
+// it is a different failure with the same shape. A module copied out of
+// client/src or common/ lands beside the test scripts, where the ONLY
+// resolution root is tests/node_modules — client/node_modules is not in the
+// image at all. So a package the client declares and this package does not is
+// a `Cannot find module` at require time, thrown from inside a file the image
+// HAS, while every host run stays green because there the module is loaded
+// from client/src and resolves against client/node_modules.
+//
+// That is exactly how `@noble/post-quantum` cost a run on 2026-08-22:
+// pk_encryption.js requires `@noble/post-quantum/ml-kem.js` for ML-KEM,
+// client/package.json has it, tests/package.json did not, and
+// crypto_engines.js — 14 sections of RFC vectors — died before the first one
+// with a message naming a package rather than a package.json.
+//
+// The set moves when a COPIED MODULE GAINS A require, not when a line here
+// changes, which is why this walks rather than lists. Only sources from
+// OUTSIDE tests/ are checked: a test script's own optional dependency is a
+// deliberate thing (url_safety_schemes.js reaches for dompurify and jsdom and
+// says so when they are absent), whereas a module has no such fallback and no
+// say in where it is loaded from.
+// ---------------------------------------------------------------------------
+function flatCopiedModulesHaveTheirPackages(dockerfile) {
+  log.debug("Entering flatCopiedModulesHaveTheirPackages().");
+  const manifest = path.join(__dirname, "package.json");
+  if (!fs.existsSync(manifest)) {
+    log.info("[deps] skipped: tests/package.json is not present, so this is " +
+      "the tests image rather than a checkout.");
+    log.debug("Leaving flatCopiedModulesHaveTheirPackages().");
+    return;
+  }
+  const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
+  const declared = {};
+  ["dependencies", "optionalDependencies"].forEach(function (section) {
+    Object.keys(pkg[section] || {}).forEach(function (name) {
+      declared[name] = true;
+    });
+  });
+  const builtins = {};
+  require("module").builtinModules.forEach(function (name) {
+    builtins[name] = true;
+  });
+
+  // Only the FLAT destination: a module landing in ./sts/ or
+  // /usr/src/client/src resolves from a directory of its own, and
+  // client/server.js — copied there to be RUN rather than required — brings
+  // the client's own node_modules question with it.
+  const sources = [];
+  fs.readFileSync(dockerfile, "utf8").split("\n").forEach(function (line) {
+    const text = line.trim();
+    if (text.indexOf("COPY ") !== 0) {
+      return;
+    }
+    const parts = text.slice(5).split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      return;
+    }
+    const dest = parts[parts.length - 1];
+    if (dest !== "./" && dest !== ".") {
+      return;
+    }
+    parts.slice(0, -1).forEach(function (src) {
+      if (!/\.js$/.test(src)) {
+        return;
+      }
+      if (src.indexOf("tests/") === 0) {
+        return;
+      }
+      if (sources.indexOf(src) === -1) {
+        sources.push(src);
+      }
+    });
+  });
+
+  const missing = [];
+  const repo = path.join(__dirname, "..");
+  sources.forEach(function (src) {
+    const file = path.join(repo, src);
+    if (!fs.existsSync(file)) {
+      // A COPY naming a file this repository has not got stops the image
+      // build itself, which is loud; say so here anyway rather than reading
+      // it as "no requires".
+      missing.push(src + " is copied but absent from this checkout");
+      return;
+    }
+    const text = fs.readFileSync(file, "utf8");
+    const re = /require\(\s*['"]([^'"]+)['"]\s*\)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const id = m[1];
+      if (id.charAt(0) === "." || id.charAt(0) === "/") {
+        continue;
+      }
+      if (builtins[id] || builtins[id.replace(/^node:/, "")]) {
+        continue;
+      }
+      // The package, not the subpath: `@noble/post-quantum/ml-kem.js` is
+      // declared as `@noble/post-quantum`.
+      const segments = id.split("/");
+      const name = id.charAt(0) === "@"
+        ? segments.slice(0, 2).join("/") : segments[0];
+      if (declared[name]) {
+        continue;
+      }
+      const entry = name + " (required by " + src + ")";
+      if (missing.indexOf(entry) === -1) {
+        missing.push(entry);
+      }
+    }
+  });
+  assert.deepStrictEqual(missing, [],
+    "tests/Dockerfile copies these modules FLAT into the image, where the " +
+    "only place node can resolve a package is tests/node_modules — and " +
+    "tests/package.json does not declare them, so the jobs that load those " +
+    "modules die at require with \"Cannot find module\" naming a package. " +
+    "A host run cannot see it: there the same module comes from client/src " +
+    "and resolves against client/node_modules. Add each to " +
+    "tests/package.json with the SAME specifier the owning package.json " +
+    "uses, so the image runs the code the browser bundle does: " +
+    missing.join(", "));
+  log.info("[deps] OK — " + sources.length + " modules are copied flat into " +
+    "the tests image and every package they require is declared in " +
+    "tests/package.json.");
+  log.debug("Leaving flatCopiedModulesHaveTheirPackages().");
 }
 
 // ---------------------------------------------------------------------------
