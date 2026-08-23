@@ -1916,10 +1916,27 @@ function buildJobs() {
   // is a request a SERVICE makes and that is the commonest misunderstanding about it.
   // Needs the client, the api's relay and the mock KDC; without them it SKIPS naming what
   // was absent, since an environment capability is not a defect.
+  //
+  // Its env is the same three values the AS, TGS/AP and SPNEGO jobs carry, and
+  // it carried NONE of them until 2026-08-23 — which cost a run the moment the
+  // containerized stack stopped skipping this job. `sts`, not `localhost`, for
+  // the reason spelled out on the AS job above: that address is TYPED INTO THE
+  // PAGE and resolved by the relay inside the api container, where localhost is
+  // the api itself and port 88 is nothing. It stayed invisible because the two
+  // stacks disagree about localhost — under local-tests.yml every service is on
+  // host networking, so the api's loopback IS the host the mock KDC listens on
+  // and the default worked; on the bridge stack it is not, and the page
+  // reported `Could not talk to ::1:88` from a KDC that was up. The compose
+  // name is right on both, since local-tests.yml gives the api an
+  // `extra_hosts` entry mapping sts to 127.0.0.1.
   const delegationPageJob = {
     name: "Kerberos delegation page (S4U2Self, S4U2Proxy, RBCD, forwarding, renewal)",
     script: "kerberos_delegation_page.js",
-    env: {},
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
+      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+    },
   };
   if (kerberosPagesSkip) delegationPageJob.skip = kerberosPagesSkip;
   jobs.push(delegationPageJob);
