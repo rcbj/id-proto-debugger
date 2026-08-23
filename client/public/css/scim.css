@@ -732,3 +732,121 @@ textarea.scim-box-tall {
 }
 
 .scim-described-note { color: #555; }
+
+/* ---------------------------------------------------------------------------
+   THE DESCRIBED TABLES SCROLL SIDEWAYS RATHER THAN WRAPPING TO NOTHING.
+
+   These three tables — the ServiceProviderConfig capabilities, ResourceTypes
+   and Schemas — are rendered into the Discovery pane, which is the THIRD
+   column of the top row and therefore about a third of the page wide. Their
+   last column is PROSE: a sentence or two saying what the row means, which is
+   the half a reader came for. At ~400px, with a name column of 11em and a
+   value column of 12em ahead of it, that column gets a strip a few words wide
+   and the cell grows to a dozen lines — the text runs down past the pane and
+   past the two panes beside it.
+
+   Wrapping harder cannot fix that; there is no width at which prose fits in
+   150px. So the tables keep a usable minimum width and the BOX scrolls,
+   which is the same trade the runner and history panes below already make in
+   the other axis. `min-width` and not `width`: on a wide viewport, or in the
+   single-column fallback under 1100px, the tables take the room they are
+   given and nothing scrolls at all.
+   ------------------------------------------------------------------------ */
+.scim-described-scroll {
+  overflow-x: auto;
+  /* A flex/grid item's automatic minimum size is its MIN-CONTENT size, and a
+     `min-width: 0` is what lets this box be narrower than the table in it —
+     without it the pane grows instead and the overflow never fires. This is
+     the same rule `.scim-pane` carries, one level in. */
+  min-width: 0;
+  min-inline-size: 0;
+}
+
+/* 46em, and the number is arithmetic rather than taste. The capability table
+   spends 11em on the name and 12em on the value before the note starts, so a
+   34em minimum leaves the note about 11em — roughly twenty characters a line,
+   which turned a two-sentence note into a 247px row. 46em gives it ~23em,
+   about forty-five characters, and the same row measures 78px. The four
+   -column tables are `table-layout: fixed` and split this evenly at ~11.5em a
+   column, which is what a schema URN needs to stop wrapping every other
+   word. */
+.scim-described-scroll .scim-capability-table,
+.scim-described-scroll .scim-table {
+  min-width: 46em;
+}
+
+/* And the two fixed columns give some of themselves back, so that a useful
+   strip of the note is on screen before anybody scrolls at all. The pane is
+   381px at 1400: 11em + 12em of name and value left about 75px of the note
+   visible, which is a column of two-letter fragments — enough to look broken
+   and not enough to read. At 9.5em and 10.5em it is about 110px, and the
+   names (`changePassword`, `authenticationSchemes`) still fit because they
+   wrap on the capital. Scoped to the scroll box: the same classes are not
+   used anywhere else, but the widths are only right for this column of the
+   grid. */
+.scim-described-scroll .scim-capability-name { width: 9.5em; }
+.scim-described-scroll .scim-capability-value { width: 10.5em; }
+
+/* ---------------------------------------------------------------------------
+   THE SHARED PANE CHROME (css/debugger.css), adjusted for this page.
+
+   Each pane is now a `div.scim-pane.dbg-pane` holding a `.dbg-legend` title
+   and the `fieldset` that title collapses, which is the markup every other
+   workflow here uses. Two consequences need naming.
+   ------------------------------------------------------------------------ */
+
+/* The fieldset that WAS the pane is now inside it, and it is the one carrying
+   the UA stylesheet's `min-inline-size: min-content` — so the rule that keeps
+   a percent-encoded DN from sizing the pane to its longest line has to follow
+   it inwards. Without this the Exchange pane goes back to 7511px on one long
+   id, which is the defect `tests/scim_page.js` section 7b plants a value to
+   catch. Both spellings, for browsers that do not honour the logical property
+   on a fieldset. */
+.scim-pane > fieldset {
+  min-width: 0;
+  min-inline-size: 0;
+}
+
+/* bootstrap sets `legend { line-height: 40px }` for its own 21px legends, so a
+   15px title in one leaves ~19px of dead space PER PANE. `.scim-pane > legend`
+   above already sets 1.2; this keeps the collapse triangle on the same line as
+   the words rather than letting `.dbg-legend`'s own metrics reassert. */
+.scim-pane > .dbg-legend {
+  line-height: 1.2;
+}
+
+/* ---------------------------------------------------------------------------
+   FOLDED PROSE, the way the Kerberos pages fold theirs (`.krb-more`).
+
+   The explanations are the reason this workflow is worth using — what a 409
+   on a duplicate userName means, why a wrong Digest hash reads exactly like a
+   wrong password — so they are kept verbatim and FOLDED rather than cut. A
+   debugger that omits why a thing fails is the thing nobody needed.
+   ------------------------------------------------------------------------ */
+.scim-more {
+  margin: 6px 0;
+}
+
+.scim-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.scim-more > summary:hover {
+  text-decoration: underline;
+}
+
+/* Inside the warning box the summary has to read as part of the warning
+   rather than as a link away from it, so it takes the warning's own colour.
+   The sentence that says these endpoints delete accounts is NOT in here — it
+   stays outside the fold, because a safety notice that can be collapsed out
+   of sight is one somebody will not have read. */
+.scim-more-warning {
+  margin: 4px 0 0;
+}
+
+.scim-more-warning > summary {
+  color: #5d4200;
+}

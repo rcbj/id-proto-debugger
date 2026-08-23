@@ -99,6 +99,38 @@ var config = {
   ldapPasswordDefault: "password!",
 
   // ---------------------------------------------------------------------------
+  // SPIFFE (client/public/spiffe.html, docs/spiffe.md).
+  //
+  // **BOTH gRPC ADDRESSES FOLLOW THE SAME RULE AS ldapUrlDefault ABOVE, AND FOR
+  // THE SAME REASON.** A browser cannot produce gRPC at all, so both surfaces
+  // are dialled by the **api** and the addresses are resolved from THERE: the
+  // compose service name where the api runs in a container, loopback for a host
+  // run, and nothing at all on a build with no api behind it. `localhost` in
+  // those two fields means the api container itself, which listens on no SPIFFE
+  // port, and the failure is a connection refused naming an address the user can
+  // reach perfectly well from their own shell.
+  //
+  // The bundle endpoint URL follows the same rule and is the case that looks
+  // like it should not: it is plain HTTPS, which a browser could fetch — but a
+  // bundle endpoint sends no CORS headers, so the page goes through the api for
+  // it like everything else and the URL is resolved on the api's side too.
+  //
+  // The two ports are not SPIRE's own. A real spire-server's default is 8081,
+  // which the mock STS's HTTP port already has, so its Workload API is on 8092
+  // and its SPIRE Server API on 8181. All three are in the api's
+  // spiffeAllowedPorts default.
+  //
+  // These are EMPTY in prod.js / test-idptools-com.js, where `backendAvailable`
+  // is false and neither gRPC surface can be reached at all — the page's bundle
+  // reader, SVID inspector and SPIFFE ID checker still work there, and none of
+  // the three needs an address.
+  // ---------------------------------------------------------------------------
+  spiffeTrustDomainDefault: "example.org",
+  spiffeWorkloadAddressDefault: "sts:8092",
+  spiffeServerAddressDefault: "sts:8181",
+  spiffeBundleUrlDefault: "http://sts:8081/spiffe/bundle",
+
+  // ---------------------------------------------------------------------------
   // SCIM 2.0 (client/public/scim.html, docs/scim.md).
   //
   // The service root the page opens on — the host plus the SCIM base path,

@@ -2,9 +2,9 @@
 
 Scope: everything under `api/`. Cross-cutting matters — versioning, `CONFIG_FILE`, the key-material rules, how the suite is run — stay in the repo-root `CLAUDE.md`.
 
-It proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It also speaks two protocols the browser cannot: it relays Kerberos to a KDC (`POST /krb5/*`) and it IS the LDAP client (`POST /ldap/*`). Both are raw TCP, so both enforce the address policy themselves — see the two sections below.
+It proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It also speaks three protocols the browser cannot: it relays Kerberos to a KDC (`POST /krb5/*`), it IS the LDAP client (`POST /ldap/*`), and it makes every SPIFFE gRPC call (`POST /spiffe/call`). All three are raw TCP, so all three enforce the address policy themselves — see the sections below.
 
-## Outbound calls: the address policy and the twelve settings
+## Outbound calls: the address policy and the sixteen settings
 
 It fetches URLs its **caller** chooses (token, introspection, revocation, device-authorization and userinfo endpoints, the SAML ArtifactResolve back-channel, the WS-Trust STS, the generic proxy), so `api/ssrf_guard.js` refuses outbound calls to loopback and private networks — otherwise anyone who can reach the api can use it to probe `127.0.0.1`, the deployment's private neighbours, or `169.254.169.254` (cloud metadata, which hands out credentials). It is installed **once** on the shared axios instance in `server.js`, so every call site present and future is covered, and it works in two layers: a request interceptor for a readable error, plus the http/https **agents** — which is what catches **redirects** (axios follows them, so a public host answering `302 → http://127.0.0.1` walks past a URL-only check) and closes most of the DNS-rebinding window. The agent needs **two** hooks, not one: a custom DNS `lookup` for hosts given as names, and a wrapped `createConnection` for hosts given as literal addresses — Node never calls `lookup` for a literal, and a redirect `Location` usually is one. That gap was real and is what `tests/api_ssrf_guard.js` caught on its first run. Hostnames are judged by what they RESOLVE to, so `localtest.me` and `127.0.0.1.nip.io` are caught by the same rule, and IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is reduced to its IPv4 form because that is the address the socket reaches.
 
@@ -164,6 +164,140 @@ server on the other end — so a rule that stopped being enforced fails a test
 naming the rule rather than timing out against a host. `GET /scim/limits`
 publishes the methods, the refused headers, the caps and the status rule, and is
 also how the page discovers whether there is an api at all. See `docs/scim.md`.
+
+## SPIFFE: gRPC, and the only endpoint here that dials a filesystem path
+
+`POST /spiffe/call` (`api/spiffe_client.js`) carries **both** of SPIFFE's gRPC
+surfaces — the Workload API's seven methods and the SPIRE Server API's
+forty-two. `POST /spiffe/bundle` fetches a bundle endpoint (ordinary axios, so
+the guard already covers it) and describes the document. `GET /spiffe/limits`
+publishes what this service will and will not do, and the whole method
+catalogue with it.
+
+**A browser cannot produce gRPC at all**, which is a stronger statement than
+the Kerberos and LDAP ones and is why this exists: gRPC is HTTP/2 with a
+length-prefixed binary framing and its status in the TRAILERS, so `fetch` will
+not open an HTTP/2 stream of its own, cannot send or read trailers, cannot see
+a `grpc-status`, and cannot present the client certificate the SPIRE Server API
+requires.
+
+**ONE endpoint for forty-nine methods rather than forty-nine endpoints**, which
+is the opposite of `POST /ldap/*`'s choice and is deliberate. There, eight
+operations have eight different shapes and each route documents its own. Here
+every method is `(service, method, request)` over one wire format and the
+method list is DERIVED from the vendored protos, so a route per method would be
+forty-nine places for that list to drift from the protos it mirrors.
+
+**The protos are vendored VERBATIM into `api/protos/`** — the SPIFFE project's
+`workloadapi.proto` and the `spire-api-sdk`'s, 21 files, byte-identical to the
+mock STS's copies. The wire matching what a real client expects is the entire
+reason `@grpc/grpc-js` is a dependency, so a local edit would give that up
+silently. A missing proto throws at require time rather than degrading: a
+client that starts and answers `Unimplemented` to everything is worse than one
+that does not start. `tests/spiffe_engine.js` compares the two copies file by
+file.
+
+**This is the fourth enforcement of the address policy**, for the reason the
+second and third exist: the guard is installed on the shared axios instance and
+grpc-js opens its own socket. It reuses `blockedRangeFor` rather than a copy of
+the ranges, and it resolves then dials the LITERAL — which here costs nothing,
+unlike `ldaps:`, because **SPIFFE identifies the far end by its SPIFFE ID and
+not by a hostname**, so there is no `servername` to preserve. The
+`grpc.default_authority` is still set back to the name the caller gave, because
+gRPC derives SNI from the target and RFC 6066 does not permit an IP address
+there; that string decides nothing about who the far end is proved to be.
+
+**THE THIRTEENTH SETTING IS `spiffeAllowedPorts`** (default `[8081, 8092,
+8181]` — a real `spire-server`'s own default, and the two the mock STS moved its
+surfaces to because 8081 is its HTTP port). `"any"` is accepted, spelled as a
+word.
+
+**THE FOURTEENTH IS `spiffeAllowedSocketPaths`, AND IT IS THE ONLY BOUND IN
+THIS FILE ON A FILESYSTEM PATH.** `SPIFFE_ENDPOINT_SOCKET` means a `unix://`
+path to `go-spiffe`, `spiffe-helper` and the SPIRE agent, so a client that
+could not reach a Unix socket could not talk to what every real deployment
+runs. That makes this the only endpoint here that opens a connection to a path
+its CALLER chose, and the address policy cannot see it: there is no address to
+judge. What it bounds is not exotic — an api reachable from anywhere, pointed
+at a path on the machine it runs on, is a way to make that machine connect to
+one of its own local services and report what came back. It is a PREFIX
+allowlist defaulting to SPIRE's own two directories.
+
+Two further checks come with it and neither is configurable, because each
+otherwise costs a confusing failure. A path longer than **103 bytes** is
+refused by name (`sun_path` is 108 on Linux and 104 on macOS, and past it the
+operating system fails the connect with a message about the address being *in
+use*, naming something that is not the problem). And a path that exists and is
+**not a socket** is refused rather than dialled, because "connection refused"
+on a regular file reads as a service that is down.
+
+**THE FIFTEENTH AND SIXTEENTH BOUND STREAMS**, and the second of them is not a
+copy of `callTimeout`. `spiffeMaxStreamMessages` (default 4) is how many
+messages are read from one; `spiffeStreamTimeout` (default 45000) is how long
+one is held. They are separate from `callTimeout` because the two bound
+different questions: `callTimeout` asks how long a server may take to ANSWER,
+and a stream is not an answer but a subscription a real client holds for the
+life of its process — the interesting event on one is the SECOND message, which
+on a Workload API is a ROTATION. The mock STS puts a floor of thirty seconds
+under that re-send, so a stream bounded by the ten-second call budget could
+never observe one however short the SVID lifetime were set: it would always
+report a timeout after one message, which is indistinguishable from a server
+that sent one and went quiet. Every answer says which cap stopped it —
+`messages`, `timeout`, `size` or `end`.
+
+**A BIDIRECTIONAL STREAM IS WRITTEN TO AND DELIBERATELY LEFT OPEN.** It looks
+like a leak and is the only correct thing to do: `AttestAgent` may answer the
+params with a CHALLENGE rather than an SVID, so a client that half-closes as
+soon as it has written has told the server the conversation is over before
+hearing whether it was. A server that ends its own side on seeing that `end`
+does so while the reply is still being produced, and the write that follows
+lands on a stream nobody is reading — the call completes with status **OK and
+no messages**, which reads as a server that accepted an attestation and issued
+nothing. `tests/spiffe_protocol.js` asserts a non-empty AttestAgent response
+rather than asserting the status alone.
+
+**SERVER VERIFICATION IS REPLACED RATHER THAN RELAXED, and this is the part to
+read before changing anything here.** A SPIRE server's certificate carries no
+DNS subjectAltName and no CN naming a host — its only subjectAltName is
+`URI:spiffe://<trust domain>/spire/server` — so node's ordinary
+`checkServerIdentity` CANNOT pass, and the failure it produces
+(`ERR_TLS_CERT_ALTNAME_INVALID`) reads as a certificate problem rather than as a
+check that was never applicable. The two obvious ways out are both worse:
+turning `rejectUnauthorized` off discards the CHAIN check, which is the one that
+matters, and `ssl_target_name_override` makes the hostname check pass by lying
+about the hostname. So `checkServerIdentity` is replaced with a SPIFFE one in
+three explicit modes (`spiffe-id`, `trust-domain`, `none`), and the chain is
+verified in ALL of them including the last — that mode turns off the SPIFFE-ID
+check and nothing else.
+
+**THE THREE OUTCOMES ARE `POST /ldap/*`'s THREE, and the third matters more
+here than anywhere else in this file.** A refusal by this service is a **400**;
+a network failure is a **502**, and so is a server that answered and turned out
+to be somebody else (flagged `identityMismatch`, because that is a different
+fact from "nothing was there" and only one of them is about the network); and
+**a gRPC status from the far end is a 200**, with `ok: false` and the code.
+`PERMISSION_DENIED` on a method this caller's entity may not use,
+`UNAUTHENTICATED` when it presented nothing, `UNIMPLEMENTED` with the reason a
+server gives for declining, `INVALID_ARGUMENT` on a JWT-SVID request with no
+audience — every one is SPIFFE ANSWERING. SPIRE goes to the trouble of
+distinguishing "authenticate" from "you may not"; an api that reported both as
+failures would throw that away. `tests/api_spiffe.js` asserts the transport
+status on every negative for that reason.
+
+**One trap the load options pay for and one they do not.** `bytes: String`
+makes protobufjs hand every `bytes` field back as base64 and accept base64 on
+the way in, so nothing here walks a message converting buffers — which is most
+of why forty-nine methods share one code path. What it does NOT reach is
+protobufjs's built-in well-known types: a `google.protobuf.Struct` decodes with
+**camelCase** members in a family that is otherwise entirely snake_case, and a
+wrapper (`StringValue` and friends) is a MESSAGE whose bare value serialises to
+NOTHING with no throw and no warning — a `ListEntries` filter sent that way
+returns every entry and looks like a filter that works until somebody counts.
+Both are handled from typed-out tables (`WRAPPED_FIELDS`, `STRUCT_FIELDS`)
+rather than by walking descriptors, because a descriptor's `typeName` is a
+RELATIVE protobuf name and resolving one means implementing protobuf's own
+name-resolution algorithm. `tests/spiffe_engine.js` reads every `.proto` and
+fails if such a field is missing from either table. See `docs/spiffe.md`.
 
 ## The TLS probe: a second raw socket, and the ninth setting
 

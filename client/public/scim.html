@@ -9,6 +9,7 @@
     <link href="/css/footer.css" rel="stylesheet">
     <link href="/css/common.css" rel="stylesheet">
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
     <link href="/css/scim.css" rel="stylesheet">
   </head>
 
@@ -25,17 +26,37 @@
 <p class="scim-return"><a href="/index.html">&larr; All protocols</a></p>
 <h3 class="scim-title">SCIM 2.0 Provisioning Debugger</h3>
 
-<p class="scim-intro">SCIM (<strong>RFC 7642</strong>, <strong>7643</strong>,
-<strong>7644</strong>) is how an identity provider puts somebody into a directory
-and takes them out again &mdash; the one protocol here whose whole purpose is to
-<strong>write</strong>. Two halves: one endpoint at a time for the ordinary
-debugging, and <em>scenarios</em>, which are named plans of many operations each
-carrying its own expectation. <strong>Hover any field label for what it
-does.</strong></p>
+<details class="scim-more">
+  <summary>What this workflow is, and how the page is laid out</summary>
+  <p class="scim-intro">SCIM (<strong>RFC 7642</strong>, <strong>7643</strong>,
+  <strong>7644</strong>) is how an identity provider puts somebody into a
+  directory and takes them out again &mdash; the one protocol here whose whole
+  purpose is to <strong>write</strong>. Two halves: one endpoint at a time for
+  the ordinary debugging, and <em>scenarios</em>, which are named plans of many
+  operations each carrying its own expectation. <strong>Hover any field label
+  for what it does.</strong></p>
+</details>
 
-<p class="scim-warning"><strong>These endpoints create and delete accounts.</strong>
-Point this at a test directory. The scenarios below really do provision and
-deprovision the users they describe, and there is no undo.</p>
+<div class="scim-warning"><strong>These endpoints create and delete
+accounts.</strong> Point this at a test directory.
+<details class="scim-more scim-more-warning">
+  <summary>What that means for the scenarios below</summary>
+  <p class="scim-note">The scenarios below really do provision and deprovision
+  the users they describe, against whatever the Connection pane points at, and
+  there is no undo. Every generated userName carries the prefix in the
+  Attribute generator, which is what makes a run findable with one filter and
+  removable in one sweep.</p>
+</details></div>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane on this page.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane&rsquo;s title to
+  collapse or expand it.</span>
+</p>
 
 <!-- ======================================================================
      THE TOP ROW — Connection, Authentication and Discovery, side by side.
@@ -47,8 +68,10 @@ deprovision the users they describe, and there is no undo.</p>
 <div class="scim-topgrid">
 
 <!-- ===================== Connection ===================== -->
-<fieldset class="scim-pane" id="pane_connection">
-  <legend>Connection</legend>
+<div class="scim-pane dbg-pane" id="pane_connection">
+  <legend class="dbg-legend" id="connection_expand_button">Connection</legend>
+  <fieldset name="connection_fieldset" id="connection_fieldset"
+            style="display: block;">
   <div class="scim-grid">
     <div class="scim-wide">
       <div class="tooltip scim-tip">
@@ -102,10 +125,13 @@ deprovision the users they describe, and there is no undo.</p>
   <p class="scim-limits" id="scim_api_limits">Asking the api what it will
   do&hellip;</p>
 </fieldset>
+</div>
 
 <!-- ===================== Authentication ===================== -->
-<fieldset class="scim-pane" id="pane_auth">
-  <legend>Authentication</legend>
+<div class="scim-pane dbg-pane" id="pane_auth">
+  <legend class="dbg-legend" id="auth_expand_button">Authentication</legend>
+  <fieldset name="auth_fieldset" id="auth_fieldset"
+            style="display: block;">
   <div class="scim-buttons">
     <input type="button" class="scim-btn" id="btn_scim_probe_auth"
            value="Ask the server what it accepts"
@@ -206,10 +232,12 @@ deprovision the users they describe, and there is no undo.</p>
   </div>
 
   <div class="scim-sub scim-hidden" id="scim_digest_row">
-    <p class="scim-note">Digest is <strong>two requests</strong>: the first is
-    answered 401 with a nonce, the second carries a hash computed over it. Both
-    legs are in the Exchange pane, because that handshake is what this scheme
-    <em>is</em>.</p>
+    <details class="scim-more">
+      <summary>Digest is <strong>two requests</strong></summary>
+      <p class="scim-note">The first is answered 401 with a nonce, the second
+      carries a hash computed over it. Both legs are in the Exchange pane,
+      because that handshake is what this scheme <em>is</em>.</p>
+    </details>
     <p class="scim-note" id="scim_digest_chosen"></p>
   </div>
 
@@ -300,13 +328,16 @@ deprovision the users they describe, and there is no undo.</p>
   </div>
 
   <div class="scim-sub scim-hidden" id="scim_cookie_row">
-    <p class="scim-note"><strong>Nothing is added to the request.</strong> The
-    browser attaches a cookie for that origin if it has one, and the call is
-    made with credentials so that it may. Three things have to line up
-    cross-origin and none is this page&rsquo;s to set:
-    <code>SameSite=None; Secure</code> on the cookie,
-    <code>Access-Control-Allow-Credentials: true</code> from the server, and a
-    named rather than wildcard origin on the preflight.</p>
+    <details class="scim-more">
+      <summary><strong>Nothing is added to the request.</strong> What has to
+      line up instead</summary>
+      <p class="scim-note">The browser attaches a cookie for that origin if it
+      has one, and the call is made with credentials so that it may. Three
+      things have to line up cross-origin and none is this page&rsquo;s to
+      set: <code>SameSite=None; Secure</code> on the cookie,
+      <code>Access-Control-Allow-Credentials: true</code> from the server, and
+      a named rather than wildcard origin on the preflight.</p>
+    </details>
     <div class="scim-buttons">
       <input type="button" class="scim-btn" id="btn_scim_cookie_signin"
              value="Open the server&rsquo;s sign-in page"
@@ -316,22 +347,31 @@ deprovision the users they describe, and there is no undo.</p>
   </div>
 
   <div class="scim-sub scim-hidden" id="scim_clientcert_row">
-    <p class="scim-note"><strong>Nothing is added to the request, and no code
-    here could add it.</strong> A client certificate is chosen during the TLS
-    handshake by whatever holds the private key, and JavaScript has no say in
-    it. The service root has to be <strong>https</strong> and the server has to
-    <em>ask</em>. The api cannot make this call either &mdash; it would present
-    <em>its</em> certificate, which is a different identity and a misleading
-    one.</p>
+    <details class="scim-more">
+      <summary><strong>Nothing is added to the request, and no code here could
+      add it.</strong> Why</summary>
+      <p class="scim-note">A client certificate is chosen during the TLS
+      handshake by whatever holds the private key, and JavaScript has no say
+      in it. The service root has to be <strong>https</strong> and the server
+      has to <em>ask</em>. The api cannot make this call either &mdash; it
+      would present <em>its</em> certificate, which is a different identity
+      and a misleading one.</p>
+    </details>
   </div>
 </fieldset>
+</div>
 
 <!-- ===================== Discovery ===================== -->
-<fieldset class="scim-pane" id="pane_discovery">
-  <legend>Discovery</legend>
-  <p class="scim-note">The three documents a client should read first. None of
-  them needs a scope &mdash; a client has to be able to read a
-  ServiceProviderConfig <em>before</em> it knows how to authenticate.</p>
+<div class="scim-pane dbg-pane" id="pane_discovery">
+  <legend class="dbg-legend" id="discovery_expand_button">Discovery</legend>
+  <fieldset name="discovery_fieldset" id="discovery_fieldset"
+            style="display: block;">
+  <details class="scim-more">
+    <summary>What these three documents are</summary>
+    <p class="scim-note">The three documents a client should read first. None
+    of them needs a scope &mdash; a client has to be able to read a
+    ServiceProviderConfig <em>before</em> it knows how to authenticate.</p>
+  </details>
   <div class="scim-buttons">
     <input type="button" class="scim-btn" id="btn_scim_spc"
            value="ServiceProviderConfig"
@@ -363,7 +403,12 @@ deprovision the users they describe, and there is no undo.</p>
        data-scim-tab="described">
     <p class="scim-note" id="scim_described_what">Nothing has been read
     yet.</p>
-    <div id="scim_capabilities"></div>
+    <!-- The described tables live in the THIRD column of the top row, which
+         is a third of the page wide, and their last column is prose. Scrolled
+         sideways inside this box rather than wrapped: see css/scim.css. -->
+    <div class="scim-described-scroll">
+      <div id="scim_capabilities"></div>
+    </div>
   </div>
   <div class="scim-tabpanel scim-tabpanel-off" data-scim-tabs="discovery"
        data-scim-tab="document">
@@ -383,25 +428,32 @@ deprovision the users they describe, and there is no undo.</p>
               readonly></textarea>
   </div>
 </fieldset>
+</div>
 
 </div><!-- /.scim-topgrid -->
 
 <!-- ===================== Configuration Parameters ===================== -->
-<fieldset class="scim-pane" id="pane_config">
-  <legend>Configuration Parameters</legend>
-  <p class="scim-note">Every setting this workflow has, in one place, with
-  <strong>where each one came from</strong>. That is the question this pane
-  exists to answer: a value you typed and a value read out of a discovery
-  document behave identically until the server changes its mind, and then only
-  one of them is stale. Edit any of them and press <strong>Save</strong>; the
-  fields in the panes above and below change with them. Rows marked
-  <em>discovered</em> can be put back with <strong>Restore discovered
-  values</strong>.</p>
-  <p class="scim-note"><strong>No credential is here.</strong> The password and
-  the HOBA private key are deliberately absent &mdash; the password is never
-  stored anywhere, and a signing key in storage is a signing key in every
-  extension&rsquo;s reach. The access token stays in the Authentication pane,
-  under its own opt-in.</p>
+<div class="scim-pane dbg-pane" id="pane_config">
+  <legend class="dbg-legend"
+          id="config_expand_button">Configuration Parameters</legend>
+  <fieldset name="config_fieldset" id="config_fieldset"
+            style="display: block;">
+  <details class="scim-more">
+    <summary>What this pane is for, and why no credential is in it</summary>
+    <p class="scim-note">Every setting this workflow has, in one place, with
+    <strong>where each one came from</strong>. That is the question this pane
+    exists to answer: a value you typed and a value read out of a discovery
+    document behave identically until the server changes its mind, and then
+    only one of them is stale. Edit any of them and press
+    <strong>Save</strong>; the fields in the panes above and below change with
+    them. Rows marked <em>discovered</em> can be put back with <strong>Restore
+    discovered values</strong>.</p>
+    <p class="scim-note"><strong>No credential is here.</strong> The password
+    and the HOBA private key are deliberately absent &mdash; the password is
+    never stored anywhere, and a signing key in storage is a signing key in
+    every extension&rsquo;s reach. The access token stays in the
+    Authentication pane, under its own opt-in.</p>
+  </details>
   <div class="scim-buttons">
     <input type="button" class="scim-btn scim-btn-primary"
            id="btn_scim_config_save"
@@ -422,10 +474,14 @@ deprovision the users they describe, and there is no undo.</p>
     <div id="scim_config"></div>
   </div>
 </fieldset>
+</div>
 
 <!-- ===================== One endpoint ===================== -->
-<fieldset class="scim-pane" id="pane_endpoint">
-  <legend>One endpoint at a time</legend>
+<div class="scim-pane dbg-pane" id="pane_endpoint">
+  <legend class="dbg-legend"
+          id="endpoint_expand_button">One endpoint at a time</legend>
+  <fieldset name="endpoint_fieldset" id="endpoint_fieldset"
+            style="display: block;">
   <div class="scim-grid">
     <div class="scim-wide">
       <div class="tooltip scim-tip">
@@ -615,15 +671,22 @@ deprovision the users they describe, and there is no undo.</p>
   </div>
   <textarea class="scim-box" id="scim_op_result" rows="14" readonly></textarea>
 </fieldset>
+</div>
 
 <!-- ===================== Generator ===================== -->
-<fieldset class="scim-pane" id="pane_generator">
-  <legend>Attribute generator</legend>
-  <p class="scim-note">Generated users carry <strong>every optional attribute
-  RFC 7643 section 4.1 defines</strong>. That is the point: what a server
-  <em>stores</em> is usually narrower than what it accepts, and the difference
-  between &ldquo;accepted and stored&rdquo; and &ldquo;accepted and
-  dropped&rdquo; is what reading the resource back shows.</p>
+<div class="scim-pane dbg-pane" id="pane_generator">
+  <legend class="dbg-legend"
+          id="generator_expand_button">Attribute generator</legend>
+  <fieldset name="generator_fieldset" id="generator_fieldset"
+            style="display: block;">
+  <details class="scim-more">
+    <summary>Why a generated user carries every optional attribute</summary>
+    <p class="scim-note">Generated users carry <strong>every optional
+    attribute RFC 7643 section 4.1 defines</strong>. That is the point: what a
+    server <em>stores</em> is usually narrower than what it accepts, and the
+    difference between &ldquo;accepted and stored&rdquo; and &ldquo;accepted
+    and dropped&rdquo; is what reading the resource back shows.</p>
+  </details>
   <div class="scim-grid">
     <div>
       <div class="tooltip scim-tip">
@@ -703,14 +766,21 @@ deprovision the users they describe, and there is no undo.</p>
   <textarea class="scim-box" id="scim_gen_output" rows="14"
             readonly></textarea>
 </fieldset>
+</div>
 
 <!-- ===================== Scenarios ===================== -->
-<fieldset class="scim-pane" id="pane_scenarios">
-  <legend>Scenarios</legend>
-  <p class="scim-note">A scenario is a <strong>plan</strong>, and every step in
-  it carries its own expectation. A green run means every step did what the plan
-  said it would, <em>including the steps that expect a refusal</em>: a 409 on a
-  duplicate userName is a pass and a 201 is a failure.</p>
+<div class="scim-pane dbg-pane" id="pane_scenarios">
+  <legend class="dbg-legend" id="scenarios_expand_button">Scenarios</legend>
+  <fieldset name="scenarios_fieldset" id="scenarios_fieldset"
+            style="display: block;">
+  <details class="scim-more">
+    <summary>What a scenario is, and what a green run means</summary>
+    <p class="scim-note">A scenario is a <strong>plan</strong>, and every step
+    in it carries its own expectation. A green run means every step did what
+    the plan said it would, <em>including the steps that expect a
+    refusal</em>: a 409 on a duplicate userName is a pass and a 201 is a
+    failure.</p>
+  </details>
   <div class="scim-grid">
     <div class="scim-wide">
       <div class="tooltip scim-tip">
@@ -776,15 +846,19 @@ deprovision the users they describe, and there is no undo.</p>
            readonly>
   </div>
 </fieldset>
+</div>
 
 <!-- ===================== Runner ===================== -->
-<fieldset class="scim-pane" id="pane_runner">
-  <legend>Runner</legend>
+<div class="scim-pane dbg-pane" id="pane_runner">
+  <legend class="dbg-legend" id="runner_expand_button">Runner</legend>
+  <fieldset name="runner_fieldset" id="runner_fieldset"
+            style="display: block;">
   <p class="scim-note" id="scim_runner_summary">Nothing planned yet.</p>
   <div class="scim-runner-scroll">
     <table class="scim-table scim-runner" id="scim_runner_table"></table>
   </div>
 </fieldset>
+</div>
 
 <!-- ======================================================================
      THE EXCHANGE PANE.
@@ -800,8 +874,10 @@ deprovision the users they describe, and there is no undo.</p>
      dragged taller — or opened to full height with the Expand button
      beside it.
      =================================================================== -->
-<fieldset class="scim-pane" id="pane_exchange">
-  <legend>Exchange</legend>
+<div class="scim-pane dbg-pane" id="pane_exchange">
+  <legend class="dbg-legend" id="exchange_expand_button">Exchange</legend>
+  <fieldset name="exchange_fieldset" id="exchange_fieldset"
+            style="display: block;">
   <p class="scim-note" id="scim_exchange_via"></p>
   <p class="scim-note" id="scim_exchange_auth_note"></p>
   <p class="scim-note scim-hidden" id="scim_exchange_first_leg"></p>
@@ -879,18 +955,28 @@ deprovision the users they describe, and there is no undo.</p>
     </div>
   </div>
 </fieldset>
+</div>
 
 <!-- ===================== Operations History ===================== -->
-<fieldset class="scim-pane" id="pane_history">
-  <legend>Operations History</legend>
-  <p class="scim-note">Every request this page sent. <strong>Failure</strong>
-  means the server answered and the answer was no &mdash; very often the correct
-  outcome, and what the negative scenarios expect. A row that stays
-  <strong>Sent</strong> means nothing came back at all, which on this workflow
-  is usually CORS refusing a browser-direct call before it was made. Those two
-  look identical in a status line and need completely different fixes.</p>
+<div class="scim-pane dbg-pane" id="pane_history">
+  <legend class="dbg-legend"
+          id="history_expand_button">Operations History</legend>
+  <fieldset name="history_fieldset" id="history_fieldset"
+            style="display: block;">
+  <details class="scim-more">
+    <summary>Why <em>Failure</em> and <em>Sent</em> are not the same
+    thing</summary>
+    <p class="scim-note">Every request this page sent. <strong>Failure</strong>
+    means the server answered and the answer was no &mdash; very often the
+    correct outcome, and what the negative scenarios expect. A row that stays
+    <strong>Sent</strong> means nothing came back at all, which on this
+    workflow is usually CORS refusing a browser-direct call before it was
+    made. Those two look identical in a status line and need completely
+    different fixes.</p>
+  </details>
   <div id="scim_history"></div>
 </fieldset>
+</div>
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">

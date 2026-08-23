@@ -58,6 +58,36 @@ init()
       ;;
   esac
   export API_URL STS_URL
+  # THE TWO SPIFFE gRPC ADDRESSES, and there are two SETS of them because two
+  # different processes dial them.
+  #
+  #   SPIFFE_WORKLOAD_ADDRESS / SPIFFE_SERVER_ADDRESS are the API's view —
+  #   `api_spiffe.js` and `spiffe_page.js` both ask the api to open the
+  #   connection, exactly as SCIM_BASE_URL and LDAP_URL are the api's view.
+  #   run-report.js already defaults these to the compose name, so they are
+  #   here only for symmetry and for a stack that overrides them.
+  #
+  #   SPIFFE_TEST_* are THIS container's view, and they exist because
+  #   `spiffe_protocol.js` drives the api's client IN PROCESS and opens the
+  #   socket itself. On this stack the two happen to be the same name; on a
+  #   host run they are not, and a single variable standing for both is the
+  #   mistake KRB5_KDC_HOST records — `localhost` in the api's view means the
+  #   api container, where nothing listens on either port.
+  #
+  # The mock STS binds both on 0.0.0.0 and neither is published to the host
+  # here, which is fine: everything that dials them is on the bridge.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      SPIFFE_WORKLOAD_ADDRESS="${SPIFFE_WORKLOAD_ADDRESS:-sts:8092}"
+      SPIFFE_SERVER_ADDRESS="${SPIFFE_SERVER_ADDRESS:-sts:8181}"
+      SPIFFE_TEST_WORKLOAD_ADDRESS="${SPIFFE_TEST_WORKLOAD_ADDRESS:-sts:8092}"
+      SPIFFE_TEST_SERVER_ADDRESS="${SPIFFE_TEST_SERVER_ADDRESS:-sts:8181}"
+      SPIFFE_BUNDLE_URL="${SPIFFE_BUNDLE_URL:-http://sts:8081/spiffe/bundle}"
+      ;;
+  esac
+  export SPIFFE_WORKLOAD_ADDRESS SPIFFE_SERVER_ADDRESS
+  export SPIFFE_TEST_WORKLOAD_ADDRESS SPIFFE_TEST_SERVER_ADDRESS
+  export SPIFFE_BUNDLE_URL
   # WS-Trust STS (mock) reachable by its compose DNS name on the test network.
   # Must match the client bundle's baked wstrustStsUrlDefault (docker-tests.js).
   #

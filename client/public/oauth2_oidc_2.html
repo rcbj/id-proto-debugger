@@ -918,6 +918,17 @@ function dbgSetAllPanes(expand) {
         <legend class="dbg-legend" id="refresh_expand_button" onclick="return oauth2_oidc_2.onClickShowFieldSet('refresh_expand_button', 'refresh_fieldset');">Obtain New Access Token Using Refresh Token</legend>
         <fieldset id="refresh_fieldset" name="refresh_fieldset">
         <input class="input" id="refresh_grant_type" name="refresh_grant_type" type="hidden" value="refresh_token" />
+    <!-- The same two tabs the token exchange pane above carries, drawn by the
+         same renderer off a channel of its own: the form that composes the
+         Refresh Request, and the exchange that request actually produced. The
+         form stays selected by default and is never switched away from by
+         code. The HTTP tab's own label carries the status instead. See
+         client/src/oauth2_oidc_2.js. -->
+    <div class="dbg-tabs" role="tablist" aria-label="Refresh token exchange">
+      <button type="button" class="dbg-tab dbg-tab-on" role="tab" id="refresh_tab_form" aria-selected="true" aria-controls="refresh_tabpanel_form" onclick="return oauth2_oidc_2.selectRefreshTab('form');">Parameters</button>
+      <button type="button" class="dbg-tab" role="tab" id="refresh_tab_http" aria-selected="false" aria-controls="refresh_tabpanel_http" onclick="return oauth2_oidc_2.selectRefreshTab('http');">HTTP</button>
+    </div>
+    <div class="dbg-tabpanel" id="refresh_tabpanel_form" role="tabpanel" aria-labelledby="refresh_tab_form">
         <table>
           <tbody>
             <tr>
@@ -993,6 +1004,14 @@ function dbgSetAllPanes(expand) {
             </tr>
           </tbody>
         </table>
+    </div>
+    <!-- The HTTP exchange for the Refresh Request: method, URL, headers and
+         body each way, and how long the response took. Populated by
+         renderHttpExchange(), which builds it as text nodes rather than as
+         markup — every value in it is somebody else's bytes. -->
+    <div class="dbg-tabpanel dbg-tabpanel-off" id="refresh_tabpanel_http" role="tabpanel" aria-labelledby="refresh_tab_http">
+      <div id="refresh_http_exchange" class="dbg-http-host"></div>
+    </div>
       </fieldset>
     </div>
   </div>

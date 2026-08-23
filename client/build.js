@@ -125,6 +125,7 @@ const BUNDLES = [
   ['ldap', 'ldap'],
   ['pki', 'pki'],
   ['scim', 'scim'],
+  ['spiffe', 'spiffe'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>
@@ -283,6 +284,26 @@ const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
       return dest;
     })
   : [];
+// The same staging for common/spiffe, and for the same reason: the SPIFFE ID
+// grammar and the trust-bundle reader live in common/ because api/, tests/ and
+// this bundle all need them and a grammar implemented three times is a grammar
+// that disagrees with itself. Only spiffe.js requires them, so unlike the
+// Kerberos list this is one bundle and the test can stay a comparison rather
+// than a list — but it is written the same way so the next module added here
+// does not have to work out which shape to follow.
+const SPIFFE_DIR = path.join(CLIENT_DIR, '..', 'common', 'spiffe');
+const SPIFFE_BUNDLES = ['spiffe'];
+const needsSpiffe = BUILT_BUNDLES.some(function (entry) {
+  return SPIFFE_BUNDLES.indexOf(entry[0]) !== -1;
+});
+const stagedSpiffe = (needsSpiffe && fs.existsSync(SPIFFE_DIR))
+  ? fs.readdirSync(SPIFFE_DIR).filter((f) => f.endsWith('.js')).map((f) => {
+      const dest = path.join(SRC, f);
+      log.info('staging common/spiffe/' + f + ' -> src/' + f);
+      fs.copyFileSync(path.join(SPIFFE_DIR, f), dest);
+      return dest;
+    })
+  : [];
 try {
   for (const [name, standalone] of BUILT_BUNDLES) {
     const out = path.join(DIST, 'js', name + '.js');
@@ -307,6 +328,7 @@ try {
 } finally {
   fs.rmSync(stagedData, { force: true });
   stagedKrb5.forEach((f) => fs.rmSync(f, { force: true }));
+  stagedSpiffe.forEach((f) => fs.rmSync(f, { force: true }));
 }
 
 // 4. Resolve <!--#include file="/partials/x.html"--> directives in-place

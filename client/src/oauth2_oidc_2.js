@@ -135,12 +135,12 @@ function logoutButtonClick()  {
 function tokenButtonClick() {
   log.debug("Entering tokenButtonClick().");
   log.debug("Entering token Submit button clicked function.");
-  $('#step3').show();
-  $('#step4').show();
-  $('#step5').show();
-  $('#step6').show();
-  $('#step7').show();
-  $('#operation-history-panel').show();
+  expandPane('#step3');
+  expandPane('#step4');
+  expandPane('#step5');
+  expandPane('#step6');
+  expandPane('#step7');
+  expandPane('#operation-history-panel');
   log.debug("Updating local storage.");
   writeValuesToLocalStorage();
   log.debug("Recalculating token request description.");
@@ -192,7 +192,7 @@ function tokenButtonClick() {
         // ones this page CHOSE: the browser adds Origin, Referer and
         // User-Agent itself, after script has stopped being able to look, and
         // the pane says so rather than implying this is all of them.
-        noteTokenRequestSent({
+        noteHttpRequestSent("token", {
           via: "browser",
           method: "POST",
           url: url,
@@ -256,7 +256,7 @@ function tokenButtonClick() {
     // reaches the identity provider.
     var proxiedBody = JSON.stringify($.extend({}, formData, {
       http_trace: true }));
-    noteTokenRequestSent({
+    noteHttpRequestSent("token", {
       via: "api",
       method: "POST",
       url: appconfig.apiUrl + "/token",
@@ -488,15 +488,15 @@ function renderOauthDpopStatus(accessToken) {
 }
 
 // ---------------------------------------------------------------------------
-// THE HTTP TAB on the token exchange pane.
+// THE HTTP TABS, and the four panes that carry one.
 //
-// What the pane showed before this was a DESCRIPTION of the request, composed
-// from the form as it stood — useful, and not the same thing as the exchange:
-// it names no headers, it is written before anything is sent, and it says
-// nothing at all about what came back or how long it took. This tab shows the
-// call that was actually made.
+// What those panes showed before this was a DESCRIPTION of the request,
+// composed from the form as it stood — useful, and not the same thing as the
+// exchange: it names no headers, it is written before anything is sent, and it
+// says nothing at all about what came back or how long it took. These tabs
+// show the call that was actually made.
 //
-// Where the bytes come from depends on which end made the call, and the pane
+// Where the bytes come from depends on which end made the call, and each pane
 // says which, because the difference is the whole reason this page offers the
 // choice:
 //
@@ -513,20 +513,48 @@ function renderOauthDpopStatus(accessToken) {
 //     `http_exchange`, which this asked for with `http_trace: true`. That is
 //     the complete exchange, headers and raw body both ways.
 //
-// Nothing here is written to localStorage. The request repeats a client
-// secret, an Authorization header and, on the password grant, a password —
-// which is precisely what this page keeps out of storage (see the state
-// persistence note in CLAUDE.md). The trace lives as long as the page does.
+// THREE CHANNELS, FOUR PANES, ONE RENDERER. There are two exchanges a reader
+// can be looking at on this page and a third they can go back to:
+//
+//   token    the Token Request. Composed on "Exchange Authorization Code for
+//            Access Token" and read on "Token Endpoint Results" — the same
+//            exchange in two panes, because a successful call COLLAPSES the
+//            form and leaves the results pane as the one on screen.
+//   refresh  the Refresh Request, in the same two places: the "Obtain New
+//            Access Token Using Refresh Token" form and "Token Endpoint
+//            Results for Refresh Token Call".
+//   viewing  whichever generation the Token History pane has activated, in
+//            the "Currently Viewing" pane. This one is not live: it is read
+//            back out of the history entry, which is the only channel that
+//            can outlive the page load that produced it.
+//
+// A channel is a name, the hosts that draw it, and the last view drawn. One
+// renderer fills every host a channel has, so a pane that is rebuilt (three of
+// the four are built as STRINGS and dropped into a container) gets the current
+// view put back into it rather than a second implementation of the drawing.
+//
+// WHAT IS AND IS NOT WRITTEN DOWN. The live channels keep their view in module
+// state for as long as the page lives, verbatim. What goes into `token_history`
+// alongside the tokens is a REDACTED copy — see redactExchangeForStorage().
+// Everything else about the exchange is kept, which is what makes the Currently
+// Viewing pane's HTTP tab worth having.
+//
+// Be exact about what that buys, because the page's storage rules are not
+// uniform and it is easy to claim more than is true. This page already stores
+// `token_client_secret` and `refresh_client_secret` as ordinary form state —
+// they are what the fields hold, and they come back when the page reloads. The
+// PASSWORD is the one the state persistence note in CLAUDE.md excludes, and it
+// is not stored anywhere. So the redaction is not what keeps the client secret
+// out of this browser; it keeps a SECOND copy of every credential out of a
+// record that grows one entry per token call, outlives the form's own state,
+// is read back by a pane rather than typed into one, and — unlike a form field
+// — carries the api's HTTP Basic header, which is a credential this page never
+// composed and had never persisted before.
 // ---------------------------------------------------------------------------
-
-// The request this page last sent, and the instant it went. Module state
-// rather than a closure because jQuery hands its handlers the response and
-// never the request that produced it.
-var tokenExchangeSent = null;
 
 // One element, with its text set as TEXT.
 //
-// Everything this pane draws — header names and values, a request body, a
+// Everything these panes draw — header names and values, a request body, a
 // response body — is somebody else's bytes, and half of it arrives from the
 // far end. Building markup out of it and handing that to .html() is the
 // js/xss-through-dom shape that fillGeneratedFields() above exists to avoid,
@@ -616,7 +644,7 @@ function parseXhrHeaders(raw) {
 }
 
 // Draw a view into one host. Everything above assembles one of these; this
-// and renderTokenHttpExchange() below are the only functions that touch a
+// and renderHttpExchange() below are the only functions that touch a
 // pane.
 //
 // view = { note, request: {method, url, headers, body},
@@ -673,54 +701,126 @@ function drawHttpExchange(host, view, emptyText) {
   log.debug("Leaving drawHttpExchange().");
 }
 
-// The two panes that show this exchange, and what each of them says when
-// there is none to show.
+// The three channels, the panes each of them draws into, and what each pane
+// says when there is nothing to draw.
 //
-// The SAME exchange is drawn in both. It is composed on the request form, so
-// the form has a tab for it; but a successful call COLLAPSES that form and
-// leaves the Token Endpoint Results pane open, which is where a reader is
-// actually looking when they want to know what went over the wire. One view,
-// one renderer, two hosts — two implementations of this would drift the first
-// time the api's trace gained a field.
-var HTTP_EXCHANGE_PANES = [
-  { host: "token_http_exchange",
-    empty: "No Token Request has been sent from this page yet. Send one " +
-        "with Get Token and the whole exchange appears here." },
-  { host: "token_result_http_exchange",
-    empty: "No Token Request has been sent since this page was loaded. " +
-        "The tokens beside this tab were restored from this browser's " +
-        "storage; the exchange that produced them was not kept, because a " +
-        "Token Request carries the client secret." }
-];
+// `empty` differs by pane because the absence means different things: on a
+// request form nothing has been sent YET; on a results pane the tokens on
+// screen may have come back from localStorage, with the exchange that produced
+// them either kept beside them or — for a set issued by a build before this,
+// or by the Authorization Endpoint, which is not an HTTP call this page makes
+// — not there at all.
+var HTTP_CHANNELS = {
+  token: {
+    // The tab buttons whose LABEL carries the status, so that a pane collapsed
+    // by a successful call still says what came back.
+    tabs: ["token_tab_http", "token_result_tab_http"],
+    panes: [
+      { host: "token_http_exchange",
+        empty: "No Token Request has been sent from this page yet. Send one " +
+            "with Get Token and the whole exchange appears here." },
+      { host: "token_result_http_exchange",
+        empty: "No Token Request has been sent since this page was loaded. " +
+            "The tokens beside this tab were restored from this browser's " +
+            "storage; open the generation in Token History to see the " +
+            "exchange that was kept with it." }
+    ]
+  },
+  refresh: {
+    tabs: ["refresh_tab_http", "refresh_result_tab_http"],
+    panes: [
+      { host: "refresh_http_exchange",
+        empty: "No Refresh Request has been sent from this page yet. Send " +
+            "one with Get Token and the whole exchange appears here." },
+      { host: "refresh_result_http_exchange",
+        empty: "No Refresh Request has been sent since this page was " +
+            "loaded. The tokens beside this tab were restored from this " +
+            "browser's storage; open the generation in Token History to see " +
+            "the exchange that was kept with it." }
+    ]
+  },
+  viewing: {
+    tabs: ["cv_tab_http"],
+    panes: [
+      { host: "cv_http_exchange",
+        empty: "No HTTP exchange was kept with this generation. Either it " +
+            "came from the Authorization Endpoint — which this page reaches " +
+            "by navigating the browser, not by making a request it can " +
+            "trace — or it was issued before this build began keeping them." }
+    ]
+  }
+};
 
-// The last view drawn, and the last thing the HTTP tab's label said.
+// Per-channel state: the request last sent on it, the last view drawn, and the
+// last thing its tab labels said.
 //
-// Both are kept because the Token Endpoint Results pane is REBUILT from a
-// string on every call and again on load, so its host element does not exist
-// when showTokenExchange() runs — that runs at the top of the same handler
-// that rebuilds the pane. Whichever of the two happens second fills in the
-// other: this function draws into every host that exists now, and
-// attachHttpTabToTokenResults() draws this view into the host it has just
-// created.
-var tokenExchangeView = null;
-var tokenExchangeLabel = null;
+// All three are kept rather than read back off the DOM because three of the
+// four panes are REBUILT from a string — on every call, and again on load — so
+// a host element does not exist at the moment the view for it is composed.
+// Whichever of the two happens second fills in the other: renderHttpExchange()
+// draws into every host that exists now, and attachHttpTab() draws the kept
+// view into the host it has just created.
+var httpChannelState = {
+  token: { sent: null, view: null, label: null },
+  refresh: { sent: null, view: null, label: null },
+  viewing: { sent: null, view: null, label: null }
+};
 
-// Draw the view in every pane that has somewhere to put it.
-function renderTokenHttpExchange(view) {
-  log.debug("Entering renderTokenHttpExchange().");
-  tokenExchangeView = view;
-  HTTP_EXCHANGE_PANES.forEach(function (pane) {
-    drawHttpExchange(document.getElementById(pane.host), view, pane.empty);
-  });
-  log.debug("Leaving renderTokenHttpExchange().");
+// The state record for one channel, created on demand so that a typo in a
+// channel name is a visible no-op rather than a thrown TypeError in an ajax
+// handler, where it would look like the call itself had failed.
+function httpChannelStateFor(channel) {
+  log.debug("Entering httpChannelStateFor(). channel=" + channel);
+  if (!httpChannelState[channel]) {
+    log.error("Unknown HTTP exchange channel: " + channel);
+    httpChannelState[channel] = { sent: null, view: null, label: null };
+  }
+  log.debug("Leaving httpChannelStateFor().");
+  return httpChannelState[channel];
 }
 
-// The tab strip. Two panels, and the form is the one that stays selected on
-// its own: a token call COLLAPSES this pane (`$("#token_fieldset").hide()`),
-// so switching tabs from a response handler would rearrange a pane nobody is
-// looking at and hand the next reader who expands it something other than the
-// form they went there for. The label carries the status instead, which is
-// visible the moment the pane is opened.
+// Draw a channel's view in every pane of it that has somewhere to put it.
+function renderHttpExchange(channel, view) {
+  log.debug("Entering renderHttpExchange(). channel=" + channel);
+  httpChannelStateFor(channel).view = view;
+  var config = HTTP_CHANNELS[channel];
+  if (!config) {
+    log.debug("Leaving renderHttpExchange(). No such channel.");
+    return;
+  }
+  config.panes.forEach(function (pane) {
+    drawHttpExchange(document.getElementById(pane.host), view, pane.empty);
+  });
+  log.debug("Leaving renderHttpExchange().");
+}
+
+// The label on a channel's tab buttons, so that a pane collapsed by a
+// successful call still says what the exchange came back as.
+function setHttpTabLabel(channel, suffix) {
+  log.debug("Entering setHttpTabLabel(). channel=" + channel + " suffix=" +
+            suffix);
+  httpChannelStateFor(channel).label = suffix || null;
+  var config = HTTP_CHANNELS[channel];
+  if (!config) {
+    log.debug("Leaving setHttpTabLabel(). No such channel.");
+    return;
+  }
+  config.tabs.forEach(function (id) {
+    var tab = document.getElementById(id);
+    if (tab) {
+      tab.textContent = suffix ? "HTTP · " + suffix : "HTTP";
+    }
+  });
+  log.debug("Leaving setHttpTabLabel().");
+}
+
+// The tab strips. Each pane's first tab is the one a reader came for — the
+// form on a request pane, the tokens on a results pane — and none of them is
+// switched away from by code: a token call COLLAPSES the pane it was sent
+// from, so a tab switched from a response handler would rearrange a pane
+// nobody is looking at and hand the next reader who expands it something other
+// than what they went there for. The tab's own label carries the status
+// instead, which is visible the moment the pane is opened.
 function selectTokenTab(name) {
   log.debug("Entering selectTokenTab(). name=" + name);
   var picked = selectPaneTab("token", ["form", "http"], name);
@@ -728,10 +828,6 @@ function selectTokenTab(name) {
   return picked;
 }
 
-// The same strip on the Token Endpoint Results pane. Its first tab is the
-// tokens for the same reason the form is first above: a reader who has just
-// called the token endpoint came for the token, and the exchange is the
-// second question rather than the first.
 function selectTokenResultTab(name) {
   log.debug("Entering selectTokenResultTab(). name=" + name);
   var picked = selectPaneTab("token_result", ["tokens", "http"], name);
@@ -739,10 +835,31 @@ function selectTokenResultTab(name) {
   return picked;
 }
 
-// Turn one tab of a strip on and every other one off. Shared by both panes:
-// the class names and the aria attributes are the contract the stylesheet and
-// a screen reader each read, and one of the two panes having its own copy of
-// them is how they stop matching. An unknown name selects the first tab
+function selectRefreshTab(name) {
+  log.debug("Entering selectRefreshTab(). name=" + name);
+  var picked = selectPaneTab("refresh", ["form", "http"], name);
+  log.debug("Leaving selectRefreshTab().");
+  return picked;
+}
+
+function selectRefreshResultTab(name) {
+  log.debug("Entering selectRefreshResultTab(). name=" + name);
+  var picked = selectPaneTab("refresh_result", ["tokens", "http"], name);
+  log.debug("Leaving selectRefreshResultTab().");
+  return picked;
+}
+
+function selectCurrentlyViewingTab(name) {
+  log.debug("Entering selectCurrentlyViewingTab(). name=" + name);
+  var picked = selectPaneTab("cv", ["tokens", "http"], name);
+  log.debug("Leaving selectCurrentlyViewingTab().");
+  return picked;
+}
+
+// Turn one tab of a strip on and every other one off. Shared by all four
+// panes: the class names and the aria attributes are the contract the
+// stylesheet and a screen reader each read, and one pane having its own copy
+// of them is how they stop matching. An unknown name selects the first tab
 // rather than none — a strip with no panel showing reads as a broken pane.
 // Returns false, because a tab click must not navigate.
 function selectPaneTab(prefix, names, wanted) {
@@ -765,101 +882,146 @@ function selectPaneTab(prefix, names, wanted) {
   return false;
 }
 
-// The tab's own label, so that a pane collapsed by a successful call still
-// says what the exchange came back as.
-function setTokenHttpTabLabel(suffix) {
-  log.debug("Entering setTokenHttpTabLabel(). suffix=" + suffix);
-  tokenExchangeLabel = suffix || null;
-  ["token_tab_http", "token_result_tab_http"].forEach(function (id) {
-    var tab = document.getElementById(id);
-    if (tab) {
-      tab.textContent = suffix ? "HTTP · " + suffix : "HTTP";
-    }
-  });
-  log.debug("Leaving setTokenHttpTabLabel().");
-}
-
-// One tab button for the results pane, wired with a listener rather than an
-// inline onclick. This strip is built BY the bundle, so the handler is in
+// One tab button for a generated pane, wired with a listener rather than an
+// inline onclick. These strips are built BY the bundle, so the handler is in
 // scope by definition — where an inline onclick in generated markup is a call
 // into a global that may not exist when the markup lands (see the note on
 // inline handlers in client/CLAUDE.md).
-function resultTabButton(which, label, on) {
-  log.debug("Entering resultTabButton(). which=" + which);
+function paneTabButton(prefix, which, label, on, onSelect) {
+  log.debug("Entering paneTabButton(). prefix=" + prefix + " which=" + which);
   var button = httpNode("button", "dbg-tab" + (on ? " dbg-tab-on" : ""),
                         label);
   button.type = "button";
-  button.id = "token_result_tab_" + which;
+  button.id = prefix + "_tab_" + which;
   button.setAttribute("role", "tab");
   button.setAttribute("aria-selected", on ? "true" : "false");
-  button.setAttribute("aria-controls", "token_result_tabpanel_" + which);
+  button.setAttribute("aria-controls", prefix + "_tabpanel_" + which);
   button.addEventListener("click", function () {
-    selectTokenResultTab(which);
+    onSelect(which);
   });
-  log.debug("Leaving resultTabButton().");
+  log.debug("Leaving paneTabButton().");
   return button;
 }
 
-// Give the Token Endpoint Results pane its HTTP tab.
+// Give a GENERATED pane its HTTP tab.
 //
-// That pane is not in the page. It is built as a STRING in four branches of
-// this file and dropped into #token_endpoint_result, so there is no markup
-// here to hang a tab strip on, and putting one in each of the four branches
-// would be four copies to keep in step — one of which already builds a bare
-// <fieldset> with no pane div around it. So this wraps whatever was just
-// built: the tokens, in whichever variant they were drawn, become the first
-// panel, and the exchange becomes the second.
+// Three of the four panes are not in the page. They are built as STRINGS and
+// dropped into a container — the token results pane in four branches of this
+// file, the refresh results pane in one, the Currently Viewing pane in one —
+// so there is no markup here to hang a tab strip on, and putting one in each
+// of those branches would be six copies to keep in step, one of which already
+// builds a bare <fieldset> with no pane div around it. So this wraps whatever
+// was just built: what the branch drew becomes the first panel, and the
+// exchange becomes the second.
 //
-// Idempotent, because the pane is rebuilt on every call and this runs after
-// each rebuild: a second strip on the same fieldset would be two sets of tabs
-// driving one panel.
-function attachHttpTabToTokenResults() {
-  log.debug("Entering attachHttpTabToTokenResults().");
-  var container = document.getElementById("token_endpoint_result");
+// Idempotent, because those panes are rebuilt on every call and this runs
+// after each rebuild: a second strip on the same fieldset would be two sets of
+// tabs driving one panel.
+//
+// `channel` names which exchange the second panel shows, and `paneIndex` which
+// of that channel's hosts this pane is — which is what decides the id the host
+// is given and the sentence an empty one carries.
+function attachHttpTab(options) {
+  log.debug("Entering attachHttpTab(). container=" + options.container);
+  var container = document.getElementById(options.container);
   var fieldset = container ? container.querySelector("fieldset") : null;
   if (!fieldset) {
-    log.debug("Leaving attachHttpTabToTokenResults(). No results pane.");
+    log.debug("Leaving attachHttpTab(). No pane to tab.");
     return;
   }
   if (fieldset.querySelector(".dbg-tabs")) {
-    log.debug("Leaving attachHttpTabToTokenResults(). Already tabbed.");
+    log.debug("Leaving attachHttpTab(). Already tabbed.");
     return;
   }
-  var tokens = httpNode("div", "dbg-tabpanel");
-  tokens.id = "token_result_tabpanel_tokens";
+  var pane = HTTP_CHANNELS[options.channel].panes[options.paneIndex];
+  var first = httpNode("div", "dbg-tabpanel");
+  first.id = options.prefix + "_tabpanel_" + options.firstTab;
   while (fieldset.firstChild) {
-    tokens.appendChild(fieldset.firstChild);
+    first.appendChild(fieldset.firstChild);
   }
   var strip = httpNode("div", "dbg-tabs");
   strip.setAttribute("role", "tablist");
-  strip.setAttribute("aria-label", "Token endpoint results");
-  strip.appendChild(resultTabButton("tokens", "Tokens", true));
-  strip.appendChild(resultTabButton("http", "HTTP", false));
+  strip.setAttribute("aria-label", options.label);
+  strip.appendChild(paneTabButton(options.prefix, options.firstTab,
+                                  options.firstTabLabel, true,
+                                  options.onSelect));
+  strip.appendChild(paneTabButton(options.prefix, "http", "HTTP", false,
+                                  options.onSelect));
   var panel = httpNode("div", "dbg-tabpanel dbg-tabpanel-off");
-  panel.id = "token_result_tabpanel_http";
+  panel.id = options.prefix + "_tabpanel_http";
   var host = httpNode("div", "dbg-http-host");
-  host.id = "token_result_http_exchange";
+  host.id = pane.host;
   panel.appendChild(host);
   fieldset.appendChild(strip);
-  fieldset.appendChild(tokens);
+  fieldset.appendChild(first);
   fieldset.appendChild(panel);
   // The exchange was drawn before this pane existed, and the label was set
   // before this button did, so both are put back here from what was kept.
-  drawHttpExchange(host, tokenExchangeView, HTTP_EXCHANGE_PANES[1].empty);
-  setTokenHttpTabLabel(tokenExchangeLabel);
+  var state = httpChannelStateFor(options.channel);
+  drawHttpExchange(host, state.view, pane.empty);
+  setHttpTabLabel(options.channel, state.label);
+  log.debug("Leaving attachHttpTab().");
+}
+
+// The Token Endpoint Results pane's HTTP tab.
+function attachHttpTabToTokenResults() {
+  log.debug("Entering attachHttpTabToTokenResults().");
+  attachHttpTab({
+    container: "token_endpoint_result",
+    prefix: "token_result",
+    channel: "token",
+    paneIndex: 1,
+    firstTab: "tokens",
+    firstTabLabel: "Tokens",
+    label: "Token endpoint results",
+    onSelect: selectTokenResultTab });
   log.debug("Leaving attachHttpTabToTokenResults().");
 }
 
-// Record what is about to go out, and show it while it is in flight. The
-// request is worth showing on its own: a call that never comes back is
-// precisely the one whose headers and body the reader needs.
-function noteTokenRequestSent(sent) {
-  log.debug("Entering noteTokenRequestSent(). " + sent.method + " " +
-            sent.url);
-  tokenExchangeSent = sent;
-  tokenExchangeSent.startedAt = Date.now();
-  setTokenHttpTabLabel("sending…");
-  renderTokenHttpExchange({
+// The Token Endpoint Results for Refresh Token Call pane's HTTP tab.
+function attachHttpTabToRefreshResults() {
+  log.debug("Entering attachHttpTabToRefreshResults().");
+  attachHttpTab({
+    container: "refresh_endpoint_result",
+    prefix: "refresh_result",
+    channel: "refresh",
+    paneIndex: 1,
+    firstTab: "tokens",
+    firstTabLabel: "Tokens",
+    label: "Refresh token endpoint results",
+    onSelect: selectRefreshResultTab });
+  log.debug("Leaving attachHttpTabToRefreshResults().");
+}
+
+// The Currently Viewing pane's HTTP tab. Unlike the two above, the view behind
+// it is not the live one: it is whatever was kept with the generation the
+// Token History pane has activated, which is put on the channel by
+// renderCurrentlyViewing() before this runs.
+function attachHttpTabToCurrentlyViewing() {
+  log.debug("Entering attachHttpTabToCurrentlyViewing().");
+  attachHttpTab({
+    container: "currently-viewing-panel",
+    prefix: "cv",
+    channel: "viewing",
+    paneIndex: 0,
+    firstTab: "tokens",
+    firstTabLabel: "Tokens",
+    label: "Currently viewing",
+    onSelect: selectCurrentlyViewingTab });
+  log.debug("Leaving attachHttpTabToCurrentlyViewing().");
+}
+
+// Record what is about to go out on a channel, and show it while it is in
+// flight. The request is worth showing on its own: a call that never comes
+// back is precisely the one whose headers and body the reader needs.
+function noteHttpRequestSent(channel, sent) {
+  log.debug("Entering noteHttpRequestSent(). channel=" + channel + " " +
+            sent.method + " " + sent.url);
+  var state = httpChannelStateFor(channel);
+  state.sent = sent;
+  state.sent.startedAt = Date.now();
+  setHttpTabLabel(channel, "sending…");
+  renderHttpExchange(channel, {
     note: sent.note,
     request: {
       method: sent.method, url: sent.url, headers: sent.headers,
@@ -867,7 +1029,7 @@ function noteTokenRequestSent(sent) {
     response: null,
     timing: [],
     failure: null });
-  log.debug("Leaving noteTokenRequestSent().");
+  log.debug("Leaving noteHttpRequestSent().");
 }
 
 // The api's own account of the call it made, when it made one. Returned under
@@ -923,13 +1085,29 @@ function tokenErrorWithoutTrace(jqXHR) {
   return view;
 }
 
-// Assemble and draw the finished exchange. Called from both ajax handlers, so
-// a refusal is drawn exactly like a success — a 400 with an error body is an
-// exchange, and the one whose headers and elapsed time are most often the
-// point.
-function showTokenExchange(jqXHR, apiTrace) {
-  log.debug("Entering showTokenExchange().");
-  var sent = tokenExchangeSent;
+// What each channel calls the request it sends, for the sentences below. The
+// pane a reader is looking at already says which call it is about, but the
+// note beside the exchange names it too — a reader who has both panes open at
+// once is looking at two request/response pairs that are alike in every way
+// except this.
+var HTTP_CHANNEL_REQUEST_NAME = {
+  token: "Token Request",
+  refresh: "Refresh Request",
+  viewing: "request"
+};
+
+// Assemble and draw the finished exchange on a channel. Called from both ajax
+// handlers of both live channels, so a refusal is drawn exactly like a success
+// — a 400 with an error body is an exchange, and the one whose headers and
+// elapsed time are most often the point.
+//
+// Returns the view it drew, so that the caller which is about to write a token
+// set to the history can keep a redacted copy of it beside the tokens without
+// composing the thing a second time.
+function showHttpExchange(channel, jqXHR, apiTrace) {
+  log.debug("Entering showHttpExchange(). channel=" + channel);
+  var sent = httpChannelStateFor(channel).sent;
+  var requestName = HTTP_CHANNEL_REQUEST_NAME[channel] || "request";
   var roundTripMs = sent && sent.startedAt ? Date.now() - sent.startedAt : null;
   var status = jqXHR && jqXHR.status ? jqXHR.status : 0;
   var timing = [];
@@ -1001,11 +1179,230 @@ function showTokenExchange(jqXHR, apiTrace) {
                   roundTripMs + " ms.");
     }
   }
-  setTokenHttpTabLabel(view.response ? String(view.response.status) :
-                       "no response");
-  renderTokenHttpExchange(view);
-  log.debug("Leaving showTokenExchange(). status=" +
+  view.requestName = requestName;
+  setHttpTabLabel(channel, view.response ? String(view.response.status) :
+                  "no response");
+  renderHttpExchange(channel, view);
+  log.debug("Leaving showHttpExchange(). status=" +
             (view.response ? view.response.status : "none"));
+  return view;
+}
+
+// ---------------------------------------------------------------------------
+// KEEPING AN EXCHANGE, which is the one thing this page had decided not to do.
+//
+// The live channels above hold their view for as long as the page lives and
+// write nothing down. That was the whole rule, and the reason for it is that a
+// Token Request repeats a client secret, carries an Authorization header built
+// out of it, and on the password grant carries a password. See the note at the
+// top of this section for what the redaction does and does not buy — the
+// password is the credential this page genuinely keeps out of storage, and the
+// Authorization header is the one it had never persisted before.
+//
+// What is kept beside a token set in `token_history` is therefore a COPY with
+// those values taken out and nothing else changed. The distinction is worth
+// being exact about, because it is the whole reason the copy is allowed to
+// exist: the method, the URL, every other request header, every other body
+// parameter, the status line, every response header, the response body and the
+// timing are all kept verbatim — those are what the exchange is FOR — and only
+// the values that authenticate the client are replaced. A reader who wants the
+// unredacted bytes has them in the live pane for as long as the page is open.
+//
+// Redaction is by NAME and it is deliberately blunt. A header whose name is in
+// the list loses its whole value; a body parameter whose name is in the list
+// loses its whole value. Guessing at which PART of a credential is secret is
+// how a redactor leaves half of one behind.
+// ---------------------------------------------------------------------------
+
+// What a redacted value reads as. One string, so a test can look for it and a
+// reader cannot mistake it for something the server sent.
+var HTTP_REDACTED = "(redacted — not stored)";
+
+// Request headers whose value is a credential. Compared lower-cased, because a
+// header name is case-insensitive and these arrive from two different senders:
+// the api reports what it sent (lower-cased by axios), and this page reports
+// what it chose (capitalised as written here).
+var HTTP_REDACTED_HEADERS = [
+  "authorization", "proxy-authorization", "cookie", "dpop"];
+
+// Body parameters whose value is a credential. `client_secret` and `password`
+// are the two this page can send; `client_assertion` is here because a private
+// key JWT is a bearer credential in exactly the same way, and a build that
+// starts sending one must not have to remember this list.
+var HTTP_REDACTED_PARAMS = [
+  "client_secret", "password", "client_assertion", "assertion"];
+
+// The most of a body that is kept. A response body is a token response —
+// three JWTs and some JSON around them — and a request body is smaller than
+// that, so this is generous for both; what it is really guarding against is
+// an identity provider that answers with a stack trace or an HTML page, times
+// the thousand generations TOKEN_HISTORY_LIMIT allows.
+var HTTP_STORED_BODY_LIMIT = 8192;
+
+// One header map with the credential-bearing values taken out.
+function redactHeadersForStorage(headers) {
+  log.debug("Entering redactHeadersForStorage().");
+  var out = {};
+  Object.keys(headers || {}).forEach(function (name) {
+    if (HTTP_REDACTED_HEADERS.indexOf(String(name).toLowerCase()) >= 0) {
+      out[name] = HTTP_REDACTED;
+    } else {
+      out[name] = headers[name];
+    }
+  });
+  log.debug("Leaving redactHeadersForStorage().");
+  return out;
+}
+
+// One request body with the credential-bearing parameters taken out.
+//
+// Two shapes reach this, because this page sends two: a form-urlencoded body
+// straight to the token endpoint, and a JSON body to the api. Both are handled
+// by name; anything that is neither is kept whole, since a body this does not
+// understand is one whose parameters it cannot find either — and a body it
+// cannot parse is not one it may hand back with a credential still in it, so
+// the unknown case keeps only its length.
+function redactBodyForStorage(body, contentType) {
+  log.debug("Entering redactBodyForStorage().");
+  if (body === null || body === undefined || body === "") {
+    log.debug("Leaving redactBodyForStorage(). Empty.");
+    return body;
+  }
+  var text = String(body);
+  var type = String(contentType || "").toLowerCase();
+  if (type.indexOf("json") >= 0 || /^\s*\{/.test(text)) {
+    try {
+      var parsed = JSON.parse(text);
+      if (parsed && typeof parsed === "object") {
+        HTTP_REDACTED_PARAMS.forEach(function (name) {
+          if (Object.prototype.hasOwnProperty.call(parsed, name)) {
+            parsed[name] = HTTP_REDACTED;
+          }
+        });
+        log.debug("Leaving redactBodyForStorage(). JSON.");
+        return JSON.stringify(parsed);
+      }
+    } catch (e) {
+      // Not JSON after all — it only looked like it. Fall through to the
+      // form-encoded pass below, which leaves a string it does not recognise
+      // alone rather than mangling it.
+      log.debug("redactBodyForStorage(): the body is not JSON.");
+    }
+  }
+  // Form-urlencoded, by name. The value is replaced with the ENCODED marker so
+  // that what is stored is still a body a reader can parse.
+  var redacted = text.replace(/([^&=?]+)=([^&]*)/g, function (whole, key) {
+    var name = "";
+    try {
+      name = decodeURIComponent(key).toLowerCase();
+    } catch (e) {
+      // A malformed percent-escape in a parameter NAME. It is not one of the
+      // names below, so the pair is kept as it stands.
+      log.debug("redactBodyForStorage(): undecodable parameter name.");
+      name = String(key).toLowerCase();
+    }
+    if (HTTP_REDACTED_PARAMS.indexOf(name) >= 0) {
+      return key + "=" + encodeURIComponent(HTTP_REDACTED);
+    }
+    return whole;
+  });
+  log.debug("Leaving redactBodyForStorage(). Form-encoded.");
+  return redacted;
+}
+
+// A body cut down to what is worth keeping, with a line saying so when it was.
+function capBodyForStorage(text) {
+  log.debug("Entering capBodyForStorage().");
+  if (text === null || text === undefined) {
+    log.debug("Leaving capBodyForStorage(). Nothing to cap.");
+    return { body: text, note: null };
+  }
+  var s = String(text);
+  if (s.length <= HTTP_STORED_BODY_LIMIT) {
+    log.debug("Leaving capBodyForStorage(). Kept whole.");
+    return { body: s, note: null };
+  }
+  log.debug("Leaving capBodyForStorage(). Cut to " + HTTP_STORED_BODY_LIMIT +
+            ".");
+  return {
+    body: s.slice(0, HTTP_STORED_BODY_LIMIT),
+    note: "Body truncated when it was stored — the first " +
+        String(HTTP_STORED_BODY_LIMIT) + " of " + String(s.length) +
+        " characters." };
+}
+
+// The whole exchange, ready to be written down beside a token set.
+//
+// The value returned is a view of exactly the shape drawHttpExchange() draws,
+// which is what lets the Currently Viewing pane read one back out of storage
+// and hand it to the same renderer the live panes use. Nothing about it is
+// re-derived on the way out: what is stored is what is shown.
+function redactExchangeForStorage(view) {
+  log.debug("Entering redactExchangeForStorage().");
+  if (!view || !view.request) {
+    log.debug("Leaving redactExchangeForStorage(). Nothing to keep.");
+    return null;
+  }
+  var requestType = (view.request.headers || {})["Content-Type"] ||
+      (view.request.headers || {})["content-type"] || "";
+  var requestBody = capBodyForStorage(
+      redactBodyForStorage(view.request.body, requestType));
+  var kept = {
+    note: view.note || null,
+    requestName: view.requestName || null,
+    // The instant the set was written, which is what the pane says when it
+    // draws an exchange that did not happen on this page load.
+    storedAt: new Date().toISOString(),
+    request: {
+      method: view.request.method,
+      url: view.request.url,
+      headers: redactHeadersForStorage(view.request.headers),
+      body: requestBody.body,
+      note: [view.request.note, requestBody.note,
+             "Credentials were removed before this exchange was stored."]
+          .filter(Boolean).join(" ") },
+    response: null,
+    timing: (view.timing || []).slice(),
+    failure: view.failure || null };
+  if (view.response) {
+    var responseBody = capBodyForStorage(view.response.body);
+    kept.response = {
+      status: view.response.status,
+      statusText: view.response.statusText,
+      // A Set-Cookie is a credential too, and the one header a token endpoint
+      // is most likely to send back.
+      headers: redactHeadersForStorage(view.response.headers),
+      body: responseBody.body,
+      note: [view.response.note, responseBody.note].filter(Boolean).join(" ")
+          || null };
+  }
+  log.debug("Leaving redactExchangeForStorage().");
+  return kept;
+}
+
+// The note a stored exchange is drawn under, which has to say two things the
+// live one does not: when it happened, and that what is on screen is the
+// redacted copy rather than the bytes.
+function storedExchangeForDisplay(kept) {
+  log.debug("Entering storedExchangeForDisplay().");
+  if (!kept || !kept.request) {
+    log.debug("Leaving storedExchangeForDisplay(). Nothing kept.");
+    return null;
+  }
+  var when = kept.storedAt ? kept.storedAt.replace("T", " ").slice(0, 19) +
+      " UTC" : "an earlier point in this session";
+  var view = {
+    note: "The " + (kept.requestName || "request") + " that produced this " +
+        "generation, kept with it at " + when + ". Credentials — the " +
+        "Authorization header, the client secret, a password — were removed " +
+        "before it was stored and read " + HTTP_REDACTED + " below. " +
+        (kept.note ? kept.note : ""),
+    request: kept.request,
+    response: kept.response,
+    timing: kept.timing,
+    failure: kept.failure };
+  log.debug("Leaving storedExchangeForDisplay().");
+  return view;
 }
 
 function buildInternalTokenAPIRequestMessage() {
@@ -1129,7 +1526,8 @@ function successfulInternalTokenAPICall(data, textStatus, request)
   if (data && typeof data === "object") {
     delete data.http_exchange;
   }
-  showTokenExchange(request, apiTrace);
+  var tokenExchangeKept =
+      redactExchangeForStorage(showHttpExchange("token", request, apiTrace));
   log.debug("Entering ajax success function for Access Token call: data=" 
           + JSON.stringify(data)
           + ", textStatus="
@@ -1261,7 +1659,7 @@ function successfulInternalTokenAPICall(data, textStatus, request)
       localStorage.setItem("token_id_token", data.id_token);
       rememberAuthorizationDetails(data);
       saveTokenSetToHistory(data.access_token, data.refresh_token,
-                            data.id_token, 'token');
+                            data.id_token, 'token', tokenExchangeKept);
     } else {
       log.debug("Displaying Access Token. No OIDC ID Token: " +
                 "data.access_token=" + data.access_token);
@@ -1310,11 +1708,11 @@ function successfulInternalTokenAPICall(data, textStatus, request)
       rememberAuthorizationDetails(data);
       saveTokenSetToHistory(DOMPurify.sanitize(data.access_token),
                             DOMPurify.sanitize(data.refresh_token), null,
-                            'token');
+                            'token', tokenExchangeKept);
     }
     $("#token_endpoint_result").html(token_endpoint_result_html);
     // The pane was just rebuilt, so its HTTP tab has to be put back
-    // on it — with the exchange showTokenExchange() drew a moment ago,
+    // on it — with the exchange showHttpExchange() drew a moment ago,
     // before this pane existed to draw it in.
     attachHttpTabToTokenResults();
     // The token values are put in as VALUES, not concatenated into the markup
@@ -1339,7 +1737,7 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     fillGeneratedFields("#token_endpoint_result", {
       access: data.access_token, refresh: currentRefreshToken, id: data.id_token
     });
-    $("#token_endpoint_result").show();
+    expandPane("#token_endpoint_result");
     $("#refresh_refresh_token").val(currentRefreshToken);
     $("#refresh_client_id").val($("#token_client_id").val());
     $("#refresh_scope").val(localStorage.getItem("scope"));
@@ -1356,8 +1754,8 @@ function successfulInternalTokenAPICall(data, textStatus, request)
       $("#refresh_fieldset").hide();
       $("#refresh_expand_button").val("Expand");
     }
-    $('#currently-viewing-panel').show();
-    $('#refresh_endpoint_result').show();
+    expandPane('#currently-viewing-panel');
+    expandPane('#refresh_endpoint_result');
     recalculateRefreshRequestDescription();
     populateRevocationTokenWithLatestAccessToken();
     populateTokenExchangeSubjectWithLatestAccessToken();
@@ -1388,7 +1786,7 @@ function errorInternalTokenAPICall(request, status, error) {
   // A refusal is an exchange, and the one whose headers, body and elapsed
   // time are most often the point. The api attaches its trace to the error
   // payload as well, so the same view is drawn from the same place.
-  showTokenExchange(request, apiHttpExchange(request, null));
+  showHttpExchange("token", request, apiHttpExchange(request, null));
   if (sdJwtVc.isFlowActive()) {
     // Stay on this page — the error panes below say what went wrong — but end
     // the workflow's hold on it.
@@ -1487,21 +1885,54 @@ function refreshButtonClick() {
   }
   var formData = buildInternalRefreshAPIRequestMessage();
   if(useRefreshFrontEnd) {
+    var refreshUrl = localStorage.getItem("token_endpoint");
+    var refreshBody = convertToOAuth2Format(formData);
+    // Recorded for the HTTP tab before the request goes, so that a call which
+    // never comes back still shows what left. The headers are the ones this
+    // page CHOSE: the browser adds Origin, Referer and User-Agent itself,
+    // after script has stopped being able to look, and the pane says so
+    // rather than implying this is all of them.
+    noteHttpRequestSent("refresh", {
+      via: "browser",
+      method: "POST",
+      url: refreshUrl,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: refreshBody,
+      bodyNote: "The browser adds Origin, Referer, User-Agent and the rest " +
+          "of its own headers to this request and does not disclose them to " +
+          "script, so they are not listed above.",
+      note: null });
     $.ajax({
       type: "POST",
       crossdomain: true,
-      url: localStorage.getItem("token_endpoint"),
-      data: convertToOAuth2Format(formData),
+      url: refreshUrl,
+      data: refreshBody,
       contentType: "application/x-www-form-urlencoded",
       success: successfulInternalRefreshAPICall,
       error: errorInternalRefreshAPICall
     });
   } else {
+    // http_trace asks the api to hand back what it saw of ITS call to the
+    // token endpoint (api/server.js, buildHttpTrace()) — the only way this
+    // page can show a proxied exchange, since the browser is not party to it.
+    // It is a flag for the api and goes no further: convertToOAuth2Format()
+    // builds the outbound form body from named parameters, so nothing here
+    // reaches the identity provider.
+    var proxiedRefreshBody = JSON.stringify($.extend({}, formData, {
+      http_trace: true }));
+    noteHttpRequestSent("refresh", {
+      via: "api",
+      method: "POST",
+      url: appconfig.apiUrl + "/token",
+      headers: { "Content-Type": "application/json; charset=utf-8" },
+      body: proxiedRefreshBody,
+      bodyNote: null,
+      note: "Waiting for the api, which is making the Refresh Request." });
     $.ajax({
       type: "POST",
       crossdomain: true,
       url: appconfig.apiUrl + "/token",
-      data: JSON.stringify(formData),
+      data: proxiedRefreshBody,
       contentType: "application/json; charset=utf-8",
       success: successfulInternalRefreshAPICall,
       error: errorInternalRefreshAPICall
@@ -1513,6 +1944,19 @@ function refreshButtonClick() {
 
 function successfulInternalRefreshAPICall(data, textStatus, request) {
   log.debug("Entering successfulInternalRefreshAPICall().");
+  // The HTTP tab, first, and BEFORE anything else reads the payload: the
+  // trace the api attaches is transport, not part of the token response, so
+  // it is taken out here rather than left for token history, the RFC 9700
+  // checks and the result panes to step around. Drawn before the RFC 9700
+  // gate below, which can discard everything else this response carried — a
+  // refused response is still an exchange that happened, and hiding it would
+  // leave the reader with a verdict and no evidence.
+  var refreshApiTrace = apiHttpExchange(request, data);
+  if (data && typeof data === "object") {
+    delete data.http_exchange;
+  }
+  var refreshExchangeKept = redactExchangeForStorage(
+      showHttpExchange("refresh", request, refreshApiTrace));
   // RFC 9700 section 4.14.2. The refresh response is judged on the same terms
   // as the token response — the ID Token it may carry, whether the token came
   // back bound, and above all whether the refresh token was ROTATED, which is
@@ -1569,7 +2013,7 @@ function successfulInternalRefreshAPICall(data, textStatus, request) {
     currentIDToken = data.id_token;
   }
   saveTokenSetToHistory(currentAccessToken, currentRefreshToken, currentIDToken,
-                        'refresh');
+                        'refresh', refreshExchangeKept);
   recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
                               currentIDToken);
   saveOperationToHistory('Token Endpoint (Refresh)', {
@@ -1665,6 +2109,13 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
                                       "</fieldset>" +
                                       "</div>";
   $("#refresh_endpoint_result").html(refresh_endpoint_result_html);
+  // The pane was just rebuilt, so its HTTP tab has to be put back on it —
+  // with whatever the refresh channel last drew, which on a page load is
+  // nothing and says so. Called before the fields below are filled because
+  // attachHttpTab() MOVES the pane's existing children into the first tab
+  // panel; a .find() run before that move would be scoped to a container the
+  // fields are about to leave.
+  attachHttpTabToRefreshResults();
   // Set as values, not concatenated into the markup — CodeQL alert #34, the
   // same finding as #43 above and fixed the same way. See the note there for
   // why .find() is scoped to the pane rather than using a bare id selector.
@@ -1691,9 +2142,9 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
   }
   recalculateRefreshRequestDescription();
   if (refreshTokenUsed) {
-   $("#refresh_endpoint_result").show();
+   expandPane("#refresh_endpoint_result");
   } else {
-   $("#refresh_endpoint_result").hide();
+   collapsePane("#refresh_endpoint_result");
   }
   populateRevocationTokenWithLatestAccessToken();
   populateTokenExchangeSubjectWithLatestAccessToken();
@@ -1704,10 +2155,18 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
 function errorInternalRefreshAPICall(request, status, error) {
   log.debug("Entering errorInternalRefreshAPICall().");
   log.error("An error occurred making a token refresh call to token endpoint.");
+  // A refusal is an exchange, and the one whose headers, body and elapsed
+  // time are most often the point. The api attaches its trace to the error
+  // payload as well, so the same view is drawn from the same place.
+  showHttpExchange("refresh", request, apiHttpExchange(request, null));
   log.error("request: " + JSON.stringify(request));
   log.error("status: " + JSON.stringify(status));
   log.error("error: " + JSON.stringify(error));
-  recalculateRefreshErrorDescription(request);
+  // The trace is taken back out of the response before the error pane prints
+  // it verbatim, for the reason tokenErrorWithoutTrace() gives: it has a pane
+  // two tabs away and would otherwise fill a five-row textarea in front of
+  // the error the reader came for.
+  recalculateRefreshErrorDescription(tokenErrorWithoutTrace(request));
   saveOperationToHistory('Token Endpoint (Refresh)', {
     client_id: $("#refresh_client_id").val(),
     detail: 'error'
@@ -1727,7 +2186,7 @@ function resetUI(value)
       $("#authzUsernameRow").hide();
       $("#authzPasswordRow").hide();
       $("#step2").hide();
-      $("#step3").show();
+      expandPane("#step3");
       $("#token_grant_type").val("client_credentials");
       recalculateTokenRequestDescription();
       recalculateRefreshRequestDescription();
@@ -1737,10 +2196,10 @@ function resetUI(value)
       $("#usePKCE-yes").prop("checked", false);
       $("#usePKCE-no").prop("checked", true);
       usePKCERFC();
-      $("#step5").hide();
-      $("#step6").hide();
-      $("#step7").hide();
-      $("#operation-history-panel").hide();
+      collapsePane("#step5");
+      collapsePane("#step6");
+      collapsePane("#step7");
+      collapsePane("#operation-history-panel");
       $("#useRefreshToken-yes").prop("checked", false);
       $("#useRefreshToken-no").prop("checked", true);
       useRefreshTokenTester = false;
@@ -1755,7 +2214,7 @@ function resetUI(value)
       $("#authzUsernameRow").show();
       $("#authzPasswordRow").show();
       $("#step2").hide();
-      $("#step3").show();
+      expandPane("#step3");
       $("#response_type").val("");
       $("#token_grant_type").val("password");
       recalculateTokenRequestDescription();
@@ -1773,7 +2232,7 @@ function resetUI(value)
     {
       $("#config_fieldset").hide();
       $("#config_expand_button").val("Expand");
-      $("#step3").hide();
+      collapsePane("#step3");
       recalculateTokenRequestDescription();
       recalculateRefreshRequestDescription();
     }
@@ -1782,7 +2241,7 @@ function resetUI(value)
     {
       $("#config_fieldset").hide();
       $("#config_expand_button").val("Expand");
-      $("#step3").hide();
+      collapsePane("#step3");
     }
     if( value == "device_authorization_grant")
     {
@@ -1815,7 +2274,7 @@ function resetUI(value)
       $("#device_verification_uri_complete")
         .val(localStorage.getItem("verification_uri_complete"));
       $("#step2").hide();
-      $("#step3").show();
+      expandPane("#step3");
       $("#token_grant_type")
         .val("urn:ietf:params:oauth:grant-type:device_code");
       $("#h2_title_2").html("Exchange Device Code for Access Token");
@@ -2484,7 +2943,7 @@ function renderAuthorizationEndpointResults(expected, returned) {
   fillGeneratedFields("#authorization_endpoint_result", {
     access: returned.access_token, id: returned.id_token
   });
-  $("#authorization_endpoint_result").show();
+  expandPane("#authorization_endpoint_result");
   log.debug("Leaving renderAuthorizationEndpointResults().");
 }
 
@@ -2963,11 +3422,11 @@ $(document).ready(function() {
                         authzVerdict);
     if (!authzVerdict.ok) {
       log.debug("RFC 9700 mode refused the authorization response.");
-      $("#step3").hide();
-      $("#step4").hide();
-      $("#step5").hide();
-      $("#step6").hide();
-      $("#step7").hide();
+      collapsePane("#step3");
+      collapsePane("#step4");
+      collapsePane("#step5");
+      collapsePane("#step6");
+      collapsePane("#step7");
       rfc9700ScrubAuthorizationResponse();
       log.debug("Leaving document.ready(). Refused by RFC 9700 mode.");
       return;
@@ -2986,9 +3445,9 @@ $(document).ready(function() {
             errorParam);
   if (!!errorDescriptionParam || 
       !!errorParam) {
-    $('#step0').hide();
-    $('#step3').hide();
-    $('#step4').hide();
+    collapsePane('#step0');
+    collapsePane('#step3');
+    collapsePane('#step4');
     var authzErrorReportHTML = '<fieldset>' +
                                '<legend>Authorization Endpoint Error ' +
                                    'Report</legend>' +
@@ -3106,9 +3565,9 @@ $(document).ready(function() {
   }
   if(useRefreshTokenTester == true)
   {
-    $("#step4").show();
+    expandPane("#step4");
   } else {
-    $("#step4").hide();
+    collapsePane("#step4");
   }
   var tokencustomParametersCheck =
       $("#customTokenParametersCheck-yes").is(":checked");
@@ -3141,19 +3600,19 @@ $(document).ready(function() {
         authorization_grant_type != "oidc_implicit_grant"))
   {
     log.debug('Detected redirect back from token detail page.');
-    $("#step3").hide();
+    collapsePane("#step3");
     if (useRefreshTokenTester) {
-      $("#step4").show();
+      expandPane("#step4");
     }
     recreateTokenDisplay();
     recreateRefreshTokenDisplay("", "", ""); // no new token
     $("#logout_id_token_hint").val(localStorage.getItem("token_id_token"));
     // Tokens already exist on this path, so show the panes that operate on
     // them (logout, revocation, token exchange) and the operation history.
-    $("#step5").show();
-    $("#step6").show();
-    $("#step7").show();
-    $("#operation-history-panel").show();
+    expandPane("#step5");
+    expandPane("#step6");
+    expandPane("#step7");
+    expandPane("#operation-history-panel");
   }
 
   recalculateRefreshRequestDescription();
@@ -3163,7 +3622,8 @@ $(document).ready(function() {
 
   // The HTTP tab starts out saying that nothing has been sent yet, rather than
   // empty: an empty panel behind a tab reads as a tab that does not work.
-  renderTokenHttpExchange(null);
+  renderHttpExchange("token", null);
+  renderHttpExchange("refresh", null);
 
   // Initialize revocation pane state and keep the request preview in sync.
   useRevocationFrontEnd = $("#revocation_initiateFromFrontEnd").is(":checked");
@@ -3186,8 +3646,17 @@ $(document).ready(function() {
   // onclick. The static panes use their own inline title onclick handlers.
   $(document).on("click", ".dbg-legend[data-target]", function() {
     var fs = document.getElementById($(this).attr("data-target"));
-    if (fs) { fs.style.display = (fs.style.display === "none") ?
-        "block" : "none"; }
+    if (fs) {
+      var shut = fs.style.display === "none";
+      fs.style.display = shut ? "block" : "none";
+      // Kept in step with collapsePane()'s mark, for the reason given there.
+      var pane = $(fs).closest(".dbg-pane").parent();
+      if (shut) {
+        pane.removeAttr("data-pane-collapsed");
+      } else {
+        pane.attr("data-pane-collapsed", "1");
+      }
+    }
     return false;
   });
   populateRevocationTokenWithLatestAccessToken();
@@ -3207,23 +3676,38 @@ $(document).ready(function() {
   populateTokenExchangeSubjectWithLatestAccessToken();
 
   if (!window.location.search) {
-    $('#step3').show();
+    expandPane('#step3');
     $('#token_fieldset').css('display', 'block');
     $('#token_expand_button').val('Collapse');
     $('#config_fieldset').css('display', 'block');
     $('#config_expand_button').val('Collapse');
-    $('#step4').hide();
-    $('#step5').hide();
-    $('#step6').hide();
-    $('#step7').hide();
-    $('#operation-history-panel').hide();
-    $('#token-history-panel').hide();
-    $('#currently-viewing-panel').hide();
-    $('#token_endpoint_result').hide();
-    $('#refresh_endpoint_result').hide();
+    collapsePane('#step4');
+    collapsePane('#step5');
+    collapsePane('#step6');
+    collapsePane('#step7');
+    collapsePane('#operation-history-panel');
+    collapsePane('#token-history-panel');
+    collapsePane('#currently-viewing-panel');
+    collapsePane('#token_endpoint_result');
+    collapsePane('#refresh_endpoint_result');
   }
 
-  if ( $('#step3').is(':visible') &&
+  // The authorization-code return path is the one that reaches here with the
+  // token pane still shut: `#token_fieldset` is written `style="display:none"`
+  // in the markup, and a page carrying a `code` in its query string runs
+  // through none of the branches above that open it. So this opens it — a
+  // reader who has just come back from the identity provider with a code came
+  // here to exchange it.
+  //
+  // Not on a pane that was collapsed ON PURPOSE, which is what the mark says.
+  // This used to read `$('#step3').is(':visible')`, and that was enough while
+  // the branch above hid the pane outright: a hidden container is not
+  // `:visible`, so the guard skipped it. Now that the pane collapses instead
+  // — see collapsePane() — a deliberately shut pane is a visible container
+  // over a shut fieldset, which is exactly what this opens, and the
+  // redirect-from-token-detail path would have had its collapse undone three
+  // lines later.
+  if ( $('#step3').attr('data-pane-collapsed') !== '1' &&
        $('#token_fieldset').css('display') === 'none') {
     $('#token_fieldset').css('display', 'block');
     $('#token_expand_button').val('Collapse');
@@ -3236,12 +3720,12 @@ $(document).ready(function() {
   // hides it, and this is what puts it back.
   if (isImplicitGrantType(authzGrantType))
   {
-    $('#step3').show();
-    $('#step4').show();
-    $('#step5').show();
-    $('#step6').show();
-    $('#step7').show();
-    $('#operation-history-panel').show();
+    expandPane('#step3');
+    expandPane('#step4');
+    expandPane('#step5');
+    expandPane('#step6');
+    expandPane('#step7');
+    expandPane('#operation-history-panel');
   }
 
   // Both history panels were just hidden by the no-query-string branch above,
@@ -3261,7 +3745,7 @@ $(document).ready(function() {
       (authorizationResponseTokenSet.access_token ||
        authorizationResponseTokenSet.id_token)) {
     renderTokenHistory();
-    $('#operation-history-panel').show();
+    expandPane('#operation-history-panel');
   }
 
   // An implicit flow's tokens arrive with the authorization response, so once
@@ -3722,10 +4206,10 @@ function useRefreshTokens()
   log.debug("useRefreshToken-yes=" + yesCheck, "useRefreshToken-no=" + noCheck);
   if(yesCheck) {
     useRefreshTokenTester = true;
-    $("#step4").show();
+    expandPane("#step4");
   } else if(noCheck) {
     useRefreshTokenTester = false;
-    $("#step4").hide();
+    collapsePane("#step4");
   }
   log.debug("useRefreshTokenTester=" + useRefreshTokenTester);
   log.debug("Leaving useRefreshTokens().");
@@ -3848,7 +4332,67 @@ function rememberAuthorizationDetails(data) {
   log.debug("Leaving rememberAuthorizationDetails().");
 }
 
-function saveTokenSetToHistory(access_token, refresh_token, id_token, source) {
+// Write the history back, dropping kept exchanges if that is what it takes to
+// fit.
+//
+// An exchange is a great deal larger than the tokens it produced — a request,
+// a response, two header maps and up to HTTP_STORED_BODY_LIMIT of body each
+// way — and TOKEN_HISTORY_LIMIT allows a thousand generations, which is more
+// than a browser's five megabytes will hold. So a quota refusal is not a
+// failure here: it means the OLDEST exchanges have to go, and they go one
+// generation at a time until the write succeeds. The tokens themselves are
+// never dropped — they are what the pane is about, the exchange is the extra —
+// and an entry whose exchange has been dropped says so through the same
+// sentence an entry that never had one uses.
+//
+// Returns true if the history was written, false if it could not be.
+function writeTokenHistory(history) {
+  log.debug("Entering writeTokenHistory(). " + history.length + " entry/ies.");
+  var attempt = 0;
+  while (attempt <= history.length) {
+    try {
+      localStorage.setItem('token_history', JSON.stringify(history));
+      log.debug("Leaving writeTokenHistory(). Written after " + attempt +
+                " exchange(s) dropped.");
+      return true;
+    } catch (e) {
+      // Over quota, or storage refused outright (a private window with
+      // storage disabled throws here too). Give up the oldest exchange still
+      // held and try again; when there are none left to give up, the write
+      // was never going to fit and the caller is told so.
+      log.debug("writeTokenHistory(): the write was refused (" + e.name +
+                "). Dropping the oldest kept exchange.");
+      var dropped = false;
+      for (var i = 0; i < history.length && !dropped; i++) {
+        if (history[i].http_exchange) {
+          delete history[i].http_exchange;
+          dropped = true;
+        }
+      }
+      if (!dropped) {
+        log.error("Could not write token_history: " + e);
+        log.debug("Leaving writeTokenHistory(). Refused.");
+        return false;
+      }
+      attempt++;
+    }
+  }
+  log.debug("Leaving writeTokenHistory(). Refused.");
+  return false;
+}
+
+// One generation of tokens, and — since this build — the HTTP exchange that
+// produced them.
+//
+// `exchange` is the REDACTED copy from redactExchangeForStorage(), not the
+// live view: the live one repeats a client secret and an Authorization header
+// and is never written down. It is null for a set that came from the
+// Authorization Endpoint, which this page reaches by navigating the browser
+// rather than by making a request it could trace, and for any set saved by a
+// build before this one — both of which the Currently Viewing pane's HTTP tab
+// says out loud rather than showing an empty panel.
+function saveTokenSetToHistory(access_token, refresh_token, id_token, source,
+                               exchange) {
   log.debug("Entering saveTokenSetToHistory().");
   var history = [];
   try { 
@@ -3876,7 +4420,7 @@ function saveTokenSetToHistory(access_token, refresh_token, id_token, source) {
     log.debug("Leaving saveTokenSetToHistory().");
     return null;
   }
-  history.push({
+  var entry = {
     timestamp: new Date().toISOString(),
     nonce: nonce,
     sid: sid,
@@ -3884,15 +4428,18 @@ function saveTokenSetToHistory(access_token, refresh_token, id_token, source) {
     access_token: access_token || '',
     refresh_token: refresh_token || '',
     id_token: id_token || ''
-  });
-  localStorage.setItem('token_history', JSON.stringify(history));
+  };
+  if (exchange) {
+    entry.http_exchange = exchange;
+  }
+  history.push(entry);
+  writeTokenHistory(history);
   renderTokenHistory();
   log.debug("Leaving saveTokenSetToHistory().");
   // The index of the set just added, for callers that cross-reference it from
   // the Operation History entry describing the call that produced it.
   return history.length - 1;
 }
-
 function selectTokenSet(index) {
   log.debug("Entering selectTokenSet().");
   var history = [];
@@ -3997,12 +4544,23 @@ function renderCurrentlyViewing(index, entry) {
              '</fieldset>' +
              '</div>';
   $('#currently-viewing-panel').html(html);
+  // The exchange kept with THIS generation goes onto the viewing channel
+  // before the tab is attached, because attachHttpTab() draws whatever the
+  // channel holds into the host it has just made. storedExchangeForDisplay()
+  // returns null for a generation that has none, and the pane's `empty`
+  // sentence then says which of the two reasons it is.
+  renderHttpExchange('viewing',
+                     storedExchangeForDisplay(entry.http_exchange));
+  setHttpTabLabel('viewing',
+                  (entry.http_exchange && entry.http_exchange.response) ?
+                      String(entry.http_exchange.response.status) : null);
+  attachHttpTabToCurrentlyViewing();
   fillGeneratedFields('#currently-viewing-panel', {
     access: entry.access_token, refresh: entry.refresh_token,
         id: entry.id_token,
     nonce: entry.nonce, sid: entry.sid
   });
-  $('#currently-viewing-panel').show();
+  expandPane('#currently-viewing-panel');
   log.debug("Leaving renderCurrentlyViewing().");
 }
 
@@ -4015,7 +4573,7 @@ function renderTokenHistory() {
     // Absent or unreadable storage: keep the default.
   }
   if (history.length === 0) {
-    $("#token-history-panel").hide();
+    collapsePane("#token-history-panel");
     log.debug("Leaving renderTokenHistory().");
     return;
   }
@@ -4086,7 +4644,7 @@ function renderTokenHistory() {
   html += '</div>';
 
   $("#token-history-panel").html(html);
-  $("#token-history-panel").show();
+  expandPane("#token-history-panel");
   log.debug("Leaving renderTokenHistory().");
 }
 
@@ -4311,20 +4869,97 @@ function generateCustomParametersListUI()
   log.debug("Leaving generateCustomParametersListUI().");
 }
 
+// ---------------------------------------------------------------------------
+// COLLAPSING A PANE, rather than making it disappear.
+//
+// This page is a column of panes, and three of its rows put panes SIDE BY SIDE
+// in a flex row — Token Endpoint Results next to the refresh results next to
+// Currently Viewing, the refresh form next to Token History, logout next to
+// revocation. Every one of those was hidden outright at some point in the
+// workflow: `$("#step4").hide()`, `$('#currently-viewing-panel').hide()`, and a
+// dozen more. A `display: none` on a flex child does not leave a gap where the
+// pane was — it removes the child, the row re-divides the width among whatever
+// is left, and the panes beside it move and change size. So the page a reader
+// meets after a token call is laid out differently from the one they were
+// looking at a moment before, and a pane they had found once is not where they
+// left it.
+//
+// Collapsing keeps the pane. Its legend stays on screen and stays clickable —
+// which is what makes the state recoverable, where a hidden pane offers
+// nothing to click — and only the fieldset inside it goes away. The row keeps
+// its columns, the columns keep their widths, and every pane keeps its place.
+//
+// These two are for PANES. The row-level and field-level `.hide()` calls
+// elsewhere in this file (`$("#authzCodeRow").hide()`, the PKCE rows, the
+// device-grant rows) are untouched and must stay that way: a table row that
+// does not apply to the selected grant is not a pane a reader can go looking
+// for, and leaving an empty one behind would be noise rather than structure.
+// ---------------------------------------------------------------------------
+
+// The fieldset a pane collapses, given the pane's container. The container is
+// sometimes the `.dbg-pane` itself (the static `#stepN` panes) and sometimes a
+// wrapper the pane is DROPPED INTO by one of the render functions (the result
+// and history panels), so this looks for the fieldset rather than assuming
+// which of the two it was handed. A container with nothing in it yet — the
+// result panels before their first call — has no fieldset and nothing to
+// collapse, which is not a failure: an empty container occupies its column
+// and shows nothing, which is exactly the state wanted.
+function paneFieldset(selector) {
+  log.debug("Entering paneFieldset(). selector=" + selector);
+  var found = $(selector).find("fieldset").first();
+  log.debug("Leaving paneFieldset(). found=" + (found.length > 0));
+  return found;
+}
+
+// Collapse a pane: the container and its legend stay, the fieldset goes.
+//
+// The container is MARKED, and the mark is the point rather than bookkeeping:
+// a collapsed pane and a pane whose fieldset has simply never been opened look
+// identical from the DOM — both are a visible container over a
+// `display: none` fieldset — and one of the two is a state the load path is
+// entitled to fix. Before this, `.hide()` told them apart for free, because a
+// hidden container failed `:visible`. See the note at the load-path guard on
+// `#step3`.
+function collapsePane(selector) {
+  log.debug("Entering collapsePane(). selector=" + selector);
+  $(selector).show().attr("data-pane-collapsed", "1");
+  paneFieldset(selector).css("display", "none");
+  log.debug("Leaving collapsePane().");
+}
+
+// Expand a pane, and make sure the container it lives in is on the page: two
+// of them (`#token-history-panel`, `#currently-viewing-panel`) are written
+// `style="display:none"` in the markup, because before the first token set
+// exists there is nothing in them at all.
+function expandPane(selector) {
+  log.debug("Entering expandPane(). selector=" + selector);
+  $(selector).show().removeAttr("data-pane-collapsed");
+  paneFieldset(selector).css("display", "block");
+  log.debug("Leaving expandPane().");
+}
+
 function onClickShowFieldSet(expand_button_id, field_set_id) {
   log.debug("Entering onClickShowFieldSet().");
   log.debug('Entering onClickShowConfigFieldSet(). expand_button_id='
     + expand_button_id + ', field_set_id=' + field_set_id
     + ', fieldset.style.display=' + $("#" + field_set_id).css("display")
     + ', expand_button.value=' + $("#" + expand_button_id).val());
+  // The pane's own mark is kept in step with the click, so that a reader who
+  // opens a collapsed pane by hand has opened it as far as collapsePane()'s
+  // mark is concerned. Set on the fieldset's PANE rather than on the fieldset,
+  // which is where collapsePane() puts it and where the load-path guard on
+  // `#step3` looks for it.
+  var pane = $("#" + field_set_id).closest(".dbg-pane, .side-by-side-col");
   if($("#" + field_set_id).css("display") == 'block') {
     log.debug('Hide ' + field_set_id + '.');
     $("#" + field_set_id).css("display", "none");
     $("#" + expand_button_id).val("Expand");
+    pane.attr("data-pane-collapsed", "1");
   } else {
     log.debug('Show ' + field_set_id + '.');
     $("#" + field_set_id).css("display", "block");
     $("#" + expand_button_id).val("Collapse");
+    pane.removeAttr("data-pane-collapsed");
   }
   $("#step0_expand_form").on("click", function(event) {
     event.preventDefault();
@@ -4551,8 +5186,8 @@ function clearTokenHistory() {
   log.debug("Entering clearTokenHistory().");
   localStorage.removeItem('token_history');
   localStorage.removeItem('token_history_active_index');
-  $('#token-history-panel').hide();
-  $('#currently-viewing-panel').hide();
+  collapsePane('#token-history-panel');
+  collapsePane('#currently-viewing-panel');
   // The Authorization Endpoint Results pane names its tokens by generation once
   // they are in the history, so clearing it leaves those links pointing at an
   // entry that no longer exists. Redrawn here, which falls back to the
@@ -4758,7 +5393,7 @@ function loadTokenForRevocation(type, generation) {
       localStorage.getItem("client_secret"));
   }
   // Make sure the revocation pane is visible and expanded.
-  $("#step6").show();
+  expandPane("#step6");
   $("#revocation_fieldset").css("display", "block");
   $("#revocation_expand_button").val("Collapse");
   recalculateRevocationRequestDescription();
@@ -5590,6 +6225,9 @@ module.exports = {
   // through the bundle's standalone name, like every other handler here.
   selectTokenTab,
   selectTokenResultTab,
+  selectRefreshTab,
+  selectRefreshResultTab,
+  selectCurrentlyViewingTab,
   usePKCERFC,
   setPostAuthStyleCheckToken,
   setHeaderAuthStyleCheckToken,

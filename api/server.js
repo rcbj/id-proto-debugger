@@ -3045,6 +3045,216 @@ app.get('/scim/limits', function (req, res) {
   return res.status(STATUS_200).json(scimProxy.limits(appconfig));
 });
 
+// ---------------------------------------------------------------------------
+// SPIFFE — POST /spiffe/bundle, POST /spiffe/call, GET /spiffe/limits
+//
+// SPIFFE's server side is three surfaces and only ONE of them is HTTP, which is
+// why two of these endpoints exist and the third is an ordinary fetch:
+//
+//   the bundle endpoint    plain HTTPS returning a JWK Set. POST /spiffe/bundle
+//                          is an axios call like /token and /scim, so the SSRF
+//                          guard installed once on the shared instance already
+//                          covers it and nothing is re-implemented here. It is
+//                          here at all for the three reasons the SCIM proxy is:
+//                          a bundle endpoint sends no CORS headers, a staging
+//                          one's certificate is self-signed, and only this side
+//                          can report the whole exchange.
+//   the Workload API       gRPC, and a browser cannot produce gRPC at all — no
+//                          HTTP/2 stream, no trailers, no `grpc-status`, no
+//                          client certificate. So POST /spiffe/call carries it.
+//   the SPIRE Server API   gRPC over MUTUAL TLS. Same endpoint, same reason,
+//                          plus a client certificate a page could never present.
+//
+// ONE endpoint for forty-nine methods rather than forty-nine endpoints, which
+// is the opposite of the choice `POST /ldap/*` made and is deliberate. There,
+// eight operations have eight different shapes and each route documents its
+// own. Here every method is `(service, method, request)` over one wire format,
+// the METHOD LIST IS DERIVED FROM THE PROTOS rather than typed, and a route per
+// method would be forty-nine places for that list to drift from the protos it
+// is supposed to mirror. `GET /spiffe/limits` publishes the catalogue, so the
+// page builds its picker from what this service can actually call.
+//
+// THE THREE OUTCOMES, which is the rule POST /ldap/* and POST /scim already
+// follow and which matters more on this surface than on either:
+//
+//   * a refusal by THIS service — an address it will not dial, a socket path
+//     outside the allowlist, a method that is not on the surface — is a **400**;
+//   * a network failure, and a server whose SPIFFE ID was not the one the
+//     caller required, are **502**s;
+//   * **a gRPC STATUS from the far end is a 200**, with `ok: false` and the
+//     code. `PERMISSION_DENIED` on a method this caller's entity may not use,
+//     `UNAUTHENTICATED` when it presented nothing, `UNIMPLEMENTED` with the
+//     reason a server gives for declining, `INVALID_ARGUMENT` on a JWT-SVID
+//     request with no audience — every one of those is SPIFFE ANSWERING, and
+//     they are the most interesting thing this workflow shows. SPIRE goes to
+//     the trouble of distinguishing "authenticate" from "you may not"; an api
+//     that reported both as a failure would throw that away.
+// ---------------------------------------------------------------------------
+const spiffeClientModule = require('./spiffe_client.js');
+const spiffeBundle = require('../common/spiffe/spiffe_bundle.js');
+// The SPIFFE client reuses the guard's address DECISION for the reason the
+// Kerberos relay and the LDAP client do: the guard's INSTALLATION is hooks on
+// the axios agents, and gRPC opens a socket with no axios in the path.
+const spiffe = spiffeClientModule.createSpiffeClient(appconfig, guard, log);
+
+// Refusals this service made itself. Listed rather than matched on a prefix, so
+// that adding a code forces a decision about which of the two outcomes it is —
+// and note that ESPIFFESERVERIDENTITY is deliberately NOT here: a server that
+// answered and turned out to be somebody else is a fact about the far end.
+const SPIFFE_REFUSED_BY_POLICY = [
+  'ESPIFFEBADADDRESS', 'ESPIFFEPORTNOTALLOWED', 'EBLOCKEDADDRESS',
+  'ESPIFFESOCKETNOTALLOWED', 'ESPIFFESOCKETMISSING', 'ESPIFFENOTASOCKET',
+  'ESPIFFESOCKETPATHTOOLONG', 'ESPIFFENOSERVICE', 'ESPIFFENOMETHOD',
+  'ESPIFFEBADMETADATA', 'ESPIFFEBADMODE', 'ESPIFFENOSERVERID',
+  'ESPIFFENOTRUSTDOMAIN', 'ESPIFFEBADTRUSTDOMAIN', 'ESPIFFENOTRUSTBUNDLE',
+  'ESPIFFEBADTRUSTBUNDLE', 'ESPIFFEBADIDENTITY', 'ESPIFFEREFUSED'
+];
+
+/**
+ * One call on either gRPC surface: the Workload API or the SPIRE Server API.
+ * @route POST /spiffe/call
+ * @param {string} address.body.required - host:port, tcp://host:port or unix:///path
+ * @param {string} service.body.required - workload, entry, agent, bundle, svid, trustdomain or debug
+ * @param {string} method.body.required - the method name as the .proto writes it
+ * @param {object} request.body - the request message; bytes fields take base64
+ * @param {object} identity.body - {certPem, keyPem}: the X509-SVID to present
+ * @param {string} trustBundle.body - PEM or base64 DER to verify the server against
+ * @param {string} serverIdentityMode.body - spiffe-id, trust-domain or none
+ * @returns {object} 200 - the answer, INCLUDING a gRPC status that is not OK
+ * @returns {object} 400 - this service refused the request (see the reason)
+ * @returns {object} 502 - the server could not be reached, or was not who it had to be
+ */
+app.post('/spiffe/call', function (req, res) {
+  log.debug('Entering POST /spiffe/call.');
+  const body = req.body || {};
+  if (!body.address) {
+    log.debug('Leaving POST /spiffe/call. No address.');
+    return res.status(STATUS_400).json({
+      error: 'address is required: host:port, tcp://host:port or ' +
+             'unix:///path/to/api.sock. Note that a unix: path is resolved ' +
+             'on the machine running this api, which is not the machine ' +
+             'running your browser.' });
+  }
+  const startedAt = Date.now();
+  spiffe.call(body).then(function (answer) {
+    answer.timing = { totalMs: Date.now() - startedAt };
+    log.info('POST /spiffe/call ' + answer.serviceLabel + '.' + answer.method +
+             ' ' + answer.target + ' -> ' + answer.status.name +
+             ' in ' + answer.timing.totalMs + 'ms');
+    log.debug('Leaving POST /spiffe/call. ok=' + answer.ok);
+    // 200 even when ok is false: see the note above. The caller reads `ok` and
+    // `status`, which is what SPIFFE actually told it.
+    return res.status(STATUS_200).json(answer);
+  }).catch(function (error) {
+    // THE NO-RESPONSE BRANCH MUST ANSWER, and on this endpoint — as on the
+    // Kerberos relay — it is a common branch rather than a rare one, because
+    // pointing it at a server that may not be there is the point.
+    const refusedByPolicy =
+      SPIFFE_REFUSED_BY_POLICY.indexOf(error && error.code) !== -1;
+    const status = refusedByPolicy ? STATUS_400 : 502;
+    log.warn('POST /spiffe/call failed [' +
+             ((error && error.code) || 'no code') + ']: ' +
+             (error && error.message));
+    log.debug('Leaving POST /spiffe/call. status=' + status);
+    return res.status(status).json({
+      error: (error && error.message) ? error.message : String(error),
+      code: (error && error.code) || null,
+      // True when a server answered, presented a certificate a trusted
+      // authority had signed, and was somebody else. Separated from an
+      // ordinary network failure because those are different facts and the
+      // page shows them differently.
+      identityMismatch: !!(error && error.identityMismatch),
+      peer: (error && error.answer && error.answer.peer) || null,
+      timing: { totalMs: Date.now() - startedAt } });
+  });
+});
+
+/**
+ * Fetch a SPIFFE bundle endpoint and say what is wrong with what came back.
+ * @route POST /spiffe/bundle
+ * @param {string} url.body.required - the bundle endpoint URL
+ * @param {boolean} sslValidate.body - verify the endpoint's TLS certificate
+ * @returns {object} 200 - the document and the report, INCLUDING a bad one
+ * @returns {object} 400 - this service refused the request
+ * @returns {object} 502 - the endpoint could not be reached
+ */
+app.post('/spiffe/bundle', function (req, res) {
+  log.debug('Entering POST /spiffe/bundle.');
+  const body = req.body || {};
+  const url = String(body.url || '').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    log.debug('Leaving POST /spiffe/bundle. Not an http(s) URL.');
+    return res.status(STATUS_400).json({
+      error: 'url is required and must be an http:// or https:// URL. A ' +
+             'SPIFFE bundle endpoint is plain HTTPS — it is the ONE surface ' +
+             'of SPIFFE that is, which is why this endpoint is an ordinary ' +
+             'fetch and the other one is gRPC.' });
+  }
+  const startedAt = Date.now();
+  const sink = {};
+  const sentHeaders = withUserAgent({ Accept: 'application/json' });
+  axios({
+    method: 'get',
+    url: url,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    // A 404 from a bundle endpoint is an ANSWER — usually the answer that the
+    // path is wrong — so it must not throw.
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(body.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      // The document is described whatever the status was, because a bundle
+      // endpoint that answers 200 with an HTML error page from a proxy is the
+      // case this report exists to name.
+      const report = spiffeBundle.describe(sink.raw || '');
+      log.info('POST /spiffe/bundle ' + url + ' -> ' + response.status + ', ' +
+               report.keys.length + ' usable key(s), ' +
+               report.errors.length + ' error(s)');
+      log.debug('Leaving POST /spiffe/bundle. status=' + response.status);
+      return res.status(STATUS_200).json({
+        ok: response.status >= 200 && response.status < 300 && report.ok,
+        url: url,
+        httpStatus: response.status,
+        headers: traceHeaders(response.headers),
+        body: sink.raw || '',
+        report: report,
+        timing: { totalMs: Date.now() - startedAt } });
+    })
+    .catch(function (error) {
+      const message = (error && error.message) ? error.message : String(error);
+      log.warn('POST /spiffe/bundle ' + url + ' failed: ' + message);
+      log.debug('Leaving POST /spiffe/bundle. 502.');
+      return res.status(502).json({
+        error: 'The bundle endpoint could not be reached: ' + message,
+        code: (error && error.code) || '',
+        timing: { totalMs: Date.now() - startedAt } });
+    });
+});
+
+/**
+ * What the SPIFFE client will and will not do, and every method it can call.
+ *
+ * The catalogue here is DERIVED from the vendored protos rather than typed, so
+ * the page's method picker cannot drift from what this service can dial. It is
+ * also how the page tells an older api from a broken one: a build without
+ * SPIFFE answers 404 here, which is a different thing from a SPIRE server that
+ * will not answer.
+ * @route GET /spiffe/limits
+ * @returns {object} 200 - the ports, socket paths, timeouts, caps and catalogue
+ */
+app.get('/spiffe/limits', function (req, res) {
+  log.debug('Entering GET /spiffe/limits.');
+  log.debug('Leaving GET /spiffe/limits.');
+  return res.status(STATUS_200).json(spiffe.limits());
+});
+
 expressSwagger(options)
 app.listen(PORT, HOST);
 log.info(`Running on http://${HOST}:${PORT}`);

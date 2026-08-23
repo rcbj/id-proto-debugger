@@ -1425,6 +1425,157 @@ async function issueCertificate(spec) {
 }
 
 // ---------------------------------------------------------------------------
+// A PKCS#10 CERTIFICATION REQUEST.
+//
+// A CSR is what you send to an authority that will not take a certificate you
+// made yourself: it carries a public key, a subject, optionally the extensions
+// you would like, and a SIGNATURE BY THE MATCHING PRIVATE KEY — which is the
+// whole point of the format. That signature is a proof of possession, and it
+// is why an authority can hand back a certificate for a key it has never seen.
+//
+// It is here rather than on the page that first needed it, because FIVE SPIFFE
+// methods take one — AttestAgent, RenewAgent, MintX509SVID, BatchNewX509SVID
+// and NewDownstreamX509CA — and the PKI page has always had somewhere to put
+// "request a certificate from somebody else" and no way to build the request.
+// One implementation, two workflows.
+//
+// TWO THINGS ARE LOAD-BEARING AND BOTH ARE ALREADY-PAID-FOR LESSONS FROM
+// issueCertificate() BELOW.
+//
+//  * **The ECDSA signature must be minimally encoded.** The same
+//    `minimalDerInteger()` problem, on a document whose signature is checked
+//    much more often than a certificate's: SPIRE verifies a CSR's signature
+//    before it will mint anything, and OpenSSL-backed verifiers re-encode what
+//    they parsed and compare bytes. A CSR with a non-minimal INTEGER in its
+//    signature is refused as a bad signature, on roughly one P-521 request in
+//    256, with a message naming neither the encoding nor the curve.
+//  * **Ed25519 is signed by hand**, because pkijs's engine does not know the
+//    algorithm. Both paths set the SAME AlgorithmIdentifier, which is what
+//    makes the request self-consistent.
+//
+// SPIFFE has one convention worth knowing before filling in `subjectAltName`:
+// the identity of an X509-SVID is the **URI subjectAltName** and nothing else.
+// The subject DN is decoration — SPIRE issues `C=US, O=SPIRE` to everything —
+// so a CSR asking for an identity asks for it in a `uri` general name, and an
+// authority is free to ignore even that. `MintX509SVID` is the one method that
+// reads it, because there is no registration entry to take the identity from.
+// ---------------------------------------------------------------------------
+async function certificationRequest(spec) {
+  log.debug("Entering certificationRequest().");
+  var subjectAttrs = typeof spec.subject === 'string'
+    ? parseDnString(spec.subject)
+    : spec.subject;
+  if (!subjectAttrs || !subjectAttrs.length) {
+    log.debug("Leaving certificationRequest(). Empty subject.");
+    throw new Error('A certification request needs a subject. SPIFFE puts no ' +
+                    'meaning in it — C=US, O=SPIRE is what SPIRE itself ' +
+                    'issues — but PKCS#10 has nowhere to leave it out.');
+  }
+  if (!spec.publicKeyPem) {
+    log.debug("Leaving certificationRequest(). No public key.");
+    throw new Error('A certification request carries the public key it is ' +
+                    'asking to have certified.');
+  }
+  if (!spec.privateKeyPem) {
+    log.debug("Leaving certificationRequest(). No private key.");
+    throw new Error('A certification request is SIGNED by the private key ' +
+                    'matching its public key: that signature is the proof of ' +
+                    'possession the whole format exists for.');
+  }
+  var keyDesc = await keys.describePublicPem(spec.publicKeyPem);
+  var sig = sigAlg(spec.signatureAlg ||
+                   defaultSignatureAlgorithm(keyDesc || {}));
+  if (!sig) {
+    log.debug("Leaving certificationRequest(). Unknown signature algorithm.");
+    throw new Error('Unknown signature algorithm: ' + spec.signatureAlg);
+  }
+  var signerDesc = signerDescriptor(sig, keyDesc || {});
+
+  var request = new pkijs.CertificationRequest();
+  request.version = 0;
+  request.subject = buildDn(subjectAttrs);
+  var spki = pemToDer(spec.publicKeyPem);
+  // Parsed in as DER rather than imported, for the reason issueCertificate()
+  // gives: pkijs's importKey cannot read an Ed25519 SPKI.
+  request.subjectPublicKeyInfo.fromSchema(asn1js.fromBER(spki).result);
+
+  // The requested extensions, in the one attribute PKCS#9 defines for them.
+  // A CSR's extensions are a REQUEST and an authority may ignore every one —
+  // which SPIRE does, except at MintX509SVID. Saying so here rather than
+  // leaving somebody to discover that their keyUsage did not survive.
+  var extensions = [];
+  // Each general name is { kind, value } — the shape buildGeneralName() takes
+  // everywhere else in this file, so a caller that has built a subjectAltName
+  // for a certificate can hand the same list here. A builder that finds
+  // nothing to encode returns null, so the nulls are dropped rather than
+  // pushed: an extension whose value is null serialises to a broken attribute.
+  if (spec.subjectAltName && spec.subjectAltName.length) {
+    extensions.push(buildAltName(EXT_OIDS.subjectAltName,
+                                 { names: spec.subjectAltName }));
+  }
+  if (spec.keyUsage && spec.keyUsage.length) {
+    extensions.push(buildKeyUsage({ bits: spec.keyUsage }));
+  }
+  if (spec.extKeyUsage && spec.extKeyUsage.length) {
+    extensions.push(buildExtKeyUsage({ ekus: spec.extKeyUsage }));
+  }
+  if (spec.basicConstraints) {
+    extensions.push(buildBasicConstraints(spec.basicConstraints));
+  }
+  extensions = extensions.filter(function (one) {
+    return !!one;
+  });
+  if (extensions.length) {
+    request.attributes = [new pkijs.Attribute({
+      type: '1.2.840.113549.1.9.14',
+      values: [(new pkijs.Extensions({ extensions: extensions })).toSchema()]
+    })];
+  } else {
+    // An EMPTY attributes list rather than none. PKCS#10's `attributes` is an
+    // implicitly tagged SET that is REQUIRED, and pkijs omits the tag entirely
+    // when the member is undefined — producing a request that this codebase
+    // reads back perfectly and that OpenSSL refuses to parse at all.
+    request.attributes = [];
+  }
+
+  var privateKey = await keys.importPrivateKey(spec.privateKeyPem, signerDesc);
+  if (sig.kind !== 'okp') {
+    await request.sign(privateKey, sig.hash);
+    if (sig.kind === 'ec') {
+      var normalized = minimalEcdsaSignature(
+        request.signatureValue.valueBlock.valueHexView);
+      request.signatureValue = new asn1js.BitString({
+        valueHex: normalized.buffer.slice(
+          normalized.byteOffset,
+          normalized.byteOffset + normalized.byteLength)
+      });
+    }
+  } else {
+    request.signatureAlgorithm = new pkijs.AlgorithmIdentifier({
+      algorithmId: ED25519_OID });
+    var tbs = request.encodeTBS().toBER(false);
+    var signature = await crypto.subtle.sign({ name: 'Ed25519' }, privateKey,
+      tbs);
+    request.signatureValue = new asn1js.BitString({ valueHex: signature });
+  }
+
+  var der = request.toSchema(true).toBER(false);
+  log.debug("Leaving certificationRequest().");
+  return {
+    der: new Uint8Array(der),
+    pem: derToPem(der, 'CERTIFICATE REQUEST'),
+    // Base64 DER, which is what every gRPC `bytes` field in the SPIRE API
+    // wants and what saves each of the five call sites a conversion.
+    base64: jose.bytesToBase64
+      ? jose.bytesToBase64(new Uint8Array(der))
+      : derToPem(der, 'CERTIFICATE REQUEST')
+          .replace(/-----[^-]+-----/g, '').replace(/\s+/g, ''),
+    subject: dnToString(request.subject),
+    signatureAlg: sig.id
+  };
+}
+
+// ---------------------------------------------------------------------------
 // A DER INTEGER, minimally encoded — which is what an ECDSA signature in a
 // certificate has to carry and what pkijs does not always produce.
 //
@@ -2078,6 +2229,7 @@ module.exports = {
   // issuing and reading
   randomSerialHex: randomSerialHex,
   issueCertificate: issueCertificate,
+  certificationRequest: certificationRequest,
   describeCertificate: describeCertificate,
   extensionValueText: extensionValueText,
   verifyChain: verifyChain,

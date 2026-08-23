@@ -3248,18 +3248,105 @@ function loadApiLimits() {
 }
 
 // ---------------------------------------------------------------------------
-// Pane collapse, matching the .dbg-* chrome the rest of the tree uses.
+// PANE COLLAPSE, matching the .dbg-* chrome the rest of the tree uses.
+//
+// The markup contract, which is the Kerberos pages' rather than the VC ones':
+//
+//   <div class="scim-pane dbg-pane" id="pane_x">
+//     <legend class="dbg-legend" id="x_expand_button">Title</legend>
+//     <fieldset name="x_fieldset" id="x_fieldset"
+//               style="display: block;">…</fieldset>
+//   </div>
+//
+// The legend and the fieldset are PAIRED BY CONVENTION — `x_expand_button`
+// drives `x_fieldset` — rather than by an inline
+// `onclick="…togglePane('x_fieldset')"`. The inline spelling repeats the id in
+// two places and fails silently when the two drift: a title that does nothing
+// at all, with nothing in the page complaining. Here a drifted pair is a
+// warning in the console, and the console on this page is asserted clean by
+// tests/scim_page.js section 9 — so it is a failure rather than a shrug.
+//
+// The `style="display: block"` in the markup is not decoration either:
+// css/debugger.css turns the triangle with
+// `.dbg-pane:has(fieldset[style*="display: none"])`, which reads the INLINE
+// style, so a pane that starts with no inline display at all would show an
+// expanded triangle over a pane the toggle had never touched.
 // ---------------------------------------------------------------------------
-function togglePane(id) {
-  log.debug("Entering togglePane(). id=" + id);
-  var body = el(id + '_body');
+function togglePane(bodyId) {
+  log.debug("Entering togglePane(). id=" + bodyId);
+  var body = el(bodyId);
   if (!body) {
     log.debug("Leaving togglePane(). No such pane.");
-    return;
+    return false;
   }
-  var hidden = body.style.display === 'none';
-  body.style.display = hidden ? '' : 'none';
-  log.debug("Leaving togglePane(). " + (hidden ? 'opened' : 'closed'));
+  body.style.display = (body.style.display === 'none') ? 'block' : 'none';
+  log.debug("Leaving togglePane(). " + body.style.display);
+  return false;
+}
+
+// Expand or collapse every pane on the page.
+//
+// The fieldsets are DISCOVERED rather than listed. Several workflows here keep
+// an array of pane ids instead, and every one of those is a list a new pane has
+// to be remembered into — the kind of omission whose only symptom is one pane
+// that the toggle skips. Reading them off the DOM covers a pane added later by
+// construction.
+function setAllPanes(expand) {
+  log.debug("Entering setAllPanes(). expand=" + !!expand);
+  var panes = document.querySelectorAll('.dbg-pane fieldset');
+  for (var i = 0; i < panes.length; i++) {
+    panes[i].style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) {
+    text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  }
+  log.debug("Leaving setAllPanes(). " + panes.length + " pane(s).");
+  return false;
+}
+
+// Bind every pane's title to its fieldset, and the one switch to all of them.
+//
+// A legend whose fieldset is missing is REPORTED rather than skipped: that is
+// precisely the drift the id convention exists to prevent, and a silent
+// `continue` would hide it again behind a title that does nothing.
+function wirePanes() {
+  log.debug("Entering wirePanes().");
+  var legends = document.querySelectorAll('.dbg-legend');
+  var wired = 0;
+  for (var i = 0; i < legends.length; i++) {
+    var legend = legends[i];
+    var id = legend.id || '';
+    if (id.indexOf('_expand_button') === -1) {
+      log.warn('a .dbg-legend has id ' + JSON.stringify(id) + ', which does ' +
+          'not end in _expand_button, so it cannot be paired with a fieldset');
+      continue;
+    }
+    var bodyId = id.replace('_expand_button', '_fieldset');
+    if (!el(bodyId)) {
+      log.warn('legend ' + id + ' names no fieldset ' + bodyId + ' — the ' +
+          "pane's ids have drifted and the title will do nothing");
+      continue;
+    }
+    legend.addEventListener('click', (function (target) {
+      return function () {
+        togglePane(target);
+        return false;
+      };
+    })(bodyId));
+    wired += 1;
+  }
+  var toggleAll = el('dbg_toggle_all');
+  if (toggleAll) {
+    toggleAll.addEventListener('change', function () {
+      setAllPanes(toggleAll.checked);
+    });
+  } else {
+    log.warn('there is no dbg_toggle_all on this page, so nothing expands or ' +
+        'collapses every pane at once');
+  }
+  log.debug("Leaving wirePanes(). " + wired + " pane(s) wired.");
+  return wired;
 }
 
 function onload() {
@@ -3271,6 +3358,7 @@ function onload() {
   // refreshAuthControls(), whose scheme select the authScheme row copies its
   // options from.
   loadConfig();
+  wirePanes();
   wireTabs();
   wireExpanders();
   refreshAuthControls();
@@ -3345,6 +3433,8 @@ module.exports = {
   // The inline handlers on scim.html.
   onload: onload,
   togglePane: togglePane,
+  setAllPanes: setAllPanes,
+  wirePanes: wirePanes,
   toggleExpand: toggleExpand,
   selectTab: selectTab,
   saveConfig: saveConfig,

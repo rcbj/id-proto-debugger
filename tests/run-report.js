@@ -230,6 +230,18 @@ const JOB_LOCKS = {
   // The mock's TLS client truststore, which is process state over there.
   "pki_mutual_tls.js": "sts-tls",
   "api_tls_probe.js": "sts-tls",
+  // The mock's SPIFFE configuration and registry. `spiffe_protocol.js` sets
+  // `spiffe.adminIds` (the only route from "I can fetch an identity" to "I can
+  // drive the registry" that does not already require an administrator),
+  // shortens `spiffe.svidTtl` to watch a rotation, and turns
+  // `spiffe.autoCreateEntries` off — deleting the invented entry — to run a
+  // client's "I have no identity" path. Each is restored per setting, but not
+  // instantly, so nothing else may be reading that trust domain meanwhile:
+  // a job fetching an SVID inside that window gets an EMPTY LIST, which reads
+  // as a Workload API that stopped issuing.
+  "spiffe_protocol.js": "sts-spiffe",
+  "spiffe_page.js": "sts-spiffe",
+  "api_spiffe.js": "sts-spiffe",
 };
 
 const CONCURRENCY = (function () {
@@ -1360,6 +1372,40 @@ function buildJobs() {
   // gitlink predates them. That is deliberately not a gate here: the reason is
   // discovered by asking the server, and it names the submodule rather than
   // the deployment.
+  // ------------------------------------------------------------------------
+  // SPIFFE's gate is its OWN variable, `SPIFFE_AVAILABLE`, and deriving it
+  // from LDAP_AVAILABLE would be the mistake tests/CLAUDE.md records about
+  // deriving LDAP's from the Kerberos one. Both workflows are missing from a
+  // static deployment for the same underlying reason — a browser cannot speak
+  // either protocol, so both need the api — but they are missing
+  // INDEPENDENTLY: a remote target could perfectly well be api-backed with a
+  // directory reachable and no SPIRE server, or the reverse, and deriving
+  // would turn "not this protocol" into a set of skipped jobs about a
+  // protocol that is there.
+  //
+  // It defaults to the LDAP answer only because that is the same question
+  // asked of a deployment — "does this target have an api at all" — and a
+  // target that is api-backed but has no SPIFFE server sets it false.
+  //
+  // THE ENGINE JOB IS DELIBERATELY NOT GATED. It needs no api, no mock and no
+  // browser: it reads the grammar, the bundle rules, the catalogue against
+  // the vendored protos and a certification request against OpenSSL. Gating
+  // it would silence the one SPIFFE job that says something true on every
+  // target, including the static ones.
+  // ------------------------------------------------------------------------
+  const spiffeOff = env.SPIFFE_AVAILABLE === "false" ||
+    (env.SPIFFE_AVAILABLE === undefined && ldapOff);
+  const spiffeSkip = spiffeOff
+    ? "SPIFFE is not on this deployment: two of its three surfaces are gRPC " +
+      "— HTTP/2 with a binary framing and its status in the trailers — which " +
+      "a browser cannot produce at all, so both live in the api and a static " +
+      "site has none. client/static_site.js leaves spiffe.html, its bundle " +
+      "and css/spiffe.css out of the build and greys the landing card. The " +
+      "SPIFFE ENGINE job still runs here and still means something, because " +
+      "it needs nothing. Run the rest against the containerized stack " +
+      "(./docker-run-tests.sh) or a local dev server, or set " +
+      "SPIFFE_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
   const scimProtocolSkip = ldapOff
     ? "the SCIM protocol job drives POST /scim on the debugger's api, and a " +
       "static site has no api at all. The SCIM PAGE still runs against such " +
@@ -2105,6 +2151,139 @@ function buildJobs() {
           (env.STS_URL || "http://localhost:8081") + "/scim/v2",
     },
   });
+
+  // ------------------------------------------------------------------------
+  // SPIFFE — four jobs, split by what each one NEEDS rather than by what it
+  // covers, which is the same division the SCIM three make and for the same
+  // reason: a failure in the first names a rule, in the second a server, in
+  // the third the api's own contract, and in the fourth a page. Collapsing
+  // them would make every SPIFFE defect present as the same thing.
+  //
+  // SPIFFE_WORKLOAD_ADDRESS and SPIFFE_SERVER_ADDRESS are the API's view of
+  // the two gRPC surfaces rather than this test's or the browser's — the same
+  // distinction LDAP_URL and KRB5_KDC_HOST draw, and on the containerized
+  // stack a different answer. They are their own variables for exactly that
+  // reason. Note the `spiffe_protocol.js` job is the exception: it drives the
+  // api's client IN PROCESS, so for that one job the address is this test's
+  // own view — which on the containerized stack happens to be the same name,
+  // and on a host run is loopback rather than `sts`.
+  // ------------------------------------------------------------------------
+
+  // THE ENGINES, with no server and no browser. It needs NOTHING — not the
+  // api, not the mock, not Chrome — so it is never gated and never skipped,
+  // and it is the one SPIFFE job that runs on every target including the
+  // static ones. It asserts the ID grammar against the specification's own
+  // rules, the trust bundle reader against documents wrong in one way each,
+  // the 49-method catalogue against the vendored protos BOTH WAYS ROUND, and
+  // those protos against the mock STS's copies byte for byte — which is the
+  // only thing standing between this debugger and a wire that agrees with the
+  // mock and interoperates with nothing.
+  //
+  // It is FIRST of the four deliberately: a broken address rule or a wrong
+  // catalogue makes the other three fail in ways that look like a broken
+  // server.
+  jobs.push({
+    name: "SPIFFE engines (the ID grammar against the specification, the " +
+        "trust bundle reader, the 49-method catalogue against the vendored " +
+        "protos, those protos against the mock's copies, every address and " +
+        "socket refusal by its code, and a PKCS#10 request checked with " +
+        "OpenSSL)",
+    script: "spiffe_engine.js",
+    env: {},
+  });
+
+  // THE PROTOCOL: all forty-nine methods against the mock, through the api's
+  // own client, driven in process. It acquires FOUR identities in order —
+  // nothing, a workload, an administrator, an agent — because this surface
+  // authorizes every method against what the caller IS, and forty of the
+  // forty-two SPIRE Server API methods are unreachable without the third.
+  //
+  // It holds the `sts-spiffe` lock: making the Workload API's own SVID an
+  // administrator means setting `spiffe.adminIds` on a shared process, and it
+  // also shortens `spiffe.svidTtl` to watch a rotation and turns
+  // `spiffe.autoCreateEntries` off to run a client's "I have no identity"
+  // path. Every one is read first and put back per setting in a `finally` —
+  // never with reset-all, which would also undo whatever a concurrent job had
+  // pinned.
+  //
+  // It is the slowest of the four at about forty seconds, and thirty of those
+  // are one assertion: the mock puts a FLOOR of thirty seconds under a
+  // Workload API stream's re-send, so watching an SVID rotate cannot be made
+  // cheaper by shortening its lifetime.
+  const spiffeProtocolJob = {
+    name: "SPIFFE protocol (all 49 methods against the mock as four " +
+        "different entities — nothing, a workload, an administrator and an " +
+        "agent — with every authorization refusal asserted as the answer it " +
+        "is, and an SVID rotation watched on a held stream)",
+    script: "spiffe_protocol.js",
+    env: {
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_TEST_WORKLOAD_ADDRESS ||
+          env.SPIFFE_WORKLOAD_ADDRESS || "localhost:8092",
+      SPIFFE_SERVER_ADDRESS: env.SPIFFE_TEST_SERVER_ADDRESS ||
+          env.SPIFFE_SERVER_ADDRESS || "localhost:8181",
+      // Empty by default and NOT derived from the setting's own default: the
+      // mock ships with spiffe.serverSocketEnabled OFF, so a path guessed
+      // from it would be a section that silently skips while claiming to
+      // cover the `local` entity — the only route to Debug.GetInfo.
+      SPIFFE_SERVER_SOCKET: env.SPIFFE_SERVER_SOCKET || "",
+      SPIFFE_TRUST_DOMAIN: env.SPIFFE_TRUST_DOMAIN || "example.org",
+    },
+  };
+  if (spiffeSkip) spiffeProtocolJob.skip = spiffeSkip;
+  jobs.push(spiffeProtocolJob);
+
+  // THE API'S OWN CONTRACT, over HTTP. What lives here and nowhere else is
+  // the STATUS-CODE RULE, which is the most consequential decision that
+  // endpoint makes: a refusal by the api is a 400, a network failure is a
+  // 502, and a gRPC status from the far end — PERMISSION_DENIED,
+  // UNAUTHENTICATED, UNIMPLEMENTED — is a **200** with the code, because
+  // those are SPIFFE answering and are the most interesting thing this
+  // workflow shows.
+  const apiSpiffeJob = {
+    name: "SPIFFE api endpoints (the status-code rule: a refusal is a 400, a " +
+        "network failure is a 502, and a gRPC status from the far end is a " +
+        "200 with the code)",
+    script: "api_spiffe.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092",
+      SPIFFE_SERVER_ADDRESS: env.SPIFFE_SERVER_ADDRESS || "sts:8181",
+      SPIFFE_BUNDLE_URL: env.SPIFFE_BUNDLE_URL ||
+          (env.API_STS_URL || "http://sts:8081") + "/spiffe/bundle",
+      SPIFFE_TRUST_DOMAIN: env.SPIFFE_TRUST_DOMAIN || "example.org",
+    },
+  };
+  if (spiffeSkip) apiSpiffeJob.skip = spiffeSkip;
+  jobs.push(apiSpiffeJob);
+
+  // THE PAGE, which covers only what needs a browser. Four things live here
+  // and nowhere else: that all forty-nine methods reach the two pickers (the
+  // whole claim this workflow makes is a claim about those dropdowns); the
+  // hand-off that takes an SVID from a surface which authenticates nobody and
+  // PRESENTS it on one that requires mutual TLS; the PKCS#10 request built
+  // with Web Crypto, which is a different implementation from the node one
+  // the engine job checks against OpenSSL; and the key-material opt-out,
+  // which must REMOVE a stored private key rather than only stop writing one.
+  const spiffePageJob = {
+    name: "SPIFFE page (all 49 methods in its pickers, the SVID hand-off " +
+        "from an unauthenticated surface to a mutual-TLS one, the " +
+        "certification request built in the browser, the three offline " +
+        "panes, and what it remembers)",
+    script: "spiffe_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "http://localhost:8081",
+      SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092",
+      SPIFFE_SERVER_ADDRESS: env.SPIFFE_SERVER_ADDRESS || "sts:8181",
+      SPIFFE_BUNDLE_URL: env.SPIFFE_BUNDLE_URL ||
+          (env.API_STS_URL || "http://sts:8081") + "/spiffe/bundle",
+      SPIFFE_TRUST_DOMAIN: env.SPIFFE_TRUST_DOMAIN || "example.org",
+    },
+  };
+  if (spiffeSkip) spiffePageJob.skip = spiffeSkip;
+  jobs.push(spiffePageJob);
 
   // The DELEGATION page: S4U2Self, S4U2Proxy with both authorization routes, forwarding
   // and renewal. tests/krb5_tgs_ap.js already drives every one of those exchanges with no
