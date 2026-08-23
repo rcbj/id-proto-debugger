@@ -73,6 +73,12 @@ COPY common/data.js /usr/src/app/src
 # have to be kept in step, which is the same two-places rule as the browserify
 # line further down.
 COPY common/krb5/ /usr/src/app/src/
+# The SPIFFE ID grammar and the trust-bundle reader, staged the same way. They
+# live in common/spiffe/ because api/spiffe_client.js refuses with the same
+# grammar and tests/ drives the same reader — three copies of a grammar is a
+# grammar that disagrees with itself. client/build.js does the equivalent
+# staging for the static deployments; BOTH have to be kept in step.
+COPY common/spiffe/ /usr/src/app/src/
 RUN browserify src/jwks.js -o public/js/jwks.js --debug --standalone jwks -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/oauth2_oidc_1.js -o public/js/oauth2_oidc_1.js --debug --standalone oauth2_oidc_1 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/token_detail.js -o public/js/token_detail.js --debug --standalone token_detail -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
@@ -125,6 +131,12 @@ RUN browserify src/spnego.js -o public/js/spnego.js --debug --standalone spnego 
 RUN browserify src/ldap.js -o public/js/ldap.js --debug --standalone ldap -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/pki.js -o public/js/pki.js --debug --standalone pki -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/scim.js -o public/js/scim.js --debug --standalone scim -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+# SPIFFE. Like LDAP and the six Kerberos pages it cannot work without the api —
+# a browser cannot produce gRPC at all — so client/static_site.js keeps it out
+# of the static deployments. This line stays regardless: the exclusion is
+# static-only, and tests/static_site_exclusions.js fails if the container build
+# loses a page.
+RUN browserify src/spiffe.js -o public/js/spiffe.js --debug --standalone spiffe -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----
@@ -160,7 +172,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "encryption_tools:encryption_tools" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "kerberos_decoder:kerberos_decoder" "kerberos:kerberos" "kerberos_tgs:kerberos_tgs" "kerberos_ap:kerberos_ap" "kerberos_delegation:kerberos_delegation" "spnego:spnego" "ldap:ldap" "pki:pki" "scim:scim" ; do \
+      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "encryption_tools:encryption_tools" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "kerberos_decoder:kerberos_decoder" "kerberos:kerberos" "kerberos_tgs:kerberos_tgs" "kerberos_ap:kerberos_ap" "kerberos_delegation:kerberos_delegation" "spnego:spnego" "ldap:ldap" "pki:pki" "scim:scim" "spiffe:spiffe" ; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

@@ -86,6 +86,11 @@ RUN npm install --omit=dev
 COPY api/. .
 COPY api/env/ /usr/src/app/env/
 COPY common/data.js .
+# The SPIFFE ID grammar and the trust-bundle reader. WORKDIR is /usr/src/app, so
+# this lands where `require('../common/spiffe/spiffe_id.js')` resolves it — the
+# same relative path that works in a bare checkout, which is what keeps this
+# from becoming a checked-in copy the way common/data.js had to.
+COPY common/spiffe/ /usr/src/common/spiffe/
 
 # Application version: the repo-root VERSION file (M.N) plus the shared stamping
 # module, which is the client's — there is one implementation of the scheme and

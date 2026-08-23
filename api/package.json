@@ -8,6 +8,8 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.8.1",
     "@xmldom/xmldom": "^0.9.8",
     "axios": "^1.16.0",
     "body-parser": "^2.2.2",

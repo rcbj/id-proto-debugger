@@ -18,19 +18,38 @@
 // that the URL shown is the token ENDPOINT, and that the note names the end
 // that made the call.
 //
-// It covers BOTH panes that show this exchange, because a reader meets them in
-// two different states. The request form has the tab the exchange was composed
-// on — but a successful call COLLAPSES that form, so the pane actually on
-// screen afterwards is the Token Endpoint Results one, which carries the same
-// exchange under a tab of its own. They share one view and one renderer
-// (renderTokenHttpExchange() draws into every host that exists), and a shared
-// renderer whose second host is missing draws nothing and says nothing, which
-// is why the second pane is asserted here rather than assumed to follow from
-// the first. The results pane is also BUILT AS A STRING by oauth2_oidc_2.js
-// in four branches rather than being in the page, so its tab is attached to
-// whatever was just built — including on a page LOAD, where the tokens come
-// back from localStorage and there is no exchange to show at all. That last
-// state is asserted too: it is the one that must say so rather than be empty.
+// It covers FOUR panes, because a reader meets this exchange in four states.
+// The request form has the tab it was composed on — but a successful call
+// COLLAPSES that form, so the pane actually on screen afterwards is the Token
+// Endpoint Results one, which carries the same exchange under a tab of its
+// own. They share one view and one renderer (renderHttpExchange() draws into
+// every host a channel has), and a shared renderer whose second host is
+// missing draws nothing and says nothing, which is why the second pane is
+// asserted here rather than assumed to follow from the first. Three of the
+// four are BUILT AS A STRING by oauth2_oidc_2.js rather than being in the
+// page, so each one's tab is attached to whatever was just built — including
+// on a page LOAD, where the tokens come back from localStorage and the pane
+// has to say which generation's exchange to go and look at.
+//
+// The third and fourth are newer than the rest of this file and are what it
+// grew for. The **Currently Viewing** pane draws the exchange KEPT WITH THE
+// GENERATION the Token History pane has activated — read back out of
+// `token_history`, which is the one path here that can break without either
+// live pane noticing, since it is fed by a JSON document rather than by the
+// ajax handler that just ran. And the **refresh** panes carry a channel of
+// their own; this grant returns no refresh token, so what is asserted here is
+// that channel's empty state, and `tests/oidc_authorization_code.js` makes a
+// real Refresh Request and asserts the exchange.
+//
+// WHICH BRINGS UP THE THING THIS FILE REVERSED. It used to assert that
+// NOTHING about the exchange reached localStorage — the request repeats a
+// client secret and carries an Authorization header built out of it. The
+// exchange is now kept, so that assertion became an assertion about
+// REDACTION: what is stored is the whole exchange with the credential-bearing
+// header and parameter VALUES replaced, the live panes are checked to be
+// unredacted, and the client secret is looked for in the raw stored document
+// rather than field by field — a secret copied into a field nobody thought to
+// check is exactly the failure that is for.
 //
 // It uses the Client Credentials grant because the pane and the handler are the
 // same for every grant this page sends and that one needs no login — the
@@ -190,6 +209,57 @@ async function readResultTab(driver) {
   });
   log.debug("Leaving readResultTab(). label=" + state.label);
   return state;
+}
+
+// Read the Currently Viewing pane's tab, which is the third pane carrying one
+// and the only one whose exchange did not happen on this page load: it is
+// read back out of the activated generation's `token_history` entry.
+async function readViewingTab(driver) {
+  log.debug("Entering readViewingTab().");
+  // NOTE: browser-side, as above. No `log` in here.
+  const state = await driver.executeScript(function () {
+    function textOf(id) {
+      var el = document.getElementById(id);
+      return el ? el.textContent : null;
+    }
+    function classOf(id) {
+      var el = document.getElementById(id);
+      return el ? el.className : null;
+    }
+    var access = document.getElementById("cv_access_token");
+    return {
+      present: !!document.getElementById("cv_tab_http"),
+      label: textOf("cv_tab_http"),
+      tokensPanelClass: classOf("cv_tabpanel_tokens"),
+      httpPanelClass: classOf("cv_tabpanel_http"),
+      panel: textOf("cv_http_exchange"),
+      accessTokenLength: access && access.value ? access.value.length : 0,
+      strips: document.querySelectorAll(
+          "#currently-viewing-panel .dbg-tabs").length
+    };
+  });
+  log.debug("Leaving readViewingTab(). label=" + state.label);
+  return state;
+}
+
+// The generations in `token_history`, and the exchange kept with each. Read as
+// the raw string as well, because the assertion that matters most about it is
+// that a credential is NOT anywhere in it — and looking for one field at a
+// time is how a copy in another field is missed.
+async function readStoredHistory(driver) {
+  log.debug("Entering readStoredHistory().");
+  const raw = await driver.executeScript(
+      "return localStorage.getItem('token_history');");
+  var parsed = [];
+  try {
+    parsed = JSON.parse(raw || "[]");
+  } catch (e) {
+    log.error("token_history is not JSON: " + e.message);
+    parsed = [];
+  }
+  log.debug("Leaving readStoredHistory(). " + parsed.length +
+            " generation(s).");
+  return { raw: raw || "", entries: parsed };
 }
 
 // Nothing the results pane's HTTP panel draws may leave the pane, and it may
@@ -371,11 +441,90 @@ async function test() {
       "The reported elapsed time is not a plausible number of " +
       "milliseconds: " + elapsed[1]);
 
-    // Nothing about the exchange is persisted. The request repeats the client
-    // secret; this page keeps credentials out of storage by design.
-    assert.ok(after.storage.indexOf("http_exchange") === -1,
-      "The HTTP trace must not be written to localStorage, and something " +
-      "named http_exchange is in it.");
+    // ---------------------------------------------------------------------
+    // WHAT WAS WRITTEN DOWN, which is the half of this that reversed.
+    //
+    // Until this build nothing about the exchange was persisted, and this
+    // asserted exactly that. It is now kept beside the tokens in
+    // `token_history`, so that the Currently Viewing pane can show the call
+    // that produced whichever generation the reader activated — and the
+    // assertion has to move with it rather than be deleted, because the
+    // reason it existed has not gone away. What is stored is a REDACTED copy:
+    // the method, the URL, the status, the timing, every non-credential
+    // header and the response body verbatim, and every credential-bearing
+    // value replaced.
+    //
+    // The check on the credential is made against the RAW string rather than
+    // field by field. A secret that has been copied into a field nobody
+    // thought to look at is exactly the failure this is for, and a per-field
+    // check cannot see one.
+    // ---------------------------------------------------------------------
+    const stored = await readStoredHistory(driver);
+    log.info("token_history holds " + stored.entries.length +
+             " generation(s); " + stored.entries.filter(
+                 (e) => !!e.http_exchange).length + " carry an exchange.");
+    assert.ok(stored.entries.length > 0,
+      "The token call should have written a generation to token_history, " +
+      "and it holds none. Everything below reads that generation.");
+    const keptExchange =
+        stored.entries[stored.entries.length - 1].http_exchange;
+    assert.ok(keptExchange,
+      "The exchange should now be KEPT with the token set it produced, and " +
+      "the newest generation carries none. The Currently Viewing pane's " +
+      "HTTP tab has nothing to show without it.");
+    log.info("Stored request: " + keptExchange.request.method + " " +
+             keptExchange.request.url);
+    assert.ok(keptExchange.request.url === after.tokenEndpoint,
+      "The stored exchange should name the token ENDPOINT (" +
+      after.tokenEndpoint + "), and it names " + keptExchange.request.url +
+      ". The api's trace is what carries the endpoint; storing the " +
+      "browser's call to the api instead is a plausible-looking exchange " +
+      "with the wrong URL in it.");
+    assert.ok(keptExchange.response &&
+              /^2\d\d$/.test(String(keptExchange.response.status)),
+      "The stored exchange should carry the response status.");
+    assert.ok(/access_token/.test((keptExchange.response || {}).body || ""),
+      "The stored exchange should carry the response BODY verbatim — that " +
+      "is what is NOT redacted, and the point of keeping it.");
+    assert.ok(/grant_type=client_credentials/.test(
+                  keptExchange.request.body || ""),
+      "The stored request body should be kept apart from its credentials, " +
+      "and grant_type is gone from it: " +
+      JSON.stringify(keptExchange.request.body));
+
+    // The credential itself, three ways, against the whole document.
+    assert.ok(stored.raw.indexOf(client_secret) === -1,
+      "THE CLIENT SECRET IS IN token_history. Redaction is by parameter " +
+      "and header NAME (redactExchangeForStorage() in " +
+      "client/src/oauth2_oidc_2.js); a value that reaches storage means a " +
+      "name is missing from one of those lists, or a body shape neither " +
+      "branch parses.");
+    assert.ok(!/"[Aa]uthorization"\s*:\s*"Basic /.test(stored.raw),
+      "An HTTP Basic Authorization header is in token_history. On a proxied " +
+      "call the api builds one out of the client secret and reports it in " +
+      "its trace, which is the credential this page had never persisted " +
+      "before.");
+    assert.ok(!/"[Dd][Pp]o[Pp]"\s*:\s*"ey/.test(stored.raw),
+      "A DPoP proof is in token_history.");
+
+    // And the redaction is VISIBLE rather than a silently dropped field: a
+    // header that vanished would read as a request that never carried one.
+    const redactedSomething = /redacted/.test(stored.raw);
+    assert.ok(redactedSomething,
+      "Nothing in the stored exchange is marked as redacted. This grant " +
+      "sends a client secret one way or the other — in the body under " +
+      "the POST auth style, in an Authorization header under the Header " +
+      "one — so a stored copy with nothing redacted in it means the " +
+      "redaction ran against the wrong shape and found nothing, which " +
+      "looks identical to a request that carried no credential.");
+
+    // The live pane is NOT redacted: the two copies are deliberately
+    // different, and a redaction that leaked into the live view would take
+    // away the bytes this whole tab exists to show.
+    assert.ok(!/redacted/.test(panel),
+      "The LIVE HTTP tab is showing redacted values. Only the copy written " +
+      "to token_history is redacted; the pane shows the exchange as it " +
+      "went, for as long as the page is open.");
 
     // Layout, measured with the exchange in it.
     const geometry = await measureHttpPanel(driver);
@@ -521,6 +670,167 @@ async function test() {
       "to the Tokens tab.");
 
     // ---------------------------------------------------------------------
+    // THE CURRENTLY VIEWING PANE, which is the third pane carrying this tab
+    // and the only one whose exchange did not happen on this page load.
+    //
+    // Activating a generation in Token History draws it here out of that
+    // generation's `token_history` entry — through the SAME renderer, off a
+    // channel of its own. That is the whole reason the exchange is stored at
+    // all, and it is the one path that can break without either live pane
+    // noticing: the live panes are fed by the ajax handler that just ran,
+    // this one by a JSON document written minutes or days ago by a build that
+    // may not have been this one.
+    //
+    // Asserted here rather than assumed from the live panes above, and
+    // asserted on CONTENT rather than on the tab existing: a pane that draws
+    // its empty sentence is a pane whose read path found nothing, and it
+    // looks exactly like one that was never given anything to draw.
+    // ---------------------------------------------------------------------
+    await clickStable(driver, By.css(
+        "#token-history-panel input[type=button][value=Activate]"),
+        "the newest generation's Activate button");
+    await driver.wait(until.elementLocated(By.id("cv_tab_http")), waitTime);
+    await clickStable(driver, By.id("cv_tab_http"),
+                      "the Currently Viewing pane's HTTP tab");
+    const viewing = await readViewingTab(driver);
+    log.info("Currently Viewing: label=" + viewing.label + ", strips=" +
+             viewing.strips);
+    log.info("Currently Viewing panel:\n" + (viewing.panel || ""));
+    assert.ok(viewing.present,
+      "The Currently Viewing pane should carry an HTTP tab once a generation " +
+      "is activated, and it has none.");
+    assert.strictEqual(viewing.strips, 1,
+      "The Currently Viewing pane carries " + viewing.strips + " tab " +
+      "strips. It is rebuilt on every activation and the tab is attached " +
+      "after each rebuild, so two strips driving one panel is what a " +
+      "non-idempotent attach looks like.");
+    assert.strictEqual(viewing.httpPanelClass, "dbg-tabpanel",
+      "Clicking the Currently Viewing pane's HTTP tab should display its " +
+      "panel; its class is \"" + viewing.httpPanelClass + "\".");
+    assert.ok(/^HTTP · 2\d\d$/.test(viewing.label || ""),
+      "The Currently Viewing HTTP tab should carry the stored response's " +
+      "status, and it reads \"" + viewing.label + "\".");
+    const viewingPanel = viewing.panel || "";
+    assert.ok(/No HTTP exchange was kept/.test(viewingPanel) === false,
+      "The Currently Viewing pane says no exchange was kept with this " +
+      "generation, and one was written a moment ago. The read path " +
+      "(storedExchangeForDisplay()) or the entry's http_exchange field is " +
+      "the thing to look at.");
+    assert.ok(viewingPanel.indexOf("POST " + after.tokenEndpoint) !== -1,
+      "The Currently Viewing pane should show the METHOD and URL of the " +
+      "stored exchange (POST " + after.tokenEndpoint + "). It reads: " +
+      JSON.stringify(viewingPanel.slice(0, 400)));
+    assert.ok(/HTTP 2\d\d/.test(viewingPanel),
+      "The Currently Viewing pane should show the stored response status.");
+    assert.ok(/access_token/.test(viewingPanel),
+      "The Currently Viewing pane should show the stored response body.");
+    assert.ok(/kept with it at /.test(viewingPanel),
+      "The stored exchange should say WHEN it was kept — this pane is the " +
+      "one whose exchange did not happen on this page load, and a pane that " +
+      "does not say so is indistinguishable from the live ones.");
+    assert.ok(/redacted/.test(viewingPanel),
+      "The Currently Viewing pane should show the redaction, rather than a " +
+      "header that silently vanished — an absent header reads as a request " +
+      "that never carried one.");
+    assert.ok(viewingPanel.indexOf(client_secret) === -1,
+      "THE CLIENT SECRET IS ON SCREEN in the Currently Viewing pane.");
+
+    // Layout, in the narrowest of the three columns.
+    const viewingGeometry = await driver.executeScript(function () {
+      // NOTE: browser-side. No `log` in here — see the repo-root CLAUDE.md.
+      var pane = document.getElementById("currently_viewing_fieldset");
+      var host = document.getElementById("cv_http_exchange");
+      if (!pane || !host) {
+        return null;
+      }
+      var paneRect = pane.getBoundingClientRect();
+      var outside = [];
+      var nodes = host.querySelectorAll("*");
+      for (var i = 0; i < nodes.length; i++) {
+        var rect = nodes[i].getBoundingClientRect();
+        if (rect.width === 0 && rect.height === 0) {
+          continue;
+        }
+        if (rect.right > paneRect.right + 1 || rect.left < paneRect.left - 1) {
+          outside.push((nodes[i].className || nodes[i].tagName) + " spans " +
+              Math.round(rect.left) + "-" + Math.round(rect.right) +
+              ", the pane spans " + Math.round(paneRect.left) + "-" +
+              Math.round(paneRect.right));
+        }
+      }
+      return {
+        outside: outside,
+        hostScrollWidth: host.scrollWidth,
+        hostClientWidth: host.clientWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        bodyClientWidth: document.body.clientWidth };
+    });
+    assert.ok(viewingGeometry,
+      "The Currently Viewing pane's HTTP host is not on the page.");
+    log.info("Currently Viewing geometry: " + JSON.stringify(viewingGeometry));
+    assert.deepStrictEqual(viewingGeometry.outside, [],
+      "Everything the Currently Viewing pane's HTTP panel draws must stay " +
+      "inside the pane's border. These do not: " +
+      viewingGeometry.outside.join("; "));
+    assert.ok(viewingGeometry.hostScrollWidth <=
+              viewingGeometry.hostClientWidth + 1,
+      "The Currently Viewing pane's HTTP panel scrolls sideways (" +
+      viewingGeometry.hostScrollWidth + "px of content in " +
+      viewingGeometry.hostClientWidth + "px).");
+    assert.ok(viewingGeometry.bodyScrollWidth <=
+              viewingGeometry.bodyClientWidth + 1,
+      "The page scrolls sideways with the Currently Viewing HTTP panel open.");
+
+    // ---------------------------------------------------------------------
+    // THE REFRESH PANES' tab, in the one state this grant can produce.
+    //
+    // Client Credentials returns no refresh token, so there is no Refresh
+    // Request to make here and the refresh channel's own EMPTY state is what
+    // this asserts: the tab is on the page, it is wired to its panel, and it
+    // says nothing has been sent — which is the state that must not be an
+    // empty panel behind a tab. `tests/oidc_authorization_code.js` makes a
+    // real refresh call and asserts the exchange itself.
+    // ---------------------------------------------------------------------
+    await clickStable(driver, By.id("refresh_expand_button"),
+                      "the refresh pane's title");
+    await clickStable(driver, By.id("refresh_tab_http"),
+                      "the refresh pane's HTTP tab");
+    const refreshEmpty = await driver.executeScript(function () {
+      // NOTE: browser-side. No `log` in here.
+      function textOf(id) {
+        var el = document.getElementById(id);
+        return el ? el.textContent : null;
+      }
+      function classOf(id) {
+        var el = document.getElementById(id);
+        return el ? el.className : null;
+      }
+      return {
+        label: textOf("refresh_tab_http"),
+        httpPanelClass: classOf("refresh_tabpanel_http"),
+        formPanelClass: classOf("refresh_tabpanel_form"),
+        panel: textOf("refresh_http_exchange") };
+    });
+    log.info("Refresh pane HTTP tab: " + JSON.stringify(refreshEmpty));
+    assert.strictEqual(refreshEmpty.label, "HTTP",
+      "No Refresh Request has been sent, so the refresh pane's HTTP tab " +
+      "should be labelled plainly \"HTTP\" and it reads \"" +
+      refreshEmpty.label + "\".");
+    assert.strictEqual(refreshEmpty.httpPanelClass, "dbg-tabpanel",
+      "Clicking the refresh pane's HTTP tab should display its panel; its " +
+      "class is \"" + refreshEmpty.httpPanelClass + "\".");
+    assert.strictEqual(refreshEmpty.formPanelClass,
+                       "dbg-tabpanel dbg-tabpanel-off",
+      "Displaying the refresh HTTP panel should hide the Parameters one.");
+    assert.ok(/no Refresh Request has been sent/i.test(
+                  refreshEmpty.panel || ""),
+      "The refresh pane's HTTP panel should say that nothing has been sent " +
+      "yet. It reads: " + JSON.stringify((refreshEmpty.panel || "")
+          .slice(0, 200)));
+    await clickStable(driver, By.id("refresh_tab_form"),
+                      "the refresh pane's Parameters tab");
+
+    // ---------------------------------------------------------------------
     // Coming BACK from the token detail page, which is the other branch that
     // builds this pane and the one with nothing to show.
     //
@@ -529,11 +839,14 @@ async function test() {
     // debugger link comes back HERE — to
     // oauth2_oidc_2.html?redirectFromTokenDetail=true, which is the only
     // caller of recreateTokenDisplay(). That branch rebuilds the pane out of
-    // localStorage, where the tokens are and the exchange is not: a Token
-    // Request carries the client secret, so this page keeps it out of storage
-    // by design. The tab therefore has to SAY so. An empty panel would read
-    // as a tab that stopped working, and "nothing has been sent yet" would be
-    // a lie about a page that plainly has tokens on it.
+    // localStorage — the tokens, but NOT the exchange, which is deliberate
+    // and is the distinction this section is about. The exchange is kept per
+    // GENERATION in `token_history`, not in the current-token slots those
+    // fields come from, so this pane cannot know which of the stored ones the
+    // tokens on screen belong to. Its tab therefore has to SAY so and point
+    // at the pane that can: an empty panel would read as a tab that stopped
+    // working, and "nothing has been sent yet" would be a lie about a page
+    // that plainly has tokens on it.
     // ---------------------------------------------------------------------
     await driver.get(baseUrl +
         "/oauth2_oidc_2.html?redirectFromTokenDetail=true");
@@ -553,9 +866,27 @@ async function test() {
       "labelled plainly \"HTTP\" and it reads \"" + reloaded.label + "\".");
     assert.ok(/has been sent since this page was loaded/i.test(
                   reloaded.panel || ""),
-      "The HTTP tab on a reloaded page should say that the exchange behind " +
-      "the tokens on screen was not kept. It reads: " +
+      "The HTTP tab on a reloaded page should say that nothing has been " +
+      "sent on THIS page load. It reads: " +
       JSON.stringify((reloaded.panel || "").slice(0, 250)));
+    assert.ok(/Token History/i.test(reloaded.panel || ""),
+      "and it should point at Token History, which is where the exchange " +
+      "for a given generation now lives. Without that the sentence tells a " +
+      "reader the exchange is gone, which stopped being true. It reads: " +
+      JSON.stringify((reloaded.panel || "").slice(0, 250)));
+
+    // The generation written earlier is still there, exchange and all: a
+    // reload must not lose it, and this is the one assertion that a
+    // page-load path cannot pass by drawing something plausible.
+    const afterReload = await readStoredHistory(driver);
+    log.info("After the reload token_history holds " +
+             afterReload.entries.length + " generation(s).");
+    assert.ok(afterReload.entries.some((e) => !!e.http_exchange),
+      "The stored exchange did not survive the page load. token_history " +
+      "now holds " + afterReload.entries.length + " generation(s) and none " +
+      "of them carries one.");
+    assert.ok(afterReload.raw.indexOf(client_secret) === -1,
+      "THE CLIENT SECRET IS IN token_history after the reload.");
     assert.ok(reloaded.strips === 1,
       "The reloaded results pane carries " + reloaded.strips + " tab strips.");
 

@@ -606,6 +606,40 @@ COPY client/src/scim_client.js client/src/scim_scenarios.js ./
 COPY api/scim_proxy.js ./
 COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 # ---------------------------------------------------------------------------
+# SPIFFE.
+#
+# Four test scripts and the four modules they load directly, FLAT beside the
+# tests — which is why every one of these scripts is named `spiffe_<something>`
+# or `api_spiffe.js` and none of them is called `spiffe_id.js`,
+# `spiffe_bundle.js` or `spiffe_client.js`. Two files of one name copied here
+# means whichever COPY ran last wins, silently, and the test would end up
+# loading itself. Same trap the SCIM block above records.
+#
+# `api/spiffe_client.js` is the second module this image takes from `api/`, and
+# it is taken for the opposite reason `scim_proxy.js` is: that one has no
+# network in it, and this one is ALL network — but its address rules, its
+# catalogue and its conversions are pure, and `spiffe_protocol.js` needs the
+# whole thing anyway to call forty-nine methods with no api running.
+#
+# **`api/protos/` HAS TO COME WITH IT, AND IT IS A DIRECTORY.** That module
+# reads the `.proto` files at REQUIRE TIME through
+# `path.join(__dirname, 'protos')`, so without this line every SPIFFE test
+# throws at load with a message about a service missing from the vendored
+# protos — which names the protos and not this COPY. `__dirname` here is
+# /usr/src/app, so the directory lands beside the flattened module and the
+# join resolves exactly as it does in a checkout.
+#
+# `common/spiffe/` goes to /usr/src/common/spiffe as well as flat, because
+# `api/spiffe_client.js` requires it as `../common/spiffe/spiffe_id.js` while
+# the tests find it flat through module_paths.js. Both spellings have to
+# resolve or one of the two callers fails at load.
+COPY common/spiffe/spiffe_id.js common/spiffe/spiffe_bundle.js ./
+COPY common/spiffe/ /usr/src/common/spiffe/
+COPY api/spiffe_client.js ./
+COPY api/protos/ ./protos/
+COPY tests/spiffe_engine.js tests/spiffe_protocol.js ./
+COPY tests/api_spiffe.js tests/spiffe_page.js ./
+# ---------------------------------------------------------------------------
 # The JWKS page. Named jwks_PAGE.js for the same reason as the three above:
 # client/src/jwks.js is bundle source and could one day be copied here, and two
 # files of one name means whichever COPY ran last wins.

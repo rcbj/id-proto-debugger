@@ -1499,6 +1499,218 @@ async function theExchangePaneShowsHeadersAndStaysInside(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 8a. THE COLLAPSING PANES, AND THE ONE SWITCH OVER ALL OF THEM.
+//
+// The page uses the same `.dbg-*` chrome as every other workflow here: a
+// `div.dbg-pane` holding a `.dbg-legend` title and the `fieldset` that title
+// collapses, plus one toggle at the top that does all of them at once.
+//
+// THREE THINGS, AND EACH FAILS SILENTLY ON ITS OWN.
+//
+//   * The legend and the fieldset are paired BY CONVENTION —
+//     `x_expand_button` drives `x_fieldset` — rather than by an inline
+//     onclick repeating the id. A drifted pair is a title that does nothing at
+//     all, which looks exactly like a title nobody thought to make clickable.
+//     wirePanes() warns about one, and section 9 asserts the console is clean,
+//     so this section checks the other half: that a click actually collapses.
+//   * setAllPanes() DISCOVERS the fieldsets rather than listing them, so a
+//     pane added later is covered by construction. The check therefore counts
+//     what it collapsed against the panes on the page — a hard-coded list
+//     that had fallen one behind would still pass a "the toggle works" test
+//     written against one pane.
+//   * The triangle is drawn by `:has(fieldset[style*="display: none"])` in
+//     css/debugger.css, which reads the INLINE style. A pane whose markup
+//     carries no inline `display` would show an expanded triangle over a pane
+//     the toggle had never touched, so the indicator is read from
+//     `::before` rather than assumed from the fieldset.
+//
+// The panes are left EXPANDED at the end: every section after this one
+// measures geometry inside them, and a collapsed fieldset has no geometry.
+// ---------------------------------------------------------------------------
+async function thePanesCollapseAndOneSwitchDoesThemAll(driver) {
+  log.debug("Entering thePanesCollapseAndOneSwitchDoesThemAll().");
+  log.info("8a. The collapsing panes.");
+  const start = await driver.executeScript(`
+    var panes = document.querySelectorAll('.dbg-pane fieldset');
+    var open = 0;
+    for (var i = 0; i < panes.length; i++) {
+      if (panes[i].style.display !== 'none') { open += 1; }
+    }
+    var legends = document.querySelectorAll('.dbg-legend');
+    var unpaired = [];
+    for (var j = 0; j < legends.length; j++) {
+      var id = legends[j].id || '';
+      var body = id.replace('_expand_button', '_fieldset');
+      if (id.indexOf('_expand_button') === -1 ||
+          !document.getElementById(body)) {
+        unpaired.push(id || '(no id)');
+      }
+    }
+    return { panes: panes.length, open: open, legends: legends.length,
+             unpaired: unpaired,
+             toggle: !!document.getElementById('dbg_toggle_all') };
+  `);
+  check('every pane has a title paired with it, and all of them start open',
+      function () {
+    assert.ok(start.panes >= 8,
+        'Only ' + start.panes + ' collapsing panes are on the page, so this ' +
+        'check is close to vacuous — the markup has stopped matching ' +
+        '.dbg-pane fieldset.');
+    assert.strictEqual(start.legends, start.panes,
+        'There are ' + start.legends + ' titles and ' + start.panes +
+        ' panes, so one of them is on its own.');
+    assert.deepStrictEqual(start.unpaired, [],
+        'These titles name no fieldset: ' + start.unpaired.join(', ') + '. ' +
+        'The pairing is `x_expand_button` drives `x_fieldset`, and a drifted ' +
+        'pair is a title that does nothing at all, with nothing on the ' +
+        'page saying so.');
+    assert.strictEqual(start.open, start.panes,
+        'Only ' + start.open + ' of ' + start.panes + ' panes are open on ' +
+        'arrival. The page opens expanded: somebody who has just chosen this ' +
+        'workflow has not asked for ten closed boxes.');
+    assert.ok(start.toggle, 'There is no dbg_toggle_all on the page.');
+  });
+  // One title, clicked for real rather than through the module — the handler
+  // is added by the bundle, so a click is the only thing that proves it ran.
+  const one = await driver.findElement(By.id('connection_expand_button'));
+  await one.click();
+  const closed = await driver.executeScript(`
+    var f = document.getElementById('connection_fieldset');
+    var lg = document.getElementById('connection_expand_button');
+    return { display: f.style.display,
+             triangle: window.getComputedStyle(lg, '::before').content,
+             cursor: window.getComputedStyle(lg).cursor };
+  `);
+  await one.click();
+  const reopened = await driver.executeScript(
+      "return document.getElementById('connection_fieldset').style.display;");
+  check("clicking a pane's title collapses it, and the triangle turns",
+      function () {
+    assert.strictEqual(closed.display, 'none',
+        'The Connection fieldset is display:' + closed.display + ' after a ' +
+        'click on its title, so nothing is wired to it.');
+    assert.ok(closed.triangle.indexOf('\u25b8') >= 0,
+        'The collapsed pane\'s title still draws ' + closed.triangle +
+        ' rather than a right-pointing triangle. That indicator is a ' +
+        ':has() rule reading the INLINE display, so this is what fails when ' +
+        'a pane is collapsed by some other means than the inline style.');
+    assert.strictEqual(closed.cursor, 'pointer',
+        'The title\'s cursor is ' + closed.cursor + ', so nothing on screen ' +
+        'says it can be clicked.');
+    assert.notStrictEqual(reopened, 'none',
+        'A second click left the pane collapsed, so the title only closes.');
+  });
+  // And the switch, over all of them at once.
+  const afterCollapse = await driver.executeScript(`
+    document.querySelector('.dbg-toggle-slider').click();
+    var panes = document.querySelectorAll('.dbg-pane fieldset');
+    var hidden = 0;
+    for (var i = 0; i < panes.length; i++) {
+      if (panes[i].style.display === 'none') { hidden += 1; }
+    }
+    return { hidden: hidden, total: panes.length,
+             text: document.querySelector('.dbg-toggle-text').textContent,
+             checked: document.getElementById('dbg_toggle_all').checked };
+  `);
+  const afterExpand = await driver.executeScript(`
+    document.querySelector('.dbg-toggle-slider').click();
+    var panes = document.querySelectorAll('.dbg-pane fieldset');
+    var open = 0;
+    for (var i = 0; i < panes.length; i++) {
+      if (panes[i].style.display !== 'none') { open += 1; }
+    }
+    return { open: open, total: panes.length,
+             text: document.querySelector('.dbg-toggle-text').textContent };
+  `);
+  check('the one switch collapses and expands EVERY pane', function () {
+    assert.strictEqual(afterCollapse.hidden, afterCollapse.total,
+        'The switch collapsed ' + afterCollapse.hidden + ' of ' +
+        afterCollapse.total + ' panes. setAllPanes() reads the fieldsets off ' +
+        'the DOM precisely so that it cannot fall behind the markup; a ' +
+        'shortfall here means it has started working from a list.');
+    assert.strictEqual(afterCollapse.checked, false,
+        'The switch is still on after collapsing everything.');
+    assert.strictEqual(afterCollapse.text, 'Expand all panes',
+        'The switch still reads "' + afterCollapse.text + '" over ten ' +
+        'collapsed panes, so the only control that can reopen them is ' +
+        'labelled as the thing that closed them.');
+    assert.strictEqual(afterExpand.open, afterExpand.total,
+        'Only ' + afterExpand.open + ' of ' + afterExpand.total +
+        ' panes came back.');
+    assert.strictEqual(afterExpand.text, 'Collapse all panes');
+  });
+  log.debug("Leaving thePanesCollapseAndOneSwitchDoesThemAll().");
+}
+
+// ---------------------------------------------------------------------------
+// 8d. THE FOLDED PROSE, AND THE ONE BLOCK THAT MUST NOT FOLD.
+//
+// The explanations on this page are the reason the workflow is worth using,
+// so they are folded rather than cut — `details.scim-more`, the same shape the
+// Kerberos pages use. Two properties, and the second is the one worth a test.
+//
+// Every fold starts CLOSED: a `details` that shipped `open` is prose back on
+// the page, which is the state this change exists to leave behind.
+//
+// And the sentence saying these endpoints delete accounts is NOT inside one.
+// A safety notice that can be collapsed out of sight is a safety notice
+// somebody will not have read, so it stays in the warning box with only the
+// elaboration folded beneath it. That is asserted by reading the warning's own
+// text with its `details` subtracted — a check written against the whole box
+// would pass with the sentence moved inside the fold.
+// ---------------------------------------------------------------------------
+async function theProseFoldsAndTheWarningDoesNot(driver) {
+  log.debug("Entering theProseFoldsAndTheWarningDoesNot().");
+  log.info("8d. The folded prose.");
+  const folds = await driver.executeScript(`
+    var all = document.querySelectorAll('details.scim-more');
+    var out = { count: all.length, open: [], noSummary: [] };
+    for (var i = 0; i < all.length; i++) {
+      var summary = all[i].querySelector('summary');
+      if (all[i].open) {
+        out.open.push((summary ? summary.textContent : '').slice(0, 40));
+      }
+      if (!summary || !summary.textContent.trim()) {
+        out.noSummary.push(i);
+      }
+    }
+    var warning = document.querySelector('.scim-warning');
+    var clone = warning.cloneNode(true);
+    var inner = clone.querySelectorAll('details');
+    for (var j = 0; j < inner.length; j++) {
+      inner[j].parentNode.removeChild(inner[j]);
+    }
+    out.warningOutsideTheFold =
+      clone.textContent.replace(/\\s+/g, ' ').trim();
+    return out;
+  `);
+  check('every block of prose is folded, closed, and has a summary',
+      function () {
+    assert.ok(folds.count >= 8,
+        'Only ' + folds.count + ' folded blocks are on the page, so this ' +
+        'check is close to vacuous — the prose has gone back to being ' +
+        'unfoldable paragraphs, or the class has been renamed.');
+    assert.deepStrictEqual(folds.open, [],
+        'These folds ship open: ' + folds.open.join(' | ') + '. A `details` ' +
+        'with the open attribute is prose back on the page.');
+    assert.deepStrictEqual(folds.noSummary, [],
+        'Folds at these indexes have no summary text, so they are a ' +
+        'triangle with nothing beside it: ' + folds.noSummary.join(', '));
+  });
+  check('the sentence about deleting accounts is NOT inside a fold',
+      function () {
+    assert.ok(/create and delete\s+accounts/i
+        .test(folds.warningOutsideTheFold),
+        'With its folds removed the warning box reads: "' +
+        folds.warningOutsideTheFold + '". The sentence saying these ' +
+        'endpoints create and delete accounts has moved inside a `details`, ' +
+        'and a warning that can be collapsed out of sight is one somebody ' +
+        'will not have read.');
+  });
+  log.debug("Leaving theProseFoldsAndTheWarningDoesNot().");
+}
+
+// ---------------------------------------------------------------------------
 // 8b. THE TOP ROW IS ONE ROW.
 //
 // Connection, Authentication and Discovery are not steps — they are the
@@ -1841,6 +2053,8 @@ async function test() {
     await theConfigurationPaneCentralizesTheSettings(driver);
     await credentialsAreNotRemembered(driver);
     await theExchangePaneShowsHeadersAndStaysInside(driver);
+    await thePanesCollapseAndOneSwitchDoesThemAll(driver);
+    await theProseFoldsAndTheWarningDoesNot(driver);
     await theTopRowIsOneRow(driver);
     await tooltipsAreEverywhereAndCannotTakeAClick(driver);
     await everyStyleClassIsDefined(driver);
@@ -1852,7 +2066,7 @@ async function test() {
         log.warn("  - " + why);
       });
     }
-    assert.ok(checks >= 55,
+    assert.ok(checks >= 59,
         'Only ' + checks + ' checks ran; a section has stopped being called.');
     log.info("Test completed successfully.");
   } finally {

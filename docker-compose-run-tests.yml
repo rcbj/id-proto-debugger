@@ -154,6 +154,27 @@ services:
       # and presentation flows timed out waiting for a page that never loaded.
       # OID4VP_WALLET_URL falls back to this, so one setting covers both.
       - OID4VCI_WALLET_URL=http://client:3000
+      # THE SPIRE SERVER API'S PRIVATE UNIX SOCKET, which ships OFF.
+      #
+      # It is on here for one reason: it is the `local` entity, and `local` is
+      # a whole class in SPIRE's authorization table that nothing else can
+      # reach. `Debug.GetInfo` is LOCAL-ONLY — an administrator's X509-SVID
+      # over TCP is refused it — so without this socket the suite can assert
+      # that refusal and can never see the method answer, which leaves half of
+      # that row untested.
+      - STS_SPIFFE_SERVER_SOCKET_ENABLED=true
+      # A SHORT path, and the shortness is load-bearing: a Unix socket path is
+      # bounded by `sun_path` at 108 bytes, and past it bind and connect fail
+      # with a message about the address already being in use — naming
+      # something that is not the problem. This one is well inside it and is
+      # the directory the volume below is mounted at on both sides.
+      - STS_SPIFFE_SERVER_SOCKET=/spire-sock/server.sock
+    volumes:
+      # Shared with the tests container so `spiffe_protocol.js` can dial it.
+      # A socket is a rendezvous point rather than a file — it holds no bytes,
+      # it is unlinked on close, and a fresh process makes a fresh one — so
+      # what crosses here is reachability and nothing else.
+      - spire-server-socket:/spire-sock
     build:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
@@ -379,6 +400,10 @@ services:
       # means "decide there" (2..4, one less than the cores); 1 restores the
       # old sequential run with live output. See run-report.js.
       TEST_CONCURRENCY: ${TEST_CONCURRENCY:-}
+      # Where the mock's SPIRE Server API private socket is mounted in this
+      # container. It is the `local` entity and the only route to a method
+      # SPIRE's own table marks local-only.
+      SPIFFE_SERVER_SOCKET: unix:///spire-sock/server.sock
     # Chrome crashes tabs on heavy pages when limited to Docker's default 64MB
     # /dev/shm. The tests also pass --disable-dev-shm-usage; this raises the cap
     # as a belt-and-suspenders mitigation.
@@ -389,6 +414,11 @@ services:
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report
+      # The mock's SPIRE Server API Unix socket — see the sts service above.
+      # SPIFFE_SERVER_SOCKET names it for spiffe_protocol.js; without the
+      # variable that test SKIPS its local-socket section with a reason rather
+      # than passing vacuously.
+      - spire-server-socket:/spire-sock
     depends_on:
       client:
         condition: service_healthy
@@ -414,6 +444,9 @@ services:
      - keycloak
 
 volumes:
+  # The mock STS's SPIRE Server API Unix socket, shared with the tests
+  # container. See both services above.
+  spire-server-socket:
   postgres_data:
 
 networks:

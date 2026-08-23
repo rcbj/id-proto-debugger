@@ -229,6 +229,17 @@ services:
       - KRB5_SERVICE_PORT=8898
       - LDAP_PORT=3389
       - LDAPS_PORT=3636
+      # The two SPIFFE gRPC listeners, and they are not optional here for a
+      # reason worth stating: they FAIL QUIETLY. Under host networking this
+      # container shares the first instance's namespace, and spiffe_server.js
+      # records a bind failure rather than throwing — so with these left at
+      # their defaults whichever instance started second comes up HEALTHY with
+      # no SPIFFE at all, or, worse, the SPIFFE tests reach whichever one won
+      # the race and get a different trust domain's CA than the rest of the
+      # suite is using. The Unix sockets need no line: each container has its
+      # own filesystem, so those cannot collide.
+      - STS_SPIFFE_WORKLOAD_PORT=8592
+      - STS_SPIFFE_SERVER_PORT=8681
     # THE SCHEME IS TRIED BOTH WAYS, and that is not hedging. With the mode on
     # this port is HTTPS; if the sts/ submodule is pinned before the mock had
     # the mode at all, STS_OAUTH2_RFC9700 names nothing and the same image

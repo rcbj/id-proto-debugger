@@ -36,9 +36,9 @@ that is never exercised — because a permissive server is hard to make say no.
 **The page carries a warning banner, and it means it.** These endpoints create
 and delete accounts and there is no undo.
 
-## The page's layout, and the four decisions behind it
+## The page's layout, and the six decisions behind it
 
-Read this before moving a pane, because three of the four are load-bearing
+Read this before moving a pane, because four of the six are load-bearing
 rather than cosmetic and one of them is a bug fix that looks like a style
 change.
 
@@ -106,6 +106,67 @@ of this, and that is worth keeping in mind: by the time it runs, the browser
 test has deleted everything it created and every readout holds a short body or
 nothing. A geometry check that only ever measures an empty box measures
 nothing, so the new one **plants** the pathological value first.
+
+**The panes collapse, and one switch does all of them.** The chrome is the
+shared `.dbg-*` set every other workflow here uses (`css/debugger.css`, which
+this page now links ahead of its own sheet): each pane is a
+`div.scim-pane.dbg-pane` holding a `.dbg-legend` title and the `fieldset` that
+title collapses, with a `.dbg-controls` toggle at the top of the page. Three
+things about it are load-bearing.
+
+The legend and the fieldset are paired **by convention** — `x_expand_button`
+drives `x_fieldset` — and wired in `wirePanes()`, not by an inline
+`onclick="…togglePane('x_fieldset')"`. Several workflows here spell it inline,
+which repeats the id in two places and fails *silently* when the two drift: a
+title that does nothing at all, indistinguishable from a title nobody thought
+to make clickable. Here a drifted pair is a `log.warn`, and section 9 asserts
+the browser console is clean, so it is a failed test rather than a shrug.
+
+`setAllPanes()` **discovers** the fieldsets (`.dbg-pane fieldset`) rather than
+holding a list of ids. The workflows that keep a list each have one a new pane
+has to be remembered into, and the only symptom of forgetting is one pane the
+switch skips.
+
+And the `style="display: block"` in the markup is not decoration: the
+collapse/expand triangle is drawn by
+`.dbg-pane:has(fieldset[style*="display: none"]) .dbg-legend::before`, which
+reads the **inline** style. A pane shipped with no inline `display` would show
+an expanded triangle over a pane the toggle had never touched.
+
+**The prose is folded rather than cut, the way the Kerberos pages fold theirs.**
+Ten `details.scim-more` blocks, styled on `.krb-more`. The explanations are the
+reason this workflow is worth using — what a 409 on a duplicate `userName`
+means, why a wrong Digest hash reads exactly like a wrong password — so none of
+them was deleted to buy vertical space. Two of the folds are the whole content
+of an authentication row (cookie, client certificate), so their **summary
+carries the headline sentence** and only the elaboration folds away; a row that
+collapsed to nothing reads as a scheme this page had not implemented.
+
+> **The sentence saying these endpoints delete accounts is NOT inside a fold.**
+> It stays in the warning box with only the elaboration folded beneath it,
+> because a safety notice that can be collapsed out of sight is a safety notice
+> somebody will not have read. `tests/scim_page.js` section 8d asserts it by
+> reading the warning's text with its `details` **subtracted** — a check
+> written against the whole box would pass with the sentence moved inside.
+
+Note also that the `fieldset` that WAS the pane is now *inside* it, so the
+`min-width: 0` / `min-inline-size: 0` rule that stops one unbreakable token
+sizing the pane to its longest line had to follow it inwards
+(`.scim-pane > fieldset`). Without that the Exchange pane goes straight back to
+7511px, which is the defect section 7b plants a value to catch.
+
+**The Discovery pane's described tables scroll sideways.** They are rendered
+into the third column of the top row — about 381px at a 1400px viewport — and
+their last column is *prose*. With a name column of 11em and a value column of
+12em ahead of it, that column got a strip a few words wide and one row grew to
+**247px**, running down past the pane and past the two beside it. Wrapping
+harder cannot fix that; there is no width at which prose fits in 150px. So
+`.scim-described-scroll` is `overflow-x: auto`, the tables keep a `min-width`
+of 46em, and the two fixed columns give some of themselves back (9.5em and
+10.5em) so a readable strip of the note is on screen before anybody scrolls.
+The same row now measures **87px**. `min-width` and not `width`: on a wide
+viewport, or in the single-column fallback under 1100px, the tables take the
+room they are given and nothing scrolls at all.
 
 ## The Exchange pane shows the headers, in wire form
 
