@@ -96,7 +96,8 @@ async function mockTarget() {
   const kdcPath = paths.mockStsModule("krb5_kdc.js", function (m) {
     log.warn(m);
   });
-  assert.ok(kdcPath, "could not find the mock KDC (sts/krb5_kdc.js). The " +
+  assert.ok(kdcPath, "could not find the mock KDC " +
+    "(sts/kerberos/krb5_kdc.js). The " +
     "sts/ directory is a submodule; run `git submodule update --init sts`.");
   let kdcModule;
   try {

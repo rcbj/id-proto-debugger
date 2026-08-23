@@ -1027,7 +1027,8 @@ async function test() {
   const spnegoPath = stsModule("spnego.js");
   if (!kdcPath || !appPath || !spnegoPath) {
     throw new Error("could not find the mock KDC, the express app and the " +
-      "SPNEGO module (sts/krb5_kdc.js, sts/app.js, sts/spnego.js). sts/ is a " +
+      "SPNEGO module (sts/kerberos/krb5_kdc.js, sts/common/app.js, " +
+      "sts/kerberos/spnego.js). sts/ is a " +
       "SUBMODULE — run `git submodule update --init sts`; an uninitialised " +
       "submodule is an EMPTY DIRECTORY rather than a missing one. If the " +
       "submodule IS initialised and only spnego.js is missing, the gitlink " +

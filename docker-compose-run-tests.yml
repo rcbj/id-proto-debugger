@@ -121,6 +121,28 @@ services:
     environment:
       # Log level, chosen the same way as for api and client.
       - CONFIG_FILE=./env/docker-tests.js
+      # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
+      # rather than given a value here.
+      #
+      # THE BARE FORM IS LOAD-BEARING AND THE OBVIOUS ALTERNATIVE BREAKS THE
+      # CONTAINER. With no `=`, compose passes the variable through ONLY if the
+      # host shell has it set and leaves it unset here otherwise, so the
+      # appconfig file's own level keeps applying when nobody asked for
+      # anything else. Written as `STS_LOG_LEVEL=${STS_LOG_LEVEL:-}` it would
+      # instead be set to the EMPTY STRING, and that is not a harmless default:
+      # bunyan throws `unknown level name: ""` from config.js's registerLogger()
+      # at require time, so the mock does not start at all. `docker compose
+      # config` tells the two apart — the bare form renders null, the assigned
+      # one renders "".
+      #
+      # Why it is worth having: the mock logs every request, every response and
+      # every artifact before and after signing, at debug. That is the point of
+      # a mock and is the record of what it issued when a test fails, so debug
+      # stays the default. It is also about half the service's CPU, and a
+      # benchmark of it wrote 156MB in sixteen seconds — so a run with several
+      # jobs hitting one instance at once can set STS_LOG_LEVEL=info and roughly
+      # double what that instance can answer.
+      - STS_LOG_LEVEL
       # Where the WALLET lives, as a base URL the BROWSER can use.
       #
       # The mock issuer's Credential Offer pages and the mock verifier's request
@@ -162,6 +184,28 @@ services:
     image: rcbj/sts
     environment:
       - CONFIG_FILE=./env/docker-tests.js
+      # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
+      # rather than given a value here.
+      #
+      # THE BARE FORM IS LOAD-BEARING AND THE OBVIOUS ALTERNATIVE BREAKS THE
+      # CONTAINER. With no `=`, compose passes the variable through ONLY if the
+      # host shell has it set and leaves it unset here otherwise, so the
+      # appconfig file's own level keeps applying when nobody asked for
+      # anything else. Written as `STS_LOG_LEVEL=${STS_LOG_LEVEL:-}` it would
+      # instead be set to the EMPTY STRING, and that is not a harmless default:
+      # bunyan throws `unknown level name: ""` from config.js's registerLogger()
+      # at require time, so the mock does not start at all. `docker compose
+      # config` tells the two apart — the bare form renders null, the assigned
+      # one renders "".
+      #
+      # Why it is worth having: the mock logs every request, every response and
+      # every artifact before and after signing, at debug. That is the point of
+      # a mock and is the record of what it issued when a test fails, so debug
+      # stays the default. It is also about half the service's CPU, and a
+      # benchmark of it wrote 156MB in sixteen seconds — so a run with several
+      # jobs hitting one instance at once can set STS_LOG_LEVEL=info and roughly
+      # double what that instance can answer.
+      - STS_LOG_LEVEL
       # The mode. It also derives global.https, which is why the URL the tests
       # are handed is https rather than http.
       - STS_OAUTH2_RFC9700=true
@@ -329,6 +373,12 @@ services:
     environment:
       KEYCLOAK_WSFED_BASE_URL: http://keycloak-wsfed:8080
       KEYCLOAK_WSFED_LOCALHOST_BASE_URL: http://keycloak-wsfed:8080
+      # How many jobs run at once. Passed THROUGH from the host so
+      # `TEST_CONCURRENCY=6 ./docker-run-tests.sh` reaches run-report.js, which
+      # otherwise sizes the pool from this container's view of the cores. Empty
+      # means "decide there" (2..4, one less than the cores); 1 restores the
+      # old sequential run with live output. See run-report.js.
+      TEST_CONCURRENCY: ${TEST_CONCURRENCY:-}
     # Chrome crashes tabs on heavy pages when limited to Docker's default 64MB
     # /dev/shm. The tests also pass --disable-dev-shm-usage; this raises the cap
     # as a belt-and-suspenders mitigation.

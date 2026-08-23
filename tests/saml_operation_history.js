@@ -378,8 +378,12 @@ async function test() {
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        baseUrl.replace(/\/+$/, ""));
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
   options.addArguments("--user-data-dir=/tmp/saml-history-chrome-" +
-                       Date.now());
+                       Date.now() + "-" + process.pid);
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 

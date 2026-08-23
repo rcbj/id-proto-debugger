@@ -82,6 +82,16 @@ Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automat
 # Full battery of tests entirely in containers
 ./docker-run-tests.sh
 
+# The jobs run in a POOL — TEST_CONCURRENCY at a time, defaulting to one less
+# than the machine's cores and held between 2 and 4. It reaches every launcher,
+# the containerized one included (docker-compose-run-tests.yml passes it
+# through). TEST_CONCURRENCY=1 restores the old one-at-a-time run with live
+# streamed output, which is the first thing to try when a job fails in the pool
+# and passes on its own. What must not overlap is declared in JOB_LOCKS at the
+# top of tests/run-report.js — read tests/CLAUDE.md before adding a test that
+# configures a shared service.
+TEST_CONCURRENCY=6 ./docker-run-tests.sh
+
 # Tests from local shell, dependencies still in containers
 ./local-run-tests.sh
 

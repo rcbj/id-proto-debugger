@@ -220,7 +220,8 @@ function bytesToB64u(bytes) {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 // Multibase base64url ("u" prefix). Kept separate from b64uToBytes for the
-// reason recorded in sts/bbs2023.js: a decoder that also strips the prefix,
+// reason recorded in sts/common/vendored/bbs2023.js: a decoder that also
+// strips the prefix,
 // plus a caller that strips it too, silently eats a data character whenever the
 // payload begins with "u" — about one key in sixty-four, which is exactly the
 // kind of bug that passes locally and fails in CI.

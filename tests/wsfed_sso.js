@@ -161,7 +161,7 @@ async function assertOperationSuccess(driver, operationLabel, timeout) {
 //   keycloak  the dedicated Keycloak 8.0.1 + cloudtrust wsfed side-car. An EOL
 //             server carrying a third-party extension — the closest thing to a
 //             production WS-Federation IdP this suite can start.
-//   sts       the mock STS (sts/wsfed.js). Deliberately strict where Keycloak
+//   sts       the mock STS (sts/ws-federation/wsfed.js). Deliberately strict where Keycloak
 //             is permissive: it refuses a wauth it cannot perform, a token type
 //             it does not offer and a wreq it cannot read, so a request the
 //             debugger builds sloppily fails HERE and passes there.

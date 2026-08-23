@@ -542,9 +542,10 @@ renderWaltidConfig()
 #
 #   * four compose files build the image with `context: ./sts`, and compose says
 #     "failed to read dockerfile" — a message about a path, not about a submodule;
-#   * tests/Dockerfile copies sts/bbs2023.js into the tests image so that
+#   * tests/Dockerfile copies sts/common/vendored/bbs2023.js into the tests image so that
 #     tests/bbs2023_cryptosuite.js can check the wallet's cryptosuite against the
-#     issuer's, and the build says "COPY sts/bbs2023.js: not found".
+#     issuer's, and the build says
+#     "COPY sts/common/vendored/bbs2023.js: not found".
 #
 # A `git clone` without --recurse-submodules leaves exactly that state: sts/
 # present and EMPTY. So this initialises it when it is missing and refuses the run
@@ -645,7 +646,7 @@ requireMockStsCheckout()
 # ---------------------------------------------------------------------------
 # The node-ldapjs submodule INSIDE the mock STS.
 #
-# The mock's embedded LDAP directory (sts/ldap_server.js) is built on ldapjs,
+# The mock's embedded LDAP directory (sts/ldap/ldap_server.js) is built on ldapjs,
 # and that dependency is `"ldapjs": "file:node-ldapjs"` — the submodule, pinned
 # by commit and used unmodified. sts/Dockerfile COPYs it into the build context
 # before npm runs.

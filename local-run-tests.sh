@@ -30,6 +30,15 @@ set -x
 #                billable infrastructure — see infra/terraform-krb5/README.md.
 #   -h|--help    Show usage.
 #
+# Environment:
+#   STS_LOG_LEVEL   The mock STS's log level (trace|debug|info|warn|error|fatal).
+#                   Unset, its appconfig file decides and that is debug — every
+#                   request, response and signed artifact written down, which is
+#                   what a failing test is read from. `info` trades that record
+#                   for roughly twice the throughput, which is worth it when
+#                   several jobs drive one instance at once. See the block in
+#                   init() for the whole argument.
+#
 SKIP_TESTS=0
 WSFED_ONLY=0
 # Which identity provider(s) --wsfed-only drives. See docs/wsfed.md for why
@@ -165,13 +174,32 @@ init()
   # line and leaves the other 179 to run; the alternative — halting the whole
   # suite over an un-bumped gitlink — costs more than it catches, because the
   # jobs themselves already refuse a permissive STS BY NAME.
-  if [ -f "sts/oauth2_bcp.js" ];
+  #
+  # AND IT IS LOOKED FOR RATHER THAN NAMED. This probe used to be
+  # `[ -f "sts/oauth2_bcp.js" ]`, which was the whole answer while every module
+  # in that repository sat in its root. mock-sts 0f986b3 ("Reorganizing source
+  # code.") moved them into subdirectories — the file is `oauth-oidc/` now —
+  # and a path test written against the old layout does not fail: it takes the
+  # `else` branch and prints a confident, wrong explanation that the submodule
+  # predates a feature it has, then quietly drops five jobs. A skip with a
+  # stated reason is this project's preferred failure, which is exactly why the
+  # reason has to be true.
+  rfc9700_module=""
+  for candidate in sts/oauth2_bcp.js sts/*/oauth2_bcp.js;
+  do
+    if [ -f "${candidate}" ];
+    then
+      rfc9700_module="${candidate}"
+      break
+    fi
+  done
+  if [ -n "${rfc9700_module}" ];
   then
     RFC9700_STS_URL=https://localhost:8091
     export RFC9700_STS_URL
   else
-    echo "sts/oauth2_bcp.js is absent, so this checkout of the mock STS has no"
-    echo "RFC 9700 mode and the five RFC 9700 flow jobs will be SKIPPED. Bump"
+    echo "oauth2_bcp.js is nowhere in sts/, so this checkout of the mock STS has"
+    echo "no RFC 9700 mode and the five RFC 9700 flow jobs will be SKIPPED. Bump"
     echo "the sts/ submodule to a mock-sts commit that carries it. See"
     echo "docs/rfc9700.md. (tests/rfc9700_client.js is unaffected — it needs no"
     echo "service at all and runs either way.)"
@@ -193,6 +221,43 @@ init()
   KEYCLOAK_WSFED_LOCALHOST_BASE_URL=http://localhost:8082
   export KEYCLOAK_WSFED_BASE_URL KEYCLOAK_WSFED_LOCALHOST_BASE_URL
   CONFIG_FILE=./env/local.js
+
+  # ---------------------------------------------------------------------------
+  # THE MOCK STS'S LOG LEVEL, exposed here so a run can turn it down.
+  #
+  # `STS_LOG_LEVEL` is a setting of the mock (see sts/common/config.js), and an
+  # environment variable there OUTRANKS the appconfig file `CONFIG_FILE` selects
+  # — so this one variable overrides whatever env/local.js or env/docker-tests.js
+  # says without either file being edited. The compose files pass it through to
+  # every sts service in the BARE form, which means "only if the shell that ran
+  # this launcher has it": unset here, unset in the container, and the appconfig
+  # file's own level applies exactly as it did before this existed.
+  #
+  # WHY YOU WOULD SET IT. The mock logs every request, every response and every
+  # token or assertion both before and after signing, and it does that at DEBUG,
+  # which is its default and the point of a mock — when a test fails, that log is
+  # the only record of what was issued. It is also expensive: it is about half of
+  # that service's CPU, and a benchmark of it wrote 156MB in sixteen seconds. With
+  # several test jobs driving ONE instance at once, `STS_LOG_LEVEL=info` roughly
+  # doubles what that instance can answer.
+  #
+  # DEBUG IS DELIBERATELY STILL THE DEFAULT. Turning it down trades the record of
+  # what the mock did for throughput, and that is a choice a run makes rather than
+  # one that should be made for it.
+  #
+  #   STS_LOG_LEVEL=info ./local-run-tests.sh
+  #
+  # EXPORTED ONLY WHEN IT HAS A VALUE, and the guard is not decoration. `export`
+  # on an unset variable does leave it unset, so the `if` changes nothing today —
+  # it is here to stop this being "simplified" later into a plain assignment with
+  # an empty default. An empty STS_LOG_LEVEL is not a harmless default: bunyan
+  # throws `unknown level name: ""` while the mock is still loading its modules,
+  # so the service does not start, and on the containerized stack that arrives as
+  # a compose healthcheck timeout rather than as anything naming a log level.
+  # ---------------------------------------------------------------------------
+  if [ -n "${STS_LOG_LEVEL:-}" ]; then
+    export STS_LOG_LEVEL
+  fi
   CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
   COMMON_SH=${CURRENT_DIR}/common/common.sh
   if [ -r "${COMMON_SH}" ];
@@ -257,7 +322,8 @@ prepTestEnv()
 {
   npm install --prefix tests
   # And the mock STS's own dependencies, because four tests run on the HOST and
-  # load sts/bbs2023.js from the submodule in place: bbs2023_cryptosuite.js,
+  # load sts/common/vendored/bbs2023.js from the submodule in place:
+  # bbs2023_cryptosuite.js,
   # ldp_vc_issuance.js, ldp_vc_refresh.js and vc_did.js, each of which compares
   # the issuer's cryptosuite with the wallet's. That module reaches
   # @digitalbazaar/bbs-signatures through a dynamic `import()`, and ESM resolution

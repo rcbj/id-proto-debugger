@@ -27,59 +27,76 @@
 
 <p class="scim-intro">SCIM (<strong>RFC 7642</strong>, <strong>7643</strong>,
 <strong>7644</strong>) is how an identity provider puts somebody into a directory
-and takes them out again. It is the one protocol in this debugger whose whole
-purpose is to <strong>write</strong>, which is why this page has two halves: one
-endpoint at a time for the ordinary debugging, and <em>scenarios</em> &mdash;
-named plans of many operations, each step carrying its own expectation &mdash;
-for the thing a single call cannot show you, which is what happens when a
-hundred of them run in order.</p>
+and takes them out again &mdash; the one protocol here whose whole purpose is to
+<strong>write</strong>. Two halves: one endpoint at a time for the ordinary
+debugging, and <em>scenarios</em>, which are named plans of many operations each
+carrying its own expectation. <strong>Hover any field label for what it
+does.</strong></p>
 
 <p class="scim-warning"><strong>These endpoints create and delete accounts.</strong>
 Point this at a test directory. The scenarios below really do provision and
 deprovision the users they describe, and there is no undo.</p>
 
+<!-- ======================================================================
+     THE TOP ROW — Connection, Authentication and Discovery, side by side.
+
+     None of the three is a step: they are the settings every pane below
+     reads. Stacked, they put the buttons somebody came here to press two
+     screens down.
+     =================================================================== -->
+<div class="scim-topgrid">
+
 <!-- ===================== Connection ===================== -->
 <fieldset class="scim-pane" id="pane_connection">
   <legend>Connection</legend>
-  <p class="scim-note">The <strong>service root</strong> is the base URL every
-  path is composed against &mdash; the host plus the SCIM base path, which is
-  <code>/scim/v2</code> on essentially every implementation. Do not include a
-  resource path: this page builds <code>/Users</code>, <code>/Groups</code> and
-  the rest onto it.</p>
   <div class="scim-grid">
     <div class="scim-wide">
-      <label class="scim-label" for="scim_base_url">Service root</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_base_url">Service root</label>
+        <span class="tooltiptext">The base URL every path is composed against
+        &mdash; the host plus the SCIM base path, which is /scim/v2 on
+        essentially every implementation. Do NOT put a resource path here: this
+        page builds /Users, /Groups and the rest onto it.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_base_url"
-             name="scim_base_url" placeholder="http://localhost:8081/scim/v2"
-             title="The SCIM service root. Every path on this page is built onto it.">
+             name="scim_base_url" placeholder="http://localhost:8081/scim/v2">
     </div>
-    <div>
-      <label class="scim-label" for="scim_ssl_validate">TLS validation</label>
+    <div class="scim-wide">
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_ssl_validate">TLS validation</label>
+        <span class="tooltiptext">Only applies to the api call path. A browser
+        makes this decision itself and cannot be told otherwise, so switching it
+        off changes nothing about a browser-direct call.</span>
+      </div>
       <select class="scim-field" id="scim_ssl_validate"
-              name="scim_ssl_validate"
-              title="Only applies to the api call path — a browser makes this decision itself and cannot be told otherwise.">
+              name="scim_ssl_validate">
         <option value="true" selected>Validate the certificate</option>
         <option value="false">Do not validate (api path only)</option>
       </select>
     </div>
   </div>
 
-  <p class="scim-note"><strong>Which way the call goes.</strong> Unlike the
-  LDAP and Kerberos workflows, the browser path here is real: SCIM is ordinary
-  HTTPS with a JSON body. The api path exists for the three things a browser
-  cannot do &mdash; reach a server that sends no CORS headers (which is
-  essentially every real SCIM endpoint), reach one with a self-signed
-  certificate, and report the exchange in full, since a browser withholds the
-  headers it adds and CORS hides most of those that come back.</p>
   <div class="scim-row">
-    <label class="scim-radio">
-      <input type="radio" name="scim_call_path" id="scim_call_browser"
-             checked> From this browser
-    </label>
-    <label class="scim-radio">
-      <input type="radio" name="scim_call_path" id="scim_call_backend">
-      Through the api
-    </label>
+    <div class="tooltip scim-tip">
+      <label class="scim-radio">
+        <input type="radio" name="scim_call_path" id="scim_call_browser"
+               checked> From this browser
+      </label>
+      <span class="tooltiptext">fetch() straight from this page. It is the only
+      path the hosted site has, and it cannot reach a server that sends no CORS
+      headers, cannot skip certificate validation, and cannot report the headers
+      the browser added or most of those that came back.</span>
+    </div>
+    <div class="tooltip scim-tip">
+      <label class="scim-radio">
+        <input type="radio" name="scim_call_path" id="scim_call_backend">
+        Through the api
+      </label>
+      <span class="tooltiptext">The api makes the call and reports the whole
+      exchange. It exists for the three things a browser cannot do: reach a
+      server with no CORS headers (essentially every real SCIM endpoint), reach
+      one with a self-signed certificate, and show every header each way.</span>
+    </div>
   </div>
   <p class="scim-note scim-hidden" id="scim_call_path_note"></p>
   <p class="scim-limits" id="scim_api_limits">Asking the api what it will
@@ -89,27 +106,26 @@ deprovision the users they describe, and there is no undo.</p>
 <!-- ===================== Authentication ===================== -->
 <fieldset class="scim-pane" id="pane_auth">
   <legend>Authentication</legend>
-  <p class="scim-note">RFC 7644 section 2 defines <strong>no SCIM credential of
-  its own</strong>. It names six ways of doing it and makes exactly two
-  normative statements: a server <em>SHALL</em> say which it accepts in a
-  <code>WWW-Authenticate</code> header, and it <em>MUST</em> be able to map an
-  authenticated client to an access control policy. All six are here, plus
-  anonymous. Only the two OAuth ones carry <strong>scopes</strong>, which is the
-  only way an operation can be refused with a 403 rather than a 401.</p>
-
-  <div class="scim-row">
+  <div class="scim-buttons">
     <input type="button" class="scim-btn" id="btn_scim_probe_auth"
            value="Ask the server what it accepts"
            onclick="return scim.probeAuthentication();"
            title="Sends one unauthenticated request. The 401 it provokes carries the WWW-Authenticate challenge, which is the fastest way to find out what a server will take.">
-    <input class="scim-status scim-grow" type="text" id="scim_auth_status"
-           readonly>
   </div>
+  <input class="scim-status scim-grow" type="text" id="scim_auth_status"
+         readonly>
   <p class="scim-challenges" id="scim_challenges"></p>
 
   <div class="scim-grid">
     <div class="scim-wide">
-      <label class="scim-label" for="scim_auth_scheme">Scheme</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_auth_scheme">Scheme</label>
+        <span class="tooltiptext">RFC 7644 section 2 defines NO SCIM credential
+        of its own. It names six ways of doing it and requires only that a
+        server say which it accepts in WWW-Authenticate. All six are here, plus
+        anonymous. Only the two OAuth ones carry scopes, which is the only way
+        an operation can be refused 403 rather than 401.</span>
+      </div>
       <select class="scim-field" id="scim_auth_scheme" name="scim_auth_scheme">
         <option value="none">None (anonymous)</option>
         <option value="bearer">OAuth 2.0 Bearer token</option>
@@ -129,87 +145,113 @@ deprovision the users they describe, and there is no undo.</p>
 
   <div class="scim-grid scim-hidden" id="scim_auth_token_row">
     <div class="scim-wide">
-      <label class="scim-label" for="scim_auth_token">Access token</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_auth_token">Access token</label>
+        <span class="tooltiptext">Paste one, or get one from the OAuth2 / OIDC
+        workflow. It is sent as a Bearer credential, or bound to a DPoP proof
+        when that scheme is selected.</span>
+      </div>
       <textarea class="scim-field scim-token" id="scim_auth_token"
                 name="scim_auth_token" rows="3"
                 placeholder="Paste an access token, or get one from the OAuth2 / OIDC workflow"></textarea>
-      <label class="scim-check">
-        <input type="checkbox" id="scim_save_token">
-        Remember this token in this browser&rsquo;s localStorage
-      </label>
-      <p class="scim-note">Off by default, and clearing it removes whatever was
-      already stored. A password on this page is <strong>never</strong> stored
-      under any setting.</p>
+      <div class="tooltip scim-tip">
+        <label class="scim-check">
+          <input type="checkbox" id="scim_save_token">
+          Remember this token in this browser&rsquo;s localStorage
+        </label>
+        <span class="tooltiptext">Off by default, and it ships CLEAR. Clearing
+        the box removes whatever was already stored, on the spot. A password on
+        this page is NEVER stored under any setting, and neither is the HOBA
+        private key.</span>
+      </div>
     </div>
   </div>
 
   <div class="scim-grid scim-hidden" id="scim_auth_password_row">
     <div>
-      <label class="scim-label" for="scim_auth_username">Username</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_auth_username">Username</label>
+        <span class="tooltiptext">The account the credential authenticates as.
+        Note that an accepted Basic name is an identity at the server and
+        usually gains a directory entry of its own — it is not one of the users
+        this page provisions.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_auth_username"
              name="scim_auth_username">
     </div>
     <div>
-      <label class="scim-label" for="scim_auth_password">Password</label>
+      <div class="tooltip scim-tip scim-tip-left">
+        <label class="scim-label" for="scim_auth_password">Password</label>
+        <span class="tooltiptext">Never written to localStorage, under any
+        setting, and never shown in the Configuration Parameters pane. It lives
+        in this field and nowhere else.</span>
+      </div>
       <input class="scim-field" type="password" id="scim_auth_password"
-             name="scim_auth_password"
-             title="Never written to localStorage.">
+             name="scim_auth_password">
     </div>
   </div>
 
   <div class="scim-grid scim-hidden" id="scim_auth_realm_row">
-    <div>
-      <label class="scim-label" for="scim_auth_realm">Realm</label>
+    <div class="scim-wide">
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_auth_realm">Realm</label>
+        <span class="tooltiptext">Taken from the server's own challenge when
+        there is one; this is the fallback. It is hashed into a Digest
+        credential and signed into a HOBA blob, so a realm that differs by one
+        character produces a credential that verifies against nothing.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_auth_realm"
-             name="scim_auth_realm"
-             title="Taken from the server's own challenge when there is one; this is the fallback.">
+             name="scim_auth_realm">
     </div>
   </div>
 
   <div class="scim-sub scim-hidden" id="scim_digest_row">
     <p class="scim-note">Digest is <strong>two requests</strong>: the first is
     answered 401 with a nonce, the second carries a hash computed over it. Both
-    are shown in the Exchange pane, because that handshake is what this scheme
-    <em>is</em> and a library normally hides it.</p>
-    <p class="scim-note">All three RFC 7616 algorithms are implemented here
-    &mdash; <code>SHA-256</code>, <code>SHA-512-256</code> and <code>MD5</code>,
-    each with its <code>-sess</code> variant &mdash; and the strongest the
-    server offers is the one answered. None of them is Web Crypto, which has
-    neither MD5 nor SHA-512/256; a client that did SHA-256 only would report
-    every MD5-only server as bad credentials.</p>
-    <p class="scim-note">The <strong>nonce count</strong> increases per request,
-    which is what makes each credential single-use. A client that sends
-    <code>nc=00000001</code> every time authenticates once and is then refused
-    as a replay &mdash; and refused <em>without</em> <code>stale=true</code>, so
-    it reads as expired credentials rather than as a counter.</p>
+    legs are in the Exchange pane, because that handshake is what this scheme
+    <em>is</em>.</p>
     <p class="scim-note" id="scim_digest_chosen"></p>
   </div>
 
   <div class="scim-sub scim-hidden" id="scim_dpop_row">
-    <p class="scim-note">A DPoP proof is a JWT signed over <em>this</em> method
-    and URL and carrying a hash of the access token, so a captured one is not
-    replayable against another endpoint. A key is generated for this page
-    session and never stored.</p>
     <p class="scim-note">Key: <span id="scim_dpop_thumbprint">no proof has been
     minted yet</span>. Server nonce: <span id="scim_dpop_nonce">none</span>.</p>
-    <pre class="scim-output scim-short" id="scim_dpop_proof"></pre>
+    <div class="scim-boxhead">
+      <div class="tooltip scim-tip">
+        <span class="scim-boxlabel">Last proof</span>
+        <span class="tooltiptext">A DPoP proof is a JWT signed over THIS method
+        and URL and carrying a hash of the access token, so a captured one is
+        not replayable against another endpoint. The key is generated for this
+        page session and never stored.</span>
+      </div>
+      <input type="button" class="scim-btn scim-expand"
+             id="btn_scim_expand_dpop_proof" value="Expand"
+             data-scim-expand="scim_dpop_proof">
+    </div>
+    <textarea class="scim-box" id="scim_dpop_proof" rows="4"
+              readonly></textarea>
   </div>
 
   <div class="scim-sub scim-hidden" id="scim_hoba_row">
-    <p class="scim-note">HOBA (RFC 7486) signs a blob bound to this origin and
-    the server&rsquo;s challenge &mdash; no password crosses the wire. The
-    algorithm registry has one entry that matters, <code>0</code>, which is
-    <strong>RSA</strong>-SHA256, so the key generated here is RSA. It lives in
-    this page only and is never written to localStorage: a signing key in
-    storage is a signing key in every extension&rsquo;s reach.</p>
     <div class="scim-grid">
       <div>
-        <label class="scim-label" for="scim_hoba_kid">Key id</label>
+        <div class="tooltip scim-tip">
+          <label class="scim-label" for="scim_hoba_kid">Key id</label>
+          <span class="tooltiptext">Names the key in the signed blob and in the
+          registration. Generated here; the private half lives in this page only
+          and is never written to localStorage — a signing key in storage is a
+          signing key in every extension's reach.</span>
+        </div>
         <input class="scim-field" type="text" id="scim_hoba_kid" readonly>
       </div>
       <div>
-        <label class="scim-label" for="scim_hoba_username">Register it
-        for</label>
+        <div class="tooltip scim-tip scim-tip-left">
+          <label class="scim-label" for="scim_hoba_username">Register it
+          for</label>
+          <span class="tooltiptext">The account the key is registered against.
+          RFC 7486 section 7 puts registration at /.well-known/hoba/register on
+          the SERVER'S ORIGIN — not under the SCIM base path.</span>
+        </div>
         <input class="scim-field" type="text" id="scim_hoba_username"
                name="scim_hoba_username">
       </div>
@@ -217,7 +259,8 @@ deprovision the users they describe, and there is no undo.</p>
     <div class="scim-buttons">
       <input type="button" class="scim-btn" id="btn_scim_hoba_generate"
              value="Generate a key"
-             onclick="return scim.generateHobaKey();">
+             onclick="return scim.generateHobaKey();"
+             title="The HOBA algorithm registry has one entry that matters — 0, which is RSA-SHA256 — so the key generated here is RSA. An ECDSA key produces a signature the scheme has no identifier for.">
       <input type="button" class="scim-btn" id="btn_scim_hoba_register"
              value="Register it with the server"
              onclick="return scim.registerHobaKey();"
@@ -227,86 +270,171 @@ deprovision the users they describe, and there is no undo.</p>
            readonly>
     <p class="scim-note">To-be-signed blob (length-prefixed, RFC 7486 section
     5): <code id="scim_hoba_tbs"></code></p>
-    <pre class="scim-output scim-short" id="scim_hoba_public_key"></pre>
-    <pre class="scim-output scim-short" id="scim_hoba_registration"></pre>
+    <div class="scim-boxhead">
+      <div class="tooltip scim-tip">
+        <span class="scim-boxlabel">Public key</span>
+        <span class="tooltiptext">The half that is registered with the server.
+        The private half never leaves this page and is never written to
+        localStorage.</span>
+      </div>
+      <input type="button" class="scim-btn scim-expand"
+             id="btn_scim_expand_hoba_key" value="Expand"
+             data-scim-expand="scim_hoba_public_key">
+    </div>
+    <textarea class="scim-box" id="scim_hoba_public_key" rows="4"
+              readonly></textarea>
+    <div class="scim-boxhead">
+      <div class="tooltip scim-tip">
+        <span class="scim-boxlabel">Registration response</span>
+        <span class="tooltiptext">What /.well-known/hoba/register answered.
+        RFC 7486 section 7 puts that endpoint on the SERVER'S ORIGIN and not
+        under the SCIM base path, which is the mistake worth checking here
+        first.</span>
+      </div>
+      <input type="button" class="scim-btn scim-expand"
+             id="btn_scim_expand_hoba_registration" value="Expand"
+             data-scim-expand="scim_hoba_registration">
+    </div>
+    <textarea class="scim-box" id="scim_hoba_registration" rows="3"
+              readonly></textarea>
   </div>
 
   <div class="scim-sub scim-hidden" id="scim_cookie_row">
     <p class="scim-note"><strong>Nothing is added to the request.</strong> The
     browser attaches a cookie for that origin if it has one, and the call is
-    made with credentials so that it may. There is no header here to get wrong,
-    which means the only thing that can be wrong is whether there <em>is</em> a
-    session &mdash; so sign in at the server first.</p>
-    <p class="scim-note">Three things have to line up for this to work
-    cross-origin, and none of them is this page&rsquo;s to set: the cookie needs
-    <code>SameSite=None; Secure</code>, the server has to send
-    <code>Access-Control-Allow-Credentials: true</code>, and it may not answer
-    the preflight with a wildcard origin. If the request arrives with no cookie,
-    that is where to look &mdash; and a browser will not tell this page which of
-    the three it was.</p>
+    made with credentials so that it may. Three things have to line up
+    cross-origin and none is this page&rsquo;s to set:
+    <code>SameSite=None; Secure</code> on the cookie,
+    <code>Access-Control-Allow-Credentials: true</code> from the server, and a
+    named rather than wildcard origin on the preflight.</p>
     <div class="scim-buttons">
       <input type="button" class="scim-btn" id="btn_scim_cookie_signin"
              value="Open the server&rsquo;s sign-in page"
              onclick="return scim.openSignIn();"
              title="Opens the server's origin in a new tab so a session cookie can be established. Nothing is sent from here.">
     </div>
-    <p class="scim-note">The api cannot make this call: it has no cookie jar
-    and no session, so selecting this scheme fixes the call path to this
-    browser.</p>
   </div>
 
   <div class="scim-sub scim-hidden" id="scim_clientcert_row">
     <p class="scim-note"><strong>Nothing is added to the request, and no code
     here could add it.</strong> A client certificate is chosen during the TLS
-    handshake by whatever holds the private key &mdash; the browser&rsquo;s
-    keychain, a smart card, a platform store &mdash; and JavaScript has no say
-    in it at all. This row exists so the page can say that rather than appear
-    to have left the scheme out.</p>
-    <p class="scim-note">For the browser to offer one, the service root has to
-    be <strong>https</strong> and the server has to <em>ask</em> for a
-    certificate during the handshake. A server that does not ask gets an
-    anonymous connection and there is nothing to see. The PKI / X.509 workflow
-    is where a client certificate and its issuing chain come from, and its TLS
-    test is the one place in this debugger that can present one deliberately
-    &mdash; a browser decides for itself.</p>
-    <p class="scim-note">The api cannot make this call either: it would present
-    <em>its</em> certificate, not yours, which is a different identity and a
-    misleading one. So this scheme fixes the call path to this browser.</p>
+    handshake by whatever holds the private key, and JavaScript has no say in
+    it. The service root has to be <strong>https</strong> and the server has to
+    <em>ask</em>. The api cannot make this call either &mdash; it would present
+    <em>its</em> certificate, which is a different identity and a misleading
+    one.</p>
   </div>
 </fieldset>
 
 <!-- ===================== Discovery ===================== -->
 <fieldset class="scim-pane" id="pane_discovery">
   <legend>Discovery</legend>
-  <p class="scim-note">The three documents a client should read before it sends
-  anything, and none of them needs a scope &mdash; a client has to be able to
-  read a ServiceProviderConfig <em>before</em> it knows how to authenticate,
-  which is the one bootstrapping problem RFC 7644 leaves to the reader.</p>
+  <p class="scim-note">The three documents a client should read first. None of
+  them needs a scope &mdash; a client has to be able to read a
+  ServiceProviderConfig <em>before</em> it knows how to authenticate.</p>
   <div class="scim-buttons">
     <input type="button" class="scim-btn" id="btn_scim_spc"
            value="ServiceProviderConfig"
-           onclick="return scim.readServiceProviderConfig();">
+           onclick="return scim.readServiceProviderConfig();"
+           title="What this server supports: filtering, sorting, PATCH, bulk, ETag, changePassword, and the authentication schemes it advertises. Everything this page can do is a promise made in this document.">
     <input type="button" class="scim-btn" id="btn_scim_resource_types"
-           value="ResourceTypes" onclick="return scim.readResourceTypes();">
+           value="ResourceTypes" onclick="return scim.readResourceTypes();"
+           title="The resource types this server has, and for each one the ENDPOINT it answers on and the schema extensions it carries. /Users and /Groups are conventions, not requirements.">
     <input type="button" class="scim-btn" id="btn_scim_schemas"
-           value="Schemas" onclick="return scim.readSchemas();">
-    <input class="scim-status scim-grow" type="text" id="scim_discovery_status"
+           value="Schemas" onclick="return scim.readSchemas();"
+           title="Every attribute this server knows, with its characteristics. This is the document that says whether a field you sent was ever going to be stored.">
+  </div>
+  <input class="scim-status scim-grow" type="text" id="scim_discovery_status"
+         readonly>
+
+  <!-- Two views of one answer, the way the Kerberos pages show a message
+       decoded and as bytes. The described table is what a reader wants nine
+       times in ten; the document is what settles an argument about what the
+       server actually said, so neither replaces the other. -->
+  <div class="scim-tabs" data-scim-tabs="discovery">
+    <button type="button" class="scim-tab scim-tab-on" role="tab"
+            aria-selected="true" id="scim_tab_discovery_described"
+            data-scim-tab="described">Described</button>
+    <button type="button" class="scim-tab" role="tab" aria-selected="false"
+            id="scim_tab_discovery_document"
+            data-scim-tab="document">Document</button>
+  </div>
+  <div class="scim-tabpanel" data-scim-tabs="discovery"
+       data-scim-tab="described">
+    <p class="scim-note" id="scim_described_what">Nothing has been read
+    yet.</p>
+    <div id="scim_capabilities"></div>
+  </div>
+  <div class="scim-tabpanel scim-tabpanel-off" data-scim-tabs="discovery"
+       data-scim-tab="document">
+    <div class="scim-boxhead">
+      <div class="tooltip scim-tip">
+        <span class="scim-boxlabel">As it came back</span>
+        <span class="tooltiptext">The document verbatim, exactly as the server
+        sent it. The Described tab is a reading of it and this is the thing
+        being read — a disagreement between the two is a defect in this page,
+        which is why both are here.</span>
+      </div>
+      <input type="button" class="scim-btn scim-expand"
+             id="btn_scim_expand_discovery" value="Expand"
+             data-scim-expand="scim_discovery_output">
+    </div>
+    <textarea class="scim-box" id="scim_discovery_output" rows="16"
+              readonly></textarea>
+  </div>
+</fieldset>
+
+</div><!-- /.scim-topgrid -->
+
+<!-- ===================== Configuration Parameters ===================== -->
+<fieldset class="scim-pane" id="pane_config">
+  <legend>Configuration Parameters</legend>
+  <p class="scim-note">Every setting this workflow has, in one place, with
+  <strong>where each one came from</strong>. That is the question this pane
+  exists to answer: a value you typed and a value read out of a discovery
+  document behave identically until the server changes its mind, and then only
+  one of them is stale. Edit any of them and press <strong>Save</strong>; the
+  fields in the panes above and below change with them. Rows marked
+  <em>discovered</em> can be put back with <strong>Restore discovered
+  values</strong>.</p>
+  <p class="scim-note"><strong>No credential is here.</strong> The password and
+  the HOBA private key are deliberately absent &mdash; the password is never
+  stored anywhere, and a signing key in storage is a signing key in every
+  extension&rsquo;s reach. The access token stays in the Authentication pane,
+  under its own opt-in.</p>
+  <div class="scim-buttons">
+    <input type="button" class="scim-btn scim-btn-primary"
+           id="btn_scim_config_save"
+           value="Save" onclick="return scim.saveConfig();"
+           title="Writes every value below to this browser's localStorage and applies it to the fields in the other panes.">
+    <input type="button" class="scim-btn" id="btn_scim_config_restore"
+           value="Restore discovered values"
+           onclick="return scim.restoreDiscovered();"
+           title="Puts every discovered row back to what the server's own document said, discarding the override. Rows you typed yourself are left alone.">
+    <input type="button" class="scim-btn" id="btn_scim_config_read_all"
+           value="Read all three documents"
+           onclick="return scim.readAllDiscovery();"
+           title="ServiceProviderConfig, ResourceTypes and Schemas in turn, filling every discovered row below from them.">
+    <input class="scim-status scim-grow" type="text" id="scim_config_status"
            readonly>
   </div>
-  <div id="scim_capabilities"></div>
-  <pre class="scim-output" id="scim_discovery_output"></pre>
+  <div class="scim-config-scroll">
+    <div id="scim_config"></div>
+  </div>
 </fieldset>
 
 <!-- ===================== One endpoint ===================== -->
 <fieldset class="scim-pane" id="pane_endpoint">
   <legend>One endpoint at a time</legend>
-  <p class="scim-note">Every operation RFC 7644 defines is in this list,
-  including the two most implementations leave out: the root
-  <code>/.search</code>, which queries both resource types at once, and
-  <code>/Me</code>.</p>
   <div class="scim-grid">
     <div class="scim-wide">
-      <label class="scim-label" for="scim_op">Operation</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_op">Operation</label>
+        <span class="tooltiptext">Every operation RFC 7644 defines, including
+        the two most implementations leave out: the root /.search, which
+        queries both resource types at once, and /Me. Choosing one rebuilds the
+        query editor, the body field and the preview below.</span>
+      </div>
       <select class="scim-field" id="scim_op" name="scim_op"></select>
     </div>
   </div>
@@ -317,13 +445,19 @@ deprovision the users they describe, and there is no undo.</p>
 
   <div class="scim-grid scim-hidden" id="scim_op_id_row">
     <div class="scim-wide">
-      <label class="scim-label" for="scim_op_id"><span
-         id="scim_op_id_label">Resource id</span></label>
-      <input class="scim-field" type="text" id="scim_op_id" name="scim_op_id"
-             title="Opaque. Use the one a create or a list gave you rather than building it.">
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_op_id"><span
+           id="scim_op_id_label">Resource id</span></label>
+        <span class="tooltiptext">Opaque. Use the one a create or a list gave
+        you rather than building it — against this project's mock STS it is the
+        entry's LDAP DN, and it is percent-encoded into the path exactly once.
+        Encoding it twice produces a 404 that reads like a deleted user.</span>
+      </div>
+      <input class="scim-field" type="text" id="scim_op_id" name="scim_op_id">
       <input type="button" class="scim-btn" id="btn_scim_use_last_id"
              value="Use the last one created"
-             onclick="return scim.useLastId();">
+             onclick="return scim.useLastId();"
+             title="Fills the field from whichever of the two remembered ids fits this operation.">
     </div>
   </div>
 
@@ -334,38 +468,59 @@ deprovision the users they describe, and there is no undo.</p>
        mock STS it is the entry's DN, which says where the user landed. -->
   <div class="scim-grid">
     <div>
-      <label class="scim-label" for="scim_last_user_id">Last user
-      created</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_last_user_id">Last user
+        created</label>
+        <span class="tooltiptext">Remembered from the last create this page
+        made, so a read, a PATCH and a delete do not need an id copied by hand
+        between two fields on the same page.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_last_user_id"
              name="scim_last_user_id" readonly>
     </div>
     <div>
-      <label class="scim-label" for="scim_last_group_id">Last group
-      created</label>
+      <div class="tooltip scim-tip scim-tip-left">
+        <label class="scim-label" for="scim_last_group_id">Last group
+        created</label>
+        <span class="tooltiptext">The same, for Groups. The Use-the-last-one
+        button picks whichever of the two matches the operation.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_last_group_id"
              name="scim_last_group_id" readonly>
     </div>
   </div>
 
   <div class="scim-hidden" id="scim_op_query_row">
-    <p class="scim-note">The RFC 7644 section 3.4.2 query parameters this
-    operation accepts. <code>startIndex</code> is <strong>1-based</strong> and
-    <code>count=0</code> asks for the total with no resources.</p>
     <div class="scim-grid">
       <div class="scim-wide scim-hidden" id="scim_query_filter_row">
-        <label class="scim-label" for="scim_query_filter">filter</label>
+        <div class="tooltip scim-tip">
+          <label class="scim-label" for="scim_query_filter">filter</label>
+          <span class="tooltiptext">RFC 7644 section 3.4.2.2, sent EXACTLY as
+          written. This page never quotes or escapes a filter — that grammar is
+          the server's to parse, and a client that escaped it would make
+          invalidFilter unreachable.</span>
+        </div>
         <input class="scim-field" type="text" id="scim_query_filter"
                name="scim_query_filter"
-               placeholder="userName sw &quot;scim.&quot;"
-               title="Sent exactly as written. This page never quotes or escapes a filter — that grammar is the server's to parse.">
+               placeholder="userName sw &quot;scim.&quot;">
       </div>
       <div class="scim-hidden" id="scim_query_sort_by_row">
-        <label class="scim-label" for="scim_query_sort_by">sortBy</label>
+        <div class="tooltip scim-tip">
+          <label class="scim-label" for="scim_query_sort_by">sortBy</label>
+          <span class="tooltiptext">An attribute path to sort on. A server may
+          say sort is unsupported in its ServiceProviderConfig and still accept
+          the parameter silently — compare the two orders to find out.</span>
+        </div>
         <input class="scim-field" type="text" id="scim_query_sort_by"
                name="scim_query_sort_by" placeholder="userName">
       </div>
       <div class="scim-hidden" id="scim_query_sort_order_row">
-        <label class="scim-label" for="scim_query_sort_order">sortOrder</label>
+        <div class="tooltip scim-tip">
+          <label class="scim-label"
+                 for="scim_query_sort_order">sortOrder</label>
+          <span class="tooltiptext">ascending or descending. Left unset, the
+          server's default applies, which RFC 7644 says is ascending.</span>
+        </div>
         <select class="scim-field" id="scim_query_sort_order"
                 name="scim_query_sort_order">
           <option value="">(unset)</option>
@@ -374,24 +529,46 @@ deprovision the users they describe, and there is no undo.</p>
         </select>
       </div>
       <div class="scim-hidden" id="scim_query_start_index_row">
-        <label class="scim-label" for="scim_query_start_index">startIndex</label>
+        <div class="tooltip scim-tip">
+          <label class="scim-label"
+                 for="scim_query_start_index">startIndex</label>
+          <span class="tooltiptext">1-BASED, not zero. A client that pages from
+          0 re-reads the first resource and loses the last one, silently, on
+          every page.</span>
+        </div>
         <input class="scim-field" type="text" id="scim_query_start_index"
                name="scim_query_start_index">
       </div>
       <div class="scim-hidden" id="scim_query_count_row">
-        <label class="scim-label" for="scim_query_count">count</label>
+        <div class="tooltip scim-tip">
+          <label class="scim-label" for="scim_query_count">count</label>
+          <span class="tooltiptext">How many resources to return. count=0 asks
+          for the TOTAL with no resources, which is the cheapest way to ask how
+          many there are.</span>
+        </div>
         <input class="scim-field" type="text" id="scim_query_count"
                name="scim_query_count">
       </div>
       <div class="scim-hidden" id="scim_query_attributes_row">
-        <label class="scim-label" for="scim_query_attributes">attributes</label>
+        <div class="tooltip scim-tip">
+          <label class="scim-label"
+                 for="scim_query_attributes">attributes</label>
+          <span class="tooltiptext">Comma-separated in a query string; an ARRAY
+          in a /.search body. That asymmetry is in the specification, not in
+          this page.</span>
+        </div>
         <input class="scim-field" type="text" id="scim_query_attributes"
-               name="scim_query_attributes" placeholder="userName,name.familyName"
-               title="Comma-separated in a query string; an ARRAY in a /.search body. That asymmetry is in the specification.">
+               name="scim_query_attributes"
+               placeholder="userName,name.familyName">
       </div>
       <div class="scim-hidden" id="scim_query_excluded_attributes_row">
-        <label class="scim-label"
-               for="scim_query_excluded_attributes">excludedAttributes</label>
+        <div class="tooltip scim-tip scim-tip-left">
+          <label class="scim-label"
+                 for="scim_query_excluded_attributes">excludedAttributes</label>
+          <span class="tooltiptext">The other way round, and mutually exclusive
+          with attributes. Useful for dropping the one enormous member list off
+          a Group read.</span>
+        </div>
         <input class="scim-field" type="text"
                id="scim_query_excluded_attributes"
                name="scim_query_excluded_attributes">
@@ -400,116 +577,181 @@ deprovision the users they describe, and there is no undo.</p>
   </div>
 
   <div class="scim-hidden" id="scim_op_body_row">
-    <label class="scim-label" for="scim_op_body">Request body</label>
     <p class="scim-note" id="scim_op_body_kind"></p>
+    <div class="tooltip scim-tip">
+      <label class="scim-label" for="scim_op_body">Request body</label>
+      <span class="tooltiptext">Sent verbatim as JSON. The Generate button
+      below fills it with the right shape for this operation — a full RFC 7643
+      User, a PatchOp, a SearchRequest or a BulkRequest.</span>
+    </div>
     <textarea class="scim-field scim-body" id="scim_op_body"
               name="scim_op_body" rows="12"></textarea>
     <div class="scim-buttons">
       <input type="button" class="scim-btn" id="btn_scim_generate_body"
              value="Generate a body for this operation"
-             onclick="return scim.generateBodyForOperation();">
+             onclick="return scim.generateBodyForOperation();"
+             title="Builds the message shape RFC 7644 defines for this operation, using the Attribute generator's seed and prefix.">
     </div>
   </div>
 
   <p class="scim-preview">Will send: <code id="scim_op_preview"></code></p>
   <div class="scim-buttons">
     <input type="button" class="scim-btn scim-btn-primary" id="btn_scim_send"
-           value="Send" onclick="return scim.runOperation();">
+           value="Send" onclick="return scim.runOperation();"
+           title="Sends exactly what the preview above says, by whichever call path the Connection pane selects.">
     <input class="scim-status scim-grow" type="text" id="scim_op_status"
            readonly>
   </div>
-  <pre class="scim-output" id="scim_op_result"></pre>
+  <div class="scim-boxhead">
+    <div class="tooltip scim-tip">
+      <span class="scim-boxlabel">Result</span>
+      <span class="tooltiptext">The response body. A refusal here is a RESULT
+      and not a failure of this page — a 409 on a duplicate userName is the
+      server answering, and is what the negative scenarios expect.</span>
+    </div>
+    <input type="button" class="scim-btn scim-expand"
+           id="btn_scim_expand_op_result" value="Expand"
+           data-scim-expand="scim_op_result">
+  </div>
+  <textarea class="scim-box" id="scim_op_result" rows="14" readonly></textarea>
 </fieldset>
 
 <!-- ===================== Generator ===================== -->
 <fieldset class="scim-pane" id="pane_generator">
   <legend>Attribute generator</legend>
   <p class="scim-note">Generated users carry <strong>every optional attribute
-  RFC 7643 section 4.1 defines</strong> &mdash; all six sub-attributes of
-  <code>name</code>, the five multi-valued types with their
-  <code>type</code>/<code>primary</code>/<code>display</code>, both addresses
-  with <code>formatted</code>, and the whole section 4.3 enterprise extension.
-  That is the point: a provisioning client tested only against
-  <code>userName</code> and <code>emails</code> has tested nothing about the
-  fields it will meet in the field. What a server <em>stores</em> is usually
-  narrower, and the difference between &ldquo;accepted and stored&rdquo; and
-  &ldquo;accepted and dropped&rdquo; is what reading the resource back
-  shows.</p>
-  <p class="scim-note"><strong>The seed makes it reproducible.</strong> The same
-  seed always produces the same users, so a failure on the seventh generated
-  user can be run again exactly rather than described.</p>
+  RFC 7643 section 4.1 defines</strong>. That is the point: what a server
+  <em>stores</em> is usually narrower than what it accepts, and the difference
+  between &ldquo;accepted and stored&rdquo; and &ldquo;accepted and
+  dropped&rdquo; is what reading the resource back shows.</p>
   <div class="scim-grid">
     <div>
-      <label class="scim-label" for="scim_gen_seed">Seed</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_gen_seed">Seed</label>
+        <span class="tooltiptext">Makes it reproducible: the same seed always
+        produces the same users, so a failure on the seventh generated user can
+        be run again exactly rather than described. It is a mulberry32 PRNG and
+        is NOT cryptography.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_gen_seed"
              name="scim_gen_seed">
     </div>
     <div>
-      <label class="scim-label" for="scim_gen_prefix">userName prefix</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_gen_prefix">userName prefix</label>
+        <span class="tooltiptext">Every generated userName starts with this,
+        which is what makes them findable with one filter and cleanable in one
+        sweep.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_gen_prefix"
-             name="scim_gen_prefix"
-             title="Every generated userName starts with this, which is what makes them findable with one filter and cleanable in one sweep.">
+             name="scim_gen_prefix">
     </div>
     <div>
-      <label class="scim-label" for="scim_gen_count">How many</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_gen_count">How many</label>
+        <span class="tooltiptext">Capped at 50. Fifty users is around 150
+        requests in a scenario, which is a long run and still a run.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_gen_count"
              name="scim_gen_count">
     </div>
     <div>
-      <label class="scim-label" for="scim_gen_domain">Email domain</label>
+      <div class="tooltip scim-tip scim-tip-left">
+        <label class="scim-label" for="scim_gen_domain">Email domain</label>
+        <span class="tooltiptext">The domain every generated email, IM and
+        photo URL is built on.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_gen_domain"
              name="scim_gen_domain">
     </div>
   </div>
-  <label class="scim-check">
-    <input type="checkbox" id="scim_gen_minimal">
-    Minimal instead &mdash; <code>userName</code> and nothing else, which is the
-    smallest legal User and the one a create should never fail on
-  </label>
+  <div class="tooltip scim-tip">
+    <label class="scim-check">
+      <input type="checkbox" id="scim_gen_minimal">
+      Minimal instead
+    </label>
+    <span class="tooltiptext">userName and nothing else — the smallest legal
+    User, and the one a create should never fail on. Useful for telling "this
+    server rejects my attributes" from "this server rejects my
+    credential".</span>
+  </div>
   <div class="scim-buttons">
     <input type="button" class="scim-btn" id="btn_scim_gen_users"
-           value="Generate users" onclick="return scim.generateUsers();">
+           value="Generate users" onclick="return scim.generateUsers();"
+           title="Builds the users without sending anything.">
     <input type="button" class="scim-btn" id="btn_scim_gen_group"
-           value="Generate a group" onclick="return scim.generateGroup();">
+           value="Generate a group" onclick="return scim.generateGroup();"
+           title="Builds a Group whose members are the users generated above.">
     <input type="button" class="scim-btn" id="btn_scim_gen_use"
            value="Use as the request body"
-           onclick="return scim.useGeneratedBody();">
+           onclick="return scim.useGeneratedBody();"
+           title="Copies the first generated resource into the endpoint pane's body field.">
     <input class="scim-status scim-grow" type="text" id="scim_gen_status"
            readonly>
   </div>
-  <pre class="scim-output" id="scim_gen_output"></pre>
+  <div class="scim-boxhead">
+    <div class="tooltip scim-tip">
+      <span class="scim-boxlabel">Generated</span>
+      <span class="tooltiptext">Nothing here has been sent. This is what WOULD
+      be sent, which is the half a provisioning debugger has to be able to show
+      before it writes to a directory.</span>
+    </div>
+    <input type="button" class="scim-btn scim-expand"
+           id="btn_scim_expand_gen_output" value="Expand"
+           data-scim-expand="scim_gen_output">
+  </div>
+  <textarea class="scim-box" id="scim_gen_output" rows="14"
+            readonly></textarea>
 </fieldset>
 
 <!-- ===================== Scenarios ===================== -->
 <fieldset class="scim-pane" id="pane_scenarios">
   <legend>Scenarios</legend>
   <p class="scim-note">A scenario is a <strong>plan</strong>, and every step in
-  it carries its own expectation. So a green run does not mean &ldquo;the server
-  answered something&rdquo; &mdash; it means every step did what the plan said
-  it would, <em>including the steps that expect a refusal</em>. That is what
-  makes the negative scenarios work: a 409 on a duplicate userName is a pass and
-  a 201 is a failure.</p>
+  it carries its own expectation. A green run means every step did what the plan
+  said it would, <em>including the steps that expect a refusal</em>: a 409 on a
+  duplicate userName is a pass and a 201 is a failure.</p>
   <div class="scim-grid">
     <div class="scim-wide">
-      <label class="scim-label" for="scim_scenario">Scenario</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_scenario">Scenario</label>
+        <span class="tooltiptext">Twelve named plans plus a random one composed
+        from the seed. Changing this — or the seed, prefix or user count —
+        throws away a plan already on screen, because a plan belongs to the
+        inputs it was built from.</span>
+      </div>
       <select class="scim-field" id="scim_scenario" name="scim_scenario">
       </select>
     </div>
     <div>
-      <label class="scim-label" for="scim_scenario_seed">Seed</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_scenario_seed">Seed</label>
+        <span class="tooltiptext">The same seed builds the same plan, users
+        included. An unseeded harness makes every interesting failure a story
+        rather than a test.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_scenario_seed"
              name="scim_scenario_seed">
     </div>
     <div>
-      <label class="scim-label" for="scim_scenario_prefix">Prefix</label>
+      <div class="tooltip scim-tip">
+        <label class="scim-label" for="scim_scenario_prefix">Prefix</label>
+        <span class="tooltiptext">Namespaces everything this run creates, so a
+        run can be found with one filter and removed in one sweep. A random
+        scenario gives each of its phases its own prefix on top of this
+        one.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_scenario_prefix"
              name="scim_scenario_prefix">
     </div>
     <div class="scim-hidden" id="scim_scenario_count_row">
-      <label class="scim-label" for="scim_scenario_count">Users</label>
+      <div class="tooltip scim-tip scim-tip-left">
+        <label class="scim-label" for="scim_scenario_count">Users</label>
+        <span class="tooltiptext">Capped at 50 — fifty users is around 150
+        requests, which is a long run and still a run.</span>
+      </div>
       <input class="scim-field" type="text" id="scim_scenario_count"
-             name="scim_scenario_count"
-             title="Capped at 50 — fifty users is around 150 requests, which is a long run and still a run.">
+             name="scim_scenario_count">
     </div>
   </div>
   <p class="scim-note" id="scim_scenario_what"></p>
@@ -522,11 +764,14 @@ deprovision the users they describe, and there is no undo.</p>
   <div class="scim-buttons">
     <input type="button" class="scim-btn" id="btn_scim_plan"
            value="Plan it (sends nothing)"
-           onclick="return scim.planScenario();">
+           onclick="return scim.planScenario();"
+           title="Builds the plan and shows it in the Runner below. Nothing is sent.">
     <input type="button" class="scim-btn scim-btn-primary" id="btn_scim_run"
-           value="Run it" onclick="return scim.runScenario();">
+           value="Run it" onclick="return scim.runScenario();"
+           title="Runs every step in order against the service root, judging each answer against what the plan said. These steps really do create and delete accounts.">
     <input type="button" class="scim-btn scim-hidden" id="scim_runner_stop"
-           value="Stop" onclick="return scim.stopScenario();">
+           value="Stop" onclick="return scim.stopScenario();"
+           title="Stops after the step now in flight. Whatever earlier steps created is still there.">
     <input class="scim-status scim-grow" type="text" id="scim_scenario_status"
            readonly>
   </div>
@@ -541,37 +786,109 @@ deprovision the users they describe, and there is no undo.</p>
   </div>
 </fieldset>
 
-<!-- ===================== Exchange ===================== -->
+<!-- ======================================================================
+     THE EXCHANGE PANE.
+
+     Request beside response, and every readout is a TEXTAREA rather than a
+     `pre`. That is not cosmetic: a SCIM response carries percent-encoded DNs,
+     base64 certificates and Location URLs, none of which has a space in it, and
+     a `pre` is a block box whose min-content width is its longest line. The
+     fieldset around it carries `min-inline-size: min-content` from the UA
+     stylesheet, so the PANE grew to fit that line and the `overflow: auto` on
+     the readout never got the chance to scroll. A textarea has an intrinsic
+     size content cannot change, scrolls both ways by construction, and can be
+     dragged taller — or opened to full height with the Expand button
+     beside it.
+     =================================================================== -->
 <fieldset class="scim-pane" id="pane_exchange">
   <legend>Exchange</legend>
   <p class="scim-note" id="scim_exchange_via"></p>
   <p class="scim-note" id="scim_exchange_auth_note"></p>
   <p class="scim-note scim-hidden" id="scim_exchange_first_leg"></p>
-  <h5 class="scim-subhead">Request</h5>
-  <p class="scim-request-line"><code
-     id="scim_exchange_request_line"></code></p>
-  <pre class="scim-output scim-short"
-       id="scim_exchange_request_headers"></pre>
-  <pre class="scim-output" id="scim_exchange_request_body"></pre>
-  <h5 class="scim-subhead">Response</h5>
-  <p class="scim-request-line"><code
-     id="scim_exchange_response_line"></code></p>
   <p class="scim-note scim-hidden" id="scim_exchange_notes"></p>
-  <pre class="scim-output scim-short"
-       id="scim_exchange_response_headers"></pre>
-  <pre class="scim-output" id="scim_exchange_response_body"></pre>
+
+  <div class="scim-exchange-grid">
+    <div class="scim-exchange-col">
+      <h5 class="scim-subhead">Request</h5>
+      <p class="scim-request-line"><code
+         id="scim_exchange_request_line"></code></p>
+      <div class="scim-boxhead">
+        <div class="tooltip scim-tip">
+          <span class="scim-boxlabel">HTTP headers</span>
+          <span class="tooltiptext">The headers of the request, in wire order
+          and wire form. On a browser-direct call these are the headers THIS
+          PAGE set — the browser adds Host, Origin, User-Agent, Referer and
+          Content-Length of its own and will not say what they were. Through the
+          api they are the whole set, as sent.</span>
+        </div>
+        <input type="button" class="scim-btn scim-expand"
+               id="btn_scim_expand_request_headers" value="Expand"
+               data-scim-expand="scim_exchange_request_headers">
+      </div>
+      <textarea class="scim-box" id="scim_exchange_request_headers" rows="8"
+                readonly></textarea>
+      <div class="scim-boxhead">
+        <div class="tooltip scim-tip">
+          <span class="scim-boxlabel">Body</span>
+          <span class="tooltiptext">What was sent, as JSON. Empty on a GET or a
+          DELETE, which carry none — a Content-Type on a request with no body is
+          a header describing nothing, and some servers refuse it.</span>
+        </div>
+        <input type="button" class="scim-btn scim-expand"
+               id="btn_scim_expand_request_body" value="Expand"
+               data-scim-expand="scim_exchange_request_body">
+      </div>
+      <textarea class="scim-box" id="scim_exchange_request_body" rows="14"
+                readonly></textarea>
+    </div>
+
+    <div class="scim-exchange-col">
+      <h5 class="scim-subhead">Response</h5>
+      <p class="scim-request-line"><code
+         id="scim_exchange_response_line"></code></p>
+      <div class="scim-boxhead">
+        <div class="tooltip scim-tip scim-tip-left">
+          <span class="scim-boxlabel">HTTP headers</span>
+          <span class="tooltiptext">What came back. On a browser-direct call
+          CORS restricts this page to the seven simple response headers unless
+          the server names more in Access-Control-Expose-Headers — Location,
+          which every SCIM create sends, is usually missing here even though it
+          WAS sent. The pane says so rather than presenting a partial list as a
+          whole one.</span>
+        </div>
+        <input type="button" class="scim-btn scim-expand"
+               id="btn_scim_expand_response_headers" value="Expand"
+               data-scim-expand="scim_exchange_response_headers">
+      </div>
+      <textarea class="scim-box" id="scim_exchange_response_headers" rows="8"
+                readonly></textarea>
+      <div class="scim-boxhead">
+        <div class="tooltip scim-tip scim-tip-left">
+          <span class="scim-boxlabel">Body</span>
+          <span class="tooltiptext">The response body. A SCIM error is an
+          answer, not a transport failure: it carries a scimType naming which
+          rule was broken, and that is the most interesting thing a SCIM server
+          ever says.</span>
+        </div>
+        <input type="button" class="scim-btn scim-expand"
+               id="btn_scim_expand_response_body" value="Expand"
+               data-scim-expand="scim_exchange_response_body">
+      </div>
+      <textarea class="scim-box" id="scim_exchange_response_body" rows="14"
+                readonly></textarea>
+    </div>
+  </div>
 </fieldset>
 
 <!-- ===================== Operations History ===================== -->
 <fieldset class="scim-pane" id="pane_history">
   <legend>Operations History</legend>
   <p class="scim-note">Every request this page sent. <strong>Failure</strong>
-  means the server answered and the answer was no &mdash; which is very often
-  the correct outcome, and is what the negative scenarios expect. A row that
-  stays <strong>Sent</strong> means nothing came back at all, which on this
-  workflow is usually CORS refusing a browser-direct call before it was made.
-  Those two look identical in a status line and need completely different
-  fixes.</p>
+  means the server answered and the answer was no &mdash; very often the correct
+  outcome, and what the negative scenarios expect. A row that stays
+  <strong>Sent</strong> means nothing came back at all, which on this workflow
+  is usually CORS refusing a browser-direct call before it was made. Those two
+  look identical in a status line and need completely different fixes.</p>
   <div id="scim_history"></div>
 </fieldset>
 

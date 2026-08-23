@@ -1424,8 +1424,12 @@ async function test() {
   var secureOrigin = baseUrl.replace(/\/+$/, "");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        secureOrigin);
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
   options.addArguments("--user-data-dir=/tmp/saml-assertion-chrome-" +
-                       Date.now());
+                       Date.now() + "-" + process.pid);
   // Collect browser-side errors so the run can assert the page logged none.
   try {
     const prefs = new logging.Preferences();

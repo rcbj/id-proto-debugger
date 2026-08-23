@@ -11,7 +11,8 @@
 //
 // The exchange deliberately crosses implementations at every step:
 //
-//   the STS issues        with @digitalbazaar/bbs-signatures (sts/bbs2023.js)
+//   the STS issues        with @digitalbazaar/bbs-signatures
+//                        (sts/common/vendored/bbs2023.js)
 //   the wallet derives    with our own BBS      (client/src/bbs2023.js)
 //   the STS verifies      the wallet's proof
 //
@@ -54,8 +55,13 @@ const walletSuite = paths.requireSharedModule(
    "bbs2023.js")],
   "the wallet's bbs-2023 cryptosuite");
 const stsSuite = paths.requireSharedModule(
-  [path.join(__dirname, "sts_bbs2023.js"), path.join(ROOT, "sts",
-   "bbs2023.js")],
+  // The tests image's flattened copy first, then wherever the submodule keeps
+  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: mock-sts 0f986b3
+  // ("Reorganizing source code.") moved every module into a subdirectory, and
+  // this one is in common/vendored/. mockStsModule() is the single place that
+  // answers that question — see tests/module_paths.js.
+  [path.join(__dirname, "sts_bbs2023.js"),
+   paths.mockStsModule("bbs2023.js") || ""],
   "the STS's bbs-2023 cryptosuite");
 
 const enc = function (s) {

@@ -62,8 +62,13 @@ const metadataClient = paths.requireSharedModule(
    "metadata_client.js")],
   "the wallet's metadata/JWS module");
 const stsSuite = paths.requireSharedModule(
-  [path.join(__dirname, "sts_bbs2023.js"), path.join(ROOT, "sts",
-   "bbs2023.js")],
+  // The tests image's flattened copy first, then wherever the submodule keeps
+  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: mock-sts 0f986b3
+  // ("Reorganizing source code.") moved every module into a subdirectory, and
+  // this one is in common/vendored/. mockStsModule() is the single place that
+  // answers that question — see tests/module_paths.js.
+  [path.join(__dirname, "sts_bbs2023.js"),
+   paths.mockStsModule("bbs2023.js") || ""],
   "the STS's bbs-2023 cryptosuite");
 
 var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";

@@ -36,13 +36,172 @@ that is never exercised — because a permissive server is hard to make say no.
 **The page carries a warning banner, and it means it.** These endpoints create
 and delete accounts and there is no undo.
 
+## The page's layout, and the four decisions behind it
+
+Read this before moving a pane, because three of the four are load-bearing
+rather than cosmetic and one of them is a bug fix that looks like a style
+change.
+
+**The top row is Connection, Authentication and Discovery, side by side.** None
+of the three is a *step* — they are the settings every pane below them reads —
+and stacked they put the buttons somebody came here to press (Send, Run) two
+screens down. `.scim-topgrid` is a three-column grid using `minmax(0, 1fr)` and
+NOT `1fr`: a grid item's automatic minimum size is its min-content size, so a
+column holding a percent-encoded DN grows the track instead of scrolling inside
+it. `tests/scim_page.js` asserts the row by GEOMETRY, because a grid that has
+silently fallen back to one column still has every class it had.
+
+**Every field carries a hover tooltip, and that is what the prose used to be.**
+The house pattern, `<div class="tooltip scim-tip"><label…><span
+class="tooltiptext">…</span></div>`, restyled in `scim.css` for a form: the
+shared `.tooltip` is 120px wide, centred over its own middle and dotted-
+underlined, because it was written for a hoverable word in a sentence. Buttons
+keep a native `title` instead — a hover tooltip over the thing you are about to
+click is the interception hazard below.
+
+> **`pointer-events: none` on `.tooltiptext` is not decoration.** bootstrap
+> hides it with `visibility: hidden` and not `display: none`, so the span still
+> occupies layout and the browser reports it as the topmost element at a nearby
+> control's position — which Selenium raises as `element click intercepted: …
+> <span class="tooltiptext">`, at coordinates that look perfectly correct in a
+> screenshot. The rule is in `css/common.css` and again in `css/scim.css`, and
+> `tests/scim_page.js` asserts it in the browser rather than trusting either
+> copy: it makes EVERY tooltip visible at once and then asks the browser what
+> is on top of each control. A test that merely clicked the buttons would pass
+> whether or not the rule were there — a tooltip is only over a control while
+> something is hovering it — which is the difference between testing the fix
+> and testing the weather. Mutating the rule away fails both halves, one of
+> them with a real `element click intercepted`.
+
+**The Discovery pane has two tabs and the second one is not a fallback.** A
+discovery document is read for two different reasons and one rendering cannot
+serve both: nine times in ten what is wanted is "where do Users live and does
+this server do PATCH", and the tenth time it is "show me exactly what it said",
+because somebody is arguing about it. So *Described* is a table and *Document*
+is the bytes. Both are kept: the table is a READING of the document, and a
+disagreement between the two is a defect in this page that hiding the original
+would make undiscoverable. ResourceTypes and Schemas have described views too
+as of this change — before it, only the ServiceProviderConfig did, and finding
+an endpoint in a nested ListResponse was a scroll and a squint.
+
+**Every readout is a `textarea` and this fixed a real overflow.** They used to
+be `pre` elements with `overflow: auto` and a `max-height`, which is the obvious
+shape and does not work inside a `fieldset`. A pre's min-content width is its
+longest line; a SCIM response is full of percent-encoded DNs, `Location` URLs
+and base64 certificates with no space in them; and a fieldset carries
+`min-inline-size: min-content` in the UA stylesheet. So the PANE was made wide
+enough to avoid the overflow and the `overflow: auto` never scrolled anything.
+Measured on the page before the change: one long id took the Exchange pane to
+**7511px** and the document to **7627px** in a 1400px viewport. A textarea has
+an intrinsic size content cannot change, scrolls both ways by construction, is
+`resize: vertical`, and carries an **Expand** button that opens it to a working
+height and closes it again.
+
+Both halves are needed — `.scim-pane` also carries `min-width: 0` /
+`min-inline-size: 0`, without which every `max-width`, `overflow` and
+`word-break` inside it is powerless.
+
+Section 8's existing "the page does not scroll sideways" check could not see any
+of this, and that is worth keeping in mind: by the time it runs, the browser
+test has deleted everything it created and every readout holds a short body or
+nothing. A geometry check that only ever measures an empty box measures
+nothing, so the new one **plants** the pathological value first.
+
+## The Exchange pane shows the headers, in wire form
+
+`Name: value`, one per line, and not a JSON dump. What a reader compares these
+against is a header they read in an RFC, a `curl -v` transcript or another
+server's log, and none of those is quoted, braced or comma-separated. A repeated
+header becomes one line each — `Set-Cookie` is the one that matters, and RFC
+7230 section 3.2.2 says in as many words that it may not be joined with a comma,
+because a cookie's own `expires` attribute contains one. (fetch's `Headers` has
+already joined those before this page can see them; the api hands them over as
+an array and they are unrolled.)
+
+Request and response sit **side by side**, because they are read against each
+other: a header sent and a header that came back, a body posted and the resource
+it produced. Stacked, the pair is a screen apart and the comparison is done from
+memory.
+
+One asymmetry is deliberate and the pane says so. On a browser-direct call the
+request headers shown are **the ones this page set** — the browser adds `Host`,
+`Origin`, `User-Agent`, `Referer` and `Content-Length` of its own and will not
+say what they were. Through the api they are corrected after the answer arrives
+from `http_exchange.request.headers`, which is what axios actually sent.
+
+## The Configuration Parameters pane
+
+Every setting this workflow has, in one table, **with the source of each**. That
+last column is the reason the pane exists: the value of a parameter is already
+visible in the field it belongs to, and what is not visible anywhere else is
+whether it is there because somebody typed it or because a server said so in a
+discovery document — and those two behave identically right up until the server
+changes its mind, after which exactly one of them is stale and nothing on screen
+says which.
+
+Three kinds of row, and the difference between the first two is the whole
+design:
+
+* a **mirror** of a field in another pane (`field`). The field is the value; the
+  row reads and writes it, in both directions. There is no second copy to drift,
+  which is what a "central settings pane" usually becomes;
+* a **discovered** parameter, which lives here and nowhere else.
+  `discoveredValues` keeps what the document said and `configValues` keeps what
+  is in force, so an override is a **visible difference** between the two —
+  tinted, with "the server said: …" beside it — rather than a lost original.
+  **Restore discovered values** has something to restore to;
+* a **heading**, which is a row of the table and not a parameter.
+
+Adopting a newly-read value tests against the PREVIOUS discovered value and not
+against emptiness: a row nobody has touched follows the server forever, and a
+row somebody has edited keeps their edit even when a later read says something
+else. Adopting over an edit would silently undo it, on a button press that says
+"read the documents".
+
+**No credential is in that table, and it is not an oversight to be tidied up
+later.** The password is never written anywhere; the HOBA private key is
+generated per session and never stored; and the access token stays in the
+Authentication pane under its own opt-in, where the checkbox that governs it is.
+A settings pane that quietly became the fourth place a bearer token is written
+would defeat that opt-in without changing a word of it. `tests/scim_page.js`
+checks this by VALUE — it types a distinctive credential into the Authentication
+pane and searches the whole table for it — because a name-based check would pass
+a table with a row called `secret`, and would also trip over
+`changePassword.supported`, which is a ServiceProviderConfig capability that
+contains the word "password".
+
+### The one parameter that is applied rather than shown, and why it matters
+
+`userEndpoint` and `groupEndpoint` are handed to `scimClient.buildRequest` as
+`spec.endpoints`, so **the page composes its requests onto whatever the
+ResourceTypes document said**. `/Users` and `/Groups` are conventions and
+nothing more: RFC 7643 section 6 defines a ResourceType's `endpoint` as "the
+resource's HTTP-addressable endpoint relative to the Base URL", RFC 7644 section
+4 has the server publish one per type, and a server answering on `/people` is
+conformant. A client that hard codes the convention meets it with a 404 on every
+operation — a failure that names an id nobody has rather than a path nobody
+serves.
+
+The substitution is a prefix swap on the rows that name a resource type. The
+discovery paths, `/.search`, `/Bulk` and `/Me` name none and are left exactly as
+they are — a substitution that reached them would relocate the three operations
+most implementations already get wrong, and moving the document that PUBLISHES
+the endpoints would make a wrong override unfixable. An absent or empty override
+means "the catalogue's own path", so an unread ResourceTypes document changes
+nothing at all. All of that is pinned in `tests/scim_engine.js`, in node.
+
+Every other row is read out and shown, and each row's tooltip says which of the
+two it is. A settings pane implying that a value it cannot act on is being
+applied is worse than no pane, because it makes a server's refusal look like a
+bug in this page.
+
 ## Four modules, and the split between them is the load-bearing part
 
 | File | Has a DOM? | What it holds |
 |---|---|---|
 | `client/src/scim_client.js` | no | the endpoint catalogue, request composition, the seven authentication schemes, the RFC 7643 generator, the message bodies, and reading an answer |
 | `client/src/scim_scenarios.js` | no | the twelve named scenarios, the random one, references, and `judge()` |
-| `client/src/scim.js` | yes | the DOM, the two call paths, the runner, the history |
+| `client/src/scim.js` | yes | the DOM, the two call paths, the runner, the history, the tabs and the configuration store |
 | `api/scim_proxy.js` | n/a | what `POST /scim` will and will not forward — **no axios and no network** |
 
 The first two have no DOM and the fourth has no socket, which is what lets
@@ -378,6 +537,24 @@ Every attribute the test sends is checked against the LDAP attribute the mock's
 than imported**, for the same reason. `title` sent, 201 returned, nothing in the
 directory: that is a field accepted and silently dropped, and a status-only test
 cannot see it.
+
+**Its section 4b is about an entry SCIM did not create**, and it is there
+because of a flake that named nothing. `userName` is the one attribute RFC 7643
+makes required, and the mock enforces that on the way OUT as well as in — while
+its own mutual-TLS listener records a client certificate by seeding a directory
+entry named `cn=<CN>,ou=users` with **no `uid` on it at all**. One such entry
+made every `GET /Users` answer `400 invalidValue — Required attribute 'userName'
+is missing`: a message about the request, on a request that was fine, caused by
+an entry it does not name. The suite runs its jobs in a pool, so whether
+`tests/api_tls.js` gets there before the SCIM jobs is a coin toss. The section
+adds such an entry over LDAP — around SCIM entirely, which is also the honest
+statement of the rule, since the directory enforces no schema and an `ldapadd`
+may write one at any time — and asserts that the list still answers, that the
+users from section 4 are still in it, and that the entry itself comes back as a
+User whose `userName` is its RDN value. The fix is in the mock
+(`scim_map.js`'s `toScimUser()` falls back to the RDN value and then to the DN,
+as the Group mapping already did for `displayName`), so this test fails against
+a mock STS older than 2026-08-23.
 
 Its authentication section exercises **all six schemes once each**, plus the
 negative that proves each check is really running — a scheme that accepted

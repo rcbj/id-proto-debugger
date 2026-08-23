@@ -94,16 +94,37 @@ const CANONICAL_DIR = (function () {
 // The vendored copy, wherever it is in this layout. The tests image copies the
 // submodule's files in under sts/, a checkout has them in the submodule, and a
 // developer mid-loop has them in a sibling checkout.
+//
+// AND IT IS NO LONGER THE ROOT OF ANY OF THE THREE. mock-sts 0f986b3
+// ("Reorganizing source code.") moved every module into a subdirectory, so the
+// vendored codec now lives in the mock's `kerberos/` folder. Rather than write
+// that name down here — a second transcription of somebody else's layout, in
+// this repository, wrong again at the next reshuffle — each root is EXPANDED
+// into the directories module_paths.js already knows how to search, and the
+// one holding a complete set of MODULES wins. The old flat layout still
+// matches, because the root itself is the first directory searched.
+function expandRoots(roots) {
+  log.debug("Entering expandRoots().");
+  const out = [];
+  roots.forEach(function (root) {
+    paths.mockStsSearchDirs(root.dir).forEach(function (dir) {
+      out.push({ dir: dir, what: root.what });
+    });
+  });
+  log.debug("Leaving expandRoots(). " + out.length + " directory(ies).");
+  return out;
+}
+
 function findVendoredDir() {
   log.debug("Entering findVendoredDir().");
-  const candidates = [
+  const candidates = expandRoots([
     { dir: path.join(__dirname, "..", "sts"), what: "the sts/ submodule" },
     { dir: path.join(__dirname, "sts"), what: "sts/ inside the tests image" },
     {
       dir: path.join(__dirname, "..", "..", "mock-sts"),
       what: "a sibling mock-sts checkout"
     }
-  ].filter(function (candidate) {
+  ]).filter(function (candidate) {
     // Never compare the canonical directory with itself. In the flat container
     // layout CANONICAL_DIR is __dirname, and a candidate resolving to the same
     // place would make this test compare a thing with itself and pass
@@ -122,7 +143,12 @@ function findVendoredDir() {
   for (const candidate of candidates) {
     const present = MODULES.filter(function (m) { return fs.existsSync(path.join(candidate.dir,
         m)); });
-    if (present.length) {
+    // HALF the set, not one of it. Expanding each root into its
+    // subdirectories means a directory holding one or two of these names by
+    // coincidence is now a candidate, and reporting that as "the sync half
+    // happened" would send somebody to run a script that is not the problem.
+    // A genuine partial sync leaves most of the eight in place.
+    if (present.length >= MODULES.length / 2) {
       log.debug("Leaving findVendoredDir().");
       throw new Error("the vendored codec in " + candidate.what +
           " is INCOMPLETE: it has " +

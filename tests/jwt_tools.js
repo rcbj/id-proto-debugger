@@ -501,7 +501,12 @@ async function test() {
   var secureOrigin = baseUrl.replace(/\/+$/, "");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        secureOrigin);
-  options.addArguments("--user-data-dir=/tmp/jwt-tools-chrome-" + Date.now());
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
+  options.addArguments("--user-data-dir=/tmp/jwt-tools-chrome-" +
+                       Date.now() + "-" + process.pid);
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 

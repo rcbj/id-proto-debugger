@@ -100,12 +100,72 @@ function requireSharedModule(candidates, what) {
 // Cases 2 and 3 both WARN, naming the reason. A green run against an unpushed working
 // copy corresponds to no commit, and that has to be impossible to miss.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// THE MOCK'S OWN LAYOUT IS NOT FLAT ANY MORE, AND THIS IS WHERE THAT IS
+// ABSORBED.
+//
+// Until mock-sts 0f986b3 ("Reorganizing source code.") every module in that
+// repository sat in its root, so `sts/krb5_kdc.js` was the whole of the
+// question. That commit moved all of them into subdirectories — `common/`,
+// `kerberos/`, `oauth-oidc/`, `oid4vc/`, `saml/`, `scim/`, `authn/`, `ldap/`,
+// `tls/`, `ws-trust/`, `ws-federation/`, `mgmt-api/`, `admin-ui/`, `spiffe/`
+// and `common/vendored/` — and a resolver that only looked in the root then
+// found NOTHING, in four Kerberos tests at once, each of which reports it as
+// "could not find the mock KDC" and blames the gitlink.
+//
+// So this searches for the module BY NAME rather than holding a name → folder
+// table. A table would be a second transcription of somebody else's directory
+// layout, kept in this repository, and it would be wrong again the next time
+// that layout moved — which is exactly the failure being fixed here. The
+// search is bounded to the root, its immediate subdirectories and
+// `common/vendored` (one level deeper, and the only place a two-level module
+// lives), so it cannot wander into `node_modules` and cannot cost more than a
+// couple of readdirs.
+//
+// It also still finds the OLD flat layout, because the root is searched first —
+// which matters for the tests image, where the files are copied in under
+// `tests/sts/` mirroring the new structure, and for a sibling checkout that
+// somebody has not yet pulled.
+// ---------------------------------------------------------------------------
+const MOCK_STS_SKIP_DIRS = ["node_modules", ".git", "node-ldapjs", "env",
+                            "protos", "contexts", "coverage"];
+
+function mockStsSearchDirs(root) {
+  const dirs = [root];
+  let entries = [];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (e) {
+    // An uninitialised submodule is an EMPTY DIRECTORY rather than a missing
+    // one, and a path that is neither is simply not a candidate. Either way
+    // there is nothing to search and the caller's next candidate is tried.
+    return dirs;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (MOCK_STS_SKIP_DIRS.indexOf(entry.name) >= 0) continue;
+    dirs.push(path.join(root, entry.name));
+  }
+  // The one module directory that is two levels down: the mock's vendored
+  // copies of this project's own client modules (bbs2023.js and friends).
+  dirs.push(path.join(root, "common", "vendored"));
+  return dirs;
+}
+
+function findInMockSts(root, name) {
+  for (const dir of mockStsSearchDirs(root)) {
+    const candidate = path.join(dir, name);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 function mockStsModule(name, warn) {
   const say = warn || function () {};
   const override = process.env.MOCK_STS_DIR;
   if (override) {
-    const overridden = path.join(override, name);
-    if (fs.existsSync(overridden)) {
+    const overridden = findInMockSts(override, name);
+    if (overridden) {
       say("MOCK_STS_DIR is set, so " + overridden + " is being used INSTEAD of the sts/ " +
         "submodule. This run reflects a working copy rather than the commit the gitlink points " +
         "at. Unset MOCK_STS_DIR to test what is committed.");
@@ -114,16 +174,22 @@ function mockStsModule(name, warn) {
     say("MOCK_STS_DIR is set to " + override + " but it does not contain " + name +
       "; falling back to the submodule.");
   }
-  const candidates = [
-    path.join(__dirname, "..", "sts", name),         // a checkout with the submodule initialised
-    path.join(__dirname, "sts", name),               // the tests image
-    path.join(__dirname, "sts_" + name)              // the tests image, flattened with a prefix
+  const roots = [
+    // a checkout with the submodule initialised, then the tests image
+    path.join(__dirname, "..", "sts"),
+    path.join(__dirname, "sts")
   ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
+  for (const root of roots) {
+    const found = findInMockSts(root, name);
+    if (found) return found;
   }
-  const sibling = path.join(__dirname, "..", "..", "mock-sts", name);
-  if (fs.existsSync(sibling)) {
+  // The tests image also flattens two modules with a prefix, because they are
+  // loaded on their own and have no relative requires to satisfy.
+  const flattened = path.join(__dirname, "sts_" + name);
+  if (fs.existsSync(flattened)) return flattened;
+  const sibling = findInMockSts(
+    path.join(__dirname, "..", "..", "mock-sts"), name);
+  if (sibling) {
     say("USING AN UNPUSHED WORKING COPY: " + sibling + ". The sts/ submodule does not carry " +
       name + " yet, so this run reflects a sibling checkout rather than the commit this " +
       "repository's gitlink points at. Push mock-sts and bump the gitlink before trusting a " +
@@ -136,5 +202,10 @@ function mockStsModule(name, warn) {
 module.exports = {
   addTestsModulesToResolutionPath: addTestsModulesToResolutionPath,
   requireSharedModule: requireSharedModule,
-  mockStsModule: mockStsModule
+  mockStsModule: mockStsModule,
+  // Exported for tests/krb5_codec_sync.js, which needs the same "where does
+  // the mock keep its modules now" answer for a whole DIRECTORY rather than
+  // for one file, and must not grow a second copy of the layout.
+  mockStsSearchDirs: mockStsSearchDirs,
+  findInMockSts: findInMockSts
 };
