@@ -26,6 +26,38 @@ init()
   # SAML: must match the client bundle's baked env (service DNS names).
   API_BASE_URL="${API_BASE_URL:-http://api:4000}"
   SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://client:3000/saml/sp}"
+  # THE api AND THE MOCK STS AS THIS CONTAINER REACHES THEM, and neither is
+  # API_BASE_URL above. That one is the SAML / WS-Federation variable — the
+  # address the identity provider is told to POST to, which common.sh registers
+  # on the Keycloak client — while API_URL and STS_URL are what the seven
+  # LDAP, SCIM and Kerberos-page jobs call THEMSELVES; run-report.js passes
+  # them per job and defaults them to a HOST's view, http://localhost:4000 and
+  # http://localhost:8081. Nothing set them here, and in this container those
+  # two addresses are this container.
+  #
+  # The cost was silence rather than failure, which is why it survived so long:
+  # api_ldap.js, ldap_page.js, scim_page.js, kerberos_as_page.js,
+  # kerberos_tgs_ap_page.js, kerberos_spnego_page.js and
+  # kerberos_delegation_page.js all treat an unreachable api or mock as "not
+  # this deployment" and SKIP with a reason, so every one of them reported PASS
+  # in about a tenth of a second on every containerized run — a browser test
+  # cannot start Chrome in that time, which is the tell. Only scim_protocol.js,
+  # which has no such fallback, failed and named the address.
+  #
+  # Both names resolve in this container AND in the api's, which matters
+  # because two of those jobs ask the api to reach the mock for them:
+  # SCIM_BASE_URL (http://sts:8081/scim/v2) and LDAP_URL (ldap://sts:389) are
+  # the API's view and run-report.js already defaults them to the compose name.
+  # Defaulted only for the containerized stack, like WSTRUST_STS_URL below: on
+  # any other target run-report.js's own localhost defaults are the right
+  # answer, and each of those jobs says for itself when there is no backend.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      API_URL="${API_URL:-http://api:4000}"
+      STS_URL="${STS_URL:-http://sts:8081}"
+      ;;
+  esac
+  export API_URL STS_URL
   # WS-Trust STS (mock) reachable by its compose DNS name on the test network.
   # Must match the client bundle's baked wstrustStsUrlDefault (docker-tests.js).
   #
