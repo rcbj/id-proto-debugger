@@ -559,9 +559,15 @@ async function theBrowserCreatesAndDeletes(driver) {
 async function theBackendPathAlsoWorks(driver) {
   log.debug("Entering theBackendPathAlsoWorks().");
   log.info("3. The same page, through the api.");
-  // ONE CONTROL, and it is a row of the configuration table: the Connection
-  // pane that used to hold a pair of radios was a second spelling of this
-  // setting, and two spellings of one setting can disagree.
+  // ONE CONTROL, and it is a row of the configuration table. The Connection
+  // pane that used to hold this choice was a second spelling of the setting,
+  // and two spellings of one setting can disagree — the duplication was the
+  // defect, not the radio. The row is a pair of radios again (FrontEnd /
+  // BackEnd, as on every other workflow here) and this test does not have to
+  // know: `radioPair()` defines `value` and `disabled` over the wrapper that
+  // carries the id, so `setField()` and the `.disabled` reads below work
+  // exactly as they did against a select. If either ever stops working, that
+  // wrapper is the first place to look.
   const backendEnabled = await driver.executeScript(`
     var e = document.getElementById('scim_cfg_callPath');
     return e ? !e.disabled : false;
@@ -1265,6 +1271,357 @@ async function theDiscoveryPaneHasBothViews(driver) {
 //     settings table that quietly became the fourth place a bearer token is
 //     written would defeat that opt-in without changing a word of it.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// 6e. THE THREE DOCUMENTS CONFIGURE THE WORKFLOW.
+//
+// The Configuration Parameters pane used to be a readout: it displayed what
+// ServiceProviderConfig, ResourceTypes and Schemas said, and all but the two
+// endpoint rows were inert — the tooltip admitted as much. Now every value the
+// three documents publish is a row, every row is editable, and the rows drive
+// what the page sends.
+//
+// WHAT IS WORTH ASSERTING IS THE LOOP, not the display. That a schema's
+// attribute appears in a table proves almost nothing; what proves the feature
+// is EDITING the row and watching the generated body change, because that is
+// the only thing that can tell a pane which configures the workflow from a
+// pane which describes it. So this drives the loop end to end:
+//
+//   read the documents → the rows exist → edit one → the body changes →
+//   Restore discovered values → the body changes back
+//
+// The negative half matters just as much and is checked here too: a row that
+// says the server cannot do something must NOT stop the request. That is the
+// rule the whole design rests on — this is a debugger, the most interesting
+// thing a SCIM server does is refuse something, and a page that refuses first
+// has replaced the server's own 400 with its own opinion.
+// ---------------------------------------------------------------------------
+async function theDocumentsConfigureTheWorkflow(driver) {
+  log.debug("Entering theDocumentsConfigureTheWorkflow().");
+  log.info("6e. The discovery documents drive the workflow.");
+  await driver.executeScript("return window.scim.readAllDiscovery();");
+  await driver.wait(async function () {
+    return await driver.executeScript(`
+      return document.querySelectorAll('.scim-config-fold').length > 0;
+    `);
+  }, 15000, 'the discovery documents produced no configuration groups');
+
+  const groups = await driver.executeScript(`
+    return Array.prototype.map.call(
+      document.querySelectorAll('.scim-config-fold'),
+      function (b) { return b.textContent.trim(); });
+  `);
+  check('every schema the server published has a group of rows', function () {
+    const schemas = groups.filter(function (one) {
+      return /Schema: /.test(one);
+    });
+    assert.ok(schemas.length >= 1,
+        'The Schemas document produced no schema group. Its groups are: ' +
+        groups.join(' | ') + '. Without them the attribute rows do not ' +
+        'exist, and the generator has nothing to be filtered through.');
+  });
+  check('and every authentication scheme it advertised has one too',
+      function () {
+    assert.ok(groups.some(function (one) {
+      return /Authentication scheme: /.test(one);
+    }), 'The ServiceProviderConfig advertised schemes and none became a ' +
+        'group. Groups: ' + groups.join(' | '));
+  });
+
+  // THE GENERATED GROUPS START FOLDED, which is what keeps a 126-row table
+  // usable, so the rows under one have to be asked for before they exist.
+  const opened = await driver.executeScript(`
+    var hit = null;
+    Array.prototype.forEach.call(
+      document.querySelectorAll('.scim-config-fold'), function (b) {
+        if (/Schema: User/.test(b.textContent)) { hit = b; }
+      });
+    if (!hit) { return { found: false }; }
+    if (hit.textContent.indexOf('▶') === 0) { hit.click(); }
+    return { found: true };
+  `);
+  check('the User schema group opens', function () {
+    assert.ok(opened.found, 'There is no group for the User schema.');
+  });
+
+  // The row for one attribute, and what it says.
+  const attrId = await driver.executeScript(`
+    var name = 'attr|' + document.getElementById('scim_cfg_userSchema').value +
+        '|nickName';
+    return 'scim_cfg_' + name.replace(/[^A-Za-z0-9_]+/g, '_');
+  `);
+  const spec = await driver.executeScript(
+      "var e = document.getElementById(arguments[0]); return e ? e.value : null;",
+      attrId);
+  if (spec === null) {
+    skip('the schema drives the generator',
+        'this server\'s User schema does not declare nickName, so there is ' +
+        'no row to edit. The loop below needs one attribute that both the ' +
+        'schema declares and the generator produces.');
+    log.debug("Leaving theDocumentsConfigureTheWorkflow(). No nickName.");
+    return;
+  }
+  check('an attribute row carries the characteristics it was given',
+      function () {
+    assert.ok(/type=/.test(spec) && /mutability=/.test(spec),
+        'The nickName row reads "' + spec + '". It is supposed to be the ' +
+        'attribute\'s characteristics as key=value pairs, which is what ' +
+        'parseAttributeSpec() reads back and the generator is filtered ' +
+        'through.');
+  });
+
+  // THE LOOP. Generate, drop the attribute from the schema, generate again.
+  await setField(driver, "scim_gen_count", "1");
+  const before = await driver.executeScript(`
+    window.scim.generateUsers();
+    var body = JSON.parse(document.getElementById('scim_gen_output').value);
+    return { nickName: body.nickName !== undefined,
+             externalId: body.externalId !== undefined,
+             schemas: body.schemas || [] };
+  `);
+  check('the generated body carries the attribute to begin with', function () {
+    assert.ok(before.nickName,
+        'The generator produced no nickName, so the next assertion could ' +
+        'not tell a working filter from a generator that never made one.');
+  });
+  check('and its schemas array is the CONFIGURED schema, not a constant',
+      function () {
+    assert.ok(before.schemas.length > 0,
+        'The generated body has an empty schemas array.');
+  });
+  check('externalId survives, because no schema declares it', function () {
+    // RFC 7643 section 3.1: id, externalId and meta are COMMON attributes and
+    // appear in no schema's attribute list. Filtering them out was the first
+    // thing this feature got wrong, and it is invisible unless asserted —
+    // externalId is the attribute a provisioning client most relies on and
+    // the one whose absence a server will not complain about.
+    assert.ok(before.externalId,
+        'externalId was filtered out of the generated body. It is a COMMON ' +
+        'attribute (RFC 7643 section 3.1) that no schema lists, so a filter ' +
+        'that drops what the schema does not name will drop it unless it is ' +
+        'exempted.');
+  });
+
+  const after = await driver.executeScript(`
+    var listId = 'schema|' +
+        document.getElementById('scim_cfg_userSchema').value + '|attributes';
+    var e = document.getElementById('scim_cfg_' +
+        listId.replace(/[^A-Za-z0-9_]+/g, '_'));
+    e.value = e.value.split(',').map(function (one) { return one.trim(); })
+      .filter(function (one) { return one !== 'nickName'; }).join(', ');
+    e.dispatchEvent(new Event('change', { bubbles: true }));
+    window.scim.generateUsers();
+    var body = JSON.parse(document.getElementById('scim_gen_output').value);
+    return { nickName: body.nickName !== undefined,
+             externalId: body.externalId !== undefined,
+             warnings: (document.getElementById('scim_config_warnings') || {})
+               .textContent || '' };
+  `);
+  check('removing an attribute from the row removes it from the body',
+      function () {
+    assert.strictEqual(after.nickName, false,
+        'nickName was taken out of the schema\'s attributes row and the ' +
+        'generator produced it anyway. The pane is describing the workflow ' +
+        'rather than configuring it, which is the whole thing this feature ' +
+        'is for.');
+    assert.ok(after.externalId,
+        'externalId disappeared when an unrelated attribute was removed.');
+  });
+  check('and the page SAYS what the configuration changed', function () {
+    assert.ok(/nickName/.test(after.warnings),
+        'The body lost an attribute and nothing on the page said so. The ' +
+        'notes under the preview are what stop a filtered body from looking ' +
+        'like a generator bug. Warnings: "' + after.warnings.slice(0, 200) +
+        '"');
+  });
+
+  // A capability row WARNS and does not refuse — the rule the design rests on.
+  const warned = await driver.executeScript(`
+    var e = document.getElementById('scim_cfg_filterSupported');
+    e.value = 'no';
+    e.dispatchEvent(new Event('change', { bubbles: true }));
+    var op = document.getElementById('scim_op');
+    op.value = 'listUsers';
+    op.dispatchEvent(new Event('change', { bubbles: true }));
+    var f = document.getElementById('scim_query_filter');
+    f.value = 'userName eq "someone"';
+    f.dispatchEvent(new Event('input', { bubbles: true }));
+    return {
+      warnings: (document.getElementById('scim_config_warnings') || {})
+        .textContent || '',
+      preview: (document.getElementById('scim_op_preview') || {})
+        .textContent || '',
+      sendDisabled: !!document.getElementById('btn_scim_send').disabled
+    };
+  `);
+  check('a capability row that says no produces a warning', function () {
+    assert.ok(/filter\.supported says no/.test(warned.warnings),
+        'filter.supported was set to no with a filter in the query and the ' +
+        'page said nothing. Warnings: "' + warned.warnings.slice(0, 200) + '"');
+  });
+  check('and it does NOT stop the request', function () {
+    assert.strictEqual(warned.sendDisabled, false,
+        'The Send button was disabled because a configuration row said the ' +
+        'server does not support filtering. It must not be: this is a ' +
+        'debugger, and watching a server refuse something is the test case. ' +
+        'A page that refuses first has replaced the server\'s 400 with its ' +
+        'own opinion.');
+    assert.ok(/filter=/.test(warned.preview) ||
+        /userName/.test(warned.preview),
+        'The filter was dropped from the request the page says it will ' +
+        'send. A row warns; it does not edit the request out from under the ' +
+        'reader. Preview: "' + warned.preview + '"');
+  });
+
+  // THE PANE SAYS THAT IT SCROLLS. This is here because the alternative was
+  // reported as a bug: a 520px box with `overflow-y: auto` and a flat bottom
+  // edge looks exactly like a table that ENDS there, so rows below the fold
+  // read as settings the pane does not have. Asserted by the computed opacity
+  // of the fades rather than by their presence, because both elements are
+  // always in the document and it is the opacity that carries the meaning.
+  const cues = await driver.executeScript(`
+    var box = document.getElementById('scim_config_scroll');
+    var wrap = document.getElementById('scim_config_scrollwrap');
+    function opacity(sel) {
+      return getComputedStyle(document.querySelector(sel)).opacity;
+    }
+    box.scrollTop = 0;
+    box.dispatchEvent(new Event('scroll'));
+    var top = { above: opacity('.scim-config-cue-top'),
+                below: opacity('.scim-config-cue-bottom') };
+    box.scrollTop = box.scrollHeight;
+    box.dispatchEvent(new Event('scroll'));
+    var end = { above: opacity('.scim-config-cue-top'),
+                below: opacity('.scim-config-cue-bottom') };
+    box.scrollTop = 0;
+    box.dispatchEvent(new Event('scroll'));
+    return { top: top, end: end,
+             overflows: box.scrollHeight > box.clientHeight + 1,
+             count: (document.getElementById('scim_config_count') || {})
+               .textContent || '' };
+  `);
+  check('the pane says how many parameters it holds', function () {
+    assert.ok(/\d+ parameters/.test(cues.count),
+        'The count above the configuration table reads "' + cues.count +
+        '". It is the only cue that survives a screenshot and the only one ' +
+        'that says how much is below the fold.');
+    assert.ok(/scrolls/.test(cues.count),
+        'The count does not say that the table scrolls. It reads "' +
+        cues.count + '".');
+  });
+  if (!cues.overflows) {
+    skip('the scroll cues',
+        'the configuration table fits its box on this run, so there is ' +
+        'nothing below the fold to point at.');
+  } else {
+    check('and a fade points the way to the rows off screen', function () {
+      assert.strictEqual(cues.top.below, '1',
+          'At the top of the table the bottom fade is not shown, so nothing ' +
+          'says there are more rows below. That is the confusion this cue ' +
+          'exists for: the rows do not look out of reach, they look absent.');
+      assert.strictEqual(cues.top.above, '0',
+          'The top fade is shown while the table is scrolled to the top, ' +
+          'promising rows above that are not there.');
+      assert.strictEqual(cues.end.above, '1',
+          'At the end of the table the top fade is not shown.');
+      assert.strictEqual(cues.end.below, '0',
+          'At the END of the table the bottom fade is still shown, so it ' +
+          'goes on promising content that is not there — which is worse ' +
+          'than no fade, because it is a cue that cannot be trusted.');
+    });
+  }
+
+  // Put the server's own answers back, so the sections after this one run
+  // against a pane that says what the server said.
+  await driver.executeScript("return window.scim.restoreDiscovered();");
+  const restored = await driver.executeScript(`
+    window.scim.generateUsers();
+    var body = JSON.parse(document.getElementById('scim_gen_output').value);
+    return { nickName: body.nickName !== undefined,
+             filter: document.getElementById('scim_cfg_filterSupported').value };
+  `);
+  check('Restore discovered values undoes all of it', function () {
+    assert.ok(restored.nickName,
+        'After Restore the generator still leaves nickName out, so an edit ' +
+        'to a dynamic row survives the restore that exists to undo it.');
+    assert.notStrictEqual(restored.filter, 'no',
+        'filter.supported is still "no" after Restore.');
+  });
+  log.debug("Leaving theDocumentsConfigureTheWorkflow().");
+}
+
+// ---------------------------------------------------------------------------
+// THE SERVICE ROOT SITS WITH THE BUTTONS THAT USE IT.
+//
+// It is the one setting that was owned by the configuration table and is not
+// any more: its box is on the Discovery line, because a URL and the three
+// buttons that fetch from it, a screen apart, is the arrangement this page was
+// awkward about. Three things have to hold at once and each fails differently:
+//
+//   * ONE element with that id, still. This is the same rule the `outside`
+//     check keeps for the owned rows, and it matters more here rather than
+//     less: the table now builds a control for this row too, and if that
+//     control ever took the field's own id again there would be two boxes for
+//     the service root with `getElementById` silently answering with the
+//     table's. Counted with querySelectorAll for exactly that reason.
+//   * IN THE DISCOVERY PANE. A box that is technically present but back in the
+//     table would pass a count and defeat the point of the move.
+//   * ON ONE LINE with all three buttons — asserted by GEOMETRY, because
+//     `.scim-buttons` wraps by default and a wrapped row keeps every class it
+//     had. Comparing vertical centres rather than `top` is deliberate: the
+//     buttons are taller than the box, so their tops legitimately differ by a
+//     few pixels while the row is still one line.
+// ---------------------------------------------------------------------------
+async function theServiceRootSitsWithItsButtons(driver) {
+  log.debug("Entering theServiceRootSitsWithItsButtons().");
+  const line = await driver.executeScript(`
+    var out = { count: 0, inDiscovery: false, buttons: 0, spread: -1 };
+    out.count = document.querySelectorAll('[id="scim_base_url"]').length;
+    var field = document.getElementById('scim_base_url');
+    var pane = document.getElementById('pane_discovery');
+    out.inDiscovery = !!(field && pane && pane.contains(field));
+    var row = document.querySelector('.scim-discovery-line');
+    if (!row) { return out; }
+    var kids = Array.prototype.slice.call(row.children);
+    out.buttons = kids.filter(function (k) {
+      return k.className.indexOf('scim-btn') >= 0;
+    }).length;
+    var centres = kids.map(function (k) {
+      var box = k.getBoundingClientRect();
+      return box.top + box.height / 2;
+    });
+    out.spread = centres.length
+      ? Math.max.apply(null, centres) - Math.min.apply(null, centres) : -1;
+    return out;
+  `);
+  check('there is exactly one service-root box', function () {
+    assert.strictEqual(line.count, 1,
+        'The page has ' + line.count + ' elements with id scim_base_url. ' +
+        'Two is the failure the owned/mirror rule exists to prevent, and it ' +
+        'is invisible from the page: getElementById answers with whichever ' +
+        'comes first in document order and the other box silently does ' +
+        'nothing.');
+  });
+  check('and it is in the Discovery pane, not the configuration table',
+      function () {
+    assert.ok(line.inDiscovery,
+        'The service root is not inside #pane_discovery. It belongs on the ' +
+        'line with the three buttons that compose paths onto it.');
+  });
+  check('and it shares one line with all three discovery buttons',
+      function () {
+    assert.strictEqual(line.buttons, 3,
+        'The discovery line holds ' + line.buttons + ' buttons rather than ' +
+        'three. A button that moved out of this row is a button that is no ' +
+        'longer beside the URL it reads from.');
+    assert.ok(line.spread >= 0 && line.spread < 6,
+        'The discovery line has wrapped: its children\'s vertical centres ' +
+        'are ' + Math.round(line.spread) + 'px apart. .scim-buttons wraps by ' +
+        'default and a wrapped row keeps every class it had, so this is ' +
+        'asserted by geometry rather than by class.');
+  });
+  log.debug("Leaving theServiceRootSitsWithItsButtons().");
+}
+
 async function theConfigurationPaneCentralizesTheSettings(driver) {
   log.debug("Entering theConfigurationPaneCentralizesTheSettings().");
   log.info("6d. The Configuration Parameters pane.");
@@ -1273,9 +1630,17 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
   // own id, a MIRROR of a field still in a pane of its own carries a generated
   // one, and so does a discovered row. The counting is the half that matters —
   // see the note in the probe below.
+  //
+  // `baseUrl` IS THE MIRROR TO WATCH. Its box was owned by this table and now
+  // lives on the Discovery line, beside the three buttons that compose paths
+  // onto it, so the table's control is `scim_cfg_baseUrl` and the field itself
+  // is `scim_base_url` in the Discovery pane. Asserting the OLD id here would
+  // now fail; asserting only the new one would not notice the field going
+  // missing altogether, which is why theServiceRootSitsWithItsButtons() below
+  // checks the other end and the duplicate rule covers the middle.
   const present = await driver.executeScript(`
     var out = { rows: [], missing: [], outside: [] };
-    var wanted = ['scim_base_url', 'scim_ssl_validate', 'scim_cfg_callPath',
+    var wanted = ['scim_cfg_baseUrl', 'scim_ssl_validate', 'scim_cfg_callPath',
                   'scim_auth_scheme', 'scim_auth_username', 'scim_auth_realm',
                   'scim_hoba_username', 'scim_cfg_userEndpoint',
                   'scim_cfg_groupEndpoint', 'scim_cfg_patchSupported',
@@ -1323,6 +1688,7 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
         'invisibly, because getElementById would go on returning the one in ' +
         'the table.');
   });
+  await theServiceRootSitsWithItsButtons(driver);
   const gone = await driver.executeScript(`
     var out = [];
     ['pane_connection', 'pane_auth', 'connection_fieldset', 'auth_fieldset',
@@ -2622,6 +2988,7 @@ async function test() {
     await aNegativeScenarioFinishesGreen(driver);
     await theDiscoveryPaneHasBothViews(driver);
     await theConfigurationPaneCentralizesTheSettings(driver);
+    await theDocumentsConfigureTheWorkflow(driver);
     await credentialsAreNotRemembered(driver);
     await theExchangePaneShowsHeadersAndStaysInside(driver);
     await thePanesCollapseAndOneSwitchDoesThemAll(driver);

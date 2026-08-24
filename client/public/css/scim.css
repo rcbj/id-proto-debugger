@@ -152,6 +152,16 @@ textarea.scim-field {
   margin: 0;
 }
 
+/* The wrapper radioPair() builds. It carries the row's id and the two radios
+   sit inside it, so it has to lay them out on one line and take only the width
+   it needs — a configuration cell is narrow and `.scim-field`'s 100% would
+   stretch this across it. */
+.scim-radio-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .scim-check {
   font-size: 12px;
   font-weight: normal;
@@ -176,6 +186,45 @@ textarea.scim-field {
   flex-wrap: wrap;
   margin: 8px 0 4px;
   align-items: center;
+}
+
+/* THE DISCOVERY LINE — the service root and the three buttons that read from
+   it, on ONE row.
+
+   .scim-buttons above wraps, which is right everywhere else on this page: a
+   row of buttons that runs out of width should go to a second line rather than
+   squeeze. Here it is wrong, because wrapping puts the box on its own line and
+   the arrangement is then the one that was just moved away from. So this row
+   does not wrap, and the give has to come from somewhere: it comes from the
+   box, which shrinks, and never from the buttons, whose labels are the names
+   of the three documents (ServiceProviderConfig is the long one) and are
+   unreadable clipped.
+
+   The label keeps its bold weight but loses the block display and the top
+   margin that space it in a grid — both of them push it off the line here. */
+.scim-discovery-line {
+  flex-wrap: nowrap;
+}
+
+.scim-discovery-line .scim-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.scim-discovery-line .tooltip {
+  flex: 0 0 auto;
+}
+
+.scim-discovery-line .scim-label {
+  display: inline;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.scim-discovery-line input.scim-field {
+  flex: 1 1 10em;
+  min-width: 6em;
+  margin-bottom: 0;
 }
 
 .scim-btn {
@@ -208,6 +257,23 @@ textarea.scim-field {
 }
 
 .scim-grow { flex: 1 1 320px; min-width: 220px; }
+
+/* The configuration's warnings about the request about to be sent. Amber and
+   not red on purpose: none of these is an error, and several are expected —
+   sending something a server said it does not support is a legitimate and
+   common thing to do here. Red would train the reader to ignore them. */
+.scim-config-warnings {
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border-left: 3px solid #c8a200;
+  background: #fffbe8;
+  font-size: 12px;
+}
+
+.scim-config-warning {
+  margin: 2px 0;
+  color: #6b5200;
+}
 
 .scim-ok { color: #2e7d32; }
 .scim-bad { color: #b00; }
@@ -671,6 +737,66 @@ textarea.scim-box-tall {
   border: 1px solid #e0e0e6;
 }
 
+/* THAT THE BOX ABOVE SCROLLS HAS TO BE VISIBLE, and this is the fix for a real
+   confusion rather than a decoration. A 520px box with `overflow-y: auto` and a
+   flat bottom edge looks exactly like a table that ENDS there — the rows below
+   the fold are not merely hard to reach, they are invisible in a way that reads
+   as "this pane does not have that setting". That was reported as a missing
+   feature, and the same edge fooled the author of this comment while looking at
+   a screenshot of it.
+
+   Two cues, because one of them is not enough on its own:
+
+     * the count above the box, which says how many parameters there ARE. It is
+       the only one of the two that survives a screenshot, and the only one that
+       tells you the size of what you are missing;
+     * the fades, which say WHICH WAY there is more. They appear only when
+       there is actually something in that direction, so a table short enough
+       to fit shows neither and nothing is ever hinted at that is not there.
+
+   The fades are overlays rather than a background on the scroll box, because
+   the table's own group headings and header row have opaque backgrounds and
+   would paint straight over a background gradient. */
+.scim-config-scrollwrap {
+  position: relative;
+}
+
+.scim-config-cue {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  height: 24px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.scim-config-cue-top {
+  top: 1px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0));
+  border-top: 1px solid #c9c9d4;
+}
+
+.scim-config-cue-bottom {
+  bottom: 1px;
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0));
+  border-bottom: 1px solid #c9c9d4;
+}
+
+.scim-config-scrollwrap.scim-more-above .scim-config-cue-top,
+.scim-config-scrollwrap.scim-more-below .scim-config-cue-bottom {
+  opacity: 1;
+}
+
+.scim-config-count {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  color: #555;
+}
+
+.scim-config-count strong { color: #333; }
+
 .scim-config-table {
   width: 100%;
   table-layout: fixed;
@@ -688,6 +814,26 @@ textarea.scim-box-tall {
 }
 
 .scim-config-table th { background: #f0f0f5; }
+
+/* A generated group's heading is a button so it can be reached from the
+   keyboard — every row it folds away is an editable setting, so a fold only a
+   mouse can open would hide settings from anybody not using one. It is styled
+   back down to look like the heading it replaced. */
+.scim-config-fold {
+  all: unset;
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.scim-config-fold:hover { text-decoration: underline; }
+
+.scim-config-fold:focus-visible {
+  outline: 2px solid #2b6cb0;
+  outline-offset: -2px;
+}
 
 .scim-config-group td {
   background: #f6f6fa;

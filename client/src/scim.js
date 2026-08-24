@@ -521,16 +521,25 @@ function wireExpanders() {
 // WHICH WAY THE CALL GOES.
 //
 // ONE CONTROL, and it is the `callPath` row of the configuration table. It was
-// a pair of radio buttons in a Connection pane of its own and a row in the
+// a pair of radio buttons in a Connection pane of its own AND a row in the
 // table that reflected them, which is two spellings of one setting: the row is
 // now the setting itself.
+//
+// IT IS A PAIR OF RADIOS AGAIN, and that is not a return to the pane. What was
+// wrong before was the DUPLICATION — two controls, in two places, for one
+// setting — and not the radio, which is how every other workflow in this
+// debugger asks this same question (introspection.html, userinfo.html,
+// oauth2_oidc_2.html: "Initiate ... From front or backend", Front and Back).
+// The labels here are FrontEnd and BackEnd to match them. There is one control
+// and it is in the table; `radioPair()` is what keeps that true while the
+// thing on screen is two `<input type="radio">` elements.
 //
 // The preference and the path IN FORCE are deliberately different things.
 // `configValues.callPath` is what the reader asked for and is remembered;
 // `callVia()` is what will actually happen, because two schemes force the
-// browser and a build with no api behind it has no choice at all. The select
-// shows the second — a page that let somebody select "through the api" with a
-// cookie scheme would send a request with no cookie and report the 401 as the
+// browser and a build with no api behind it has no choice at all. The control
+// shows the second — a page that let somebody select BackEnd with a cookie
+// scheme would send a request with no cookie and report the 401 as the
 // server's fault.
 // ---------------------------------------------------------------------------
 function callVia() {
@@ -552,7 +561,7 @@ function callVia() {
 function refreshCallPathControls() {
   log.debug("Entering refreshCallPathControls().");
   var scheme = scimClient.authScheme(val('scim_auth_scheme'));
-  var pathSelect = el('scim_cfg_callPath');
+  var pathControl = el('scim_cfg_callPath');
   var reason = '';
   if (!BACKEND_AVAILABLE) {
     reason = 'This build has no api behind it, so every call is made by this ' +
@@ -564,11 +573,12 @@ function refreshCallPathControls() {
         scheme.what.split('.')[0] + '. The call path is fixed to this ' +
         'browser while it is selected.';
   }
-  if (pathSelect) {
+  if (pathControl) {
     // Disabled rather than removed, and the PREFERENCE underneath is left
     // alone: a scheme selected for one call must not silently throw away a
     // call path chosen for the next one. Changing the scheme back restores it.
-    pathSelect.disabled = !!reason;
+    // `disabled` on the wrapper reaches both radios — see radioPair().
+    pathControl.disabled = !!reason;
   }
   setText('scim_call_path_note', reason);
   show('scim_call_path_note', !!reason);
@@ -595,16 +605,26 @@ function refreshCallPathControls() {
 // design:
 //
 //   * an OWNED field (`field` with `owns`). The row IS the control:
-//     `configInput()` gives it the field's own id, so `scim_base_url` and
-//     `scim_auth_scheme` are elements of this table and of nothing else. That
+//     `configInput()` gives it the field's own id, so `scim_auth_scheme` and
+//     `scim_auth_username` are elements of this table and of nothing else. That
 //     is a change from the first cut of this page, where the row mirrored a
 //     field in a Connection or an Authentication pane — one setting spelled
 //     twice, in two panes that could disagree about it. There is now nothing
 //     to mirror.
 //   * a MIRROR of a field in a pane that is still here (`field` WITHOUT
-//     `owns`) — the generator's four and the scenario planner's three, which
-//     belong beside the buttons that use them. The field is the value; this
-//     row reads and writes it, in both directions.
+//     `owns`) — the generator's four, the scenario planner's three, and THE
+//     SERVICE ROOT, which belong beside the buttons that use them. The field
+//     is the value; this row reads and writes it, in both directions.
+//
+//     `baseUrl` is the one that was owned and became a mirror, so it is worth
+//     saying what did and did not change. What moved is the BOX: it is on the
+//     Discovery line now, with the three buttons that compose paths onto it,
+//     because a URL a screen away from the buttons that fetch from it is the
+//     thing this page was awkward about. What did not change is that there is
+//     exactly one of it. A mirror is not the deleted Connection pane, which
+//     held a SECOND field that could hold a different string; here an edit in
+//     either place is a write to the one element and a read back into the
+//     other.
 //
 //     **`owns` IS NOT OPTIONAL ON THE FIRST KIND AND MUST NOT BE ADDED TO THE
 //     SECOND.** `configControlId()` gives an owned row the field's own id, so
@@ -669,30 +689,41 @@ var RT = 'ResourceTypes';
 
 var CONFIG_PARAMS = [
   { group: 'Connection' },
-  { name: 'baseUrl', label: 'baseUrl', field: 'scim_base_url', owns: true,
+  // A MIRROR, not an owned row: the box is authored in the Discovery pane,
+  // beside the buttons that read from it. See the note above on the two kinds,
+  // and the top-row comment in client/public/scim.html.
+  { name: 'baseUrl', label: 'baseUrl', field: 'scim_base_url',
     source: 'you', placeholder: 'http://localhost:8081/scim/v2',
-    wire: wireBaseUrl, applied: true,
+    applied: true,
     what: 'The SCIM service root every path is composed against — the host ' +
         'plus the SCIM base path, which is /scim/v2 on essentially every ' +
         'implementation. ACTED ON: every request on this page is composed ' +
         'onto it, and changing it makes this page ask the server what it ' +
         'accepts. Do NOT put a resource path here; /Users and the rest are ' +
-        'built onto it.' },
+        'built onto it. The BOX is in the Discovery pane, on the line with ' +
+        'the three buttons; this row reads and writes it.' },
   { name: 'sslValidate', label: 'sslValidate', field: 'scim_ssl_validate',
     owns: true, source: 'you', kind: 'select',
     options: [['true', 'validate'], ['false', 'do not validate']],
     what: 'Applies to the api call path only. A browser decides this for ' +
         'itself and cannot be told otherwise, so switching it off changes ' +
         'nothing about a browser-direct call.' },
-  { name: 'callPath', label: 'callPath', source: 'you', kind: 'select',
-    options: [['browser', 'from this browser'], ['api', 'through the api']],
-    what: 'Which way a request goes. From this browser is a fetch() off ' +
-        'this page and is the only path the hosted site has; through the api ' +
-        'exists for the three things a browser cannot do — reach a server ' +
-        'with no CORS headers, reach one with a self-signed certificate, and ' +
-        'show every header each way. Two schemes — session cookie and TLS ' +
-        'client certificate — force the browser, and this row then shows ' +
-        'what is IN FORCE rather than what was last chosen.' },
+  // A RADIO PAIR, and the labels are FrontEnd / BackEnd because that is what
+  // this same choice is called on every other workflow in this debugger —
+  // introspection.html, userinfo.html and oauth2_oidc_2.html all offer
+  // "Initiate ... From front or backend" as two radios. The values underneath
+  // are unchanged (`browser` / `api`): they are what `callVia()` returns, what
+  // `configValues.callPath` remembers and what three tests assert on, and
+  // renaming them would have been a rename of the mechanism to match a label.
+  { name: 'callPath', label: 'callPath', source: 'you', kind: 'radio',
+    options: [['browser', 'FrontEnd'], ['api', 'BackEnd']],
+    what: 'Which way a request goes. FrontEnd is a fetch() off this page and ' +
+        'is the only path the hosted site has; BackEnd goes through the api ' +
+        'component, which exists for the three things a browser cannot do — ' +
+        'reach a server with no CORS headers, reach one with a self-signed ' +
+        'certificate, and show every header each way. Two schemes — session ' +
+        'cookie and TLS client certificate — force FrontEnd, and this row ' +
+        'then shows what is IN FORCE rather than what was last chosen.' },
 
   { group: 'Authentication' },
   { name: 'authScheme', label: 'authScheme', field: 'scim_auth_scheme',
@@ -767,39 +798,44 @@ var CONFIG_PARAMS = [
     what: 'Every schema this server publishes. This is the document that ' +
         'says whether a field you sent was ever going to be stored.' },
 
+  // Every resource type the document named that is NOT User or Group. Those
+  // two keep the four fixed rows above, because everything on this page reads
+  // them by those names.
+  { dynamic: 'resourceTypes' },
+
   { group: 'Capabilities (RFC 7644 section 5)' },
-  { name: 'patchSupported', label: 'patch.supported', discovered: true,
+  { name: 'patchSupported', label: 'patch.supported', discovered: true, warns: true,
     source: SPC,
     what: 'Whether PATCH works at all. Without it every change is a PUT, ' +
         'which REPLACES the resource — and a PUT that omits an attribute ' +
         'the server holds usually clears it.' },
-  { name: 'bulkSupported', label: 'bulk.supported', discovered: true,
+  { name: 'bulkSupported', label: 'bulk.supported', discovered: true, warns: true,
     source: SPC,
     what: 'Whether many operations may be sent in one request.' },
-  { name: 'bulkMaxOperations', label: 'bulk.maxOperations', discovered: true,
+  { name: 'bulkMaxOperations', label: 'bulk.maxOperations', discovered: true, warns: true,
     source: SPC,
     what: 'The most operations one BulkRequest may carry. A bulk scenario ' +
         'larger than this is refused as a whole, not truncated.' },
   { name: 'bulkMaxPayloadSize', label: 'bulk.maxPayloadSize',
     discovered: true, source: SPC,
     what: 'The byte ceiling on a BulkRequest.' },
-  { name: 'filterSupported', label: 'filter.supported', discovered: true,
+  { name: 'filterSupported', label: 'filter.supported', discovered: true, warns: true,
     source: SPC,
     what: 'ONE boolean for fourteen operators, which is why the filter-tour ' +
         'scenario exists: this says nothing about which of them work.' },
-  { name: 'filterMaxResults', label: 'filter.maxResults', discovered: true,
+  { name: 'filterMaxResults', label: 'filter.maxResults', discovered: true, warns: true,
     source: SPC,
     what: 'The most resources a filtered query will return, whatever count ' +
         'asked for.' },
-  { name: 'sortSupported', label: 'sort.supported', discovered: true,
+  { name: 'sortSupported', label: 'sort.supported', discovered: true, warns: true,
     source: SPC, what: 'Whether sortBy and sortOrder are honoured.' },
-  { name: 'etagSupported', label: 'etag.supported', discovered: true,
+  { name: 'etagSupported', label: 'etag.supported', discovered: true, applied: true,
     source: SPC,
     what: 'Optimistic concurrency. A server that says false here and sends ' +
         'an ETag anyway is worse than one with none, because a client would ' +
         'trust it.' },
   { name: 'changePasswordSupported', label: 'changePassword.supported',
-    discovered: true, source: SPC,
+    discovered: true, warns: true, source: SPC,
     what: 'Whether a password can be set through SCIM at all.' },
   { name: 'authenticationSchemes', label: 'authenticationSchemes',
     discovered: true, source: SPC,
@@ -808,6 +844,22 @@ var CONFIG_PARAMS = [
         'different thing from the member being absent.' },
   { name: 'documentationUri', label: 'documentationUri', discovered: true,
     source: SPC, what: 'Where the server says its own documentation is.' },
+  { name: 'spcSchemas', label: 'meta.schemas', discovered: true, source: SPC,
+    what: 'The document\'s own schema URN. A ServiceProviderConfig that does ' +
+        'not name the ServiceProviderConfig schema is the first sign that ' +
+        'the service root is pointing at something else.' },
+  { name: 'spcLocation', label: 'meta.location', discovered: true, source: SPC,
+    what: 'Where the SERVER says this document lives. Worth comparing ' +
+        'against the baseUrl it was composed onto: the commonest cause of a ' +
+        'discovery that reads the wrong thing is a service root with a ' +
+        'resource path already on the end of it.' },
+
+  // Every scheme the ServiceProviderConfig advertised, in full.
+  { dynamic: 'authSchemes' },
+
+  // One group per schema the Schemas document published, and a row per
+  // attribute inside it. These are what the generator is filtered through.
+  { dynamic: 'schemas' },
 
   { group: 'Data generation' },
   { name: 'genSeed', label: 'genSeed', field: 'scim_gen_seed', source: 'you',
@@ -846,15 +898,281 @@ var CONFIG_BY_NAME = (function () {
   return index;
 })();
 
+// ---------------------------------------------------------------------------
+// THE ROWS THAT ONLY EXIST BECAUSE A SERVER SAID SO.
+//
+// ServiceProviderConfig has a fixed shape and its rows are written out above.
+// The other two documents do not: a server publishes as many resource types
+// and as many schemas as it likes, each schema with as many attributes as it
+// likes, and every one of those is a configuration parameter in the sense this
+// pane means — a value that decides what this page sends. So they cannot be a
+// static list, and they are built from what was actually read.
+//
+// THE NAME IS THE WHOLE ROW. A dynamic row carries no state anywhere: its name
+// says what it is, `dynamicRowFor()` turns the name back into a row object, and
+// `allConfigParams()` finds the names by scanning the two value stores. That is
+// why there is no registry to keep in step, nothing to rebuild when a discovery
+// lands, and nothing extra to persist — `configValues` and `discoveredValues`
+// are keyed by name and were already written to localStorage, so the rows come
+// back on a reload for free. The alternative was a parallel store of row
+// definitions, which is a second thing to keep in step with the first.
+//
+// The grammar, with a separator that cannot occur in a SCIM attribute name and
+// does not occur in a schema URN:
+//
+//   type|<typeName>|endpoint        where that resource type answers
+//   type|<typeName>|schema          its schema URN
+//   type|<typeName>|extensions      its extension URNs
+//   type|<typeName>|description     what the server calls it
+//   schema|<schemaId>|name          the schema's own name
+//   schema|<schemaId>|description
+//   schema|<schemaId>|attributes    the attribute names, IN ORDER
+//   attr|<schemaId>|<attributeName> one attribute's characteristics
+//
+// `schema|…|attributes` is load-bearing rather than decorative: it is both the
+// membership and the ORDER of the attribute rows, so deleting a name from it
+// removes that attribute from the generated body, and the row it names stops
+// being drawn. Editing that one row is how a reader says "this server does not
+// really have that attribute, whatever its Schemas document claims".
+// ---------------------------------------------------------------------------
+var DYN = '|';
+
+// Every name either store knows about, so a row survives a reload and an
+// override of a row whose document has not been re-read still appears.
+function discoveredRowNames() {
+  var seen = {};
+  [discoveredValues, configValues].forEach(function (store) {
+    Object.keys(store || {}).forEach(function (name) {
+      seen[name] = true;
+    });
+  });
+  return Object.keys(seen);
+}
+
+// The distinct middle segment of `<kind>|<middle>|<leaf>` names.
+function dynamicSubjects(kind) {
+  var seen = {};
+  var out = [];
+  discoveredRowNames().forEach(function (name) {
+    var parts = splitDynamicName(name);
+    if (parts && parts.kind === kind && !seen[parts.subject]) {
+      seen[parts.subject] = true;
+      out.push(parts.subject);
+    }
+  });
+  out.sort();
+  return out;
+}
+
+// `<kind>|<subject>|<leaf>`, where the SUBJECT may itself contain anything
+// except the separator — a schema URN has colons in it and an attribute name
+// does not, so splitting on the first and last separator is what keeps both
+// whole.
+function splitDynamicName(name) {
+  var first = String(name).indexOf(DYN);
+  var last = String(name).lastIndexOf(DYN);
+  if (first < 1 || last <= first) {
+    return null;
+  }
+  return {
+    kind: name.slice(0, first),
+    subject: name.slice(first + 1, last),
+    leaf: name.slice(last + 1)
+  };
+}
+
+function dynamicName(kind, subject, leaf) {
+  return kind + DYN + subject + DYN + leaf;
+}
+
+// What one dynamic row IS, worked out from its name alone.
+//
+// Every one of them is `discovered` — it came out of a document — and every one
+// is editable, which is the point: a reader who knows the server's Schemas
+// document is wrong about an attribute edits the row and the generator follows
+// the row.
+function dynamicRowFor(name) {
+  var parts = splitDynamicName(name);
+  if (!parts) {
+    return null;
+  }
+  var row = { name: name, discovered: true, dynamicKind: parts.kind,
+    subject: parts.subject, leaf: parts.leaf };
+  if (parts.kind === 'type') {
+    row.label = parts.leaf;
+    row.source = RT;
+    row.applied = (parts.leaf === 'endpoint');
+    row.what = TYPE_ROW_WHAT[parts.leaf] || 'From this resource type\'s entry ' +
+        'in the ResourceTypes document.';
+    return row;
+  }
+  if (parts.kind === 'schema') {
+    row.label = parts.leaf;
+    row.source = 'Schemas';
+    row.applied = (parts.leaf === 'attributes');
+    row.what = SCHEMA_ROW_WHAT[parts.leaf] || 'From this schema\'s entry in ' +
+        'the Schemas document.';
+    return row;
+  }
+  if (parts.kind === 'authscheme') {
+    row.label = parts.leaf;
+    row.source = SPC;
+    // `type` is the member that acts — and it is the SUBJECT here, not a leaf,
+    // so no row of this group is `applied`. The joined `authenticationSchemes`
+    // row above is what orders the scheme select.
+    row.what = 'From this authentication scheme\'s entry in the ' +
+        'ServiceProviderConfig. Shown so that a reader can decide whether a ' +
+        'scheme is worth trying; which scheme is SENT is the authScheme row.';
+    return row;
+  }
+  if (parts.kind === 'attr') {
+    row.label = parts.leaf;
+    row.source = 'Schemas';
+    row.applied = true;
+    row.what = 'The characteristics of the ' + parts.leaf + ' attribute, as ' +
+        'the Schemas document gave them. ACTED ON: the generator is filtered ' +
+        'through this row — a readOnly or immutable attribute is not sent, a ' +
+        'canonical list is what a generated type is chosen from, multiValued ' +
+        'decides whether a value is wrapped in an array, and required means ' +
+        'the attribute is put back if the generator left it out. Editing ' +
+        'this row changes what the next generated body contains.';
+    return row;
+  }
+  return null;
+}
+
+var TYPE_ROW_WHAT = {
+  endpoint: 'Where this resource type answers, relative to the service root. ' +
+      'ACTED ON: an operation against this type is composed onto it.',
+  schema: 'The URN of this type\'s own schema.',
+  extensions: 'The schema extensions this type carries, and whether each is ' +
+      'required.',
+  description: 'What the server calls this type.'
+};
+
+var SCHEMA_ROW_WHAT = {
+  name: 'What the server calls this schema.',
+  description: 'The schema\'s own description.',
+  attributes: 'Every attribute this schema declares, IN ORDER. ACTED ON, and ' +
+      'in two ways: it is the membership of the attribute rows below — a name ' +
+      'removed from here stops being a row — and it is what the generator is ' +
+      'allowed to emit for this schema. Removing a name is how you say the ' +
+      'server does not really have that attribute.'
+};
+
+// The static rows with the dynamic ones expanded in place. Everything that
+// walks the table walks THIS, which is why the expansion is one function
+// rather than a splice at each call site.
+function allConfigParams() {
+  var out = [];
+  CONFIG_PARAMS.forEach(function (row) {
+    if (row.dynamic) {
+      expandDynamic(row.dynamic).forEach(function (extra) {
+        out.push(extra);
+      });
+      return;
+    }
+    out.push(row);
+  });
+  return out;
+}
+
+function expandDynamic(kind) {
+  log.debug("Entering expandDynamic(). " + kind);
+  var out = [];
+  if (kind === 'resourceTypes') {
+    dynamicSubjects('type').forEach(function (typeName) {
+      out.push({ group: 'Resource type: ' + typeName });
+      ['endpoint', 'schema', 'extensions', 'description'].forEach(
+        function (leaf) {
+          var name = dynamicName('type', typeName, leaf);
+          if (hasDiscoveredName(name)) {
+            out.push(dynamicRowFor(name));
+          }
+        });
+    });
+  }
+  if (kind === 'authSchemes') {
+    dynamicSubjects('authscheme').forEach(function (type) {
+      out.push({ group: 'Authentication scheme: ' + type });
+      ['name', 'description', 'specUri', 'documentationUri', 'primary']
+        .forEach(function (leaf) {
+          var name = dynamicName('authscheme', type, leaf);
+          if (hasDiscoveredName(name)) {
+            out.push(dynamicRowFor(name));
+          }
+        });
+    });
+  }
+  if (kind === 'schemas') {
+    dynamicSubjects('schema').forEach(function (schemaId) {
+      var label = configValues[dynamicName('schema', schemaId, 'name')] || '';
+      out.push({ group: 'Schema: ' + (label ? label + ' — ' : '') + schemaId });
+      ['name', 'description', 'attributes'].forEach(function (leaf) {
+        var name = dynamicName('schema', schemaId, leaf);
+        if (hasDiscoveredName(name)) {
+          out.push(dynamicRowFor(name));
+        }
+      });
+      // THE ATTRIBUTE ROWS FOLLOW THE `attributes` ROW rather than the
+      // document, so that removing a name from that row removes the row it
+      // names. That is the whole point of it being editable.
+      attributeNamesFor(schemaId).forEach(function (attrName) {
+        var name = dynamicName('attr', schemaId, attrName);
+        out.push(dynamicRowFor(name));
+      });
+    });
+  }
+  log.debug("Leaving expandDynamic(). " + out.length + " row(s).");
+  return out;
+}
+
+function hasDiscoveredName(name) {
+  return (configValues && configValues[name] !== undefined) ||
+      (discoveredValues && discoveredValues[name] !== undefined);
+}
+
+// The attribute names one schema is configured to have, in the order the
+// `attributes` row gives them.
+function attributeNamesFor(schemaId) {
+  var listed = String(configValues[dynamicName('schema', schemaId,
+      'attributes')] || '');
+  return listed.split(',').map(function (one) {
+    return one.trim();
+  }).filter(Boolean);
+}
+
+// A row by name, static or dynamic. Everything that used to index
+// CONFIG_BY_NAME directly goes through this, because a dynamic row is not in
+// that index and never will be — it is synthesised from its name.
+function configRowFor(name) {
+  if (CONFIG_BY_NAME[name]) {
+    return CONFIG_BY_NAME[name];
+  }
+  return dynamicRowFor(name);
+}
+
 // Where a row's control lives. An owned row took the field's own id, so that
-// `val('scim_base_url')` reads this table and there is no second element to
-// disagree with it; everything else gets a generated one.
+// `val('scim_auth_scheme')` reads this table and there is no second element to
+// disagree with it; everything else gets a generated one — including the
+// mirrors, whose one real element is in the pane the field was authored in.
 //
 // NO ENTERING/LEAVING PAIR, for the reason `configValue()` below records: this
 // is called once per row by renderConfig(), and once per row again by
 // refreshConfigValues() on every change event anywhere on the page.
 function configControlId(row) {
-  return row.owns ? row.field : ('scim_cfg_' + row.name);
+  return row.owns ? row.field : ('scim_cfg_' + safeIdPart(row.name));
+}
+
+// An element id built from a row name. The static names are already
+// alphanumeric so this is a no-op for every one of them — `scim_cfg_callPath`
+// is still `scim_cfg_callPath`, which matters because tests/scim_page.js names
+// several of them. A DYNAMIC name is not: it carries a schema URN, so it has
+// colons and `|` in it, and while getElementById copes with any characters at
+// all, an id that cannot be written in a CSS selector is a trap for the next
+// person who reaches for querySelector.
+function safeIdPart(name) {
+  return String(name).replace(/[^A-Za-z0-9_]+/g, '_');
 }
 
 // What is in force, and what the last document said. Kept apart on purpose:
@@ -872,7 +1190,7 @@ var discoveredValues = {};
 // keystroke that left a field. The functions that call it keep their logging,
 // which is where a trace of a configuration change actually lives.
 function configValue(name) {
-  var row = CONFIG_BY_NAME[name];
+  var row = configRowFor(name);
   if (!row) {
     return '';
   }
@@ -896,8 +1214,19 @@ function endpointsForRequests() {
     User: configValue('userEndpoint'),
     Group: configValue('groupEndpoint')
   };
+  // And every other resource type the server published, keyed by its own
+  // name. No operation in the catalogue targets one today, so this changes
+  // nothing until one does — but the endpoint is CONFIGURED rather than
+  // guessed the moment it does, which is the whole reason the rows exist.
+  dynamicSubjects('type').forEach(function (typeName) {
+    var endpoint = configValue(dynamicName('type', typeName, 'endpoint'));
+    if (endpoint) {
+      out[typeName] = endpoint;
+    }
+  });
   log.debug("Leaving endpointsForRequests(). User=" +
-      (out.User || '(default)') + " Group=" + (out.Group || '(default)'));
+      (out.User || '(default)') + " Group=" + (out.Group || '(default)') +
+      " and " + (Object.keys(out).length - 2) + " more.");
   return out;
 }
 
@@ -980,7 +1309,7 @@ function renderConfig() {
   // (which every discovery causes) empties the service root, the scheme and
   // the generator's seed at once, from a button nobody pressed.
   var carried = {};
-  CONFIG_PARAMS.forEach(function (row) {
+  allConfigParams().forEach(function (row) {
     if (row.name && row.owns) {
       carried[row.name] = configValue(row.name);
     }
@@ -993,7 +1322,7 @@ function renderConfig() {
   // would find nothing, and rebuilding it would be a second element with the
   // same id.
   var blocks = {};
-  CONFIG_PARAMS.forEach(function (row) {
+  allConfigParams().forEach(function (row) {
     if (row.block) {
       blocks[row.block] = el(row.block);
     }
@@ -1006,9 +1335,22 @@ function renderConfig() {
   table.className = 'scim-config-table';
   table.appendChild(configHeaderRow());
   var rows = 0;
-  CONFIG_PARAMS.forEach(function (row) {
+  var folded = 0;
+  var currentGroup = '';
+  allConfigParams().forEach(function (row) {
     if (row.group) {
+      currentGroup = row.group;
       table.appendChild(configGroupRow(row.group));
+      return;
+    }
+    // A row under a folded group is not built at all, rather than built and
+    // hidden. `refreshConfigValues()` and `saveConfig()` both skip a row whose
+    // control is absent, so a folded group is simply not on the page — and a
+    // value it holds is still in `configValues`, still saved, and still what
+    // the generator reads. Building 126 controls to hide 90 of them would cost
+    // the rebuild that every discovery causes.
+    if (!groupIsOpen(currentGroup)) {
+      folded += 1;
       return;
     }
     if (row.block) {
@@ -1022,7 +1364,88 @@ function renderConfig() {
   if (focused && el(focused) && typeof el(focused).focus === 'function') {
     el(focused).focus();
   }
-  log.debug("Leaving renderConfig(). " + rows + " parameter(s).");
+  setConfigCount(rows, folded);
+  // AFTER host.appendChild(table): the box's scrollHeight is the old table's
+  // until the new one is in the document, so a cue computed before this line
+  // describes the table that was just thrown away.
+  refreshConfigScrollCues();
+  log.debug("Leaving renderConfig(). " + rows + " parameter(s), " + folded +
+      " folded away.");
+}
+
+// ---------------------------------------------------------------------------
+// SAYING THAT THE TABLE SCROLLS.
+//
+// The configuration table lives in a 520px box with `overflow-y: auto`, and a
+// box like that with a flat bottom edge looks exactly like a table that ENDS
+// there. The rows below the fold are not merely out of reach — they read as
+// settings the pane does not have, which is how a "these parameters are
+// missing" report came in about parameters that were on screen the whole time,
+// one scroll down.
+//
+// Two cues, and they answer different questions. The COUNT above the box says
+// how many parameters there are, which is the only one of the two that a
+// reader can see without touching anything and the only one that says how much
+// is missing. The FADES say which way there is more; each appears only when
+// there is something in that direction, so a table short enough to fit shows
+// neither and nothing is hinted at that is not there.
+//
+// CALLED FROM THREE PLACES and it needs all three: the scroll event (the box
+// moved), renderConfig() (the table changed height under a box that did not
+// move, which is what folding a group does), and resize (the box changed
+// height under a table that did not). Missing the second is the one that shows
+// — fold a group shut and the bottom fade would go on claiming there is more
+// below when there is not.
+// ---------------------------------------------------------------------------
+function refreshConfigScrollCues() {
+  var box = el('scim_config_scroll');
+  var wrap = el('scim_config_scrollwrap');
+  if (!box || !wrap) {
+    return;
+  }
+  // A pixel of slack at each end. Sub-pixel layout and zoom mean scrollTop
+  // rarely lands exactly on 0 or on the maximum, and a fade that never quite
+  // switches off at the bottom is worse than no fade at all — it is a promise
+  // of content that is not there.
+  var above = box.scrollTop > 1;
+  var below = (box.scrollHeight - box.clientHeight - box.scrollTop) > 1;
+  setClass(wrap, 'scim-more-above', above);
+  setClass(wrap, 'scim-more-below', below);
+}
+
+function setClass(node, name, on) {
+  if (!node) {
+    return;
+  }
+  var classes = String(node.className || '').split(/\s+/).filter(function (one) {
+    return one && one !== name;
+  });
+  if (on) {
+    classes.push(name);
+  }
+  node.className = classes.join(' ');
+}
+
+// How many parameters the table holds, and how many of them are folded away.
+// Written above the box, so it is legible without the scroll it is describing.
+function setConfigCount(shown, folded) {
+  log.debug("Entering setConfigCount(). " + shown + "/" + folded);
+  var host = el('scim_config_count');
+  if (!host) {
+    log.debug("Leaving setConfigCount(). No host.");
+    return;
+  }
+  host.innerHTML = '';
+  var total = shown + folded;
+  var strong = document.createElement('strong');
+  strong.textContent = total + ' parameter' + (total === 1 ? '' : 's');
+  host.appendChild(strong);
+  var rest = folded
+    ? ' — ' + shown + ' shown, ' + folded + ' inside folded groups. ' +
+      'The table scrolls.'
+    : '. The table scrolls.';
+  host.appendChild(document.createTextNode(rest));
+  log.debug("Leaving setConfigCount().");
 }
 
 function configHeaderRow() {
@@ -1037,15 +1460,104 @@ function configHeaderRow() {
   return tr;
 }
 
+// ---------------------------------------------------------------------------
+// GROUPS THAT FOLD, AND WHY THE GENERATED ONES START FOLDED.
+//
+// Reading a server's three discovery documents in full turns this table from
+// about forty rows into a hundred and twenty-six, inside a box 520px tall.
+// Every one of those rows is wanted — that is the whole point of the pane —
+// but a reader who came to change the service root should not have to scroll
+// past twenty-one attribute rows and seven authentication schemes to reach
+// `authScheme`.
+//
+// So the groups BUILT FROM A DOCUMENT fold, and start folded; the fixed groups
+// at the top do not fold at all, because they are the ones somebody came for
+// and a fold there would only be a click between them and their work.
+//
+// THE STATE OUTLIVES THE REBUILD, which is the part worth knowing before
+// editing this. `renderConfig()` tears the table down and builds it again on
+// EVERY discovery, so a fold kept only in the DOM would spring open the moment
+// the automatic probe came back — from an event the reader did not cause. It
+// is kept in `configGroupsOpen` and written to localStorage beside the rest of
+// the pane's state.
+// ---------------------------------------------------------------------------
+var GROUPS_STORAGE_KEY = 'scim_config_groups';
+var configGroupsOpen = {};
+
+// A group is foldable when it was generated from a document. The three
+// prefixes are the ones `expandDynamic()` writes.
+function isFoldableGroup(title) {
+  return /^(Schema|Resource type|Authentication scheme): /.test(String(title));
+}
+
+function groupIsOpen(title) {
+  if (!isFoldableGroup(title)) {
+    return true;
+  }
+  // Absent means CLOSED for a generated group — see the header. An explicit
+  // false and an absent value therefore mean the same thing here, which is why
+  // this tests for true rather than for undefined.
+  return configGroupsOpen[title] === true;
+}
+
+function loadConfigGroups() {
+  log.debug("Entering loadConfigGroups().");
+  try {
+    var stored = localStorage.getItem(GROUPS_STORAGE_KEY);
+    configGroupsOpen = stored ? JSON.parse(stored) : {};
+  } catch (e) {
+    // No storage, or an older build's value. Everything generated folds shut,
+    // which is the default anyway.
+    log.warn('could not read the folded groups: ' + e.message);
+    configGroupsOpen = {};
+  }
+  log.debug("Leaving loadConfigGroups().");
+}
+
+function toggleConfigGroup(title) {
+  log.debug("Entering toggleConfigGroup(). " + title);
+  configGroupsOpen[title] = !groupIsOpen(title);
+  try {
+    localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(configGroupsOpen));
+  } catch (e) {
+    // The fold still works for this visit; only the remembering is lost.
+    log.warn('could not write the folded groups: ' + e.message);
+  }
+  renderConfig();
+  refreshConfigValues();
+  log.debug("Leaving toggleConfigGroup().");
+}
+
 function configGroupRow(title) {
   log.debug("Entering configGroupRow(). " + title);
   var tr = document.createElement('tr');
   tr.className = 'scim-config-group';
   var td = document.createElement('td');
   td.colSpan = 3;
-  td.textContent = title;
+  if (!isFoldableGroup(title)) {
+    td.textContent = title;
+    tr.appendChild(td);
+    log.debug("Leaving configGroupRow(). Fixed.");
+    return tr;
+  }
+  var open = groupIsOpen(title);
+  tr.className = 'scim-config-group scim-config-group-fold';
+  // A BUTTON and not a click handler on the row: a fold that cannot be reached
+  // from the keyboard is a fold that hides rows from anybody not using a
+  // mouse, and every one of these rows is an editable setting.
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'scim-config-fold';
+  button.setAttribute('aria-expanded', open ? 'true' : 'false');
+  button.textContent = (open ? '\u25bc ' : '\u25b6 ') + title;
+  button.addEventListener('click', (function (name) {
+    return function () {
+      toggleConfigGroup(name);
+    };
+  })(title));
+  td.appendChild(button);
   tr.appendChild(td);
-  log.debug("Leaving configGroupRow().");
+  log.debug("Leaving configGroupRow(). " + (open ? 'open' : 'folded'));
   return tr;
 }
 
@@ -1091,7 +1603,7 @@ function blockRowId(id) {
 function configRow(row, carried) {
   log.debug("Entering configRow(). " + row.name);
   var tr = document.createElement('tr');
-  tr.id = 'scim_cfg_row_' + row.name;
+  tr.id = 'scim_cfg_row_' + safeIdPart(row.name);
 
   var name = document.createElement('td');
   name.className = 'scim-config-name';
@@ -1105,9 +1617,16 @@ function configRow(row, carried) {
   tip.appendChild(caption);
   var text = document.createElement('span');
   text.className = 'tooltiptext';
-  text.textContent = row.what + (row.applied
-    ? '' : (row.discovered ? ' Shown here; this page does not change what it ' +
-        'sends because of it.' : ''));
+  // THREE STATES AND NOT TWO, since the capability rows started acting.
+  // `applied` changes the request itself; `warns` does not change it but says
+  // so before it goes; anything else really is only shown, and still says so —
+  // that sentence is the reason this pane can be trusted, and deleting it
+  // because most rows now act would make the remaining few misleading.
+  text.textContent = row.what + (row.applied ? ''
+    : (row.warns ? ' NOT SENT AS A VALUE: this row does not change the ' +
+        'request, it warns under the preview when the request contradicts it.'
+      : (row.discovered ? ' Shown here; this page does not change what it ' +
+        'sends because of it.' : '')));
   tip.appendChild(text);
   name.appendChild(tip);
   tr.appendChild(name);
@@ -1129,7 +1648,8 @@ function configRow(row, carried) {
 
   var source = document.createElement('td');
   source.className = 'scim-config-source';
-  source.textContent = row.source + (row.applied ? ' — applied' : '');
+  source.textContent = row.source + (row.applied ? ' — applied'
+    : (row.warns ? ' — warns' : ''));
   tr.appendChild(source);
 
   log.debug("Leaving configRow().");
@@ -1139,16 +1659,24 @@ function configRow(row, carried) {
 // The control for one row.
 //
 // AN OWNED ROW TAKES THE FIELD'S OWN ID. That is what makes this table the
-// setting rather than a view of it: `val('scim_base_url')` reads the cell of
-// this table, `REMEMBERED` writes it to localStorage under the same name it
+// setting rather than a view of it: `val('scim_auth_scheme')` reads the cell
+// of this table, `REMEMBERED` writes it to localStorage under the same name it
 // always had, and there is no second element anywhere that could hold a
 // different value.
+//
+// A MIRROR ROW TAKES A GENERATED ID and the same sentence still holds, from
+// the other end: `val('scim_base_url')` reads the box in the Discovery pane,
+// `REMEMBERED` writes THAT element under the same name, and the cell this
+// builds is `scim_cfg_baseUrl` — a different id, so there is still exactly one
+// element per name.
 function configInput(row, carried) {
   log.debug("Entering configInput(). " + row.name);
   var current = (carried && carried[row.name] !== undefined)
     ? carried[row.name] : configValue(row.name);
   var control;
-  if (row.kind === 'select') {
+  if (row.kind === 'radio') {
+    control = radioPair(row, current);
+  } else if (row.kind === 'select') {
     control = document.createElement('select');
     optionsFor(row).forEach(function (pair) {
       var option = document.createElement('option');
@@ -1165,7 +1693,8 @@ function configInput(row, carried) {
       control.placeholder = row.placeholder;
     }
   }
-  control.className = 'scim-field';
+  // A radio pair is not a field and must not be 100% wide; everything else is.
+  control.className = (row.kind === 'radio') ? 'scim-radio-pair' : 'scim-field';
   control.id = configControlId(row);
   control.addEventListener('change', (function (name) {
     return function (event) {
@@ -1178,13 +1707,103 @@ function configInput(row, carried) {
     // here rather than there is what keeps a value written through on a
     // change made after the first discovery. A MIRROR row needs none of this:
     // the field it reflects is in a pane of its own and keeps its listeners.
+    //
+    // THERE WAS A `row.wire` HOOK HERE and it is gone rather than left empty.
+    // It existed for the one owned row that needed listeners of its own — the
+    // service root — and when that box moved to the Discovery pane and became
+    // a mirror it had no caller left. wireBaseUrl() is called from onload()
+    // now, on an element no rebuild replaces, which is the whole reason the
+    // hook was needed in the first place.
     control.addEventListener('change', saveState);
-    if (row.wire) {
-      row.wire(control);
-    }
   }
   log.debug("Leaving configInput().");
   return control;
+}
+
+// ---------------------------------------------------------------------------
+// A RADIO PAIR THAT ANSWERS TO `.value` AND `.disabled`.
+//
+// Two radios are two elements, and everything on this page that touches a
+// configuration control expects ONE: `refreshConfigValues()` assigns
+// `control.value`, `refreshCallPathControls()` assigns `control.disabled`,
+// `saveConfig()` reads `control.value`, and `tests/scim_page.js` drives the
+// row by setting `.value` on the id and dispatching a change. Rewriting all of
+// those to special-case a radio would have put the same three-line branch in
+// four places and left the test knowing which rows are radios.
+//
+// So the pair is WRAPPED in one element that carries the row's id and defines
+// those two properties over the radios inside it. A span has neither `value`
+// nor `disabled` of its own, so nothing is being shadowed. The invariant the
+// whole configuration table rests on — one element per id, asserted by
+// `tests/scim_page.js` with querySelectorAll — is untouched: the wrapper is
+// that element, and the radios inside carry ids derived from it.
+//
+// NO CHANGE LISTENER IS ADDED HERE. `change` bubbles, so the one `configInput()`
+// puts on the wrapper hears both a click on a radio (`event.target` is the
+// radio, and its `value` is the option) and a scripted `.value =` followed by a
+// dispatch on the wrapper (`event.target` is the wrapper, and its `value` is
+// the getter below). Both give the same answer, which is why there is one
+// listener rather than three.
+//
+// THE `name` IS SHARED AND THE `id`s ARE NOT. Two radios that do not share a
+// name are not a pair at all — they are two independent controls that can both
+// be on, and the bug reads as "the page ignored my choice" long after the
+// markup that caused it.
+// ---------------------------------------------------------------------------
+function radioPair(row, current) {
+  log.debug("Entering radioPair(). " + row.name);
+  var span = document.createElement('span');
+  var radios = [];
+  optionsFor(row).forEach(function (pair) {
+    var label = document.createElement('label');
+    // `scim-radio` and not a class of its own: it already carries the fix for
+    // Bootstrap floating a radio out of its own label. See css/scim.css.
+    label.className = 'scim-radio';
+    var radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = configControlId(row) + '_group';
+    radio.id = configControlId(row) + '_' + pair[0];
+    radio.value = pair[0];
+    radio.checked = (String(current) === pair[0]);
+    label.appendChild(radio);
+    label.appendChild(document.createTextNode(' ' + pair[1]));
+    span.appendChild(label);
+    radios.push(radio);
+  });
+  Object.defineProperty(span, 'value', {
+    get: function () {
+      for (var i = 0; i < radios.length; i++) {
+        if (radios[i].checked) {
+          return radios[i].value;
+        }
+      }
+      // None checked. An empty string is what a select with no selection
+      // would answer, and refreshConfigValues() then writes the real value in.
+      return '';
+    },
+    set: function (value) {
+      radios.forEach(function (radio) {
+        radio.checked = (String(value) === radio.value);
+      });
+    }
+  });
+  Object.defineProperty(span, 'disabled', {
+    // Disabled only if EVERY radio is, which is the only state anything here
+    // sets. Reading it as "any" would answer true for a half-disabled pair
+    // that nothing can produce.
+    get: function () {
+      return radios.length > 0 && radios.every(function (radio) {
+        return radio.disabled;
+      });
+    },
+    set: function (value) {
+      radios.forEach(function (radio) {
+        radio.disabled = !!value;
+      });
+    }
+  });
+  log.debug("Leaving radioPair(). " + radios.length + " choice(s).");
+  return span;
 }
 
 // The options for a select row: a fixed list, or one computed at render time.
@@ -1280,6 +1899,13 @@ function authSchemeOptions() {
 // The service root is the one setting that makes this page go and ask a
 // question of its own: a change to it invalidates every discovered row and the
 // scheme list with them.
+//
+// CALLED FROM onload(), once, on the box authored in the Discovery pane. It
+// used to be called by configInput() on every rebuild of the configuration
+// table, because the box was a cell of that table and each rebuild replaced
+// it. It is not any more, so these listeners are added once and survive.
+// The two the `REMEMBERED` loop in onload() adds — saveState() and
+// refreshConfigValues() — are separate and still apply.
 function wireBaseUrl(control) {
   log.debug("Entering wireBaseUrl().");
   control.addEventListener('input', refreshRequestPreview);
@@ -1296,7 +1922,7 @@ function wireBaseUrl(control) {
 // changes and then wonders why nothing happened; Save is for PERSISTING.
 function applyOneParameter(name, value) {
   log.debug("Entering applyOneParameter(). " + name);
-  var row = CONFIG_BY_NAME[name];
+  var row = configRowFor(name);
   if (!row) {
     log.debug("Leaving applyOneParameter(). Unknown parameter.");
     return;
@@ -1346,7 +1972,7 @@ function applyOneParameter(name, value) {
 
 function saveConfig() {
   log.debug("Entering saveConfig().");
-  CONFIG_PARAMS.forEach(function (row) {
+  allConfigParams().forEach(function (row) {
     if (!row.name) {
       return;
     }
@@ -1375,7 +2001,7 @@ function saveConfig() {
 function restoreDiscovered() {
   log.debug("Entering restoreDiscovered().");
   var restored = 0;
-  CONFIG_PARAMS.forEach(function (row) {
+  allConfigParams().forEach(function (row) {
     if (!row.name || !row.discovered) {
       return;
     }
@@ -1408,7 +2034,7 @@ function restoreDiscovered() {
 function refreshConfigValues() {
   log.debug("Entering refreshConfigValues().");
   var changed = 0;
-  CONFIG_PARAMS.forEach(function (row) {
+  allConfigParams().forEach(function (row) {
     if (!row.name) {
       return;
     }
@@ -2139,7 +2765,7 @@ function explainBrowserFailure() {
       'resolved or reached, the TLS certificate was rejected, or the page ' +
       'is https and the URL is http. ' +
       (BACKEND_AVAILABLE
-        ? 'Switch the call path to "through the api" — it has no CORS to ' +
+        ? 'Switch the callPath row to BackEnd — the api has no CORS to ' +
           'obey, can be told to skip certificate validation, and reports ' +
           'the whole exchange.'
         : 'This build has no api to fall back to, so a server with no CORS ' +
@@ -2266,6 +2892,7 @@ function showResponse(result) {
   setText('scim_exchange_response_line', result.status + ' — ' +
       described.summary + ' (' + result.elapsedMs + 'ms)');
   setHeaders('scim_exchange_response_headers', result.headers);
+  rememberETag(result);
   // THE HEADERS THE api ACTUALLY SENT, when it was the api that sent them.
   // What `showRequest()` drew a moment ago is what this PAGE composed, and the
   // two differ: axios adds a User-Agent, a Content-Length and an
@@ -2558,6 +3185,18 @@ function currentRequest() {
       query: queryFromFields(row),
       body: body.body
     });
+    // THE CONFIGURATION'S LAST WORD ON THE REQUEST. `etag.supported` is the
+    // one row that adds a header rather than changing a value, and it does it
+    // here — after buildRequest, because the catalogue composes the message
+    // and this is a fact about this exchange rather than about the operation.
+    if (configFlag('etagSupported') === true &&
+        ['PUT', 'PATCH', 'DELETE'].indexOf(request.method) >= 0) {
+      var tag = etagFor(val('scim_op_id'));
+      if (tag) {
+        request.headers = Object.assign({}, request.headers,
+            { 'If-Match': tag });
+      }
+    }
     log.debug("Leaving currentRequest(). Built.");
     return { ok: true, request: request };
   } catch (e) {
@@ -2571,10 +3210,12 @@ function refreshRequestPreview() {
   var built = currentRequest();
   if (!built.ok) {
     setText('scim_op_preview', built.error);
+    showConfigurationWarnings();
     log.debug("Leaving refreshRequestPreview(). Not buildable yet.");
     return;
   }
   setText('scim_op_preview', built.request.method + ' ' + built.request.url);
+  showConfigurationWarnings();
   log.debug("Leaving refreshRequestPreview().");
 }
 
@@ -2659,6 +3300,397 @@ function useLastId() {
 // ---------------------------------------------------------------------------
 // THE GENERATOR PANE.
 // ---------------------------------------------------------------------------
+// ETAGS, WHICH ARE THE ONE CAPABILITY THAT NEEDS TWO REQUESTS TO EXERCISE.
+//
+// `etag.supported` is the only row here whose meaning is a round trip: the
+// server sends an ETag on a read and expects it back as `If-Match` on the
+// write. So the value is remembered per resource id from whatever response
+// carried it, and sent back on the next PUT, PATCH or DELETE to that id —
+// but only when the etagSupported row says yes, because a client that sends
+// `If-Match` at a server with no ETags gets a 428 or a 412 for a reason that
+// has nothing to do with what it was testing.
+//
+// A BROWSER-DIRECT CALL USUALLY CANNOT SEE THE ETAG. It is not one of the
+// seven CORS-safelisted response headers, so unless the server names it in
+// `Access-Control-Expose-Headers` the browser withholds it from this page —
+// which is the same limitation the exchange pane already explains, and is why
+// the warning below says which call path you are on rather than blaming the
+// server.
+// ---------------------------------------------------------------------------
+var lastETags = {};
+
+function rememberETag(result) {
+  log.debug("Entering rememberETag().");
+  var id = val('scim_op_id');
+  var tag = result && result.headers
+    ? scenarios.headerValue(result.headers, 'etag') : '';
+  if (!tag) {
+    log.debug("Leaving rememberETag(). None on this response.");
+    return;
+  }
+  // Filed under the id that was asked for, and under the one that came back —
+  // a create answers with an id the field does not hold yet.
+  if (id) {
+    lastETags[id] = tag;
+  }
+  if (result.body && result.body.id) {
+    lastETags[String(result.body.id)] = tag;
+  }
+  log.debug("Leaving rememberETag(). " + tag);
+}
+
+function etagFor(id) {
+  return id && lastETags[id] ? lastETags[id] : '';
+}
+
+// ---------------------------------------------------------------------------
+// WHAT THE CONFIGURATION PANE ACTUALLY DOES.
+//
+// This section is the answer to the question the pane used to dodge. Every row
+// above was displayed and all but two were inert: the tooltip said "Shown
+// here; this page does not change what it sends because of it", and that was
+// honest but it made the pane a readout rather than a configuration. Now the
+// rows drive the workflow, and the rule for HOW they drive it is the important
+// half:
+//
+// A ROW NEVER BLOCKS A SEND. It changes what is generated, and it WARNS when
+// what you are about to send contradicts it — it does not refuse. This is a
+// debugger: the most interesting thing a SCIM server does is refuse something,
+// and a page that refuses first on the server's behalf has removed the test
+// case and replaced the server's own 400 with its own opinion. So
+// `filter.supported = no` gets you a warning and the request still goes.
+//
+// WHICH IS WHY EVERY ROW IS EDITABLE, and the two facts are one design. The
+// pane is not only a picture of what the server said — it is where you say
+// what you want this page to believe. A server whose Schemas document is wrong
+// about an attribute is corrected by editing the row; a capability the server
+// under-reports is forced by editing the row to `yes`. The "the server said: …"
+// note beside an edited row is what keeps that from being a lie you forget you
+// told, and **Restore discovered values** puts it all back.
+// ---------------------------------------------------------------------------
+
+// A row that holds one of RFC 7644's booleans. `supportedText()` writes them as
+// yes/no/(not stated) and a person may well type true/false, so both are read.
+// An unreadable value answers null — "nothing is claimed" — and every caller
+// treats null as "do not warn", because warning about a value nobody stated is
+// noise about the server's silence rather than about the request.
+function configFlag(name) {
+  var text = String(configValue(name) || '').trim().toLowerCase();
+  if (text === 'yes' || text === 'true') {
+    return true;
+  }
+  if (text === 'no' || text === 'false') {
+    return false;
+  }
+  return null;
+}
+
+function configNumber(name) {
+  var text = String(configValue(name) || '').trim();
+  if (!text) {
+    return null;
+  }
+  var value = Number(text);
+  return isFinite(value) ? value : null;
+}
+
+function configuredSchemaFor(kind) {
+  return String(configValue(kind === 'Group' ? 'groupSchema'
+    : 'userSchema') || '').trim();
+}
+
+// The extension URNs configured for a kind. The row's text is what
+// `extensionSummary()` wrote — `urn (required), urn` — or the word `none`, and
+// a person may have edited it to anything, so the parsing takes the URN off
+// the front of each comma-separated piece and ignores the rest.
+function configuredExtensionsFor(kind) {
+  if (kind === 'Group') {
+    return [];
+  }
+  var text = String(configValue('schemaExtensions') || '').trim();
+  if (!text || text.toLowerCase() === 'none') {
+    return [];
+  }
+  return text.split(',').map(function (piece) {
+    return piece.trim().split(/\s+/)[0];
+  }).filter(function (one) {
+    return one && one.toLowerCase() !== 'none';
+  });
+}
+
+function isSchemaUrn(key) {
+  return String(key).indexOf('urn:') === 0;
+}
+
+// RFC 7643 section 3.1's COMMON ATTRIBUTES, which every resource has and NO
+// schema lists — they are defined by the specification rather than by a
+// server's Schemas document, so an attributes row will never mention them.
+//
+// This is not a nicety: without it the filter drops `externalId` from every
+// generated body, because it looks exactly like an attribute the schema does
+// not declare. That was the first thing this filter got wrong, and it was
+// invisible until a generated body was compared against the one before it —
+// `externalId` is the attribute a provisioning client most relies on and the
+// one whose absence a server will not complain about.
+var COMMON_ATTRIBUTES = ['id', 'externalId', 'meta'];
+
+function isCommonAttribute(key) {
+  return COMMON_ATTRIBUTES.indexOf(String(key)) >= 0;
+}
+
+// ---------------------------------------------------------------------------
+// THE SCHEMAS DOCUMENT, APPLIED TO A GENERATED BODY.
+//
+// The generator in scim_client.js produces a rich, complete User — every
+// section 4.1 attribute, filled with plausible data — and that is worth
+// keeping, because a provisioning client tested only against `userName` has
+// tested nothing. What it cannot know is what THIS server's schema actually
+// declares. So the body is generated as before and then filtered through the
+// configured attributes, rather than being built from them: building from the
+// schema would have thrown away every piece of realistic data the generator
+// knows how to make, and a schema-shaped body full of `string-1` values
+// exercises nothing.
+//
+// Four things happen here and each is reported rather than done quietly, per
+// the rule above:
+//
+//   * an attribute the configured schema does not declare is DROPPED — that is
+//     the case this exists for, and the note names it;
+//   * `mutability: readOnly` and `immutable` are dropped, because a client
+//     that sends them is testing its own ability to be ignored;
+//   * `multiValued` decides whether a value is wrapped or unwrapped, and
+//     `canonicalValues` is what a generated `type` is snapped to — a generator
+//     that invents `type: "office"` against a schema offering work/home/other
+//     produces a 400 that reads like a server bug;
+//   * a `required` attribute the generator did not produce is ADDED, because
+//     the alternative is a create that fails for a reason the pane could see
+//     coming.
+//
+// A SCHEMA NOBODY HAS READ CHANGES NOTHING. If no attributes are configured
+// for the kind, the body passes through untouched except for its `schemas`
+// array — which is the same rule the endpoints follow, and it is what keeps
+// this page working against a server whose Schemas endpoint is unreachable.
+// ---------------------------------------------------------------------------
+function applySchemaToBody(body, kind) {
+  log.debug("Entering applySchemaToBody(). " + kind);
+  var notes = [];
+  if (!body || typeof body !== 'object' ||
+      Object.prototype.toString.call(body) === '[object Array]') {
+    log.debug("Leaving applySchemaToBody(). Not an object.");
+    return { body: body, notes: notes };
+  }
+  var schemaId = configuredSchemaFor(kind);
+  var extensions = configuredExtensionsFor(kind);
+  var allowed = schemaId ? attributeNamesFor(schemaId) : [];
+  var specs = {};
+  allowed.forEach(function (name) {
+    specs[name] = parseAttributeSpec(configValue(dynamicName('attr', schemaId,
+        name)));
+  });
+  var out = {};
+  Object.keys(body).forEach(function (key) {
+    if (key === 'schemas') {
+      return;
+    }
+    if (isSchemaUrn(key)) {
+      // An extension's data, filed under the extension's own URN.
+      if (!extensions.length || extensions.indexOf(key) >= 0) {
+        out[key] = body[key];
+      } else {
+        notes.push('dropped the ' + key + ' extension — it is not in the ' +
+            'schemaExtensions row');
+      }
+      return;
+    }
+    if (isCommonAttribute(key)) {
+      // Section 3.1's, and no schema declares them — see COMMON_ATTRIBUTES.
+      out[key] = body[key];
+      return;
+    }
+    if (!allowed.length) {
+      // Nothing is configured for this kind, so nothing is claimed about it.
+      out[key] = body[key];
+      return;
+    }
+    var spec = specs[key];
+    if (!spec) {
+      notes.push('dropped ' + key + ' — the attributes row for ' + schemaId +
+          ' does not list it');
+      return;
+    }
+    if (spec.mutability === 'readOnly' || spec.mutability === 'immutable') {
+      notes.push('dropped ' + key + ' — mutability=' + spec.mutability);
+      return;
+    }
+    out[key] = coerceToSpec(body[key], spec, key, notes);
+  });
+  allowed.forEach(function (name) {
+    var spec = specs[name];
+    if (!spec || !spec.required || out[name] !== undefined) {
+      return;
+    }
+    if (spec.mutability === 'readOnly' || spec.mutability === 'immutable') {
+      return;
+    }
+    out[name] = placeholderFor(name, spec);
+    notes.push('added ' + name + ' — required=true and the generator did ' +
+        'not produce one');
+  });
+  var schemas = (schemaId ? [schemaId] : []).concat(extensions);
+  out.schemas = schemas.length ? schemas : (body.schemas || []);
+  log.debug("Leaving applySchemaToBody(). " + notes.length + " change(s).");
+  return { body: out, notes: notes };
+}
+
+// One value, made to fit one attribute's characteristics.
+function coerceToSpec(value, spec, name, notes) {
+  var isArray = Object.prototype.toString.call(value) === '[object Array]';
+  var out = value;
+  if (spec.multiValued && !isArray) {
+    out = [value];
+    notes.push('wrapped ' + name + ' in an array — multiValued=true');
+  } else if (!spec.multiValued && isArray) {
+    out = value.length ? value[0] : '';
+    notes.push('unwrapped ' + name + ' — multiValued=false, so the ' +
+        value.length + ' generated values would have been a type error');
+  }
+  if (!spec.canonical.length) {
+    return out;
+  }
+  // A canonical list constrains the `type` sub-attribute of a complex
+  // multi-valued attribute, and the attribute's own value when it is a plain
+  // string. Both shapes occur in section 4.1, so both are handled.
+  if (Object.prototype.toString.call(out) === '[object Array]') {
+    out.forEach(function (member) {
+      if (member && typeof member === 'object' && member.type !== undefined &&
+          spec.canonical.indexOf(String(member.type)) < 0) {
+        notes.push('changed a ' + name + ' type from "' + member.type +
+            '" to "' + spec.canonical[0] + '" — not in canonicalValues');
+        member.type = spec.canonical[0];
+      }
+    });
+    return out;
+  }
+  if (typeof out === 'string' && out &&
+      spec.canonical.indexOf(out) < 0) {
+    notes.push('changed ' + name + ' from "' + out + '" to "' +
+        spec.canonical[0] + '" — not in canonicalValues');
+    return spec.canonical[0];
+  }
+  return out;
+}
+
+// Something legal for a required attribute the generator did not make. It is
+// deliberately recognisable rather than plausible: a value that looks real is
+// one somebody will believe came out of the generator.
+function placeholderFor(name, spec) {
+  if (spec.type === 'boolean') {
+    return true;
+  }
+  if (spec.type === 'integer' || spec.type === 'decimal') {
+    return 1;
+  }
+  if (spec.type === 'complex') {
+    return spec.multiValued ? [{ value: 'required-' + name }]
+      : { value: 'required-' + name };
+  }
+  var text = 'required-' + name;
+  return spec.multiValued ? [text] : text;
+}
+
+// ---------------------------------------------------------------------------
+// WHAT THE CONFIGURATION SAYS ABOUT THE REQUEST YOU ARE ABOUT TO SEND.
+//
+// Warnings, never refusals — see the section header. Each one names the ROW it
+// came from, because the point is not "this will fail" (it may not; a server
+// that under-reports its own capabilities is common) but "the pane predicted
+// this, and here is the row to edit if the pane is wrong".
+// ---------------------------------------------------------------------------
+function configurationWarnings() {
+  log.debug("Entering configurationWarnings().");
+  var out = [];
+  var row = scimClient.operation(val('scim_op'));
+  if (!row) {
+    log.debug("Leaving configurationWarnings(). No operation.");
+    return out;
+  }
+  var query = queryFromFields(row);
+  if (query.filter && configFlag('filterSupported') === false) {
+    out.push('filter.supported says no, and this request carries a filter.');
+  }
+  var maxResults = configNumber('filterMaxResults');
+  var count = Number(query.count);
+  if (maxResults !== null && isFinite(count) && count > maxResults) {
+    out.push('count is ' + count + ' and filter.maxResults says ' +
+        maxResults + '; a conformant server will return fewer and say so in ' +
+        'totalResults.');
+  }
+  if ((query.sortBy || query.sortOrder) &&
+      configFlag('sortSupported') === false) {
+    out.push('sort.supported says no, and this request carries ' +
+        (query.sortBy ? 'sortBy' : 'sortOrder') + '.');
+  }
+  if (row.method === 'PATCH' && configFlag('patchSupported') === false) {
+    out.push('patch.supported says no. Without PATCH every change is a PUT, ' +
+        'which REPLACES the resource.');
+  }
+  if (row.id && row.id.indexOf('bulk') === 0) {
+    if (configFlag('bulkSupported') === false) {
+      out.push('bulk.supported says no.');
+    }
+    var maxOperations = configNumber('bulkMaxOperations');
+    var generated = Number(val('scim_gen_count'));
+    if (maxOperations !== null && isFinite(generated) &&
+        generated > maxOperations) {
+      out.push('genCount is ' + generated + ' and bulk.maxOperations says ' +
+          maxOperations + '.');
+    }
+  }
+  if (configFlag('changePasswordSupported') === false && bodyCarriesPassword()) {
+    out.push('changePassword.supported says no, and this body carries a ' +
+        'password.');
+  }
+  if (configFlag('etagSupported') === true &&
+      ['PUT', 'PATCH', 'DELETE'].indexOf(row.method) >= 0 &&
+      !etagFor(val('scim_op_id'))) {
+    out.push('etag.supported says yes and no ETag has been seen for this id, ' +
+        'so no If-Match is sent. Read the resource first' +
+        (callVia() === 'browser' ? ' — and note that a browser-direct call ' +
+          'cannot see an ETag unless the server names it in ' +
+          'Access-Control-Expose-Headers, so the BackEnd call path is the ' +
+          'one that can.' : '.'));
+  }
+  log.debug("Leaving configurationWarnings(). " + out.length + " warning(s).");
+  return out;
+}
+
+function bodyCarriesPassword() {
+  var text = val('scim_op_body');
+  return !!text && text.indexOf('"password"') >= 0;
+}
+
+function showConfigurationWarnings(extra) {
+  log.debug("Entering showConfigurationWarnings().");
+  var lines = configurationWarnings().concat(extra || []);
+  var host = el('scim_config_warnings');
+  if (!host) {
+    log.debug("Leaving showConfigurationWarnings(). No host.");
+    return;
+  }
+  host.innerHTML = '';
+  lines.forEach(function (line) {
+    var one = document.createElement('div');
+    one.className = 'scim-config-warning';
+    // textContent, because a warning can quote a discovered value and a
+    // discovered value is somebody else's bytes.
+    one.textContent = line;
+    host.appendChild(one);
+  });
+  show('scim_config_warnings', lines.length > 0);
+  log.debug("Leaving showConfigurationWarnings(). " + lines.length + " line(s).");
+}
+
+// ---------------------------------------------------------------------------
 function generatorSettings() {
   log.debug("Entering generatorSettings().");
   var out = {
@@ -2679,17 +3711,28 @@ function generateUsers() {
   var rng = scimClient.newRng(settings.seed);
   var users = [];
   var i;
+  var notes = [];
   for (i = 0; i < settings.count; i++) {
-    users.push(scimClient.randomUser({
+    var made = applySchemaToBody(scimClient.randomUser({
       rng: rng, prefix: settings.prefix, index: i, domain: settings.domain,
       minimal: settings.minimal
-    }));
+    }), 'User');
+    users.push(made.body);
+    // The notes are the same for every user of a run — they come from the
+    // configuration, not from the data — so only the first one's are kept.
+    if (i === 0) {
+      notes = made.notes;
+    }
   }
   setJson('scim_gen_output', settings.count === 1 ? users[0] : users);
+  showConfigurationWarnings(notes.map(function (note) {
+    return 'Generator: ' + note;
+  }));
   statusOk('scim_gen_status', settings.count + ' user(s) generated from the ' +
       'seed "' + settings.seed + '". The SAME seed always produces the SAME ' +
       'users, which is what makes a failure here reproducible rather than a ' +
-      'story.');
+      'story.' + (notes.length ? ' The configured schema changed ' +
+        notes.length + ' thing(s) — see the notes under the preview.' : ''));
   log.debug("Leaving generateUsers(). " + users.length + " user(s).");
   return users;
 }
@@ -2699,8 +3742,13 @@ function generateGroup() {
   saveState();
   var settings = generatorSettings();
   var rng = scimClient.newRng(settings.seed + ':group');
-  var group = scimClient.randomGroup({ rng: rng, prefix: settings.prefix });
+  var madeGroup = applySchemaToBody(
+      scimClient.randomGroup({ rng: rng, prefix: settings.prefix }), 'Group');
+  var group = madeGroup.body;
   setJson('scim_gen_output', group);
+  showConfigurationWarnings(madeGroup.notes.map(function (note) {
+    return 'Generator: ' + note;
+  }));
   statusOk('scim_gen_status', 'A group was generated. Members are added ' +
       'afterwards with a PATCH against the GROUP — membership is a fact ' +
       'about the group and is never changed through a User resource.');
@@ -2735,10 +3783,12 @@ function generateBodyForOperation() {
   var rng = scimClient.newRng(settings.seed + ':' + row.id);
   var body = null;
   if (row.body === 'User') {
-    body = scimClient.randomUser({ rng: rng, prefix: settings.prefix,
-        index: 0, domain: settings.domain, minimal: settings.minimal });
+    body = applySchemaToBody(scimClient.randomUser({ rng: rng,
+        prefix: settings.prefix, index: 0, domain: settings.domain,
+        minimal: settings.minimal }), 'User').body;
   } else if (row.body === 'Group') {
-    body = scimClient.randomGroup({ rng: rng, prefix: settings.prefix });
+    body = applySchemaToBody(scimClient.randomGroup({ rng: rng,
+        prefix: settings.prefix }), 'Group').body;
   } else if (row.body === 'SearchRequest') {
     body = scimClient.searchRequest({
       filter: val('scim_query_filter') || 'userName pr',
@@ -2758,11 +3808,13 @@ function generateBodyForOperation() {
     var i;
     for (i = 0; i < settings.count; i++) {
       operations.push({ method: 'POST', bulkId: 'user' + i, path: '/Users',
-        data: scimClient.randomUser({ rng: rng, prefix: settings.prefix,
-            index: i, domain: settings.domain, minimal: settings.minimal }) });
+        data: applySchemaToBody(scimClient.randomUser({ rng: rng,
+            prefix: settings.prefix, index: i, domain: settings.domain,
+            minimal: settings.minimal }), 'User').body });
       members.push({ value: 'bulkId:user' + i, type: 'User' });
     }
-    var group = scimClient.randomGroup({ rng: rng, prefix: settings.prefix });
+    var group = applySchemaToBody(scimClient.randomGroup({ rng: rng,
+        prefix: settings.prefix }), 'Group').body;
     group.members = members;
     operations.push({ method: 'POST', bulkId: 'group0', path: '/Groups',
       data: group });
@@ -3401,9 +4453,43 @@ function captureFromServiceProviderConfig(body) {
       .map(function (row) {
         return row.type || row.name;
       }).join(', '),
-    documentationUri: body.documentationUri || ''
+    documentationUri: body.documentationUri || '',
+    // Read and dropped until now. `schemas` is the document's own type and
+    // `meta.location` is where the server says this document lives — which is
+    // worth having beside the service root it was composed onto, because the
+    // commonest reason discovery reads the wrong thing is a baseUrl with a
+    // resource path already on it.
+    spcSchemas: (body.schemas || []).join(', '),
+    spcLocation: (body.meta && body.meta.location) || ''
   });
+  captureAuthenticationSchemes(body.authenticationSchemes || []);
   log.debug("Leaving captureFromServiceProviderConfig().");
+}
+
+// Each advertised scheme, in full. `type` is the member that does anything —
+// `offeredSchemeIds()` reads the joined list above to order the scheme select —
+// and the other four are what a reader needs to decide whether a scheme is
+// worth trying, which is exactly the question this pane exists to answer.
+function captureAuthenticationSchemes(schemes) {
+  log.debug("Entering captureAuthenticationSchemes(). " + schemes.length);
+  var found = {};
+  schemes.forEach(function (scheme) {
+    var type = String(scheme.type || scheme.name || '').trim();
+    if (!type) {
+      return;
+    }
+    found[dynamicName('authscheme', type, 'name')] = scheme.name || '';
+    found[dynamicName('authscheme', type, 'description')] =
+        scheme.description || '';
+    found[dynamicName('authscheme', type, 'specUri')] = scheme.specUri || '';
+    found[dynamicName('authscheme', type, 'documentationUri')] =
+        scheme.documentationUri || '';
+    found[dynamicName('authscheme', type, 'primary')] =
+        scheme.primary === undefined ? '' : String(!!scheme.primary);
+  });
+  recordDiscovered(found);
+  log.debug("Leaving captureAuthenticationSchemes(). " +
+      Object.keys(found).length + " value(s).");
 }
 
 function numberOrBlank(holder, member) {
@@ -3429,27 +4515,168 @@ function captureFromResourceTypes(types) {
       found.groupSchema = row.schema || '';
     }
   });
+  // EVERY OTHER TYPE GETS ROWS OF ITS OWN. Until now a server whose types were
+  // named something else contributed nothing at all and said so in a warning
+  // nobody reads — which made this page undriveable against exactly the
+  // servers worth testing it on. User and Group keep the four fixed rows
+  // above rather than gaining a second spelling here, because everything on
+  // this page reads them by those names.
+  types.forEach(function (row) {
+    var name = String(row.name || row.id || '').trim();
+    if (!name || name === 'User' || name === 'Group') {
+      return;
+    }
+    found[dynamicName('type', name, 'endpoint')] = row.endpoint || '';
+    found[dynamicName('type', name, 'schema')] = row.schema || '';
+    found[dynamicName('type', name, 'extensions')] = extensionSummary(row);
+    found[dynamicName('type', name, 'description')] = row.description || '';
+  });
   if (!Object.keys(found).length) {
-    // A server whose types are named something other than User and Group.
-    // Nothing is invented for it: an endpoint guessed here would be composed
-    // into every request, and a wrong one produces a 404 on everything.
-    log.warn('the ResourceTypes document names no User or Group type, so ' +
+    // A document with no types in it at all. Nothing is invented: an endpoint
+    // guessed here would be composed into every request, and a wrong one
+    // produces a 404 on everything.
+    log.warn('the ResourceTypes document named no resource type at all, so ' +
         'no endpoint was taken from it');
     log.debug("Leaving captureFromResourceTypes(). Nothing recognised.");
     return;
   }
   recordDiscovered(found);
-  log.debug("Leaving captureFromResourceTypes().");
+  log.debug("Leaving captureFromResourceTypes(). " +
+      Object.keys(found).length + " value(s).");
 }
 
+// The Schemas document, all of it.
+//
+// This is the document that decides whether a field you sent was ever going to
+// be stored, and until now the page took one row out of it — the list of ids —
+// and threw the rest away. What it actually publishes is, per schema, every
+// attribute with seven characteristics, and every one of those is a
+// configuration parameter in the sense this pane means: `mutability` decides
+// whether a client may send an attribute at all, `canonicalValues` decides
+// what a `type` sub-field is allowed to say, `required` decides whether a
+// create can legally omit it. So all of it is recorded, and
+// `applySchemaToBody()` is where it bites.
+//
+// SUB-ATTRIBUTES ARE LISTED, NOT GIVEN ROWS. A complex attribute's members are
+// recorded in its own spec (`sub=…`) rather than as rows of their own. One row
+// per sub-attribute would roughly triple the table for a filter that operates
+// on top-level attributes anyway — the generator emits a whole `name` object or
+// none of it — and a row nothing reads is the thing this pane is careful not to
+// grow.
 function captureFromSchemas(schemas) {
-  log.debug("Entering captureFromSchemas().");
-  recordDiscovered({
+  log.debug("Entering captureFromSchemas(). " + schemas.length + " schema(s).");
+  var found = {
     schemaIds: schemas.map(function (row) {
       return row.id;
     }).filter(Boolean).join(', ')
+  };
+  schemas.forEach(function (schema) {
+    var id = String(schema.id || '').trim();
+    if (!id) {
+      return;
+    }
+    var attributes = schema.attributes || [];
+    found[dynamicName('schema', id, 'name')] = schema.name || '';
+    found[dynamicName('schema', id, 'description')] = schema.description || '';
+    found[dynamicName('schema', id, 'attributes')] = attributes
+      .map(function (attribute) {
+        return attribute.name;
+      }).filter(Boolean).join(', ');
+    attributes.forEach(function (attribute) {
+      var name = String(attribute.name || '').trim();
+      if (!name) {
+        return;
+      }
+      found[dynamicName('attr', id, name)] = formatAttributeSpec(attribute);
+    });
   });
-  log.debug("Leaving captureFromSchemas().");
+  recordDiscovered(found);
+  log.debug("Leaving captureFromSchemas(). " + Object.keys(found).length +
+      " value(s).");
+}
+
+// ---------------------------------------------------------------------------
+// ONE ATTRIBUTE, AS AN EDITABLE LINE.
+//
+// A row's value is a string — that is what makes every row of this table
+// editable by the same input and savable by the same code — so an attribute's
+// seven characteristics are written as `key=value` pairs and read back the
+// same way. The parser is deliberately forgiving: an unknown key is kept and
+// ignored rather than dropped, a missing key means "the RFC's default", and a
+// value nobody can parse leaves the attribute alone rather than throwing. A
+// configuration pane that rejects what somebody typed is a pane they cannot
+// use to lie to the page, and lying to the page on purpose is the point.
+//
+// The list separator inside a value is `|`. It is also the separator between
+// the SEGMENTS OF A ROW NAME, which sounds like a collision and is not: names
+// are split by splitDynamicName() and values are never split by it.
+// ---------------------------------------------------------------------------
+function formatAttributeSpec(attribute) {
+  var parts = ['type=' + (attribute.type || 'string')];
+  if (attribute.multiValued) {
+    parts.push('multiValued=true');
+  }
+  if (attribute.required) {
+    parts.push('required=true');
+  }
+  parts.push('mutability=' + (attribute.mutability || 'readWrite'));
+  parts.push('returned=' + (attribute.returned || 'default'));
+  if (attribute.uniqueness && attribute.uniqueness !== 'none') {
+    parts.push('uniqueness=' + attribute.uniqueness);
+  }
+  if (attribute.caseExact) {
+    parts.push('caseExact=true');
+  }
+  if (attribute.canonicalValues && attribute.canonicalValues.length) {
+    parts.push('canonical=' + attribute.canonicalValues.join('|'));
+  }
+  if (attribute.referenceTypes && attribute.referenceTypes.length) {
+    parts.push('referenceTypes=' + attribute.referenceTypes.join('|'));
+  }
+  if (attribute.subAttributes && attribute.subAttributes.length) {
+    parts.push('sub=' + attribute.subAttributes.map(function (one) {
+      return one.name;
+    }).filter(Boolean).join('|'));
+  }
+  return parts.join(', ');
+}
+
+function parseAttributeSpec(text) {
+  var spec = { type: 'string', multiValued: false, required: false,
+    mutability: 'readWrite', returned: 'default', canonical: [], sub: [] };
+  String(text || '').split(',').forEach(function (piece) {
+    var at = piece.indexOf('=');
+    if (at < 0) {
+      return;
+    }
+    var key = piece.slice(0, at).trim();
+    var value = piece.slice(at + 1).trim();
+    if (key === 'type') {
+      spec.type = value;
+    } else if (key === 'mutability') {
+      spec.mutability = value;
+    } else if (key === 'returned') {
+      spec.returned = value;
+    } else if (key === 'uniqueness') {
+      spec.uniqueness = value;
+    } else if (key === 'multiValued') {
+      spec.multiValued = (value === 'true');
+    } else if (key === 'required') {
+      spec.required = (value === 'true');
+    } else if (key === 'caseExact') {
+      spec.caseExact = (value === 'true');
+    } else if (key === 'canonical') {
+      spec.canonical = value.split('|').map(function (one) {
+        return one.trim();
+      }).filter(Boolean);
+    } else if (key === 'sub') {
+      spec.sub = value.split('|').map(function (one) {
+        return one.trim();
+      }).filter(Boolean);
+    }
+    // An unrecognised key is kept where it was and ignored — see the header.
+  });
+  return spec;
 }
 
 // The three documents in turn, from the Configuration Parameters pane. In
@@ -3613,8 +4840,8 @@ function probeAuthentication(options) {
             ? 'That is very likely this call path rather than that server: a ' +
               'browser-direct call sees only the seven simple response ' +
               'headers unless the server names WWW-Authenticate in ' +
-              'Access-Control-Expose-Headers. Set callPath to "through the ' +
-              'api", which reads every header each way.'
+              'Access-Control-Expose-Headers. Set callPath to BackEnd, ' +
+              'which reads every header each way.'
             : 'The api reads every header, so the server genuinely sent ' +
               'none — which RFC 7644 section 2 requires it to send.'));
     } else if (result.status >= 200 && result.status < 300) {
@@ -3958,6 +5185,7 @@ function onload() {
   populateOperations();
   populateScenarios();
   loadConfig();
+  loadConfigGroups();
   renderConfig();
   loadState();
   wirePanes();
@@ -3996,9 +5224,21 @@ function onload() {
   if (opSelect) {
     opSelect.addEventListener('change', refreshOperationControls);
   }
-  // The scheme select and the service root are wired by `configInput()` when
-  // the table builds them — they belong to it now, and a listener added here
-  // would be lost on the first rebuild.
+  var configScroll = el('scim_config_scroll');
+  if (configScroll) {
+    configScroll.addEventListener('scroll', refreshConfigScrollCues);
+  }
+  window.addEventListener('resize', refreshConfigScrollCues);
+  // The scheme select is wired by `configInput()` when the table builds it —
+  // it belongs to the table, and a listener added here would be lost on the
+  // first rebuild. THE SERVICE ROOT IS THE OTHER WAY ROUND now: its box is
+  // authored in the Discovery pane, so no rebuild replaces it and it is wired
+  // here instead. The `REMEMBERED` loop above has already given it
+  // saveState() and refreshConfigValues(); these are the two beyond that.
+  var baseUrlField = el('scim_base_url');
+  if (baseUrlField) {
+    wireBaseUrl(baseUrlField);
+  }
   var scenarioSelect = el('scim_scenario');
   if (scenarioSelect) {
     scenarioSelect.addEventListener('change', onScenarioSelected);

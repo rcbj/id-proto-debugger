@@ -72,6 +72,17 @@ accounts.</strong> Point this at a test directory.
      controls instead of reflecting them. What could not be a table row (a
      password, a generated key, a minted proof) sits directly under it, and
      appears only for the scheme that uses it.
+
+     THE SERVICE ROOT IS THE ONE EXCEPTION, and it is not a return to the pane
+     that was deleted. Its box is on the Discovery line below, with the three
+     buttons that compose paths onto it — a URL and the buttons that fetch from
+     it, a screen apart, is the arrangement somebody actually complained about.
+     What makes that safe is that it is ONE box: the baseUrl row in the table
+     is a MIRROR of this field, the same shape the generator's and the
+     scenario planner's rows already had, so the two cannot disagree — an edit
+     in either place is a write to this element and a read back into the other.
+     The old Connection pane was not that; it was a second, independent field.
+     See CONFIG_PARAMS in client/src/scim.js for the two kinds of row.
      =================================================================== -->
 <div class="scim-topgrid">
 
@@ -92,7 +103,24 @@ accounts.</strong> Point this at a test directory.
     section 2 makes of a SCIM server &mdash; and the scheme list in the
     configuration table above is ordered by what came back.</p>
   </details>
-  <div class="scim-buttons">
+  <!-- ONE LINE: the service root and the three buttons that read from it.
+       `scim-discovery-line` is what keeps it one line — .scim-buttons wraps by
+       default, which would put the buttons under the box and undo the point of
+       moving it here. The buttons do not shrink and the box does; see
+       css/scim.css. -->
+  <div class="scim-buttons scim-discovery-line">
+    <div class="tooltip scim-tip">
+      <label class="scim-label" for="scim_base_url">baseUrl</label>
+      <span class="tooltiptext">The SCIM service root every path on this page
+      is composed against — the host plus the SCIM base path, which is
+      /scim/v2 on essentially every implementation. Do NOT put a resource path
+      here; /Users and the rest are built onto it. Changing it makes this page
+      go and ask the server what it accepts, which is why it sits with these
+      three buttons. The baseUrl row in the configuration table is a mirror of
+      this box, not a second copy of the setting.</span>
+    </div>
+    <input class="scim-field" type="text" id="scim_base_url"
+           placeholder="http://localhost:8081/scim/v2">
     <input type="button" class="scim-btn" id="btn_scim_spc"
            value="ServiceProviderConfig"
            onclick="return scim.readServiceProviderConfig();"
@@ -206,7 +234,22 @@ accounts.</strong> Point this at a test directory.
     <input class="scim-status scim-grow" type="text" id="scim_config_status"
            readonly>
   </div>
-  <div class="scim-config-scroll">
+  <!-- HOW MANY PARAMETERS THERE ARE, above the box rather than inside it. The
+       box below scrolls, and a count inside it would be the one thing you
+       cannot see when you cannot see that it scrolls. Filled by
+       renderConfig(). -->
+  <p class="scim-config-count" id="scim_config_count"></p>
+  <!-- THE SCROLL CUES. This wrapper exists only to be a positioned ancestor
+       for them: they have to sit OUTSIDE the scrolling element, or they scroll
+       away with the content they are there to point at. Both are
+       pointer-events: none so neither can swallow a click on a row, and both
+       are aria-hidden because they say nothing a screen reader does not
+       already get from the scroll container itself.
+       refreshConfigScrollCues() in scim.js turns them on and off. -->
+  <div class="scim-config-scrollwrap" id="scim_config_scrollwrap">
+  <div class="scim-config-cue scim-config-cue-top" aria-hidden="true"></div>
+  <div class="scim-config-cue scim-config-cue-bottom" aria-hidden="true"></div>
+  <div class="scim-config-scroll" id="scim_config_scroll">
     <!-- The table is generated into this host by renderConfig(). The access
          token block below is authored here rather than generated because a
          textarea, a checkbox and a button are not a table cell &mdash; and it
@@ -249,6 +292,7 @@ accounts.</strong> Point this at a test directory.
         </div>
       </div>
     </div>
+  </div>
   </div>
 
   <details class="scim-more scim-readout" id="scim_call_path_note_fold" open>
@@ -609,6 +653,14 @@ accounts.</strong> Point this at a test directory.
   </div>
 
   <p class="scim-preview">Will send: <code id="scim_op_preview"></code></p>
+  <!-- WHAT THE CONFIGURATION PANE THINKS OF THAT REQUEST. Warnings only: a row
+       never blocks a send, because the most interesting thing a SCIM server
+       does is refuse something and a page that refuses first has replaced the
+       server's own 400 with its own opinion. Each line names the row it came
+       from, so the fix is either the request or that row. Also carries the
+       generator's notes — what the configured schema changed about a body
+       before it was written into the field. See scim.js. -->
+  <div id="scim_config_warnings" class="scim-config-warnings scim-hidden"></div>
   <div class="scim-buttons">
     <input type="button" class="scim-btn scim-btn-primary" id="btn_scim_send"
            value="Send" onclick="return scim.runOperation();"
