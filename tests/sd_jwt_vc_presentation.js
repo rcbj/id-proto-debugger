@@ -403,13 +403,26 @@ function claimsAskedFor(request) {
 // service's account of itself, and what a presentation is judged against is
 // the dcql_query it was sent. A setup step that quietly does nothing is worse
 // than no setup step at all.
+//
+// It is pinned through the MANAGEMENT API rather than through the console page
+// that owns the setting, and the reason is the console's own gate: since the
+// mock STS grew `admin.authRequired` (on by default) every /admin form needs a
+// browser sign-on session, and a program posting JSON to one is refused 401
+// `login_required` rather than redirected — which is what failed this whole
+// file on 2026-08-24, before a browser had been started. /admin-api is
+// deliberately NOT gated, for exactly this caller, and
+// /admin-api/verifier-request/select is the same handler behind the same
+// resource: the action moves from the body to the path and the answer is the
+// same object. A setup step is not the thing under test, so it goes through
+// the door meant for programs.
 // ---------------------------------------------------------------------------
 async function pinVerifierRequest() {
   log.debug("Entering pinVerifierRequest().");
-  var configured = await httpJson(issuerBase + "/admin/vc-verifier-config", {
+  var configured = await httpJson(
+    issuerBase + "/admin-api/verifier-request/select", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "select", claims: REQUESTED })
+    body: JSON.stringify({ claims: REQUESTED })
   });
   assert.ok(configured.ok,
     "the mock verifier should accept what it is asked to ask for, got HTTP " +

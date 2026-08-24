@@ -155,7 +155,7 @@ Two frictions specific to this repository's layout, both of which need deciding 
 
 **The codec cannot be shared across the submodule boundary.** Compose builds the STS with `context: ./sts`, so it cannot `COPY ../common/krb5`. The realistic answer is a vendored copy in `mock-sts` plus a `sync-krb5.sh`, and — more importantly — **a conformance test in `tests/` that round-trips a fixture corpus through both copies and fails on divergence.** Without that test, a drifted codec talks happily to itself and the divergence is discovered against a real DC, weeks later. The alternative is to put the KDC in a side-car in this repository, the way `keycloak-wsfed/` is, which costs the submodule's tidiness and buys back a single implementation; this plan follows the stated preference for the mock STS, with the sync test as the price.
 
-**`GET /sts-metadata` walks the Express router, so a raw TCP listener on port 88 is invisible to it.** The page's whole design is that it cannot go stale, and a protocol family it cannot see is the one way it can. The listener needs an explicit entry — and the drift test needs to tolerate an entry that has no route behind it, which today is the failure it is specifically written to catch.
+**`GET /admin/sts-metadata` walks the Express router, so a raw TCP listener on port 88 is invisible to it.** The page's whole design is that it cannot go stale, and a protocol family it cannot see is the one way it can. The listener needs an explicit entry — and the drift test needs to tolerate an entry that has no route behind it, which today is the failure it is specifically written to catch.
 
 ---
 

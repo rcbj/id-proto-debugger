@@ -252,6 +252,29 @@ async function clickAndWait(driver, buttonId, statusId, wanted, timeoutMs) {
   return status;
 }
 
+// ---------------------------------------------------------------------------
+// WAIT FOR THE PROBE THE PAGE STARTS BY ITSELF.
+//
+// A change to the service root makes this page ask the server what it accepts,
+// debounced, and the answer REBUILDS the configuration table — which is where
+// the scheme select and the service root now live. A test that reads either
+// without waiting is racing a rebuild it never asked for, and the failure
+// reads as a wrong value rather than an early read.
+//
+// Waiting on the page's own state rather than on a sleep, which is the rule
+// tests/CLAUDE.md records: `autoProbeState()` says whether anything is pending
+// or in flight, and both have to be false.
+// ---------------------------------------------------------------------------
+async function waitForProbe(driver, why) {
+  log.debug("Entering waitForProbe(). " + why);
+  await driver.wait(async function () {
+    const state = await driver.executeScript(
+        "return window.scim ? window.scim.autoProbeState() : null;");
+    return !!state && !state.pending && !state.inFlight;
+  }, 30000, 'the automatic authentication probe never settled (' + why + ')');
+  log.debug("Leaving waitForProbe().");
+}
+
 async function openPage(driver) {
   log.debug("Entering openPage().");
   await driver.get(baseUrl + "/scim.html");
@@ -260,6 +283,7 @@ async function openPage(driver) {
   // tests/inline_onclick and the note in tests/CLAUDE.md.
   await waitForPageBundle(driver, "the SCIM page");
   await setField(driver, "scim_base_url", scimBaseUrl);
+  await waitForProbe(driver, "after opening the page");
   log.debug("Leaving openPage().");
 }
 
@@ -524,21 +548,33 @@ async function theBrowserCreatesAndDeletes(driver) {
 async function theBackendPathAlsoWorks(driver) {
   log.debug("Entering theBackendPathAlsoWorks().");
   log.info("3. The same page, through the api.");
+  // ONE CONTROL, and it is a row of the configuration table: the Connection
+  // pane that used to hold a pair of radios was a second spelling of this
+  // setting, and two spellings of one setting can disagree.
   const backendEnabled = await driver.executeScript(`
-    var e = document.getElementById('scim_call_backend');
+    var e = document.getElementById('scim_cfg_callPath');
     return e ? !e.disabled : false;
   `);
   if (!backendEnabled) {
     skip('the backend call path',
-        'the backend radio is disabled on this build — which is correct on ' +
+        'the callPath row is disabled on this build — which is correct on ' +
         'a static deployment, where there is no api at all.');
     log.debug("Leaving theBackendPathAlsoWorks(). No api.");
     return;
   }
-  await driver.executeScript(`
-    document.getElementById('scim_call_backend').checked = true;
-    document.getElementById('scim_call_browser').checked = false;
-  `);
+  await setField(driver, "scim_cfg_callPath", "api");
+  check('choosing the api is what the page then reports as in force',
+      function () {
+    return null;
+  });
+  const inForce = await driver.executeScript(
+      "return window.scim.callVia();");
+  check('callVia() says the api', function () {
+    assert.strictEqual(inForce, 'api',
+        'The callPath row was set to "api" and the page says it will call ' +
+        'by "' + inForce + '". That row is the setting itself now, not a ' +
+        'view of one — if it does not reach callVia() nothing does.');
+  });
   check('the page reports the api\'s published limits', async function () {
     return null;
   });
@@ -576,11 +612,160 @@ async function theBackendPathAlsoWorks(driver) {
         headers.slice(0, 200));
   });
   // Back to the browser path for the rest of the run.
-  await driver.executeScript(`
-    document.getElementById('scim_call_browser').checked = true;
-    document.getElementById('scim_call_backend').checked = false;
-  `);
+  await setField(driver, "scim_cfg_callPath", "browser");
   log.debug("Leaving theBackendPathAlsoWorks().");
+}
+
+// ---------------------------------------------------------------------------
+// 3b. THE PAGE ASKS THE SERVER WHAT IT ACCEPTS, WITHOUT BEING TOLD TO.
+//
+// RFC 7644 section 2 defines no SCIM credential of its own. It names six ways
+// of doing it and makes exactly ONE normative requirement: that a 401 say in
+// WWW-Authenticate which of them the server accepts. There is nothing in that
+// for a reader to decide, so there is no button: the page probes whenever the
+// service root changes and orders the scheme list by what came back.
+//
+// FOUR THINGS ARE ASSERTED and each is a way this could be decorative:
+//
+//   * the challenge is COLLECTED — the discovered `challengeSchemes` row is
+//     filled from a header nobody clicked for;
+//   * the scheme list is ORDERED by it, with the offered ones marked. A list
+//     that merely renders in table order has read the header and done nothing
+//     with it;
+//   * every scheme is still SELECTABLE. A server may accept one it does not
+//     advertise, and a page that filtered the list would make that
+//     untestable — which is the case somebody opens this workflow for;
+//   * a DIFFERENT service root replaces them. Leaving the previous server's
+//     schemes in place is the one wrong answer this list can give, and it is
+//     the one nothing on screen would contradict.
+// ---------------------------------------------------------------------------
+async function theProbeRunsWithoutBeingAskedTo(driver) {
+  log.debug("Entering theProbeRunsWithoutBeingAskedTo().");
+  log.info("3b. The automatic authentication probe.");
+  // A service root nobody has probed in this page's lifetime, so what is read
+  // below cannot be left over from openPage().
+  await setField(driver, "scim_base_url", scimBaseUrl + "/");
+  await waitForProbe(driver, "after changing the service root");
+  const collected = await driver.executeScript(`
+    var select = document.getElementById('scim_auth_scheme');
+    var options = [];
+    for (var i = 0; i < select.options.length; i++) {
+      options.push({ id: select.options[i].value,
+                     text: select.options[i].text });
+    }
+    return { options: options,
+             row: document.getElementById('scim_cfg_challengeSchemes').value,
+             challenges: (document.getElementById('scim_challenges')
+                 .textContent || ''),
+             status: document.getElementById('scim_auth_status').value };
+  `);
+  if (!/bearer|basic|digest|hoba/i.test(collected.row)) {
+    // A server that authenticates nobody, or a browser-only build whose CORS
+    // withheld the header, are both legitimate — and both make every check
+    // below vacuous, which is worse than not running them.
+    //
+    // BUT A BROKEN TRIGGER LOOKS EXACTLY THE SAME FROM HERE, and skipping on
+    // it is how this suite has quietly stopped testing something before. So
+    // the same probe is driven DIRECTLY before giving up: if that collects a
+    // challenge, the server offers one and it is the automatic half that is
+    // broken, which is a failure and not a skip.
+    await driver.executeScript("return window.scim.probeAuthentication();");
+    const byHand = await driver.executeScript(
+        "return document.getElementById('scim_cfg_challengeSchemes').value;");
+    check('the probe runs without being asked to', function () {
+      assert.ok(!/bearer|basic|digest|hoba/i.test(byHand),
+          'A probe driven by hand collected "' + byHand + '" from this ' +
+          'server and the automatic one collected "' + collected.row + '". ' +
+          'The server offers a challenge, so what is broken is the trigger — ' +
+          'the page is meant to ask when the service root changes, and there ' +
+          'is no button left to press instead.');
+    });
+    skip('the automatic authentication probe',
+        'no challenge was collected from ' + scimBaseUrl + ', by hand ' +
+        'either. The page said: ' + collected.status.slice(0, 200));
+    log.debug("Leaving theProbeRunsWithoutBeingAskedTo(). No challenge.");
+    await setField(driver, "scim_base_url", scimBaseUrl);
+    await waitForProbe(driver, "after the probe section");
+    return;
+  }
+  check('a challenge nobody clicked for reached the discovered row',
+      function () {
+    assert.ok(/bearer/i.test(collected.row),
+        'The challengeSchemes row says "' + collected.row + '" after a ' +
+        'change to the service root and nothing else. That header is the ' +
+        'ONE normative requirement RFC 7644 section 2 makes of a SCIM ' +
+        'server, and reading it is one unauthenticated request — there is ' +
+        'nothing in it for a button to ask.');
+    assert.ok(/offered/i.test(collected.challenges) ||
+        collected.challenges.indexOf('Bearer') >= 0,
+        'The Credential block does not show the challenge. It says: ' +
+        collected.challenges.slice(0, 200));
+  });
+  check('the scheme list is ordered by what the server named', function () {
+    const marked = collected.options.filter(function (one) {
+      return / — offered$/.test(one.text);
+    });
+    assert.ok(marked.length > 0,
+        'No scheme in the list is marked as offered, so the challenge was ' +
+        'read and nothing was done with it. The list reads: ' +
+        collected.options.map(function (o) {
+          return o.text;
+        }).join(' / '));
+    // Anonymous stays first: it is not a scheme a server offers, it is
+    // sending nothing, and it is what the probe itself uses.
+    assert.strictEqual(collected.options[0].id, 'none',
+        'The list starts with "' + collected.options[0].id + '". Anonymous ' +
+        'is not something a server offers and it is this page\'s default, ' +
+        'so it does not get sorted below what the server named.');
+    const firstMarked = collected.options.findIndex(function (one) {
+      return / — offered$/.test(one.text);
+    });
+    const lastUnmarked = collected.options.reduce(function (at, one, i) {
+      return / — not offered$/.test(one.text) ? i : at;
+    }, -1);
+    assert.ok(lastUnmarked === -1 || firstMarked < lastUnmarked,
+        'An offered scheme sorts below one the server did not name, so the ' +
+        'ordering is table order with labels on it.');
+  });
+  check('every scheme is still selectable', function () {
+    ['none', 'bearer', 'dpop', 'basic', 'digest', 'hoba', 'cookie',
+     'clientcert'].forEach(function (id) {
+      assert.ok(collected.options.some(function (one) {
+        return one.id === id;
+      }), 'The scheme "' + id + '" has been filtered out of the list. A ' +
+          'server may accept a scheme it does not advertise — and two of ' +
+          'these can never appear in a challenge at all, because neither ' +
+          'puts anything in an Authorization header.');
+    });
+  });
+  // A service root that answers nothing. The challenge rows have to EMPTY:
+  // ordering the scheme list by what a different server said is the one wrong
+  // answer this list can give.
+  await setField(driver, "scim_base_url", "http://127.0.0.1:9/scim/v2");
+  await waitForProbe(driver, "after a dead service root");
+  const cleared = await driver.executeScript(`
+    var select = document.getElementById('scim_auth_scheme');
+    var marked = 0;
+    for (var i = 0; i < select.options.length; i++) {
+      if (/ — offered$/.test(select.options[i].text)) { marked += 1; }
+    }
+    return { row: document.getElementById('scim_cfg_challengeSchemes').value,
+             marked: marked };
+  `);
+  check('a different service root replaces the challenge rather than keeping '
+      + 'it', function () {
+    assert.strictEqual(cleared.row, '',
+        'The challengeSchemes row still says "' + cleared.row + '" after ' +
+        'the service root was pointed at a port that answers nothing. Those ' +
+        'schemes belong to the PREVIOUS server, and a scheme list ordered ' +
+        'by what a different server said is wrong in a way nothing on ' +
+        'screen contradicts.');
+    assert.strictEqual(cleared.marked, 0,
+        cleared.marked + ' scheme(s) are still marked as offered.');
+  });
+  await setField(driver, "scim_base_url", scimBaseUrl);
+  await waitForProbe(driver, "after the probe section");
+  log.debug("Leaving theProbeRunsWithoutBeingAskedTo().");
 }
 
 // ---------------------------------------------------------------------------
@@ -605,7 +790,8 @@ async function everySchemeIsOfferedAndExplained(driver) {
         spec: (document.getElementById('scim_auth_spec').textContent || ''),
         scopeNote: (document.getElementById('scim_auth_scope_note')
           .textContent || ''),
-        backendDisabled: document.getElementById('scim_call_backend').disabled,
+        backendDisabled:
+            document.getElementById('scim_cfg_callPath').disabled,
         tokenShown: shown('scim_auth_token_row'),
         passwordShown: shown('scim_auth_password_row'),
         dpopShown: shown('scim_dpop_row'),
@@ -1055,31 +1241,51 @@ async function theDiscoveryPaneHasBothViews(driver) {
 // Three things are asserted and each is a way the pane could be decorative
 // rather than real:
 //
-//   * it MIRRORS the fields in the other panes rather than copying them, in
-//     both directions. A "central settings pane" that is a second store is a
-//     second store to drift;
+//   * it OWNS the controls rather than mirroring them. The Connection and
+//     Authentication panes are gone and the table took their fields' own ids,
+//     so `scim_base_url` is a cell of this table and of nothing else. There is
+//     no second element left that could hold a different value;
 //   * a discovered endpoint is APPLIED — the request the page would compose
 //     changes with it. That is the row the page acts on, and a settings pane
 //     implying it applies a value it does not is worse than no pane, because
 //     it makes the server's 404 look like a bug here;
 //   * NO CREDENTIAL is in it. The password is never written anywhere and the
-//     token has its own opt-in one pane up; a settings table that quietly
-//     became the fourth place a bearer token is written would defeat that
-//     opt-in without changing a word of it.
+//     token has its own opt-in in the Credential block BELOW the table; a
+//     settings table that quietly became the fourth place a bearer token is
+//     written would defeat that opt-in without changing a word of it.
 // ---------------------------------------------------------------------------
 async function theConfigurationPaneCentralizesTheSettings(driver) {
   log.debug("Entering theConfigurationPaneCentralizesTheSettings().");
   log.info("6d. The Configuration Parameters pane.");
+  // Three spellings, because there are three kinds of row and the id says
+  // which: an OWNED control (a row whose pane was deleted) carries the field's
+  // own id, a MIRROR of a field still in a pane of its own carries a generated
+  // one, and so does a discovered row. The counting is the half that matters —
+  // see the note in the probe below.
   const present = await driver.executeScript(`
-    var out = { rows: [], missing: [] };
-    var wanted = ['baseUrl', 'sslValidate', 'callPath', 'authScheme',
-                  'authUsername', 'authRealm', 'userEndpoint',
-                  'groupEndpoint', 'patchSupported', 'bulkMaxOperations',
-                  'filterSupported', 'challengeSchemes', 'genSeed',
-                  'scenarioPrefix'];
+    var out = { rows: [], missing: [], outside: [] };
+    var wanted = ['scim_base_url', 'scim_ssl_validate', 'scim_cfg_callPath',
+                  'scim_auth_scheme', 'scim_auth_username', 'scim_auth_realm',
+                  'scim_hoba_username', 'scim_cfg_userEndpoint',
+                  'scim_cfg_groupEndpoint', 'scim_cfg_patchSupported',
+                  'scim_cfg_bulkMaxOperations', 'scim_cfg_filterSupported',
+                  'scim_cfg_challengeSchemes', 'scim_cfg_genSeed',
+                  'scim_cfg_scenarioPrefix'];
+    var host = document.getElementById('scim_config');
     for (var i = 0; i < wanted.length; i++) {
-      if (!document.getElementById('scim_cfg_' + wanted[i])) {
+      // querySelectorAll and NOT getElementById, which returns the FIRST
+      // match in document order and so cannot see a duplicate at all — the
+      // table's control comes first, and a second element with the same id
+      // added below it would leave this check passing while the page had two
+      // controls for one setting. That mutation was tried and it passed.
+      var all = document.querySelectorAll('[id=' + JSON.stringify(wanted[i]) +
+          ']');
+      if (all.length === 0) {
         out.missing.push(wanted[i]);
+      } else if (all.length > 1) {
+        out.outside.push(wanted[i] + ' (' + all.length + ' elements)');
+      } else if (!host.contains(all[0])) {
+        out.outside.push(wanted[i]);
       }
     }
     var controls = document.querySelectorAll('#scim_config input,' +
@@ -1094,6 +1300,33 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
         'These parameters have no row: ' + present.missing.join(', ') + '. ' +
         'A pane that centralizes SOME of the settings leaves the reader ' +
         'hunting for the rest in exactly the panes it was meant to replace.');
+  });
+  check('and the table is where those controls LIVE, not a view of them',
+      function () {
+    assert.deepStrictEqual(present.outside, [],
+        'These controls are outside the configuration table, or there is ' +
+        'more than one of them: ' + present.outside.join(', ') + '. The ' +
+        'Connection and Authentication panes were removed because a setting ' +
+        'spelled in two places is a setting that can disagree with itself, ' +
+        'and a second element with one of these ids puts that back — ' +
+        'invisibly, because getElementById would go on returning the one in ' +
+        'the table.');
+  });
+  const gone = await driver.executeScript(`
+    var out = [];
+    ['pane_connection', 'pane_auth', 'connection_fieldset', 'auth_fieldset',
+     'scim_call_browser', 'scim_call_backend', 'btn_scim_probe_auth',
+     'scim_auth_realm_row'].forEach(function (id) {
+      if (document.getElementById(id)) { out.push(id); }
+    });
+    return out;
+  `);
+  check('the Connection and Authentication panes are gone entirely',
+      function () {
+    assert.deepStrictEqual(gone, [],
+        'These are still on the page: ' + gone.join(', ') + '. Each was a ' +
+        'second spelling of a configuration row, and leaving one behind ' +
+        'means two controls for one setting with nothing saying which won.');
   });
   // The credential check is about VALUES and not about the names somebody
   // happened to choose for the rows — a table with a row called `secret` and
@@ -1142,30 +1375,59 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
   });
   await setField(driver, "scim_auth_token", "");
   await useRunCredential(driver, 'after the credential check');
-  // Two-way: the config table drives the field, and the field drives it back.
-  await driver.executeScript(`
-    var e = document.getElementById('scim_cfg_authRealm');
-    e.value = 'REALM-FROM-THE-CONFIG-PANE';
-    e.dispatchEvent(new Event('change'));
+  // THE ROW REACHES THE REQUEST. There is nothing to mirror any more — the
+  // row is the control — so what is worth asserting is the other end: that
+  // editing a cell of this table changes what the page would send. A settings
+  // pane whose values do not reach the request is a settings pane nobody can
+  // trust, and that is true whether it owns its fields or reflects them.
+  await setField(driver, "scim_auth_realm", "REALM-FROM-THE-CONFIG-PANE");
+  const reached = await driver.executeScript(`
+    return { realm: document.getElementById('scim_auth_realm').value,
+             stored: localStorage.getItem('scim_auth_realm'),
+             inTable: document.getElementById('scim_config')
+                 .contains(document.getElementById('scim_auth_realm')) };
   `);
-  const forward = await textOf(driver, "scim_auth_realm");
-  check('editing a row edits the field it mirrors', function () {
-    assert.strictEqual(forward, 'REALM-FROM-THE-CONFIG-PANE',
-        'The Authentication pane\'s realm still says "' + forward + '". A ' +
-        'settings pane whose values do not reach the request is a settings ' +
-        'pane nobody can trust.');
-  });
-  await setField(driver, "scim_auth_realm", "REALM-FROM-THE-FIELD");
-  const back = await driver.executeScript(
-      "return document.getElementById('scim_cfg_authRealm').value;");
-  check('editing the field edits the row, so there is one value and not two',
+  check('a row edited in the table is the value, and is written through',
       function () {
-    assert.strictEqual(back, 'REALM-FROM-THE-FIELD',
-        'The configuration row still says "' + back + '", so it is a COPY ' +
-        'of the field rather than a view of it — and a copy is a thing to ' +
-        'drift.');
+    assert.strictEqual(reached.realm, 'REALM-FROM-THE-CONFIG-PANE');
+    assert.ok(reached.inTable,
+        'The realm control is not inside the configuration table.');
+    assert.strictEqual(reached.stored, 'REALM-FROM-THE-CONFIG-PANE',
+        'localStorage says "' + reached.stored + '". An owned row is a ' +
+        'REMEMBERED field, and the listener that writes it through is added ' +
+        'when the table builds the control — a table that is rebuilt on ' +
+        'every discovery would otherwise stop remembering after the first ' +
+        'one, silently.');
   });
   await setField(driver, "scim_auth_realm", "SCIM");
+  // AND THE OTHER KIND OF ROW, both ways. Seven parameters still live in a
+  // pane of their own — the generator's four and the planner's three, which
+  // belong beside the buttons that use them — so those rows are MIRRORS and
+  // the table must drive the field and follow it. This is the check that
+  // catches the mistake the ownership change makes easy: marking a mirror row
+  // as owned gives its cell the field's own id, and `getElementById` then
+  // returns the table's copy for ever while the generator's own box silently
+  // does nothing.
+  await driver.executeScript(`
+    var e = document.getElementById('scim_cfg_genSeed');
+    e.value = 'seed-from-the-table';
+    e.dispatchEvent(new Event('change'));
+  `);
+  const toTheField = await textOf(driver, "scim_gen_seed");
+  await setField(driver, "scim_gen_seed", "seed-from-the-pane");
+  const fromTheField = await driver.executeScript(
+      "return document.getElementById('scim_cfg_genSeed').value;");
+  check('a mirrored row drives its field, and follows it back', function () {
+    assert.strictEqual(toTheField, 'seed-from-the-table',
+        'The generator pane\'s seed says "' + toTheField + '" after the ' +
+        'table was edited, so the row is decorative in that direction.');
+    assert.strictEqual(fromTheField, 'seed-from-the-pane',
+        'The table still says "' + fromTheField + '" after the generator ' +
+        'pane\'s own box was edited. Either the row is a COPY rather than a ' +
+        'view — a copy is a thing to drift — or the two have become ONE ' +
+        'element carrying one id twice, which reads exactly like this.');
+  });
+  await setField(driver, "scim_gen_seed", "seed-1");
   // The discovered endpoint, and the fact that the page composes onto it.
   // The wanted text is the SUCCESS sentence and not the word "Read": the
   // failure message is "The documents could not all be read", which a /Read/
@@ -1260,6 +1522,7 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
   await driver.findElement(By.id("btn_scim_config_save")).click();
   await driver.navigate().refresh();
   await waitForPageBundle(driver, "the SCIM page");
+  await waitForProbe(driver, "after the reload in the configuration section");
   const survived = await driver.executeScript(
       "return document.getElementById('scim_cfg_groupEndpoint').value;");
   check('a saved parameter survives a reload', function () {
@@ -1276,6 +1539,7 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
     e.dispatchEvent(new Event('change'));
   `, discovered.group);
   await setField(driver, "scim_base_url", scimBaseUrl);
+  await waitForProbe(driver, "after the configuration pane");
   log.debug("Leaving theConfigurationPaneCentralizesTheSettings().");
 }
 
@@ -1354,6 +1618,7 @@ async function credentialsAreNotRemembered(driver) {
   });
   await driver.navigate().refresh();
   await waitForPageBundle(driver, "the SCIM page");
+  await waitForProbe(driver, "after the reload in the remembering section");
   const remembered = await textOf(driver, "scim_base_url");
   check('the service root survives a reload', function () {
     assert.strictEqual(remembered, scimBaseUrl,
@@ -1572,23 +1837,23 @@ async function thePanesCollapseAndOneSwitchDoesThemAll(driver) {
   });
   // One title, clicked for real rather than through the module — the handler
   // is added by the bundle, so a click is the only thing that proves it ran.
-  const one = await driver.findElement(By.id('connection_expand_button'));
+  const one = await driver.findElement(By.id('config_expand_button'));
   await one.click();
   const closed = await driver.executeScript(`
-    var f = document.getElementById('connection_fieldset');
-    var lg = document.getElementById('connection_expand_button');
+    var f = document.getElementById('config_fieldset');
+    var lg = document.getElementById('config_expand_button');
     return { display: f.style.display,
              triangle: window.getComputedStyle(lg, '::before').content,
              cursor: window.getComputedStyle(lg).cursor };
   `);
   await one.click();
   const reopened = await driver.executeScript(
-      "return document.getElementById('connection_fieldset').style.display;");
+      "return document.getElementById('config_fieldset').style.display;");
   check("clicking a pane's title collapses it, and the triangle turns",
       function () {
     assert.strictEqual(closed.display, 'none',
-        'The Connection fieldset is display:' + closed.display + ' after a ' +
-        'click on its title, so nothing is wired to it.');
+        'The Configuration Parameters fieldset is display:' + closed.display +
+        ' after a click on its title, so nothing is wired to it.');
     assert.ok(closed.triangle.indexOf('\u25b8') >= 0,
         'The collapsed pane\'s title still draws ' + closed.triangle +
         ' rather than a right-pointing triangle. That indicator is a ' +
@@ -1647,10 +1912,16 @@ async function thePanesCollapseAndOneSwitchDoesThemAll(driver) {
 //
 // The explanations on this page are the reason the workflow is worth using,
 // so they are folded rather than cut — `details.scim-more`, the same shape the
-// Kerberos pages use. Two properties, and the second is the one worth a test.
+// Kerberos pages use. Three properties, and the third is the one worth a test.
 //
-// Every fold starts CLOSED: a `details` that shipped `open` is prose back on
-// the page, which is the state this change exists to leave behind.
+// TWO KINDS OF FOLD and the distinction is the check. An EXPLANATION starts
+// CLOSED: a `details` that shipped `open` is prose back on the page, which is
+// the state this arrangement exists to leave behind. A READOUT
+// (`.scim-readout`) holds the page's own answer — what this operation needs,
+// what the server said it accepts, how the run went — and ships OPEN, because
+// a readout behind a click nobody knows to make is a page that looks like it
+// did not run. Requiring each kind to be in its own state is what stops one
+// quietly becoming the other.
 //
 // And the sentence saying these endpoints delete accounts is NOT inside one.
 // A safety notice that can be collapsed out of sight is a safety notice
@@ -1664,14 +1935,31 @@ async function theProseFoldsAndTheWarningDoesNot(driver) {
   log.info("8d. The folded prose.");
   const folds = await driver.executeScript(`
     var all = document.querySelectorAll('details.scim-more');
-    var out = { count: all.length, open: [], noSummary: [] };
+    var out = { count: all.length, readouts: 0, open: [], shut: [],
+                noSummary: [] };
     for (var i = 0; i < all.length; i++) {
       var summary = all[i].querySelector('summary');
-      if (all[i].open) {
-        out.open.push((summary ? summary.textContent : '').slice(0, 40));
-      }
+      var label = (summary ? summary.textContent : '').slice(0, 40);
+      var readout = all[i].className.indexOf('scim-readout') >= 0;
+      if (readout) { out.readouts += 1; }
+      if (all[i].open && !readout) { out.open.push(label); }
+      if (!all[i].open && readout) { out.shut.push(label); }
       if (!summary || !summary.textContent.trim()) {
         out.noSummary.push(i);
+      }
+    }
+    // Every block of prose longer than one line has to be IN one of these.
+    // A paragraph left loose in a pane is the state this check exists to
+    // leave behind, and it is invisible to a count of the folds.
+    out.loose = [];
+    var notes = document.querySelectorAll(
+        '.dbg-pane p.scim-note, .dbg-pane p.scim-challenges,' +
+        ' .dbg-pane p.scim-limits');
+    for (var n = 0; n < notes.length; n++) {
+      if (notes[n].closest('details')) { continue; }
+      var lines = notes[n].getClientRects().length;
+      if (lines > 1) {
+        out.loose.push((notes[n].id || notes[n].textContent).slice(0, 40));
       }
     }
     var warning = document.querySelector('.scim-warning');
@@ -1684,18 +1972,31 @@ async function theProseFoldsAndTheWarningDoesNot(driver) {
       clone.textContent.replace(/\\s+/g, ' ').trim();
     return out;
   `);
-  check('every block of prose is folded, closed, and has a summary',
-      function () {
-    assert.ok(folds.count >= 8,
+  check('every block of prose is folded and has a summary', function () {
+    assert.ok(folds.count >= 20,
         'Only ' + folds.count + ' folded blocks are on the page, so this ' +
         'check is close to vacuous — the prose has gone back to being ' +
         'unfoldable paragraphs, or the class has been renamed.');
-    assert.deepStrictEqual(folds.open, [],
-        'These folds ship open: ' + folds.open.join(' | ') + '. A `details` ' +
-        'with the open attribute is prose back on the page.');
+    assert.ok(folds.readouts >= 10,
+        'Only ' + folds.readouts + ' of them are readouts. Every block of ' +
+        'text on this page that runs to more than a line is collapsible, ' +
+        'the live ones included.');
     assert.deepStrictEqual(folds.noSummary, [],
         'Folds at these indexes have no summary text, so they are a ' +
         'triangle with nothing beside it: ' + folds.noSummary.join(', '));
+    assert.deepStrictEqual(folds.loose, [],
+        'These paragraphs run to more than one line and are not inside a ' +
+        'fold: ' + folds.loose.join(' | ') + '.');
+  });
+  check('an explanation ships closed and a readout ships open', function () {
+    assert.deepStrictEqual(folds.open, [],
+        'These explanations ship open: ' + folds.open.join(' | ') + '. A ' +
+        '`details` with the open attribute is prose back on the page.');
+    assert.deepStrictEqual(folds.shut, [],
+        'These readouts ship closed: ' + folds.shut.join(' | ') + '. A ' +
+        'readout behind a click nobody knows to make is a page that looks ' +
+        'like it did not run — which is exactly what the status line of a ' +
+        'failed operation is for.');
   });
   check('the sentence about deleting accounts is NOT inside a fold',
       function () {
@@ -1713,19 +2014,23 @@ async function theProseFoldsAndTheWarningDoesNot(driver) {
 // ---------------------------------------------------------------------------
 // 8b. THE TOP ROW IS ONE ROW.
 //
-// Connection, Authentication and Discovery are not steps — they are the
-// settings every pane below them reads — so they sit across the top rather
-// than stacked, and the Configuration Parameters pane sits under all three.
-// Asserted by GEOMETRY rather than by the presence of a class, because a grid
-// that has silently fallen back to one column still has every class it had.
+// Configuration Parameters and Discovery are not steps — between them they
+// hold every setting the panes below read and the documents those settings are
+// read out of — so they sit across the top rather than stacked, which is what
+// keeps Send and Run on the first screen. Asserted by GEOMETRY rather than by
+// the presence of a class, because a grid that has silently fallen back to one
+// column still has every class it had.
+//
+// TWO PANES AND NOT THREE since the Connection and Authentication panes were
+// folded into the configuration table, and the endpoint pane below is what
+// says the row did not simply become a third column.
 // ---------------------------------------------------------------------------
 async function theTopRowIsOneRow(driver) {
   log.debug("Entering theTopRowIsOneRow().");
   log.info("8b. The top row.");
   await driver.manage().window().setRect({ width: 1400, height: 1000 });
   const boxes = await driver.executeScript(`
-    var wanted = ['pane_connection', 'pane_auth', 'pane_discovery',
-                  'pane_config'];
+    var wanted = ['pane_config', 'pane_discovery', 'pane_endpoint'];
     var out = {};
     for (var i = 0; i < wanted.length; i++) {
       var e = document.getElementById(wanted[i]);
@@ -1737,33 +2042,26 @@ async function theTopRowIsOneRow(driver) {
     }
     return out;
   `);
-  check('Connection, Authentication and Discovery are on one row', function () {
-    ['pane_connection', 'pane_auth', 'pane_discovery'].forEach(function (id) {
+  check('Configuration Parameters and Discovery are on one row', function () {
+    ['pane_config', 'pane_discovery', 'pane_endpoint'].forEach(function (id) {
       assert.ok(boxes[id], 'There is no ' + id + ' on the page.');
     });
-    const tops = ['pane_connection', 'pane_auth', 'pane_discovery']
-      .map(function (id) {
-        return boxes[id].top;
-      });
-    assert.ok(Math.max.apply(null, tops) - Math.min.apply(null, tops) <= 4,
-        'The three panes start at ' + tops.join(', ') + 'px, so they are ' +
-        'stacked rather than side by side — which is what a grid looks like ' +
-        'when it has fallen back to one column, with every class still in ' +
-        'place.');
-    assert.ok(boxes.pane_connection.left < boxes.pane_auth.left &&
-        boxes.pane_auth.left < boxes.pane_discovery.left,
-        'The three are on one row and out of order: ' +
-        boxes.pane_connection.left + ', ' + boxes.pane_auth.left + ', ' +
-        boxes.pane_discovery.left + '.');
+    assert.ok(Math.abs(boxes.pane_config.top - boxes.pane_discovery.top) <= 4,
+        'The two panes start at ' + boxes.pane_config.top + 'px and ' +
+        boxes.pane_discovery.top + 'px, so they are stacked rather than side ' +
+        'by side — which is what a grid looks like when it has fallen back ' +
+        'to one column, with every class still in place.');
+    assert.ok(boxes.pane_config.left < boxes.pane_discovery.left,
+        'The two are on one row and out of order: ' +
+        boxes.pane_config.left + ', ' + boxes.pane_discovery.left + '.');
   });
-  check('the Configuration Parameters pane spans the row beneath them',
-      function () {
-    assert.ok(boxes.pane_config.top > boxes.pane_discovery.top,
-        'The configuration pane is not below the top row.');
-    assert.ok(boxes.pane_config.width > boxes.pane_connection.width * 2,
-        'The configuration pane is ' + boxes.pane_config.width + 'px wide ' +
-        'against a top-row pane\'s ' + boxes.pane_connection.width + 'px, so ' +
-        'it is in the grid rather than under it.');
+  check('the endpoint pane spans the row beneath them', function () {
+    assert.ok(boxes.pane_endpoint.top > boxes.pane_discovery.top,
+        'The endpoint pane is not below the top row.');
+    assert.ok(boxes.pane_endpoint.width > boxes.pane_config.width * 1.5,
+        'The endpoint pane is ' + boxes.pane_endpoint.width + 'px wide ' +
+        'against a top-row pane\'s ' + boxes.pane_config.width + 'px, so it ' +
+        'is in the grid rather than under it.');
   });
   log.debug("Leaving theTopRowIsOneRow().");
 }
@@ -1904,7 +2202,7 @@ async function tooltipsAreEverywhereAndCannotTakeAClick(driver) {
   // And a real click on each of the buttons a test presses, in that state.
   const clicks = [];
   for (const id of ['btn_scim_spc', 'btn_scim_resource_types',
-                    'btn_scim_schemas', 'btn_scim_probe_auth',
+                    'btn_scim_schemas',
                     'btn_scim_config_save', 'btn_scim_config_restore',
                     'btn_scim_gen_users', 'btn_scim_plan',
                     'scim_tab_discovery_document',
@@ -2044,6 +2342,10 @@ async function test() {
     await everyEndpointComposes(driver);
     await theBrowserCreatesAndDeletes(driver);
     await theBackendPathAlsoWorks(driver);
+    await theProbeRunsWithoutBeingAskedTo(driver);
+    // The probe leaves the scheme at whatever it was; the sections that send
+    // need the run credential back.
+    await useRunCredential(driver, 'after the probe section');
     await everySchemeIsOfferedAndExplained(driver);
     await theDpopProofIsMintedInTheBrowser(driver);
     await theHobaKeyIsGeneratedAndSigns(driver);

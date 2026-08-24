@@ -444,7 +444,7 @@ the token rather than the encoding.
 (`spiffe.trustDomain`, `example.org`), in all three server-side shapes, on
 **four sockets**. `GET /spiffe` (and `?format=json`) describes all of it and
 reports whether each socket actually bound — which nothing else can do, because
-`/sts-metadata` is built by walking the Express router and a gRPC listener
+`/admin/sts-metadata` is built by walking the Express router and a gRPC listener
 registers no route. See `docs/mock-sts.md` and the mock's own
 `spiffe/CLAUDE.md`.
 

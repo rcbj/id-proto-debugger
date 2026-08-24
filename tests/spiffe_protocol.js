@@ -187,19 +187,23 @@ function json(url, options) {
   });
 }
 
-function readSetting(key) {
-  log.debug("Entering readSetting(). " + key);
+// One setting's whole row, which carries where the value CAME FROM as well as
+// what it is. Both halves are needed to put a setting back — see
+// restoreSetting(); reading the value alone is what left four overrides behind
+// on 2026-08-24.
+function readSettingRow(key) {
+  log.debug("Entering readSettingRow(). " + key);
   return json(STS_URL + "/admin-api/config").then(function (answer) {
     const rows = (answer.body && (answer.body.settings ||
       answer.body.config)) || [];
     for (const row of rows) {
       if (row.key === key) {
-        log.debug("Leaving readSetting(). found");
-        return row.value;
+        log.debug("Leaving readSettingRow(). found, source=" + row.source);
+        return row;
       }
     }
-    log.debug("Leaving readSetting(). not found");
-    return undefined;
+    log.debug("Leaving readSettingRow(). not found");
+    return null;
   });
 }
 
@@ -212,6 +216,49 @@ function writeSetting(key, value) {
   }).then(function (answer) {
     log.debug("Leaving writeSetting(). " + answer.status);
     return answer;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// A setting put back the way it was found, which is NOT the same as written
+// back with the value it had.
+//
+// The mock records where every value came from — `appconfig` for one its
+// process started with, `override` for one changed at runtime — and a `set`
+// always makes the second, even when the value is identical. So a test that
+// read 3600 and wrote 3600 back leaves the row reading `source: override`
+// forever, and tests/admin_api.js's "no runtime override should be in force
+// before this check runs" then fails on the NEXT run against the same
+// container, naming four SPIFFE settings and no test. That is what it found on
+// 2026-08-24.
+//
+// `reset` is the operation that undoes an override rather than covering it, so
+// a setting this file overrode is reset unless it was ALREADY overridden when
+// it got here — in which case the value it had is what it goes back to.
+// ---------------------------------------------------------------------------
+function restoreSetting(key, before, fallback) {
+  log.debug("Entering restoreSetting(). " + key);
+  if (before && before.source === "override") {
+    log.debug("Leaving restoreSetting(). It was already an override.");
+    return writeSetting(key, before.value);
+  }
+  return json(STS_URL + "/admin-api/config/reset", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ key: key })
+  }).then(function (answer) {
+    if (answer.status === 200 && answer.body && answer.body.ok) {
+      log.debug("Leaving restoreSetting(). Reset to what it started with.");
+      return answer;
+    }
+    // The service refused the reset — an older mock with no such action, say.
+    // Writing the value back is worse than a reset and better than leaving
+    // this run's value in place, so it is the fallback rather than the plan.
+    log.warn("Could not reset " + key + " (HTTP " + answer.status +
+             "); writing the previous value back instead.");
+    log.debug("Leaving restoreSetting(). Fell back to a write.");
+    return writeSetting(key, before === null || before === undefined ?
+                        fallback : before.value);
   });
 }
 
@@ -1158,10 +1205,9 @@ async function testLocalSocket() {
 // ---------------------------------------------------------------------------
 async function testRotation(restore) {
   log.debug("Entering testRotation().");
-  const previous = await readSetting("spiffe.svidTtl");
+  const previous = await readSettingRow("spiffe.svidTtl");
   restore.push(function () {
-    return writeSetting("spiffe.svidTtl",
-      previous === undefined ? 3600 : previous);
+    return restoreSetting("spiffe.svidTtl", previous, 3600);
   });
   const set = await writeSetting("spiffe.svidTtl", 6);
   if (set.status !== 200 || !(set.body && set.body.ok)) {
@@ -1227,13 +1273,11 @@ function isInventedForThisCaller(entry) {
 
 async function testNoIdentityPath(adminBase, restore) {
   log.debug("Entering testNoIdentityPath().");
-  const previousAuto = await readSetting("spiffe.autoCreateEntries");
-  const previousAttest = await readSetting("spiffe.attestWorkloads");
+  const previousAuto = await readSettingRow("spiffe.autoCreateEntries");
+  const previousAttest = await readSettingRow("spiffe.attestWorkloads");
   restore.push(async function () {
-    await writeSetting("spiffe.attestWorkloads",
-      previousAttest === undefined ? true : previousAttest);
-    await writeSetting("spiffe.autoCreateEntries",
-      previousAuto === undefined ? true : previousAuto);
+    await restoreSetting("spiffe.attestWorkloads", previousAttest, true);
+    await restoreSetting("spiffe.autoCreateEntries", previousAuto, true);
     // One call with the setting back on, so the entry this section deleted is
     // invented again before anything else looks for it.
     try {
@@ -1318,10 +1362,9 @@ async function test() {
     // Make the Workload API's own SVID an administrator. THE ONLY route from
     // "I can fetch an identity" to "I can drive the registry" that does not
     // already require one — and the reason this job holds a lock.
-    previousAdminIds = await readSetting("spiffe.adminIds");
+    previousAdminIds = await readSettingRow("spiffe.adminIds");
     restore.push(function () {
-      return writeSetting("spiffe.adminIds",
-        previousAdminIds === undefined ? "" : previousAdminIds);
+      return restoreSetting("spiffe.adminIds", previousAdminIds, "");
     });
     const set = await writeSetting("spiffe.adminIds", held.spiffe_id);
     assert.ok(set.status === 200 && set.body && set.body.ok,

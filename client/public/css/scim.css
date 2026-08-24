@@ -405,6 +405,11 @@ textarea.scim-field {
    settings every other pane on this page reads, and stacking them put the
    thing somebody actually came here to press (Send, Run) two screens down.
 
+   TWO COLUMNS AND NOT THREE, since the Connection and Authentication panes
+   were folded into the configuration table: the table OWNS the service root,
+   the call path and the scheme now, so a pane of its own for each would be a
+   second copy of a value rather than a second place to read it.
+
    `minmax(0, 1fr)` and not `1fr`: a grid item's automatic minimum size is its
    MIN-CONTENT size, so a column holding a percent-encoded DN — a long unbroken
    string with no space in it — grows the track rather than scrolling inside
@@ -416,13 +421,29 @@ textarea.scim-field {
    ------------------------------------------------------------------------ */
 .scim-topgrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 14px;
   align-items: start;
 }
 
 @media (max-width: 1100px) {
   .scim-topgrid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------------------------------------------------------------------
+   THE CREDENTIAL BLOCK, under the configuration table rather than in it.
+
+   A password, a generated signing key and a minted proof are not settings:
+   they are not read out of a document, they cannot be compared against one,
+   and two of the three must never be written down at all — so they cannot be
+   rows of a table whose whole subject is where a value came from and whether
+   it is still current. They sit below it instead, ruled off, and only the
+   blocks the selected scheme actually uses are ever on screen.
+   ------------------------------------------------------------------------ */
+.scim-credentials {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px solid #e0e0e6;
 }
 
 /* A `fieldset` carries `min-inline-size: min-content` in the UA stylesheet,
@@ -836,6 +857,22 @@ textarea.scim-box-tall {
 
 .scim-more > summary:hover {
   text-decoration: underline;
+}
+
+/* A READOUT FOLD, which ships OPEN, and the distinction is not cosmetic.
+
+   The folds above hold explanations — what a 409 on a duplicate userName
+   means, why a wrong Digest hash reads exactly like a wrong password — and
+   those start closed, because prose that shipped open is prose back on the
+   page. These hold the page's own ANSWERS: what this operation needs, what
+   the server said it accepts, how the run went. Shipping one of those closed
+   would hide the result of pressing Send behind a click nobody knows to make.
+
+   The class is what makes the difference assertable: tests/scim_page.js
+   requires every `.scim-more` WITHOUT it to be closed and every one WITH it to
+   be open, so neither kind can quietly become the other. */
+.scim-readout > summary {
+  color: #555;
 }
 
 /* Inside the warning box the summary has to read as part of the warning

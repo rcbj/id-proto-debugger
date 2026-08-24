@@ -65,7 +65,7 @@
 // **Two schemes are browser-only and it is not a limitation of this page.** A
 // session cookie is attached by the browser and the api has no cookie jar; a
 // TLS client certificate is chosen during the handshake by whatever holds the
-// key. Selecting either turns the backend radio off with a reason on screen.
+// key. Selecting either disables the `callPath` row with a reason on screen.
 //
 // ---------------------------------------------------------------------------
 // WHAT IS REMEMBERED AND WHAT IS NOT.
@@ -141,8 +141,13 @@ function setText(id, v) {
   var e = el(id);
   if (e) e.textContent = v == null ? '' : String(v);
 }
+// A prose block that has been folded is hidden by hiding its `details`
+// wrapper, which by convention is the block's own id with `_fold` on the end.
+// Hiding only the paragraph would leave a summary the reader can open onto
+// nothing at all — which is worse than the note being absent, because it reads
+// as a note that failed to render.
 function show(id, on) {
-  var e = el(id);
+  var e = el(id + '_fold') || el(id);
   if (!e) { return; }
   e.style.display = on ? '' : 'none';
   // The class as well as the inline style, for the reason pki.js records: an
@@ -514,9 +519,18 @@ function wireExpanders() {
 // ---------------------------------------------------------------------------
 // WHICH WAY THE CALL GOES.
 //
-// The radio, plus the two schemes that force the browser. A page that let
-// somebody select "through the api" with a cookie scheme would send a request
-// with no cookie and report a 401 as the server's fault.
+// ONE CONTROL, and it is the `callPath` row of the configuration table. It was
+// a pair of radio buttons in a Connection pane of its own and a row in the
+// table that reflected them, which is two spellings of one setting: the row is
+// now the setting itself.
+//
+// The preference and the path IN FORCE are deliberately different things.
+// `configValues.callPath` is what the reader asked for and is remembered;
+// `callVia()` is what will actually happen, because two schemes force the
+// browser and a build with no api behind it has no choice at all. The select
+// shows the second — a page that let somebody select "through the api" with a
+// cookie scheme would send a request with no cookie and report the 401 as the
+// server's fault.
 // ---------------------------------------------------------------------------
 function callVia() {
   log.debug("Entering callVia().");
@@ -529,7 +543,7 @@ function callVia() {
     log.debug("Leaving callVia(). No api on this deployment.");
     return 'browser';
   }
-  var via = isOn('scim_call_backend') ? 'api' : 'browser';
+  var via = configValues.callPath === 'api' ? 'api' : 'browser';
   log.debug("Leaving callVia(). " + via);
   return via;
 }
@@ -537,8 +551,7 @@ function callVia() {
 function refreshCallPathControls() {
   log.debug("Entering refreshCallPathControls().");
   var scheme = scimClient.authScheme(val('scim_auth_scheme'));
-  var backendRadio = el('scim_call_backend');
-  var browserRadio = el('scim_call_browser');
+  var pathSelect = el('scim_cfg_callPath');
   var reason = '';
   if (!BACKEND_AVAILABLE) {
     reason = 'This build has no api behind it, so every call is made by this ' +
@@ -550,22 +563,20 @@ function refreshCallPathControls() {
         scheme.what.split('.')[0] + '. The call path is fixed to this ' +
         'browser while it is selected.';
   }
-  if (backendRadio) {
-    backendRadio.disabled = !!reason;
-    if (reason) {
-      backendRadio.checked = false;
-      if (browserRadio) {
-        browserRadio.checked = true;
-      }
-    }
+  if (pathSelect) {
+    // Disabled rather than removed, and the PREFERENCE underneath is left
+    // alone: a scheme selected for one call must not silently throw away a
+    // call path chosen for the next one. Changing the scheme back restores it.
+    pathSelect.disabled = !!reason;
   }
   setText('scim_call_path_note', reason);
   show('scim_call_path_note', !!reason);
-  // A scheme that forces the browser has just moved the radio; the callPath
-  // row in the configuration table has to say what is actually in force
-  // rather than what was last chosen.
+  // The callPath row shows what is IN FORCE rather than what was last asked
+  // for, and a scheme that forces the browser has just changed the first
+  // without touching the second.
   refreshConfigValues();
-  log.debug("Leaving refreshCallPathControls().");
+  log.debug("Leaving refreshCallPathControls(). " +
+      (reason ? 'fixed to the browser' : 'the reader\'s choice'));
 }
 
 // ---------------------------------------------------------------------------
@@ -582,9 +593,25 @@ function refreshCallPathControls() {
 // THREE KINDS OF ROW, and the difference between the first two is the whole
 // design:
 //
-//   * a MIRROR of a field in another pane (`field`). The field is the value;
-//     this row reads and writes it. There is no second copy to drift, which is
-//     what a "central settings pane" usually becomes.
+//   * an OWNED field (`field` with `owns`). The row IS the control:
+//     `configInput()` gives it the field's own id, so `scim_base_url` and
+//     `scim_auth_scheme` are elements of this table and of nothing else. That
+//     is a change from the first cut of this page, where the row mirrored a
+//     field in a Connection or an Authentication pane — one setting spelled
+//     twice, in two panes that could disagree about it. There is now nothing
+//     to mirror.
+//   * a MIRROR of a field in a pane that is still here (`field` WITHOUT
+//     `owns`) — the generator's four and the scenario planner's three, which
+//     belong beside the buttons that use them. The field is the value; this
+//     row reads and writes it, in both directions.
+//
+//     **`owns` IS NOT OPTIONAL ON THE FIRST KIND AND MUST NOT BE ADDED TO THE
+//     SECOND.** `configControlId()` gives an owned row the field's own id, so
+//     marking a row that still has a field of its own elsewhere puts TWO
+//     elements with that id on the page — and `getElementById` returns the
+//     first in document order, which is this table's, so the pane's own box
+//     silently stops doing anything. tests/scim_page.js counts the elements
+//     per id with `querySelectorAll` for exactly this reason.
 //   * a DISCOVERED parameter (`discovered`), which lives here and nowhere
 //     else. `discoveredValues` keeps what the document said and
 //     `configValues` keeps what is in force, so an override is a visible
@@ -592,13 +619,21 @@ function refreshCallPathControls() {
 //   * a heading (`group`), which is a row of the table and not a parameter.
 //
 // NO CREDENTIAL IS IN THIS TABLE, and that is deliberate rather than an
-// oversight to be tidied up later. The password is never written anywhere; the
-// HOBA private key is generated per session and never stored, because a
-// signing key in localStorage is a signing key in every extension's reach; and
-// the access token stays in the Authentication pane under its own opt-in,
-// where the checkbox that governs it is. A settings pane that quietly became
-// the fourth place a bearer token is written would defeat that opt-in without
-// changing a word of it.
+// oversight to be tidied up later — the panes went away, this rule did not.
+// The password is never written anywhere; the HOBA private key is generated
+// per session and never stored, because a signing key in localStorage is a
+// signing key in every extension's reach; and the access token is under its
+// own opt-in. All three are in the Credential block BELOW the table, which is
+// part of this pane and is not part of this table: a settings pane that
+// quietly became the fourth place a bearer token is written would defeat that
+// opt-in without changing a word of it. What decides whether a thing is a row
+// here is whether it is a value that can be compared against a document —
+// a minted proof and a generated key never can be.
+//
+// THE TABLE IS REBUILT WHOLE on every discovery, so `renderConfig()` carries
+// the owned fields' values across the rebuild and puts the focus back. It
+// would otherwise wipe the service root the moment the automatic probe that
+// the service root triggered came back.
 //
 // WHAT THE PAGE ACTS ON, honestly marked. `userEndpoint` and `groupEndpoint`
 // are real: they are handed to `scimClient.buildRequest`, so a server whose
@@ -615,38 +650,55 @@ var RT = 'ResourceTypes';
 
 var CONFIG_PARAMS = [
   { group: 'Connection' },
-  { name: 'baseUrl', label: 'baseUrl', field: 'scim_base_url', source: 'you',
-    what: 'The SCIM service root every path is composed against. Editing it ' +
-        'here is the same as editing it in the Connection pane — there is ' +
-        'one value, not two.' },
+  { name: 'baseUrl', label: 'baseUrl', field: 'scim_base_url', owns: true,
+    source: 'you', placeholder: 'http://localhost:8081/scim/v2',
+    wire: wireBaseUrl, applied: true,
+    what: 'The SCIM service root every path is composed against — the host ' +
+        'plus the SCIM base path, which is /scim/v2 on essentially every ' +
+        'implementation. ACTED ON: every request on this page is composed ' +
+        'onto it, and changing it makes this page ask the server what it ' +
+        'accepts. Do NOT put a resource path here; /Users and the rest are ' +
+        'built onto it.' },
   { name: 'sslValidate', label: 'sslValidate', field: 'scim_ssl_validate',
-    source: 'you', kind: 'select',
+    owns: true, source: 'you', kind: 'select',
     options: [['true', 'validate'], ['false', 'do not validate']],
     what: 'Applies to the api call path only. A browser decides this for ' +
-        'itself and cannot be told otherwise.' },
+        'itself and cannot be told otherwise, so switching it off changes ' +
+        'nothing about a browser-direct call.' },
   { name: 'callPath', label: 'callPath', source: 'you', kind: 'select',
     options: [['browser', 'from this browser'], ['api', 'through the api']],
-    what: 'Which way a request goes. Two authentication schemes — session ' +
-        'cookie and TLS client certificate — force the browser and cannot be ' +
-        'changed here while they are selected.' },
+    what: 'Which way a request goes. From this browser is a fetch() off ' +
+        'this page and is the only path the hosted site has; through the api ' +
+        'exists for the three things a browser cannot do — reach a server ' +
+        'with no CORS headers, reach one with a self-signed certificate, and ' +
+        'show every header each way. Two schemes — session cookie and TLS ' +
+        'client certificate — force the browser, and this row then shows ' +
+        'what is IN FORCE rather than what was last chosen.' },
 
   { group: 'Authentication' },
   { name: 'authScheme', label: 'authScheme', field: 'scim_auth_scheme',
-    source: 'you', kind: 'select', optionsFrom: 'scim_auth_scheme',
+    owns: true, source: 'you', kind: 'select', optionsFn: authSchemeOptions,
     what: 'Which of RFC 7644 section 2\'s six schemes to use, or anonymous. ' +
-        'Only the two OAuth ones carry scopes.' },
+        'Only the two OAuth ones carry scopes. The list is ORDERED by what ' +
+        'the server\'s own WWW-Authenticate challenge named, which this page ' +
+        'collects by itself whenever the service root changes — every scheme ' +
+        'stays selectable, because a server may accept one it does not ' +
+        'advertise.' },
   { name: 'authUsername', label: 'authUsername',
-    field: 'scim_auth_username', source: 'you',
+    field: 'scim_auth_username', owns: true, source: 'you',
     what: 'The account a Basic or Digest credential authenticates as. The ' +
-        'PASSWORD is not in this table and is never stored anywhere.' },
+        'PASSWORD is not in this table and is never stored anywhere — it is ' +
+        'in the Credential block below. Note that an accepted Basic name is ' +
+        'an identity at the server and usually gains a directory entry of ' +
+        'its own; it is not one of the users this page provisions.' },
   { name: 'authRealm', label: 'authRealm', field: 'scim_auth_realm',
-    source: 'you',
+    owns: true, source: 'you',
     what: 'The realm used when the server\'s own challenge does not supply ' +
         'one. It is hashed into a Digest credential and signed into a HOBA ' +
         'blob, so one character wrong produces a credential that verifies ' +
         'against nothing.' },
   { name: 'hobaUsername', label: 'hobaUsername',
-    field: 'scim_hoba_username', source: 'you',
+    field: 'scim_hoba_username', owns: true, source: 'you',
     what: 'The account a generated HOBA key is registered against. The key ' +
         'itself is not in this table and is never written to storage.' },
   { name: 'challengeSchemes', label: 'challengeSchemes', discovered: true,
@@ -772,6 +824,17 @@ var CONFIG_BY_NAME = (function () {
   return index;
 })();
 
+// Where a row's control lives. An owned row took the field's own id, so that
+// `val('scim_base_url')` reads this table and there is no second element to
+// disagree with it; everything else gets a generated one.
+//
+// NO ENTERING/LEAVING PAIR, for the reason `configValue()` below records: this
+// is called once per row by renderConfig(), and once per row again by
+// refreshConfigValues() on every change event anywhere on the page.
+function configControlId(row) {
+  return row.owns ? row.field : ('scim_cfg_' + row.name);
+}
+
 // What is in force, and what the last document said. Kept apart on purpose:
 // an override is then a visible difference rather than a lost original, and
 // "restore" has something to restore to.
@@ -889,6 +952,20 @@ function renderConfig() {
     log.debug("Leaving renderConfig(). No host.");
     return;
   }
+  // THE VALUES OF THE OWNED FIELDS, READ BEFORE THE TABLE IS TORN DOWN.
+  // `configValue()` reads an owned row out of its control, and after
+  // `innerHTML = ''` there is no control to read — so without this a rebuild
+  // (which every discovery causes) empties the service root, the scheme and
+  // the generator's seed at once, from a button nobody pressed.
+  var carried = {};
+  CONFIG_PARAMS.forEach(function (row) {
+    if (row.name && row.owns) {
+      carried[row.name] = configValue(row.name);
+    }
+  });
+  // And the focus, for the same reason: the automatic probe fires on a change
+  // to the service root, and its answer rebuilds this table.
+  var focused = document.activeElement ? document.activeElement.id : '';
   host.innerHTML = '';
   var table = document.createElement('table');
   table.className = 'scim-config-table';
@@ -899,10 +976,13 @@ function renderConfig() {
       table.appendChild(configGroupRow(row.group));
       return;
     }
-    table.appendChild(configRow(row));
+    table.appendChild(configRow(row, carried));
     rows += 1;
   });
   host.appendChild(table);
+  if (focused && el(focused) && typeof el(focused).focus === 'function') {
+    el(focused).focus();
+  }
   log.debug("Leaving renderConfig(). " + rows + " parameter(s).");
 }
 
@@ -930,7 +1010,7 @@ function configGroupRow(title) {
   return tr;
 }
 
-function configRow(row) {
+function configRow(row, carried) {
   log.debug("Entering configRow(). " + row.name);
   var tr = document.createElement('tr');
   tr.id = 'scim_cfg_row_' + row.name;
@@ -956,7 +1036,7 @@ function configRow(row) {
 
   var value = document.createElement('td');
   value.className = 'scim-config-value';
-  value.appendChild(configInput(row));
+  value.appendChild(configInput(row, carried));
   if (row.discovered && discoveredValues[row.name] !== undefined &&
       configValue(row.name) !== discoveredValues[row.name]) {
     value.className = 'scim-config-value scim-config-overridden';
@@ -978,9 +1058,17 @@ function configRow(row) {
   return tr;
 }
 
-function configInput(row) {
+// The control for one row.
+//
+// AN OWNED ROW TAKES THE FIELD'S OWN ID. That is what makes this table the
+// setting rather than a view of it: `val('scim_base_url')` reads the cell of
+// this table, `REMEMBERED` writes it to localStorage under the same name it
+// always had, and there is no second element anywhere that could hold a
+// different value.
+function configInput(row, carried) {
   log.debug("Entering configInput(). " + row.name);
-  var current = configValue(row.name);
+  var current = (carried && carried[row.name] !== undefined)
+    ? carried[row.name] : configValue(row.name);
   var control;
   if (row.kind === 'select') {
     control = document.createElement('select');
@@ -995,37 +1083,135 @@ function configInput(row) {
     control = document.createElement('input');
     control.type = 'text';
     control.value = current;
+    if (row.placeholder) {
+      control.placeholder = row.placeholder;
+    }
   }
-  control.id = 'scim_cfg_' + row.name;
+  control.className = 'scim-field';
+  control.id = configControlId(row);
   control.addEventListener('change', (function (name) {
     return function (event) {
       applyOneParameter(name, event.target.value);
     };
   })(row.name));
+  if (row.owns) {
+    // An owned field is a REMEMBERED field, and the listener the onload loop
+    // adds is on the element that this rebuild has just replaced. Adding it
+    // here rather than there is what keeps a value written through on a
+    // change made after the first discovery. A MIRROR row needs none of this:
+    // the field it reflects is in a pane of its own and keeps its listeners.
+    control.addEventListener('change', saveState);
+    if (row.wire) {
+      row.wire(control);
+    }
+  }
   log.debug("Leaving configInput().");
   return control;
 }
 
-// A select whose options are another select's, so that the two cannot come to
-// disagree about which schemes exist — the authentication list is built from
-// scim_client.js's own table and this row must not be a second transcription
-// of it.
+// The options for a select row: a fixed list, or one computed at render time.
 function optionsFor(row) {
   log.debug("Entering optionsFor(). " + row.name);
-  if (!row.optionsFrom) {
-    log.debug("Leaving optionsFor(). Its own list.");
-    return row.options || [];
+  if (row.optionsFn) {
+    var computed = row.optionsFn();
+    log.debug("Leaving optionsFor(). " + computed.length + " computed.");
+    return computed;
   }
-  var source = el(row.optionsFrom);
-  var pairs = [];
-  if (source) {
-    for (var i = 0; i < source.options.length; i++) {
-      pairs.push([source.options[i].value, source.options[i].text]);
+  log.debug("Leaving optionsFor(). Its own list.");
+  return row.options || [];
+}
+
+// ---------------------------------------------------------------------------
+// THE SCHEME LIST, ORDERED BY WHAT THE SERVER SAID.
+//
+// RFC 7644 section 2 defines no SCIM credential of its own. It names six ways
+// of doing it and makes exactly ONE normative requirement: that a server say
+// which it accepts in a WWW-Authenticate header. So the list of schemes is not
+// this page's to decide, and it is not a pane's either — it is read off that
+// header, which `autoProbe()` collects whenever the service root changes.
+//
+// EVERY SCHEME STAYS SELECTABLE and the offered ones are merely moved to the
+// top and marked. Filtering the list to the challenge would be wrong twice
+// over: a server that accepts Bearer without advertising it is common enough
+// to be the reason somebody opened this page, and two of the eight — a session
+// cookie and a TLS client certificate — can never appear in a challenge at
+// all, because neither puts anything in an Authorization header.
+// ---------------------------------------------------------------------------
+var CHALLENGE_TO_SCHEME = {
+  bearer: 'bearer',
+  dpop: 'dpop',
+  basic: 'basic',
+  digest: 'digest',
+  hoba: 'hoba'
+};
+
+// Read from the live challenges when there are some, and from the recorded
+// `challengeSchemes` row otherwise — so the ordering survives a reload of a
+// page whose probe has already run.
+function offeredSchemeIds() {
+  log.debug("Entering offeredSchemeIds().");
+  var names = lastChallenges.length
+    ? lastChallenges.map(function (one) {
+        return one.scheme;
+      })
+    : String(configValue('challengeSchemes') || '').split(',');
+  var ids = {};
+  names.forEach(function (name) {
+    var id = CHALLENGE_TO_SCHEME[String(name).trim().toLowerCase()];
+    if (id) {
+      ids[id] = true;
     }
-  }
-  log.debug("Leaving optionsFor(). " + pairs.length + " option(s).");
+  });
+  log.debug("Leaving offeredSchemeIds(). " + Object.keys(ids).length +
+      " scheme(s).");
+  return ids;
+}
+
+function authSchemeOptions() {
+  log.debug("Entering authSchemeOptions().");
+  var offered = offeredSchemeIds();
+  var any = Object.keys(offered).length > 0;
+  var anonymous = [];
+  var first = [];
+  var rest = [];
+  scimClient.AUTH_SCHEMES.forEach(function (scheme) {
+    if (scheme.id === 'none') {
+      // Anonymous stays at the top whatever the server said. It is not a
+      // scheme a server offers — it is sending nothing, which is always
+      // available, is this page's default, and is the probe itself.
+      anonymous.push([scheme.id, scheme.label]);
+      return;
+    }
+    if (offered[scheme.id]) {
+      first.push([scheme.id, scheme.label + ' — offered']);
+      return;
+    }
+    // Only a scheme that COULD have been named in a challenge is marked as
+    // absent from one. Saying "not offered" of a session cookie would be a
+    // claim about the server that the header never made.
+    var couldHave = CHALLENGE_TO_SCHEME[scheme.id] !== undefined;
+    rest.push([scheme.id, scheme.label +
+        (any && couldHave ? ' — not offered' : '')]);
+  });
+  var pairs = anonymous.concat(first, rest);
+  log.debug("Leaving authSchemeOptions(). " + first.length + " offered of " +
+      pairs.length + ".");
   return pairs;
 }
+
+// The service root is the one setting that makes this page go and ask a
+// question of its own: a change to it invalidates every discovered row and the
+// scheme list with them.
+function wireBaseUrl(control) {
+  log.debug("Entering wireBaseUrl().");
+  control.addEventListener('input', refreshRequestPreview);
+  control.addEventListener('change', scheduleAutoProbe);
+  log.debug("Leaving wireBaseUrl().");
+}
+
+// There is no wireAuthScheme(): `applyOneParameter()` calls
+// refreshAuthControls() for that row, and a second listener on the same change
+// event would run the whole scheme refresh twice per keystroke-free click.
 
 // One parameter, applied the moment it is changed. A settings pane whose
 // values only take effect on a button press is a settings pane somebody
@@ -1037,7 +1223,20 @@ function applyOneParameter(name, value) {
     log.debug("Leaving applyOneParameter(). Unknown parameter.");
     return;
   }
-  if (row.field) {
+  if (row.owns) {
+    // The row IS the control, so this is a write to the same element the event
+    // came from — which matters when the caller is Save rather than the
+    // control's own change handler. NO `change` IS DISPATCHED: that event is
+    // what called this, and re-firing it on the same element is an infinite
+    // loop rather than a refresh.
+    setVal(row.field, value);
+    saveState();
+    if (name === 'authScheme') {
+      refreshAuthControls();
+    }
+  } else if (row.field) {
+    // A mirror: the value lives in another pane's field, and that field's own
+    // listeners are what a change has to reach.
     setVal(row.field, value);
     var field = el(row.field);
     if (field) {
@@ -1045,14 +1244,10 @@ function applyOneParameter(name, value) {
     }
     saveState();
   } else if (name === 'callPath') {
-    var backend = el('scim_call_backend');
-    var browser = el('scim_call_browser');
-    if (backend && !backend.disabled) {
-      backend.checked = value === 'api';
-    }
-    if (browser) {
-      browser.checked = value !== 'api' || (backend && backend.disabled);
-    }
+    // The PREFERENCE, which is not always what happens: `callVia()` overrides
+    // it for a scheme that forces the browser, and the row shows that.
+    configValues.callPath = value === 'api' ? 'api' : 'browser';
+    refreshCallPathControls();
   } else {
     configValues[name] = value;
   }
@@ -1077,7 +1272,7 @@ function saveConfig() {
     if (!row.name) {
       return;
     }
-    var control = el('scim_cfg_' + row.name);
+    var control = el(configControlId(row));
     if (!control) {
       return;
     }
@@ -1092,9 +1287,9 @@ function saveConfig() {
   renderConfig();
   refreshRequestPreview();
   statusOk('scim_config_status', 'Saved. Every value above is in this ' +
-      'browser\'s localStorage and applied to the panes it belongs to — ' +
-      'except the password and the HOBA private key, which are never ' +
-      'written anywhere.');
+      'browser\'s localStorage — except the password and the HOBA private ' +
+      'key, which are never written anywhere, and the access token, which is ' +
+      'written only under its own opt-in below.');
   log.debug("Leaving saveConfig(). Saved.");
   return false;
 }
@@ -1139,7 +1334,7 @@ function refreshConfigValues() {
     if (!row.name) {
       return;
     }
-    var control = el('scim_cfg_' + row.name);
+    var control = el(configControlId(row));
     if (!control) {
       return;
     }
@@ -1565,7 +1760,8 @@ function send(request) {
         if (fields.missing) {
           first.pageNote = 'The server answered 401 but offered no Digest ' +
               'challenge, so there is no nonce to compute a credential over. ' +
-              'The challenges it did offer are in the Authentication pane.';
+              'The challenges it did offer are in the Credential block ' +
+              'under the configuration table.';
           log.debug("Leaving send(). No Digest challenge offered.");
           return first;
         }
@@ -1602,7 +1798,8 @@ function send(request) {
         if (!signed) {
           first.pageNote = 'The server issued a HOBA challenge and this page ' +
               'has no registered key to answer it with. Generate one and ' +
-              'register it in the Authentication pane.';
+              'register it in the Credential block under the ' +
+              'configuration table.';
           log.debug("Leaving send(). No HOBA key.");
           return first;
         }
@@ -1617,12 +1814,17 @@ function send(request) {
   });
 }
 
-function sendOnce(request, auth) {
+// `options.via` overrides the call path for ONE call and `options.quiet`
+// keeps it out of the Exchange pane. Both exist for the automatic
+// authentication probe and for nothing else — see probeAuthentication().
+function sendOnce(request, auth, options) {
   log.debug("Entering sendOnce(). scheme=" + auth.scheme);
   var applied = scimClient.applyAuth(request, auth);
   var headers = Object.assign({}, request.headers, applied.headers);
-  var via = callVia();
-  showRequest(request, headers, via, applied.note);
+  var via = (options && options.via) || callVia();
+  if (!(options && options.quiet)) {
+    showRequest(request, headers, via, applied.note);
+  }
   if (via === 'api') {
     log.debug("Leaving sendOnce(). Through the api.");
     return sendThroughApi(request, headers);
@@ -1900,10 +2102,16 @@ function showResponse(result) {
 function renderChallenges() {
   log.debug("Entering renderChallenges().");
   if (!lastChallenges.length) {
-    setText('scim_challenges', 'No challenge has been collected yet. Send ' +
-        'anything with the scheme set to None: a server with authentication ' +
-        'turned on answers 401 and RFC 7644 section 2 requires it to say in ' +
-        'that response which schemes it accepts.');
+    setText('scim_challenges', 'No challenge has been collected. This page ' +
+        'asks for one by itself whenever the service root changes — an ' +
+        'unauthenticated request, which a server with authentication turned ' +
+        'on answers 401, and RFC 7644 section 2 requires that answer to say ' +
+        'which schemes it accepts. Nothing here means one of three things: ' +
+        'the server was not reachable, it authenticates nobody, or the ' +
+        'probe went from this browser and CORS withheld the header — which ' +
+        'it does unless the server names WWW-Authenticate in ' +
+        'Access-Control-Expose-Headers. The api reads every header, so the ' +
+        'callPath row above is what settles the third.');
     log.debug("Leaving renderChallenges(). None.");
     return;
   }
@@ -3127,11 +3335,29 @@ function runDiscovery(operationId, label) {
   });
 }
 
-// A deliberate 401, to read the challenge. This is the fastest way to find out
-// what a server will accept and it is a BUTTON rather than something the page
-// does silently, because it is a request being sent.
-function probeAuthentication() {
-  log.debug("Entering probeAuthentication().");
+// ---------------------------------------------------------------------------
+// A DELIBERATE 401, TO READ THE CHALLENGE — AND THE PAGE DOES IT BY ITSELF.
+//
+// RFC 7644 section 2 defines no credential of its own and makes one normative
+// requirement of a SCIM server: that a 401 say in WWW-Authenticate which
+// schemes it accepts. That header is therefore the whole of SCIM's
+// authentication discovery, and asking for it is one unauthenticated request
+// against the resource the page is already pointed at. There is nothing for a
+// reader to decide and so nothing for a button to ask them, which is why the
+// button is gone: the probe runs whenever the service root changes, and the
+// scheme list in the configuration table is ordered by what came back.
+//
+// `quiet` is what makes that acceptable. An automatic probe must not overwrite
+// the Exchange pane — the request somebody is looking at is the one THEY sent,
+// and having it replaced by a probe they did not ask for makes the page look
+// like it is sending things at random. So the automatic call records the
+// challenges and the status and renders neither half of the exchange; a probe
+// asked for through the module (which is how tests/scim_page.js drives it)
+// shows both, because then it IS the thing being looked at.
+// ---------------------------------------------------------------------------
+function probeAuthentication(options) {
+  var quiet = !!(options && options.quiet);
+  log.debug("Entering probeAuthentication(). quiet=" + quiet);
   saveState();
   var request;
   try {
@@ -3145,11 +3371,13 @@ function probeAuthentication() {
   }
   statusBusy('scim_auth_status', 'Sending an unauthenticated request to see ' +
       'what the server asks for…');
-  var applied = scimClient.applyAuth(request, { scheme: 'none' });
-  showRequest(request, request.headers, callVia(), applied.note);
-  log.debug("Leaving probeAuthentication(). Sent.");
-  return sendOnce(request, { scheme: 'none' }).then(function (result) {
-    showResponse(result);
+  var via = probeVia();
+  log.debug("Leaving probeAuthentication(). Sent via " + via + ".");
+  return sendOnce(request, { scheme: 'none' },
+      { via: via, quiet: quiet }).then(function (result) {
+    if (!quiet) {
+      showResponse(result);
+    }
     if (result.transportError) {
       statusBad('scim_auth_status', result.transportError);
       return result;
@@ -3157,11 +3385,31 @@ function probeAuthentication() {
     lastChallenges = scimClient.parseChallenges(
       scenarios.headerValue(result.headers, 'www-authenticate'));
     renderChallenges();
-    if (result.status === 401) {
+    if (result.status === 401 && lastChallenges.length) {
       statusOk('scim_auth_status', 'The server refused an anonymous request ' +
           'and said what it accepts — that WWW-Authenticate header is the ' +
           'only normative requirement RFC 7644 section 2 makes of a SCIM ' +
-          'server\'s authentication. The challenge is below.');
+          'server\'s authentication. What it named is at the top of the ' +
+          'authScheme list above, marked "offered"' +
+          (val('scim_auth_scheme') === 'none'
+            ? ', and nothing is selected but anonymous — pick one.' : '.'));
+    } else if (result.status === 401) {
+      // THE 401 CAME BACK AND THE CHALLENGE DID NOT, which on the browser path
+      // says nothing at all about the server: CORS hands this page only the
+      // seven simple response headers, and WWW-Authenticate is not one of
+      // them. The header was almost certainly sent. Reporting "this server
+      // named no scheme" here would be a claim about somebody else's server
+      // made out of a limit of this one's call path.
+      statusBad('scim_auth_status', 'The server refused an anonymous ' +
+          'request, and no WWW-Authenticate challenge could be READ from ' +
+          'here. ' + (result.via === 'browser'
+            ? 'That is very likely this call path rather than that server: a ' +
+              'browser-direct call sees only the seven simple response ' +
+              'headers unless the server names WWW-Authenticate in ' +
+              'Access-Control-Expose-Headers. Set callPath to "through the ' +
+              'api", which reads every header each way.'
+            : 'The api reads every header, so the server genuinely sent ' +
+              'none — which RFC 7644 section 2 requires it to send.'));
     } else if (result.status >= 200 && result.status < 300) {
       statusBad('scim_auth_status', 'The server allowed an ANONYMOUS read ' +
           '(' + result.status + '). That is not a failure of this page: ' +
@@ -3180,6 +3428,126 @@ function probeAuthentication() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// THE AUTOMATIC PROBE.
+//
+// Debounced, because `change` on the service root fires on every blur — a Tab
+// through the table would otherwise send one request per field — and BY URL,
+// so that leaving and re-entering the field without editing it sends nothing
+// at all. A page that re-probes on every focus change is a page somebody's
+// server log will notice.
+//
+// It fails towards the page in every direction: an empty or unparseable
+// service root is not probed, a probe already in flight is not doubled, and a
+// server that does not answer leaves the scheme list exactly as it was. None
+// of that is reported as an error, because nobody asked for this request.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// A PROBE PREFERS THE api, WHATEVER `callPath` SAYS, AND THIS IS NOT AN
+// OVERRIDE OF THE READER'S CHOICE.
+//
+// The whole content of this request is a RESPONSE HEADER, and CORS hands a
+// browser-direct call only the seven simple ones — `WWW-Authenticate` is not
+// among them, so from the browser a probe of a cross-origin SCIM server reads
+// an empty challenge from a server that sent a perfectly good one. The api
+// reads every header each way, which is the reason it exists. So the probe
+// goes that way when there is an api that answered, and the reader's callPath
+// still decides every request they actually asked for.
+//
+// On a static deployment there is no api and the probe goes from the browser,
+// where it will usually collect nothing — and the status line says which of
+// the two happened rather than blaming the server.
+// ---------------------------------------------------------------------------
+function probeVia() {
+  log.debug("Entering probeVia().");
+  var via = (BACKEND_AVAILABLE && apiAnswered) ? 'api' : callVia();
+  log.debug("Leaving probeVia(). " + via);
+  return via;
+}
+
+var AUTO_PROBE_DELAY_MS = 400;
+var autoProbeTimer = null;
+var autoProbedUrl = null;
+var autoProbeInFlight = false;
+
+function scheduleAutoProbe() {
+  log.debug("Entering scheduleAutoProbe().");
+  if (autoProbeTimer) {
+    clearTimeout(autoProbeTimer);
+  }
+  autoProbeTimer = setTimeout(autoProbe, AUTO_PROBE_DELAY_MS);
+  log.debug("Leaving scheduleAutoProbe(). In " + AUTO_PROBE_DELAY_MS + "ms.");
+}
+
+function autoProbe() {
+  log.debug("Entering autoProbe().");
+  autoProbeTimer = null;
+  var url = val('scim_base_url').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    log.debug("Leaving autoProbe(). Not an absolute service root.");
+    return Promise.resolve(null);
+  }
+  if (autoProbeInFlight) {
+    log.debug("Leaving autoProbe(). One is already in flight.");
+    return Promise.resolve(null);
+  }
+  if (url === autoProbedUrl) {
+    log.debug("Leaving autoProbe(). This service root has been probed.");
+    return Promise.resolve(null);
+  }
+  autoProbedUrl = url;
+  autoProbeInFlight = true;
+  // A NEW SERVICE ROOT MEANS NEW CHALLENGES, so the old ones go before the
+  // request rather than after it. Leaving them would order the scheme list by
+  // what a DIFFERENT server said, which is the one wrong answer this list can
+  // give and the one nothing on screen would contradict.
+  lastChallenges = [];
+  log.debug("Leaving autoProbe(). Probing " + url);
+  // AFTER the api has said whether it is there, because probeVia() reads that
+  // answer and the load-time probe races it otherwise — a probe that took the
+  // browser path only because the limits call had not come back yet would
+  // collect no challenge from a server that sends one.
+  return Promise.resolve(apiLimitsPromise).then(function () {
+    return probeAuthentication({ quiet: true });
+  }).then(function (result) {
+    autoProbeInFlight = false;
+    // NO CHALLENGE MEANS NO CHALLENGE, and the three discovered rows have to
+    // say so. A 200 (this server authenticates nobody), a 403, and a server
+    // that did not answer at all each leave `lastChallenges` empty, and
+    // leaving the previous service root's schemes in the table would order the
+    // scheme list by what a DIFFERENT server said — the one wrong answer this
+    // list can give, and the one nothing on screen would contradict.
+    if (!lastChallenges.length) {
+      recordDiscovered({ challengeSchemes: '', challengeRealm: '',
+          digestAlgorithms: '' });
+    }
+    return result;
+  }).catch(function (error) {
+    autoProbeInFlight = false;
+    // Nobody asked for this request, so its failure is a log line and not a
+    // banner. `probeAuthentication()` has already put the transport error in
+    // the credential block's own status.
+    log.warn('the automatic authentication probe failed: ' + error.message);
+    return null;
+  });
+}
+
+// Whether the automatic probe has anything left to do.
+//
+// Reached by tests/scim_page.js and by nothing on the page. It is here because
+// the probe is the one thing on this page that starts by ITSELF: a test that
+// sets the service root and reads the scheme list is otherwise racing a
+// debounce it cannot see, and the failure looks like a wrong list rather than
+// an early read.
+function autoProbeState() {
+  log.debug("Entering autoProbeState().");
+  var state = { pending: !!autoProbeTimer, inFlight: autoProbeInFlight,
+      probedUrl: autoProbedUrl };
+  log.debug("Leaving autoProbeState(). pending=" + state.pending +
+      " inFlight=" + state.inFlight);
+  return state;
+}
+
 function refreshAuthControls() {
   log.debug("Entering refreshAuthControls().");
   var scheme = scimClient.authScheme(val('scim_auth_scheme'));
@@ -3192,7 +3560,9 @@ function refreshAuthControls() {
   show('scim_auth_token_row', scheme.id === 'bearer' || scheme.id === 'dpop');
   show('scim_auth_password_row', scheme.id === 'basic' ||
       scheme.id === 'digest');
-  show('scim_auth_realm_row', scheme.id === 'digest' || scheme.id === 'hoba');
+  // There is no realm row to show: `authRealm` and `hobaUsername` are rows of
+  // the configuration table and are always on screen. Only the things a table
+  // cannot hold appear and disappear with the scheme.
   show('scim_digest_row', scheme.id === 'digest');
   show('scim_dpop_row', scheme.id === 'dpop');
   show('scim_hoba_row', scheme.id === 'hoba');
@@ -3218,6 +3588,12 @@ function refreshAuthControls() {
 // a static deployment gets nothing, which is a stronger signal than a
 // configuration flag because it is the service itself answering.
 // ---------------------------------------------------------------------------
+// Set by loadApiLimits(). `BACKEND_AVAILABLE` is what the build was told and
+// this is what the api itself said, which is the stronger of the two — see the
+// note on GET /scim/limits in api/scim_proxy.js.
+var apiAnswered = false;
+var apiLimitsPromise = null;
+
 function loadApiLimits() {
   log.debug("Entering loadApiLimits().");
   if (!BACKEND_AVAILABLE) {
@@ -3236,12 +3612,16 @@ function loadApiLimits() {
         limits.maxRequestBytes + ' bytes out and ' + limits.maxResponseBytes +
         ' back; ' + limits.callTimeoutMs + 'ms per call. ' +
         limits.statusRule);
+    apiAnswered = true;
     log.debug("Leaving loadApiLimits(). Read.");
     return limits;
   }).catch(function (error) {
+    apiAnswered = false;
     setText('scim_api_limits', 'The api at ' + API_URL + ' did not answer ' +
         '(' + error.message + '), so the backend call path will not work. ' +
-        'Browser-direct calls are unaffected.');
+        'Browser-direct calls are unaffected — but the automatic ' +
+        'authentication probe is not, because CORS withholds ' +
+        'WWW-Authenticate from a browser-direct call.');
     log.debug("Leaving loadApiLimits(). No answer.");
     return null;
   });
@@ -3349,15 +3729,25 @@ function wirePanes() {
   return wired;
 }
 
+// ---------------------------------------------------------------------------
+// THE ORDER HERE IS LOAD-BEARING, and it changed when the Connection and
+// Authentication panes were folded into the configuration table.
+//
+// `renderConfig()` now CREATES the service root, the scheme select and the
+// generator's fields, because those rows own their controls rather than
+// mirroring somebody else's. So it has to run before `loadState()`, which
+// fills every remembered field and skips the ones that are not there yet — and
+// after `loadConfig()`, which is where the discovered values it draws come
+// from. Getting this backwards is not an exception: it is a page that comes up
+// with an empty service root every time, from storage that has one.
+// ---------------------------------------------------------------------------
 function onload() {
   log.debug("Entering onload().");
   populateOperations();
   populateScenarios();
-  loadState();
-  // BEFORE renderConfig(), which reads both stores, and before
-  // refreshAuthControls(), whose scheme select the authScheme row copies its
-  // options from.
   loadConfig();
+  renderConfig();
+  loadState();
   wirePanes();
   wireTabs();
   wireExpanders();
@@ -3367,8 +3757,8 @@ function onload() {
   refreshCallPathControls();
   renderChallenges();
   renderHistory();
-  renderConfig();
-  loadApiLimits();
+  refreshConfigValues();
+  apiLimitsPromise = loadApiLimits();
   // Every field writes through on change, so a reload keeps the page a person
   // had set up — the same rule every other workflow here follows.
   REMEMBERED.concat([TOKEN_FIELD, 'scim_save_token']).forEach(function (id) {
@@ -3389,18 +3779,9 @@ function onload() {
   if (opSelect) {
     opSelect.addEventListener('change', refreshOperationControls);
   }
-  var schemeSelect = el('scim_auth_scheme');
-  if (schemeSelect) {
-    schemeSelect.addEventListener('change', refreshAuthControls);
-  }
-  // The call-path radios are not in REMEMBERED (the choice is not stored),
-  // but the configuration table shows them, so it has to hear about a click.
-  ['scim_call_browser', 'scim_call_backend'].forEach(function (id) {
-    var radio = el(id);
-    if (radio) {
-      radio.addEventListener('change', refreshConfigValues);
-    }
-  });
+  // The scheme select and the service root are wired by `configInput()` when
+  // the table builds them — they belong to it now, and a listener added here
+  // would be lost on the first rebuild.
   var scenarioSelect = el('scim_scenario');
   if (scenarioSelect) {
     scenarioSelect.addEventListener('change', onScenarioSelected);
@@ -3415,7 +3796,7 @@ function onload() {
       e.addEventListener('input', forgetPlan);
     }
   });
-  ['scim_base_url', 'scim_op_id', 'scim_query_filter', 'scim_query_count',
+  ['scim_op_id', 'scim_query_filter', 'scim_query_count',
    'scim_query_start_index', 'scim_query_sort_by', 'scim_query_sort_order',
    'scim_query_attributes', 'scim_query_excluded_attributes'].forEach(
     function (id) {
@@ -3424,6 +3805,10 @@ function onload() {
         e.addEventListener('input', refreshRequestPreview);
       }
     });
+  // And the first probe, for the service root that was just restored from
+  // storage. Debounced like every other one, so a page opened and immediately
+  // edited sends one request rather than two.
+  scheduleAutoProbe();
   log.debug("Leaving onload().");
 }
 
@@ -3452,7 +3837,12 @@ module.exports = {
   readServiceProviderConfig: readServiceProviderConfig,
   readSchemas: readSchemas,
   readResourceTypes: readResourceTypes,
+  // No longer an inline handler — the page probes for itself when the
+  // service root changes. Exported because tests/scim_page.js drives it
+  // directly, which is the only way to assert what one probe did.
   probeAuthentication: probeAuthentication,
+  autoProbe: autoProbe,
+  autoProbeState: autoProbeState,
   generateHobaKey: generateHobaKey,
   registerHobaKey: registerHobaKey,
   openSignIn: openSignIn,
