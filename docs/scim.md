@@ -58,15 +58,34 @@ silently fallen back to one column still has every class it had.
 > root that can disagree with itself, and the table's own job is to be the one
 > place a setting lives. So the table now **owns** those controls:
 > `configInput()` gives an owned row the field's own id, which is why
-> `val('scim_base_url')` reads a cell of that table and why `REMEMBERED` keeps
-> working unchanged. What could not be a table row went with them but not into
-> it — a password, a generated signing key, a minted proof are not values that
-> can be compared against a document — and those sit in the **Credential**
+> `val('scim_auth_scheme')` reads a cell of that table and why `REMEMBERED`
+> keeps working unchanged. What could not be a table row went with them but not
+> into it — a password, a generated signing key, a minted proof are not values
+> that can be compared against a document — and those sit in the **Credential**
 > block directly under the table, where only the blocks the selected scheme
 > uses are ever on screen. `tests/scim_page.js` asserts both halves: that each
 > named control is INSIDE `#scim_config`, and that none of `pane_connection`,
 > `pane_auth`, `scim_call_browser`, `scim_call_backend` or `btn_scim_probe_auth`
 > is anywhere on the page.
+
+> **The service root is the one exception, and it is not the Connection pane
+> coming back.** `baseUrl`'s box is on the **Discovery** line, with the three
+> buttons that compose paths onto it: a URL a screen away from the buttons that
+> fetch from it was the arrangement this page was awkward about. What makes
+> that different from the pane that was deleted is that there is still exactly
+> one box. The `baseUrl` row is a **mirror** — the same kind of row the
+> generator's and the scenario planner's fields already had — so an edit in
+> either place is a write to the one element and a read back into the other,
+> where the old pane held a second, independent field. The table's control is
+> `scim_cfg_baseUrl`; `val('scim_base_url')` reads the Discovery box, and
+> `REMEMBERED` keeps working unchanged because it is keyed by element id
+> wherever the element sits. `wireBaseUrl()` moved with it: it is called once
+> from `onload()` now rather than by `configInput()` on every rebuild, because
+> nothing rebuilds that box any more.
+> `theServiceRootSitsWithItsButtons()` in `tests/scim_page.js` pins all three
+> halves — one element, inside `#pane_discovery`, and sharing one line with all
+> three buttons, the last asserted by GEOMETRY because `.scim-buttons` wraps by
+> default and a wrapped row keeps every class it had.
 
 **Every block of prose longer than a line is inside a `details`.** The
 explanations are why this workflow is worth using — what a 409 on a duplicate
@@ -233,8 +252,8 @@ Three kinds of row, and the difference between the first two is the whole
 design:
 
 * an **owned** field (`field`). The row *is* the control: `configInput()` gives
-  it the field's own id, so `scim_base_url` and `scim_auth_scheme` are elements
-  of this table and of nothing else. That is a change from the first cut, where
+  it the field's own id, so `scim_auth_scheme` and `scim_auth_username` are
+  elements of this table and of nothing else. That is a change from the first cut, where
   the row mirrored a field in a Connection or an Authentication pane — one
   setting spelled twice, in two panes that could disagree about it. There is now
   nothing to mirror. Two consequences worth knowing before editing
@@ -247,10 +266,41 @@ design:
   is in force, so an override is a **visible difference** between the two —
   tinted, with "the server said: …" beside it — rather than a lost original.
   **Restore discovered values** has something to restore to;
+* a **mirror** of a field that is still in a pane of its own (`field` *without*
+  `owns`): the generator's four, the scenario planner's three, and the **service
+  root**, whose box is on the Discovery line. The field is the value and the row
+  reads and writes it in both directions, so there is still one element per
+  setting — which is what separates a mirror from the Connection pane that was
+  deleted, where the second control was a second *value*;
+* a **dynamic** row, which exists only because a server said so. Every
+  resource type, every authentication scheme, every schema and every attribute
+  inside every schema is one. See *The three documents configure the workflow*
+  below;
 * a **heading**, which is a row of the table and not a parameter;
 * a **block**, which is not a parameter at all: a row spanning the whole table
   into which an element authored in `scim.html` is **moved**. There is one, and
   it is the access token — see below.
+
+**A row's control is a text box, a `select` or a RADIO PAIR (`kind`).** The pair
+is `callPath`, and it is labelled **FrontEnd / BackEnd** to match the way every
+other workflow in this debugger asks the same question — `introspection.html`,
+`userinfo.html` and `oauth2_oidc_2.html` all offer "Initiate … From front or
+backend" as two radios. The values underneath are still `browser` and `api`,
+because those are what `callVia()` returns and what `configValues.callPath`
+remembers; the labels changed and the mechanism did not.
+
+Two radios are two elements, and everything that touches a configuration control
+expects one — `refreshConfigValues()` assigns `.value`,
+`refreshCallPathControls()` assigns `.disabled`, `saveConfig()` reads `.value`,
+and `tests/scim_page.js` drives the row by setting `.value` on the id and
+dispatching a change. So `radioPair()` wraps the pair in a `span` that carries
+the row's id and **defines `value` and `disabled` over the radios inside it**. A
+span has neither property of its own, nothing is shadowed, the one-element-per-id
+invariant the table rests on is untouched, and not one caller or test needed to
+learn which rows are radios. There is also only one change listener: `change`
+bubbles, so the one on the wrapper hears a click on a radio (`event.target` is
+the radio) and a scripted `.value =` plus dispatch (`event.target` is the
+wrapper) alike, and both answer with the same value.
 
 Adopting a newly-read value tests against the PREVIOUS discovered value and not
 against emptiness: a row nobody has touched follows the server forever, and a
@@ -488,16 +538,148 @@ such notion). A `/Me` that resolves to *somebody else* is the failure worth
 catching, because a client that only ever provisions itself cannot tell it from
 a working one and the write that follows lands on the wrong account.
 
+### The three documents configure the workflow
+
+The pane used to be a **readout**. It displayed what ServiceProviderConfig,
+ResourceTypes and Schemas said, and all but the two endpoint rows were inert —
+each row's tooltip admitted it in as many words. That was honest, and it made
+the pane a picture of the server rather than a configuration of the page.
+
+Now **every value the three documents publish is a row, every row is editable,
+and the rows drive what the page sends.**
+
+**The rows that only exist because a server said so.** ServiceProviderConfig has
+a fixed shape and its rows are written out in `CONFIG_PARAMS`. The other two do
+not: a server publishes as many resource types and schemas as it likes, each
+schema with as many attributes as it likes. So those rows are built from what
+was read, and **the name is the whole row** — `dynamicRowFor()` turns a name
+back into a row object and `allConfigParams()` finds the names by scanning the
+two value stores. There is no registry to keep in step, nothing to rebuild when
+a discovery lands, and nothing extra to persist: `configValues` and
+`discoveredValues` are keyed by name and were already written to localStorage,
+so the rows come back on a reload for free. The grammar:
+
+| Name | What it holds |
+|---|---|
+| `type\|<name>\|endpoint` | where that resource type answers — **applied** |
+| `type\|<name>\|schema`, `\|extensions`, `\|description` | the rest of its entry |
+| `authscheme\|<type>\|name`, `\|description`, `\|specUri`, `\|documentationUri`, `\|primary` | one advertised scheme |
+| `schema\|<id>\|name`, `\|description` | the schema itself |
+| `schema\|<id>\|attributes` | its attribute names, **in order** — membership AND ordering |
+| `attr\|<id>\|<attribute>` | one attribute's characteristics, as `key=value` pairs |
+
+`schema|…|attributes` is load-bearing rather than decorative: it is both the
+membership and the order of the attribute rows, so **removing a name from it
+removes that attribute from the generated body** and stops the row being drawn.
+Editing that one row is how a reader says *this server does not really have that
+attribute, whatever its Schemas document claims*.
+
+**User and Group keep their fixed rows.** `userEndpoint`, `groupEndpoint`,
+`userSchema` and `groupSchema` are what everything on this page reads, so those
+two types do not also gain a `type|…|` spelling. Every OTHER resource type does
+— until this change a server whose types were named something else contributed
+nothing at all and said so in a warning nobody reads, which made the page
+undriveable against exactly the servers worth testing it on.
+
+**How the Schemas document bites.** The generator in `scim_client.js` produces a
+rich, complete User — every section 4.1 attribute, filled with plausible data —
+and that is worth keeping. What it cannot know is what *this* server's schema
+declares. So the body is generated as before and then **filtered through the
+configured attributes**, rather than built from them: building from the schema
+would throw away every piece of realistic data the generator knows how to make,
+and a schema-shaped body full of `string-1` values exercises nothing.
+`applySchemaToBody()` does four things and reports every one of them under the
+preview:
+
+* an attribute the configured schema does not declare is **dropped**;
+* `mutability: readOnly` and `immutable` are dropped, because a client that
+  sends them is testing its own ability to be ignored;
+* `multiValued` decides whether a value is wrapped or unwrapped, and
+  `canonicalValues` is what a generated `type` is snapped to — a generator that
+  invents `type: "office"` against a schema offering work/home/other produces a
+  400 that reads like a server bug;
+* a `required` attribute the generator did not produce is **added**.
+
+> **RFC 7643 section 3.1's common attributes are exempt, and this is not a
+> nicety.** `id`, `externalId` and `meta` are defined by the specification
+> rather than by a server's Schemas document, so no attributes row will ever
+> mention them. Without the exemption the filter drops `externalId` from every
+> generated body — it looks exactly like an attribute the schema does not
+> declare. That was the first thing this filter got wrong, and it was invisible
+> until one generated body was compared against the one before it: `externalId`
+> is the attribute a provisioning client most relies on and the one whose
+> absence a server will not complain about. `tests/scim_page.js` asserts it.
+
+**A row never blocks a send.** This is the rule the whole design rests on. A
+capability row changes what is generated and **warns** when the request
+contradicts it; it does not refuse. This is a debugger — the most interesting
+thing a SCIM server does is refuse something, and a page that refuses first on
+the server's behalf has removed the test case and replaced the server's own 400
+with its own opinion. So `filter.supported = no` gets you a warning under the
+preview and the request still goes. The Source column says which of the three a
+row is: **applied** (it changes the request), **warns** (it does not, but it
+says so first), or neither, which still says so in the tooltip.
+
+Which is why **every row is editable**, and the two facts are one design: the
+pane is not only a picture of what the server said, it is where you say what you
+want this page to believe. A server whose Schemas document is wrong about an
+attribute is corrected by editing the row; a capability the server
+under-reports is forced by editing the row to `yes`. The *the server said: …*
+note beside an edited row keeps that from being a lie you forget you told, and
+**Restore discovered values** puts all of it back.
+
+**`etag.supported` is the one row whose meaning is a round trip**, so it is the
+one that adds a header rather than changing a value. The ETag is remembered per
+resource id from whatever response carried it and sent back as `If-Match` on the
+next PUT, PATCH or DELETE to that id — but only when the row says yes, because a
+client that sends `If-Match` at a server with no ETags gets a 412 for a reason
+that has nothing to do with what it was testing. A browser-direct call usually
+cannot see the ETag at all: it is not CORS-safelisted, so unless the server names
+it in `Access-Control-Expose-Headers` the browser withholds it, and the warning
+says which call path you are on rather than blaming the server.
+
+**The pane says that it scrolls, and this is a fix rather than a decoration.**
+The table lives in a 520px box with `overflow-y: auto`, and a box like that with
+a flat bottom edge looks exactly like a table that *ends* there — the rows below
+the fold are not merely out of reach, they read as settings the pane does not
+have. That was reported as parameters being missing when they had been on screen
+the whole time, one scroll down. Two cues answer two different questions: the
+**count above the box** (`109 parameters — 36 shown, 73 inside folded groups.
+The table scrolls.`) is the only one a reader can see without touching anything
+and the only one that says how much is missing; the **fades** at the top and
+bottom edges say which way there is more, and each appears only when there is
+something in that direction, so a table short enough to fit shows neither. The
+fades are overlays in a positioned wrapper rather than a background on the
+scroll box itself, for two reasons — a background would be painted over by the
+group headings' own opaque backgrounds, and anything inside the scrolling
+element scrolls away with the content it is meant to be pointing at.
+`refreshConfigScrollCues()` is called from three places and needs all three: the
+scroll event, `renderConfig()` (the table changed height under a box that did
+not move — which is what folding a group does), and resize.
+
+**The generated groups fold, and start folded.** Reading all three documents in
+full turns the table from about forty rows into a hundred and twenty-six, inside
+a box 520px tall. Every one of those rows is wanted — that is the point — but a
+reader who came to change the service root should not scroll past twenty-one
+attribute rows to reach `authScheme`. So groups built from a document fold; the
+fixed groups at the top do not fold at all. A row under a folded group is **not
+built**, rather than built and hidden — and its value still drives the
+generator, because that is read from `configValues` and never from the DOM. The
+fold state outlives the rebuild that every discovery causes, which is why it is
+kept in localStorage rather than in the table.
+
 **Three schemes are browser-only and selecting one LOCKS the call path.** A
 cookie is attached by the browser and the api has no cookie jar; a client
 certificate is chosen in the handshake and the api would present *its own*,
 which is a different identity and a misleading one. A page that let somebody
-pick "through the api" with a cookie scheme would send a request with no cookie
-and report the 401 as the server's fault. `refreshCallPathControls()` disables
-the `callPath` row of the configuration table and puts the reason on screen —
-and it disables the control without touching the **preference** underneath, so
+pick BackEnd with a cookie scheme would send a request with no cookie and
+report the 401 as the server's fault. `refreshCallPathControls()` disables the
+`callPath` row of the configuration table and puts the reason on screen — and
+it disables the control without touching the **preference** underneath, so
 selecting a cookie scheme for one call does not silently throw away a call path
-chosen for the next one.
+chosen for the next one. The row is a **radio pair** and `disabled` on it
+reaches both radios, which is one of the two properties `radioPair()` defines
+over the wrapper; see below.
 
 ### Digest is the one with real arithmetic in it, and four details are load-bearing
 
