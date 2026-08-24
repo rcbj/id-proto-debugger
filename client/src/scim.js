@@ -96,6 +96,7 @@ var bunyan = require("bunyan");
 var scimClient = require("./scim_client");
 var scenarios = require("./scim_scenarios");
 var dpop = require("./dpop");
+var handoff = require("./token_handoff");
 var history = require("./scim_history");
 
 var log = bunyan.createLogger({ name: 'scim', level: appconfig.logLevel });
@@ -618,17 +619,35 @@ function refreshCallPathControls() {
 //     difference between the two rather than a lost original.
 //   * a heading (`group`), which is a row of the table and not a parameter.
 //
-// NO CREDENTIAL IS IN THIS TABLE, and that is deliberate rather than an
-// oversight to be tidied up later — the panes went away, this rule did not.
-// The password is never written anywhere; the HOBA private key is generated
-// per session and never stored, because a signing key in localStorage is a
-// signing key in every extension's reach; and the access token is under its
-// own opt-in. All three are in the Credential block BELOW the table, which is
-// part of this pane and is not part of this table: a settings pane that
-// quietly became the fourth place a bearer token is written would defeat that
-// opt-in without changing a word of it. What decides whether a thing is a row
-// here is whether it is a value that can be compared against a document —
-// a minted proof and a generated key never can be.
+//   * a BLOCK (`block`), which is not a parameter at all: a `<tr>` spanning
+//     the table into which an element authored in the markup is MOVED. There
+//     is one, the access token, and the next paragraph is why.
+//
+// NO CREDENTIAL IS A ROW OF THIS TABLE. The password is never written
+// anywhere; the HOBA private key is generated per session and never stored,
+// because a signing key in localStorage is a signing key in every extension's
+// reach; and both are in the Credential block BELOW the table, which is part
+// of this pane and is not part of this table. What decides whether a thing is
+// a row here is whether it is a value that can be compared against a
+// document — a minted proof and a generated key never can be.
+//
+// THE ACCESS TOKEN IS THE EXCEPTION, and it is a placement rather than a
+// change to any of that. It is not a row: it is a `block`, and its markup —
+// the textarea, the save opt-in and the button that goes and gets one — is
+// exactly what it was in the Credential block, moved. It sits here because it
+// is the only credential on this page a reader has to leave the page to
+// obtain, and a button that launches the OAuth2 / OIDC workflow is no use a
+// screen away from the scheme select that decides whether a token is sent at
+// all. The opt-in is untouched and still ships clear: `saveState()` is the
+// only thing that writes the token to localStorage and it has not moved
+// either.
+//
+// A BLOCK IS MOVED AND NEVER COPIED. `renderConfig()` takes the node out of
+// the page and appends it to the row it builds, so there is one element with
+// that id at every moment — the same rule `owns` exists to keep, arrived at
+// from the other direction. Copying the markup would put two `scim_auth_token`
+// textareas on the page, and `getElementById` would answer with whichever came
+// first in document order.
 //
 // THE TABLE IS REBUILT WHOLE on every discovery, so `renderConfig()` carries
 // the owned fields' values across the rebuild and puts the focus back. It
@@ -684,6 +703,9 @@ var CONFIG_PARAMS = [
         'collects by itself whenever the service root changes — every scheme ' +
         'stays selectable, because a server may accept one it does not ' +
         'advertise.' },
+  // The access token, moved into this section from the Credential block
+  // below rather than built here. See the note above on `block`.
+  { block: 'scim_auth_token_row' },
   { name: 'authUsername', label: 'authUsername',
     field: 'scim_auth_username', owns: true, source: 'you',
     what: 'The account a Basic or Digest credential authenticates as. The ' +
@@ -963,6 +985,19 @@ function renderConfig() {
       carried[row.name] = configValue(row.name);
     }
   });
+  // AND THE BLOCKS, held by reference before the table is torn down. They are
+  // authored in the markup and MOVED into the row this build makes for them,
+  // so after the first render they are children of the host that `innerHTML =
+  // ''` is about to empty. Holding the node keeps it alive with its value, its
+  // checked boxes and its listeners intact; re-reading it after the clear
+  // would find nothing, and rebuilding it would be a second element with the
+  // same id.
+  var blocks = {};
+  CONFIG_PARAMS.forEach(function (row) {
+    if (row.block) {
+      blocks[row.block] = el(row.block);
+    }
+  });
   // And the focus, for the same reason: the automatic probe fires on a change
   // to the service root, and its answer rebuilds this table.
   var focused = document.activeElement ? document.activeElement.id : '';
@@ -974,6 +1009,10 @@ function renderConfig() {
   CONFIG_PARAMS.forEach(function (row) {
     if (row.group) {
       table.appendChild(configGroupRow(row.group));
+      return;
+    }
+    if (row.block) {
+      table.appendChild(configBlockRow(row.block, blocks[row.block]));
       return;
     }
     table.appendChild(configRow(row, carried));
@@ -1008,6 +1047,45 @@ function configGroupRow(title) {
   tr.appendChild(td);
   log.debug("Leaving configGroupRow().");
   return tr;
+}
+
+// A row that is not a parameter but a home: one cell across the whole table,
+// holding an element that was authored in the markup.
+//
+// The node is APPENDED, which moves it — `appendChild` of an element that is
+// already in the document removes it from where it was. That is the point: one
+// element, one id, the listeners `onload()` put on it still attached.
+//
+// The row carries the block's own visibility. `refreshAuthControls()` hides
+// the block for a scheme that sends no token, and a hidden block inside a
+// visible row is an empty bordered stripe across the table that nothing
+// explains.
+function configBlockRow(id, node) {
+  log.debug("Entering configBlockRow(). " + id);
+  var tr = document.createElement('tr');
+  tr.className = 'scim-config-block';
+  tr.id = blockRowId(id);
+  var td = document.createElement('td');
+  td.colSpan = 3;
+  if (node) {
+    td.appendChild(node);
+  } else {
+    log.warn('the configuration table has a block row for ' + id + ' and ' +
+        'there is no such element on the page, so the row is empty — the ' +
+        "markup's id and CONFIG_PARAMS have drifted apart");
+  }
+  tr.appendChild(td);
+  log.debug("Leaving configBlockRow().");
+  return tr;
+}
+
+// The id of the row a block sits in, in one place: `refreshAuthControls()`
+// shows and hides it and `configBlockRow()` names it, and a mismatch between
+// those two is a row that never appears with no error anywhere.
+function blockRowId(id) {
+  log.debug("Entering blockRowId(). " + id);
+  log.debug("Leaving blockRowId().");
+  return 'scim_cfg_block_' + id;
 }
 
 function configRow(row, carried) {
@@ -1599,6 +1677,135 @@ function signHoba(request) {
       log.warn('the HOBA signature failed: ' + error.message);
       return null;
     });
+}
+
+// ---------------------------------------------------------------------------
+// GETTING A TOKEN, WHICH THIS PAGE CANNOT DO AND THE ONE NEXT DOOR CAN.
+//
+// RFC 7644 section 2 names an OAuth 2.0 bearer token as a SCIM authentication
+// scheme and says nothing at all about where one comes from — no grant, no
+// endpoint, not even a hint that a client should have an authorization server.
+// So this page offered a field for a token and no route to one, which left the
+// reader with another tab, somebody else's workflow and a clipboard.
+//
+// The route is the OAuth2 / OIDC workflow in this same application, driven as
+// it always is: every grant it implements ends in an access token, and any of
+// them will do. `token_handoff.js` is the whole of the mechanism — this page
+// marks itself as waiting and navigates; that workflow puts up a banner saying
+// who is waiting; whichever of its three token-bearing responses arrives first
+// drops the token into a tab-scoped slot; and `applyHandedToken()` below
+// collects it on the way back and empties the slot.
+//
+// NOTHING IS PRE-FILLED THERE AND THAT IS NOT AN OMISSION. This page knows a
+// SCIM service root and nothing whatever about an authorization server — not
+// the issuer, not the client id, not the scopes that server's policy wants.
+// Guessing any of them would produce a request that fails for a reason the
+// reader did not choose. The workflow keeps its own configuration in this same
+// browser, so it comes up as it was last left.
+// ---------------------------------------------------------------------------
+var OAUTH_WORKFLOW_URL = '/oauth2_oidc_1.html?tokenhandoff=1';
+
+// Where the workflow sends the browser back to. Read off this page rather than
+// written down, so a deployment that serves it under another path — the static
+// sites do not, but nothing here should depend on that — comes back to itself.
+function thisPageUrl() {
+  log.debug("Entering thisPageUrl().");
+  var here = '/scim.html';
+  try {
+    here = window.location.pathname || here;
+  } catch (e) {
+    // No location object worth the name. The default is this page's own path
+    // on every deployment there is.
+    here = '/scim.html';
+  }
+  log.debug("Leaving thisPageUrl(). " + here);
+  return here;
+}
+
+function getAccessToken() {
+  log.debug("Entering getAccessToken().");
+  // Whatever is on this page goes to storage first: the next thing that
+  // happens is a navigation away from it, and an edit that has not yet fired a
+  // change event would be lost.
+  saveState();
+  var started = handoff.start({ returnUrl: thisPageUrl(),
+      label: 'SCIM provisioning' });
+  if (!started) {
+    statusBad('scim_auth_status', 'This browser has no session storage for ' +
+        'this origin, so a token could not be carried back automatically. ' +
+        'Open the OAuth2 / OIDC workflow yourself and paste what it returns ' +
+        'into the field above.');
+    setText('scim_token_handoff_note', 'The handoff could not be started — ' +
+        'this browser has no session storage for this origin. Nothing has ' +
+        'been changed here.');
+    log.debug("Leaving getAccessToken(). No handoff.");
+    return false;
+  }
+  setText('scim_token_handoff_note', 'Going to the OAuth2 / OIDC workflow…');
+  log.debug("Leaving getAccessToken(). " + OAUTH_WORKFLOW_URL);
+  window.location.href = OAUTH_WORKFLOW_URL;
+  return false;
+}
+
+// The other end, run from `onload()`.
+//
+// A DELIVERED TOKEN IS COLLECTED AND AN UNDELIVERED HANDOFF IS LEFT ALONE.
+// The difference matters: the workflow's round trip goes out to an identity
+// provider and back to oauth2_oidc_2.html and never through this page, so this
+// page loading with a handoff still open means the reader came back by
+// themselves — a Back button, a bookmark — and cancelling it there would break
+// the flow they are still in the middle of.
+//
+// The token is put in the field and then written through by `saveState()`,
+// which is the one place that decides whether a token is stored at all. So the
+// opt-in still governs it: with the box clear this token lives in the field
+// and nowhere else, exactly like a pasted one.
+function applyHandedToken() {
+  log.debug("Entering applyHandedToken().");
+  if (!handoff.isDelivered()) {
+    if (handoff.isActive()) {
+      setText('scim_token_handoff_note', 'The OAuth2 / OIDC workflow is ' +
+          'still holding this page\'s request for a token. Finish a grant ' +
+          'there and it will come back to this field.');
+      log.debug("Leaving applyHandedToken(). Still waiting.");
+      return false;
+    }
+    log.debug("Leaving applyHandedToken(). Nothing waiting.");
+    return false;
+  }
+  var handed = handoff.take();
+  if (handed.expired) {
+    setText('scim_token_handoff_note', 'A token was handed back by the ' +
+        'OAuth2 / OIDC workflow more than half an hour ago and has been ' +
+        'discarded rather than filled in here — a credential appearing in a ' +
+        'field nobody filled is worse than none. Ask for another one.');
+    statusBad('scim_auth_status', 'The handed-back access token was too old ' +
+        'to use and was discarded.');
+    log.debug("Leaving applyHandedToken(). Expired.");
+    return false;
+  }
+  setVal(TOKEN_FIELD, handed.token);
+  saveState();
+  var from = handed.source ? ' from ' + handed.source : '';
+  setText('scim_token_handoff_note', 'This access token came back from the ' +
+      'OAuth2 / OIDC workflow' + from + '. It is in the field above and, ' +
+      'unless the box below is ticked, nowhere else.');
+  var scheme = scimClient.authScheme(val('scim_auth_scheme'));
+  if (scheme && scheme.id !== 'bearer' && scheme.id !== 'dpop') {
+    // The field it went into is hidden for this scheme, so a status line the
+    // reader can actually see has to say where the token went.
+    statusBad('scim_auth_status', 'An access token came back from the ' +
+        'OAuth2 / OIDC workflow, but the selected scheme sends no token, so ' +
+        'nothing will carry it. Choose the Bearer or DPoP scheme above to ' +
+        'see it and use it.');
+  } else {
+    statusOk('scim_auth_status', 'An access token came back from the ' +
+        'OAuth2 / OIDC workflow' + from + ' and is in the Access token ' +
+        'field.');
+  }
+  log.debug("Leaving applyHandedToken(). " + handed.token.length +
+      " characters.");
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -3557,7 +3764,12 @@ function refreshAuthControls() {
   }
   setText('scim_auth_what', scheme.what);
   setText('scim_auth_spec', scheme.spec);
-  show('scim_auth_token_row', scheme.id === 'bearer' || scheme.id === 'dpop');
+  // The token block and the table row it was moved into, together — see
+  // `configBlockRow()`. Hiding one without the other leaves either an empty
+  // stripe across the table or a token field for a scheme that sends none.
+  var carriesToken = scheme.id === 'bearer' || scheme.id === 'dpop';
+  show('scim_auth_token_row', carriesToken);
+  show(blockRowId('scim_auth_token_row'), carriesToken);
   show('scim_auth_password_row', scheme.id === 'basic' ||
       scheme.id === 'digest');
   // There is no realm row to show: `authRealm` and `hobaUsername` are rows of
@@ -3752,6 +3964,11 @@ function onload() {
   wireTabs();
   wireExpanders();
   refreshAuthControls();
+  // AFTER loadState(), which fills the token field from storage, and after
+  // refreshAuthControls(), which decides whether the block holding it is on
+  // screen at all. A token handed back by the OAuth2 / OIDC workflow is the
+  // newer of the two and must not be overwritten by what storage remembered.
+  applyHandedToken();
   refreshOperationControls();
   refreshScenarioControls();
   refreshCallPathControls();
@@ -3846,6 +4063,10 @@ module.exports = {
   generateHobaKey: generateHobaKey,
   registerHobaKey: registerHobaKey,
   openSignIn: openSignIn,
+  // The Access token block's button, and the other end of the same handoff —
+  // exported because tests/scim_page.js drives both without navigating.
+  getAccessToken: getAccessToken,
+  applyHandedToken: applyHandedToken,
   saveState: saveState,
   // Reached by tests/scim_page.js, which asserts what the page composes rather
   // than only what came back — the difference between "the request was wrong"

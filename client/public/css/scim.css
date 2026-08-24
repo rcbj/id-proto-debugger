@@ -695,6 +695,25 @@ textarea.scim-box-tall {
   color: #12107c;
 }
 
+/* ---------------------------------------------------------------------------
+   A BLOCK ROW: one cell across the table, holding an element that was authored
+   in the markup and moved here by renderConfig(). There is one — the access
+   token — and it is here rather than in the Credential block below because the
+   button beside it goes and GETS a token, which is no use a screen away from
+   the scheme select that decides whether one is sent.
+
+   No monospace and no break-all: the cell holds a form, not a value. The
+   padding matches the group headings above it rather than the value cells, so
+   the block reads as part of the Authentication section and not as a
+   parameter that has grown too big for its row.
+   ------------------------------------------------------------------------ */
+.scim-config-block td {
+  background: #fbfbfe;
+  padding: 6px 8px;
+}
+
+.scim-config-block .scim-buttons { margin: 4px 0 0 0; }
+
 .scim-config-name {
   width: 15em;
   font-family: Menlo, Consolas, monospace;

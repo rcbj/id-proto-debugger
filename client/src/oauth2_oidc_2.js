@@ -3,6 +3,7 @@ const appconfig = require(process.env.CONFIG_FILE);
 // so both Configuration Parameters panes carry the same fields and defaults.
 const opMetadata = require("./op_metadata");
 const sdJwtVc = require("./sd_jwt_vc");
+const tokenHandoff = require("./token_handoff");
 // DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
 // see oauth_dpop.js for why the two are separate state.
 const oauthDpop = require("./oauth_dpop");
@@ -1775,6 +1776,11 @@ function successfulInternalTokenAPICall(data, textStatus, request)
          "'>DPoP: " +
         dpopVerdictToShow.text + "</p>"));
     }
+    // If another workflow asked for a token, this is one. Before the SD-JWT
+    // VC return below, which navigates away when that workflow is the one
+    // waiting — the two are never both active, and the order says which wins
+    // if a future one ever is.
+    offerTokenToHandoff(data.access_token, 'the token endpoint');
     // If the SD-JWT VC workflow sent us here, the tokens are what it came for.
     returnToSdJwtVcFlow();
   log.debug("Leaving successfulInternalTokenAPICall().");
@@ -2127,6 +2133,7 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
   // Store new tokens in local storage
   if (!!currentAccessToken) {
     localStorage.setItem("refresh_access_token", currentAccessToken );
+    offerTokenToHandoff(currentAccessToken, 'a Refresh Token grant');
   }
   if (!!currentRefreshToken) {
     localStorage.setItem("refresh_refresh_token", currentRefreshToken );
@@ -2944,6 +2951,10 @@ function renderAuthorizationEndpointResults(expected, returned) {
     access: returned.access_token, id: returned.id_token
   });
   expandPane("#authorization_endpoint_result");
+  // An Implicit or Hybrid flow's access token arrives HERE and never at the
+  // token endpoint, so a handoff that only watched that endpoint would leave
+  // those two flows with a banner that never resolved.
+  offerTokenToHandoff(returned.access_token, 'the authorization response');
   log.debug("Leaving renderAuthorizationEndpointResults().");
 }
 
@@ -3767,6 +3778,7 @@ $(document).ready(function() {
   }
 
   maybeContinueSdJwtVcFlow();
+  maybeShowTokenHandoffBanner();
   // RFC 9700 section 4.12.2 (requirement 10.1). Last thing in this handler,
   // because everything above reads the response out of the live URL and the
   // scrub replaces it. Out of mode the URL is left exactly as the identity
@@ -3815,6 +3827,81 @@ function maybeContinueSdJwtVcFlow() {
     "the credential.</div>");
   window.setTimeout(tokenButtonClick, 250);
   log.debug("Leaving maybeContinueSdJwtVcFlow().");
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// ANOTHER WORKFLOW IS WAITING FOR AN ACCESS TOKEN.
+//
+// The SCIM page sends the reader here with `token_handoff.js` marked active,
+// because RFC 7644 section 2 has it authenticate with a bearer token and says
+// nothing at all about where one comes from. Whichever of this page's three
+// token-bearing responses arrives first fills the slot, and the banner offers
+// the way back.
+//
+// THE BROWSER IS NOT SENT BACK BY ITSELF, which is the difference from the
+// SD-JWT VC handoff below. That workflow is a sequence of numbered steps and
+// this page is a waypoint in it; a reader who came here for a token is on the
+// page that shows them what came back — the claims, the DPoP verdict, the
+// whole exchange — and yanking them off it the instant the response lands
+// takes away the thing they can only see here. The token is in the slot from
+// the moment it arrives, so the button is a convenience: opening the SCIM page
+// any other way collects it just the same.
+//
+// NOTHING IS WRITTEN ANYWHERE unless a handoff is active — `deliver()`
+// refuses otherwise — so an ordinary visit to this page is untouched by all of
+// this.
+// ---------------------------------------------------------------------------
+function offerTokenToHandoff(token, source) {
+  log.debug("Entering offerTokenToHandoff(). source=" + source);
+  if (!tokenHandoff.deliver(token, source)) {
+    log.debug("Leaving offerTokenToHandoff(). Not delivered.");
+    return false;
+  }
+  maybeShowTokenHandoffBanner();
+  var where = tokenHandoff.returnUrl();
+  var who = tokenHandoff.label();
+  // Built as markup with no value in it and then filled in as TEXT: the label
+  // and the return url both crossed a page load, and one of them is going into
+  // an href.
+  $("#token_handoff_banner").html("<strong>An access token is ready for " +
+      "<span id='token_handoff_who'></span></strong> — it came from <span " +
+      "id='token_handoff_source'></span>. <a href='#' " +
+      "id='token_handoff_return'>Take it there now</a>, or stay here and " +
+      "read what came back; opening that page later collects it just the " +
+      "same.");
+  $("#token_handoff_who").text(who);
+  $("#token_handoff_source").text(source);
+  $("#token_handoff_return").on("click", function (event) {
+    event.preventDefault();
+    log.debug("Token handoff: returning to " + where);
+    window.location.href = where;
+    return false;
+  });
+  log.debug("Leaving offerTokenToHandoff(). " + who);
+  return true;
+}
+
+// The banner itself, put up on load so that a page which is about to send a
+// token somewhere else says so BEFORE the reader runs a grant on it, and
+// reused by offerTokenToHandoff() once there is one to send.
+function maybeShowTokenHandoffBanner() {
+  log.debug("Entering maybeShowTokenHandoffBanner().");
+  if (!tokenHandoff.isActive()) {
+    log.debug("Leaving maybeShowTokenHandoffBanner(). None active.");
+    return false;
+  }
+  if ($("#token_handoff_banner").length) {
+    log.debug("Leaving maybeShowTokenHandoffBanner(). Already shown.");
+    return true;
+  }
+  $(".container").prepend("<div class='vc-handoff-banner' " +
+      "id='token_handoff_banner'><strong>An access token was asked for by " +
+      "<span id='token_handoff_who'></span></strong> — whichever grant " +
+      "returns one first, it is carried back there.</div>");
+  $("#token_handoff_who").text(tokenHandoff.label());
+  log.debug("Leaving maybeShowTokenHandoffBanner(). " +
+      tokenHandoff.label());
   return true;
 }
 
@@ -6256,5 +6343,10 @@ module.exports = {
   setInitiateTokenExchangeFromEnd,
   setPostAuthStyleTokenExchange,
   setHeaderAuthStyleTokenExchange,
-  setTokenExchangeType
+  setTokenExchangeType,
+  // The access token handoff. Not called from the markup: exported because
+  // tests/scim_page.js drives the delivery half without an identity provider,
+  // which is the only way to assert the whole route from the SCIM page's
+  // button to the SCIM page's field.
+  offerTokenToHandoff
 };

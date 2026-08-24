@@ -147,7 +147,49 @@ async function click(driver, locator) {
 // stand in for that lost the race periodically. It also reports what the field
 // LAST held on a timeout, which the local copy of waitForStatus could not — its
 // message was built before the first poll, so it always said "(last status: )".
-const { text, value, waitForStatus, waitForValue } = require("./wait_for");
+const { text, value, waitFor, waitForStatus, waitForValue } =
+    require("./wait_for");
+
+// ---------------------------------------------------------------------------
+// Step 3's checks table arrives in TWO passes, and reading it after the first
+// one reports a page bug for a network round-trip that had not finished. The
+// rows below are appended when their promises settle — "Disclosure digests"
+// once every Disclosure has been hashed, "Issuer signature" once the issuer's
+// keys have been resolved (here out of the did:jwk in iss, or off walt.id's
+// own metadata) and the JWS verified against them. Both are appended on the
+// failure path too, so this waits on the page having FINISHED, never on it
+// having succeeded. The full account is in the note above
+// readStepThreeChecks() in tests/sd_jwt_vc_issuance.js, which lost a run to
+// exactly this on 2026-08-24.
+// ---------------------------------------------------------------------------
+var CHECK_ROWS_SCRIPT =
+  "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
+      "tbody tr')).map(function (tr) {" +
+  "  var td = tr.querySelectorAll('td');" +
+  "  return { name: td[0].textContent.trim(), result: " +
+      "td[1].textContent.trim(), detail: td[2].textContent.trim() };" +
+  "});";
+
+var LATE_CHECKS = ["Disclosure digests", "Issuer signature"];
+
+async function readStepThreeChecks(driver, message) {
+  log.debug("Entering readStepThreeChecks().");
+  var rows = await waitFor(driver,
+    function () {
+      return driver.executeScript(CHECK_ROWS_SCRIPT);
+    },
+    function (got) {
+      var names = (got || []).map(function (c) { return c.name; });
+      return LATE_CHECKS.every(function (name) {
+        return names.indexOf(name) !== -1;
+      });
+    },
+    (message || "step 3") + " should finish its checks — the digests and " +
+        "the issuer signature are appended after their promises settle");
+  log.debug("Leaving readStepThreeChecks().");
+  return rows;
+}
+
 function severeErrors(driver) {
   log.debug("Entering severeErrors().");
   log.debug("Leaving severeErrors().");
@@ -475,14 +517,7 @@ async function checkCredential(driver, what, opts) {
   }
 
   // And the page's own verdicts, which are what a user reads.
-  var checks = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
-        "tbody tr')).map(function (tr) {" +
-    "  var td = tr.querySelectorAll('td');" +
-    "  return { name: td[0].textContent.trim(), result: " +
-        "td[1].textContent.trim()," +
-    "           detail: td[2].textContent.trim() };" +
-    "});");
+  var checks = await readStepThreeChecks(driver, "step 3");
   assert.ok(checks.length >= 7, "step 3 should report its checks, got " +
             checks.length + ".");
   var failed = checks.filter(function (c) { return c.result === "FAILED"; });

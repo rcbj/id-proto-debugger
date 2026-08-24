@@ -1004,6 +1004,114 @@ async function configurationCanBeChangedAndPutBack(doc) {
   log.debug("Leaving configurationCanBeChangedAndPutBack().");
 }
 
+// ---------------------------------------------------------------------------
+// A SUCCESSFUL LIVENESS PROBE IS NOT AN EVENT.
+//
+// `/healthcheck` is asked every few seconds for the whole life of the service —
+// by the compose healthcheck in every launcher here, and by CI's wait loop —
+// and it always answers the same 200. Recorded, it is by a wide margin the most
+// common row in the audit log and it pushes everything a person opened that
+// page to read off the end of a capped list.
+//
+// THE ABSENCE IS ASSERTED WITH TWO CONTROLS BESIDE IT, because "no rows came
+// back" is the easiest passing check in this suite to write and the easiest to
+// be wrong:
+//
+//   * `audit.protocolCalls` must be ON. That setting turns off the whole
+//     category a `/healthcheck` row would belong to, and with it off the
+//     absence below proves nothing whatever.
+//   * A `POST /healthcheck`, which Express answers 404, MUST be recorded. Same
+//     path, same page, same query — so a row that is missing for any reason
+//     other than the rule under test takes this control with it. It is also
+//     the second half of the rule stated: the quiet one is a SUCCESSFUL probe,
+//     because a healthcheck answering anything else is exactly the event
+//     somebody hunting a start-up failure came looking for.
+//
+// And the counters are checked to have counted the probes anyway: this is a
+// rule about the event log, where one act is one line, and not about how much
+// the service was asked to do.
+// ---------------------------------------------------------------------------
+const PROBES = 3;
+
+async function successfulHealthchecksAreNotInTheAuditLog() {
+  log.debug("Entering successfulHealthchecksAreNotInTheAuditLog().");
+  log.info("=== The audit log ignores a successful liveness probe ===");
+  const before = await get("/metrics");
+  const countedBefore = healthcheckCalls(before);
+  for (let i = 0; i < PROBES; i++) {
+    const probe = await common.httpJson(base + "/healthcheck");
+    assert.strictEqual(probe.status, 200,
+        "GET /healthcheck answered " + probe.status + ". This test is about " +
+        "what that call does NOT write; if the call itself is broken, " +
+        "everything below would pass for the wrong reason.");
+  }
+  const refused = await common.httpJson(base + "/healthcheck",
+      { method: "POST" });
+  assert.ok(refused.status >= 400,
+      "POST /healthcheck answered " + refused.status + ", so the control " +
+      "this section leans on is not a refusal any more and the absence " +
+      "below would have nothing standing beside it.");
+
+  const view = await get("/audit?q=healthcheck&per=200");
+  assert.strictEqual(view.protocolCalls, true,
+      "audit.protocolCalls is off, so protocol endpoint calls get no row at " +
+      "all and the absence this section asserts is vacuous. Something " +
+      "earlier in the run turned it off and did not put it back.");
+  // `events`, and NOT `rows`: that is what the reply calls the page of the
+  // list, and reading a member that does not exist is an empty array and a
+  // green check.
+  const rows = view.events || [];
+  assert.ok(Array.isArray(view.events),
+      "The audit reply has no `events` array, so every assertion below is " +
+      "reading undefined and passing. Members: " +
+      Object.keys(view || {}).join(", ") + ".");
+  const onThePath = rows.filter(function (row) {
+    return String(row.target || "") === "/healthcheck";
+  });
+  const succeeded = onThePath.filter(function (row) {
+    return row.outcome === "success";
+  });
+  assert.deepStrictEqual(succeeded.map(function (row) {
+    return row.summary;
+  }), [],
+      "These successful /healthcheck rows are in the audit log. The probe " +
+      "runs every few seconds for the life of the service, so one row here " +
+      "means the log fills with nothing else and the page stops being " +
+      "readable — which is what recordHttp()'s QUIET_WHEN_OK exists to " +
+      "prevent.");
+  assert.ok(onThePath.length > 0,
+      "NO /healthcheck row of any kind came back, not even the POST that was " +
+      "just refused — so this section proved nothing: the query, the " +
+      "recording or the path could each be broken and it would still pass.");
+
+  const after = await get("/metrics");
+  assert.ok(healthcheckCalls(after) >= countedBefore + PROBES,
+      "The metrics page counted " + healthcheckCalls(after) + " calls to " +
+      "/healthcheck against " + countedBefore + " before " + PROBES + " were " +
+      "made. The audit rule is about the event LOG — a counter is one row " +
+      "however often it goes up, so the probes must still be counted.");
+  log.info("[audit] OK — " + PROBES + " successful probes wrote no row, the " +
+           "refused one wrote " + onThePath.length + ", and all of them were " +
+           "counted.");
+  log.debug("Leaving successfulHealthchecksAreNotInTheAuditLog().");
+}
+
+// Every call the metrics table has counted against /healthcheck, whatever the
+// method — the row is keyed on the route pattern AND the method, so a GET row
+// and a POST row are two of them.
+function healthcheckCalls(metrics) {
+  log.debug("Entering healthcheckCalls().");
+  const rows = (metrics && metrics.calls && metrics.calls.rows) || [];
+  let total = 0;
+  rows.forEach(function (row) {
+    if (String(row.path || "") === "/healthcheck") {
+      total += Number(row.count || 0);
+    }
+  });
+  log.debug("Leaving healthcheckCalls(). " + total);
+  return total;
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Running the management API checks against " + api);
@@ -1027,6 +1135,7 @@ async function test() {
   await configurationCanBeChangedAndPutBack(doc);
   await theBulkRevocationsWorkAndAreUndone();
   await theExplorerIsServedUnderAScopedPolicy(session);
+  await successfulHealthchecksAreNotInTheAuditLog();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }
