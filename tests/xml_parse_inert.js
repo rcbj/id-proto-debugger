@@ -47,15 +47,23 @@ var log = bunyan.createLogger({ name: "xml_parse_inert",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-const SRC_DIR = path.join(__dirname, "..", "client", "src");
+// The two roots that hold in-browser XML code. `common/` joined the sweep on
+// 2026-08-24, when xmldsig.js moved there: it is now required by eight browser
+// bundles AND by api/server.js, so it is exactly the file this test is most
+// about — and for a day it was the one file none of the three checks could
+// see. A root that is swept for parseFromString must be swept for the sinks as
+// well, which is why both checks below walk the same list.
+const SRC_DIRS = [path.join(__dirname, "..", "client", "src"),
+                  path.join(__dirname, "..", "common")];
 
 // "That directory exists" is not "this is a checkout", and the difference is
 // what this test skips on. The tests image stages most borrowed modules FLAT
 // beside the scripts, but it also mirrors a handful of Kerberos bundles into
 // /usr/src/client/src, because the two Kerberos pane tests resolve their files
-// as ../client/src (tests/Dockerfile). So SRC_DIR is present in the image and
-// holds eleven modules, none of which parses XML — the whole sweep below then
-// ran over the mirror and failed with "found no parseFromString calls at all",
+// as ../client/src (tests/Dockerfile). So client/src is present in the image
+// and holds eleven modules, none of which parses XML — the whole sweep below
+// then ran over the mirror and failed with "found no parseFromString calls at
+// all",
 // which reads as the XML pages having moved rather than as the layout it is.
 //
 // client/package.json is what separates the two: it is outside client/src
@@ -70,8 +78,15 @@ function isCheckout() {
 }
 
 // The shared XML/crypto engine. It is the module every XML page reaches for, so
-// an HTML sink appearing HERE would be reachable from all of them at once.
-const XML_ENGINE = "xmldsig.js";
+// an HTML sink appearing HERE would be reachable from all of them at once —
+// and since 2026-08-24 api/server.js signs the SAML bindings with it too, so
+// the blast radius now includes a service. It lives in common/ rather than
+// client/src, which is a path this test has to name explicitly: the day it
+// moved, `path.join(SRC_DIR, "xmldsig.js")` stopped existing and the check
+// failed with "missing — this test needs updating", which is the message you
+// are reading the fix for.
+const XML_ENGINE = "common/xmldsig.js";
+const XML_ENGINE_FILE = path.join(__dirname, "..", "common", "xmldsig.js");
 
 // Writing markup, as opposed to writing text.
 const HTML_SINKS = [
@@ -106,7 +121,7 @@ const LIVE_DOM_ADOPTIONS = [
 function sourceFiles() {
   log.debug("Entering sourceFiles().");
   const files = [];
-  (function walk(dir) {
+  function walk(dir) {
     fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -115,9 +130,27 @@ function sourceFiles() {
         files.push(full);
       }
     });
-  })(SRC_DIR);
+  }
+  SRC_DIRS.forEach(walk);
   log.debug("Leaving sourceFiles().");
   return files;
+}
+
+// A path to name in a message. `path.relative` against ONE root turns a file
+// under the other into a "../../common/..." string that reads like an escape
+// from the tree rather than like a second root, so pick the root the file is
+// actually under.
+function label(file) {
+  log.debug("Entering label().");
+  for (const root of SRC_DIRS) {
+    const rel = path.relative(root, file);
+    if (!rel.startsWith("..")) {
+      log.debug("Leaving label(). Under " + root);
+      return path.join(path.basename(root), rel);
+    }
+  }
+  log.debug("Leaving label(). Under no known root.");
+  return file;
 }
 
 // A line that is only a comment is not code. The reasoning about these sinks
@@ -187,12 +220,13 @@ function everyParseIsXml() {
       if (/parseFromString\s*\([^;]*?,\s*['"](application\/xml|text\/xml|application\/xhtml\+xml|image\/svg\+xml)['"]\s*\)/.test(line.text)) {
         return;
       }
-      offences.push(path.relative(SRC_DIR, file) + ":" + line.number + "  " +
+      offences.push(label(file) + ":" + line.number + "  " +
                     line.text.trim().slice(0, 110));
     });
   });
   assert.ok(parseCalls > 0,
-            "found no parseFromString calls at all — has client/src moved?");
+            "found no parseFromString calls at all — have client/src and " +
+                "common/ moved?");
   assert.deepStrictEqual(offences, [],
     "these DOMParser calls do not parse as XML with a literal MIME type. " +
         "Parsing caller-supplied\n" +
@@ -210,11 +244,10 @@ function everyParseIsXml() {
 function xmlEngineHasNoHtmlSink() {
   log.debug("Entering xmlEngineHasNoHtmlSink().");
   log.info("[engine] " + XML_ENGINE + " must contain no HTML sink.");
-  const file = path.join(SRC_DIR, XML_ENGINE);
-  assert.ok(fs.existsSync(file), XML_ENGINE +
+  assert.ok(fs.existsSync(XML_ENGINE_FILE), XML_ENGINE +
             " is missing — this test needs updating.");
   const offences = [];
-  codeLines(fs.readFileSync(file, "utf8")).forEach(function (line) {
+  codeLines(fs.readFileSync(XML_ENGINE_FILE, "utf8")).forEach(function (line) {
     HTML_SINKS.forEach(function (sink) {
       if (sink.pattern.test(line.text)) {
         offences.push(XML_ENGINE + ":" + line.number + " uses " + sink.name +
@@ -251,7 +284,7 @@ function parsedNodesStayDetached() {
     codeLines(text).forEach(function (line) {
       LIVE_DOM_ADOPTIONS.forEach(function (sink) {
         if (sink.pattern.test(line.text)) {
-          offences.push(path.relative(SRC_DIR, file) + ":" + line.number +
+          offences.push(label(file) + ":" + line.number +
                         " uses " + sink.name +
                         " — " + line.text.trim().slice(0, 90));
         }
@@ -259,7 +292,8 @@ function parsedNodesStayDetached() {
     });
   });
   assert.ok(xmlModules > 0,
-            "found no modules that parse XML — has client/src moved?");
+            "found no modules that parse XML — have client/src and " +
+                "common/ moved?");
   assert.deepStrictEqual(offences, [],
     "a module that parses caller-supplied XML also adopts nodes into the " +
         "live document. An inert\n" +
