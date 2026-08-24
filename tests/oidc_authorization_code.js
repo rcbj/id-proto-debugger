@@ -20,6 +20,12 @@ const { populateMetadata, getAccessTokenAuthCode, verifyAccessToken } =
        require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
        assert });
 
+// What client/src/oauth2_oidc_2.js puts in a credential's place before an
+// exchange is stored (its HTTP_REDACTED). Spelled here rather than matched
+// loosely, so that a build which stored some OTHER placeholder — or the value
+// itself — is a failure rather than a match on the word "redacted".
+const REDACTED_MARKER = "(redacted \u2014 not stored)";
+
 function decodeJWT(jwt_) {
   log.debug("Entering decodeJWT().");
   log.debug("Leaving decodeJWT().");
@@ -461,10 +467,41 @@ async function verifyRefreshHttpTab(driver, client_secret) {
     "The stored refresh exchange should keep the request body apart from " +
     "its credentials, and grant_type is gone from it: " +
     JSON.stringify(kept.request.body));
+  // The credential, and then the proof that looking for it meant something.
+  //
+  // The value comes from the environment, and for a PUBLIC client there is no
+  // secret to put there: Keycloak answers `"secret": null` and `jq -r` turns
+  // that into the four characters "null", which is a substring of the
+  // `"failure":null` every stored generation carries — so this check failed
+  // both public jobs on 2026-08-24 over a credential that does not exist.
+  // common/common.sh now substitutes a named placeholder for that case, so the
+  // field still holds something, it is still sent, and it still must not reach
+  // storage. Nothing here needs to know which of the two it was given.
   assert.ok((state.history || "").indexOf(client_secret) === -1,
     "THE CLIENT SECRET IS IN token_history. Redaction is by parameter and " +
     "header NAME (redactExchangeForStorage() in " +
     "client/src/oauth2_oidc_2.js).");
+  // An absence proves nothing on its own: a page that stored no request body
+  // at all would pass the line above. So count what WAS redacted — the
+  // authorization code exchange sends client_secret whatever the field holds,
+  // and the stored copy must carry the parameter with the marker in place of
+  // the value.
+  const secretParams = (state.history || "").match(/client_secret=[^&"]*/g) ||
+      [];
+  const unredacted = secretParams.filter(function (pair) {
+    return pair.indexOf(encodeURIComponent(REDACTED_MARKER)) === -1;
+  });
+  log.info("token_history carries " + secretParams.length +
+           " client_secret parameter(s), " + unredacted.length +
+           " of them with a value.");
+  assert.ok(secretParams.length > 0,
+    "No client_secret parameter reached token_history at all, so the check " +
+    "above compared a credential against a document that could not have " +
+    "contained one. Either the page stopped sending the parameter or it " +
+    "stopped storing the request body; both change what that check means.");
+  assert.deepStrictEqual(unredacted, [],
+    "A client_secret in token_history still has its value: " +
+    JSON.stringify(unredacted));
   assert.ok(!/"[Aa]uthorization"\s*:\s*"Basic /.test(state.history || ""),
     "An HTTP Basic Authorization header is in token_history.");
 

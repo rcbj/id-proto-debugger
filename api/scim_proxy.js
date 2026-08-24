@@ -395,9 +395,9 @@ function readResponse(status, headers, raw) {
 // The same device `/ldap/limits`, `/krb5/limits` and `/tls/limits` use: the
 // page says what this service will and will not do BEFORE a call fails, so a
 // refusal is a sentence rather than a surprise. It is also how the page knows
-// there is an api at all — a static deployment gets no answer here and turns
-// the backend radio off, which is a stronger signal than a configuration flag
-// because it is the api itself saying so.
+// there is an api at all — a static deployment gets no answer here and fixes
+// the page's `callPath` to the browser, which is a stronger signal than a
+// configuration flag because it is the api itself saying so.
 // ---------------------------------------------------------------------------
 function limits(appconfig) {
   log.debug("Entering limits().");

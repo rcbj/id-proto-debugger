@@ -629,7 +629,7 @@ async function nonceHandshakeWorks() {
   log.info("=== The DPoP-Nonce handshake (RFC 9449 sections 8 and 9) ===");
   // Nonce mode is a server setting and this test drives the server over HTTP,
   // so it is turned on through the non-spec control endpoint the mock publishes
-  // for exactly this purpose (and which /sts-metadata lists as non-spec).
+  // for exactly this purpose (and which /admin/sts-metadata lists as non-spec).
   var on = await post(stsBase + "/dpop/nonce-mode",
       { json: { required: true } });
   if (on.status === 404) {

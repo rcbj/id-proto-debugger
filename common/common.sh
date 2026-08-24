@@ -1639,6 +1639,29 @@ configureKeycloak()
      "${KEYCLOAK_LOCALHOST_BASE_URL}/admin/realms/debugger-testing/clients?clientId=${FLOW_NAME}" \
      -H "Authorization: Bearer ${KEYCLOAK_ACCESS_TOKEN}" \
      | jq -r '.[0].secret')
+    # A PUBLIC client has no secret, and Keycloak says so by answering
+    # `"secret": null` — which `jq -r` renders as the four characters "null".
+    # That string is then exported as ${FLOW_VARIABLE}_CLIENT_SECRET and typed
+    # into the debugger's Client Secret field, where it is harmless: a public
+    # client is not authenticated and the value is ignored.
+    #
+    # WHAT IS NOT HARMLESS IS A TEST SEARCHING FOR IT. Since the token history
+    # started keeping a redacted copy of each exchange, every stored generation
+    # contains `"failure":null`, so tests/oidc_authorization_code.js's "the
+    # client secret must not have reached token_history" check matched the JSON
+    # null and failed BOTH public jobs on 2026-08-24 — naming a credential that
+    # does not exist. The confidential jobs, whose secret is a real one, passed.
+    #
+    # So the placeholder is made unmistakable instead of removed. It cannot be
+    # left EMPTY: every one of these tests asserts CLIENT_SECRET is set, and the
+    # blank check below would exit first. It cannot stay "null": that is a
+    # substring of ordinary JSON. A name that says what it is keeps the
+    # redaction check meaningful on a public client — the field still holds
+    # something, it is still sent, and it still must not reach storage.
+    if [ "${CLIENT_SECRET}" = "null" ];
+    then
+      CLIENT_SECRET="public-client-has-no-secret-${FLOW_NAME}"
+    fi
     SCOPE_ID=$(curl \
       -X GET \
       "${KEYCLOAK_LOCALHOST_BASE_URL}/admin/realms/debugger-testing/client-scopes" \

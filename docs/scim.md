@@ -42,14 +42,43 @@ Read this before moving a pane, because four of the six are load-bearing
 rather than cosmetic and one of them is a bug fix that looks like a style
 change.
 
-**The top row is Connection, Authentication and Discovery, side by side.** None
-of the three is a *step* — they are the settings every pane below them reads —
-and stacked they put the buttons somebody came here to press (Send, Run) two
-screens down. `.scim-topgrid` is a three-column grid using `minmax(0, 1fr)` and
-NOT `1fr`: a grid item's automatic minimum size is its min-content size, so a
-column holding a percent-encoded DN grows the track instead of scrolling inside
-it. `tests/scim_page.js` asserts the row by GEOMETRY, because a grid that has
+**The top row is Configuration Parameters and Discovery, side by side.**
+Neither is a *step* — between them they hold every setting the panes below read
+and the documents those settings are read out of — and stacked they put the
+buttons somebody came here to press (Send, Run) two screens down.
+`.scim-topgrid` is a two-column grid using `minmax(0, 1fr)` and NOT `1fr`: a
+grid item's automatic minimum size is its min-content size, so a column holding
+a percent-encoded DN grows the track instead of scrolling inside it.
+`tests/scim_page.js` asserts the row by GEOMETRY, because a grid that has
 silently fallen back to one column still has every class it had.
+
+> **There is no Connection pane and no Authentication pane, and their absence
+> is the design.** Both were built beside the configuration table and both were
+> spellings of rows already in it — a service root in two places is a service
+> root that can disagree with itself, and the table's own job is to be the one
+> place a setting lives. So the table now **owns** those controls:
+> `configInput()` gives an owned row the field's own id, which is why
+> `val('scim_base_url')` reads a cell of that table and why `REMEMBERED` keeps
+> working unchanged. What could not be a table row went with them but not into
+> it — a password, a generated signing key, a minted proof are not values that
+> can be compared against a document — and those sit in the **Credential**
+> block directly under the table, where only the blocks the selected scheme
+> uses are ever on screen. `tests/scim_page.js` asserts both halves: that each
+> named control is INSIDE `#scim_config`, and that none of `pane_connection`,
+> `pane_auth`, `scim_call_browser`, `scim_call_backend` or `btn_scim_probe_auth`
+> is anywhere on the page.
+
+**Every block of prose longer than a line is inside a `details`.** The
+explanations are why this workflow is worth using — what a 409 on a duplicate
+`userName` means, why a wrong Digest hash reads exactly like a wrong password —
+so they are folded rather than cut, and the live readouts (what this operation
+needs, how the run went, how the call was made) are folded **open**. The one
+block that must never fold is the sentence saying these endpoints create and
+delete accounts; `tests/scim_page.js` strips every `details` out of the warning
+box and asserts that sentence is still there. A `show()` on a folded note has
+to hide the **fold** and not the paragraph inside it, or the reader is left a
+summary that opens onto nothing: the convention is that the fold's id is the
+paragraph's with `_fold` on the end, and `show()` looks for it first.
 
 **Every field carries a hover tooltip, and that is what the prose used to be.**
 The house pattern, `<div class="tooltip scim-tip"><label…><span
@@ -203,9 +232,16 @@ says which.
 Three kinds of row, and the difference between the first two is the whole
 design:
 
-* a **mirror** of a field in another pane (`field`). The field is the value; the
-  row reads and writes it, in both directions. There is no second copy to drift,
-  which is what a "central settings pane" usually becomes;
+* an **owned** field (`field`). The row *is* the control: `configInput()` gives
+  it the field's own id, so `scim_base_url` and `scim_auth_scheme` are elements
+  of this table and of nothing else. That is a change from the first cut, where
+  the row mirrored a field in a Connection or an Authentication pane — one
+  setting spelled twice, in two panes that could disagree about it. There is now
+  nothing to mirror. Two consequences worth knowing before editing
+  `renderConfig()`: it **carries the owned values across a rebuild** (it reads
+  them out of the DOM, and every discovery tears the table down) and it **puts
+  the focus back**, because the automatic probe below rebuilds the table from an
+  event the reader did not cause;
 * a **discovered** parameter, which lives here and nowhere else.
   `discoveredValues` keeps what the document said and `configValues` keeps what
   is in force, so an override is a **visible difference** between the two —
@@ -220,16 +256,66 @@ else. Adopting over an edit would silently undo it, on a button press that says
 "read the documents".
 
 **No credential is in that table, and it is not an oversight to be tidied up
-later.** The password is never written anywhere; the HOBA private key is
-generated per session and never stored; and the access token stays in the
-Authentication pane under its own opt-in, where the checkbox that governs it is.
-A settings pane that quietly became the fourth place a bearer token is written
-would defeat that opt-in without changing a word of it. `tests/scim_page.js`
-checks this by VALUE — it types a distinctive credential into the Authentication
-pane and searches the whole table for it — because a name-based check would pass
-a table with a row called `secret`, and would also trip over
-`changePassword.supported`, which is a ServiceProviderConfig capability that
-contains the word "password".
+later — the panes went away and this rule did not.** The password is never
+written anywhere; the HOBA private key is generated per session and never
+stored; and the access token is under its own opt-in. All three are in the
+**Credential block below the table**, which is part of the same pane and is not
+part of the table: a settings table that quietly became the fourth place a
+bearer token is written would defeat that opt-in without changing a word of it.
+What decides whether a thing is a row here is whether it is a value that can be
+compared against a document, and a minted proof never can be.
+`tests/scim_page.js` checks this by VALUE — it types a distinctive credential
+into the Credential block and searches the whole table for it — because a
+name-based check would pass a table with a row called `secret`, and would also
+trip over `changePassword.supported`, which is a ServiceProviderConfig
+capability that contains the word "password".
+
+### The scheme list is read off the server, and nothing asks for it
+
+RFC 7644 section 2 defines no SCIM credential of its own. It names six ways of
+doing it and makes exactly ONE normative requirement of a server: that a 401 say
+in `WWW-Authenticate` which of them it accepts. There is nothing in that for a
+reader to decide, so **there is no probe button**: a change to the service root
+schedules one unauthenticated request, and the `authScheme` row is ordered by
+what came back, with the offered schemes marked `— offered` and moved to the
+top. `challengeSchemes`, `challengeRealm` and `digestAlgorithms` are filled from
+the same answer, which is why they are `discovered` rows beside the three
+documents.
+
+Five things about that probe are load-bearing:
+
+* **It prefers the api, whatever `callPath` says.** The whole content of the
+  request is a *response header*, and CORS hands a browser-direct call only the
+  seven simple ones — `WWW-Authenticate` is not among them. From the browser a
+  probe of a cross-origin SCIM server therefore reads an empty challenge from a
+  server that sent a perfectly good one. `probeVia()` takes the api when there
+  is one that answered `GET /scim/limits`; the reader's `callPath` still decides
+  every request they actually asked for.
+* **It is quiet.** `sendOnce(request, auth, {quiet: true})` keeps it out of the
+  Exchange pane. The request somebody is looking at is the one *they* sent, and
+  having it replaced by a probe they did not ask for makes the page look like it
+  is sending things at random.
+* **It is debounced and keyed by URL.** `change` on a field fires on every blur,
+  so a Tab through the table would otherwise send one request per field, and
+  re-entering the field without editing it would send another.
+* **Every scheme stays selectable.** Filtering the list to the challenge would
+  be wrong twice over: a server that accepts Bearer without advertising it is
+  common enough to be why somebody opened this page, and a session cookie and a
+  TLS client certificate can never appear in a challenge at all. Anonymous stays
+  at the top of the list — it is not something a server offers, it is sending
+  nothing, and it is what the probe itself uses.
+* **A 401 with no readable challenge is reported as this call path, not as that
+  server.** Saying "this server named no scheme" out of a limit of the browser's
+  header access would be a claim about somebody else's software; the status line
+  names the CORS restriction and points at the `callPath` row instead.
+
+`tests/scim_page.js` section 3b asserts all of it, including the case the
+ordering can only get wrong once: pointing the service root at a port that
+answers nothing must **empty** the challenge rows, because a scheme list ordered
+by what a *different* server said is wrong in a way nothing on screen would
+contradict. Because the probe starts by itself, the test waits on
+`scim.autoProbeState()` rather than on a sleep — a read taken during the
+rebuild looks like a wrong value rather than an early one.
 
 ### The one parameter that is applied rather than shown, and why it matters
 
@@ -386,7 +472,10 @@ certificate is chosen in the handshake and the api would present *its own*,
 which is a different identity and a misleading one. A page that let somebody
 pick "through the api" with a cookie scheme would send a request with no cookie
 and report the 401 as the server's fault. `refreshCallPathControls()` disables
-the radio and puts the reason on screen.
+the `callPath` row of the configuration table and puts the reason on screen —
+and it disables the control without touching the **preference** underneath, so
+selecting a cookie scheme for one call does not silently throw away a call path
+chosen for the next one.
 
 ### Digest is the one with real arithmetic in it, and four details are load-bearing
 
