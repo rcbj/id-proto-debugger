@@ -197,9 +197,12 @@ remove sts/node-ldapjs/node_modules
 # build.js's static-site copy of the same thing.
 #
 # The two data.js are copies of common/data.js that the Dockerfiles stage and a
-# local run has to stage by hand; version.js/version.json are per-build stamps
-# written by client/version.js --stamp. All five are transient by construction —
-# a committed one would make a build report a version it is not.
+# local run has to stage by hand, and api/xmldsig.js is the same arrangement
+# for common/xmldsig.js — the api signs the SAML bindings with the module the
+# browser signs them with, so it is staged rather than duplicated;
+# version.js/version.json are per-build stamps written by
+# client/version.js --stamp. All of them are transient by construction — a
+# committed one would make a build report a version it is not.
 # ---------------------------------------------------------------------------
 group "Build output (restore: see the notes printed at the end)"
 remove client/dist
@@ -208,6 +211,7 @@ remove client/public/version.json
 remove client/src/data.js
 remove extension/dist
 remove api/data.js
+remove api/xmldsig.js
 remove api/version.js
 remove api/version.json
 
@@ -277,6 +281,7 @@ To get a working tree back:
   npm ci                                     # in api/, client/, tests/, and sts/
   cp common/data.js api/data.js              # both services require ./data.js
   cp common/data.js client/src/data.js
+  cp common/xmldsig.js api/xmldsig.js        # the api's SAML signing
   (cd client && npm run build)               # dist/ and the bundles
 
   # Or, for a local run without docker, build the bundles in place — one per

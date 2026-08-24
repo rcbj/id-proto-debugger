@@ -760,10 +760,20 @@ function buildJobs() {
   // unlinkability, replay and substituted-disclosure refusals, and the draft's
   // own test vectors driven through the page. Symmetric MACs: keyed-hash
   // (HMAC/KMAC/BLAKE), block-cipher (CMAC/CBC-MAC/ GMAC), universal-hash
-  // (Poly1305/SipHash) — compute + verify + tamper check.
+  // (Poly1305/SipHash) — compute + verify + tamper check. JWS: every
+  // registered algorithm through all three serializations, the JSON payload
+  // check that pane exists for, detached and RFC 7797 unencoded payloads, the
+  // unprotected header and where it may not go, and an algorithm the verifier
+  // did not choose being refused. XML Signature: all three signature types,
+  // four canonicalization methods (with the assertion that WithComments
+  // really changes the digest, which needs a document containing a comment),
+  // every DigestMethod, RSA / RSASSA-PSS / ECDSA over four curves / HMAC, both
+  // XPath transforms — which only a browser can run, since they are evaluated
+  // by the DOM's own XPath engine — and every KeyInfo form.
   jobs.push({
-    name: "Digital Signature (asymmetric sigs incl. BBS + symmetric MACs — " +
-        "generate, sign/MAC, validate, download)",
+    name: "Digital Signature (asymmetric sigs incl. BBS, JWS and XML " +
+        "Signature + symmetric MACs — generate, sign/MAC, validate, " +
+        "download)",
     script: "digital_signature.js",
     env: {},
   });
@@ -802,6 +812,24 @@ function buildJobs() {
     name: "Encryption engines (RFC 8439 / 4493 / SP 800-38A / FIPS 81 & 203 " +
         "vectors, cross-checked against OpenSSL, in node)",
     script: "crypto_engines.js",
+    env: {},
+  });
+
+  // The Digital Signature page's JWS pane, in node, for the same reason the
+  // job above exists: a round trip through the page agrees with itself
+  // whatever the implementation does, and the defects that matter in a JWS are
+  // the self-consistent ones — an ECDSA signature left in DER where RFC 7518
+  // §3.4 wants R || S, a PSS salt that is not the hash length, a payload
+  // re-serialized between validating it and signing it. So every registered
+  // algorithm (HS/RS/PS/ES, EdDSA over both curves, ES256K, and the unsecured
+  // `none`) is cross-checked against node's own OpenSSL in BOTH directions and
+  // against `jsonwebtoken`, and then the rules no vector can express: RFC
+  // 7515's crit MUST, RFC 7797's period rule, RFC 8725's "the verifier decides
+  // the algorithm", and what an Unsecured JWS is allowed to be.
+  jobs.push({
+    name: "JWS engine (RFC 7515/7518/7797/8037/8812 — every registered " +
+        "algorithm cross-checked against OpenSSL and jsonwebtoken, in node)",
+    script: "jws_engine.js",
     env: {},
   });
 
@@ -3149,7 +3177,7 @@ function buildJobs() {
 
   // XML Signature & XML Encryption interop. A pure-Node test (no browser, no
   // IdP) that runs the WS-Trust workflow's in-browser crypto
-  // (client/src/xmldsig.js) and validates its output against official
+  // (common/xmldsig.js) and validates its output against official
   // libraries: xml-crypto verifies the WS-Security signature; xml-encryption
   // decrypts the XML-Encryption output.
   jobs.push({

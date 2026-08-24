@@ -5,7 +5,7 @@
 // client/src.
 //
 // Two tests exercise the real in-browser modules rather than a copy of their
-// logic: xmlsec_interop.js loads client/src/xmldsig.js, and
+// logic: xmlsec_interop.js loads common/xmldsig.js, and
 // wstrust_schema_validate.js loads client/src/wstrust_msg.js. Node resolves a
 // module's own requires relative to WHERE THAT MODULE LIVES, so those modules
 // look for node-forge / bunyan under client/node_modules — which a checkout

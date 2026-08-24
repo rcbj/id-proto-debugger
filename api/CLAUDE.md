@@ -435,6 +435,46 @@ no-response branch must answer**, as everywhere else here: a refusal by policy i
 a 400, a network failure is a 502, and a failed HANDSHAKE is neither — it
 resolves with a report, because the alert is the answer. See `docs/pki.md`.
 
+## SAML signing: the same module the browser uses, staged in
+
+`POST /samlsign` signs an AuthnRequest or a LogoutRequest for whichever binding
+the caller asked for — the redirect binding's detached signature over the query
+string, or the POST binding's enveloped XML-DSIG. Both are
+**`common/xmldsig.js`** since 2026-08-24, staged into this directory by
+`api/Dockerfile` exactly the way `common/data.js` is, and needing the two DOM
+constructors that `@xmldom/xmldom` supplies (`server.js` sets them on `global`
+once, near the signing code).
+
+**It was the `xml-crypto` package, and dropping it removed this application's
+THIRD implementation of XML Signature.** The browser had two of its own — the
+shared module, and a full private copy of the canonicalizer inside
+`client/src/saml_request.js` — so the same AuthnRequest could be signed by any
+of three readings of Canonical XML depending on which button was pressed. A
+canonicalizer is a reading of a specification, and the failure mode when two
+readings disagree is an identity provider answering *invalid signature* and
+nothing else. `xml-crypto` is gone from `api/package.json`; it stays in
+`tests/package.json`, where being a **different** implementation is the whole
+point of it.
+
+Two things about the change are worth keeping:
+
+* **The redirect binding now signs with the digest its own `SigAlg` names.** It
+  was `crypto.createSign('RSA-SHA256')` regardless, so a request that declared
+  `…#rsa-sha512` was signed with SHA-256 and said otherwise in the query string
+  it sent. Nothing local catches that — the only symptom is at the identity
+  provider. `tests/xmlsec_interop.js` now signs each of the four SigAlgs and
+  has node's OpenSSL verify under the named digest AND refuse under a different
+  one, so the assertion cannot go vacuous.
+* **`signXmlEnveloped()` lost its `rootLocalName` argument** and gained the
+  `sigAlg` the caller sent. The old one needed the root's name to build an
+  XPath; `signEnveloped()` finds the root's `ID` attribute itself, and its
+  defaults — the enveloped-signature + exclusive-C14N transform pair, X509Data
+  KeyInfo, the `<Signature>` placed directly after `<Issuer>` — ARE the SAML
+  profile, because that is what the function was written for.
+
+A local run outside Docker needs `cp common/xmldsig.js api/xmldsig.js`, the
+same as `api/data.js`; `clean-artifacts.sh` lists both.
+
 ## Dependency overrides
 
 `api/package.json` carries three, and each pins something this service does not depend on directly. Two are for `express-swagger-generator@1.1.17` — an unmaintained package the api uses once, at startup, to build the Swagger document out of the JSDoc in `server.js`:

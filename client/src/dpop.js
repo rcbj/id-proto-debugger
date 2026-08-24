@@ -51,6 +51,7 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
+var jws = require("./jws");
 
 // RFC 9449 section 4.2: the proof is explicitly typed, as RFC 8725 section 3.11
 // recommends. A receiver that does not check `typ` will accept some other JWT
@@ -64,11 +65,19 @@ var PROOF_TYP = "dpop+jwt";
 //
 // ES256 first because it is what the OID4VCI credential proof already uses, so
 // choosing Holder of Key (below) does not silently need a second algorithm.
+//
+// `importAs` and `sign` used to be here too — the Web Crypto parameters for
+// turning a JWK into a key and signing with it. They are jws.js's now, along
+// with the base64url, the signing input and the assembly, because the same
+// two lines were also written out in vci_wallet.js and twice more in
+// sd_jwt_vp.js: four copies of one mapping, and getting it wrong produces a
+// Web Crypto DataError that names neither the algorithm nor the key. What is
+// left here is what is genuinely this module's — how to GENERATE a key, and
+// which JWK members a thumbprint is taken over (RFC 7638, where the member
+// set and its order are part of the definition).
 var ALGS = {
   ES256: {
     generate: { name: "ECDSA", namedCurve: "P-256" },
-    importAs: { name: "ECDSA", namedCurve: "P-256" },
-    sign: { name: "ECDSA", hash: { name: "SHA-256" } },
     publicMembers: ["kty", "crv", "x", "y"]
   },
   RS256: {
@@ -78,8 +87,6 @@ var ALGS = {
       publicExponent: new Uint8Array([1, 0, 1]),
       hash: "SHA-256"
     },
-    importAs: { name: "RSASSA-PKCS1-v1_5", hash: { name: "SHA-256" } },
-    sign: { name: "RSASSA-PKCS1-v1_5" },
     publicMembers: ["kty", "n", "e"]
   }
 };
@@ -324,9 +331,12 @@ function proof(opts) {
             ", withNonce=" + (opts.nonce ? "yes" : "no"));
   var key = opts.key || {};
   var alg = key.alg || algOfJwk(key.publicJwk) || DEFAULT_ALG;
-  var spec;
   try {
-    spec = algOrThrow(alg);
+    // The CHECK, not a lookup: RFC 9449 forbids `none` and every MAC — a
+    // symmetric proof proves nothing, since the verifier would hold the same
+    // secret and could mint proofs itself. jws.js will sign whatever JOSE
+    // registers, so this refusal has to stay here, where the rule is.
+    algOrThrow(alg);
   } catch (e) {
     log.debug("Leaving proof(). Refused: " + e.message);
     return Promise.reject(e);
@@ -347,25 +357,22 @@ function proof(opts) {
   return Promise.resolve(opts.accessToken ? athFor(opts.accessToken) : null)
     .then(function (ath) {
       if (ath) payload.ath = ath;
-      var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) +
-          "." +
-                         metadataClient.utf8ToB64u(JSON.stringify(payload));
-      return crypto.subtle.importKey("jwk", key.privateJwk, spec.importAs,
-                                     false, ["sign"])
-        .then(function (imported) {
-          return crypto.subtle.sign(spec.sign, imported,
-            new TextEncoder().encode(signingInput));
-        })
-        .then(function (sig) {
-          log.debug("Leaving proof().");
-          return {
-            // Web Crypto returns ECDSA signatures as the raw r||s pair, which is
-            // exactly the JWS encoding — no DER unwrapping needed.
-            proof: signingInput + "." + metadataClient.bytesToB64u(sig),
-            header: header,
-            payload: payload
-          };
-        });
+      // The header is handed over VERBATIM, member order included: a DPoP
+      // proof is the base64url of these exact bytes, and RFC 9449 §4.2 fixes
+      // what is in it, so nothing may re-order or add to it. jws.js does the
+      // rest — the signing input, the Web Crypto parameters for this `alg`,
+      // and the knowledge that an ECDSA signature comes back as the raw r||s
+      // pair JWS already wants.
+      return jws.signJwsAsync({
+        algId: alg,
+        protectedHeader: header,
+        payload: payload,
+        privateKey: { jwk: key.privateJwk },
+        backend: "webcrypto"
+      }).then(function (signed) {
+        log.debug("Leaving proof().");
+        return { proof: signed.serialized, header: header, payload: payload };
+      });
     });
 }
 

@@ -124,10 +124,25 @@ var config = {
   // is false and neither gRPC surface can be reached at all — the page's bundle
   // reader, SVID inspector and SPIFFE ID checker still work there, and none of
   // the three needs an address.
+  //
+  // **`spiffeServerAddressDefault` IS `http://localhost:8081` HERE BY REQUEST,
+  // AND THE API WILL REFUSE IT AS WRITTEN.** parseAddress() in
+  // api/spiffe_client.js takes `host:port`, `tcp://host:port` or
+  // `unix:///path` and refuses any other scheme rather than defaulting it,
+  // because grpc-js's own resolver reads an unknown scheme as a DNS name and
+  // would dial a host called "http" — a lookup failure naming something that
+  // is not the mistake. So the first SPIRE Server API call made against this
+  // default comes back "the scheme is not one this service dials", which is
+  // the api saying exactly what is wrong; the field's tooltip says it before
+  // the call. Spell it `localhost:8081` to make it dialable, and note that
+  // `localhost` is resolved by the API and therefore means the machine the api
+  // runs on — the api container, on a compose stack. The test configs below
+  // keep `sts:8181`, which is where the mock's SPIRE Server API actually
+  // listens.
   // ---------------------------------------------------------------------------
   spiffeTrustDomainDefault: "example.org",
   spiffeWorkloadAddressDefault: "sts:8092",
-  spiffeServerAddressDefault: "sts:8181",
+  spiffeServerAddressDefault: "http://localhost:8081",
   spiffeBundleUrlDefault: "http://sts:8081/spiffe/bundle",
 
   // ---------------------------------------------------------------------------

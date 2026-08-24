@@ -42,6 +42,11 @@
 //     carries the checkbox the SAML, WS-Trust and WS-Federation panes do, and
 //     clearing it must remove what is already stored rather than only stopping
 //     future writes.
+//  7. **THE SHAPE OF THE PAGE.** Every editable setting is in ONE pane and
+//     every explanation is folded, so what is on screen for a control is its
+//     tooltip. All three of those decay silently — a field added to a pane
+//     below, a fold that ships open, a control with no title — and none of
+//     them fails anything a protocol test asserts. Section 10.
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -679,6 +684,132 @@ async function theIdentityOptOutRemovesWhatIsStored(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 10. THE SHAPE OF THE PAGE — one settings pane, folded prose, and a tooltip
+//     on everything.
+//
+// All three of these are properties a person sees at a glance and a protocol
+// test cannot see at all, and each of them decays silently:
+//
+//   * **ONE PANE OWNS THE SETTINGS.** Every editable setting is in
+//     `#pane_config`, grouped under the name of the pane it acts on. What is
+//     allowed to be editable OUTSIDE it is a fixed list — the method pickers,
+//     the two request editors, the bundle document and the two offline inputs
+//     — because those ARE the operation rather than a setting for it. A new
+//     field added to a pane below is what this catches, and a settings pane
+//     that quietly grows a second copy of a field somewhere else is what the
+//     duplicate-id check beside it catches: getElementById answers with the
+//     first in document order, so the second box silently stops doing
+//     anything. That is the same rule scim.js's `owns` exists to keep.
+//   * **THE PROSE FOLDS, AND SHIPS CLOSED.** The explanations are why this
+//     page is worth using, so they are folded rather than cut. One that
+//     shipped `open` is prose back on the page, which is the state this was
+//     changed away from.
+//   * **EVERY FIELD AND BUTTON HAS A TOOLTIP.** With the prose folded, the
+//     tooltip is the only explanation on screen for a control somebody is
+//     looking straight at.
+// ---------------------------------------------------------------------------
+const EDITABLE_OUTSIDE_CONFIG = [
+  "spiffe_bundle_document",
+  "spiffe_workload_method",
+  "spiffe_workload_request",
+  "spiffe_server_service",
+  "spiffe_server_method",
+  "spiffe_server_request",
+  "spiffe_svid_input",
+  "spiffe_id_input"
+];
+
+const CONFIG_GROUPS = [
+  "Trust Domain",
+  "Discovery",
+  "Workload API",
+  "Held Identity",
+  "SPIRE Server API",
+  "Certification Request"
+];
+
+async function theSettingsAreInOnePaneAndTheProseFolds(driver) {
+  log.debug("Entering theSettingsAreInOnePaneAndTheProseFolds().");
+  // Everything below runs IN THE BROWSER, so it has no bunyan and no `log` —
+  // see the repo-root CLAUDE.md. What is logged is what it returns.
+  const shape = await driver.executeScript(
+    "var conf = document.getElementById('pane_config');" +
+    "var all = document.querySelectorAll('input, select, textarea');" +
+    "var outside = [], untitled = [], ids = {}, dupes = [];" +
+    "for (var i = 0; i < all.length; i++) {" +
+    "  var e = all[i];" +
+    "  if (e.id) { ids[e.id] = (ids[e.id] || 0) + 1; }" +
+    "  if (!e.title || !e.title.trim()) { untitled.push(e.id || e.outerHTML" +
+    "      .slice(0, 40)); }" +
+    "  var editable = !e.readOnly && e.type !== 'button';" +
+    "  if (editable && !(conf && conf.contains(e))) {" +
+    "    outside.push(e.id || e.outerHTML.slice(0, 40));" +
+    "  }" +
+    "}" +
+    "for (var id in ids) { if (ids[id] > 1) { dupes.push(id); } }" +
+    "var folds = document.querySelectorAll('details.spiffe-more');" +
+    "var openFolds = [];" +
+    "for (var f = 0; f < folds.length; f++) {" +
+    "  if (folds[f].open) { openFolds.push(folds[f].querySelector('summary')" +
+    "      .textContent.slice(0, 40)); }" +
+    "}" +
+    "var titles = [];" +
+    "var heads = conf ? conf.querySelectorAll('.spiffe-group-title') : [];" +
+    "for (var h = 0; h < heads.length; h++) {" +
+    "  titles.push(heads[h].textContent.trim());" +
+    "}" +
+    "var prose = document.querySelectorAll('p.spiffe-note, p.spiffe-intro');" +
+    "var unfolded = [];" +
+    "for (var q = 0; q < prose.length; q++) {" +
+    "  if (prose[q].id) { continue; }" +
+    "  if (!prose[q].closest('details.spiffe-more')) {" +
+    "    unfolded.push(prose[q].textContent.trim().slice(0, 40)); }" +
+    "}" +
+    "return { outside: outside, untitled: untitled, dupes: dupes," +
+    "         openFolds: openFolds, folds: folds.length, titles: titles," +
+    "         unfolded: unfolded };");
+
+  check("every editable setting is in the Configuration Parameters pane — " +
+    "what is editable outside it is the operation itself, and that list is " +
+    "fixed", function () {
+      assert.deepStrictEqual(shape.outside.slice().sort(),
+        EDITABLE_OUTSIDE_CONFIG.slice().sort());
+    });
+
+  check("no id appears twice — a settings pane that mirrors a field instead " +
+    "of owning it puts two elements under one id, and getElementById " +
+    "answers with the first, so the other box silently does nothing",
+    function () {
+      assert.deepStrictEqual(shape.dupes, []);
+    });
+
+  check("the pane's groups are the panes the settings came from, in order, " +
+    "with the trust bundle's called Discovery", function () {
+      assert.deepStrictEqual(shape.titles, CONFIG_GROUPS);
+    });
+
+  check("every field and button on the page carries a tooltip — with the " +
+    "prose folded it is the only explanation on screen for a control " +
+    "somebody is looking straight at", function () {
+      assert.deepStrictEqual(shape.untitled, []);
+    });
+
+  check("every explanation on the page is inside a fold", function () {
+      assert.deepStrictEqual(shape.unfolded, []);
+      assert.ok(shape.folds >= 15,
+        "only " + shape.folds + " folds — the prose has been cut rather " +
+        "than folded");
+    });
+
+  check("and every fold ships CLOSED: one that shipped open is prose back " +
+    "on the page", function () {
+      assert.deepStrictEqual(shape.openFolds, []);
+    });
+
+  log.debug("Leaving theSettingsAreInOnePaneAndTheProseFolds().");
+}
+
+// ---------------------------------------------------------------------------
 // 9. THE STYLESHEET, and the console.
 // ---------------------------------------------------------------------------
 async function everyStyleClassIsDefined(driver) {
@@ -807,6 +938,7 @@ async function test() {
     await theInspectorAndTheGrammarNeedNoNetwork(driver, token);
     await theHistoryTellsARefusalFromNoAnswer(driver);
     await theIdentityOptOutRemovesWhatIsStored(driver);
+    await theSettingsAreInOnePaneAndTheProseFolds(driver);
     await everyStyleClassIsDefined(driver);
     await theConsoleIsClean(driver);
     log.info(checks + " checks passed.");

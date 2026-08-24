@@ -86,6 +86,11 @@ RUN npm install --omit=dev
 COPY api/. .
 COPY api/env/ /usr/src/app/env/
 COPY common/data.js .
+# The XML Signature engine. api/server.js signs the SAML redirect binding and
+# the enveloped POST binding with it — it used to reach for the `xml-crypto`
+# package instead, which made this application's THIRD implementation of XML
+# Signature. Requires @xmldom/xmldom, which is already a dependency here.
+COPY common/xmldsig.js .
 # The SPIFFE ID grammar and the trust-bundle reader. WORKDIR is /usr/src/app, so
 # this lands where `require('../common/spiffe/spiffe_id.js')` resolves it — the
 # same relative path that works in a bare checkout, which is what keeps this

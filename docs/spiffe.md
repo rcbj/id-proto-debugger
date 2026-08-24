@@ -375,15 +375,60 @@ wide rather than scrolling inside it.
 
 | Pane | What it is for |
 |---|---|
-| **Trust Domain** | the trust domain and the three addresses, plus what `GET /spiffe/limits` says the api will dial |
-| **Trust Bundle** | fetch through the api (a bundle endpoint sends no CORS headers), or **read what is in the box with no network at all**; make the `x509-svid` authorities the trust anchor for the pane below |
-| **Workload API** | all seven methods, the security-header toggle, extra gRPC metadata, and the message cap that makes a rotation visible |
-| **Held Identity** | the SVID **and its private key**, with the key-material opt-out |
-| **SPIRE Server API** | all forty-two, the identity to present, the server-verification mode, and the trust anchor |
+| **Configuration Parameters** | **every editable setting on the page**, grouped under the name of the pane it acts on — see below |
+| **Trust Bundle** | fetch through the api (a bundle endpoint sends no CORS headers), or **read what is in the box with no network at all**; make the `x509-svid` authorities the trust anchor for the SPIRE Server API group |
+| **Workload API** | all seven methods, the request, and what came back |
+| **Held Identity** | the SVID **and its private key**, and what the page holds of each |
+| **SPIRE Server API** | all forty-two, the request, and what came back |
 | **Certification Request** | a key pair and a PKCS#10 request, in the browser |
 | **SVID Inspector** | an X509-SVID or a JWT-SVID, read offline |
 | **SPIFFE ID** | the grammar, offline |
 | **Exchange** / **Operations History** | both halves of what the api was asked for, and a log of every call |
+
+### One pane owns the settings
+
+There was a **Trust Domain** pane at the top of this page and there is not any
+more: every editable setting moved into a single **Configuration Parameters**
+pane, which is the arrangement `scim.html` arrived at and is documented in
+`docs/scim.md` for the same reason — a setting a screen away from the button
+that reads it is what people actually complain about. The groups inside it are
+named after the panes the fields came from, with one rename: the trust
+bundle's group is **Discovery**, because what it configures is how this page
+finds a trust domain's keys rather than the reading of a document it already
+has.
+
+**What stayed below is what *is* the operation** — the method pickers, the two
+request editors, the bundle document, and the SVID inspector's and SPIFFE ID
+checker's inputs. A "Call" button a screen away from the JSON it sends would
+be the same defect in the other direction.
+
+**Nothing is mirrored.** Each of those boxes is the one element with its id;
+there is no second field anywhere that holds the same setting. That is the
+rule `scim.js`'s `owns` flag exists to keep, and it matters for a reason that
+is invisible until it bites: `getElementById` answers with the **first**
+element in document order, so a duplicated id makes the other box silently
+stop doing anything. `spiffe_page.js` section 10 counts ids for exactly this,
+and asserts the list of controls that are editable outside the pane.
+
+### The prose folds, and every control has a tooltip
+
+Every explanation on the page is inside a `<details class="spiffe-more">` and
+**ships closed**, the way `scim.html` and the Kerberos pages fold theirs. The
+explanations are why this page is worth using — why a bundle of keys with no
+`use` verifies nothing while reporting no error, why `UNAUTHENTICATED` and
+`PERMISSION_DENIED` are different instructions — so they are folded rather
+than cut.
+
+What is **not** folded is the page's own answers: `spiffe_workload_about`,
+`spiffe_server_about`, the two streaming lines, `spiffe_identity_holds_key`,
+`spiffe_server_peer` and `spiffe_limits` are written by the bundle and stay on
+the page. A result behind a click nobody knows to make is a result nobody
+sees.
+
+With the prose folded, the **tooltip is the only explanation on screen for a
+control somebody is looking straight at**, so every field and every button
+carries one — the readouts included, since a box whose contents arrived from
+somewhere else is exactly where "where did this come from" gets asked.
 
 ### Why there is a CSR builder
 
@@ -505,7 +550,7 @@ contract, and in the fourth a page.
 | `spiffe_engine.js` | **nothing** — never gated, runs on every target including the static ones | the grammar against the specification's own rules; the bundle reader against documents wrong in one way each; the 49-method catalogue against the vendored protos **both ways round**; those protos against the mock's copies byte for byte; every address and socket refusal **by its code**; a PKCS#10 request in four key algorithms verified with **OpenSSL** |
 | `spiffe_protocol.js` | the mock's SPIFFE surfaces | all forty-nine methods **actually sent**, as four different entities, with every authorization refusal asserted as the answer it is — and an SVID rotation watched on a held stream |
 | `api_spiffe.js` | the api | the **status-code rule**: 400 / 502 / 200-with-the-code |
-| `spiffe_page.js` | the api and Chrome | that all forty-nine reach the pickers; the SVID hand-off; the CSR built with Web Crypto (a different implementation from the node one); the three offline panes; the key-material opt-out |
+| `spiffe_page.js` | the api and Chrome | that all forty-nine reach the pickers; the SVID hand-off; the CSR built with Web Crypto (a different implementation from the node one); the three offline panes; the key-material opt-out; and the **shape of the page** — one pane owning every setting, no duplicated id, every fold closed, every control with a tooltip |
 
 **The coverage floor in `spiffe_protocol.js` is a count of methods SENT, not of
 assertions.** A method can be in the catalogue, in the picker and on the page
@@ -552,5 +597,5 @@ with a directory reachable and no SPIRE server.
 | the shared modules | `common/spiffe/spiffe_id.js`, `common/spiffe/spiffe_bundle.js` |
 | the CSR builder | `client/src/x509.js`'s `certificationRequest()` |
 | the api's settings | `api/env/*.js`: `spiffeAllowedPorts`, `spiffeAllowedSocketPaths`, `spiffeMaxStreamMessages`, `spiffeStreamTimeout` |
-| the page's defaults | `client/src/env/*.js`: `spiffeTrustDomainDefault`, `spiffeWorkloadAddressDefault`, `spiffeServerAddressDefault`, `spiffeBundleUrlDefault` |
+| the page's defaults | `client/src/env/*.js`: `spiffeTrustDomainDefault`, `spiffeWorkloadAddressDefault`, `spiffeServerAddressDefault`, `spiffeBundleUrlDefault` — read by `init()`'s `seed()`, which fills a field only when storage left it empty. **They were declared and read by nothing at all until this build**, so a deployment that set one got an empty box and no complaint from anywhere. `local.js` sets the server address to `http://localhost:8081`, which `parseAddress()` **refuses**: a gRPC address is `host:port`, `tcp://host:port` or `unix:///path`, and an unrecognised scheme is refused rather than defaulted because grpc-js would dial a host called `http`. The refusal names the scheme, and the field's tooltip says so before the call |
 | the mock | `sts/spiffe/` — and its own `spiffe/CLAUDE.md`, which is the authority on what that service does and does not check |

@@ -286,6 +286,48 @@ async function waitForProbe(driver, why) {
   log.debug("Leaving waitForProbe().");
 }
 
+// Scroll the configuration pane to one end and read the two fade cues once
+// they have SETTLED.
+//
+// The fades are `transition: opacity 120ms`, so the opacity a moment after the
+// scroll is still the value the cue is coming FROM — read there, the assertion
+// is about the state before the scroll and reports a working cue as a missing
+// one. That is what it did: at the end of the table the top fade read "0",
+// which is where it started, 120ms before it arrived.
+//
+// The wait is on the transitions themselves rather than on a sleep, because a
+// sleep here is the bet this suite has lost before. `getAnimations()` holds a
+// CSS transition while it is PENDING as well as while it runs and drops it
+// when it finishes, so an empty list is the settled state — and the list is
+// empty immediately when the scroll changed neither cue, which is why this
+// costs nothing in that case.
+async function scrollCuesAt(driver, where) {
+  log.debug("Entering scrollCuesAt(). " + where);
+  await driver.executeScript(
+      "var box = document.getElementById('scim_config_scroll');" +
+      "box.scrollTop = " +
+      (where === 'end' ? "box.scrollHeight" : "0") + ";" +
+      "box.dispatchEvent(new Event('scroll'));");
+  await driver.wait(async function () {
+    return await driver.executeScript(
+        "return [].slice.call(" +
+        "document.querySelectorAll('.scim-config-cue'))" +
+        ".every(function (n) { return n.getAnimations().length === 0; });");
+  }, 10000,
+      'the configuration pane\'s fade transitions never settled (' + where +
+      ')');
+  const at = await driver.executeScript(
+      "var box = document.getElementById('scim_config_scroll');" +
+      "function opacity(sel) {" +
+      " return getComputedStyle(document.querySelector(sel)).opacity; }" +
+      "return { above: opacity('.scim-config-cue-top')," +
+      " below: opacity('.scim-config-cue-bottom')," +
+      " overflows: box.scrollHeight > box.clientHeight + 1 };");
+  log.debug("Leaving scrollCuesAt(). above=" + at.above +
+      " below=" + at.below);
+  return at;
+}
+
 async function openPage(driver) {
   log.debug("Entering openPage().");
   await driver.get(baseUrl + "/scim.html");
@@ -1478,27 +1520,13 @@ async function theDocumentsConfigureTheWorkflow(driver) {
   // read as settings the pane does not have. Asserted by the computed opacity
   // of the fades rather than by their presence, because both elements are
   // always in the document and it is the opacity that carries the meaning.
-  const cues = await driver.executeScript(`
-    var box = document.getElementById('scim_config_scroll');
-    var wrap = document.getElementById('scim_config_scrollwrap');
-    function opacity(sel) {
-      return getComputedStyle(document.querySelector(sel)).opacity;
-    }
-    box.scrollTop = 0;
-    box.dispatchEvent(new Event('scroll'));
-    var top = { above: opacity('.scim-config-cue-top'),
-                below: opacity('.scim-config-cue-bottom') };
-    box.scrollTop = box.scrollHeight;
-    box.dispatchEvent(new Event('scroll'));
-    var end = { above: opacity('.scim-config-cue-top'),
-                below: opacity('.scim-config-cue-bottom') };
-    box.scrollTop = 0;
-    box.dispatchEvent(new Event('scroll'));
-    return { top: top, end: end,
-             overflows: box.scrollHeight > box.clientHeight + 1,
-             count: (document.getElementById('scim_config_count') || {})
-               .textContent || '' };
-  `);
+  const cues = { top: await scrollCuesAt(driver, 'top'),
+                 end: await scrollCuesAt(driver, 'end') };
+  cues.overflows = cues.top.overflows;
+  await scrollCuesAt(driver, 'top');
+  cues.count = await driver.executeScript(
+      "return (document.getElementById('scim_config_count') || {})" +
+      ".textContent || '';");
   check('the pane says how many parameters it holds', function () {
     assert.ok(/\d+ parameters/.test(cues.count),
         'The count above the configuration table reads "' + cues.count +

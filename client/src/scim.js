@@ -1541,7 +1541,12 @@ function configGroupRow(title) {
     return tr;
   }
   var open = groupIsOpen(title);
-  tr.className = 'scim-config-group scim-config-group-fold';
+  // The row keeps `scim-config-group` and nothing else. A second class here
+  // would be a hook no stylesheet answers, and `everyStyleClassIsDefined()` in
+  // tests/scim_page.js fails a run over exactly that — it is the guard that
+  // caught the WS-Federation pages linking the wrong stylesheet. The fold is
+  // styled through the BUTTON (`.scim-config-fold`), which is where the
+  // difference between a foldable heading and a fixed one actually lives.
   // A BUTTON and not a click handler on the row: a fold that cannot be reached
   // from the keyboard is a fold that hides rows from anybody not using a
   // mouse, and every one of these rows is an editable setting.

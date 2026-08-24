@@ -43,10 +43,12 @@
   margin-bottom: 10px;
 }
 
-/* The paragraph explaining why the two gRPC surfaces are authenticated in
-   opposite ways. It is the one thing on this page a reader has to take in
-   before anything else makes sense, so it is set apart rather than left as the
-   third paragraph of four. */
+/* The explanation of why the two gRPC surfaces are authenticated in opposite
+   ways. It is the one thing on this page a reader has to take in before
+   anything else makes sense, so it is set apart rather than left as the third
+   paragraph of four. Since the prose on this page folds, the class is on the
+   `<details>` and not on the paragraph inside it — otherwise the summary line
+   that opens the box would sit outside it. */
 .spiffe-callout {
   background: #f6f6fa;
   border-left: 3px solid #12107c;
@@ -255,4 +257,79 @@ textarea.spiffe-small { font-size: 11px; }
   font-size: 12px;
   color: #666;
   margin: 6px 0;
+}
+
+/* ---------------------------------------------------------------------------
+   THE CONFIGURATION PARAMETERS PANE, and the groups inside it.
+
+   Every editable setting on this page is in that one pane, under the name of
+   the pane it acts on — the arrangement scim.html arrived at, for the reason
+   that page records: a setting a screen away from the button that uses it is
+   the thing readers complain about, and two boxes for one setting is worse
+   again. What is here is the ONE element with its id; nothing below mirrors
+   it.
+
+   A group is a heading and a rule rather than a nested <fieldset>. A fieldset
+   inside a fieldset would need its own `min-inline-size: 0` (see the header)
+   and would put a second border around content that is already inside one.
+   ------------------------------------------------------------------------ */
+.spiffe-group {
+  border-top: 1px solid #e4e4ec;
+  padding-top: 6px;
+  margin-top: 10px;
+  /* The pane's own rule, repeated: a base64 trust anchor pasted into the
+     SPIRE Server API group is an unbroken string, and a grid track sized to
+     min-content is exactly how one widens everything above it. */
+  min-inline-size: 0;
+}
+
+.spiffe-group:first-of-type {
+  border-top: 0;
+  margin-top: 2px;
+}
+
+.spiffe-group-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #12107c;
+  margin: 0 0 4px;
+  line-height: 1.2;
+}
+
+/* ---------------------------------------------------------------------------
+   FOLDED PROSE, the way scim.html folds its own (`.scim-more`) and the
+   Kerberos pages theirs (`.krb-more`).
+
+   The explanations are the reason this page is worth using — why a bundle of
+   keys with no `use` verifies nothing while reporting no error, why
+   UNAUTHENTICATED and PERMISSION_DENIED are different instructions — so they
+   are kept verbatim and FOLDED rather than cut. They ship CLOSED: prose that
+   shipped open is prose back on the page.
+
+   The page's own ANSWERS are not in one of these. `spiffe_workload_about`,
+   `spiffe_server_about`, the two streaming lines, `spiffe_identity_holds_key`,
+   `spiffe_server_peer` and `spiffe_limits` are written by the bundle and stay
+   on the page, because a result behind a click nobody knows to make is a
+   result nobody sees.
+   ------------------------------------------------------------------------ */
+.spiffe-more {
+  margin: 6px 0;
+}
+
+.spiffe-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.spiffe-more > summary:hover {
+  text-decoration: underline;
+}
+
+/* The callout is now the FOLD rather than the paragraph inside it, so that the
+   summary line is inside the box it introduces rather than above it. */
+.spiffe-more.spiffe-callout > summary {
+  color: #12107c;
+  font-weight: bold;
 }

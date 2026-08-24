@@ -71,7 +71,7 @@ RUN node -v
 RUN npm -v
 
 # Bundle app source
-COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js ./
+COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js tests/jws_engine.js ./
 # The per-run username minter, required by tests across four protocols (OAuth2,
 # RFC 9700, Kerberos, LDAP) and by both mock-KDC page jobs. A SHARED MODULE
 # rather than a test, so nothing schedules it and the run-report cross-check in
@@ -104,7 +104,8 @@ COPY client/Dockerfile ./client_Dockerfile
 # and resolve its deps (node-forge, etc.) from this image's node_modules. The
 # WS-Trust schema test likewise builds messages with the real generator
 # (wstrust_msg.js) and validates them against the derived XSD in ./schemas.
-COPY client/src/xmldsig.js client/src/wstrust_msg.js client/src/jose_jwe.js client/src/edge_landing.js ./
+COPY common/xmldsig.js ./
+COPY client/src/wstrust_msg.js client/src/jose_jwe.js client/src/edge_landing.js ./
 # The JWK -> SPKI PEM encoder, tested the same way (tests/jwk_pem_encoding.js
 # requires it directly). Note that in this image there is no client/src tree, so
 # that test's scan for requires which would pull `elliptic` back into a bundle
@@ -118,6 +119,18 @@ COPY client/src/xmldsig.js client/src/wstrust_msg.js client/src/jose_jwe.js clie
 # build since. Same trap as metadata_schema.js, same remedy: give the test a name
 # no module will land on. cose.js requires ./jwk_pem, so the MODULE keeps its name.
 COPY client/src/jwk_pem.js ./
+# The JWS engine, loaded directly by tests/jws_engine.js and checked there
+# against node's own OpenSSL (in both directions, for every asymmetric
+# algorithm) and against `jsonwebtoken`. The TEST is called jws_engine.js and
+# not jws.js for the reason the paragraph above gives: this COPY lands the
+# module FLAT beside the test scripts, so a test of that name would silently
+# replace it — or be replaced by it — depending on which COPY ran last. The
+# module keeps its own name because digital_signature.js requires ./jws.
+#
+# It requires ./crypto_bytes and ./pk_encryption, both of which are copied
+# further down for tests/crypto_engines.js; this test fails at load if either
+# COPY is removed.
+COPY client/src/jws.js ./
 # The scheme allowlist, tested directly by tests/url_safety_schemes.js.
 COPY client/src/url_safety.js ./
 # The metadata schema checker, loaded directly by
