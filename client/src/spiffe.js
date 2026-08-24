@@ -1457,6 +1457,26 @@ function onChangeField() {
   return false;
 }
 
+// Put a value in a field that has none. A field the user has typed in — or one
+// loadState() has just filled from storage — is left exactly as it is, which is
+// what makes this safe to call on every load.
+//
+// `configured` is what CONFIG_FILE says and `fallback` is what this page uses
+// when the config says nothing. An EMPTY string in the config is a deliberate
+// answer (see the note in init(), and prod.js), so only null/undefined falls
+// through to the fallback.
+function seed(id, configured, fallback) {
+  log.debug("Entering seed(). id=" + id);
+  if (val(id)) {
+    log.debug("Leaving seed(). Already filled.");
+    return;
+  }
+  var value = (configured === null || configured === undefined)
+    ? fallback : configured;
+  setVal(id, value);
+  log.debug("Leaving seed(). value=" + value);
+}
+
 function init() {
   log.debug("Entering init().");
   loadState();
@@ -1464,8 +1484,22 @@ function init() {
   renderIdentity();
   renderHistory();
   // Seeded only where nothing was stored, so a reload keeps what was typed.
-  if (!val('spiffe_trust_domain')) setVal('spiffe_trust_domain', 'example.org');
-  if (!val('spiffe_csr_subject')) setVal('spiffe_csr_subject', 'C=US,O=SPIRE');
+  //
+  // THE FOUR ADDRESSES COME FROM `CONFIG_FILE`, and until this build they did
+  // not: `spiffeTrustDomainDefault`, `spiffeWorkloadAddressDefault`,
+  // `spiffeServerAddressDefault` and `spiffeBundleUrlDefault` were declared in
+  // every `client/src/env/*.js`, documented in docs/spiffe.md as "the page's
+  // defaults", and read by nothing at all — so a deployment that set them got
+  // an empty box and no complaint from anywhere. They are read here now, which
+  // is also why `prod.js` and `test-idptools-com.js` leave them EMPTY: those
+  // targets have no api, so neither gRPC surface exists and an address would
+  // be a suggestion to dial something unreachable.
+  seed('spiffe_trust_domain', appconfig.spiffeTrustDomainDefault,
+       'example.org');
+  seed('spiffe_workload_address', appconfig.spiffeWorkloadAddressDefault, '');
+  seed('spiffe_server_address', appconfig.spiffeServerAddressDefault, '');
+  seed('spiffe_bundle_url', appconfig.spiffeBundleUrlDefault, '');
+  seed('spiffe_csr_subject', null, 'C=US,O=SPIRE');
   loadLimits();
   log.debug("Leaving init().");
 }

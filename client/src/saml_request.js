@@ -34,6 +34,41 @@ var history = require("./saml_history");
 // The scheme allowlist applied before navigating anywhere, or POSTing a form
 // anywhere. See url_safety.js for why this is not DOMPurify.
 var urlSafety = require("./url_safety");
+// ---------------------------------------------------------------------------
+// THE XML SIGNATURE AND CANONICALIZATION ARE NOT THIS PAGE'S ANY MORE.
+//
+// This file used to carry its own copy of the whole of it: exclusive and
+// inclusive Canonical XML, the digest and signature-method tables, the PEM
+// helpers, the strict parser, the encryption algorithm specs, and an enveloped
+// signer. xmldsig.js's own header says its canonicalizer came from HERE — it
+// was copied out for the SAML Assertion Tool and the original stayed, so this
+// application had two readings of C14N in it, and this was the one nothing
+// else exercised: the SSO page signs the AuthnRequest a real identity provider
+// then has to verify.
+//
+// They had already drifted. The shared canonicalizer emits processing
+// instructions, which C14N 1.0 retains in BOTH its variants; the copy that
+// used to be here dropped them, so a signed subtree containing one digested
+// differently here than in xmlsec, Santuario or xml-crypto — which reads at
+// the far end as a document modified in transit, and is not that.
+//
+// What is left in this file is what is genuinely this page's: which fields
+// hold what, how a SAML AuthnRequest is shaped, and the SAML-specific
+// EncryptedData it builds around the shared encryption pieces.
+// ---------------------------------------------------------------------------
+var xmldsig = require("./xmldsig");
+var certPemToB64 = xmldsig.certPemToB64;
+var pemWrapCert = xmldsig.pemWrapCert;
+var digestBase64 = xmldsig.digestBase64;
+var sigAlgSpec = xmldsig.sigAlgSpec;
+var parseXmlStrict = xmldsig.parseXmlStrict;
+var canonicalize = xmldsig.canonicalize;
+var canonicalizeInclusive = xmldsig.canonicalizeInclusive;
+var dataAlgSpec = xmldsig.dataAlgSpec;
+var forgeMdFor = xmldsig.forgeMdFor;
+var mgfMdFor = xmldsig.mgfMdFor;
+var encPlaintext = xmldsig.encPlaintext;
+var xmlEscape = xmldsig.xmlEscape;
 var log = bunyan.createLogger({ name: 'saml_request',
     level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -667,15 +702,6 @@ function triggerDownload(filename, data, mime) {
 // SP metadata (EntityDescriptor) — describes this debugger as a Service
 // Provider so it can be registered on the IdP.
 // ---------------------------------------------------------------------------
-function certPemToB64(pem) {
-  log.debug("Entering certPemToB64().");
-  log.debug("Leaving certPemToB64().");
-  return String(pem || '')
-    .replace(/-----BEGIN CERTIFICATE-----/g, '')
-    .replace(/-----END CERTIFICATE-----/g, '')
-    .replace(/\s+/g, '');
-}
-
 function buildSpMetadata() {
   log.debug("Entering buildSpMetadata().");
   var entityId = val('saml_sp_entity_id');
@@ -737,14 +763,6 @@ function downloadSpMetadata() {
 // ---------------------------------------------------------------------------
 // AuthnRequest construction
 // ---------------------------------------------------------------------------
-function xmlEscape(s) {
-  log.debug("Entering xmlEscape().");
-  log.debug("Leaving xmlEscape().");
-  return String(s == null ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
-}
-
 function ssoDestination(binding) {
   log.debug("Entering ssoDestination().");
   // The AuthnRequest itself is delivered via HTTP-POST or HTTP-Redirect. The
@@ -916,42 +934,6 @@ function deflateRaw(str) {
                       .then(function (buf) { return new Uint8Array(buf); });
 }
 
-function digestBase64(str, mdFactory) {
-  log.debug("Entering digestBase64().");
-  var md = mdFactory();
-  md.update(str, 'utf8');
-  log.debug("Leaving digestBase64().");
-  return forge.util.encode64(md.digest().getBytes());
-}
-
-// XML Signature SignatureMethod URI -> forge digest factory + the matching
-// Reference DigestMethod URI. The selected algorithm drives both the redirect
-// SigAlg and the POST enveloped SignatureMethod/DigestMethod. The SP key is
-// RSA, so these are the RSA-family methods from xmldsig / xmldsig-more (RFC
-// 6931).
-function sigAlgSpec(uri) {
-  log.debug("Entering sigAlgSpec().");
-  switch (uri) {
-    case 'http://www.w3.org/2000/09/xmldsig#rsa-sha1':
-      log.debug("Leaving sigAlgSpec().");
-      return { md: forge.md.sha1.create,
-              digestUri: 'http://www.w3.org/2000/09/xmldsig#sha1' };
-    case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha384':
-      log.debug("Leaving sigAlgSpec().");
-      return { md: forge.md.sha384.create,
-              digestUri: 'http://www.w3.org/2001/04/xmldsig-more#sha384' };
-    case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha512':
-      log.debug("Leaving sigAlgSpec().");
-      return { md: forge.md.sha512.create,
-              digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512' };
-    case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256':
-    default:
-      log.debug("Leaving sigAlgSpec().");
-      return { md: forge.md.sha256.create,
-              digestUri: 'http://www.w3.org/2001/04/xmlenc#sha256' };
-  }
-  log.debug("Leaving sigAlgSpec().");
-}
 function selectedSigAlg() {
   log.debug("Entering selectedSigAlg().");
   log.debug("Leaving selectedSigAlg().");
@@ -973,11 +955,12 @@ function signRedirect(xml, dest, relayState, doSign) {
     if (doSign) {
       var alg = selectedSigAlg();
       qs += '&SigAlg=' + encodeURIComponent(alg);
-      var pk = forge.pki.privateKeyFromPem(val('saml_sp_private_key'));
-      var md = sigAlgSpec(alg).md();
-      md.update(qs, 'utf8'); // the query string is ASCII
-      qs += '&Signature=' +
-          encodeURIComponent(forge.util.encode64(pk.sign(md)));
+      // saml-bindings-2.0-os section 3.4.4.1: the signature is over the
+      // query string as it will be SENT, SigAlg included — which is why it is
+      // appended before this call and not after.
+      qs += '&Signature=' + encodeURIComponent(
+        xmldsig.signQueryString(qs, {
+          privateKeyPem: val('saml_sp_private_key'), sigAlg: alg }));
     }
     var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
         qs) : qs;
@@ -987,378 +970,25 @@ function signRedirect(xml, dest, relayState, doSign) {
 
 // HTTP-POST binding: enveloped XML-DSIG. Returns the signed XML string. The
 // <Signature> is placed after <Issuer> per the SAML schema.
-// Parse caller-supplied XML, refusing anything that is not well-formed.
+// HTTP-POST binding: enveloped XML-DSIG. Returns the signed XML string.
 //
-// The counterpart of xmldsig.js's parseXmlStrict(), kept local because this
-// page carries its own copy of the signing code and does not load that module.
-// It deliberately alters no bytes: XML-DSIG signs exactly what is
-// canonicalized, so anything that rewrote the input here would invalidate the
-// signature being produced. What it catches is a malformed document being
-// signed or encrypted as though it had parsed.
-function parseXmlStrict(xml, what) {
-  log.debug("Entering parseXmlStrict().");
-  var label = what || 'XML';
-  if (typeof xml !== 'string' || xml.trim() === '') {
-    throw new Error(label + ' is empty.');
-  }
-  var doc = new DOMParser().parseFromString(xml, 'application/xml');
-  if (!doc || doc.getElementsByTagName('parsererror').length ||
-      !doc.documentElement) {
-    throw new Error('malformed ' + label + ' — it is not well-formed XML.');
-  }
-  log.debug("Leaving parseXmlStrict().");
-  return doc;
-}
-
+// xmldsig.js's signEnveloped() produces exactly what this function used to:
+// the same exclusive C14N, the same enveloped-signature + C14N transform
+// pair, the same X509Data KeyInfo, and the <Signature> placed directly after
+// <Issuer>, which is where the SAML schema requires it. The one thing that
+// looks like a difference is not one — that module canonicalizes SignedInfo
+// after inserting it rather than while detached, and under EXCLUSIVE C14N the
+// two byte streams are identical, which is the whole reason SAML uses it.
 function signPostEnveloped(xml) {
   log.debug("Entering signPostEnveloped().");
-  var certB64 = certPemToB64(val('saml_sp_public_key'));
-  var alg = selectedSigAlg();
-  var spec = sigAlgSpec(alg);
-  var doc = parseXmlStrict(xml, 'the AuthnRequest to sign');
-  var root = doc.documentElement;
-  var id = root.getAttribute('ID') || '';
-
-  // Reference digest: c14n(root) — no <Signature> present yet, which is exactly
-  // what the enveloped-signature transform reproduces at verification time.
-  var digest = digestBase64(canonicalize(root), spec.md);
-
-  var signedInfo = '<ds:SignedInfo xmlns:ds="' + DS_NS + '">' +
-    '<ds:CanonicalizationMethod Algorithm="' + C14N_EXCLUSIVE + '"/>' +
-    '<ds:SignatureMethod Algorithm="' + alg + '"/>' +
-    '<ds:Reference URI="#' + id + '">' +
-    '<ds:Transforms>' +
-    '<ds:Transform Algorithm="' + TRANSFORM_ENVELOPED + '"/>' +
-    '<ds:Transform Algorithm="' + C14N_EXCLUSIVE + '"/>' +
-    '</ds:Transforms>' +
-    '<ds:DigestMethod Algorithm="' + spec.digestUri + '"/>' +
-    '<ds:DigestValue>' + digest + '</ds:DigestValue>' +
-    '</ds:Reference></ds:SignedInfo>';
-
-  // Sign c14n(SignedInfo) with the selected algorithm's digest.
-  var siCanon = canonicalize(new DOMParser().parseFromString(signedInfo,
-      'application/xml').documentElement);
-  var pk = forge.pki.privateKeyFromPem(val('saml_sp_private_key'));
-  var md = spec.md();
-  md.update(siCanon, 'utf8');
-  var sigVal = forge.util.encode64(pk.sign(md));
-
-  var signature = '<ds:Signature xmlns:ds="' + DS_NS + '">' + signedInfo +
-    '<ds:SignatureValue>' + sigVal + '</ds:SignatureValue>' +
-    '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 +
-        '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
-    '</ds:Signature>';
-
-  var sigNode = doc.importNode(new DOMParser().parseFromString(signature,
-      'application/xml').documentElement, true);
-  var issuer = null, kids = root.childNodes;
-  for (var i = 0; i < kids.length; i++) {
-    if (kids[i].nodeType === 1 && kids[i].localName === 'Issuer') { issuer =
-        kids[i]; break; }
-  }
-  if (issuer) root.insertBefore(sigNode, issuer.nextSibling);
-  else root.insertBefore(sigNode, root.firstChild);
+  var signed = xmldsig.signEnveloped(xml, {
+    privateKeyPem: val('saml_sp_private_key'),
+    certPem: val('saml_sp_public_key'),
+    sigAlg: selectedSigAlg(),
+    placement: 'after-issuer'
+  });
   log.debug("Leaving signPostEnveloped().");
-  return new XMLSerializer().serializeToString(doc);
-}
-
-// --- Exclusive Canonical XML 1.0 (omit-comments) over a DOM element ----------
-// Exclusive C14N (xml-exc-c14n#) renders on each element only the namespace
-// declarations that element *visibly utilizes* — the prefix of its own name and
-// the prefixes of its namespace-qualified attributes — and only when not
-// already output (same prefix→uri) by an ancestor. This makes a subtree
-// canonicalize identically whether processed standalone or nested (the property
-// SAML relies on for the detached SignedInfo signature). No InclusiveNamespaces
-// PrefixList is emitted (we never set one). The documents here use no default
-// namespace.
-function canonicalize(apex) {
-  log.debug("Entering canonicalize().");
-  log.debug("Leaving canonicalize().");
-  return c14nSerialize(apex, {});
-}
-
-// All in-scope namespace declarations for `el` (walking ancestors), prefix→uri.
-function c14nInScopeNs(el) {
-  log.debug("Entering c14nInScopeNs().");
-  var map = {};
-  var chain = [], n = el;
-  while (n && n.nodeType === 1) { chain.unshift(n); n = n.parentNode; }
-  chain.forEach(function (e) {
-    for (var i = 0; i < e.attributes.length; i++) {
-      var a = e.attributes[i];
-      if (a.name === 'xmlns') map[''] = a.value;
-      else if (a.name.indexOf('xmlns:') === 0) map[a.name.slice(6)] = a.value;
-    }
-  });
-  log.debug("Leaving c14nInScopeNs().");
-  return map;
-}
-function c14nTextEscape(s) {
-  log.debug("Entering c14nTextEscape().");
-  log.debug("Leaving c14nTextEscape().");
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g,
-                '&gt;').replace(/\r/g, '&#xD;');
-}
-function c14nAttrEscape(s) {
-  log.debug("Entering c14nAttrEscape().");
-  log.debug("Leaving c14nAttrEscape().");
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g,
-                '&quot;')
-    .replace(/\t/g, '&#x9;').replace(/\n/g, '&#xA;').replace(/\r/g, '&#xD;');
-}
-// `rendered` maps prefix→uri already output by an ancestor and still in scope.
-function c14nSerialize(el, rendered) {
-  log.debug("Entering c14nSerialize().");
-  var inscope = c14nInScopeNs(el);
-
-  // Prefixes visibly utilized by THIS element: its own prefix, plus the prefix
-  // of each namespace-qualified attribute. Unprefixed attributes don't count.
-  var utilized = {};
-  utilized[el.prefix || ''] = true;
-  var attrs = [];
-  for (var i = 0; i < el.attributes.length; i++) {
-    var a = el.attributes[i];
-    if (a.name === 'xmlns' || a.name.indexOf('xmlns:') === 0) continue;
-    if (a.prefix) utilized[a.prefix] = true;
-    attrs.push(a);
-  }
-
-  var childRendered = {};
-  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] =
-       rendered[k]; }
-  var nsOut = [];
-  Object.keys(utilized).forEach(function (prefix) {
-    var uri = inscope.hasOwnProperty(prefix) ?
-        inscope[prefix] : (prefix === '' ? '' : undefined);
-    if (uri === undefined) return;                                  // prefix not bound
-    if (prefix === '' && uri === '' &&
-        !rendered.hasOwnProperty('')) return; // no default ns in scope
-    if (childRendered[prefix] !== uri) {
-      nsOut.push({ prefix: prefix, uri: uri });
-      childRendered[prefix] = uri;
-    }
-  });
-  nsOut.sort(function (a, b) {
-    if (a.prefix === b.prefix) return 0;
-    if (a.prefix === '') return -1;
-    if (b.prefix === '') return 1;
-    return a.prefix < b.prefix ? -1 : 1;
-  });
-
-  var out = '<' + el.nodeName;
-  nsOut.forEach(function (n) {
-    out += ' ' + (n.prefix ? ('xmlns:' + n.prefix) : 'xmlns') + '="' +
-        c14nAttrEscape(n.uri) + '"';
-  });
-  attrs.sort(function (a, b) {
-    var au = a.namespaceURI || '', bu = b.namespaceURI || '';
-    if (au !== bu) return au < bu ? -1 : 1;
-    var al = a.localName || a.name, bl = b.localName || b.name;
-    return al < bl ? -1 : (al > bl ? 1 : 0);
-  });
-  attrs.forEach(function (a) { out += ' ' + a.name + '="' +
-                c14nAttrEscape(a.value) + '"'; });
-  out += '>';
-  var child = el.firstChild;
-  while (child) {
-    if (child.nodeType === 1) out += c14nSerialize(child, childRendered);
-    else if (child.nodeType === 3 ||
-             child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
-    child = child.nextSibling;
-  }
-  log.debug("Leaving c14nSerialize().");
-  return out + '</' + el.nodeName + '>';
-}
-
-// Inclusive Canonical XML 1.0 — used ONLY by the encryption "Inclusive C14N"
-// serialization option. Signing always uses the exclusive canonicalize() above;
-// this stays separate so the two can't interfere. Apex renders every in-scope
-// namespace; descendants render only their own declarations.
-function canonicalizeInclusive(apex) {
-  log.debug("Entering canonicalizeInclusive().");
-  log.debug("Leaving canonicalizeInclusive().");
-  return c14nIncl(apex, {}, true);
-}
-function c14nIncl(el, rendered, isApex) {
-  log.debug("Entering c14nIncl().");
-  var nsSource = {};
-  if (isApex) { nsSource = c14nInScopeNs(el); }
-  else {
-    for (var a = 0; a < el.attributes.length; a++) {
-      var at = el.attributes[a];
-      if (at.name === 'xmlns') nsSource[''] = at.value;
-      else if (at.name.indexOf('xmlns:') === 0) nsSource[at.name.slice(6)] =
-               at.value;
-    }
-  }
-  var childRendered = {};
-  for (var k in rendered) { if (rendered.hasOwnProperty(k)) childRendered[k] =
-       rendered[k]; }
-  var nsOut = [];
-  Object.keys(nsSource).forEach(function (p) {
-    if (childRendered[p] !== nsSource[p]) { nsOut.push({ prefix: p,
-        uri: nsSource[p] }); childRendered[p] = nsSource[p]; }
-  });
-  nsOut.sort(function (a, b) {
-    if (a.prefix === b.prefix) return 0;
-    if (a.prefix === '') return -1;
-    if (b.prefix === '') return 1;
-    return a.prefix < b.prefix ? -1 : 1;
-  });
-  var out = '<' + el.nodeName;
-  nsOut.forEach(function (n) { out += ' ' + (n.prefix ? ('xmlns:' +
-                n.prefix) : 'xmlns') + '="' + c14nAttrEscape(n.uri) + '"'; });
-  var attrs = [];
-  for (var i = 0; i < el.attributes.length; i++) {
-    var aa = el.attributes[i];
-    if (aa.name === 'xmlns' || aa.name.indexOf('xmlns:') === 0) continue;
-    attrs.push(aa);
-  }
-  attrs.sort(function (a, b) {
-    var au = a.namespaceURI || '', bu = b.namespaceURI || '';
-    if (au !== bu) return au < bu ? -1 : 1;
-    var al = a.localName || a.name, bl = b.localName || b.name;
-    return al < bl ? -1 : (al > bl ? 1 : 0);
-  });
-  attrs.forEach(function (a) { out += ' ' + a.name + '="' +
-                c14nAttrEscape(a.value) + '"'; });
-  out += '>';
-  var child = el.firstChild;
-  while (child) {
-    if (child.nodeType === 1) out += c14nIncl(child, childRendered, false);
-    else if (child.nodeType === 3 ||
-             child.nodeType === 4) out += c14nTextEscape(child.nodeValue);
-    child = child.nextSibling;
-  }
-  log.debug("Leaving c14nIncl().");
-  return out + '</' + el.nodeName + '>';
-}
-
-// ---------------------------------------------------------------------------
-// AuthnRequest encryption (XML Encryption, W3C xmlenc) — fully in-browser via
-// node-forge. Applied AFTER signing (sign-then-encrypt). A random session key
-// encrypts the target with the chosen block cipher; that key is RSA-wrapped
-// with the recipient (IdP) certificate's public key, and the target is replaced
-// by an <xenc:EncryptedData>. NOTE: no standard SAML element carries an
-// encrypted AuthnRequest, so IdPs (Keycloak) reject it — this is for
-// inspection/education.
-// ---------------------------------------------------------------------------
-
-// Wrap bare base64 DER in PEM so forge can parse it (pass-through if already
-// PEM).
-function pemWrapCert(certPemOrB64) {
-  log.debug("Entering pemWrapCert().");
-  var s = String(certPemOrB64 || '');
-  if (/-----BEGIN CERTIFICATE-----/.test(s)) {
-    log.debug("Leaving pemWrapCert().");
-    return s;
-  }
-  var b64 = s.replace(/\s+/g, '');
-  var lines = b64.match(/.{1,64}/g) || [];
-  log.debug("Leaving pemWrapCert().");
-  return '-----BEGIN CERTIFICATE-----\n' + lines.join('\n') +
-      '\n-----END CERTIFICATE-----\n';
-}
-
-// Data-encryption algorithm URI -> forge cipher spec.
-function dataAlgSpec(uri) {
-  log.debug("Entering dataAlgSpec().");
-  switch (uri) {
-    case XENC11_NS + 'aes128-gcm':
-      log.debug("Leaving dataAlgSpec().");
-      return { cipher: 'AES-GCM', keyBytes: 16, ivBytes: 12, gcm: true };
-    case XENC11_NS + 'aes192-gcm':
-      log.debug("Leaving dataAlgSpec().");
-      return { cipher: 'AES-GCM', keyBytes: 24, ivBytes: 12, gcm: true };
-    case XENC11_NS + 'aes256-gcm':
-      log.debug("Leaving dataAlgSpec().");
-      return { cipher: 'AES-GCM', keyBytes: 32, ivBytes: 12, gcm: true };
-    case XENC_NS + 'aes128-cbc':
-      log.debug("Leaving dataAlgSpec().");
-      return { cipher: 'AES-CBC', keyBytes: 16, ivBytes: 16, gcm: false };
-    case XENC_NS + 'aes192-cbc':
-      log.debug("Leaving dataAlgSpec().");
-      return { cipher: 'AES-CBC', keyBytes: 24, ivBytes: 16, gcm: false };
-    case XENC_NS + 'aes256-cbc':
-      log.debug("Leaving dataAlgSpec().");
-      return { cipher: 'AES-CBC', keyBytes: 32, ivBytes: 16, gcm: false };
-    case XENC_NS + 'tripledes-cbc':
-      log.debug("Leaving dataAlgSpec().");
-      return { cipher: '3DES-CBC', keyBytes: 24, ivBytes: 8, gcm: false };
-    default: throw new Error('Unsupported data encryption algorithm: ' + uri);
-  }
-  log.debug("Leaving dataAlgSpec().");
-}
-function forgeMdFor(uri) {
-  log.debug("Entering forgeMdFor().");
-  switch (uri) {
-    case 'http://www.w3.org/2000/09/xmldsig#sha1':
-      log.debug("Leaving forgeMdFor().");
-      return forge.md.sha1.create();
-    case XENC_NS + 'sha256':
-      log.debug("Leaving forgeMdFor().");
-      return forge.md.sha256.create();
-    case 'http://www.w3.org/2001/04/xmldsig-more#sha384':
-      log.debug("Leaving forgeMdFor().");
-      return forge.md.sha384.create();
-    case XENC_NS + 'sha512':
-      log.debug("Leaving forgeMdFor().");
-      return forge.md.sha512.create();
-    default:
-      log.debug("Leaving forgeMdFor().");
-      return forge.md.sha256.create();
-  }
-}
-function mgfMdFor(uri) {
-  log.debug("Entering mgfMdFor().");
-  switch (uri) {
-    case XENC11_NS + 'mgf1sha1':
-      log.debug("Leaving mgfMdFor().");
-      return forge.md.sha1.create();
-    case XENC11_NS + 'mgf1sha256':
-      log.debug("Leaving mgfMdFor().");
-      return forge.md.sha256.create();
-    case XENC11_NS + 'mgf1sha384':
-      log.debug("Leaving mgfMdFor().");
-      return forge.md.sha384.create();
-    case XENC11_NS + 'mgf1sha512':
-      log.debug("Leaving mgfMdFor().");
-      return forge.md.sha512.create();
-    default:
-      log.debug("Leaving mgfMdFor().");
-      return forge.md.sha1.create();
-  }
-}
-
-// Serialize the target to the octets that get encrypted, honoring the selected
-// canonicalization and Type (Element = whole element, Content = children only).
-function encPlaintext(xml, c14nMode, type) {
-  log.debug("Entering encPlaintext().");
-  var isContent = type && type.indexOf('#Content') >= 0;
-  if (c14nMode === 'exc-c14n' || c14nMode === 'c14n') {
-    var fn = (c14nMode === 'c14n') ? canonicalizeInclusive : canonicalize;
-    var doc = parseXmlStrict(xml, 'the XML to encrypt');
-    var root = doc.documentElement;
-    if (!isContent) {
-      log.debug("Leaving encPlaintext().");
-      return fn(root);
-    }
-    var inner = '', ch = root.firstChild;
-    while (ch) { if (ch.nodeType === 1) inner += fn(ch); ch = ch.nextSibling; }
-    log.debug("Leaving encPlaintext().");
-    return inner;
-  }
-  // none: serialize as-is.
-  if (!isContent) {
-    log.debug("Leaving encPlaintext().");
-    return xml;
-  }
-  var d2 = parseXmlStrict(xml, 'the XML to encrypt');
-  var r2 = d2.documentElement, s = '', c = r2.firstChild;
-  while (c) { s += new XMLSerializer().serializeToString(c); c =
-         c.nextSibling; }
-  log.debug("Leaving encPlaintext().");
-  return s;
+  return signed;
 }
 
 function encryptAuthnRequest(xml) {

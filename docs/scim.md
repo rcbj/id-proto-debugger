@@ -657,6 +657,22 @@ element scrolls away with the content it is meant to be pointing at.
 scroll event, `renderConfig()` (the table changed height under a box that did
 not move — which is what folding a group does), and resize.
 
+**A fade is a 120ms `transition`, which is a trap for the test rather than for
+the reader, and it cost a run on 2026-08-24.** The computed opacity a moment
+after a scroll is still the value the cue is coming *from*, so a test that
+scrolls and reads in the same `executeScript` asserts the state before the
+scroll — it reported the top fade as absent at the end of the table, 120ms
+before it arrived, and named the cue rather than the timing. `scrollCuesAt()`
+in `tests/scim_page.js` scrolls, waits for `getAnimations()` on the two cue
+elements to come back empty (a CSS transition is held there while it is
+*pending* as well as while it runs, and an unchanged cue starts none, so this
+costs nothing when nothing moved), and only then reads. A `sleep` here is the
+bet this suite has lost before. The row class is the matching trap from the
+other side: a foldable group heading carries `scim-config-group` and nothing
+else, because a second class would be a hook no stylesheet answers and
+`everyStyleClassIsDefined()` fails a run over exactly that — the fold's own
+styling belongs to the button, `.scim-config-fold`.
+
 **The generated groups fold, and start folded.** Reading all three documents in
 full turns the table from about forty rows into a hundred and twenty-six, inside
 a box 520px tall. Every one of those rows is wanted — that is the point — but a

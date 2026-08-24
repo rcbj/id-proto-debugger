@@ -65,6 +65,10 @@ COPY client/src/ /usr/src/app/src/
 RUN true
 COPY client/src/env/ /usr/src/app/public/js/env/
 COPY common/data.js /usr/src/app/src
+# The XML Signature / XML Encryption engine, staged the same way and for the
+# same reason: it is in common/ because api/server.js signs with it too, and
+# the eight bundles that require('./xmldsig') resolve it from src/.
+COPY common/xmldsig.js /usr/src/app/src
 # The Kerberos codec, staged into src/ the same way and for the same reason:
 # kerberos_decoder.js requires('./krb5_describe.js'), which requires its siblings,
 # so browserify has to find them beside the bundle entry point. They live in

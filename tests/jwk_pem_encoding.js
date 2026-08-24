@@ -459,8 +459,19 @@ function ellipticStaysOutOfTheBundles() {
   // nothing in this repository noticing — the Kerberos crypto reaches Web Crypto
   // through globalThis specifically to avoid it, and this is what holds it to
   // that.
-  const extraDirs = [path.join(__dirname, "..", "common", "krb5")]
+  //
+  // common/spiffe and common/xmldsig.js are staged the same way and are read
+  // here for the same reason. xmldsig.js is the one that would otherwise have
+  // slipped out of this check entirely: it USED to live in client/src and was
+  // moved to common/ when api/server.js started signing with it, and a scan
+  // that only reads client/src would have gone on reporting a pass over a
+  // module it no longer looks at — while that module is still browserified
+  // into eight bundles.
+  const extraDirs = [path.join(__dirname, "..", "common", "krb5"),
+                     path.join(__dirname, "..", "common", "spiffe")]
     .filter(function (d) { return fs.existsSync(d); });
+  const extraFiles = [path.join(__dirname, "..", "common", "xmldsig.js")]
+    .filter(function (f) { return fs.existsSync(f); });
   const banned = [
     { pattern: /require\(\s*['"]jwk-to-pem['"]\s*\)/, name: "jwk-to-pem",
       why: "builds its EC point through elliptic; use ./jwk_pem instead" },
@@ -492,6 +503,10 @@ function ellipticStaysOutOfTheBundles() {
   extraDirs.forEach(function (dir) {
     walkExtra(dir, path.relative(path.join(__dirname, ".."), dir));
   });
+  extraFiles.forEach(function (file) {
+    files.push({ path: file,
+                 label: path.relative(path.join(__dirname, ".."), file) });
+  });
   function walkExtra(dir, label) {
     fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
       const full = path.join(dir, entry.name);
@@ -506,6 +521,15 @@ function ellipticStaysOutOfTheBundles() {
     const rel = path.relative(path.join(__dirname, ".."), dir);
     assert.ok(files.some(function (f) { return f.label.indexOf(rel) === 0; }),
       "found no .js files under " + rel + ", which is staged into a bundle and must be scanned");
+  });
+  // The same non-vacuity check for the single staged FILES, and it matters
+  // more for them: a directory that vanishes is obvious, whereas a file that
+  // moves again leaves this list quietly naming nothing.
+  extraFiles.forEach(function (file) {
+    const rel = path.relative(path.join(__dirname, ".."), file);
+    assert.ok(files.some(function (f) { return f.label === rel; }),
+      "found no " + rel + ", which is staged into eight bundles and must " +
+      "be scanned");
   });
   files.forEach(function (file) {
     const text = fs.readFileSync(file.path, "utf8");
@@ -544,11 +568,13 @@ function ellipticStaysOutOfTheBundles() {
             "requires it for the PKCE " +
     "code_challenge, and it is currently only present as a transitive " +
             "dependency of browserify");
-  log.info("[bundles] OK — " + files.length + " files in client/src plus the staged" +
-           "directories (" +
-    extraDirs.map(function (d) { return path.relative(path.join(__dirname, ".."), d); }).join(", ") +
-    "), none requiring a package that " +
-           "reaches elliptic, and none of those packages declared.");
+  var stagedNames = extraDirs.concat(extraFiles).map(function (p) {
+    return path.relative(path.join(__dirname, ".."), p);
+  });
+  log.info("[bundles] OK — " + files.length + " files in client/src plus " +
+           "the staged " + stagedNames.join(", ") + ", none requiring a " +
+           "package that reaches elliptic, and none of those packages " +
+           "declared.");
   log.debug("Leaving ellipticStaysOutOfTheBundles().");
 }
 
@@ -1225,6 +1251,82 @@ function coverageListCoversEveryBundle() {
 // commander rather than for the option alone: node ignores the pair when
 // nothing reads it (crypto_engines.js relies on that, and says so).
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// A SHARED MODULE IN common/ IS STAGED INTO client/src BY A LIST, AND A LIST
+// GOES STALE.
+//
+// common/xmldsig.js is copied into client/src at build time so the eight
+// bundles that `require("./xmldsig")` can resolve it — client/build.js names
+// them in XMLDSIG_BUNDLES. Add a ninth consumer and nothing here notices: the
+// bundle builds locally (a developer usually has a staged copy lying around)
+// and fails in the image with `Cannot find module './xmldsig'`, a message
+// naming a file that exists, two directories away. That is precisely how the
+// Kerberos list failed when spnego.js was added — the comment above
+// KRB5_BUNDLES in build.js records it — so the list gets a check this time
+// rather than a comment.
+function stagedSharedModuleListsAreComplete() {
+  log.debug("Entering stagedSharedModuleListsAreComplete().");
+  const srcDir = path.join(__dirname, "..", "client", "src");
+  const buildJs = path.join(__dirname, "..", "client", "build.js");
+  if (!fs.existsSync(srcDir) || !fs.existsSync(buildJs)) {
+    log.info("[staged lists] SKIPPED — this is the tests image, which has no " +
+             "client/src tree or build.js to compare.");
+    log.debug("Leaving stagedSharedModuleListsAreComplete().");
+    return;
+  }
+  const build = fs.readFileSync(buildJs, "utf8");
+  // Every staged module that a bundle reaches by a bare relative require, and
+  // the build.js list that is supposed to name its consumers.
+  const staged = [
+    { module: "xmldsig", list: "XMLDSIG_BUNDLES" },
+    { module: "spiffe_id", list: "SPIFFE_BUNDLES" }
+  ];
+  let checked = 0;
+  staged.forEach(function (entry) {
+    const m = new RegExp("const " + entry.list +
+      "\\s*=\\s*\\[([^\\]]*)\\]").exec(build);
+    assert.ok(m, "client/build.js no longer declares " + entry.list +
+      ", which is what stages common/" + entry.module + ".js into client/src");
+    const declared = (m[1].match(/'[^']+'/g) || [])
+      .map(function (q) { return q.slice(1, -1); }).sort();
+    // Who actually requires it, read from the source rather than from a list.
+    const requires = new RegExp("require\\(\\s*[\"']\\./" +
+      entry.module + "(\\.js)?[\"']\\s*\\)");
+    const consumers = fs.readdirSync(srcDir)
+      .filter(function (f) { return /\.js$/.test(f); })
+      .filter(function (f) {
+        return requires.test(fs.readFileSync(path.join(srcDir, f), "utf8"));
+      })
+      .map(function (f) { return f.replace(/\.js$/, ""); });
+    // A consumer that is not itself a bundle entry point is reached THROUGH
+    // one, and the bundle that reaches it is what has to be in the list — so
+    // only compare the ones that are bundles.
+    const bundles = new Set((build.match(/\['([a-z0-9_]+)',\s*'[^']*'\]/g) ||
+      []).map(function (b) { return /\['([a-z0-9_]+)'/.exec(b)[1]; }));
+    const direct = consumers.filter(function (c) { return bundles.has(c); })
+      .sort();
+    direct.forEach(function (c) {
+      assert.ok(declared.indexOf(c) >= 0,
+        "client/src/" + c + ".js requires ./" + entry.module + " but " +
+        entry.list + " in client/build.js does not name it, so common/" +
+        entry.module + ".js will not be staged for that bundle and the image " +
+        "build fails with \"Cannot find module './" + entry.module + "'\".");
+    });
+    // ...and the other way, so the list cannot quietly name a bundle that
+    // stopped needing it and go on looking maintained.
+    declared.forEach(function (d) {
+      assert.ok(consumers.indexOf(d) >= 0,
+        entry.list + " in client/build.js names " + d + ", which no longer " +
+        "requires ./" + entry.module + ".");
+    });
+    checked += direct.length;
+  });
+  log.info("[staged lists] OK — " + checked + " bundle(s) that require a " +
+           "module staged out of common/ are named by the list that stages " +
+           "it, and no list names a bundle that does not.");
+  log.debug("Leaving stagedSharedModuleListsAreComplete().");
+}
+
 function everyJobDeclaresTheUrlOption() {
   log.debug("Entering everyJobDeclaresTheUrlOption().");
   const report = path.join(__dirname, "run-report.js");
@@ -1295,6 +1397,7 @@ async function test() {
   appendedBeaconNeedsNoModuleSystem();
   coverageListCoversEveryBundle();
   testsImageHasNoCollidingFilenames();
+  stagedSharedModuleListsAreComplete();
   everyJobDeclaresTheUrlOption();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");

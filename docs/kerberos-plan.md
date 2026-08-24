@@ -44,7 +44,7 @@ The motivating case is the one that is hardest to debug from anything else: *get
 
 The only mature OS-independent implementation in any language with a browser-capable target is **[Devolutions `sspi-rs`](https://github.com/Devolutions/sspi-rs)** — pure Rust Kerberos, NTLM, SPNEGO and CredSSP, compiled to WASM for the IronRDP web client and driven through a KDC proxy. It is rejected anyway, for a reason that is about this product rather than about the library: its interface is SSPI-shaped, `InitializeSecurityContext` in and an opaque token out. **A debugger's entire product is the fields.** Wrapping an implementation that hides them would leave the tool able to say "authentication succeeded" and nothing else, which is the one answer nobody needs. It would also put a Rust toolchain and `wasm-pack` into a build that has never needed one.
 
-So Kerberos v5 gets written in JavaScript, here. That is the same call already made for `client/src/xmldsig.js` (XML-DSig signing, verification and encryption in the browser) and for `client/src/jose_jwe.js`, and for the same reason.
+So Kerberos v5 gets written in JavaScript, here. That is the same call already made for `common/xmldsig.js` (XML-DSig signing, verification and encryption in the browser) and for `client/src/jose_jwe.js`, and for the same reason.
 
 ---
 

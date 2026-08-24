@@ -970,37 +970,41 @@ function xmlTextEscape(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function signXmlEnveloped(xml, privateKeyPem, certPem, rootLocalName) {
+// THE XML SIGNATURE HERE IS THE SAME ONE THE BROWSER USES.
+//
+// This was the `xml-crypto` package, which made three implementations of XML
+// Signature in one application: xml-crypto here, and two copies of a
+// hand-written one in the browser (client/src/saml_request.js had its own and
+// common/xmldsig.js had the other). A canonicalizer is a reading of a
+// specification, and three readings is three chances to disagree with the
+// verifier at the far end — which for SAML is an identity provider that says
+// only "invalid signature".
+//
+// common/xmldsig.js needs the two DOM constructors, which node does not have;
+// @xmldom/xmldom supplies them and was already a dependency of this file for
+// the artifact SOAP handling further down.
+var xmldom = require('@xmldom/xmldom');
+if (!global.DOMParser) global.DOMParser = xmldom.DOMParser;
+if (!global.XMLSerializer) global.XMLSerializer = xmldom.XMLSerializer;
+var xmldsig = require('./xmldsig.js');
+
+function signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg) {
   log.debug("Entering signXmlEnveloped().");
-  var root = rootLocalName || 'AuthnRequest';
-  var xmlcrypto = require('xml-crypto');
-  var SignedXml = xmlcrypto.SignedXml;
-  // The root element's ID becomes the signature Reference URI (#ID).
-  var m = xml.match(/\bID="([^"]+)"/);
-  var id = m ? m[1] : '';
-  var sig = new SignedXml({
-    privateKey: privateKeyPem,
-    publicCert: certPem || undefined
-  });
-  sig.signatureAlgorithm = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
-  sig.canonicalizationAlgorithm = 'http://www.w3.org/2001/10/xml-exc-c14n#';
-  sig.addReference({
-    xpath: "/*[local-name(.)='" + root + "']",
-    transforms: [
-      'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
-      'http://www.w3.org/2001/10/xml-exc-c14n#'
-    ],
-    digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
-    uri: id ? ('#' + id) : ''
-  });
-  // Per the SAML schema the <Signature> must follow <Issuer>.
-  sig.computeSignature(xml, {
-    location: {
-      reference: "/*[local-name(.)='" + root + "']/*[local-name(.)='Issuer']",
-          action: 'after' }
+  // The Reference URI, the enveloped-signature + exclusive-C14N transform
+  // pair, the X509Data KeyInfo and the placement directly after <Issuer> are
+  // all signEnveloped()'s defaults — which is not a coincidence: those
+  // defaults ARE the SAML profile, which is what that function was written
+  // for. `rootLocalName` is gone with the xpath that needed it; the module
+  // finds the root's ID attribute itself.
+  var signed = xmldsig.signEnveloped(xml, {
+    privateKeyPem: privateKeyPem,
+    certPem: certPem || '',
+    sigAlg: sigAlg || 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
+    placement: 'after-issuer',
+    includeKeyInfo: !!certPem
   });
   log.debug("Leaving signXmlEnveloped().");
-  return sig.getSignedXml();
+  return signed;
 }
 
 /**
@@ -1029,8 +1033,7 @@ app.post('/samlsign', function (req, res) {
     }
 
     if (binding === 'post') {
-      var signedXml = signXmlEnveloped(xml, privateKeyPem, certPem,
-          rootElement);
+      var signedXml = signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg);
       var params = {
         SAMLRequest: Buffer.from(signedXml, 'utf8').toString('base64') };
       if (relayState) params.RelayState = relayState;
@@ -1063,10 +1066,15 @@ app.post('/samlsign', function (req, res) {
     var qs = 'SAMLRequest=' + encodeURIComponent(samlRequest);
     if (relayState) qs += '&RelayState=' + encodeURIComponent(relayState);
     qs += '&SigAlg=' + encodeURIComponent(sigAlg);
-    var signer = crypto.createSign('RSA-SHA256');
-    signer.update(qs);
-    var signature = signer.sign(privateKeyPem, 'base64');
-    qs += '&Signature=' + encodeURIComponent(signature);
+    // THE DIGEST NOW FOLLOWS SigAlg. This was `crypto.createSign('RSA-SHA256')`
+    // whatever the caller asked for, so a request that declared
+    // SigAlg=…#rsa-sha512 was signed with SHA-256 and the query string said
+    // otherwise — a document that verifies nowhere, and whose only symptom at
+    // the identity provider is "invalid signature". signQueryString() reads
+    // the digest out of the SigAlg it is given.
+    qs += '&Signature=' + encodeURIComponent(
+      xmldsig.signQueryString(qs, { privateKeyPem: privateKeyPem,
+                                    sigAlg: sigAlg }));
     // Full GET URL when a destination is known; otherwise just the signed query
     // string (e.g. "Build Request" before metadata is loaded).
     var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
@@ -1178,7 +1186,7 @@ function resolveArtifact(artifact, relayState) {
     var signed;
     try {
       signed = signXmlEnveloped(ar, ctx.privateKeyPem, ctx.certPem,
-          'ArtifactResolve');
+          ctx.sigAlg);
     } catch (e) {
       return reject(new Error('signing ArtifactResolve failed: ' + e.message));
     }

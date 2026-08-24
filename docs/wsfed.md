@@ -32,7 +32,7 @@ Because the enveloped binding has nothing to sign without an inline `wreq`, sele
 
 **With signing on and no key, the request is built unsigned and the status says `NOT signed`** — the one outcome that must never be silent, because a request that merely looks signed is exactly what somebody debugging a signature would be misled by. Pressing *Generate Keys* rebuilds the request immediately, so what is on screen is always what the buttons would send.
 
-Both paths go through `client/src/xmldsig.js` — `signQueryString()` and `signEnveloped()` — the same engine the SAML and WS-Trust pages use. Nothing here reimplements a signature.
+Both paths go through `common/xmldsig.js` — `signQueryString()` and `signEnveloped()` — the same engine the SAML and WS-Trust pages use. Nothing here reimplements a signature.
 
 `tests/wsfed_sso.js` drives all eight combinations (two bindings × four algorithms × two initiation routes), against each IdP, and asserts the signature **client-side, before the round trip**: that is the deterministic part. Whether the IdP then honours it is a separate, best-effort concern — neither of them verifies a passive sign-in request, which the profile does not require them to.
 
