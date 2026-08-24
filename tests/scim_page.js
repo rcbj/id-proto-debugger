@@ -44,6 +44,17 @@
 //     clearing the box must PURGE what was already there. Nothing outside a
 //     browser can see any of that.
 //
+//   * **THE ACCESS TOKEN HAND-OFF**, which is three pages and two navigations:
+//     the button in the Authentication section of the configuration table, the
+//     banner it raises on the OAuth2 / OIDC workflow, the token that workflow
+//     hands back, and the field it lands in. It is driven here with NO identity
+//     provider — `offerTokenToHandoff()` is called directly, which is what the
+//     token endpoint's success handler does with `data.access_token` — because
+//     what can break is the route rather than the grant. The reload at the end
+//     is the part that matters most: with the save box clear the token must be
+//     in the field and NOWHERE else, or the hand-off has quietly made that
+//     opt-in a lie.
+//
 // **Services needed:** the client, the mock STS (for a real SCIM server), and
 // the api for the backend-path section only. browser_flags.js is called
 // because the page fetches loopback addresses from whatever origin the suite is
@@ -1335,6 +1346,13 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
   // whole table is then searched for it. (A name check on its own also has a
   // false positive waiting in it: `changePassword.supported` is a
   // ServiceProviderConfig capability and contains the word `password`.)
+  //
+  // THE ACCESS TOKEN IS IN THE TABLE ON PURPOSE and is the one exception, so
+  // it is checked the other way round: its marker must appear inside the
+  // access token BLOCK and nowhere else in the table. Searching only `input`
+  // and `select` would have passed either way — the field is a textarea — and
+  // a check that passes for a reason nobody chose is a check that will pass
+  // after the thing it guards has moved.
   const marker = 'never-in-the-config-pane-' + stamp;
   await driver.executeScript(`
     var select = document.getElementById('scim_auth_scheme');
@@ -1344,11 +1362,23 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
   await setField(driver, "scim_auth_password", marker);
   await setField(driver, "scim_auth_token", marker + '-token');
   const leaked = await driver.executeScript(`
-    var out = { values: [], named: [] };
+    var out = { values: [], named: [], tokenOutsideItsBlock: [],
+                tokenInItsBlock: false };
     var controls = document.querySelectorAll('#scim_config input,' +
-        ' #scim_config select');
+        ' #scim_config select, #scim_config textarea');
+    var block = document.getElementById('scim_auth_token_row');
     for (var i = 0; i < controls.length; i++) {
-      if (String(controls[i].value).indexOf(arguments[0]) >= 0) {
+      var value = String(controls[i].value);
+      var inBlock = !!(block && block.contains(controls[i]));
+      if (value.indexOf(arguments[0] + '-token') >= 0) {
+        if (inBlock) {
+          out.tokenInItsBlock = true;
+        } else {
+          out.tokenOutsideItsBlock.push(controls[i].id);
+        }
+        continue;
+      }
+      if (value.indexOf(arguments[0]) >= 0) {
         out.values.push(controls[i].id);
       }
     }
@@ -1361,17 +1391,29 @@ async function theConfigurationPaneCentralizesTheSettings(driver) {
     }
     return out;
   `, marker);
-  check('no credential is in that table', function () {
+  check('no credential is a ROW of that table', function () {
     assert.deepStrictEqual(leaked.values, [],
         'The credential typed into the Authentication pane is showing in ' +
         'these configuration rows: ' + leaked.values.join(', ') + '.');
     assert.deepStrictEqual(leaked.named, [],
         'These credential rows exist in the configuration table: ' +
         leaked.named.join(', ') + '. The password is never written anywhere ' +
-        'and the access token is governed by its own opt-in checkbox in the ' +
-        'Authentication pane — a settings table that became a fourth place ' +
-        'one is written would defeat that opt-in without changing a word of ' +
-        'it.');
+        'and the access token is governed by its own opt-in checkbox — a ' +
+        'settings ROW that became a fourth place one is written would ' +
+        'defeat that opt-in without changing a word of it.');
+  });
+  check('and the access token is in the table only inside its own block',
+      function () {
+    assert.ok(leaked.tokenInItsBlock,
+        'The token typed in is not in the access token block at all, so ' +
+        'this check found nothing and would have passed whatever the table ' +
+        'held.');
+    assert.deepStrictEqual(leaked.tokenOutsideItsBlock, [],
+        'The access token is showing in these controls as well as its own ' +
+        'block: ' + leaked.tokenOutsideItsBlock.join(', ') + '. It belongs ' +
+        'to the block that renderConfig() MOVES into the Authentication ' +
+        'section, and to nothing else — a copy of it in a row would be a ' +
+        'second element with a life of its own.');
   });
   await setField(driver, "scim_auth_token", "");
   await useRunCredential(driver, 'after the credential check');
@@ -2014,7 +2056,7 @@ async function theProseFoldsAndTheWarningDoesNot(driver) {
 // ---------------------------------------------------------------------------
 // 8b. THE TOP ROW IS ONE ROW.
 //
-// Configuration Parameters and Discovery are not steps — between them they
+// Discovery and Configuration Parameters are not steps — between them they
 // hold every setting the panes below read and the documents those settings are
 // read out of — so they sit across the top rather than stacked, which is what
 // keeps Send and Run on the first screen. Asserted by GEOMETRY rather than by
@@ -2042,7 +2084,7 @@ async function theTopRowIsOneRow(driver) {
     }
     return out;
   `);
-  check('Configuration Parameters and Discovery are on one row', function () {
+  check('Discovery and Configuration Parameters are on one row', function () {
     ['pane_config', 'pane_discovery', 'pane_endpoint'].forEach(function (id) {
       assert.ok(boxes[id], 'There is no ' + id + ' on the page.');
     });
@@ -2051,9 +2093,10 @@ async function theTopRowIsOneRow(driver) {
         boxes.pane_discovery.top + 'px, so they are stacked rather than side ' +
         'by side — which is what a grid looks like when it has fallen back ' +
         'to one column, with every class still in place.');
-    assert.ok(boxes.pane_config.left < boxes.pane_discovery.left,
-        'The two are on one row and out of order: ' +
-        boxes.pane_config.left + ', ' + boxes.pane_discovery.left + '.');
+    assert.ok(boxes.pane_discovery.left < boxes.pane_config.left,
+        'The two are on one row and out of order — Discovery is on the ' +
+        'left: ' + boxes.pane_discovery.left + ', ' +
+        boxes.pane_config.left + '.');
   });
   check('the endpoint pane spans the row beneath them', function () {
     assert.ok(boxes.pane_endpoint.top > boxes.pane_discovery.top,
@@ -2321,6 +2364,232 @@ async function theConsoleIsClean(driver) {
   log.debug("Leaving theConsoleIsClean().");
 }
 
+// ---------------------------------------------------------------------------
+// 8e. THE ACCESS TOKEN IS IN THE AUTHENTICATION SECTION, WITH THE BUTTON THAT
+//     GOES AND GETS ONE.
+//
+// It is the one credential this page has that a reader cannot produce — RFC
+// 7644 section 2 names a bearer token and says nothing whatever about where
+// one comes from — so it sits under the scheme select that decides whether it
+// is sent, rather than in the Credential block with the password and the HOBA
+// key, and it has a button beside it that runs the OAuth2 / OIDC workflow.
+//
+// ASSERTED BY WHERE THE ELEMENT IS IN THE TABLE, not by a class: the block is
+// MOVED into the row renderConfig() builds for it, and a build that copied the
+// markup instead would put two `scim_auth_token` elements on the page — which
+// looks perfect until getElementById answers with the wrong one. The count is
+// the first check for that reason.
+// ---------------------------------------------------------------------------
+async function theTokenFieldIsInTheAuthenticationSection(driver) {
+  log.debug("Entering theTokenFieldIsInTheAuthenticationSection().");
+  log.info("8e. The access token's place in the table.");
+  const placement = await driver.executeScript(`
+    var select = document.getElementById('scim_auth_scheme');
+    select.value = 'bearer';
+    select.dispatchEvent(new Event('change'));
+    var field = document.getElementById('scim_auth_token');
+    var block = document.getElementById('scim_auth_token_row');
+    var row = block ? block.closest('tr') : null;
+    var table = block ? block.closest('table') : null;
+    var groups = [];
+    var blockAt = -1;
+    if (table) {
+      var rows = table.rows;
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].className.indexOf('scim-config-group') >= 0) {
+          groups.push({ at: i, title: rows[i].textContent || '' });
+        }
+        if (row && rows[i] === row) { blockAt = i; }
+      }
+    }
+    var shown = function (e) {
+      return e ? e.className.indexOf('scim-hidden') < 0 : false;
+    };
+    return {
+      fields: document.querySelectorAll('#scim_auth_token').length,
+      boxes: document.querySelectorAll('#scim_save_token').length,
+      insideConfig: !!(table && document.getElementById('scim_config')
+          .contains(table)),
+      rowClass: row ? row.className : '(no row)',
+      blockAt: blockAt,
+      groups: groups,
+      buttonInBlock: !!(block &&
+          block.querySelector('#btn_scim_get_token')),
+      shownForBearer: shown(block) && shown(row)
+    };
+  `);
+  check('there is exactly ONE access token field on the page', function () {
+    assert.strictEqual(placement.fields, 1,
+        'There are ' + placement.fields + ' elements with id ' +
+        'scim_auth_token. The configuration table MOVES that block into ' +
+        'itself; a build that copied it would leave two, and ' +
+        'getElementById would answer with whichever came first in document ' +
+        'order — so the field the reader types in would stop being the one ' +
+        'the request is composed from.');
+    assert.strictEqual(placement.boxes, 1,
+        'There are ' + placement.boxes + ' save-token checkboxes, for the ' +
+        'same reason.');
+  });
+  check('it is inside the Configuration Parameters table', function () {
+    assert.ok(placement.insideConfig,
+        'The access token block is not inside the generated configuration ' +
+        'table at all (row class: ' + placement.rowClass + ').');
+    assert.ok(placement.rowClass.indexOf('scim-config-block') >= 0,
+        'The row holding it is "' + placement.rowClass + '" rather than a ' +
+        'scim-config-block, so it is not the row renderConfig() built.');
+  });
+  check('and in the AUTHENTICATION section of it', function () {
+    const titles = placement.groups.map(function (g) {
+      return g.title;
+    });
+    const auth = placement.groups.filter(function (g) {
+      return /Authentication/.test(g.title);
+    })[0];
+    assert.ok(auth, 'The table has no Authentication group at all. Groups: ' +
+        JSON.stringify(titles));
+    const after = placement.groups.filter(function (g) {
+      return g.at > auth.at;
+    })[0];
+    assert.ok(placement.blockAt > auth.at,
+        'The access token block is at row ' + placement.blockAt + ' and the ' +
+        'Authentication heading is at row ' + auth.at + ', so it is ABOVE ' +
+        'the section it belongs to.');
+    assert.ok(!after || placement.blockAt < after.at,
+        'The access token block is at row ' + placement.blockAt + ', past ' +
+        'the "' + (after ? after.title : '') + '" heading at row ' +
+        (after ? after.at : '') + ' — so it has fallen out of the ' +
+        'Authentication section into the one below it.');
+  });
+  check('the button that obtains one is beside it', function () {
+    assert.ok(placement.buttonInBlock,
+        'There is no btn_scim_get_token inside the access token block. That ' +
+        'button is the whole reason the field is up here: a page that ' +
+        'offers a token field and no route to a token leaves the reader ' +
+        'with another tab and a clipboard.');
+    assert.ok(placement.shownForBearer,
+        'The block or its row is hidden with the Bearer scheme selected.');
+  });
+  const hidden = await driver.executeScript(`
+    var select = document.getElementById('scim_auth_scheme');
+    select.value = 'none';
+    select.dispatchEvent(new Event('change'));
+    var block = document.getElementById('scim_auth_token_row');
+    var row = block ? block.closest('tr') : null;
+    var shown = function (e) {
+      return e ? e.className.indexOf('scim-hidden') < 0 : false;
+    };
+    return { block: shown(block), row: shown(row) };
+  `);
+  check('and both it and its row go away for a scheme that sends no token',
+      function () {
+    assert.ok(!hidden.block,
+        'The access token block is still shown for the anonymous scheme.');
+    assert.ok(!hidden.row,
+        'The block is hidden but the table row holding it is not, which is ' +
+        'an empty bordered stripe across the Authentication section that ' +
+        'nothing on the page explains.');
+  });
+  log.debug("Leaving theTokenFieldIsInTheAuthenticationSection().");
+}
+
+// ---------------------------------------------------------------------------
+// 8f. THE WHOLE ROUTE FROM THAT BUTTON TO THAT FIELD.
+//
+// Three pages and two navigations, driven with NO identity provider: the SCIM
+// page marks itself as waiting and goes to the OAuth2 / OIDC workflow, that
+// workflow says who is waiting, the page that receives tokens hands one over,
+// and the SCIM page collects it. The one step this test stands in for is the
+// grant itself — `offerTokenToHandoff` is called directly, which is exactly
+// what the token endpoint's success handler does with `data.access_token`.
+//
+// THE ONE-SHOT RULE IS ASSERTED BY RELOADING. The token must be in the field
+// and, with the save opt-in clear, gone after a reload — a handoff that left a
+// bearer token in storage would have made the opt-in a lie without changing a
+// word of it.
+//
+// LAST IN THE FILE, because it navigates away from the page every other
+// section is holding.
+// ---------------------------------------------------------------------------
+async function theTokenComesBackFromTheOauthWorkflow(driver) {
+  log.debug("Entering theTokenComesBackFromTheOauthWorkflow().");
+  log.info("8f. The access token handoff.");
+  const handed = 'handed-back-token-' + checks;
+  await driver.get(baseUrl + "/scim.html");
+  await waitForPageBundle(driver, "the SCIM page");
+  await setCheckbox(driver, "scim_save_token", false);
+  await setField(driver, "scim_auth_token", "");
+  await driver.executeScript(`
+    var select = document.getElementById('scim_auth_scheme');
+    select.value = 'bearer';
+    select.dispatchEvent(new Event('change'));
+  `);
+  await driver.findElement(By.id("btn_scim_get_token")).click();
+  await driver.wait(async function () {
+    const url = await driver.getCurrentUrl();
+    return /oauth2_oidc_1\.html/.test(url);
+  }, 15000, 'the Get-a-token button did not go to the OAuth2 / OIDC ' +
+      'workflow — an inline onclick before the bundle exists is a silent ' +
+      'no-op, which is what this looks like');
+  await waitForPageBundle(driver, "the OAuth2 / OIDC configuration page");
+  const askedBy = await driver.wait(async function () {
+    const text = await driver.executeScript(
+        "var e = document.getElementById('token_handoff_banner');" +
+        "return e ? String(e.textContent || '') : '';");
+    return text ? text : null;
+  }, 15000, 'no handoff banner appeared on the OAuth2 / OIDC page, so a ' +
+      'reader running a grant there would have no idea the token was about ' +
+      'to be sent somewhere else');
+  check('the OAuth2 / OIDC page says who asked for a token', function () {
+    assert.ok(/SCIM provisioning/.test(askedBy),
+        'The banner does not name the workflow that is waiting: ' +
+        askedBy.slice(0, 200));
+  });
+  // The page that receives tokens. Opened directly and handed one, which is
+  // what its token endpoint handler does with the response it got.
+  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await waitForPageBundle(driver, "the OAuth2 / OIDC results page");
+  const delivered = await driver.executeScript(
+      "return window.oauth2_oidc_2.offerTokenToHandoff(arguments[0], " +
+      "'the token endpoint');", handed);
+  check('the results page hands the access token over', function () {
+    assert.strictEqual(delivered, true,
+        'offerTokenToHandoff() refused the token, which means the handoff ' +
+        'was not active on that page — the two pages disagree about the ' +
+        'session-storage slot, or the SCIM page never started one.');
+  });
+  await driver.findElement(By.id("token_handoff_return")).click();
+  await driver.wait(async function () {
+    const url = await driver.getCurrentUrl();
+    return /scim\.html/.test(url);
+  }, 15000, 'the "take it there now" link did not return to the SCIM page');
+  await waitForPageBundle(driver, "the SCIM page, on the way back");
+  const back = await textOf(driver, "scim_auth_token");
+  const note = await textOf(driver, "scim_token_handoff_note");
+  check('and it arrives in the SCIM page\'s access token field', function () {
+    assert.strictEqual(back, handed,
+        'The access token field holds ' + JSON.stringify(back.slice(0, 60)) +
+        ' rather than the token that was handed back. This is the whole ' +
+        'point of the route: the button, the banner and the link are of no ' +
+        'use if the field is not filled at the end of it.');
+    assert.ok(/OAuth2/.test(note),
+        'The field was filled and the page says nothing about where the ' +
+        'token came from. Note: ' + JSON.stringify(note.slice(0, 120)));
+  });
+  await driver.navigate().refresh();
+  await waitForPageBundle(driver, "the SCIM page, reloaded");
+  const afterReload = await textOf(driver, "scim_auth_token");
+  check('the handoff is ONE SHOT and honours the save opt-in', function () {
+    assert.strictEqual(afterReload, '',
+        'After a reload the access token field still holds ' +
+        JSON.stringify(afterReload.slice(0, 60)) + '. With the save box ' +
+        'clear a handed-back token must live in the field and nowhere ' +
+        'else — and the slot it came out of must have been emptied by the ' +
+        'page that read it, or the next visit picks up a credential nobody ' +
+        'asked for.');
+  });
+  log.debug("Leaving theTokenComesBackFromTheOauthWorkflow().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
@@ -2358,9 +2627,12 @@ async function test() {
     await thePanesCollapseAndOneSwitchDoesThemAll(driver);
     await theProseFoldsAndTheWarningDoesNot(driver);
     await theTopRowIsOneRow(driver);
+    await theTokenFieldIsInTheAuthenticationSection(driver);
     await tooltipsAreEverywhereAndCannotTakeAClick(driver);
     await everyStyleClassIsDefined(driver);
     await theConsoleIsClean(driver);
+    // LAST: it navigates away from this page and comes back to a fresh one.
+    await theTokenComesBackFromTheOauthWorkflow(driver);
     log.info(checks + " checks passed.");
     if (skips.length) {
       log.warn(skips.length + " section(s) skipped:");
@@ -2368,7 +2640,7 @@ async function test() {
         log.warn("  - " + why);
       });
     }
-    assert.ok(checks >= 59,
+    assert.ok(checks >= 69,
         'Only ' + checks + ' checks ran; a section has stopped being called.');
     log.info("Test completed successfully.");
   } finally {

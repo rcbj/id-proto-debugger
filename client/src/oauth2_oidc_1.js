@@ -4,6 +4,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 var opMetadata = require("./op_metadata");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
+var tokenHandoff = require("./token_handoff");
 // DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
 // see oauth_dpop.js for why the two are separate state.
 var oauthDpop = require("./oauth_dpop");
@@ -1283,8 +1284,60 @@ function onload() {
     window.location.href = "/oauth2_oidc_2.html";
   }
   maybeStartSdJwtVcFlow();
+  maybeShowTokenHandoffBanner();
   log.debug("Leaving onload().");
   log.debug("Leaving onload().");
+}
+
+// ---------------------------------------------------------------------------
+// ANOTHER WORKFLOW IS WAITING FOR AN ACCESS TOKEN (?tokenhandoff=1).
+//
+// The SCIM page authenticates with an OAuth 2.0 bearer token (RFC 7644 section
+// 2) and has no way of its own to obtain one, so its Access token field has a
+// button that comes here. This banner is what says so — a page that is about
+// to send a token somewhere else must say where, before the reader runs a
+// grant on it.
+//
+// NOTHING IS STARTED AND NOTHING IS PRE-FILLED, which is the difference from
+// the SD-JWT VC handoff above. That one arrives with an authorization endpoint
+// and a client id that its own step 1 has just written; this one arrives from
+// a page that knows a SCIM service root and nothing whatever about an
+// authorization server. So the reader configures this page as they always do
+// and runs whichever grant that server accepts — every one of them ends in an
+// access token, and any of them will do.
+//
+// The flag is read from the handoff itself rather than from the query
+// parameter, so the banner survives the reader's editing this page, following
+// a link and coming back.
+// ---------------------------------------------------------------------------
+function maybeShowTokenHandoffBanner() {
+  log.debug("Entering maybeShowTokenHandoffBanner().");
+  if (!tokenHandoff.isActive()) {
+    log.debug("Leaving maybeShowTokenHandoffBanner(). None active.");
+    return false;
+  }
+  // The label crosses a page load in session storage, so it is put in as TEXT
+  // and never concatenated into markup — the same rule the token panes on
+  // oauth2_oidc_2.html follow for a value that came from somewhere else.
+  var banner = $("<div class='vc-handoff-banner' id='token_handoff_banner'>" +
+      "<strong>An access token was asked for by <span " +
+      "id='token_handoff_who'></span></strong> — run any grant on this page " +
+      "and the access token it returns is carried back there. Nothing here " +
+      "has been filled in for you: that workflow knows nothing about this " +
+      "authorization server. <a href='#' id='token_handoff_cancel'>Cancel " +
+      "the handoff</a>.</div>");
+  $(".container").prepend(banner);
+  $("#token_handoff_who").text(tokenHandoff.label());
+  $("#token_handoff_cancel").on("click", function (event) {
+    event.preventDefault();
+    tokenHandoff.cancel();
+    $("#token_handoff_banner").text('The handoff was cancelled. Nothing on ' +
+        'this page will be sent anywhere else.');
+    return false;
+  });
+  log.debug("Leaving maybeShowTokenHandoffBanner(). " +
+      tokenHandoff.label());
+  return true;
 }
 
 // ---------------------------------------------------------------------------

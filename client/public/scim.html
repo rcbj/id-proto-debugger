@@ -59,7 +59,7 @@ accounts.</strong> Point this at a test directory.
 </p>
 
 <!-- ======================================================================
-     THE TOP ROW — Configuration Parameters and Discovery, side by side.
+     THE TOP ROW — Discovery and Configuration Parameters, side by side.
 
      Neither is a step: between them they hold every setting the panes below
      read, and the two documents those settings are read out of. Stacked, they
@@ -74,6 +74,84 @@ accounts.</strong> Point this at a test directory.
      appears only for the scheme that uses it.
      =================================================================== -->
 <div class="scim-topgrid">
+
+<!-- ===================== Discovery ===================== -->
+<div class="scim-pane dbg-pane" id="pane_discovery">
+  <legend class="dbg-legend" id="discovery_expand_button">Discovery</legend>
+  <fieldset name="discovery_fieldset" id="discovery_fieldset"
+            style="display: block;">
+  <details class="scim-more">
+    <summary>What these three documents are</summary>
+    <p class="scim-note">The three documents a client should read first. None
+    of them needs a scope &mdash; a client has to be able to read a
+    ServiceProviderConfig <em>before</em> it knows how to authenticate.</p>
+    <p class="scim-note">There is a fourth source and it is not a document:
+    the <code>WWW-Authenticate</code> header of a 401. This page collects it
+    <strong>by itself</strong> whenever the service root changes &mdash; one
+    unauthenticated request, which is the only normative requirement RFC 7644
+    section 2 makes of a SCIM server &mdash; and the scheme list in the
+    configuration table above is ordered by what came back.</p>
+  </details>
+  <div class="scim-buttons">
+    <input type="button" class="scim-btn" id="btn_scim_spc"
+           value="ServiceProviderConfig"
+           onclick="return scim.readServiceProviderConfig();"
+           title="What this server supports: filtering, sorting, PATCH, bulk, ETag, changePassword, and the authentication schemes it advertises. Everything this page can do is a promise made in this document.">
+    <input type="button" class="scim-btn" id="btn_scim_resource_types"
+           value="ResourceTypes" onclick="return scim.readResourceTypes();"
+           title="The resource types this server has, and for each one the ENDPOINT it answers on and the schema extensions it carries. /Users and /Groups are conventions, not requirements.">
+    <input type="button" class="scim-btn" id="btn_scim_schemas"
+           value="Schemas" onclick="return scim.readSchemas();"
+           title="Every attribute this server knows, with its characteristics. This is the document that says whether a field you sent was ever going to be stored.">
+  </div>
+  <input class="scim-status scim-grow" type="text" id="scim_discovery_status"
+         readonly>
+
+  <!-- Two views of one answer, the way the Kerberos pages show a message
+       decoded and as bytes. The described table is what a reader wants nine
+       times in ten; the document is what settles an argument about what the
+       server actually said, so neither replaces the other. -->
+  <div class="scim-tabs" data-scim-tabs="discovery">
+    <button type="button" class="scim-tab scim-tab-on" role="tab"
+            aria-selected="true" id="scim_tab_discovery_described"
+            data-scim-tab="described">Described</button>
+    <button type="button" class="scim-tab" role="tab" aria-selected="false"
+            id="scim_tab_discovery_document"
+            data-scim-tab="document">Document</button>
+  </div>
+  <div class="scim-tabpanel" data-scim-tabs="discovery"
+       data-scim-tab="described">
+    <details class="scim-more scim-readout" open>
+      <summary>What was read, and what it said</summary>
+      <p class="scim-note" id="scim_described_what">Nothing has been read
+      yet.</p>
+    </details>
+    <!-- The described tables live in the SECOND column of the top row, which
+         is half the page wide, and their last column is prose. Scrolled
+         sideways inside this box rather than wrapped: see css/scim.css. -->
+    <div class="scim-described-scroll">
+      <div id="scim_capabilities"></div>
+    </div>
+  </div>
+  <div class="scim-tabpanel scim-tabpanel-off" data-scim-tabs="discovery"
+       data-scim-tab="document">
+    <div class="scim-boxhead">
+      <div class="tooltip scim-tip">
+        <span class="scim-boxlabel">As it came back</span>
+        <span class="tooltiptext">The document verbatim, exactly as the server
+        sent it. The Described tab is a reading of it and this is the thing
+        being read — a disagreement between the two is a defect in this page,
+        which is why both are here.</span>
+      </div>
+      <input type="button" class="scim-btn scim-expand"
+             id="btn_scim_expand_discovery" value="Expand"
+             data-scim-expand="scim_discovery_output">
+    </div>
+    <textarea class="scim-box" id="scim_discovery_output" rows="16"
+              readonly></textarea>
+  </div>
+</fieldset>
+</div>
 
 <!-- ===================== Configuration Parameters ===================== -->
 <div class="scim-pane dbg-pane" id="pane_config">
@@ -96,14 +174,21 @@ accounts.</strong> Point this at a test directory.
     and nowhere else, so there is one value of each rather than two that can
     drift apart.</p>
     <p class="scim-note"><strong>The credentials are under the table, not in
-    it.</strong> A password, a signing key and a minted proof are not
-    parameters — they are not read out of a document, they are not compared
-    against one, and two of the three must never be written down at all. So
-    they sit below in the <em>Credential</em> block, which shows only what the
-    selected scheme actually uses. The password is never stored anywhere; the
-    HOBA private key is generated per session and never stored, because a
-    signing key in storage is a signing key in every extension&rsquo;s reach;
-    the access token is stored only under its own opt-in.</p>
+    it — with one exception, and it is the access token.</strong> A password,
+    a signing key and a minted proof are not parameters — they are not read
+    out of a document, they are not compared against one, and two of the three
+    must never be written down at all. So they sit below in the
+    <em>Credential</em> block, which shows only what the selected scheme
+    actually uses. The password is never stored anywhere; the HOBA private key
+    is generated per session and never stored, because a signing key in storage
+    is a signing key in every extension&rsquo;s reach.</p>
+    <p class="scim-note">The <strong>access token</strong> is in the
+    Authentication section above, directly under the scheme that decides
+    whether it is sent at all. It is the one credential here that a reader has
+    to go and <em>get</em>, and the button that gets it — which runs the
+    OAuth2 / OIDC workflow and carries the token back into the field — is no
+    use a screen away from the scheme that needs it. It is still stored only
+    under its own opt-in, which ships clear.</p>
   </details>
   <div class="scim-buttons">
     <input type="button" class="scim-btn scim-btn-primary"
@@ -122,7 +207,48 @@ accounts.</strong> Point this at a test directory.
            readonly>
   </div>
   <div class="scim-config-scroll">
-    <div id="scim_config"></div>
+    <!-- The table is generated into this host by renderConfig(). The access
+         token block below is authored here rather than generated because a
+         textarea, a checkbox and a button are not a table cell &mdash; and it
+         is authored INSIDE the host so that the rebuild can pick it up and
+         MOVE it (one node, one id, its listeners intact) into the
+         Authentication group, where the scheme that needs it is chosen. It is
+         parked here for the moment before the first render and nowhere else.
+         -->
+    <div id="scim_config">
+      <div class="scim-grid scim-hidden" id="scim_auth_token_row">
+        <div class="scim-wide">
+          <div class="tooltip scim-tip">
+            <label class="scim-label" for="scim_auth_token">Access token</label>
+            <span class="tooltiptext">Paste one, or get one from the OAuth2 / OIDC
+            workflow with the button below. It is sent as a Bearer credential, or
+            bound to a DPoP proof when that scheme is selected.</span>
+          </div>
+          <textarea class="scim-field scim-token" id="scim_auth_token"
+                    name="scim_auth_token" rows="3"
+                    placeholder="Paste an access token, or get one from the OAuth2 / OIDC workflow"></textarea>
+          <div class="scim-buttons">
+            <input type="button" class="scim-btn" id="btn_scim_get_token"
+                   value="Get one from the OAuth2 / OIDC workflow"
+                   onclick="return scim.getAccessToken();"
+                   title="Goes to the OAuth2 / OIDC workflow with this page marked as waiting. Run any grant there; the access token it returns is carried back into this field.">
+          </div>
+          <p class="scim-note" id="scim_token_handoff_note"></p>
+          <div class="tooltip scim-tip">
+            <label class="scim-check">
+              <input type="checkbox" id="scim_save_token">
+              Remember this token in this browser&rsquo;s localStorage
+            </label>
+            <span class="tooltiptext">Off by default, and it ships CLEAR. Clearing
+            the box removes whatever was already stored, on the spot. A token
+            carried back from the OAuth2 / OIDC workflow is handed over in
+            sessionStorage and removed as this page reads it, so it is not stored
+            under any setting either. A password on this page is NEVER stored, and
+            neither is the HOBA private key.</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <details class="scim-more scim-readout" id="scim_call_path_note_fold" open>
@@ -155,30 +281,6 @@ accounts.</strong> Point this at a test directory.
     <summary>What the server said it accepts</summary>
     <p class="scim-challenges" id="scim_challenges"></p>
   </details>
-
-  <div class="scim-grid scim-hidden" id="scim_auth_token_row">
-    <div class="scim-wide">
-      <div class="tooltip scim-tip">
-        <label class="scim-label" for="scim_auth_token">Access token</label>
-        <span class="tooltiptext">Paste one, or get one from the OAuth2 / OIDC
-        workflow. It is sent as a Bearer credential, or bound to a DPoP proof
-        when that scheme is selected.</span>
-      </div>
-      <textarea class="scim-field scim-token" id="scim_auth_token"
-                name="scim_auth_token" rows="3"
-                placeholder="Paste an access token, or get one from the OAuth2 / OIDC workflow"></textarea>
-      <div class="tooltip scim-tip">
-        <label class="scim-check">
-          <input type="checkbox" id="scim_save_token">
-          Remember this token in this browser&rsquo;s localStorage
-        </label>
-        <span class="tooltiptext">Off by default, and it ships CLEAR. Clearing
-        the box removes whatever was already stored, on the spot. A password on
-        this page is NEVER stored under any setting, and neither is the HOBA
-        private key.</span>
-      </div>
-    </div>
-  </div>
 
   <div class="scim-grid scim-hidden" id="scim_auth_password_row">
     <div class="scim-wide">
@@ -321,84 +423,6 @@ accounts.</strong> Point this at a test directory.
     </details>
   </div>
   </div><!-- /.scim-credentials -->
-</fieldset>
-</div>
-
-<!-- ===================== Discovery ===================== -->
-<div class="scim-pane dbg-pane" id="pane_discovery">
-  <legend class="dbg-legend" id="discovery_expand_button">Discovery</legend>
-  <fieldset name="discovery_fieldset" id="discovery_fieldset"
-            style="display: block;">
-  <details class="scim-more">
-    <summary>What these three documents are</summary>
-    <p class="scim-note">The three documents a client should read first. None
-    of them needs a scope &mdash; a client has to be able to read a
-    ServiceProviderConfig <em>before</em> it knows how to authenticate.</p>
-    <p class="scim-note">There is a fourth source and it is not a document:
-    the <code>WWW-Authenticate</code> header of a 401. This page collects it
-    <strong>by itself</strong> whenever the service root changes &mdash; one
-    unauthenticated request, which is the only normative requirement RFC 7644
-    section 2 makes of a SCIM server &mdash; and the scheme list in the
-    configuration table above is ordered by what came back.</p>
-  </details>
-  <div class="scim-buttons">
-    <input type="button" class="scim-btn" id="btn_scim_spc"
-           value="ServiceProviderConfig"
-           onclick="return scim.readServiceProviderConfig();"
-           title="What this server supports: filtering, sorting, PATCH, bulk, ETag, changePassword, and the authentication schemes it advertises. Everything this page can do is a promise made in this document.">
-    <input type="button" class="scim-btn" id="btn_scim_resource_types"
-           value="ResourceTypes" onclick="return scim.readResourceTypes();"
-           title="The resource types this server has, and for each one the ENDPOINT it answers on and the schema extensions it carries. /Users and /Groups are conventions, not requirements.">
-    <input type="button" class="scim-btn" id="btn_scim_schemas"
-           value="Schemas" onclick="return scim.readSchemas();"
-           title="Every attribute this server knows, with its characteristics. This is the document that says whether a field you sent was ever going to be stored.">
-  </div>
-  <input class="scim-status scim-grow" type="text" id="scim_discovery_status"
-         readonly>
-
-  <!-- Two views of one answer, the way the Kerberos pages show a message
-       decoded and as bytes. The described table is what a reader wants nine
-       times in ten; the document is what settles an argument about what the
-       server actually said, so neither replaces the other. -->
-  <div class="scim-tabs" data-scim-tabs="discovery">
-    <button type="button" class="scim-tab scim-tab-on" role="tab"
-            aria-selected="true" id="scim_tab_discovery_described"
-            data-scim-tab="described">Described</button>
-    <button type="button" class="scim-tab" role="tab" aria-selected="false"
-            id="scim_tab_discovery_document"
-            data-scim-tab="document">Document</button>
-  </div>
-  <div class="scim-tabpanel" data-scim-tabs="discovery"
-       data-scim-tab="described">
-    <details class="scim-more scim-readout" open>
-      <summary>What was read, and what it said</summary>
-      <p class="scim-note" id="scim_described_what">Nothing has been read
-      yet.</p>
-    </details>
-    <!-- The described tables live in the SECOND column of the top row, which
-         is half the page wide, and their last column is prose. Scrolled
-         sideways inside this box rather than wrapped: see css/scim.css. -->
-    <div class="scim-described-scroll">
-      <div id="scim_capabilities"></div>
-    </div>
-  </div>
-  <div class="scim-tabpanel scim-tabpanel-off" data-scim-tabs="discovery"
-       data-scim-tab="document">
-    <div class="scim-boxhead">
-      <div class="tooltip scim-tip">
-        <span class="scim-boxlabel">As it came back</span>
-        <span class="tooltiptext">The document verbatim, exactly as the server
-        sent it. The Described tab is a reading of it and this is the thing
-        being read — a disagreement between the two is a defect in this page,
-        which is why both are here.</span>
-      </div>
-      <input type="button" class="scim-btn scim-expand"
-             id="btn_scim_expand_discovery" value="Expand"
-             data-scim-expand="scim_discovery_output">
-    </div>
-    <textarea class="scim-box" id="scim_discovery_output" rows="16"
-              readonly></textarea>
-  </div>
 </fieldset>
 </div>
 

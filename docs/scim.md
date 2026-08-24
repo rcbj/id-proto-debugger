@@ -42,7 +42,7 @@ Read this before moving a pane, because four of the six are load-bearing
 rather than cosmetic and one of them is a bug fix that looks like a style
 change.
 
-**The top row is Configuration Parameters and Discovery, side by side.**
+**The top row is Discovery and Configuration Parameters, side by side.**
 Neither is a *step* — between them they hold every setting the panes below read
 and the documents those settings are read out of — and stacked they put the
 buttons somebody came here to press (Send, Run) two screens down.
@@ -247,7 +247,10 @@ design:
   is in force, so an override is a **visible difference** between the two —
   tinted, with "the server said: …" beside it — rather than a lost original.
   **Restore discovered values** has something to restore to;
-* a **heading**, which is a row of the table and not a parameter.
+* a **heading**, which is a row of the table and not a parameter;
+* a **block**, which is not a parameter at all: a row spanning the whole table
+  into which an element authored in `scim.html` is **moved**. There is one, and
+  it is the access token — see below.
 
 Adopting a newly-read value tests against the PREVIOUS discovered value and not
 against emptiness: a row nobody has touched follows the server forever, and a
@@ -255,20 +258,39 @@ row somebody has edited keeps their edit even when a later read says something
 else. Adopting over an edit would silently undo it, on a button press that says
 "read the documents".
 
-**No credential is in that table, and it is not an oversight to be tidied up
-later — the panes went away and this rule did not.** The password is never
-written anywhere; the HOBA private key is generated per session and never
-stored; and the access token is under its own opt-in. All three are in the
-**Credential block below the table**, which is part of the same pane and is not
-part of the table: a settings table that quietly became the fourth place a
-bearer token is written would defeat that opt-in without changing a word of it.
-What decides whether a thing is a row here is whether it is a value that can be
-compared against a document, and a minted proof never can be.
-`tests/scim_page.js` checks this by VALUE — it types a distinctive credential
-into the Credential block and searches the whole table for it — because a
-name-based check would pass a table with a row called `secret`, and would also
-trip over `changePassword.supported`, which is a ServiceProviderConfig
-capability that contains the word "password".
+**No credential is a ROW of that table, and it is not an oversight to be tidied
+up later — the panes went away and this rule did not.** The password is never
+written anywhere and the HOBA private key is generated per session and never
+stored; both are in the **Credential block below the table**, which is part of
+the same pane and is not part of the table. What decides whether a thing is a
+row here is whether it is a value that can be compared against a document, and
+a minted proof never can be. `tests/scim_page.js` checks this by VALUE — it
+types a distinctive credential into the Credential block and searches the whole
+table for it — because a name-based check would pass a table with a row called
+`secret`, and would also trip over `changePassword.supported`, which is a
+ServiceProviderConfig capability that contains the word "password".
+
+**The access token is the exception, and it is a placement rather than a hole
+in any of that.** It is not a row: it is a `block` — the same textarea, the
+same opt-in checkbox and the button that goes and gets one, MOVED into the
+Authentication section directly under the `authScheme` select. It is there
+because it is the only credential on this page a reader has to leave the page
+to obtain, and a button that launches the OAuth2 / OIDC workflow is no use a
+screen away from the select that decides whether a token is sent at all.
+Nothing about the storage changed: `saveState()` is still the only thing that
+writes it and the opt-in still ships clear.
+
+> **A block is MOVED and never copied.** `renderConfig()` takes the node out of
+> the page and appends it to the row it builds, which is the same rule `owns`
+> exists to keep, arrived at from the other end: copying the markup would put
+> two `scim_auth_token` textareas on the page, and `getElementById` answers
+> with whichever comes first in document order — so the field the reader types
+> in would silently stop being the field the request is composed from. The
+> table is rebuilt whole on every discovery, so the node is held by reference
+> across `innerHTML = ''` and re-appended with its value and its listeners
+> intact. `tests/scim_page.js` counts the elements per id for exactly this
+> reason, and asserts the row's position between the Authentication heading
+> and the one after it.
 
 ### The scheme list is read off the server, and nothing asks for it
 
@@ -770,6 +792,69 @@ credentials are treated differently from each other on purpose:
   in the change handler, so no code path can leave one behind. It also runs on
   load, so arriving with the box already clear cleans up.
 * **The HOBA private key is never stored under any setting.**
+
+## Getting a token, which this page cannot do and the one next door can
+
+RFC 7644 section 2 names an OAuth 2.0 bearer token as a SCIM authentication
+scheme and then says **nothing whatever** about where one comes from — no
+grant, no endpoint, not even a hint that a client should have an authorization
+server. So this page offered a field for a token and no route to one, which
+left the reader with a second tab, somebody else's workflow and a clipboard.
+
+The route is the **OAuth2 / OIDC workflow in this same application**, driven
+exactly as it always is. `client/src/token_handoff.js` is the whole of the
+mechanism and it is four moving parts:
+
+1. **`getAccessToken()`** (the *Get one from the OAuth2 / OIDC workflow* button
+   beside the token field) marks this page as waiting — `start({returnUrl,
+   label})` — and navigates to `/oauth2_oidc_1.html?tokenhandoff=1`.
+2. **`oauth2_oidc_1.js`** puts up a banner naming the waiting workflow, so a
+   page that is about to send a token somewhere else says so *before* a grant
+   is run on it. **Nothing there is pre-filled**, which is the difference from
+   the SD-JWT VC hand-off beside it in that file: that workflow arrives with an
+   authorization endpoint and a client id its own step 1 has just written,
+   while this one arrives from a page that knows a SCIM service root and
+   nothing at all about an authorization server. Guessing any of it would
+   produce a request that fails for a reason the reader did not choose.
+3. **`oauth2_oidc_2.js`** calls `offerTokenToHandoff()` from **all three** of
+   its token-bearing responses — the token endpoint, a Refresh Token grant, and
+   the authorization response itself, which is where an Implicit or Hybrid
+   flow's access token arrives and *only* there. It fills the slot and offers a
+   link back. **The browser is not sent back by itself**, which again differs
+   from the SD-JWT VC hand-off: that page is a waypoint in a numbered sequence,
+   whereas a reader who came here for a token is on the one page that shows
+   them what came back — the claims, the DPoP verdict, the whole exchange — and
+   yanking them off it the instant the response lands takes away the thing they
+   can only see there.
+4. **`applyHandedToken()`** runs from this page's `onload()`, after
+   `loadState()` (so a handed-back token is not overwritten by what storage
+   remembered) and after `refreshAuthControls()`. It fills the field and says
+   where the token came from.
+
+**The slot is `sessionStorage` and not `localStorage`, and that is the whole
+reason the opt-in above is still true.** A hand-off that wrote the token to
+`localStorage` would have stored a credential on the reader's behalf without
+asking: `scim_save_token` would still be clear and would now be a lie. Session
+storage is scoped to the tab and dies with it, the hand-off is a single
+same-tab navigation (the identity provider round trip leaves this tab and comes
+back to it), and `take()` **removes what it returns** — so the slot holds a
+token for the length of one page load. A delivered token also **expires** after
+half an hour, because a slot that was filled and never collected would
+otherwise be picked up by an unrelated visit an hour later, and a bearer token
+appearing in a field nobody filled is worse than no hand-off at all.
+
+`applyHandedToken()` collects a delivered token and **leaves an undelivered
+hand-off alone**. The difference matters: the workflow's round trip goes out to
+an identity provider and back to `oauth2_oidc_2.html` and never through this
+page, so this page loading with a hand-off still open means the reader came
+back by themselves — a Back button, a bookmark — and cancelling it there would
+break the flow they are still in the middle of.
+
+`tests/scim_page.js` section 8f drives the whole route with **no identity
+provider**: the button, the banner on page 1, `offerTokenToHandoff()` called
+directly (which is what the token endpoint's success handler does with
+`data.access_token`), the link back, the field, and then a reload — because
+with the save box clear the token must be in the field and nowhere else.
 
 ## Adding an endpoint
 

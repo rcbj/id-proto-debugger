@@ -177,6 +177,61 @@ const {
   text, value, waitFor, waitForStatus, waitForValue, waitForFilled, waitForJson
 } = require("./wait_for");
 
+// ---------------------------------------------------------------------------
+// STEP 3's CHECKS TABLE IS FILLED IN TWO PASSES, and reading it after the first
+// one is what failed the run of 2026-08-24T12-43-25.
+//
+// vc_issuance_3.js's verify() renders the rows it can decide from the
+// credential alone — typ, alg, vct, cnf, _sd_alg, the validity window, the
+// KB-JWT — and then appends two more when their promises settle: "Disclosure
+// digests", once every Disclosure has been hashed, and "Issuer signature",
+// once the issuer's keys have been FETCHED OVER THE NETWORK (the JWT VC issuer
+// metadata, then its jwks_uri) and the JWS verified against them.
+//
+// So the table is legitimately seven rows for as long as that fetch takes, and
+// a test that reads it the moment the credential appears reads seven rows,
+// none of them FAILED, and no signature verdict at all — the assertion then
+// reports "the page must verify the issuer signature ... Got: undefined",
+// which names a product bug for what is a network round-trip that had not
+// finished. The gap it used to win by is only the slack in `until.urlContains`
+// plus click()'s sleep, a few hundred milliseconds; on a machine running the
+// whole suite in a pool that slack is not enough.
+//
+// Both late rows are appended on the FAILURE path too — the catch pushes a row
+// saying why the signature could not be checked — so waiting for the pair is a
+// wait on the page having FINISHED, never a wait on it having succeeded: a
+// credential that genuinely does not verify still arrives here and still fails
+// the assertions below.
+// ---------------------------------------------------------------------------
+var CHECK_ROWS_SCRIPT =
+  "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
+      "tbody tr')).map(function (tr) {" +
+  "  var td = tr.querySelectorAll('td');" +
+  "  return { name: td[0].textContent.trim(), result: " +
+      "td[1].textContent.trim(), detail: td[2].textContent.trim() };" +
+  "});";
+
+// The two rows that arrive late. See the note above.
+var LATE_CHECKS = ["Disclosure digests", "Issuer signature"];
+
+async function readStepThreeChecks(driver, message) {
+  log.debug("Entering readStepThreeChecks().");
+  var rows = await waitFor(driver,
+    function () {
+      return driver.executeScript(CHECK_ROWS_SCRIPT);
+    },
+    function (got) {
+      var names = (got || []).map(function (c) { return c.name; });
+      return LATE_CHECKS.every(function (name) {
+        return names.indexOf(name) !== -1;
+      });
+    },
+    (message || "step 3") + " should finish its checks — the digests and " +
+        "the issuer signature are appended after their promises settle");
+  log.debug("Leaving readStepThreeChecks().");
+  return rows;
+}
+
 function severeErrors(driver) {
   log.debug("Entering severeErrors().");
   log.debug("Leaving severeErrors().");
@@ -826,13 +881,7 @@ async function stepThree(driver, context) {
       "step 3 should show the credential");
 
   // ---- what the page says --------------------------------------------------
-  var checks = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
-        "tbody tr')).map(function (tr) {" +
-    "  var td = tr.querySelectorAll('td');" +
-    "  return { name: td[0].textContent.trim(), result: " +
-        "td[1].textContent.trim(), detail: td[2].textContent.trim() };" +
-    "});");
+  var checks = await readStepThreeChecks(driver, "step 3");
   assert.ok(checks.length >= 7, "step 3 should report its checks, got " +
             checks.length + ".");
   var failed = checks.filter(function (c) { return c.result === "FAILED"; });
@@ -3700,13 +3749,9 @@ async function credentialOfferSameDevice(driver) {
     assert.ok(String(payload.sub).indexOf(signInUser) !== -1,
       "it should describe the user who signed in. Got: " + payload.sub);
   }
-  var failed = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
-        "tbody tr'))" +
-    "  .filter(function (tr) { return " +
-        "tr.querySelectorAll('td')[1].textContent.trim() === 'FAILED'; })" +
-    "  .map(function (tr) { return " +
-        "tr.querySelectorAll('td')[0].textContent.trim(); });");
+  var failed = (await readStepThreeChecks(driver, "the H.1 credential"))
+    .filter(function (c) { return c.result === "FAILED"; })
+    .map(function (c) { return c.name; });
   assert.strictEqual(failed.length, 0,
                      "no check should fail on the H.1 credential: " +
                      failed.join(", "));
@@ -4150,14 +4195,7 @@ async function deferredIssuance(driver) {
 // Step 3's verdicts, for a credential that a working issuer has just issued.
 async function assertStepThreeIsHappy(driver, label) {
   log.debug("Entering assertStepThreeIsHappy(). label=" + label);
-  var checks = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
-        "tbody tr')).map(function (tr) {" +
-    "  var td = tr.querySelectorAll('td');" +
-    "  return { name: td[0].textContent.trim(), result: " +
-        "td[1].textContent.trim()," +
-    "           detail: td[2].textContent.trim() };" +
-    "});");
+  var checks = await readStepThreeChecks(driver, label);
   assert.ok(checks.length >= 7, "step 3 should report its checks, got " +
             checks.length + ".");
   var failed = checks.filter(function (c) { return c.result === "FAILED"; });
