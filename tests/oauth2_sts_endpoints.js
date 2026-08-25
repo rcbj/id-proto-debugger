@@ -43,7 +43,7 @@ var log = bunyan.createLogger({ name: 'oauth2_sts_endpoints',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var stsBase = stsUrl.replace(/\/sts\/?$/, "");
 var metadataUrl = process.env.OAUTH_METADATA_URL || (stsBase +
     "/.well-known/oauth-authorization-server");

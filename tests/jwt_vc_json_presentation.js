@@ -55,7 +55,7 @@ var waitTime = appconfig.waitTime || 15000;
 // arrived at yet. Four times the field budget for anything that crosses a page.
 var stepWait = waitTime * 4;
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 // The mock hosts the issuer and the verifier on one service.

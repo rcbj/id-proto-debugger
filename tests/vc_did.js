@@ -71,7 +71,7 @@ const stsSuite = paths.requireSharedModule(
    paths.mockStsModule("bbs2023.js") || ""],
   "the STS's bbs-2023 cryptosuite");
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 
@@ -86,9 +86,13 @@ const PAIRS = [
    format: "ldp_vc" }
 ];
 
-// http, because these stacks have no TLS. did:web mandates https and this is
-// the same deviation the pages take (allowHttp), not a shortcut peculiar to the
-// test.
+// `allowHttp` PERMITS plain http; it does not select it. resolve() tries the
+// https URL did:web mandates first and falls back to the plain one only if that
+// fails, so this one constant is right whichever scheme the issuer is on — and
+// the issuer moved, on 2026-08-25, when the mock began binding its main port as
+// TLS. It is the same option the pages pass, not a shortcut peculiar to the
+// test; it stays true because a stack serving the issuer over plain http is
+// still something somebody runs.
 const RESOLVE = { allowHttp: true };
 
 function issuerOrigin() {

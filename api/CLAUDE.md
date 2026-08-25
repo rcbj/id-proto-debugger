@@ -34,6 +34,50 @@ A fifth setting is not a limit but an identity: **`userAgent`**, default `Identi
 
 `tests/api_connect_timeout.js` covers this (node only, never skipped), and the case that earns its keep is the second one: a host that **connects and then says nothing** must still be waiting well past the connect budget, failing only at `callTimeout`. That assertion fails against an `AbortSignal` implementation and passes against this one. It also checks a stalled TLS handshake, that wrapping a guarded agent keeps the guard's refusal (and keeps it immediate), that an oversized response is refused while the same body is accepted with no cap set (the control that makes the first half mean something, given axios's unlimited default), and — by reading `server.js` — that every axios call site carries all four limits, the User-Agent, and no bare `https.Agent`, which is the only thing that would catch a *new* call site added without them.
 
+## `sts_truststore.sh`: the image's entrypoint, and it is a truststore rather than a switch
+
+The mock STS serves its **main port over TLS** in this project's test stacks
+(`STS_HTTPS=true` on the `sts` service in `local-tests.yml`,
+`docker-compose-run-tests.yml` and `keycloak-tests.yml`). That is not a
+preference: the RFC 9700 pass is a **trust realm** on that one instance now
+rather than a second container, a realm binds no socket of its own, and the pass
+is only honest over https — requirement 8.1 is that every configured endpoint is
+https and the client under test enforces it. `docs/rfc9700.md` argues all of it.
+
+This service reaches that port for SCIM, for the WS-Trust / SAML / OIDC proxying
+the browser asks it to do, and for the Kerberos MS-KKDCP relay, and every one of
+those goes through `outboundHttpsAgent()`, **which verifies**. The certificate
+over there is **self-signed and regenerated on every start**, so nothing can hold
+an anchor for it ahead of time — it cannot be committed, baked into this image,
+or installed by whoever ran the launcher, because it does not exist until the
+mock is up. Without one, those calls fail as `DEPTH_ZERO_SELF_SIGNED_CERT`: a
+message that names a certificate and never names the mock.
+
+So `api/sts_truststore.sh` is this image's `ENTRYPOINT`. When `STS_CERT_URL` is
+set it fetches the PEM before the server starts and points
+`NODE_EXTRA_CA_CERTS` at it; then it `exec "$@"`, so `CMD` is unchanged and so is
+`docker-compose-coverage.yml`'s `command:` override that replaces it with c8.
+**It is a no-op when `STS_CERT_URL` is unset**, which is what lets it be the
+entrypoint rather than a command override in two compose files: a deployed api
+has no mock STS, sets nothing, and starts exactly as it did.
+
+Two things about it are decisions rather than details:
+
+* **It ADDS an anchor; it does not turn verification off.**
+  `NODE_TLS_REJECT_UNAUTHORIZED=0` would have been one line and would also have
+  disarmed `api_ssrf_guard.js`, `api_tls_probe.js` and `url_safety_schemes.js` —
+  three test files whose subject is a certificate being *refused*. A test that
+  cannot fail is worse than a test that is missing.
+* **A failed fetch is a WARNING, not a fatal.** This service has a great deal to
+  do that has nothing to do with the mock, and a stack whose mock never came up
+  should fail on the test that needed it, with that test's message, rather than
+  on an api container that would not start. The warning line is what a reader
+  greps for when a dozen STS-backed jobs report a certificate error at once.
+
+The fetch itself is made without verification (`curl -k`) — the ordinary
+bootstrap for a per-start certificate, and the same act as trusting the PEM that
+endpoint hands back, done one step earlier.
+
 ## The HTTP trace on `POST /token`: what only this service can see
 
 The OAuth2/OIDC workflow's token exchange pane has an **HTTP tab** showing the Token Request and its response as they actually went — method, URL, headers and body each way, and how long the far end took. On the browser-direct setting the page records that itself. On the **proxied** setting, which is that pane's default because a great many identity providers refuse a browser-origin Token Request outright, the request is made *here*, and the browser is not party to it: all it ever receives is the parsed token payload. So `POST /token` hands back what it saw, and it is the only thing that can.
@@ -474,6 +518,52 @@ Two things about the change are worth keeping:
 
 A local run outside Docker needs `cp common/xmldsig.js api/xmldsig.js`, the
 same as `api/data.js`; `clean-artifacts.sh` lists both.
+
+## The artifact back-channel answers TWO protocol versions
+
+`POST /samlartifactctx` stashes what will be needed to resolve an artifact later
+— the resolution URL, the SP key pair, the signature algorithm and any
+WS-Addressing headers — and hands back the `art:<id>` handle the browser carries
+to the identity provider. Since 2026-08-25 it also takes `samlVersion`, and the
+difference it selects is not cosmetic:
+
+| | SAML 2.0 | SAML 1.1 |
+|---|---|---|
+| the endpoint is | an Artifact Resolution Service | a **SAML responder** (`saml-bindings-1.1` section 3.1) |
+| the message is | `<samlp:ArtifactResolve>` | `<samlp:Request>` carrying `<AssertionArtifact>` |
+| the id attribute is | `ID` | **`RequestID`** |
+| `ds:Signature` goes | after `<Issuer>` | **first** — a 1.1 request has no `<Issuer>` at all, and its schema's sequence is `RespondWith*`, `ds:Signature?`, then the query |
+| the answer wraps | an `<ArtifactResponse>` around the `<Response>` | the `<Response>` **itself**, built at resolution time so it can carry `InResponseTo` |
+| the artifact is | 44 bytes, type `0x0004`, standing for a MESSAGE | 42 bytes, type `0x0001`, standing for an ASSERTION |
+
+`buildArtifactResolveMessage()` is the fork and returns the reference URI with
+the message, because `signEnveloped()` searches `ID`, `AssertionID` and `Id` and
+finds none of them on a SAML 1.1 request — told nothing, a signer of that shape
+INVENTS an id and points the reference at what it invented. It verifies, and it
+is not the id a SAML 1.1 responder looks for.
+
+Two further changes came with it, and both are improvements to the 2.0 path as
+well:
+
+* **`privateKeyPem` is no longer required.** Neither version requires this
+  message be signed, and SAML 1.1 has no request document to sign in the first
+  place. The refusal used to make "the service provider generated no key pair"
+  fail HERE, in a call whose error text names `privateKeyPem` and nothing else,
+  several steps before anything SAML-shaped happens. `resolveArtifact()` signs
+  when there is a key and says out loud when there is not.
+* **`handleSamlAcs()` reads `TARGET` as well as `RelayState`.** `RelayState` did
+  not exist before SAML 2.0; the 1.1 browser profiles round-trip `TARGET`, and
+  the binding's guarantee that it comes back byte for byte is the whole of what
+  this endpoint needs from it. Reading only `RelayState` made every 1.1 artifact
+  resolution fail with *no artifact context*, which reads as an expired stash
+  rather than as a parameter this handler never looked at.
+
+`extractResponseFromArtifactResponse()` now selects on either protocol
+namespace. Note SAML 1.1's is `urn:oasis:names:tc:SAML:1.0:protocol` and that is
+not a typo: the schemas were never renamed between 1.0 and 1.1 — the version
+travels in `MajorVersion`/`MinorVersion` attributes instead.
+
+See `docs/saml11.md`.
 
 ## Dependency overrides
 

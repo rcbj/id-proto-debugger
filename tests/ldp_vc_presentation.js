@@ -61,7 +61,7 @@ var waitTime = appconfig.waitTime || 20000;
 // 2113ms, which reads as the wallet refusing to present. Four times the field
 // budget for anything that crosses a page or derives a proof.
 var stepWait = waitTime * 4;
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 var verifierBase = process.env.OID4VP_VERIFIER_URL || issuerBase;

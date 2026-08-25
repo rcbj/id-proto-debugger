@@ -27,7 +27,7 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: keycloak
       KC_HEALTH_ENABLED: "true"
   # WS-Trust STS (mock) for remote-run-tests.sh against a local dev site. The
-  # host-run browser / local api reach it at http://localhost:8081/sts.
+  # host-run browser / local api reach it at https://localhost:8081/sts.
   sts:
     image: rcbj/sts
     hostname: sts
@@ -45,6 +45,22 @@ services:
       # unset it arrives empty and sts/server.js falls back to its own default, which
       # is right for a local dev site.
       - OID4VCI_WALLET_URL=${OID4VCI_WALLET_URL}
+      # ---------------------------------------------------------------------
+      # THE MAIN PORT IS HTTPS HERE TOO, for the reason local-tests.yml and
+      # docker-compose-run-tests.yml give at length: the RFC 9700 pass is a
+      # TRUST REALM on this one instance now (`/realm/rfc9700/...`) rather than
+      # a second container, a realm binds no socket of its own, and that pass is
+      # only honest over TLS — requirement 8.1 is that every configured
+      # endpoint is https. So the scheme belongs to the process.
+      #
+      # It matters more on THIS stack than on the other two, not less. A
+      # deployed target is an https page, and Chrome will not let one fetch a
+      # plain-http service even on loopback without a mixed-content complaint —
+      # so the mock being https removes an exception rather than adding one.
+      # What it costs is the certificate: self-signed, regenerated every start,
+      # so remote-run-tests.sh installs it with trustStsCertificate() before it
+      # builds a browser.
+      - STS_HTTPS=true
     build:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.

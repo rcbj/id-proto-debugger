@@ -385,6 +385,9 @@ wide rather than scrolling inside it.
 | **SPIFFE ID** | the grammar, offline |
 | **Exchange** / **Operations History** | both halves of what the api was asked for, and a log of every call |
 
+Every one of them collapses, and one switch at the top does all of them — see
+*Every pane collapses* below.
+
 ### One pane owns the settings
 
 There was a **Trust Domain** pane at the top of this page and there is not any
@@ -441,6 +444,115 @@ With the prose folded, the **tooltip is the only explanation on screen for a
 control somebody is looking straight at**, so every field and every button
 carries one — the readouts included, since a box whose contents arrived from
 somewhere else is exactly where "where did this come from" gets asked.
+
+**The field NAMES carry it too**, and that is the other half rather than a
+duplicate. A reader scanning a pane reads the labels, and on this page a label
+is a `<label>` with its own hit area *beside* the box rather than on it — so a
+tooltip living only on the control is one that is not there when the pointer is
+over the word that raised the question. Each label carries the same string its
+control carries, and `spiffe_page.js` asserts both that every label has one and
+that the two texts are **identical**: a tooltip improved on the control and
+left alone on the label is a page explaining one field two different ways
+depending on where the pointer is.
+
+### Every pane collapses, and one switch does all of them
+
+The page is nine panes long, so the answer somebody wants is routinely four
+panes below the one they are working in. Every pane therefore shuts, using the
+**shared `.dbg-*` chrome in `css/debugger.css`** that twenty-odd pages here
+already link — the same clickable title, the same triangle and the same
+top-of-page switch as the OAuth2 / OIDC workflow — rather than a fourth
+implementation of it. With every pane collapsed the page is **1,657px** against
+3,416px open, which is a table of contents.
+
+The markup contract is `scim.html`'s, which is the Kerberos pages':
+
+```html
+<div class="spiffe-pane dbg-pane" id="pane_x">
+  <legend class="dbg-legend" id="spiffe_x_expand_button">Title</legend>
+  <fieldset name="spiffe_x_fieldset" id="spiffe_x_fieldset"
+            style="display: block;">…</fieldset>
+</div>
+```
+
+Four things about it are load-bearing.
+
+**The pane is a `<div>` and the collapse target is the `<fieldset>` inside
+it**, because the title has to stay visible when the pane is shut and so cannot
+live inside the element that is hidden. That moves the `min-inline-size: 0` the
+stylesheet header describes onto the **inner** fieldset — it is that element
+which still computes a min-content width from a base64 certificate, and putting
+the rule on the wrapping `div` would do nothing.
+
+**The legend and the fieldset are paired by ID** — `x_expand_button` drives
+`x_fieldset`, wired in `wirePanes()` — rather than by an inline
+`onclick="spiffe.togglePane('x_fieldset')"`. The inline spelling writes the id
+twice and fails silently when the two drift: a pane title that does nothing at
+all. Here a drifted pair is a console warning, and this page's console is
+asserted clean, so it is a failure rather than a shrug.
+
+**`setAllPanes()` discovers the fieldsets off the DOM** instead of holding a
+list of ids. Several workflows here keep the list, and every one of those is
+something a new pane has to be remembered into — an omission whose only symptom
+is the single pane the switch skips.
+
+**`style="display: block"` in the markup is not decoration.**
+`css/debugger.css` turns the triangle with
+`.dbg-pane:has(fieldset[style*="display: none"])`, which reads the **inline**
+style, so a pane that started with no inline display at all would show an
+expanded triangle over a pane the switch had never touched. For the same
+reason `spiffe_page.js` asserts the pane's **height** rather than its triangle:
+the marker is a CSS rule and can perfectly well turn over a pane that is still
+on the screen.
+
+Two smaller notes. `css/debugger.css` is linked **before** `css/spiffe.css`, so
+where the two disagree this page's own sheet wins and the tight borders,
+padding and margins of the density pass survive; only the behaviour is
+borrowed. And `dbg_toggle_all` is on `EDITABLE_OUTSIDE_CONFIG` in
+`spiffe_page.js` rather than in the Configuration Parameters pane — it
+configures nothing, sends nothing and is not saved, and a control that changes
+what is on the screen has to sit above the panes it opens.
+
+### Every box is sized to what it holds
+
+The page is **3,355px** tall with nothing done on it, and it was 5,152px
+before this build. None of the difference is content: the panes, the prose and
+the forty-nine methods are exactly what they were. What was removed was white
+space, in two kinds.
+
+**The first is the readouts, and it is most of it.** Seventeen of the boxes on
+this page are `<textarea>`s and most of them are *answers* — the two Exchange
+readouts, the SVID Inspector's output, the certification request's three, the
+held identity's two. On a page nobody has done anything on yet **every one of
+those is empty**, and each was reserving eight or ten rows for an answer it did
+not have: a hundred and eighty pixels of nothing between two panes a reader is
+trying to compare. Each now declares `data-min-rows` and `data-max-rows`, opens
+at the minimum, and is sized to its content by `fitTextarea()` — from
+`setVal()`, which is the single write path for everything this page renders,
+from an `input` listener on the boxes somebody types into, and from
+`mountAutoFit()` at load, which covers a value restored from storage. The
+ceiling is what the old fixed `rows` was really for and it is kept: a
+two-hundred-line gRPC answer scrolls inside its own box rather than pushing
+every pane below it out of sight.
+
+**The second is the margins**, and there is one trap in it worth recording,
+because it is the same one `css/spiffe.css` already carries a comment about for
+`.spiffe-field`. Bootstrap's `input[type="text"] { margin-bottom: 10px }` is
+specificity (0,1,1) and a bare `.spiffe-status` is (0,1,0), so the status line
+kept a 10px bottom margin whatever this sheet said — and in the four panes
+where a status line is the **only** thing in its flex row, that made a 20px row
+30px tall. The fix is `input.spiffe-status`, naming the element the way
+`.spiffe-field` had to.
+
+`spiffe_page.js` asserts all of it, and where it asserts each half matters.
+**On a freshly loaded page** (`everyBoxOpensAtItsMinimum()`, called from
+`open()`) every textarea must declare both bounds, must open at no more than
+four rows, and must already be fitted to whatever it holds — checked there
+because by the time the protocol sections below have run, every one of those
+boxes has something in it, which is the state that hides this. **After the
+inspector has written one** (section 6) the output box must have *grown* to the
+answer, which is what tells a box that fits from a box that was simply born
+small.
 
 ### Why there is a CSR builder
 

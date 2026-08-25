@@ -50,7 +50,7 @@ var waitTime = appconfig.waitTime;
 
 const STS = (process.env.OID4VCI_ISSUER_URL ||
              (process.env.WSTRUST_STS_URL ||
-              "http://localhost:8081/sts").replace(/\/sts\/?$/, ""));
+              "https://localhost:8081/sts").replace(/\/sts\/?$/, ""));
 const CLIENT_ID = "webauthn-mfa-test";
 // A username unique to this run. The STS remembers enrolled keys per username
 // for the life of its process, while a virtual authenticator lives only as long
@@ -177,9 +177,13 @@ async function test() {
     options.addArguments("--headless=new");
   }
   options.addArguments("--no-sandbox", "--disable-dev-shm-usage");
-  // The ceremony happens on the STS's own origin, which in the containerized
-  // stack is http://sts:8081 — not a secure context, where
-  // navigator.credentials does not exist at all. See tests/browser_flags.js.
+  // The ceremony happens on the STS's own origin. That origin is https since
+  // 2026-08-25 (STS_HTTPS=true on the `sts` service — the RFC 9700 pass is a
+  // trust realm on that instance now and a realm binds no scheme of its own),
+  // so it IS a secure context and the relaxation this call used to be needed
+  // for is a no-op. The call stays because the same helper is what hands Chrome
+  // the mock's SPKI pin, without which every page on that origin meets a
+  // certificate interstitial instead. See tests/browser_flags.js.
   browserFlags.addBrowserAccessFlags(options, STS);
   const prefs = new logging.Preferences();
   prefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);

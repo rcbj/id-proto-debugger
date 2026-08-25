@@ -128,7 +128,7 @@ generateWaltidVerifierKey
 check_return_code $?
 renderWaltidConfig "${CURRENT_DIR}"
 check_return_code $?
-EXTENSION_AUTOARM_ORIGINS="http://sts:8081" \
+EXTENSION_AUTOARM_ORIGINS="https://sts:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # the browser runs inside the compose network
 check_return_code $?
 

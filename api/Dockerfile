@@ -119,4 +119,15 @@ ARG COVERAGE=false
 RUN if [ "$COVERAGE" = "true" ]; then npm install -g c8; fi
 
 EXPOSE 4000
+
+# ---------------------------------------------------------------------------
+# The entrypoint installs the mock STS's certificate in node's truststore when
+# STS_CERT_URL names one, and does nothing at all when it does not — see
+# api/sts_truststore.sh for why that cannot be done at build time. It ends in
+# `exec "$@"`, so CMD below is unchanged and so is docker-compose-coverage.yml's
+# `command:` override, which replaces it with c8.
+# ---------------------------------------------------------------------------
+COPY api/sts_truststore.sh /usr/src/app/sts_truststore.sh
+RUN chmod +x /usr/src/app/sts_truststore.sh
+ENTRYPOINT [ "/usr/src/app/sts_truststore.sh" ]
 CMD [ "npm", "start" ]

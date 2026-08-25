@@ -227,7 +227,15 @@ async function test() {
       "--disable-features=BlockInsecurePrivateNetworkRequests," +
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
 
-  const loggingPrefs = new logging.Preferences();
+  // The mock STS serves https on a certificate it generated at startup (see
+  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
+  // makes the whole argument. This file builds its Chrome options by hand
+  // rather than through addBrowserAccessFlags(), which is why the call is here
+  // instead of arriving with the rest.
+  browserFlags.addStsTrustFlags(options);
+
+    const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
   const driver = await new Builder()

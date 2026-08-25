@@ -882,7 +882,7 @@ async function test() {
     assert(flow, "OIDC_FLOW=\"" + flowKey + "\" is not one of: " +
            Object.keys(FLOWS).join(", ") + ".");
 
-    const stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+    const stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
     const stsBase = stsUrl.replace(/\/sts\/?$/, "");
     const discovery_endpoint = process.env.DISCOVERY_ENDPOINT ||
                                (stsBase + "/.well-known/openid-configuration");

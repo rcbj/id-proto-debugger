@@ -284,7 +284,7 @@ async function test() {
         .setLoggingPrefs(loggingPrefs).build();
 
   try {
-    const stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+    const stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
     const stsBase = stsUrl.replace(/\/sts\/?$/, "");
     const discovery = process.env.DISCOVERY_ENDPOINT ||
                       (stsBase + "/.well-known/openid-configuration");

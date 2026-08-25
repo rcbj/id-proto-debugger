@@ -118,7 +118,59 @@ function addBrowserAccessFlags(options, baseUrl) {
                          origin);
     options.addArguments("--user-data-dir=" + profile);
   }
+
+  // (4) The mock STS's key, when a run has one. See addStsTrustFlags() below
+  // for why it is a pin rather than --ignore-certificate-errors, and why it
+  // adds nothing at all when STS_SPKI_PIN is unset.
+  addStsTrustFlags(options);
   log.debug("Leaving addBrowserAccessFlags().");
+  return options;
+}
+
+// (4) THE MOCK STS'S CERTIFICATE, AS AN EXACT KEY PIN.
+//
+// That service serves its main port over TLS in every stack here
+// (STS_HTTPS=true in local-tests.yml, docker-compose-run-tests.yml and
+// keycloak-tests.yml), because the RFC 9700 pass is a TRUST REALM on the one
+// instance now rather than a second container — a realm binds no socket of its
+// own — and that pass is only honest over https, since requirement 8.1 is that
+// every configured endpoint is https and the client under test enforces it.
+//
+// The certificate is SELF-SIGNED AND REGENERATED ON EVERY START of that
+// service, so no browser profile, image or CA bundle can hold an anchor for it:
+// it does not exist until the mock is up. common/common.sh's
+// trustStsCertificate() fetches it once the service answers and exports
+// STS_SPKI_PIN — the base64 SHA-256 of its SubjectPublicKeyInfo — and this is
+// what puts that in front of Chrome.
+//
+// --ignore-certificate-errors-spki-list TRUSTS THAT ONE KEY AND NOTHING ELSE.
+// It is a truststore of a single entry: a different self-signed certificate,
+// including the one that same mock will generate on its next start, still meets
+// an interstitial. The blunt --ignore-certificate-errors was rejected for the
+// reason a suite like this one exists — url_safety_schemes.js, api_tls_probe.js
+// and api_ssrf_guard.js are about certificates being REFUSED, and a flag that
+// accepts every certificate makes those pass without testing anything.
+//
+// A NO-OP WHEN THE PIN IS UNSET, which is every run against a mock on plain
+// http and every job that never touches one. Nothing is added to the command
+// line, so a browser that had no reason to meet this certificate is exactly the
+// browser it was before.
+//
+// It is called from addBrowserAccessFlags() below, so the twenty-odd tests that
+// use that helper get it without an edit. The four that build their Chrome
+// options by hand (wstrust.js, wstrust_operation_history.js,
+// oauth2_metadata_rfc8414.js, saml11_sso.js) call it directly, and a fifth,
+// rfc9700_flows.js, calls it in place of the blunt flag it used to carry.
+function addStsTrustFlags(options) {
+  log.debug("Entering addStsTrustFlags().");
+  var pin = String(process.env.STS_SPKI_PIN || "").trim();
+  if (!pin) {
+    log.debug("Leaving addStsTrustFlags(). No STS_SPKI_PIN; nothing added.");
+    return options;
+  }
+  options.addArguments("--ignore-certificate-errors-spki-list=" + pin);
+  log.info("Trusting the mock STS's public key by SPKI pin.");
+  log.debug("Leaving addStsTrustFlags().");
   return options;
 }
 
@@ -162,5 +214,6 @@ function addWebCryptoEd25519Flags(options) {
 module.exports = {
   addBrowserAccessFlags: addBrowserAccessFlags,
   addWebCryptoEd25519Flags: addWebCryptoEd25519Flags,
+  addStsTrustFlags: addStsTrustFlags,
   originOf: originOf
 };

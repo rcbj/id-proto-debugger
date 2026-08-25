@@ -12,7 +12,7 @@
  * above is written to catch, in the halfway state where a page uses one
  * family's classes and loads the other's sheet.
  *
- * TWO LAYOUT CONSTRAINTS, and both are already-paid-for lessons.
+ * THREE LAYOUT CONSTRAINTS, and all three are already-paid-for lessons.
  *
  * The first is the one every page here that renders somebody else's values has
  * had to learn: this page shows base64 DER certificates, base64url JWT-SVIDs
@@ -28,19 +28,32 @@
  * wide rather than scrolling inside it. `min-inline-size: 0` on the pane is
  * what stops that, and it has to be on the fieldset — putting it on the child
  * does nothing.
+ *
+ * The third is the whole reason the numbers below are as small as they are:
+ * this page is LONG — nine panes, forty-nine methods and seventeen text boxes
+ * — so every margin here is paid ten times over, and the page was 5,152px
+ * tall before this sheet was tightened and is 3,355px after it. Nothing was
+ * cut to get there. Two rules follow. Spacing is in single-figure pixels
+ * throughout, and a new one should match its neighbours rather than a habit
+ * from another sheet. And a `<textarea>` gets its height from what is IN it —
+ * `data-min-rows` / `data-max-rows` in the markup and `fitTextarea()` in the
+ * bundle — never from a fixed `rows` chosen for the biggest answer it might
+ * one day hold, because most of these boxes are empty most of the time and an
+ * empty ten-row box is ten rows of white space. `tests/spiffe_page.js` asserts
+ * both halves; see docs/spiffe.md.
  */
 
 .spiffe-return {
   float: right;
-  margin: 4px 0 0;
+  margin: 2px 0 0;
   font-size: 0.95em;
 }
 
-.spiffe-title { margin-bottom: 6px; margin-top: 2px; line-height: 1.25; }
+.spiffe-title { margin-bottom: 2px; margin-top: 0; line-height: 1.2; }
 
 .spiffe-intro {
   max-width: 900px;
-  margin-bottom: 10px;
+  margin: 2px 0 4px;
 }
 
 /* The explanation of why the two gRPC surfaces are authenticated in opposite
@@ -52,30 +65,62 @@
 .spiffe-callout {
   background: #f6f6fa;
   border-left: 3px solid #12107c;
-  padding: 8px 12px;
+  padding: 2px 10px;
 }
 
+/* ---------------------------------------------------------------------------
+   THE PANES, and why they carry TWO class names.
+
+   `dbg-pane` / `dbg-legend` / `dbg-toggle` are the shared collapse chrome in
+   css/debugger.css that twenty-odd pages here link — the clickable title, the
+   triangle that tracks the real state, and the one switch that opens or shuts
+   the lot. This page links that sheet FIRST and its own second, so where the
+   two disagree the rules below win: the border, the padding and the margins
+   stay the tight ones the density pass arrived at, and only the behaviour is
+   borrowed. The legend keeps this workflow's colour and size the same way —
+   `.spiffe-pane > legend` is (0,1,1) and `.dbg-legend` is (0,1,0), so it wins
+   on the properties it names whatever order the sheets load in, and inherits
+   the cursor, the block display and the triangle from the ones it does not.
+
+   THE PANE IS A `<div>` AND THE COLLAPSE TARGET IS THE `<fieldset>` INSIDE IT.
+   That is the markup contract the rest of the tree uses and it is not
+   arbitrary: the title has to stay visible when the pane is shut, so it cannot
+   be inside the element that is hidden. It also moves the `min-inline-size: 0`
+   the header describes onto the INNER fieldset, which is the element that
+   still computes a min-content width from a base64 certificate.
+   ------------------------------------------------------------------------ */
 .spiffe-pane {
   border: 1px solid #ddd;
   border-radius: 4px;
-  padding: 10px 14px 14px;
-  margin-bottom: 14px;
+  padding: 4px 10px 6px;
+  margin: 0 0 6px;
   background: #fcfcfd;
-  /* See the header. Without this one long base64 string makes the fieldset
-     itself wider than the viewport, and no amount of overflow on a child
-     brings it back. */
+  min-inline-size: 0;
+}
+
+/* See the header. Without this one long base64 string makes the fieldset
+   itself wider than the viewport, and no amount of overflow on a child brings
+   it back — and it has to be on the fieldset, which is now the inner element
+   rather than the pane. */
+.spiffe-pane > fieldset {
   min-inline-size: 0;
 }
 
 .spiffe-pane > legend {
   width: auto;
   border: 0;
-  margin-bottom: 4px;
-  padding: 0 6px;
+  margin: 0 0 2px;
+  padding: 0;
   font-size: 15px;
   font-weight: bold;
   color: #12107c;
   line-height: 1.2;
+}
+
+/* The collapse-all switch row. css/debugger.css draws the switch itself; this
+   only takes the margins down to the rest of the page's. */
+.spiffe-pane-controls {
+  margin: 2px 0 4px;
 }
 
 /* THE ELEMENT-AND-ATTRIBUTE SELECTOR OUTRANKS A BARE CLASS, so the class has to
@@ -118,14 +163,14 @@ textarea.spiffe-small { font-size: 11px; }
   white-space: pre;
   overflow-x: auto;
   background: #fbfbfd;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
 }
 
 .spiffe-label {
   display: block;
   font-weight: bold;
-  margin-top: 6px;
-  margin-bottom: 2px;
+  margin-top: 3px;
+  margin-bottom: 1px;
   font-size: 12px;
 }
 
@@ -133,7 +178,7 @@ textarea.spiffe-small { font-size: 11px; }
   display: inline-block;
   font-size: 12px;
   font-weight: normal;
-  margin: 4px 12px 4px 0;
+  margin: 2px 12px 2px 0;
 }
 
 .spiffe-grid {
@@ -146,7 +191,7 @@ textarea.spiffe-small { font-size: 11px; }
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 8px 0 4px;
+  margin: 4px 0 2px;
   flex-wrap: wrap;
 }
 
@@ -176,6 +221,12 @@ textarea.spiffe-small { font-size: 11px; }
   box-sizing: border-box;
 }
 
+/* The same specificity trap `.spiffe-field` above records, and here it costs
+   height rather than spacing: bootstrap's `input[type="text"] { margin-bottom:
+   10px }` outranks a bare class, and a status line is often the ONLY thing in
+   its flex row — so that margin made a 20px row 30px tall in four panes. */
+input.spiffe-status { margin-bottom: 0; }
+
 .spiffe-grow { flex: 1 1 320px; min-width: 220px; }
 
 .spiffe-ok { color: #2e7d32; }
@@ -192,7 +243,7 @@ textarea.spiffe-small { font-size: 11px; }
 .spiffe-note {
   font-size: 12px;
   color: #555;
-  margin: 4px 0 6px;
+  margin: 2px 0 3px;
   max-width: 900px;
 }
 
@@ -202,8 +253,8 @@ textarea.spiffe-small { font-size: 11px; }
   background: #f6f6fa;
   border: 1px solid #e4e4ec;
   border-radius: 3px;
-  padding: 6px 8px;
-  margin: 6px 0;
+  padding: 3px 6px;
+  margin: 3px 0;
 }
 
 .spiffe-table {
@@ -211,13 +262,13 @@ textarea.spiffe-small { font-size: 11px; }
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 12px;
-  margin: 6px 0;
+  margin: 3px 0;
 }
 
 .spiffe-table th,
 .spiffe-table td {
   border: 1px solid #e0e0e6;
-  padding: 3px 6px;
+  padding: 2px 5px;
   text-align: left;
   vertical-align: top;
 }
@@ -256,7 +307,7 @@ textarea.spiffe-small { font-size: 11px; }
 .spiffe-history-empty {
   font-size: 12px;
   color: #666;
-  margin: 6px 0;
+  margin: 3px 0;
 }
 
 /* ---------------------------------------------------------------------------
@@ -275,8 +326,8 @@ textarea.spiffe-small { font-size: 11px; }
    ------------------------------------------------------------------------ */
 .spiffe-group {
   border-top: 1px solid #e4e4ec;
-  padding-top: 6px;
-  margin-top: 10px;
+  padding-top: 3px;
+  margin-top: 5px;
   /* The pane's own rule, repeated: a base64 trust anchor pasted into the
      SPIRE Server API group is an unbroken string, and a grid track sized to
      min-content is exactly how one widens everything above it. */
@@ -285,14 +336,14 @@ textarea.spiffe-small { font-size: 11px; }
 
 .spiffe-group:first-of-type {
   border-top: 0;
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .spiffe-group-title {
   font-size: 13px;
   font-weight: bold;
   color: #12107c;
-  margin: 0 0 4px;
+  margin: 0 0 2px;
   line-height: 1.2;
 }
 
@@ -313,14 +364,15 @@ textarea.spiffe-small { font-size: 11px; }
    result nobody sees.
    ------------------------------------------------------------------------ */
 .spiffe-more {
-  margin: 6px 0;
+  margin: 2px 0;
 }
 
 .spiffe-more > summary {
   cursor: pointer;
   color: #31708f;
   font-size: 12px;
-  padding: 2px 0;
+  padding: 0;
+  line-height: 1.35;
 }
 
 .spiffe-more > summary:hover {

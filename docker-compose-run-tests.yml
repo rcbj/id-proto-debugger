@@ -63,6 +63,22 @@ services:
     image: rcbj/api
     environment:
       - CONFIG_FILE=./env/docker-tests.js
+      # ---------------------------------------------------------------------
+      # THE MOCK STS'S CERTIFICATE, IN THIS SERVICE'S TRUSTSTORE.
+      #
+      # That mock serves its main port over TLS on this stack (see STS_HTTPS on
+      # the `sts` service for why the scheme moved to the process when the RFC
+      # 9700 pass became a trust realm), on a self-signed certificate it
+      # regenerates every start — so nothing can have an anchor for it ahead of
+      # time. api/sts_truststore.sh, this image's entrypoint, fetches it from
+      # this URL before the server starts and points NODE_EXTRA_CA_CERTS at it.
+      # Unset, the entrypoint does nothing, which is what a deployed api wants.
+      #
+      # This is a truststore addition, not a verification switch: every other
+      # certificate this service meets is still verified, which is what
+      # api_ssrf_guard.js, api_tls_probe.js and url_safety_schemes.js assert.
+      # ---------------------------------------------------------------------
+      - STS_CERT_URL=https://sts:8081/tls/server-certificate
     build:
       context: .
       dockerfile: api/Dockerfile
@@ -74,6 +90,11 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-}
     depends_on:
       keycloak:
+        condition: service_healthy
+      # So the entrypoint's certificate fetch has something to fetch from. It
+      # retries regardless (see api/sts_truststore.sh), but depends_on turns the
+      # ordinary case into no retries at all.
+      sts:
         condition: service_healthy
     healthcheck:
       test: curl -X GET http://localhost:4000
@@ -169,6 +190,33 @@ services:
       # something that is not the problem. This one is well inside it and is
       # the directory the volume below is mounted at on both sides.
       - STS_SPIFFE_SERVER_SOCKET=/spire-sock/server.sock
+      # ---------------------------------------------------------------------
+      # THE MAIN PORT IS HTTPS, AND THE WHOLE SUITE TALKS TO IT THAT WAY.
+      #
+      # This replaced a SECOND mock instance (`sts-rfc9700`, deleted). RFC 9700
+      # mode used to need one: `oauth2.rfc9700` derives `global.https` in that
+      # service, so it binds 8081 as TLS, and one process could not serve the
+      # permissive pass and the compliant one. Since mock-sts marks that flag
+      # `realmRuntime` it can be set on a TRUST REALM — a realm binds no socket,
+      # so only the mode's checks change — and `/realm/rfc9700/...` is the
+      # compliant server while `/...` stays permissive. See common/common.sh's
+      # configureStsRfc9700Realm().
+      #
+      # WHAT A REALM CANNOT BRING WITH IT IS A SCHEME. The port is HTTPS or it
+      # is not, for every realm at once, and the RFC 9700 pass is only honest
+      # over TLS — requirement 8.1 is that every configured endpoint is https,
+      # and the debugger enforces it. So the scheme moves to the PROCESS.
+      #
+      # `STS_HTTPS` rather than `STS_OAUTH2_RFC9700`: that one would turn the
+      # mode on for the DEFAULT realm too, and the permissive pass — twelve
+      # jobs — is the other half of the matrix. This is the setting that exists
+      # to separate the two.
+      #
+      # The certificate is self-signed and regenerated every start, so nothing
+      # can have an anchor for it ahead of time. The `api` service fetches it
+      # in its own entrypoint (STS_CERT_URL) and the tests container fetches it
+      # in trustStsCertificate() (common/common.sh).
+      - STS_HTTPS=true
     volumes:
       # Shared with the tests container so `spiffe_protocol.js` can dial it.
       # A socket is a rendezvous point rather than a file — it holds no bytes,
@@ -179,8 +227,11 @@ services:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
       context: ./sts
+    # https, and `rejectUnauthorized:false` — the certificate is self-signed and
+    # regenerated every start, so nothing in this container can have an anchor
+    # for it. Liveness is this check's question, not trust.
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8081/healthcheck',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
+      test: ["CMD-SHELL", "node -e \"require('https').get({host:'localhost',port:8081,path:'/healthcheck',rejectUnauthorized:false},function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -189,72 +240,6 @@ services:
       - keycloak
     ports:
       - 8081:8081
-  # THE SAME MOCK STS A SECOND TIME, IN RFC 9700 MODE — see the long note on
-  # sts-rfc9700 in local-tests.yml for why it has to be a second instance
-  # (oauth2.rfc9700 derives global.https, and the main port's scheme is decided
-  # once when the listener is bound).
-  #
-  # WHAT IS DIFFERENT HERE: nothing but the mode. This stack is a bridge
-  # network, so this container has a namespace of its own and the seven
-  # listeners keep their default ports without colliding with `sts` — only the
-  # container's NAME distinguishes them, which is also how the tests address it
-  # (RFC9700_STS_URL=https://sts-rfc9700:8081). Nothing is published to the
-  # host: only the tests container needs to reach it.
-  sts-rfc9700:
-    container_name: sts-rfc9700
-    image: rcbj/sts
-    environment:
-      - CONFIG_FILE=./env/docker-tests.js
-      # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
-      # rather than given a value here.
-      #
-      # THE BARE FORM IS LOAD-BEARING AND THE OBVIOUS ALTERNATIVE BREAKS THE
-      # CONTAINER. With no `=`, compose passes the variable through ONLY if the
-      # host shell has it set and leaves it unset here otherwise, so the
-      # appconfig file's own level keeps applying when nobody asked for
-      # anything else. Written as `STS_LOG_LEVEL=${STS_LOG_LEVEL:-}` it would
-      # instead be set to the EMPTY STRING, and that is not a harmless default:
-      # bunyan throws `unknown level name: ""` from config.js's registerLogger()
-      # at require time, so the mock does not start at all. `docker compose
-      # config` tells the two apart — the bare form renders null, the assigned
-      # one renders "".
-      #
-      # Why it is worth having: the mock logs every request, every response and
-      # every artifact before and after signing, at debug. That is the point of
-      # a mock and is the record of what it issued when a test fails, so debug
-      # stays the default. It is also about half the service's CPU, and a
-      # benchmark of it wrote 156MB in sixteen seconds — so a run with several
-      # jobs hitting one instance at once can set STS_LOG_LEVEL=info and roughly
-      # double what that instance can answer.
-      - STS_LOG_LEVEL
-      # The mode. It also derives global.https, which is why the URL the tests
-      # are handed is https rather than http.
-      - STS_OAUTH2_RFC9700=true
-      # As on the permissive instance: the browser runs in the tests container,
-      # where localhost:3000 is nothing at all.
-      - OID4VCI_WALLET_URL=http://client:3000
-    build:
-      context: ./sts
-    # THE SCHEME IS TRIED BOTH WAYS, and that is not hedging. With the mode on
-    # this port is HTTPS; if the sts/ submodule is pinned before the mock had
-    # the mode at all, STS_OAUTH2_RFC9700 names nothing and the same image
-    # comes up plain HTTP here. An https-only check would leave the container
-    # permanently unhealthy in that case — which on the containerized stack
-    # blocks `tests` on its depends_on and produces a compose timeout instead
-    # of a named failure. Liveness is this check's question; whether the thing
-    # is actually COMPLIANT is asked where it can be answered usefully, by
-    # requireStsReachable() on the local stack and by rfc9700_flows.js itself,
-    # which refuses a permissive STS by name.
-    # --insecure equivalent (rejectUnauthorized:false): the certificate is
-    # self-signed and regenerated every start, so nothing can have an anchor.
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"var u={host:'localhost',port:8081,path:'/healthcheck',rejectUnauthorized:false};function ok(r){process.exit(r.statusCode===200?0:1)}require('https').get(u,ok).on('error',function(){require('http').get(u,ok).on('error',function(){process.exit(1)})})\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - keycloak
   # walt.id issuer-api2 — a REAL OpenID4VCI 1.0 Credential Issuer, run beside the
   # mock one so the SD-JWT VC workflow can be shown to work against an
   # independent implementation and not only against our own. Its configuration
@@ -426,13 +411,13 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
-      sts:
-        condition: service_healthy
-      # The RFC 9700 pass has a server of its own, and waiting on it here is
-      # what keeps the five jobs from starting against a port that is not
-      # listening yet — a compliant server that has not bound is
+      # The RFC 9700 pass no longer has a server of its own: it is a TRUST
+      # REALM on this one, created by configureStsRfc9700Realm() in
+      # common/common.sh once the service is healthy. So this single wait is
+      # what keeps the five compliant jobs from starting against a port that
+      # has not bound — a compliant server that is not listening is
       # indistinguishable, from a test, from one that refused.
-      sts-rfc9700:
+      sts:
         condition: service_healthy
       waltid-issuer:
         condition: service_healthy

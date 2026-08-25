@@ -88,7 +88,7 @@ var apiUrl = process.env.API_URL || "http://localhost:4000";
 // resolves this one, and that distinction has cost this suite a run before on
 // the LDAP and SPNEGO workflows.
 var scimBaseUrl = process.env.SCIM_BROWSER_URL ||
-    process.env.STS_URL + "/scim/v2" || "http://localhost:8081/scim/v2";
+    process.env.STS_URL + "/scim/v2" || "https://localhost:8081/scim/v2";
 
 var stamp = Date.now().toString(36) +
     Math.floor(Math.random() * 1e6).toString(36);

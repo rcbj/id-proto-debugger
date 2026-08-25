@@ -109,7 +109,7 @@ check_return_code $?
 # '"/extension/dist/ci": not found' three minutes in, and the coverage report
 # that gets uploaded is empty rather than absent. Same omission this file has
 # had before with the walt.id render.
-EXTENSION_AUTOARM_ORIGINS="http://sts:8081" \
+EXTENSION_AUTOARM_ORIGINS="https://sts:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # same stack as docker-run-tests.sh
 check_return_code $?
 

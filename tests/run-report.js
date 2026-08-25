@@ -188,10 +188,14 @@ function jobTypeOf(script) {
 //     /admin/vc-verifier-config: the claims a credential carries and the ones
 //     the Verifier asks for, which sd_jwt_vc_presentation.js pins and the rest
 //     of that family reads off the wire). `waltid` is the same argument for
-//     walt.id's own issuer and verifier containers. `sts-rfc9700` is the second
-//     mock instance, which rfc9700_flows.js reconfigures through
-//     /admin-api/config/set. `sts-tls` is the mock's client TRUSTSTORE, which
-//     pki_mutual_tls.js fills and empties on a live process.
+//     walt.id's own issuer and verifier containers. `sts-rfc9700` is the mock's
+//     RFC 9700 TRUST REALM, which rfc9700_flows.js reconfigures through
+//     /realm/rfc9700/admin-api/config/set — the name is kept from when that was
+//     a second mock INSTANCE, and what changed is that the state is a realm
+//     override now, so this serialises those jobs against each other and no
+//     longer against anything driving the permissive server. `sts-tls` is the
+//     mock's client TRUSTSTORE, which pki_mutual_tls.js fills and empties on a
+//     live process.
 //   * EXCLUSIVE means the job runs alone, and admin_api.js is the only one: it
 //     changes claim sets globally and compares the count of every artifact the
 //     mock is holding against the same count read through the console, so any
@@ -226,7 +230,17 @@ const JOB_LOCKS = {
   "sd_jwt_vc_presentation_waltid.js": "waltid",
   "jwt_vc_json_issuance_waltid.js": "waltid",
   "jwt_vc_json_presentation_waltid.js": "waltid",
-  // The second mock STS, the one started in RFC 9700 mode.
+  // The mock's RFC 9700 TRUST REALM — `.../realm/rfc9700` — which
+  // rfc9700_flows.js reconfigures through POST
+  // /realm/rfc9700/admin-api/config/set (oauth2.redirectUris, which an RFC 9700
+  // server compares by exact string match and which therefore differs per run).
+  //
+  // It used to be a second mock INSTANCE, and the lock name is kept rather than
+  // renamed because what it protects is the same state under a new address.
+  // What CHANGED is worth knowing: that state is a realm override now, so it is
+  // genuinely separate from the default realm's configuration — this lock
+  // serialises these jobs against each other, and no longer against anything
+  // driving the permissive server.
   "rfc9700_flows.js": "sts-rfc9700",
   "rfc9700_client.js": "sts-rfc9700",
   // The mock's TLS client truststore, which is process state over there.
@@ -244,6 +258,24 @@ const JOB_LOCKS = {
   "spiffe_protocol.js": "sts-spiffe",
   "spiffe_page.js": "sts-spiffe",
   "api_spiffe.js": "sts-spiffe",
+  // The mock's SAML 1.1 identity provider settings. `sts_saml11.js` turns
+  // `saml11.signAssertion` and `saml11.signResponse` OFF one at a time to check
+  // that an unsigned document is recognised as one, flips `defaultProfile` to
+  // artifact, and turns `autocreateApplications` off so a relying party nobody
+  // registered is refused. Every one of those is restored, and none of them
+  // instantly — so a browser round trip running inside that window gets an
+  // UNSIGNED assertion, or a profile it did not ask for, or a 400 for a relying
+  // party it just named. `saml11_sso.js` asserts a valid signature and the
+  // confirmation method for its binding, so it would fail naming the signature
+  // or the profile and nothing would say which other job did it.
+  //
+  // The three binding jobs therefore serialise against each other as well,
+  // which is the cost of a single-name lock and is worth it here: the
+  // alternative is a flake that appears only in the pool and passes on its own.
+  // `saml11_options.js` is deliberately absent — it needs no identity provider
+  // at all, so nothing it does can collide with this.
+  "sts_saml11.js": "sts-saml11",
+  "saml11_sso.js": "sts-saml11",
 };
 
 const CONCURRENCY = (function () {
@@ -444,11 +476,16 @@ function buildJobs() {
   // password grant, refusing a code presented twice — and being REVERSIBLE,
   // which a test that only ever switches the mode on can never see.
   //
-  // Gated on RFC9700_STS_URL, which is a SECOND STS instance. It has to be a
-  // second one: oauth2.rfc9700 binds the main port as HTTPS and is therefore
-  // restart-only, so one process cannot serve both passes. See
-  // docs/rfc9700.md for the two lines that start it, and for the submodule
-  // bump it currently waits on.
+  // Gated on RFC9700_STS_URL, which names a TRUST REALM on the same mock STS
+  // the twelve permissive jobs use — `.../realm/rfc9700` — rather than a second
+  // instance. It used to be a second one: `oauth2.rfc9700` binds the main port
+  // as HTTPS over there and is therefore restart-only, so one process could not
+  // serve both passes. It can now, because that flag is the one setting in that
+  // service marked `realmRuntime`: restart-only for the PROCESS and settable on
+  // a REALM, since a realm binds no socket. common/common.sh's
+  // configureStsRfc9700Realm() creates it and is what leaves this variable
+  // unset — and therefore these five jobs unscheduled — when the mock is too
+  // old to have it. See docs/rfc9700.md.
   if (env.RFC9700_STS_URL) {
     const RFC9700_JOBS = [
       ["refused", "the refusals, and that the mode is reversible"],
@@ -462,10 +499,15 @@ function buildJobs() {
         name: `RFC 9700 — ${label} (debugger AND mock STS both compliant)`,
         script: "rfc9700_flows.js",
         // WSTRUST_STS_URL is what the script reads, as every other STS-backed
-        // job does; RFC9700_STS_URL is what SELECTS the compliant instance.
+        // job does; RFC9700_STS_URL is what SELECTS the compliant REALM.
         // Naming them differently here is what keeps a permissive STS from
         // being handed to a job that would then pass while proving nothing —
         // the script refuses one by name, but the wiring should not offer it.
+        // It matters more now than it did when the two were separate
+        // containers: the permissive and the compliant server are the same
+        // process, told apart only by a path prefix, so a URL that lost its
+        // prefix would reach a running, healthy, permissive server rather than
+        // nothing at all.
         env: { WSTRUST_STS_URL: env.RFC9700_STS_URL, RFC9700_FLOW },
       });
     }
@@ -657,9 +699,9 @@ function buildJobs() {
         "fetched reaching the DOM as markup)",
     script: "jwks_page.js",
     env: {
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       JWKS_BROWSER_URL: env.JWKS_BROWSER_URL ||
-          (env.STS_URL || "http://localhost:8081") + "/oauth2/jwks",
+          (env.STS_URL || "https://localhost:8081") + "/oauth2/jwks",
     },
   });
 
@@ -1875,7 +1917,7 @@ function buildJobs() {
     name: "Kerberos AS exchange page (wiring, CORS, the two-step flow, credential handling)",
     script: "kerberos_as_page.js",
     env: {
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       // "sts", not "localhost": this value is TYPED INTO THE PAGE and the address is
       // resolved by the API's relay, which runs in the api container — where localhost is
       // the api itself, listening on nothing. The mock KDC's port 88 is not published to
@@ -1916,7 +1958,7 @@ function buildJobs() {
     script: "kerberos_tgs_ap_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
       KRB5_SERVICE_HOST: env.KRB5_SERVICE_HOST || "sts",
@@ -1970,7 +2012,7 @@ function buildJobs() {
     script: "kerberos_spnego_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
       // The URL the API — not the browser — fetches, so it is the api's view of
@@ -1980,7 +2022,7 @@ function buildJobs() {
       // own variable rather than derived.
       KRB5_SPNEGO_URL: env.KRB5_SPNEGO_URL ||
         (env.KRB5_SPNEGO_HOST ? "http://" + env.KRB5_SPNEGO_HOST +
-          "/spnego/protected" : "http://sts:8081/spnego/protected"),
+          "/spnego/protected" : "https://sts:8081/spnego/protected"),
     },
   };
   if (kerberosPagesSkip) spnegoPageJob.skip = kerberosPagesSkip;
@@ -2047,7 +2089,7 @@ function buildJobs() {
     script: "api_ldap.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       LDAP_URL: env.LDAP_URL || "ldap://sts:389",
       LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
       LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
@@ -2087,7 +2129,7 @@ function buildJobs() {
     script: "ldap_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       LDAP_URL: env.LDAP_URL || "ldap://sts:389",
       LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
       LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
@@ -2147,8 +2189,8 @@ function buildJobs() {
     script: "scim_protocol.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
-      SCIM_BASE_URL: env.SCIM_BASE_URL || "http://sts:8081/scim/v2",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      SCIM_BASE_URL: env.SCIM_BASE_URL || "https://sts:8081/scim/v2",
       LDAP_URL: env.LDAP_URL || "ldap://sts:389",
       LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
       LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
@@ -2177,9 +2219,9 @@ function buildJobs() {
     script: "scim_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       SCIM_BROWSER_URL: env.SCIM_BROWSER_URL ||
-          (env.STS_URL || "http://localhost:8081") + "/scim/v2",
+          (env.STS_URL || "https://localhost:8081") + "/scim/v2",
     },
   });
 
@@ -2248,7 +2290,7 @@ function buildJobs() {
         "is, and an SVID rotation watched on a held stream)",
     script: "spiffe_protocol.js",
     env: {
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_TEST_WORKLOAD_ADDRESS ||
           env.SPIFFE_WORKLOAD_ADDRESS || "localhost:8092",
       SPIFFE_SERVER_ADDRESS: env.SPIFFE_TEST_SERVER_ADDRESS ||
@@ -2278,11 +2320,11 @@ function buildJobs() {
     script: "api_spiffe.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092",
       SPIFFE_SERVER_ADDRESS: env.SPIFFE_SERVER_ADDRESS || "sts:8181",
       SPIFFE_BUNDLE_URL: env.SPIFFE_BUNDLE_URL ||
-          (env.API_STS_URL || "http://sts:8081") + "/spiffe/bundle",
+          (env.API_STS_URL || "https://sts:8081") + "/spiffe/bundle",
       SPIFFE_TRUST_DOMAIN: env.SPIFFE_TRUST_DOMAIN || "example.org",
     },
   };
@@ -2305,11 +2347,11 @@ function buildJobs() {
     script: "spiffe_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092",
       SPIFFE_SERVER_ADDRESS: env.SPIFFE_SERVER_ADDRESS || "sts:8181",
       SPIFFE_BUNDLE_URL: env.SPIFFE_BUNDLE_URL ||
-          (env.API_STS_URL || "http://sts:8081") + "/spiffe/bundle",
+          (env.API_STS_URL || "https://sts:8081") + "/spiffe/bundle",
       SPIFFE_TRUST_DOMAIN: env.SPIFFE_TRUST_DOMAIN || "example.org",
     },
   };
@@ -2890,34 +2932,103 @@ function buildJobs() {
   }
 
   // ---------------------------------------------------------------------
-  // SAML **1.1**, and it is a different kind of job from every other one in
-  // this section.
+  // SAML **1.1**, which since 2026-08-25 is a working profile on this page
+  // rather than a reference-only entry in a dropdown. THREE kinds of job, and
+  // the distinction between them is worth reading before adding a fourth.
   //
-  // The three above drive the DEBUGGER's service provider against an identity
-  // provider. This one drives the mock STS's SAML 1.1 identity provider
-  // directly, over HTTP, with a relying party it writes itself and no browser
-  // at all — like sts_dpop.js, sts_metadata.js, admin_api.js and vc_did.js,
-  // which is the family it belongs to.
+  // 1. `saml11_sso.js` — the DEBUGGER's SAML 1.1 service provider, driven
+  //    through its pages by a browser, once per binding. `saml_sso.js`'s
+  //    sibling and deliberately its mirror image.
+  // 2. `saml11_options.js` — which of the SP / Request settings apply to SAML
+  //    1.1 and which are switched off. No identity provider at all.
+  // 3. `sts_saml11.js` — the mock STS's SAML 1.1 identity provider, driven
+  //    directly over HTTP with a relying party it writes itself, and almost
+  //    entirely NEGATIVES. It sits with `sts_metadata.js`, `sts_dpop.js`,
+  //    `admin_api.js` and `vc_did.js`, which is the family it belongs to.
   //
-  // **It has to be, because the debugger has no SAML 1.1 service provider to
-  // drive.** saml_tools.html composes, signs and encrypts a SAML 1.1
-  // assertion, and the WS-Trust and WS-Federation response pages consume one,
-  // but the SAML protocol workflow is SAML 2.0 SP-initiated: selecting 1.1 on
-  // saml_request.html returns an XML comment where a request would be, and
-  // callIdp() and singleLogout() both refuse by name. So this is the only
-  // shape this coverage can take today, and it is not a Keycloak pairing
-  // waiting to happen either — Keycloak has spoken no SAML 1.1 since it
-  // dropped the profile.
+  // **THERE IS NO KEYCLOAK HALF OF ANY OF THEM, and there will not be one.**
+  // Every other browser-SSO job in this section is pushed once per identity
+  // provider, because a mock that is quietly more permissive than the real
+  // thing passes every test written against it alone. That argument still
+  // holds and there is nothing to act on it with: Keycloak dropped SAML 1.1
+  // years ago. So the mock is the only identity provider here, and
+  // `sts_saml11.js` is what compensates — it writes the relying party ITSELF
+  // rather than importing the debugger's, in the same spirit as `sts_dpop.js`
+  // writing its own DPoP client, so a shared misunderstanding between the two
+  // ends of the exchange cannot pass unnoticed.
   //
-  // Gated on the STS alone, like the four it sits with. It restores every
+  // The three binding jobs and `sts_saml11.js` share a JOB_LOCK — see the note
+  // beside it, which is the "read tests/CLAUDE.md before adding a test that
+  // configures a shared service" case exactly.
+  // ---------------------------------------------------------------------
+  //
+  // The SAML 1.1 metadata URL is the mock's PER-RELYING-PARTY descriptor, the
+  // same device the SAML 2.0 job's `SAML_STS_METADATA_URL` is and computed the
+  // same way. Nothing has to be provisioned: that service accepts any
+  // identifier and mints the document on the ask.
+  for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
+    const job = {
+      name: `SAML 1.1 SSO — HTTP ${SAML_BINDING === 'post' ?
+          'POST' : SAML_BINDING === 'artifact' ?
+          'Artifact' : 'Redirect'} binding (mock STS)`,
+      script: "saml11_sso.js",
+      env: {
+        SAML_BINDING,
+        SAML11_METADATA_URL: env.SAML11_METADATA_URL,
+        SAML11_METADATA_FILE: env.SAML11_METADATA_FILE,
+        SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
+        SAML_USER: env.SAML_STS_USER || env.SAML_USER || "saml",
+      },
+    };
+    if (!env.SAML11_METADATA_URL && !env.SAML11_METADATA_FILE) {
+      job.skip = "the mock STS is not reachable by the browser for SAML 1.1 " +
+        "(SAML11_METADATA_URL and SAML11_METADATA_FILE both unset). The " +
+        "launchers set it wherever the STS is reachable — the containerized " +
+        "stack by compose DNS name, the host and live-site runs over " +
+        "loopback. Keycloak cannot stand in: it has spoken no SAML 1.1 for " +
+        "years.";
+    } else if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
+      // The same gate the SAML 2.0 artifact job carries, and about the TARGET
+      // rather than the identity provider: resolving an artifact is a SOAP
+      // call the service provider has to make server-side, whichever version
+      // minted it.
+      job.skip = "HTTP Artifact needs the API backend (the SAML 1.1 SOAP " +
+        "responder is a server-side call); unavailable on the static " +
+        "deployment.";
+    }
+    jobs.push(job);
+  }
+
+  // What the SP / Request pane offers on SAML 1.1 and what it must stop
+  // offering — the username hint, request signing, request encryption, Single
+  // Logout and the SLO endpoints, each asserted DISABLED and greyed rather than
+  // merely absent. No identity provider, so it is never skipped: a control
+  // wrongly left live is invisible in the round-trip jobs above as long as the
+  // flow works anyway, which it does.
+  jobs.push({
+    name: "SAML 1.1 SP/Request settings (what applies, what is switched off, " +
+        "the Shibboleth request shape, the 1.1 SP metadata)",
+    script: "saml11_options.js",
+    env: {},
+  });
+
+  // The mock STS's own SAML 1.1 identity provider, over HTTP with no browser:
+  // Browser/POST and Browser/Artifact end to end, the SOAP responder's four
+  // request types (which makes that service an attribute authority), the
+  // per-relying-party metadata, the NameIdentifier formats, and the four traps
+  // this profile hides — the confirmation method, the signature reference
+  // through the real AssertionID, an InResponseTo on a profile with no request,
+  // and the one-shot artifact.
+  //
+  // Gated on the STS alone, like the four tests it sits with. It restores every
   // setting it changes, through /admin-api/config/reset rather than by writing
   // the old value back, so it leaves no runtime override for admin_api.js to
   // trip over on the next run against the same container.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
-      name: "SAML 1.1 browser profiles against the mock STS (Browser/POST, " +
+      name: "SAML 1.1 identity provider on the mock STS (Browser/POST, " +
           "Browser/Artifact, the SOAP responder, per-RP metadata)",
-      script: "saml11_sso.js",
+      script: "sts_saml11.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",

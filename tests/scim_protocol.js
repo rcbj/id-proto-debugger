@@ -122,11 +122,11 @@ const scenarios = paths.requireSharedModule(
 var apiUrl = process.env.API_URL || "http://localhost:4000";
 // The mock's HTTP side as THIS TEST reaches it — for /admin-api and the token
 // endpoint.
-var stsUrl = process.env.STS_URL || "http://localhost:8081";
+var stsUrl = process.env.STS_URL || "https://localhost:8081";
 // The SCIM service root as the API must reach it. A different question from the
 // line above, and on the containerized stack a different answer: the api
 // resolves this name, and the api's view of the mock is not the test's.
-var scimBaseUrl = process.env.SCIM_BASE_URL || "http://sts:8081/scim/v2";
+var scimBaseUrl = process.env.SCIM_BASE_URL || "https://sts:8081/scim/v2";
 // The directory, again as the api must reach it — the verification channel.
 var ldapUrl = process.env.LDAP_URL || "ldap://sts:389";
 var baseDn = process.env.LDAP_BASE_DN || "dc=example,dc=com";

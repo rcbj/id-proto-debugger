@@ -46,7 +46,7 @@ var log = bunyan.createLogger({
   name: "oid4vci_request_encryption", level: appconfig.logLevel || "info"
 });
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 const ROOT = path.join(__dirname, "..");

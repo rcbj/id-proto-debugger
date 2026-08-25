@@ -49,7 +49,7 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime || 15000;
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 

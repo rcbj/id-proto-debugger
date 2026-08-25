@@ -46,7 +46,7 @@ log.info("Log initialized. logLevel=" + log.level());
 const browserFlags = require("./browser_flags.js");
 const waitForContent = require("./wait_for.js");
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 const STS = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/, "");
 let BASE = "http://localhost:3000";
 

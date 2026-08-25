@@ -74,7 +74,7 @@ log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = "http://localhost:3000";
 var apiUrl = process.env.API_URL || "http://localhost:4000";
-var stsUrl = process.env.STS_URL || "http://localhost:8081";
+var stsUrl = process.env.STS_URL || "https://localhost:8081";
 // The directory as the API must reach it — not as this test or the browser
 // would. On the containerized stack those are three different names, and it is
 // the api that opens the socket.
