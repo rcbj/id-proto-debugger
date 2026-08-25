@@ -55,6 +55,15 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
+// The Analyzer's capture inbox is rebuilt from scratch on every refresh —
+// window.onload starts one and the Refresh button starts another — so a button
+// found in the old table is detached before it can be clicked. That is a
+// StaleElementReferenceError the test can do nothing about except re-find, and
+// it took out the run of 2026-08-25T20-23-22. clickStable() is the shared
+// re-finding click; see common/tests.js.
+const { clickStable } =
+      require("../common/tests.js")({ By, until, waitTime, log, assert });
+
 const STS = (process.env.OID4VCI_ISSUER_URL ||
              (process.env.WSTRUST_STS_URL ||
               "https://localhost:8081/sts").replace(/\/sts\/?$/, ""));
@@ -391,8 +400,11 @@ async function test() {
         "needs to quote: " + armedNote);
 
       // One click loads the WHOLE envelope, request half included, which is the
-      // point of the inbox over pasting a response.
-      await driver.findElement(By.css("input.wa-load-capture")).click();
+      // point of the inbox over pasting a response. Through clickStable(),
+      // because the row carrying this button is re-created by every render of
+      // the pane and one of those can land between finding it and clicking it.
+      await clickStable(driver, By.css("input.wa-load-capture"),
+                        "the inbox's Load button");
       let request = "";
       await driver.wait(async function () {
         request = await driver.findElement(By.id("wa_request_body")).getText();
