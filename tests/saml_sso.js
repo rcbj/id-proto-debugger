@@ -6,6 +6,7 @@ const { Command, Option } = require('commander');
 // The SP key pair is generated per run and passed in through the environment;
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -306,6 +307,17 @@ async function test() {
   options.addArguments(
       "--disable-features=BlockInsecurePrivateNetworkRequests," +
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+
+  // The mock STS serves https on a certificate it generated at startup (see
+  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
+  // makes the whole argument. Without it the IdP half of this test meets a
+  // certificate interstitial instead of a sign-in screen, and what the log
+  // says is that the identity provider never showed its #username field.
+  // This file builds its Chrome options by hand rather than through
+  // addBrowserAccessFlags(), which is why the call is here instead of
+  // arriving with the rest.
+  browserFlags.addStsTrustFlags(options);
 
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);

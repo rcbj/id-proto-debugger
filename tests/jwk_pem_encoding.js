@@ -987,9 +987,10 @@ function stsModuleClosureIsCopied(dockerfile) {
 // The set moves when a COPIED MODULE GAINS A require, not when a line here
 // changes, which is why this walks rather than lists. Only sources from
 // OUTSIDE tests/ are checked: a test script's own optional dependency is a
-// deliberate thing (url_safety_schemes.js reaches for dompurify and jsdom and
-// says so when they are absent), whereas a module has no such fallback and no
-// say in where it is loaded from.
+// deliberate thing, whereas a module has no such fallback and no say in where
+// it is loaded from. (url_safety_schemes.js used to be the example here; its
+// dompurify/jsdom pair is declared now, because "optional" had turned into a
+// section that logged SKIPPED on every run and measured nothing.)
 // ---------------------------------------------------------------------------
 function flatCopiedModulesHaveTheirPackages(dockerfile) {
   log.debug("Entering flatCopiedModulesHaveTheirPackages().");

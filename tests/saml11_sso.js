@@ -6,6 +6,7 @@ const { Command, Option } = require('commander');
 // The SP key pair is generated per run and passed in through the environment;
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");

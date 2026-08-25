@@ -22,6 +22,7 @@ const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");

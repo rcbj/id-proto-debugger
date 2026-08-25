@@ -232,7 +232,14 @@ function browserRelativeResolution() {
 // --- why not DOMPurify ------------------------------------------------------
 //
 // This is the claim the whole change rests on, so it is measured rather than
-// asserted in a comment. Skipped when dompurify is not installed for node.
+// asserted in a comment.
+//
+// dompurify and jsdom ARE dependencies of this package (tests/package.json).
+// They were left out once, on the reasoning that a missing dev tool must not
+// fail the suite — and the result was a section that logged SKIPPED on every
+// run and measured nothing, which is the worse of the two failures: a claim
+// nobody is checking reads exactly like a claim that holds. The catch below
+// stays as a safety net for a checkout whose install did not finish.
 function dompurifyWouldNotHaveHelped() {
   log.debug("Entering dompurifyWouldNotHaveHelped().");
   log.info("[contrast] Demonstrating that an HTML sanitizer is not a " +
@@ -243,11 +250,13 @@ function dompurifyWouldNotHaveHelped() {
     const { JSDOM } = require("jsdom");
     DOMPurify = createDOMPurify(new JSDOM("").window);
   } catch (e) {
-    // dompurify/jsdom are not dependencies of this package — the point is
-    // documented in url_safety.js either way, and a missing dev tool must not
-    // fail the suite.
-    log.info("[contrast] SKIPPED — dompurify/jsdom not available here (" +
-             e.message + ").");
+    // Both are declared in tests/package.json, so reaching here means the
+    // install did not finish rather than that they were never wanted. Said
+    // loudly, because the section below is the only measurement of the claim.
+    log.warn("[contrast] SKIPPED — dompurify/jsdom are dependencies of " +
+             "tests/package.json but could not be loaded, so the claim this " +
+             "section exists to measure was not measured. Run `npm install " +
+             "--prefix tests`. (" + e.message + ")");
     log.debug("Leaving dompurifyWouldNotHaveHelped().");
     return;
   }

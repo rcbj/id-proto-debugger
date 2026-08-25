@@ -80,6 +80,26 @@ services:
     # Only the api needs it: it is the only process that resolves the KDC's name.
     extra_hosts:
       - "sts:127.0.0.1"
+      # A SECOND NAME FOR THE SAME SERVICE, AND THE POINT IS THAT THE
+      # CERTIFICATE DOES NOT CARRY IT.
+      #
+      # tests/api_ldap.js binds the mock's LDAPS socket under this name to
+      # prove that this service still VERIFIES certificates. It cannot prove
+      # that with an untrusted certificate any more: the entrypoint above
+      # fetches the mock's own self-signed certificate into NODE_EXTRA_CA_CERTS
+      # on every start, so the anchor is deliberately there and the connection
+      # deliberately succeeds. What a truststore entry does NOT do is switch
+      # off hostname verification, so a name outside the certificate's
+      # subjectAltName is the one refusal left that only a verifying client can
+      # produce — which is what keeps every `rejectUnauthorized: false` in that
+      # file from being a decoration.
+      #
+      # The mock generates the certificate with SANs localhost, sts, sts-mock,
+      # sts.example.com and 127.0.0.1, so this name must stay OUT of that list.
+      # docker-compose-run-tests.yml provides the same name as a network alias
+      # on the `sts` service, because there is no Docker DNS on this stack and
+      # no /etc/hosts to edit on that one.
+      - "sts-not-in-the-certificate:127.0.0.1"
     environment:
       - CONFIG_FILE=./env/local.js
       # ---------------------------------------------------------------------

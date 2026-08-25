@@ -30,6 +30,7 @@ const http = require("http");
 const https = require("https");
 const jwt = require("jsonwebtoken");
 const { Command, Option } = require('commander');
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -98,8 +99,32 @@ function get(url, headers) {
   log.debug("Entering get().");
   log.debug("Leaving get().");
   return new Promise(function (resolve, reject) {
-    var mod = url.indexOf("https:") === 0 ? https : http;
-    var req = mod.get(url, { headers: headers || {} }, function (res) {
+    var secure = url.indexOf("https:") === 0;
+    var mod = secure ? https : http;
+    // THE `Host` HEADER MUST NOT DECIDE WHICH CERTIFICATE IS ACCEPTABLE.
+    //
+    // testIssuerTracksHost() sends `Host: sts.test:9999` to ask the mock to
+    // describe a host it was not reached at. node derives TLS's `servername`
+    // from that header when nothing else sets it (calculateServerName() in
+    // _http_client.js), so the certificate is then checked against sts.test —
+    // a name the mock's self-signed certificate has never carried — and the
+    // request dies as ERR_TLS_CERT_ALTNAME_INVALID before the server sees it.
+    // The failure names an altname list and never names the Host header that
+    // produced it. Pinning `servername` to the host actually being dialled
+    // keeps the header a request-routing question and leaves verification
+    // pointed at the real endpoint: this is not a relaxation, and a wrong
+    // certificate on that socket still fails.
+    var opts = { headers: headers || {} };
+    if (secure) {
+      try {
+        opts.servername = new URL(url).hostname;
+      } catch (e) {
+        // Not parseable: leave node to work it out, which is what it did
+        // before this existed.
+        log.debug("get(): " + url + " is not a parseable URL; no servername.");
+      }
+    }
+    var req = mod.get(url, opts, function (res) {
       var body = "";
       res.on("data", function (c) { body += c; });
       res.on("end", function () { resolve({ status: res.statusCode,
