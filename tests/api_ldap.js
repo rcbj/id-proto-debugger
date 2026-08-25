@@ -55,10 +55,14 @@
 // client would otherwise learn wrongly — TLS does not make the password checked
 // (every bind still succeeds, and "invalid" is still 49), and no CLIENT certificate
 // is ever asked for there — and the one about its certificate: verification is ON by
-// default in the api and a self-signed certificate is refused, so the workflow passes
-// rejectUnauthorized: false deliberately and the negative is asserted rather than
-// assumed. It is here rather than in a test of its own because a second file would
-// duplicate every helper in this one and would still be testing the same directory.
+// default in the api, so the workflow passes rejectUnauthorized: false deliberately
+// and the negative is asserted rather than assumed. The negative is a NAME the
+// certificate does not carry rather than an untrusted certificate, because the api's
+// entrypoint now fetches this mock's own certificate into NODE_EXTRA_CA_CERTS at
+// startup: the key is anchored on purpose, and hostname verification is the part a
+// truststore entry cannot switch off. It is here rather than in a test of its own
+// because a second file would duplicate every helper in this one and would still be
+// testing the same directory.
 //
 // And two properties of the mock directory that the debugger teaches and that
 // would be quietly wrong if they regressed: a bind succeeds with ANY password
@@ -1196,11 +1200,15 @@ async function theLimitsAreHonest(limits) {
 //    password `invalid` is still 49. Encryption changed what is on the wire, not
 //    whether anything checks it — and "it is over LDAPS" is exactly the sentence
 //    people substitute for "it is authenticated".
-//  * **Certificate verification is ON by default in the api**, and the mock's
-//    certificate is self-signed and regenerated on every start. So the workflow
-//    passes `rejectUnauthorized: false` deliberately, and the refusal without it
-//    is asserted rather than assumed: a client that quietly stopped verifying
-//    would pass every other assertion in this file.
+//  * **Certificate verification is ON by default in the api.** The mock's
+//    certificate is self-signed and regenerated on every start, and the api's
+//    entrypoint fetches exactly that one into NODE_EXTRA_CA_CERTS (STS_CERT_URL),
+//    so with verification left alone this connection is ACCEPTED — the anchor is
+//    deliberately there. What that anchor does not do is stop the name being
+//    checked, so the same socket under a name outside the certificate is still
+//    refused, and that refusal is what the workflow's `rejectUnauthorized: false`
+//    is measured against. A client that quietly stopped verifying would pass every
+//    other assertion in this file.
 //  * **One certificate serves all of this service's TLS sockets** — 8443, 9443 and
 //    636 — so trusting this mock is one fetch of GET /tls/server-certificate and
 //    not three. That is checked from both ends: against what the mock SAYS it
@@ -1228,9 +1236,12 @@ function ldapsUrlFrom(described) {
 
 // A connection to the LDAPS listener. `rejectUnauthorized: false` is here rather
 // than being the api's default: the api verifies unless it is explicitly told not
-// to, and the mock's certificate is self-signed and regenerated every start, so
-// there is nothing a truststore could hold between runs. The negative below is
-// what keeps that flag honest.
+// to, and this is the flag a user with a self-signed directory certificate reaches
+// for. It is not what makes these calls work — the api holds this mock's
+// certificate as an anchor either way (api/sts_truststore.sh) — which is why the
+// negative below dials a name the certificate does not carry: that is the one
+// refusal left that only a verifying client produces, and it is what keeps this
+// flag from being a decoration.
 function secureConnection() {
   log.debug("Entering secureConnection().");
   log.debug("Leaving secureConnection().");
@@ -1456,21 +1467,130 @@ async function theSameDirectoryAnswersOverLdaps(described) {
   //
   // Not a curiosity: every call above passed `rejectUnauthorized: false`, and an
   // api that had stopped verifying certificates altogether would answer all of
-  // them identically. This is the only assertion in the file that would notice.
+  // them identically. These two assertions are the only ones in the file that
+  // would notice.
+  //
+  // THE FIRST HALF USED TO BE A REFUSAL AND IS NOW A SUCCESS, and the change is
+  // the api's rather than this file's. That service's entrypoint
+  // (api/sts_truststore.sh, wired up by STS_CERT_URL in local-tests.yml and
+  // docker-compose-run-tests.yml) fetches this mock's self-signed certificate
+  // on every start and points NODE_EXTRA_CA_CERTS at it, because the mock now
+  // serves its main port over https and every STS-backed job would otherwise
+  // die as DEPTH_ZERO_SELF_SIGNED_CERT. So the anchor IS there, deliberately,
+  // and a verifying client accepts this connection. Asserting a 502 here is
+  // asserting that the truststore is broken.
+  //
+  // THE TWO HALVES BELOW ARE ASSERTIONS ON THE LAUNCHER STACKS AND
+  // OBSERVATIONS ANYWHERE ELSE, and this is what tells the two apart. Both of
+  // them are about how the api this run is pointed at was CONFIGURED — the
+  // truststore its entrypoint filled, and an alias in its /etc/hosts or on its
+  // network — and `./local-run-tests.sh` and `./docker-run-tests.sh` are the
+  // only launchers that configure either. Both reach the directory as `sts`.
+  // remote-run-tests.sh's local-dev-server branch reaches an api somebody
+  // started by hand, at `localhost`, where neither has been arranged and
+  // neither can be asserted.
+  const thisIsALauncherStack = /^ldaps:\/\/sts:/i.test(ldapsUrl);
   const verified = await call("/ldap/bind",
     { url: ldapsUrl, bindDn: bindDn, password: password });
-  assert.strictEqual(verified.status, 502,
-    "with verification left at its default the api must REFUSE this " +
-    "connection: the mock's certificate is self-signed and regenerated every " +
-    "start, so nothing in a truststore can vouch for it. A 200 here means " +
-    "certificates are not being verified at all — which would make every " +
-    "`rejectUnauthorized: false` above a no-op and the setting a decoration. " +
-    "Got " + verified.status + " " +
-    JSON.stringify(verified.body).slice(0, 300));
-  assert.ok(/certificate|self.signed|verif/i.test(String(verified.body.error)),
-    "and it must say that the CERTIFICATE was the problem. \"Could not " +
-    "connect\" for a refused certificate sends somebody to look at the network " +
-    "for a trust decision. Got " + JSON.stringify(verified.body));
+  if (thisIsALauncherStack) {
+    assert.strictEqual(verified.status, 200,
+      "with verification left at its default the api must ACCEPT this " +
+      "connection: its entrypoint fetched this mock's certificate into " +
+      "NODE_EXTRA_CA_CERTS at startup, so it holds the one anchor that can " +
+      "vouch for it. A 502 here means that fetch did not happen — check that " +
+      "STS_CERT_URL is set on the api service and that api/sts_truststore.sh " +
+      "is still its entrypoint, because every other STS-backed job in this " +
+      "suite depends on the same certificate. Got " + verified.status + " " +
+      JSON.stringify(verified.body).slice(0, 300));
+    log.info("LDAPS: with verification left alone the bind SUCCEEDS, because " +
+             "the api holds this mock's certificate as an anchor.");
+  } else {
+    // Not one of the launcher stacks, so whether that api has the anchor is
+    // not this file's business. Both answers are legitimate; a third is not.
+    assert.ok(verified.status === 200 || verified.status === 502,
+      "a bind with verification left at its default must either succeed or " +
+      "be refused as a connection failure; got " + verified.status + " " +
+      JSON.stringify(verified.body).slice(0, 300));
+    log.info("LDAPS: with verification left alone this api answered " +
+             verified.status + " — it is not a launcher stack, so whether it " +
+             "was given this mock's certificate as an anchor is not asserted " +
+             "here.");
+  }
+
+  // --- and the half that keeps `rejectUnauthorized: false` honest ----------
+  //
+  // A truststore entry vouches for a KEY. It does not switch off hostname
+  // verification, so the same socket under a name the certificate does not
+  // carry is still refused — and it is refused only by a client that is
+  // actually checking. That makes this the one assertion left that an api
+  // which had stopped verifying altogether would fail, now that the anchor
+  // above is legitimately present.
+  //
+  // The name is a SECOND NAME FOR THE SAME SERVICE, provided by the api's
+  // extra_hosts on the host-networked stack (local-tests.yml) and by a network
+  // alias on the `sts` service on the containerized one
+  // (docker-compose-run-tests.yml). The mock's certificate carries localhost,
+  // sts, sts-mock, sts.example.com and 127.0.0.1, and this name is deliberately
+  // none of them. LDAPS_MISMATCH_HOST overrides it for a stack that spells it
+  // differently.
+  const mismatchHost = process.env.LDAPS_MISMATCH_HOST ||
+      "sts-not-in-the-certificate";
+  const mismatchUrl = "ldaps://" + mismatchHost + ":" +
+      (described.tls.port || 636);
+  const mismatched = await call("/ldap/bind",
+    { url: mismatchUrl, bindDn: bindDn, password: password });
+  const mismatchError = String((mismatched.body || {}).error || "");
+  // A name that does not resolve is a DIFFERENT failure and would pass a
+  // regex written for a certificate, so it is caught first and says what to
+  // add rather than what went wrong.
+  const unresolved = /resolve|ENOTFOUND|EAI_AGAIN|EBLOCKEDADDRESS|EDNS/i
+      .test(mismatchError);
+  const aliasAdvice = mismatchHost + " is an alias for the mock, added by " +
+    "the api's extra_hosts in local-tests.yml and by the `sts` service's " +
+    "network aliases in docker-compose-run-tests.yml; a stack that spells it " +
+    "differently sets LDAPS_MISMATCH_HOST.";
+  // On a launcher stack the alias is declared, so a name that does not
+  // resolve is a broken stack and is FAILED rather than skipped: a negative
+  // that quietly stops running is the failure this section guards against.
+  const skipTheNameCheck = unresolved && !thisIsALauncherStack;
+  if (skipTheNameCheck) {
+    log.warn("SKIP (LDAPS name check): the api could not resolve " +
+             mismatchHost + ", and this stack does not reach the directory " +
+             "as `sts`, so nothing here declares it. " + aliasAdvice + " " +
+             "Certificate verification itself is therefore unmeasured on " +
+             "this run; the section below still runs.");
+  }
+  assert.ok(skipTheNameCheck || !unresolved,
+    "the api could not resolve " + mismatchHost + ", so this check tested " +
+    "nothing. " + aliasAdvice + " Got " +
+        JSON.stringify(mismatched.body).slice(0, 300));
+  if (!skipTheNameCheck) {
+    assert.strictEqual(mismatched.status, 502,
+      "the same socket asked for under a name the certificate does not carry " +
+      "must be REFUSED. A 200 means the api is not checking the name against " +
+      "the certificate at all — which would make every " +
+      "`rejectUnauthorized: false` above a no-op and the setting a " +
+      "decoration. Got " + mismatched.status + " " +
+      JSON.stringify(mismatched.body).slice(0, 300));
+    assert.ok(/certificate|altname|hostname|verif/i.test(mismatchError),
+      "and it must say that the CERTIFICATE was the problem. \"Could not " +
+      "connect\" for a refused certificate sends somebody to look at the " +
+      "network for a trust decision. Got " + JSON.stringify(mismatched.body));
+
+    // And the same name with verification explicitly off must get PAST the
+    // certificate — otherwise the two assertions above would also pass
+    // against an api that refused this name for some reason of its own, and
+    // the switch would still be untested.
+    const overridden = await call("/ldap/bind",
+      { url: mismatchUrl, bindDn: bindDn, password: password,
+        rejectUnauthorized: false });
+    assertSucceeded(overridden, "a bind over LDAPS under a name outside the " +
+      "certificate, with verification explicitly switched off. The refusal " +
+      "above must be the certificate check and nothing else");
+    log.info("LDAPS: the anchor the api fetched at startup is accepted, a " +
+             "name outside the certificate is refused, and " +
+             "rejectUnauthorized:false is what tells the two apart.");
+  }
 
   // --- one certificate for all of this mock's TLS sockets ------------------
   const pem = await fetch(stsUrl + "/tls/server-certificate");

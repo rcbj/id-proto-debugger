@@ -157,10 +157,18 @@ function addBrowserAccessFlags(options, baseUrl) {
 // browser it was before.
 //
 // It is called from addBrowserAccessFlags() below, so the twenty-odd tests that
-// use that helper get it without an edit. The four that build their Chrome
+// use that helper get it without an edit. The SIX that build their Chrome
 // options by hand (wstrust.js, wstrust_operation_history.js,
-// oauth2_metadata_rfc8414.js, saml11_sso.js) call it directly, and a fifth,
-// rfc9700_flows.js, calls it in place of the blunt flag it used to carry.
+// oauth2_metadata_rfc8414.js, saml11_sso.js, saml_sso.js, saml_logout.js) call
+// it directly, and a seventh, rfc9700_flows.js, calls it in place of the blunt
+// flag it used to carry.
+//
+// WHAT IT LOOKS LIKE WHEN ONE OF THEM IS MISSED, because two of the six were:
+// saml_sso.js and saml_logout.js drove Chrome straight at the mock's https
+// origin with no pin, met the certificate interstitial, and reported that "the
+// identity provider never showed its sign-in screen (no #username field)" —
+// four jobs naming a login form, on a page titled `Privacy error`. Adding the
+// call is one line; finding out that it was the missing line is not.
 function addStsTrustFlags(options) {
   log.debug("Entering addStsTrustFlags().");
   var pin = String(process.env.STS_SPKI_PIN || "").trim();

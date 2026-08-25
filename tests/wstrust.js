@@ -7,6 +7,7 @@ const { Command, Option } = require('commander');
 // two remote runs have failed that way. See page_load.js.
 const { loadPage, describeLoad, describeToString } =
     require("./page_load");
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");

@@ -237,7 +237,28 @@ services:
       retries: 5
       start_period: 10s
     networks:
-      - keycloak
+      keycloak:
+        aliases:
+          # A SECOND NAME FOR THIS CONTAINER, AND THE POINT IS THAT ITS
+          # CERTIFICATE DOES NOT CARRY IT.
+          #
+          # tests/api_ldap.js binds this service's LDAPS socket under this name
+          # to prove that the `api` still VERIFIES certificates. It cannot
+          # prove that with an untrusted certificate any more: that service's
+          # entrypoint fetches this one's self-signed certificate into
+          # NODE_EXTRA_CA_CERTS on every start (STS_CERT_URL), so the anchor is
+          # deliberately there and the connection deliberately succeeds. What a
+          # truststore entry does NOT do is switch off hostname verification,
+          # so a name outside the certificate's subjectAltName is the one
+          # refusal left that only a verifying client can produce — which is
+          # what keeps every `rejectUnauthorized: false` in that file from
+          # being a decoration.
+          #
+          # The certificate is generated with SANs localhost, sts, sts-mock,
+          # sts.example.com and 127.0.0.1, so this name must stay OUT of that
+          # list. local-tests.yml provides the same name through the api's
+          # extra_hosts, because that stack has no Docker DNS at all.
+          - sts-not-in-the-certificate
     ports:
       - 8081:8081
   # walt.id issuer-api2 — a REAL OpenID4VCI 1.0 Credential Issuer, run beside the
