@@ -244,20 +244,29 @@ function theConsoleChromeIsThere(page) {
 // THE PROTOCOL LIST AT THE TOP, WHICH IS THE ONE PART OF THIS PAGE THAT IS NOT
 // DERIVED — AND SO THE ONE PART THAT CAN LIE.
 //
-// A family reaches the endpoint tables only if it is HTTP: SAML 2.0 and SAML
-// 1.1 register no route at all, and Kerberos, LDAP, PKI and SPIFFE live mostly
-// on raw sockets. So the list is hand-written, and the page reports three kinds
-// of drift about it that this checks are empty: a card naming an endpoint group
-// with no rows, a card citing a specification that does not exist, and — the
-// direction nothing else catches — a group of endpoints no card claims, which
-// is what a fourteenth protocol family added without a card looks like.
+// A family reaches the endpoint tables only if it is HTTP, and Kerberos, LDAP,
+// PKI and SPIFFE live mostly on raw sockets. So the list is hand-written, and
+// the page reports three kinds of drift about it that this checks are empty: a
+// card naming an endpoint group with no rows, a card citing a specification
+// that does not exist, and — the direction nothing else catches — a group of
+// endpoints no card claims, which is what a fifteenth protocol family added
+// without a card looks like.
+//
+// The list itself moves on the MOCK's schedule rather than on this file's, the
+// way the sts/ COPY closure in tests/Dockerfile does. **Federation** is the
+// fourteenth and arrived with the submodule bump of 2026-08-25: both ends of a
+// federation relationship, in five protocols, and it sits SECOND because that
+// is where the mock's own PROTOCOLS table puts it. Adding a name here is the
+// whole of the fix — the assertion is deepStrictEqual and so covers the order
+// too, which is deliberate: the page draws the cards in this order and a list
+// that only checked membership would let them be shuffled silently.
 // ---------------------------------------------------------------------------
 function theProtocolListIsHonest(doc, page) {
   log.debug("Entering theProtocolListIsHonest().");
   log.info("=== The protocol list ===");
-  const expected = ["OAuth2 / OIDC", "SAML 2.0", "SAML 1.1", "WS-Federation",
-                    "WS-Trust", "Kerberos", "SPNEGO", "SPIFFE", "SCIM", "LDAP",
-                    "PKI / X.509", "WebAuthn / CTAP",
+  const expected = ["OAuth2 / OIDC", "Federation", "SAML 2.0", "SAML 1.1",
+                    "WS-Federation", "WS-Trust", "Kerberos", "SPNEGO", "SPIFFE",
+                    "SCIM", "LDAP", "PKI / X.509", "WebAuthn / CTAP",
                     "Verifiable Credentials (OID4VCI / OID4VP)"];
   assert.ok(Array.isArray(doc.protocols),
     "the document should carry the protocol list; it has none.");

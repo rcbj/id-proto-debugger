@@ -405,6 +405,28 @@ COPY sts/common/config.js ./sts/common/
 # moves on the mock's schedule, not on this file's.
 COPY sts/common/applications.js ./sts/common/
 COPY sts/oauth-oidc/client_auth.js sts/oauth-oidc/mtls.js sts/oauth-oidc/oauth2_bcp.js ./sts/oauth-oidc/
+# THE FIFTH recomputation, and it arrived on the same schedule as the fourth:
+# the sts/ gitlink moved, and three modules this image already carries reached
+# for three it did not. realms.js is the mock's multi-realm table and is now
+# required by app.js, helpers.js, admin_stats.js, audit.js, client_auth.js and
+# oauth2_bcp.js — six files here, all of them already copied; delegation.js is
+# krb5_kdc.js's new require; and federation.js is admin_stats.js's, which is why
+# a federation module is in a Kerberos-shaped section of this file at all.
+#
+# The failure is the one every entry above has: "Cannot find module
+# './realms'" at require time, from inside a file this image HAS, before a
+# single test has run. federation.js lands under ./sts/federation/ rather than
+# flat because its own requires are `./../common/config`, `./../common/helpers`
+# and `./../common/audit` — a copy landing beside them in ./sts/ would resolve
+# those one directory too high and reach outside the image's sts/ tree.
+#
+# None of the three adds anything further: realms.js takes only bunyan,
+# async_hooks and ./config, delegation.js takes ./helpers, ./realms, ./config
+# and ./admin_stats, and federation.js takes crypto plus the three common/
+# modules named above. The closure walk in tests/jwk_pem_encoding.js is what
+# says so, and it is what caught this — run it after every submodule bump.
+COPY sts/common/realms.js sts/common/delegation.js ./sts/common/
+COPY sts/federation/federation.js ./sts/federation/
 COPY sts/kerberos/krb5_primitives.js sts/kerberos/krb5_asn1.js sts/kerberos/krb5_crypto.js sts/kerberos/krb5_messages.js sts/kerberos/krb5_gss.js ./sts/kerberos/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build
