@@ -314,9 +314,65 @@ async function waitForPageBundle(driver, message, timeout) {
   log.debug("Leaving waitForPageBundle().");
 }
 
+// ---------------------------------------------------------------------------
+// Wait until the BROWSER considers this page focused and visible.
+//
+// WebAuthn is the one API this suite drives that refuses to run at all on a
+// page the browser does not consider focused. Chrome states the reason
+// plainly —
+//
+//     NotAllowedError: The operation is not allowed at this time because the
+//     page does not have focus.
+//
+// — but the page only ever sees the ERROR NAME, and `NotAllowedError` is the
+// name WebAuthn deliberately gives to a declined prompt, a missing credential
+// and a timeout as well. So nothing on screen, and nothing in a test that
+// reads the screen, says "focus": tests/webauthn_lab_page.js reported "the
+// registration never produced a credential", three sections after the one that
+// had already checked the environment and found it usable.
+//
+// A freshly launched headless Chrome does NOT start focused. Measured on
+// Chrome 151 against http://localhost:3000/webauthn.html: at 708ms after
+// `driver.get()` returned, `document.hasFocus()` was false, `visibilityState`
+// was "hidden", and a ceremony was refused; at 1540ms both had flipped and the
+// same click registered a credential. That is the whole failure, and it is why
+// the two WebAuthn tests that sign in to an identity provider first passed on
+// the same machine in the same run — a Keycloak login is more than 1.5s of
+// navigation, so they were already past it by accident.
+//
+// Both halves are load-bearing: a page can report hasFocus() === true while
+// the window is still "hidden", and Chrome refuses the ceremony in that state
+// too — measured immediately after a `navigate().refresh()`.
+//
+// A fixed sleep would be the same bet this whole module exists to avoid, so
+// this polls the state and still fails, loudly, if it never arrives.
+// ---------------------------------------------------------------------------
+async function waitForFocus(driver, timeout) {
+  log.debug("Entering waitForFocus().");
+  var last;
+  try {
+    await driver.wait(async function () {
+      // Runs IN THE BROWSER, so it has no bunyan and no `log` — see the
+      // repo-root CLAUDE.md. What it returns is logged out here.
+      last = await driver.executeScript(
+        "return document.hasFocus() + '/' + document.visibilityState;");
+      return last === "true/visible";
+    }, timeout || defaultTimeout);
+  } catch (e) {
+    e.message = "the browser never gave this page focus (last state: " +
+      forMessage(last) + "). WebAuthn refuses a ceremony on an unfocused or " +
+      "hidden page and reports it as a bare NotAllowedError, which is " +
+      "indistinguishable from a declined prompt — " + e.message;
+    log.debug("Leaving waitForFocus(). Never focused.");
+    throw e;
+  }
+  log.debug("Leaving waitForFocus(). " + last);
+}
+
 module.exports = {
   waitForBundle: waitForBundle,
   waitForPageBundle: waitForPageBundle,
+  waitForFocus: waitForFocus,
   configure: configure,
   forMessage: forMessage,
   text: text,

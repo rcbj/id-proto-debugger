@@ -2807,26 +2807,122 @@ function buildJobs() {
   // remote-run-tests.sh sets SAML_BACKEND_AVAILABLE=false for those targets;
   // skip it there rather than fail.
   const samlBackendAvailable = env.SAML_BACKEND_AVAILABLE !== "false";
-  for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
-    const job = {
-      name: `SAML 2.0 SSO — HTTP-${SAML_BINDING === 'post' ?
-          'POST' : SAML_BINDING === 'artifact' ?
-          'Artifact' : 'Redirect'} binding`,
-      script: "saml_sso.js",
+  // ---------------------------------------------------------------------
+  // TWO IDENTITY PROVIDERS ANSWER THIS PROFILE, and every SSO job below is
+  // pushed once per IdP — the same arrangement the WS-Federation pair further
+  // down have had, and here for the same reason: a mock that is quietly more
+  // permissive than the real thing passes every test written against it alone.
+  //
+  //   * **Keycloak is somebody else's implementation**, and the only
+  //     interoperability evidence here. It VALIDATES the AuthnRequest
+  //     signature against the certificate common.sh registered for this run,
+  //     so a request the debugger builds sloppily fails there.
+  //   * **The mock STS grew this profile in 2026-08**, and it covers what
+  //     Keycloak cannot: it answers the HTTP Artifact binding with a real SOAP
+  //     back channel in a service that starts in seconds, it refuses a
+  //     ProtocolBinding it does not implement BY NAME, and it needs NOTHING
+  //     PROVISIONED — any entityID is accepted and a metadata document is
+  //     minted for anything asked for. It also publishes its metadata PER
+  //     SERVICE PROVIDER, which is what SAML_STS_METADATA_URL names.
+  //
+  // Each is gated on its own metadata URL, so an environment with one and not
+  // the other runs half of these and skips the other half naming which.
+  const samlIdps = [
+    {
+      key: "keycloak",
+      label: "Keycloak",
+      skip: (env.SAML_METADATA_URL || env.SAML_METADATA_FILE) ? null :
+        "the Keycloak SAML realm is not provisioned (SAML_METADATA_URL and " +
+        "SAML_METADATA_FILE both unset).",
       env: {
+        SAML_IDP: "keycloak",
         SAML_METADATA_URL: env.SAML_METADATA_URL,
         // When set (remote-run-tests.sh), the metadata is uploaded from this
         // local file instead of fetched from the URL — see loadIdpMetadata().
         SAML_METADATA_FILE: env.SAML_METADATA_FILE,
         SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
         SAML_USER: env.SAML_USER,
-        SAML_BINDING,
       },
-    };
-    if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
-      job.skip = "HTTP-Artifact needs the API backend (server-side SOAP ArtifactResolve); unavailable on the static deployment.";
+    },
+    {
+      key: "sts",
+      label: "mock STS",
+      skip: env.SAML_STS_METADATA_URL ? null :
+        "the mock STS is not reachable by the browser for SAML 2.0 " +
+        "(SAML_STS_METADATA_URL unset). The launchers set it wherever the STS " +
+        "is reachable — the containerized stack by compose DNS name, the host " +
+        "and live-site runs over loopback.",
+      env: {
+        SAML_IDP: "sts",
+        SAML_METADATA_URL: env.SAML_STS_METADATA_URL,
+        // The SAME service provider entityID Keycloak's client is provisioned
+        // for. It can be, and that is the point rather than a shortcut: the
+        // mock registers no service providers, accepts any entityID, and
+        // creates the application entry from the first valid AuthnRequest — so
+        // there is nothing here to collide with a provisioned client
+        // somewhere else, and the two runs describe the same service provider
+        // to two identity providers, which is what a federation looks like.
+        SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
+        SAML_USER: env.SAML_STS_USER || env.SAML_USER || "saml",
+      },
+    },
+  ];
+
+  for (const idp of samlIdps) {
+    for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
+      const job = {
+        name: `SAML 2.0 SSO — HTTP-${SAML_BINDING === 'post' ?
+            'POST' : SAML_BINDING === 'artifact' ?
+            'Artifact' : 'Redirect'} binding (${idp.label})`,
+        script: "saml_sso.js",
+        env: Object.assign({ SAML_BINDING }, idp.env),
+      };
+      if (idp.skip) {
+        job.skip = idp.skip;
+      } else if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
+        // The gate is about the TARGET rather than the IdP: resolving an
+        // artifact is a server-side SOAP call the SP has to make, so it needs
+        // the api backend whichever identity provider minted the artifact.
+        job.skip = "HTTP-Artifact needs the API backend (server-side SOAP ArtifactResolve); unavailable on the static deployment.";
+      }
+      jobs.push(job);
     }
-    jobs.push(job);
+  }
+
+  // ---------------------------------------------------------------------
+  // SAML **1.1**, and it is a different kind of job from every other one in
+  // this section.
+  //
+  // The three above drive the DEBUGGER's service provider against an identity
+  // provider. This one drives the mock STS's SAML 1.1 identity provider
+  // directly, over HTTP, with a relying party it writes itself and no browser
+  // at all — like sts_dpop.js, sts_metadata.js, admin_api.js and vc_did.js,
+  // which is the family it belongs to.
+  //
+  // **It has to be, because the debugger has no SAML 1.1 service provider to
+  // drive.** saml_tools.html composes, signs and encrypts a SAML 1.1
+  // assertion, and the WS-Trust and WS-Federation response pages consume one,
+  // but the SAML protocol workflow is SAML 2.0 SP-initiated: selecting 1.1 on
+  // saml_request.html returns an XML comment where a request would be, and
+  // callIdp() and singleLogout() both refuse by name. So this is the only
+  // shape this coverage can take today, and it is not a Keycloak pairing
+  // waiting to happen either — Keycloak has spoken no SAML 1.1 since it
+  // dropped the profile.
+  //
+  // Gated on the STS alone, like the four it sits with. It restores every
+  // setting it changes, through /admin-api/config/reset rather than by writing
+  // the old value back, so it leaves no runtime override for admin_api.js to
+  // trip over on the next run against the same container.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "SAML 1.1 browser profiles against the mock STS (Browser/POST, " +
+          "Browser/Artifact, the SOAP responder, per-RP metadata)",
+      script: "saml11_sso.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
   }
 
   // SAML 2.0 EncryptedAssertion decryption: SSO against a SAML client with
@@ -2853,6 +2949,15 @@ function buildJobs() {
   // ciphertext, which does not DEFLATE, so a redirect-bound one roughly doubles
   // in URL length — which is precisely why saml-profiles-2.0-os section 4.1.2
   // says the Redirect binding MUST NOT carry the Response.
+  //
+  // **THIS ONE IS KEYCLOAK-ONLY, and the reason is a documented non-feature
+  // rather than an omission in the test.** The mock STS's Web Browser SSO
+  // profile does not encrypt an assertion: there is no recipient certificate in
+  // an AuthnRequest to encrypt to unless SP metadata is consumed, and that
+  // service publishes metadata and does not consume it. (Its WS-Trust endpoint
+  // does encrypt, at /sts?encrypt=1, because a WS-Security signature carries
+  // the certificate.) So there is no `sts` half to add here — adding one would
+  // be a job that could only ever fail or be skipped.
   {
     const encJob = {
       name: "SAML 2.0 EncryptedAssertion — decrypt on Response page",
@@ -2881,19 +2986,27 @@ function buildJobs() {
   // and capture the NameID/SessionIndex), then send a signed LogoutRequest and
   // confirm the LogoutResponse renders with a Success status on the response
   // page.
-  jobs.push({
-    name: "SAML 2.0 Single Logout (login → LogoutRequest → " +
-        "LogoutResponse Success)",
-    script: "saml_logout.js",
-    env: {
-      SAML_METADATA_URL: env.SAML_METADATA_URL,
-      // When set (remote-run-tests.sh), the metadata is uploaded from this
-      // local file instead of fetched from the URL — see loadIdpMetadata().
-      SAML_METADATA_FILE: env.SAML_METADATA_FILE,
-      SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
-      SAML_USER: env.SAML_USER,
-    },
-  });
+  //
+  // Once per identity provider, like the SSO jobs above. The interesting
+  // difference between the two is where the LogoutResponse is SENT: a
+  // LogoutRequest carries no return address, so Keycloak reads the SP metadata
+  // it was configured with, and the mock — which publishes metadata and does
+  // not consume it — uses the samlSingleLogoutService declared on the service
+  // provider's directory entry, falling back to the assertion consumer service
+  // URL it last used. The launchers declare it; the fallback is right for this
+  // stack anyway, because the api's /samlacs and /samlslo are one handler.
+  for (const idp of samlIdps) {
+    const logoutJob = {
+      name: "SAML 2.0 Single Logout (login → LogoutRequest → " +
+          `LogoutResponse Success) (${idp.label})`,
+      script: "saml_logout.js",
+      env: Object.assign({}, idp.env),
+    };
+    if (idp.skip) {
+      logoutJob.skip = idp.skip;
+    }
+    jobs.push(logoutJob);
+  }
 
   // WS-Federation Passive Requestor Profile SSO, run twice: against the
   // dedicated Keycloak 8.0.1 + cloudtrust keycloak-wsfed side-car (the 26.x

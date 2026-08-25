@@ -43,6 +43,7 @@ const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { waitForFocus } = require("./wait_for.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -145,6 +146,11 @@ async function runCeremony(driver, username) {
   await driver.findElement(By.id("username")).sendKeys(username);
   await driver.findElement(By.id("kc-login")).click();
   await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
+  // A headless window is neither focused nor visible for its first second or
+  // so, and WebAuthn refuses on such a page with a bare NotAllowedError that
+  // reads exactly like a declined prompt. See waitForFocus() in
+  // tests/wait_for.js.
+  await waitForFocus(driver, waitTime * 8);
   await driver.findElement(By.id("wa-go")).click();
   await driver.wait(until.urlContains("/oauth2/callback-sink"), waitTime * 8);
   const url = new URL(await driver.getCurrentUrl());
@@ -482,6 +488,7 @@ async function ceremonyFingerprint(driver, username) {
   // Re-run the enrolment's artifacts out of the STS is not possible (it keeps
   // only the key), so the fingerprint is taken from a fresh ceremony driven in
   // the page and read back with the browser's own APIs.
+  await waitForFocus(driver, waitTime * 8);
   log.debug("Leaving ceremonyFingerprint().");
   return driver.executeAsyncScript(
     "var done = arguments[arguments.length - 1];" +

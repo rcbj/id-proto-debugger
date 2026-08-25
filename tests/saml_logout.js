@@ -16,6 +16,62 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
+// ---------------------------------------------------------------------------
+// WHICH IDENTITY PROVIDER this run drives — see tests/saml_sso.js, which
+// carries the full note. The short version: `keycloak` needs a provisioned
+// client carrying this run's SP certificate, `sts` needs nothing provisioned at
+// all, and both use the same sign-in field ids.
+//
+// **THERE IS A FOURTH "IDP:" DIFFERENCE IN THIS FILE AND IT IS THE INTERESTING
+// ONE**: where the LogoutResponse is SENT. A <samlp:LogoutRequest> carries no
+// return address — only SP metadata has one, in a SingleLogoutService element.
+// Keycloak consumes SP metadata and knows. The mock STS does NOT consume SP
+// metadata, so it looks for a samlSingleLogoutService on the service provider's
+// directory entry, then saml2.defaultSingleLogoutService, and then falls back to
+// the assertion consumer service URL that service provider last used — which is
+// a GUESS, is logged as one, and happens to be right here because the debugger's
+// /samlacs and /samlslo are the same handler. local-run-tests.sh declares it
+// through the management API anyway, so that the run exercises the declared path
+// rather than the fallback; see there.
+// ---------------------------------------------------------------------------
+var IDP = (process.env.SAML_IDP || "keycloak").toLowerCase();
+
+var LOGIN_BUTTONS = ["kc-login", "saml2-login"];
+
+async function elementExists(driver, id) {
+  log.debug("Entering elementExists().");
+  var found = await driver.findElements(By.id(id));
+  log.debug("Leaving elementExists().");
+  return found.length > 0;
+}
+
+async function loginAtIdp(driver, user, timeout) {
+  log.debug("Entering loginAtIdp().");
+  var username = By.id("username");
+  await driver.wait(until.elementLocated(username), timeout,
+    "the identity provider never showed its sign-in screen (no #username " +
+        "field). idp=" + IDP);
+  await driver.wait(until.elementIsVisible(driver.findElement(username)),
+                    timeout);
+  await driver.findElement(username).clear();
+  await driver.findElement(username).sendKeys(user);
+  await driver.findElement(By.id("password")).clear();
+  await driver.findElement(By.id("password")).sendKeys(user);
+
+  var clicked = null;
+  for (var i = 0; i < LOGIN_BUTTONS.length; i++) {
+    if (await elementExists(driver, LOGIN_BUTTONS[i])) {
+      clicked = LOGIN_BUTTONS[i];
+      await driver.findElement(By.id(clicked)).click();
+      break;
+    }
+  }
+  assert(clicked, "the sign-in screen carries none of the submit buttons this " +
+      "test knows (" + LOGIN_BUTTONS.join(", ") + ").");
+  log.info("Signed in at the " + IDP + " sign-in screen (" + clicked + ").");
+  log.debug("Leaving loginAtIdp().");
+}
+
 // Poll a field's value until the predicate passes (or timeout).
 async function waitForValue(driver, locator, predicate, message, timeout) {
   log.debug("Entering waitForValue().");
@@ -106,9 +162,12 @@ async function ssoLogin(driver, metadataUrl, spEntityId, user, binding,
   await driver.findElement(spField).clear();
   await driver.findElement(spField).sendKeys(spEntityId);
 
-  // This run's SP signing key pair (its cert is registered on the Keycloak
-  // client, so both the AuthnRequest and the LogoutRequest signatures
-  // validate).
+  // This run's SP signing key pair. IDP: on Keycloak its certificate is
+  // registered on the client, so both the AuthnRequest and the LogoutRequest
+  // signatures are validated there; the mock STS records that a message was
+  // signed and verifies neither. The test signs identically either way — what
+  // it proves against the mock is that the DEBUGGER built and sent a signed
+  // LogoutRequest, which is the half of this that is about the client.
   var spPair = readSpKeyPair();
   var spKey = spPair.privateKey;
   var spCert = spPair.certificate;
@@ -121,16 +180,8 @@ async function ssoLogin(driver, metadataUrl, spEntityId, user, binding,
   await selectBinding(driver, binding);
   await clickByValue(driver, "Call IdP");
 
-  log.info("Log in at Keycloak.");
-  var username = By.id("username");
-  await driver.wait(until.elementLocated(username), loginWait);
-  await driver.wait(until.elementIsVisible(driver.findElement(username)),
-                    loginWait);
-  await driver.findElement(username).clear();
-  await driver.findElement(username).sendKeys(user);
-  await driver.findElement(By.id("password")).clear();
-  await driver.findElement(By.id("password")).sendKeys(user);
-  await driver.findElement(By.id("kc-login")).click();
+  log.info("Log in at the identity provider (idp=" + IDP + ").");
+  await loginAtIdp(driver, user, loginWait);
 
   // Land on the response page; the assertion render persists the subject for
   // SLO.
@@ -139,7 +190,8 @@ async function ssoLogin(driver, metadataUrl, spEntityId, user, binding,
     function (v) { return v.indexOf("Assertion") >= 0 &&
               v.indexOf("no <Assertion") < 0; },
     "SSO did not yield an assertion — cannot exercise logout.", loginWait);
-  log.info("SSO login complete; Keycloak session established.");
+  log.info("SSO login complete; the " + IDP + " session is established. It is " +
+           "that session Single Logout has to end.");
   log.debug("Leaving ssoLogin().");
 }
 
@@ -147,7 +199,8 @@ async function samlLogout(driver, metadataUrl, spEntityId, user, binding,
                           metadataFile) {
   log.debug("Entering samlLogout().");
   // Keycloak's login + logout round-trips can take several seconds on a cold
-  // browser, so give the navigations a generous timeout.
+  // browser, so give the navigations a generous timeout. The mock STS needs
+  // none of it and one timeout for both is better than a branch.
   var loginWait = Math.max(waitTime, 15000);
 
   await ssoLogin(driver, metadataUrl, spEntityId, user, binding, loginWait,

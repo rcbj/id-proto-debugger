@@ -425,6 +425,18 @@ What is **not** folded is the page's own answers: `spiffe_workload_about`,
 the page. A result behind a click nobody knows to make is a result nobody
 sees.
 
+Those answers are told apart from the shipped prose **by their id**, and that
+is the rule a new one has to follow: every `<p class="spiffe-note">` the
+bundle GENERATES — `renderMessages()`'s per-message headings and its
+no-messages line, `describeBundleText()`'s summary and its error and warning
+lines, `checkSpiffeId()`'s verdict and membership lines — is given one, because
+all four result containers (`spiffe_bundle_report`, `spiffe_workload_result`,
+`spiffe_server_result`, `spiffe_id_report`) sit OUTSIDE the folds. Without an
+id a generated note is indistinguishable from a paragraph of prose that
+escaped its `<details>`, both to a reader and to `spiffe_page.js`, whose
+"every explanation is inside a fold" check skips prose that has one. The
+generated readouts carry a `title` for the same reason the static ones do.
+
 With the prose folded, the **tooltip is the only explanation on screen for a
 control somebody is looking straight at**, so every field and every button
 carries one — the readouts included, since a box whose contents arrived from

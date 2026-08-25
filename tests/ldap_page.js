@@ -192,6 +192,23 @@ async function clearStatus(driver, id) {
   log.debug("Leaving clearStatus().");
 }
 
+// The same rule as clearStatus(), for the readouts that are TEXT rather than
+// the value of an input. #ldap_search_count is a <p> the page rewrites at the
+// end of every search, so it still holds the previous search's total when the
+// next one is started — and a wait for /\d+ entries/ is then satisfied by the
+// answer to a question the test is no longer asking. That cost a run on
+// 2026-08-24: the pager section read "2 entries" (the group the previous
+// preset had found) where it had just created 24, and reported "Something else
+// is in ou=...,dc=example,dc=com, or the search did not run against it" — a
+// message about the DIRECTORY for a defect that was entirely in the test.
+async function clearText(driver, id) {
+  log.debug("Entering clearText(). " + id);
+  await driver.executeScript(
+    "var e = document.getElementById(arguments[0]);" +
+    "if (e) { e.textContent = ''; }", id);
+  log.debug("Leaving clearText().");
+}
+
 async function click(driver, id) {
   log.debug("Entering click(). " + id);
   const button = await driver.findElement(By.id(id));
@@ -619,7 +636,12 @@ async function theSearchPanePagesItsResults(driver) {
         "s.value = '10';" +
         "s.dispatchEvent(new Event('change'));");
     await clearStatus(driver, "ldap_search_status");
+    // Both readouts, because the wait below is on the COUNT and the previous
+    // section left one there.
+    await clearText(driver, "ldap_search_count");
     await click(driver, "btn_ldap_search");
+    await waitForValue(driver, "ldap_search_status", /succeeded|refused|HTTP/,
+                       30000, "the paging search produced no status");
     await waitForText(driver, "ldap_search_count", /\d+ entries/, 20000,
                       "the search to return entries");
 

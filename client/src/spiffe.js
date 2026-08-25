@@ -913,6 +913,14 @@ function renderMessages(id, payload) {
   if (!payload.messages || !payload.messages.length) {
     var empty = document.createElement('p');
     empty.className = 'spiffe-note';
+    // Every <p> this page GENERATES carries an id, and the four result
+    // containers are why: they sit outside the folds the shipped prose lives
+    // in, so a note drawn into one is a paragraph of unfolded text as far as
+    // anything reading the DOM can tell — including tests/spiffe_page.js,
+    // whose "every explanation is inside a fold" check exempts prose with an
+    // id precisely because an id marks a SLOT the page fills rather than
+    // prose it ships.
+    empty.id = id + '_note';
     empty.textContent = payload.status
       ? 'No messages. The server answered ' + payload.status.name +
         (payload.status.details ? ': ' + payload.status.details : '') + '.'
@@ -924,6 +932,7 @@ function renderMessages(id, payload) {
   payload.messages.forEach(function (message, index) {
     var heading = document.createElement('p');
     heading.className = 'spiffe-note';
+    heading.id = id + '_message_' + (index + 1);
     heading.textContent = payload.messages.length > 1
       ? 'Message ' + (index + 1) + ' of ' + payload.messages.length
       : 'The answer';
@@ -932,6 +941,12 @@ function renderMessages(id, payload) {
     box.className = 'spiffe-output';
     box.readOnly = true;
     box.rows = 12;
+    // A tooltip here for the same reason every other control on this page has
+    // one: with the prose folded, this is the only explanation on screen for
+    // the box somebody is looking straight at.
+    box.title = 'The message the server sent back, as JSON. This is what ' +
+      'came off the wire, decoded from protobuf and nothing more — no ' +
+      'field is added, renamed or interpreted here.';
     // textContent rather than innerHTML, everywhere on this page. What is being
     // rendered came off a wire this page does not control, and a readonly
     // textarea holding text is a sink with no interpretation at all — which is
@@ -1016,6 +1031,7 @@ function describeBundleText(report) {
   clear(node);
   var summary = document.createElement('p');
   summary.className = 'spiffe-note';
+  summary.id = 'spiffe_bundle_summary';
   summary.textContent = 'spiffe_sequence ' +
     (report.sequence === null ? '(absent)' : report.sequence) +
     ', spiffe_refresh_hint ' +
@@ -1026,9 +1042,10 @@ function describeBundleText(report) {
 
   [['spiffe-bad-text', 'Error', report.errors],
    ['spiffe-warn-text', 'Warning', report.warnings]].forEach(function (pair) {
-    pair[2].forEach(function (line) {
+    pair[2].forEach(function (line, index) {
       var p = document.createElement('p');
       p.className = 'spiffe-note ' + pair[0];
+      p.id = 'spiffe_bundle_' + pair[1].toLowerCase() + '_' + (index + 1);
       p.textContent = pair[1] + ': ' + line;
       node.appendChild(p);
     });
@@ -1392,6 +1409,7 @@ function checkSpiffeId() {
   if (node) {
     clear(node);
     var line = document.createElement('p');
+    line.id = 'spiffe_id_verdict';
     line.className = 'spiffe-note ' +
       (parsed.ok ? 'spiffe-ok-text' : 'spiffe-bad-text');
     line.textContent = parsed.ok
@@ -1405,6 +1423,7 @@ function checkSpiffeId() {
     node.appendChild(line);
     if (parsed.ok) {
       var member = document.createElement('p');
+      member.id = 'spiffe_id_membership';
       member.className = 'spiffe-note';
       var against = val('spiffe_trust_domain');
       member.textContent = against

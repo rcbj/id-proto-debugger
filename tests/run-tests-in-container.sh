@@ -123,6 +123,25 @@ init()
       ;;
   esac
   export WSFED_STS_METADATA_URL
+  # The same mock also answers SAML 2.0 WEB BROWSER SSO, so the SAML jobs run
+  # against it as well as against the Keycloak realm. Same DNS rule and the same
+  # reason as the two above: this is a BROWSER-facing URL.
+  #
+  # THE PATH SEGMENT IS A DIGEST, computed here rather than guessed. That
+  # service publishes metadata PER SERVICE PROVIDER, and the segment is the
+  # entityID where that is safe in a URL path and `app-` plus twelve hex
+  # characters of its SHA-256 where it is not. Ours is a URL, so it is the
+  # digest — and note it is computed from THIS file's SAML_SP_ENTITY_ID, which
+  # is the compose-DNS spelling and therefore a different digest from the host
+  # run's. Nothing has to be provisioned for it: the mock accepts any entityID
+  # and mints the document on the ask.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      SAML_STS_SP_SLUG="app-$(printf '%s' "${SAML_SP_ENTITY_ID}" | sha256sum | cut -c1-12)"
+      SAML_STS_METADATA_URL="${SAML_STS_METADATA_URL:-http://sts:8081/saml2/metadata/${SAML_STS_SP_SLUG}}"
+      ;;
+  esac
+  export SAML_STS_METADATA_URL
   # RFC 9700 (OAuth 2.0 Security BCP): the SECOND mock STS, the one started with
   # STS_OAUTH2_RFC9700=true, which is a separate container here
   # (docker-compose-run-tests.yml, service sts-rfc9700) rather than a setting on
