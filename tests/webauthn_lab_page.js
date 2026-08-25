@@ -37,6 +37,7 @@ const { VirtualAuthenticatorOptions, Transport, Protocol } =
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { waitForFocus } = require("./wait_for.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -177,6 +178,12 @@ async function test() {
                 "the RP ID should be prefilled from this origin; got " + rpId);
       return "RP ID prefilled as " + rpId;
     });
+
+    // Before ANY ceremony: a headless window is neither focused nor visible
+    // for its first second or so, and WebAuthn refuses on such a page with a
+    // bare NotAllowedError that reads exactly like a declined prompt. See
+    // waitForFocus() in tests/wait_for.js for the measurement.
+    await waitForFocus(driver, waitTime * 8);
 
     await driver.addVirtualAuthenticator(
       authenticatorOptions({ hasUserVerification: true,

@@ -34,6 +34,7 @@ const { VirtualAuthenticatorOptions, Transport, Protocol } =
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { waitForFocus } = require("./wait_for.js");
 const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -209,6 +210,12 @@ async function test() {
                   async () => {
       await signIn(driver, MFA_USER, authorizeUrl("&acr_values=mfa"));
       await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
+      // A headless window is neither focused nor visible for its first second
+      // or so, and WebAuthn refuses on such a page with a bare
+      // NotAllowedError that reads exactly like a declined prompt. This test
+      // signs in first and so was past that window by accident; the one on
+      // the Lab page was not. See waitForFocus() in tests/wait_for.js.
+      await waitForFocus(driver, waitTime * 8);
       const heading = await driver.findElement(By.css("h1")).getText();
       assert.ok(/Enrol/i.test(heading),
         "with no key enrolled the step should register one; the " +

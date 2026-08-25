@@ -8,6 +8,13 @@ set -x
 #                provision Keycloak with SAML AuthnRequest signature validation
 #                DISABLED, then leave the stack running WITHOUT running the tests
 #                (for manual SAML testing with a browser-generated SP key).
+#   --saml-only[=IDP]
+#                Just the SAML 2.0 Web Browser SSO jobs — SSO over all three
+#                bindings plus Single Logout — against the Keycloak realm, the
+#                mock STS, or both (default), and against the mock the SAML 1.1
+#                browser profiles as well. The mock needs nothing
+#                provisioned and starts in seconds, so --saml-only=sts is the
+#                fastest loop.
 #   --wsfed-only[=IDP]
 #                Bring up ONLY what the WS-Federation test needs (api, client,
 #                the mock STS and the Keycloak 8.0.1 + wsfed side-car),
@@ -40,6 +47,13 @@ set -x
 #                   init() for the whole argument.
 #
 SKIP_TESTS=0
+SAML_ONLY=0
+# Which identity provider(s) --saml-only drives. Two of them answer the SAML 2.0
+# Web Browser SSO profile now — the Keycloak realm, and the mock STS since
+# 2026-08-24 — and the same jobs run against both for the reason the WS-Fed pair
+# below run against both: a mock that is quietly more permissive than the real
+# thing passes every test written against it alone.
+SAML_ONLY_IDP=both
 WSFED_ONLY=0
 # Which identity provider(s) --wsfed-only drives. See docs/wsfed.md for why
 # there are two and what each covers that the other cannot.
@@ -52,7 +66,8 @@ SAML_SIG_VALIDATION=true
 usage()
 {
   cat <<USAGE
-Usage: $(basename "$0") [--saml-dev] [--wsfed-only[=keycloak|sts|both]]
+Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
+                        [--wsfed-only[=keycloak|sts|both]]
                         [--krb5-real-dc[=test|capture|both]] [-h|--help]
 
   (default)    Build + start the stack, provision Keycloak (SAML AuthnRequest
@@ -61,6 +76,28 @@ Usage: $(basename "$0") [--saml-dev] [--wsfed-only[=keycloak|sts|both]]
   --saml-dev   Build + start Keycloak and the debugger (api + client), provision
                Keycloak with SAML AuthnRequest signature validation DISABLED, and
                leave the stack running WITHOUT running the tests.
+
+  --saml-only[=IDP]
+               Build + start only api, client and whichever identity provider is
+               asked for, and run tests/saml_sso.js over all three bindings plus
+               tests/saml_logout.js. IDP is "keycloak", "sts" or "both"
+               (default).
+
+               The two differ in what they can show. Keycloak is somebody else's
+               implementation and the only interoperability evidence here, and it
+               VALIDATES the AuthnRequest signature. The mock STS answers the
+               HTTP Artifact binding with a real SOAP back channel, refuses a
+               ProtocolBinding it does not implement by name, and needs NOTHING
+               PROVISIONED — it accepts any entityID and mints a metadata
+               document for anything asked for — so --saml-only=sts starts in
+               seconds and is the fastest loop.
+
+               The sts half runs one job the keycloak half cannot:
+               tests/saml11_sso.js, the SAML 1.1 browser profiles. That one uses
+               no browser at all — it drives the mock's identity provider over
+               HTTP with a relying party it writes itself, because the
+               debugger's SAML workflow is SAML 2.0 SP-initiated and Keycloak
+               has spoken no SAML 1.1 for years.
 
   --wsfed-only[=IDP]
                Build + start only api, client, the mock STS and the WS-Fed
@@ -94,6 +131,8 @@ USAGE
 while [ $# -gt 0 ]; do
   case "$1" in
     --saml-dev) SKIP_TESTS=1; SAML_SIG_VALIDATION=false ;;
+    --saml-only) SAML_ONLY=1 ;;
+    --saml-only=*) SAML_ONLY=1; SAML_ONLY_IDP="${1#*=}" ;;
     --wsfed-only) WSFED_ONLY=1 ;;
     --wsfed-only=*) WSFED_ONLY=1; WSFED_ONLY_IDP="${1#*=}" ;;
     --krb5-real-dc) KRB5_REAL_DC=1 ;;
@@ -103,6 +142,11 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+case "${SAML_ONLY_IDP}" in
+  keycloak|sts|both) ;;
+  *) echo "Unknown --saml-only identity provider: ${SAML_ONLY_IDP}" >&2
+     usage; exit 1 ;;
+esac
 case "${WSFED_ONLY_IDP}" in
   keycloak|sts|both) ;;
   *) echo "Unknown --wsfed-only identity provider: ${WSFED_ONLY_IDP}" >&2
@@ -116,6 +160,11 @@ esac
 if [ "${KRB5_REAL_DC}" = "1" ] && [ "${WSFED_ONLY}" = "1" ];
 then
   echo "--krb5-real-dc and --wsfed-only each run one thing; pick one." >&2
+  exit 1
+fi
+if [ "${SAML_ONLY}" = "1" ] && { [ "${WSFED_ONLY}" = "1" ] || [ "${KRB5_REAL_DC}" = "1" ]; };
+then
+  echo "--saml-only, --wsfed-only and --krb5-real-dc each run one thing; pick one." >&2
   exit 1
 fi
 export SAML_SIG_VALIDATION
@@ -138,6 +187,25 @@ init()
   # passive endpoint at all.
   WSFED_STS_METADATA_URL=http://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml
   export WSFED_STS_METADATA_URL
+  # And the same mock STS answers SAML 2.0 WEB BROWSER SSO since 2026-08-24, so
+  # the SAML jobs can be run against it as well as against the Keycloak realm.
+  #
+  # THE PATH SEGMENT IS A DIGEST AND IT IS COMPUTED HERE RATHER THAN GUESSED.
+  # That service publishes metadata PER SERVICE PROVIDER — a distinct identity
+  # provider entityID and its own SSO, SLO and artifact endpoints, the way Okta
+  # and Ping do — and the segment is the entityID itself where that is safe in a
+  # URL path and `app-` plus twelve hex characters of its SHA-256 where it is
+  # not. Ours is a URL, so it is the digest. The unscoped /saml2/metadata would
+  # also work and is deliberately not what is used: the per-application document
+  # is the feature, and a test configured from the generic one would never touch
+  # it.
+  #
+  # It does NOT have to exist first. That service accepts any entityID and mints
+  # the document on the ask, which is why there is no provisioning step for it
+  # anywhere in this file.
+  SAML_STS_SP_SLUG="app-$(printf '%s' "${SAML_SP_ENTITY_ID}" | sha256sum | cut -c1-12)"
+  SAML_STS_METADATA_URL="http://localhost:8081/saml2/metadata/${SAML_STS_SP_SLUG}"
+  export SAML_STS_SP_SLUG SAML_STS_METADATA_URL
   # And it hosts the TLS / mutual-TLS endpoint the PKI page presents a client
   # certificate to (its two HTTPS listeners, 8443 and 9443). This is its PLAIN
   # HTTP base: the test configures the far end's truststore over it and reads
@@ -445,6 +513,224 @@ runReport()
 # having on its own.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# --saml-only: the SAML 2.0 Web Browser SSO jobs, against one identity provider
+# or both.
+#
+# Same shape as --wsfed-only below and for the same reason. What each side is
+# for:
+#
+#   keycloak  somebody else's implementation, and the only interoperability
+#             evidence here. It VALIDATES the AuthnRequest signature against the
+#             certificate configureKeycloak() registered for this run, so a
+#             request the debugger builds sloppily fails THERE and passes at the
+#             mock.
+#   sts       the mock STS (sts/saml/saml2_sso.js). It answers the HTTP Artifact
+#             binding with a real SOAP back channel, refuses a ProtocolBinding it
+#             does not implement BY NAME, answers IsPassive with NoPassive rather
+#             than a screen — and needs nothing provisioned, because it accepts
+#             any entityID and mints a metadata document for anything asked for.
+#
+# The mock is deliberately more permissive in exactly one way that matters here:
+# it verifies no request signature. So the pair answer different questions, which
+# is why both run rather than one replacing the other.
+# ---------------------------------------------------------------------------
+
+# One SAML job against the IdP described by the environment the caller sets.
+# Invoked exactly as tests/run-report.js does it: from the repository root, with
+# CONFIG_FILE relative to the test file.
+runSamlAgainst()
+{
+  local label="$1"
+  local script="$2"
+  echo "Entering runSamlAgainst(). label=${label} script=${script}"
+  echo "=== ${script} against ${label} (binding=${SAML_BINDING:-redirect}) ==="
+  echo "SAML_IDP=${SAML_IDP}  SAML_METADATA_URL=${SAML_METADATA_URL}"
+  echo "SAML_SP_ENTITY_ID=${SAML_SP_ENTITY_ID}  SAML_USER=${SAML_USER}"
+  node "${NODEJS_BASE_DIR}/${script}" --url "${DEBUGGER_BASE_URL}"
+  local rc=$?
+  echo "Leaving runSamlAgainst(). label=${label} rc=${rc}"
+  return ${rc}
+}
+
+# Every SAML job for one identity provider: SSO over each of the three bindings,
+# then Single Logout. The bindings are run in one subshell each so that a failure
+# in one names its own binding rather than leaving the next to inherit its
+# environment — the trap runWsfedOnly() writes down at length.
+runSamlSuiteAgainst()
+{
+  local label="$1"
+  echo "Entering runSamlSuiteAgainst(). label=${label}"
+  local rc=0
+  local failures=""
+  local binding
+  for binding in redirect post artifact;
+  do
+    (
+      export SAML_BINDING="${binding}"
+      runSamlAgainst "${label}" saml_sso.js
+    )
+    if [ $? -ne 0 ]; then rc=1; failures="${failures} sso/${binding}"; fi
+  done
+  # Single Logout on the redirect binding only. The test drives the binding
+  # SELECTOR, which decides which SLO endpoint the LogoutRequest goes to, and
+  # both identity providers publish the same endpoint for both bindings — so a
+  # second pass would exercise the debugger's own POST form and nothing else
+  # about either IdP.
+  (
+    export SAML_BINDING=redirect
+    runSamlAgainst "${label}" saml_logout.js
+  )
+  if [ $? -ne 0 ]; then rc=1; failures="${failures} logout"; fi
+  if [ ${rc} -ne 0 ];
+  then
+    echo "SAML failed against ${label}:${failures}" >&2
+  fi
+  echo "Leaving runSamlSuiteAgainst(). label=${label} rc=${rc}"
+  return ${rc}
+}
+
+runSamlOnly()
+{
+  echo "Entering runSamlOnly(). idp=${SAML_ONLY_IDP}"
+  local services="api client"
+  case "${SAML_ONLY_IDP}" in
+    keycloak) services="${services} keycloak" ;;
+    sts)      services="${services} sts" ;;
+    both)     services="${services} keycloak sts" ;;
+  esac
+  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml build ${services}
+  check_return_code $?
+  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml up -d ${services}
+  check_return_code $?
+  if [ "${SAML_ONLY_IDP}" != "sts" ];
+  then
+    echo "Waiting for Keycloak ..."
+    sleep 30
+  else
+    echo "Waiting for the mock STS ..."
+    sleep 5
+  fi
+  CONFIG_FILE=./env/local.js verifyComposeServicesRunning local-tests.yml
+
+  # Provision the realm only when this loop is driving it. There is deliberately
+  # no equivalent for the mock: it accepts any entityID, needs no client, no
+  # user and no certificate, and creates the application entry itself from the
+  # first valid AuthnRequest.
+  if [ "${SAML_ONLY_IDP}" != "keycloak" ];
+  then
+    CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml sts
+    check_return_code $?
+  fi
+  if [ "${SAML_ONLY_IDP}" != "sts" ];
+  then
+    CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml keycloak
+    check_return_code $?
+    # No compose-file argument: configureKeycloak() takes none, unlike
+    # configureKeycloakWsfed(). It is what exports SAML_METADATA_URL and
+    # SAML_USER for the realm, so the keycloak branch below reads them from
+    # here rather than from init().
+    configureKeycloak
+    check_return_code $?
+  fi
+
+  export DEBUGGER_BASE_URL CONFIG_FILE KEYCLOAK_BASE_URL
+  local rc=0
+  local failures=""
+
+  if [ "${SAML_ONLY_IDP}" != "sts" ];
+  then
+    (
+      export SAML_IDP=keycloak
+      export SAML_METADATA_URL="${SAML_METADATA_URL}"
+      export SAML_SP_ENTITY_ID SAML_USER
+      runSamlSuiteAgainst "the Keycloak realm"
+    )
+    if [ $? -ne 0 ]; then rc=1; failures="${failures} Keycloak"; fi
+  fi
+
+  if [ "${SAML_ONLY_IDP}" != "keycloak" ];
+  then
+    (
+      export SAML_IDP=sts
+      export SAML_METADATA_URL="${SAML_STS_METADATA_URL}"
+      export SAML_SP_ENTITY_ID
+      export SAML_USER="${SAML_STS_USER:-saml}"
+      declareStsLogoutService
+      runSamlSuiteAgainst "the mock STS"
+    )
+    if [ $? -ne 0 ]; then rc=1; failures="${failures} mock-STS"; fi
+    # SAML **1.1**, which only the mock answers and which no browser touches.
+    #
+    # It is not part of runSamlSuiteAgainst() because it is not the same kind of
+    # job: the four in there drive the DEBUGGER's service provider against an
+    # identity provider, and this one drives the mock's SAML 1.1 identity
+    # provider directly over HTTP with a relying party it writes itself. It has
+    # to — the debugger's SAML workflow is SAML 2.0 SP-initiated, and selecting
+    # 1.1 on saml_request.html returns an XML comment where a request would be.
+    # So there is no keycloak half of this and there will not be one; Keycloak
+    # has spoken no SAML 1.1 for years.
+    #
+    # It takes WSTRUST_STS_URL, which init() exported, and needs nothing
+    # provisioned: any TARGET is accepted and the application entry is created
+    # on sight.
+    (
+      echo "Entering runSaml11Against(). label=the mock STS"
+      echo "WSTRUST_STS_URL=${WSTRUST_STS_URL}"
+      node "${NODEJS_BASE_DIR}/saml11_sso.js" --url "${DEBUGGER_BASE_URL}"
+      # The subshell's status is the status of its LAST command, so the rc has
+      # to be carried out deliberately — an echo after the node call would
+      # otherwise make every run of it succeed. runSamlAgainst() does the same.
+      saml11_rc=$?
+      echo "Leaving runSaml11Against(). rc=${saml11_rc}"
+      exit ${saml11_rc}
+    )
+    if [ $? -ne 0 ]; then rc=1; failures="${failures} mock-STS/saml11"; fi
+  fi
+
+  if [ ${rc} -ne 0 ];
+  then
+    echo "SAML failed against:${failures}" >&2
+  fi
+  echo "Leaving runSamlOnly(). rc=${rc}"
+  return ${rc}
+}
+
+# WHERE THE MOCK SENDS ITS LogoutResponse, declared rather than guessed.
+#
+# A <samlp:LogoutRequest> carries no return address — only SP metadata has one,
+# and that service publishes metadata and does not consume it. So with nothing
+# declared it falls back to the assertion consumer service URL the service
+# provider last used, which is a GUESS, is logged as one, and happens to be right
+# here because the api's /samlacs and /samlslo are the same handler.
+#
+# Declaring it makes the run exercise the DECLARED path, which is the one a real
+# deployment uses; leaving it undeclared would mean the fallback is what is
+# tested and nothing would say so. It goes through /admin-api, which is the
+# management API and is deliberately NOT behind that console's gate.
+#
+# Failures here are reported and NOT fatal: the fallback is correct for this
+# stack, so a mock started without the API reachable should still run the test
+# rather than refuse to.
+declareStsLogoutService()
+{
+  echo "Entering declareStsLogoutService()."
+  local api="http://localhost:8081/admin-api/saml2"
+  local slo="${SAML_STS_SLO_URL:-http://localhost:4000/samlslo}"
+  curl -sS -o /dev/null -X POST "${api}/register" \
+    -H 'Content-Type: application/json' \
+    -d "{\"sp\":\"${SAML_SP_ENTITY_ID}\"}" \
+    || echo "NOTE: could not register the service provider on the mock STS; it" \
+            "will be created by the first AuthnRequest anyway." >&2
+  curl -sS -o /dev/null -X POST "${api}/set-logout-service" \
+    -H 'Content-Type: application/json' \
+    -d "{\"sp\":\"${SAML_SP_ENTITY_ID}\",\"value\":\"${slo}\"}" \
+    || echo "NOTE: could not declare the SingleLogoutService on the mock STS." \
+            "The LogoutResponse will go to the assertion consumer service URL" \
+            "instead, which is a guess that is right for this stack." >&2
+  echo "Leaving declareStsLogoutService(). slo=${slo}"
+}
+
 # Run tests/wsfed_sso.js once, against the IdP described by the environment the
 # caller sets. Invoked exactly as tests/run-report.js does it: from the
 # repository root, with CONFIG_FILE relative to the test file (require()
@@ -635,6 +921,13 @@ then
   runKrb5RealDc
   check_return_code $?
   echo "Kerberos real-DC work passed (${KRB5_REAL_DC_WHAT})."
+  exit 0
+fi
+if [ "${SAML_ONLY}" = "1" ];
+then
+  runSamlOnly
+  check_return_code $?
+  echo "SAML 2.0 tests passed (idp=${SAML_ONLY_IDP})."
   exit 0
 fi
 if [ "${WSFED_ONLY}" = "1" ];

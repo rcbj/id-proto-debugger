@@ -222,6 +222,20 @@ init()
   then
     export WSFED_STS_METADATA_URL
   fi
+  # And the same mock answers SAML 2.0 Web Browser SSO, which a live-site run
+  # would otherwise have only one identity provider for. Same loopback reasoning
+  # as above — the BROWSER navigates to it. The path segment is a digest of the
+  # service provider entityID, because that service publishes metadata per
+  # service provider; nothing has to be provisioned, since it accepts any
+  # entityID and mints the document on the ask. Set it empty to skip these jobs.
+  if [ -n "${SAML_SP_ENTITY_ID:-}" ];
+  then
+    SAML_STS_METADATA_URL="${SAML_STS_METADATA_URL-http://localhost:8081/saml2/metadata/app-$(printf '%s' "${SAML_SP_ENTITY_ID}" | sha256sum | cut -c1-12)}"
+  fi
+  if [ -n "${SAML_STS_METADATA_URL:-}" ];
+  then
+    export SAML_STS_METADATA_URL
+  fi
 
   # ---------------------------------------------------------------------------
   # The SD-JWT VC and WS-Federation side-cars, all on this host's loopback.

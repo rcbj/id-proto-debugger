@@ -4,6 +4,8 @@ Scope: everything under `tests/`, plus the launchers (`docker-run-tests.sh`, `lo
 
 Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automatically.
 
+Most of them, anyway. **A handful drive the mock STS DIRECTLY over HTTP with no browser at all** — `sts_metadata.js`, `sts_dpop.js`, `admin_api.js`, `vc_did.js` and `saml11_sso.js` — and they are a family rather than five exceptions: each takes `WSTRUST_STS_URL` / `OID4VCI_ISSUER_URL`, each skips with a reason when there is no STS to talk to, and each is almost entirely NEGATIVES, because a mock that answers a well-formed request correctly looks finished and can be worth nothing. **A new test of the mock's protocol surface belongs in this directory and not in the `sts/` submodule**, and that is a decision somebody has already reversed once: `saml11_sso.js` was written over there on 2026-08-25, in a `tests/` directory of its own with its own `npm test`, and moved here the same day — a second suite means a second runner, a second report, a second thing CI has to know about and a second place to forget. The submodule keeps exactly one test, `federation-e2e/`, because that one builds a three-container topology out of several copies of the mock rather than driving one.
+
 **What each individual test covers is in `docs/test-suite-map.md`** — 24 files' worth of notes, including which services each needs and what gates or skips it. Read it before changing a test you did not write, or before adding one that overlaps. What follows here is the part that applies to **every** test in the suite, and each item below has already cost a run.
 
 ## The suite runs in a POOL, so a test may not assume it is alone
