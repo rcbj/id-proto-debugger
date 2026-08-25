@@ -1101,18 +1101,36 @@ app.post('/samlsign', function (req, res) {
 app.post('/samlartifactctx', function (req, res) {
   var b = req.body || {
     };
-  if (!b.privateKeyPem || !b.arsUrl) {
+  // THE KEY IS OPTIONAL AND THE ADDRESS IS NOT, which is a change of shape
+  // rather than a relaxation. SAML 2.0 section 3.6.3 does not require the
+  // <ArtifactResolve> to be signed either, and SAML 1.1 has no request document
+  // to sign at all — the browser sends four unsigned query parameters. Refusing
+  // without a key made "the service provider generated no key pair" fail HERE,
+  // in a call whose error text names privateKeyPem and nothing else, several
+  // steps before anything SAML-shaped happens. resolveArtifact() below signs
+  // when there is a key and sends it unsigned when there is not.
+  if (!b.arsUrl) {
     return res.status(STATUS_400).json({
-      error: 'privateKeyPem and arsUrl are required.'
+      error: 'arsUrl is required.'
     });
   }
   var id = stashArtifactCtx({
     arsUrl: b.arsUrl,
-    privateKeyPem: b.privateKeyPem,
+    privateKeyPem: b.privateKeyPem || '',
     certPem: b.certPem || '',
     spEntityId: b.spEntityId || '',
     sigAlg: b.sigAlg || 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
-    // Optional WS-Addressing headers for the ArtifactResolve SOAP envelope.
+    // WHICH PROTOCOL VERSION'S BACK-CHANNEL THIS IS. '1.1' means the endpoint
+    // is a SAML 1.1 SAML RESPONDER (saml-bindings-1.1 section 3.1), which
+    // answers a <samlp:Request> carrying an <AssertionArtifact> — NOT a SAML
+    // 2.0 Artifact Resolution Service, which answers an <ArtifactResolve>. The
+    // two are different messages in different namespaces returning differently
+    // shaped answers, and sending one where the other is expected produces a
+    // status a relying party reads as "that artifact does not resolve".
+    samlVersion: b.samlVersion === '1.1' ? '1.1' : '2.0',
+    // Optional WS-Addressing headers for the SOAP envelope. They apply to both
+    // versions: WS-Addressing is a SOAP-layer mechanism and knows nothing about
+    // what is inside the body.
     wsa: b.wsa || {}
   });
   res.json({
@@ -1140,7 +1158,17 @@ function decodeSamlMessage(b64) {
   log.debug("Leaving decodeSamlMessage().");
 }
 
-// Pull the <samlp:Response> element out of a SOAP <ArtifactResponse> envelope.
+// Pull the <samlp:Response> element out of the SOAP envelope that came back.
+//
+// It sits at a different DEPTH in the two versions and the difference is not
+// cosmetic. A SAML 2.0 Artifact Resolution Service answers with an
+// <ArtifactResponse> WRAPPING the <Response> that would otherwise have been
+// POSTed — two protocol messages, each with its own status. A SAML 1.1 SAML
+// responder answers with the <Response> itself, built at resolution time so it
+// can carry InResponseTo naming this SOAP request. Selecting on the local name
+// and the namespace finds the right element in both, and the namespace has to
+// be part of it: SAML 1.1's protocol namespace ends `:1.0:protocol`, which is
+// not a typo — the schemas were never renamed between 1.0 and 1.1.
 function extractResponseFromArtifactResponse(soapXml) {
   log.debug("Entering extractResponseFromArtifactResponse().");
   var xmldom = require('@xmldom/xmldom');
@@ -1148,7 +1176,8 @@ function extractResponseFromArtifactResponse(soapXml) {
   var doc = new xmldom.DOMParser().parseFromString(soapXml, 'text/xml');
   var nodes = xpath.select(
     "//*[local-name(.)='Response' and " +
-        "namespace-uri(.)='urn:oasis:names:tc:SAML:2.0:protocol']",
+        "(namespace-uri(.)='urn:oasis:names:tc:SAML:2.0:protocol' or " +
+         "namespace-uri(.)='urn:oasis:names:tc:SAML:1.0:protocol')]",
     doc
   );
   if (!nodes || !nodes.length) {
@@ -1157,6 +1186,46 @@ function extractResponseFromArtifactResponse(soapXml) {
   }
   log.debug("Leaving extractResponseFromArtifactResponse().");
   return new xmldom.XMLSerializer().serializeToString(nodes[0]);
+}
+
+// The message that asks for an artifact to be resolved, in whichever version's
+// spelling. Returns the XML and the id the enveloped signature must reference —
+// SAML 1.1 spells that attribute `RequestID`, which is on none of the lists
+// xmldsig's signEnveloped() searches, so it is passed explicitly rather than
+// found. Told nothing, xml-crypto-style signers INVENT an `Id` and point the
+// reference at that; it verifies, and it is not the id a SAML 1.1 responder
+// looks for.
+function buildArtifactResolveMessage(artifact, ctx) {
+  log.debug("Entering buildArtifactResolveMessage(). version=" +
+      ctx.samlVersion);
+  var id = '_' + crypto.randomBytes(16).toString('hex');
+  var instant = new Date().toISOString();
+  if (ctx.samlVersion === '1.1') {
+    // saml-bindings-1.1 section 3.2.3. MajorVersion/MinorVersion rather than a
+    // Version attribute, RequestID rather than ID, and NO <Issuer> — SAML 1.1
+    // has no element for a requester to name itself in, which is why the
+    // responder identifies the caller by the transport or not at all.
+    var req = '<samlp:Request ' +
+        'xmlns:samlp="urn:oasis:names:tc:SAML:1.0:protocol"' +
+        ' xmlns:saml="urn:oasis:names:tc:SAML:1.0:assertion"' +
+        ' RequestID="' + id + '" MajorVersion="1" MinorVersion="1"' +
+        ' IssueInstant="' + instant + '">' +
+        '<samlp:AssertionArtifact>' + xmlTextEscape(artifact) +
+        '</samlp:AssertionArtifact>' +
+        '</samlp:Request>';
+    log.debug("Leaving buildArtifactResolveMessage(). A SAML 1.1 Request.");
+    return { xml: req, id: id, refUri: '#' + id };
+  }
+  var ar = '<samlp:ArtifactResolve ' +
+      'xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
+           ' xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"' +
+           ' ID="' + id + '" Version="2.0" IssueInstant="' + instant + '">' +
+           '<saml:Issuer>' + xmlTextEscape(ctx.spEntityId || '') +
+               '</saml:Issuer>' +
+           '<samlp:Artifact>' + xmlTextEscape(artifact) + '</samlp:Artifact>' +
+           '</samlp:ArtifactResolve>';
+  log.debug("Leaving buildArtifactResolveMessage(). An ArtifactResolve.");
+  return { xml: ar, id: id, refUri: '#' + id };
 }
 
 // Resolve an artifact via the SOAP back-channel: build + sign an
@@ -1174,21 +1243,39 @@ function resolveArtifact(artifact, relayState) {
       return reject(new Error('no artifact context / ARS URL (RelayState ' +
                     'missing or expired)'));
     }
-    var id = '_' + crypto.randomBytes(16).toString('hex');
-    var instant = new Date().toISOString();
-    var ar = '<samlp:ArtifactResolve ' +
-        'xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
-             ' xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"' +
-             ' ID="' + id + '" Version="2.0" IssueInstant="' + instant + '">' +
-             '<saml:Issuer>' + (ctx.spEntityId || '') + '</saml:Issuer>' +
-             '<samlp:Artifact>' + artifact + '</samlp:Artifact>' +
-             '</samlp:ArtifactResolve>';
-    var signed;
-    try {
-      signed = signXmlEnveloped(ar, ctx.privateKeyPem, ctx.certPem,
-          ctx.sigAlg);
-    } catch (e) {
-      return reject(new Error('signing ArtifactResolve failed: ' + e.message));
+    var msg = buildArtifactResolveMessage(artifact, ctx);
+    var signed = msg.xml;
+    if (ctx.privateKeyPem) {
+      try {
+        signed = xmldsig.signEnveloped(msg.xml, {
+          privateKeyPem: ctx.privateKeyPem,
+          certPem: ctx.certPem || '',
+          sigAlg: ctx.sigAlg ||
+              'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
+          includeKeyInfo: !!ctx.certPem,
+          // Named rather than found: SAML 1.1's id attribute is `RequestID`,
+          // which signEnveloped() does not look for, and a signature that
+          // referenced the wrong id verifies against the document it invented
+          // instead of the one that was sent.
+          refUri: msg.refUri,
+          // WHERE ds:Signature GOES, and the two versions disagree. A SAML 2.0
+          // <ArtifactResolve> has an <Issuer> and the signature follows it. A
+          // SAML 1.1 <samlp:Request> has no Issuer at all and its schema's
+          // sequence is RespondWith*, ds:Signature?, then the query or the
+          // artifact — so the signature is the FIRST child, and a document that
+          // put it after the <AssertionArtifact> is schema-invalid.
+          placement: ctx.samlVersion === '1.1' ? 'first' : 'after-issuer'
+        });
+      } catch (e) {
+        return reject(new Error('signing the artifact resolution request ' +
+                      'failed: ' + e.message));
+      }
+    } else {
+      log.info('resolveArtifact: no SP private key was registered for this ' +
+               'flow, so the artifact resolution request is being sent ' +
+               'UNSIGNED. Neither version requires a signature here; an ' +
+               'identity provider that wants one refuses with a SAML status ' +
+               'rather than an HTTP error.');
     }
 
     // Optional WS-Addressing SOAP headers. WS-Addressing is a SOAP-layer
@@ -1252,8 +1339,19 @@ function handleSamlAcs(req, res) {
   try {
     var samlResponse = (req.body && req.body.SAMLResponse) ||
         req.query.SAMLResponse;
+    // THE RELAY STATE HAS TWO NAMES, one per protocol version. `RelayState` is
+    // SAML 2.0's and did not exist before it; SAML 1.1's browser profiles
+    // round-trip `TARGET`, which the profile intends as the URL of the resource
+    // the person was trying to reach and which the binding guarantees comes
+    // back byte for byte. That guarantee is the whole of what this endpoint
+    // needs from it: the Browser/Artifact flow carries the `art:<id>` handle
+    // naming the stashed SP context, and SAML 1.1 has nowhere else to put one.
+    // Reading only RelayState made every 1.1 artifact resolution fail with "no
+    // artifact context", which reads as an expired stash rather than as a
+    // parameter this handler never looked at.
     var relayState = (req.body && req.body.RelayState) ||
-        req.query.RelayState || '';
+        req.query.RelayState ||
+        (req.body && req.body.TARGET) || req.query.TARGET || '';
     if (typeof relayState !== 'string') {
       log.debug("Leaving handleSamlAcs().");
       return res.status(STATUS_400).send('ACS: invalid RelayState.');

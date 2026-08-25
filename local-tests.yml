@@ -82,6 +82,22 @@ services:
       - "sts:127.0.0.1"
     environment:
       - CONFIG_FILE=./env/local.js
+      # ---------------------------------------------------------------------
+      # THE MOCK STS'S CERTIFICATE, IN THIS SERVICE'S TRUSTSTORE.
+      #
+      # That mock serves its main port over TLS on this stack (see STS_HTTPS on
+      # the `sts` service for why the scheme moved to the process when the RFC
+      # 9700 pass became a trust realm), on a self-signed certificate it
+      # regenerates every start — so nothing can have an anchor for it ahead of
+      # time. api/sts_truststore.sh, this image's entrypoint, fetches it from
+      # this URL before the server starts and points NODE_EXTRA_CA_CERTS at it.
+      # Unset, the entrypoint does nothing, which is what a deployed api wants.
+      #
+      # This is a truststore addition, not a verification switch: every other
+      # certificate this service meets is still verified, which is what
+      # api_ssrf_guard.js, api_tls_probe.js and url_safety_schemes.js assert.
+      # ---------------------------------------------------------------------
+      - STS_CERT_URL=https://localhost:8081/tls/server-certificate
     build:
       context: .
       dockerfile: api/Dockerfile
@@ -93,6 +109,11 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-}
     depends_on:
       keycloak:
+        condition: service_healthy
+      # So the entrypoint's certificate fetch has something to fetch from. It
+      # retries regardless (see api/sts_truststore.sh), but depends_on turns the
+      # ordinary case into no retries at all.
+      sts:
         condition: service_healthy
     healthcheck:
       test: curl -X GET http://localhost:4000
@@ -149,111 +170,47 @@ services:
       # jobs hitting one instance at once can set STS_LOG_LEVEL=info and roughly
       # double what that instance can answer.
       - STS_LOG_LEVEL
+      # ---------------------------------------------------------------------
+      # THE MAIN PORT IS HTTPS, AND THE WHOLE SUITE TALKS TO IT THAT WAY.
+      #
+      # This replaced a SECOND mock instance. RFC 9700 mode used to need one:
+      # `oauth2.rfc9700` derives `global.https` in that service, so it binds
+      # 8081 as TLS, and one process could not serve the permissive pass and
+      # the compliant one. Since mock-sts marks that flag `realmRuntime` it can
+      # be set on a TRUST REALM — a realm binds no socket, so only the mode's
+      # checks change — and `/realm/rfc9700/...` is the compliant server while
+      # `/...` stays permissive. See common/common.sh's
+      # configureStsRfc9700Realm().
+      #
+      # WHAT A REALM CANNOT BRING WITH IT IS A SCHEME. The port is HTTPS or it
+      # is not, for every realm at once, and the RFC 9700 pass is only honest
+      # over TLS — requirement 8.1 is that every configured endpoint is https,
+      # and the debugger enforces it. So the scheme moves to the PROCESS, here,
+      # and every STS URL in the suite is https.
+      #
+      # `STS_HTTPS` rather than `STS_OAUTH2_RFC9700`: that one would turn the
+      # mode on for the DEFAULT realm too, and the permissive pass — twelve
+      # jobs — is the other half of the matrix. This is the setting that exists
+      # to separate the two.
+      #
+      # THE COST IS A CERTIFICATE NOBODY HAS AN ANCHOR FOR: it is self-signed
+      # and regenerated on every start, so it cannot be baked into an image or
+      # a truststore ahead of time. It is fetched from
+      # /tls/server-certificate once the service is up and installed for the
+      # two things that verify — node, through NODE_EXTRA_CA_CERTS, and Chrome,
+      # through an exact SPKI pin. common/common.sh's trustStsCertificate()
+      # does it for the host-side launchers; the `api` service above does its
+      # own, because it starts before any launcher could hand it one.
+      - STS_HTTPS=true
     build:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
       context: ./sts
+    # https, and `rejectUnauthorized:false` — the certificate is self-signed and
+    # regenerated every start, so nothing in this container can have an anchor
+    # for it. Liveness is this check's question, not trust.
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8081/healthcheck',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-  # THE SAME MOCK STS A SECOND TIME, IN RFC 9700 MODE.
-  #
-  # A second INSTANCE rather than a second setting, because `oauth2.rfc9700` is
-  # restart-only in that service: it derives `global.https`, and the main port's
-  # scheme is decided once when the listener is bound. One process cannot serve
-  # the permissive pass and the compliant one, so the OAuth2/OIDC matrix gets a
-  # server of its own to run against a second time. See docs/rfc9700.md.
-  #
-  # WHY EVERY PORT IS RESTATED. Under host networking there is no network
-  # namespace to hide behind — this container and `sts` above share the host's,
-  # so the seven listeners the mock binds would land on the seven the first one
-  # already holds. The main port has no error handler on its listen, so an
-  # EADDRINUSE there is an uncaught exception and the container dies at
-  # startup; the Kerberos and LDAP listeners record a bind failure instead of
-  # throwing, which is worse, because the service then comes up healthy while
-  # answering for neither. Each port is therefore moved deliberately rather
-  # than left to collide. (On the bridge stack,
-  # docker-compose-run-tests.yml, none of this applies and the second instance
-  # keeps the defaults.)
-  #
-  # 8081 IS THE ONE THAT MATTERS AND IT IS NOT SET HERE ON PURPOSE: the whole
-  # suite reaches the permissive mock on it, and anything else holding it takes
-  # out every STS-backed test at once. requireStsReachable() in
-  # local-run-tests.sh names the port when something else has it.
-  sts-rfc9700:
-    container_name: sts-rfc9700
-    hostname: sts-rfc9700
-    # The same image as `sts` — only the environment differs, so nothing is
-    # built twice and the two instances cannot drift.
-    image: rcbj/sts
-    network_mode: "host"
-    build:
-      context: ./sts
-    environment:
-      - CONFIG_FILE=./env/local.js
-      # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
-      # rather than given a value here.
-      #
-      # THE BARE FORM IS LOAD-BEARING AND THE OBVIOUS ALTERNATIVE BREAKS THE
-      # CONTAINER. With no `=`, compose passes the variable through ONLY if the
-      # host shell has it set and leaves it unset here otherwise, so the
-      # appconfig file's own level keeps applying when nobody asked for
-      # anything else. Written as `STS_LOG_LEVEL=${STS_LOG_LEVEL:-}` it would
-      # instead be set to the EMPTY STRING, and that is not a harmless default:
-      # bunyan throws `unknown level name: ""` from config.js's registerLogger()
-      # at require time, so the mock does not start at all. `docker compose
-      # config` tells the two apart — the bare form renders null, the assigned
-      # one renders "".
-      #
-      # Why it is worth having: the mock logs every request, every response and
-      # every artifact before and after signing, at debug. That is the point of
-      # a mock and is the record of what it issued when a test fails, so debug
-      # stays the default. It is also about half the service's CPU, and a
-      # benchmark of it wrote 156MB in sixteen seconds — so a run with several
-      # jobs hitting one instance at once can set STS_LOG_LEVEL=info and roughly
-      # double what that instance can answer.
-      - STS_LOG_LEVEL
-      # The mode itself. It also derives global.https, which is why the URL the
-      # tests are handed (RFC9700_STS_URL) is https rather than http.
-      - STS_OAUTH2_RFC9700=true
-      # The main port. docs/rfc9700.md names 8091, and so does
-      # local-run-tests.sh.
-      - STS_PORT=8091
-      # The remaining six listeners, moved off the first instance's.
-      - STS_TLS_PORT=8453
-      - STS_MTLS_PORT=9453
-      - KRB5_KDC_PORT=8088
-      - KRB5_SERVICE_PORT=8898
-      - LDAP_PORT=3389
-      - LDAPS_PORT=3636
-      # The two SPIFFE gRPC listeners, and they are not optional here for a
-      # reason worth stating: they FAIL QUIETLY. Under host networking this
-      # container shares the first instance's namespace, and spiffe_server.js
-      # records a bind failure rather than throwing — so with these left at
-      # their defaults whichever instance started second comes up HEALTHY with
-      # no SPIFFE at all, or, worse, the SPIFFE tests reach whichever one won
-      # the race and get a different trust domain's CA than the rest of the
-      # suite is using. The Unix sockets need no line: each container has its
-      # own filesystem, so those cannot collide.
-      - STS_SPIFFE_WORKLOAD_PORT=8592
-      - STS_SPIFFE_SERVER_PORT=8681
-    # THE SCHEME IS TRIED BOTH WAYS, and that is not hedging. With the mode on
-    # this port is HTTPS; if the sts/ submodule is pinned before the mock had
-    # the mode at all, STS_OAUTH2_RFC9700 names nothing and the same image
-    # comes up plain HTTP here. An https-only check would leave the container
-    # permanently unhealthy in that case — which on the containerized stack
-    # blocks `tests` on its depends_on and produces a compose timeout instead
-    # of a named failure. Liveness is this check's question; whether the thing
-    # is actually COMPLIANT is asked where it can be answered usefully, by
-    # requireStsReachable() on the local stack and by rfc9700_flows.js itself,
-    # which refuses a permissive STS by name.
-    # --insecure equivalent (rejectUnauthorized:false): the certificate is
-    # self-signed and regenerated every start, so nothing can have an anchor.
-    healthcheck:
-      test: ["CMD-SHELL", "node -e \"var u={host:'localhost',port:8091,path:'/healthcheck',rejectUnauthorized:false};function ok(r){process.exit(r.statusCode===200?0:1)}require('https').get(u,ok).on('error',function(){require('http').get(u,ok).on('error',function(){process.exit(1)})})\""]
+      test: ["CMD-SHELL", "node -e \"require('https').get({host:'localhost',port:8081,path:'/healthcheck',rejectUnauthorized:false},function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
       interval: 10s
       timeout: 5s
       retries: 5

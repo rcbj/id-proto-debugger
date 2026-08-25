@@ -207,9 +207,12 @@ function resolveDid() {
     log.debug("Leaving resolveDid().");
     return false;
   }
-  // did:web over plain http is allowed here because this suite's own issuer
-  // runs on it. The method mandates https; a deployed site talking to a real
-  // issuer will use it, and the only reason to relax it is a local stack.
+  // did:web over plain http is PERMITTED here — not preferred. resolve() always
+  // tries the https URL the method mandates first and falls back to the plain
+  // one only when this flag is set; see the note above the fallback in did.js.
+  // The flag stayed after this project's own mock moved to https, because a
+  // local stack serving a DID's host over plain http is still an ordinary thing
+  // to point this page at.
   var allowHttp =
       /^https?:\/\/localhost|^http:\/\//.test(String(window.location.origin)) ||
                   /^did:web:(localhost|sts|127\.0\.0\.1)/.test(didValue);

@@ -122,7 +122,7 @@ log.info("Log initialized. logLevel=" + log.level());
 
 var apiUrl = process.env.API_URL || "http://localhost:4000";
 // Where the mock's HTTP side is, as THIS TEST must reach it.
-var stsUrl = process.env.STS_URL || "http://localhost:8081";
+var stsUrl = process.env.STS_URL || "https://localhost:8081";
 // Where the directory is, as the API must reach it — a different question, and
 // on the containerized stack a different answer. It is its own variable rather
 // than derived from stsUrl for the same reason KRB5_SPNEGO_URL is: the api

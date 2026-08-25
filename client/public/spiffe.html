@@ -9,6 +9,7 @@
     <link href="/css/footer.css" rel="stylesheet">
     <link href="/css/common.css" rel="stylesheet">
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
     <link href="/css/spiffe.css" rel="stylesheet">
   </head>
 
@@ -67,9 +68,22 @@ So: fetch an SVID from the Workload API with nothing at all, then present it to
 the SPIRE Server API and find out who that makes you.</p>
 </details>
 
+<p class="dbg-controls spiffe-pane-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane on this page.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked"
+           title="Expand or collapse every pane on this page.">
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane&rsquo;s title to collapse
+  or expand it.</span>
+</p>
+
 <!-- ===================== Configuration parameters ===================== -->
-<fieldset class="spiffe-pane" id="pane_config">
-  <legend>Configuration Parameters</legend>
+<div class="spiffe-pane dbg-pane" id="pane_config">
+  <legend class="dbg-legend" id="spiffe_config_expand_button">Configuration Parameters</legend>
+  <fieldset name="spiffe_config_fieldset" id="spiffe_config_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>What is in this pane, and what deliberately is not</summary>
   <p class="spiffe-note">Every editable setting on this page, in one place
@@ -94,28 +108,32 @@ the SPIRE Server API and find out who that makes you.</p>
   </details>
   <div class="spiffe-grid">
     <div>
-      <label class="spiffe-label" for="spiffe_trust_domain">Trust domain</label>
+      <label class="spiffe-label" for="spiffe_trust_domain"
+             title="The name only — no scheme. The SPIRE Server API's own identity is derived from it as spiffe://<trust domain>/spire/server.">Trust domain</label>
       <input class="spiffe-field" type="text" id="spiffe_trust_domain"
              name="spiffe_trust_domain" placeholder="example.org"
              onchange="return spiffe.onChangeField();"
              title="The name only — no scheme. The SPIRE Server API's own identity is derived from it as spiffe://<trust domain>/spire/server.">
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_workload_address">Workload API address</label>
+      <label class="spiffe-label" for="spiffe_workload_address"
+             title="host:port, tcp://host:port or unix:///tmp/spire-agent/public/api.sock — which is what SPIFFE_ENDPOINT_SOCKET means to every real client. Resolved by the api.">Workload API address</label>
       <input class="spiffe-field" type="text" id="spiffe_workload_address"
              name="spiffe_workload_address" placeholder="sts:8092"
              onchange="return spiffe.onChangeField();"
              title="host:port, tcp://host:port or unix:///tmp/spire-agent/public/api.sock — which is what SPIFFE_ENDPOINT_SOCKET means to every real client. Resolved by the api.">
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_server_address">SPIRE Server API address</label>
+      <label class="spiffe-label" for="spiffe_server_address"
+             title="host:port for the mutual-TLS port, or unix:///tmp/spire-server/private/api.sock for the private socket a spire-server CLI uses. A gRPC address takes no other scheme: the api refuses one it does not dial rather than defaulting it, so an http:// address here comes back 'the scheme is not one this service dials' rather than being dialled. The value this box starts with is CONFIG_FILE's spiffeServerAddressDefault.">SPIRE Server API address</label>
       <input class="spiffe-field" type="text" id="spiffe_server_address"
              name="spiffe_server_address" placeholder="sts:8181"
              onchange="return spiffe.onChangeField();"
              title="host:port for the mutual-TLS port, or unix:///tmp/spire-server/private/api.sock for the private socket a spire-server CLI uses. A gRPC address takes no other scheme: the api refuses one it does not dial rather than defaulting it, so an http:// address here comes back 'the scheme is not one this service dials' rather than being dialled. The value this box starts with is CONFIG_FILE's spiffeServerAddressDefault.">
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_bundle_url">Bundle endpoint URL</label>
+      <label class="spiffe-label" for="spiffe_bundle_url"
+             title="Plain HTTPS. The one SPIFFE surface that is not gRPC.">Bundle endpoint URL</label>
       <input class="spiffe-field" type="text" id="spiffe_bundle_url"
              name="spiffe_bundle_url" placeholder="http://sts:8081/spiffe/bundle"
              onchange="return spiffe.onChangeField();"
@@ -136,7 +154,8 @@ the SPIRE Server API and find out who that makes you.</p>
   carrying a self-signed certificate, which a development trust
   domain usually does.</p>
   </details>
-    <label class="spiffe-check"><input type="checkbox" id="spiffe_bundle_ssl"
+    <label class="spiffe-check"
+           title="Clear it to read a bundle endpoint carrying a self-signed certificate, which a development trust domain usually has. It governs the api's call and nothing else."><input type="checkbox" id="spiffe_bundle_ssl"
            checked
     title="Clear it to read a bundle endpoint carrying a self-signed certificate, which a development trust domain usually has. It governs the api's call and nothing else."> Verify the endpoint&rsquo;s TLS certificate</label>
   </div>
@@ -144,7 +163,8 @@ the SPIRE Server API and find out who that makes you.</p>
   <h4 class="spiffe-group-title">Workload API</h4>
   <div class="spiffe-grid">
     <div>
-      <label class="spiffe-label" for="spiffe_workload_messages">Messages to
+      <label class="spiffe-label" for="spiffe_workload_messages"
+             title="Only meaningful on a streaming method. Two on FetchX509SVID shows a rotation; the api caps this and says which cap stopped it.">Messages to
       read</label>
       <input class="spiffe-field" type="number" min="1" max="16"
              id="spiffe_workload_messages" name="spiffe_workload_messages"
@@ -152,16 +172,19 @@ the SPIRE Server API and find out who that makes you.</p>
              title="Only meaningful on a streaming method. Two on FetchX509SVID shows a rotation; the api caps this and says which cap stopped it.">
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_workload_metadata">Extra gRPC
+      <label class="spiffe-label" for="spiffe_workload_metadata"
+             title="One name: value per line. Refused by shape rather than by an allowlist, so anything a real server asks for can be sent.">Extra gRPC
       metadata</label>
       <textarea class="spiffe-field spiffe-small" id="spiffe_workload_metadata"
                 name="spiffe_workload_metadata" rows="2" spellcheck="false"
+                data-min-rows="2" data-max-rows="6"
                 onchange="return spiffe.onChangeField();"
                 placeholder="x-sts-mock-workload-selector: unix:uid:1000"
                 title="One name: value per line. Refused by shape rather than by an allowlist, so anything a real server asks for can be sent."></textarea>
     </div>
   </div>
-  <label class="spiffe-check"><input type="checkbox"
+  <label class="spiffe-check"
+         title="The one check a conforming Workload API makes. Clear it to see what such a server does to a client that forgot it, which is a bug nothing else will ever report."><input type="checkbox"
          id="spiffe_workload_security_header" checked
          title="The one check a conforming Workload API makes. Clear it to see what such a server does to a client that forgot it, which is a bug nothing else will ever report.">
     Send <code>workload.spiffe.io: true</code></label>
@@ -177,7 +200,8 @@ the SPIRE Server API and find out who that makes you.</p>
   </div>
   <div class="spiffe-group">
   <h4 class="spiffe-group-title">Held Identity</h4>
-  <label class="spiffe-check"><input type="checkbox" id="spiffe_save_identity"
+  <label class="spiffe-check"
+         title="Clearing it removes what is already stored, on the spot; the identity then lives only until this page is reloaded. Every other field here is remembered either way."><input type="checkbox" id="spiffe_save_identity"
          checked onchange="return spiffe.onToggleSaveIdentity();"
   title="Clearing it removes what is already stored, on the spot; the identity then lives only until this page is reloaded. Every other field here is remembered either way.">
     Remember this identity in this browser</label>
@@ -193,7 +217,8 @@ the SPIRE Server API and find out who that makes you.</p>
   <h4 class="spiffe-group-title">SPIRE Server API</h4>
   <div class="spiffe-grid">
     <div>
-      <label class="spiffe-label" for="spiffe_server_present">Present</label>
+      <label class="spiffe-label" for="spiffe_server_present"
+             title="Anonymous reaches GetBundle and AttestAgent and nothing else.">Present</label>
       <select class="spiffe-field" id="spiffe_server_present"
               name="spiffe_server_present"
               title="Anonymous reaches GetBundle and AttestAgent and nothing else.">
@@ -203,7 +228,8 @@ the SPIRE Server API and find out who that makes you.</p>
       </select>
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_server_messages">Messages to
+      <label class="spiffe-label" for="spiffe_server_messages"
+             title="Only meaningful on a streaming method. The api caps this and says which cap stopped it.">Messages to
       read</label>
       <input class="spiffe-field" type="number" min="1" max="16"
              id="spiffe_server_messages" name="spiffe_server_messages" value="1"
@@ -211,7 +237,8 @@ the SPIRE Server API and find out who that makes you.</p>
              title="Only meaningful on a streaming method. The api caps this and says which cap stopped it.">
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_server_identity_mode">Verify the
+      <label class="spiffe-label" for="spiffe_server_identity_mode"
+             title="The chain is verified in all three. The last one turns off the check on WHO the server is and reports what it was instead.">Verify the
       server as</label>
       <select class="spiffe-field" id="spiffe_server_identity_mode"
               name="spiffe_server_identity_mode"
@@ -223,7 +250,8 @@ the SPIRE Server API and find out who that makes you.</p>
       </select>
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_server_id">Expected SPIFFE
+      <label class="spiffe-label" for="spiffe_server_id"
+             title="Read only when the mode beside it is exactly one SPIFFE ID. Empty is derived as spiffe://<trust domain>/spire/server, which is what SPIRE calls itself.">Expected SPIFFE
       ID</label>
       <input class="spiffe-field" type="text" id="spiffe_server_id"
              name="spiffe_server_id"
@@ -232,10 +260,12 @@ the SPIRE Server API and find out who that makes you.</p>
       title="Read only when the mode beside it is exactly one SPIFFE ID. Empty is derived as spiffe://<trust domain>/spire/server, which is what SPIRE calls itself.">
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_server_metadata">Extra gRPC
+      <label class="spiffe-label" for="spiffe_server_metadata"
+             title="One name: value per line. Refused by shape rather than by an allowlist, so anything a real server asks for can be sent.">Extra gRPC
       metadata</label>
       <textarea class="spiffe-field spiffe-small" id="spiffe_server_metadata"
                 name="spiffe_server_metadata" rows="2" spellcheck="false"
+                data-min-rows="2" data-max-rows="6"
                 onchange="return spiffe.onChangeField();"
       title="One name: value per line. Refused by shape rather than by an allowlist, so anything a real server asks for can be sent."></textarea>
     </div>
@@ -251,28 +281,35 @@ the SPIRE Server API and find out who that makes you.</p>
   subjectAltName. The chain is still verified in every mode above, including the
   last: that mode turns off the identity check and nothing else.</p>
   </details>
-  <label class="spiffe-check"><input type="checkbox"
+  <label class="spiffe-check"
+         title="Dial the port with no TLS at all: nothing is presented and nothing is verified. A server started without mutual TLS, or one behind a mesh that terminates it."><input type="checkbox"
          id="spiffe_server_plaintext"
          onchange="return spiffe.onChangeField();"
          title="Dial the port with no TLS at all: nothing is presented and nothing is verified. A server started without mutual TLS, or one behind a mesh that terminates it.">
     This port is plain gRPC (mutual TLS is off on the server)</label>
-  <label class="spiffe-label" for="spiffe_server_bundle">Trust anchor (PEM, or
+  <label class="spiffe-label" for="spiffe_server_bundle"
+         title="Empty falls back to the bundle that came with the held identity. Every X509-SVID response carries the bundle beside the identity, for exactly this.">Trust anchor (PEM, or
   base64 DER)</label>
-  <textarea class="spiffe-field spiffe-code" id="spiffe_server_bundle" rows="3"
+  <textarea class="spiffe-field spiffe-code" id="spiffe_server_bundle" rows="2"
+            data-min-rows="2" data-max-rows="8"
             spellcheck="false"
             title="Empty falls back to the bundle that came with the held identity. Every X509-SVID response carries the bundle beside the identity, for exactly this."></textarea>
   <div class="spiffe-grid">
     <div>
-      <label class="spiffe-label" for="spiffe_server_cert">Client certificate
+      <label class="spiffe-label" for="spiffe_server_cert"
+             title="PEM or base64 DER. Used only when Present above is set to the pasted pair.">Client certificate
       (pasted)</label>
-      <textarea class="spiffe-field spiffe-code" id="spiffe_server_cert" rows="3"
+      <textarea class="spiffe-field spiffe-code" id="spiffe_server_cert" rows="2"
+                data-min-rows="2" data-max-rows="8"
                 spellcheck="false"
       title="PEM or base64 DER. Used only when Present above is set to the pasted pair."></textarea>
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_server_key">Its private key
+      <label class="spiffe-label" for="spiffe_server_key"
+             title="Never stored. Only used when Present is set to the pasted pair.">Its private key
       (pasted)</label>
-      <textarea class="spiffe-field spiffe-code" id="spiffe_server_key" rows="3"
+      <textarea class="spiffe-field spiffe-code" id="spiffe_server_key" rows="2"
+                data-min-rows="2" data-max-rows="8"
                 spellcheck="false"
                 title="Never stored. Only used when Present is set to the pasted pair."></textarea>
     </div>
@@ -282,7 +319,8 @@ the SPIRE Server API and find out who that makes you.</p>
   <h4 class="spiffe-group-title">Certification Request</h4>
   <div class="spiffe-grid">
     <div>
-      <label class="spiffe-label" for="spiffe_csr_key_alg">Key</label>
+      <label class="spiffe-label" for="spiffe_csr_key_alg"
+             title="EC P-256 is what SPIRE issues by default and what the X509-SVID specification recommends.">Key</label>
       <select class="spiffe-field" id="spiffe_csr_key_alg"
               name="spiffe_csr_key_alg"
               onchange="return spiffe.onChangeField();"
@@ -295,14 +333,16 @@ the SPIRE Server API and find out who that makes you.</p>
       </select>
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_csr_subject">Subject DN</label>
+      <label class="spiffe-label" for="spiffe_csr_subject"
+             title="SPIFFE puts no meaning in it — SPIRE issues C=US, O=SPIRE to everything — but PKCS#10 has nowhere to leave it out.">Subject DN</label>
       <input class="spiffe-field" type="text" id="spiffe_csr_subject"
              name="spiffe_csr_subject" placeholder="C=US,O=SPIRE"
              onchange="return spiffe.onChangeField();"
              title="SPIFFE puts no meaning in it — SPIRE issues C=US, O=SPIRE to everything — but PKCS#10 has nowhere to leave it out.">
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_csr_uri">SPIFFE ID to ask
+      <label class="spiffe-label" for="spiffe_csr_uri"
+             title="Goes in as a URI subjectAltName. Read by MintX509SVID and ignored by everything else.">SPIFFE ID to ask
       for</label>
       <input class="spiffe-field" type="text" id="spiffe_csr_uri"
              name="spiffe_csr_uri" placeholder="spiffe://example.org/minted"
@@ -312,10 +352,13 @@ the SPIRE Server API and find out who that makes you.</p>
   </div>
   </div>
 </fieldset>
+</div>
 
 <!-- ===================== Trust bundle ===================== -->
-<fieldset class="spiffe-pane" id="pane_bundle">
-  <legend>Trust Bundle</legend>
+<div class="spiffe-pane dbg-pane" id="pane_bundle">
+  <legend class="dbg-legend" id="spiffe_bundle_expand_button">Trust Bundle</legend>
+  <fieldset name="spiffe_bundle_fieldset" id="spiffe_bundle_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>What a trust bundle is, and the one defect that verifies nothing
       silently</summary>
@@ -346,17 +389,22 @@ the SPIRE Server API and find out who that makes you.</p>
            id="spiffe_bundle_status" readonly
            title="The last thing this pane did, and how it went.">
   </div>
-  <label class="spiffe-label" for="spiffe_bundle_document">The bundle
+  <label class="spiffe-label" for="spiffe_bundle_document"
+         title="Fetched, or pasted. The reader below works on whatever is here.">The bundle
   document</label>
-  <textarea class="spiffe-output" id="spiffe_bundle_document" rows="8"
+  <textarea class="spiffe-output" id="spiffe_bundle_document" rows="3"
+            data-min-rows="3" data-max-rows="14"
             spellcheck="false"
             title="Fetched, or pasted. The reader below works on whatever is here."></textarea>
   <div id="spiffe_bundle_report"></div>
 </fieldset>
+</div>
 
 <!-- ===================== Workload API ===================== -->
-<fieldset class="spiffe-pane" id="pane_workload">
-  <legend>Workload API</legend>
+<div class="spiffe-pane dbg-pane" id="pane_workload">
+  <legend class="dbg-legend" id="spiffe_workload_expand_button">Workload API</legend>
+  <fieldset name="spiffe_workload_fieldset" id="spiffe_workload_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>Why this surface authenticates nobody, and what a second message
       shows</summary>
@@ -370,7 +418,8 @@ the SPIRE Server API and find out who that makes you.</p>
   </details>
   <div class="spiffe-grid">
     <div>
-      <label class="spiffe-label" for="spiffe_workload_method">Method</label>
+      <label class="spiffe-label" for="spiffe_workload_method"
+             title="The seven Workload API methods, from the api's own catalogue. Four of them are streams.">Method</label>
       <select class="spiffe-field" id="spiffe_workload_method"
               name="spiffe_workload_method"
               onchange="return spiffe.describeWorkloadMethod();"
@@ -379,9 +428,11 @@ the SPIRE Server API and find out who that makes you.</p>
   </div>
   <p class="spiffe-note" id="spiffe_workload_about"></p>
   <p class="spiffe-note" id="spiffe_workload_streaming"></p>
-  <label class="spiffe-label" for="spiffe_workload_request">Request</label>
+  <label class="spiffe-label" for="spiffe_workload_request"
+         title="The protobuf message as JSON, field names exactly as the .proto writes them. A bytes field takes base64.">Request</label>
   <textarea class="spiffe-field spiffe-code" id="spiffe_workload_request"
-            name="spiffe_workload_request" rows="6" spellcheck="false"
+            name="spiffe_workload_request" rows="4" spellcheck="false"
+            data-min-rows="4" data-max-rows="12"
             onchange="return spiffe.onChangeField();"
             title="The protobuf message as JSON, field names exactly as the .proto writes them. A bytes field takes base64."></textarea>
   <div class="spiffe-row">
@@ -398,10 +449,13 @@ the SPIRE Server API and find out who that makes you.</p>
   </div>
   <div id="spiffe_workload_result"></div>
 </fieldset>
+</div>
 
 <!-- ===================== Held identity ===================== -->
-<fieldset class="spiffe-pane" id="pane_identity">
-  <legend>Held Identity</legend>
+<div class="spiffe-pane dbg-pane" id="pane_identity">
+  <legend class="dbg-legend" id="spiffe_identity_expand_button">Held Identity</legend>
+  <fieldset name="spiffe_identity_fieldset" id="spiffe_identity_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>What is held here, and the two ways to come by it</summary>
   <p class="spiffe-note">An X509-SVID <strong>and the private key that goes with
@@ -412,7 +466,8 @@ the SPIRE Server API and find out who that makes you.</p>
   when only one of them is here.</p>
   </details>
   <div class="spiffe-row">
-    <label class="spiffe-label" for="spiffe_identity_id_view">SPIFFE ID</label>
+    <label class="spiffe-label" for="spiffe_identity_id_view"
+           title="The URI subjectAltName of the held SVID, which is where a SPIFFE identity lives and the only place it does.">SPIFFE ID</label>
     <input class="spiffe-field spiffe-grow" type="text"
            id="spiffe_identity_id_view" readonly
            title="The URI subjectAltName of the held SVID, which is where a SPIFFE identity lives and the only place it does.">
@@ -426,21 +481,28 @@ the SPIRE Server API and find out who that makes you.</p>
            id="spiffe_identity_status" readonly
            title="What last happened to the held identity — where it came from, or that it was discarded.">
   </div>
-  <label class="spiffe-label" for="spiffe_identity_cert_view">The SVID (base64
+  <label class="spiffe-label" for="spiffe_identity_cert_view"
+         title="The held SVID as base64 DER. Its private key is NOT shown: it is held beside this and only ever sent to the api for a call that presents it.">The SVID (base64
   DER)</label>
-  <textarea class="spiffe-output" id="spiffe_identity_cert_view" rows="4"
+  <textarea class="spiffe-output" id="spiffe_identity_cert_view" rows="2"
+            data-min-rows="2" data-max-rows="8"
             readonly
   title="The held SVID as base64 DER. Its private key is NOT shown: it is held beside this and only ever sent to the api for a call that presents it."></textarea>
-  <label class="spiffe-label" for="spiffe_identity_bundle_view">The trust bundle
+  <label class="spiffe-label" for="spiffe_identity_bundle_view"
+         title="Concatenated DER. Note that node reads concatenated DER as ONE certificate, so the api splits it into separate PEM blocks — a trust domain that has rotated publishes more than one authority.">The trust bundle
   that came with it</label>
-  <textarea class="spiffe-output" id="spiffe_identity_bundle_view" rows="3"
+  <textarea class="spiffe-output" id="spiffe_identity_bundle_view" rows="2"
+            data-min-rows="2" data-max-rows="6"
             readonly
             title="Concatenated DER. Note that node reads concatenated DER as ONE certificate, so the api splits it into separate PEM blocks — a trust domain that has rotated publishes more than one authority."></textarea>
 </fieldset>
+</div>
 
 <!-- ===================== SPIRE Server API ===================== -->
-<fieldset class="spiffe-pane" id="pane_server">
-  <legend>SPIRE Server API</legend>
+<div class="spiffe-pane dbg-pane" id="pane_server">
+  <legend class="dbg-legend" id="spiffe_server_expand_button">SPIRE Server API</legend>
+  <fieldset name="spiffe_server_fieldset" id="spiffe_server_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>How SPIRE authorizes a caller, and why the port asks rather than
       requires</summary>
@@ -466,14 +528,16 @@ the SPIRE Server API and find out who that makes you.</p>
   </details>
   <div class="spiffe-grid">
     <div>
-      <label class="spiffe-label" for="spiffe_server_service">Service</label>
+      <label class="spiffe-label" for="spiffe_server_service"
+             title="The six SPIRE Server API services. The method list below is rebuilt from whichever is chosen.">Service</label>
       <select class="spiffe-field" id="spiffe_server_service"
               name="spiffe_server_service"
               onchange="return spiffe.onChangeService();"
       title="The six SPIRE Server API services. The method list below is rebuilt from whichever is chosen."></select>
     </div>
     <div>
-      <label class="spiffe-label" for="spiffe_server_method">Method</label>
+      <label class="spiffe-label" for="spiffe_server_method"
+             title="Forty-two methods across the six services, from the api's own catalogue — so what is offered here is what the api can actually dial.">Method</label>
       <select class="spiffe-field" id="spiffe_server_method"
               name="spiffe_server_method"
               onchange="return spiffe.describeServerMethod();"
@@ -482,9 +546,11 @@ the SPIRE Server API and find out who that makes you.</p>
   </div>
   <p class="spiffe-note" id="spiffe_server_about"></p>
   <p class="spiffe-note" id="spiffe_server_streaming"></p>
-  <label class="spiffe-label" for="spiffe_server_request">Request</label>
+  <label class="spiffe-label" for="spiffe_server_request"
+         title="The protobuf message as JSON. A bytes field takes base64; a google.protobuf wrapper may be sent as a bare value and the api wraps it.">Request</label>
   <textarea class="spiffe-field spiffe-code" id="spiffe_server_request"
-            name="spiffe_server_request" rows="10" spellcheck="false"
+            name="spiffe_server_request" rows="4" spellcheck="false"
+            data-min-rows="4" data-max-rows="16"
             onchange="return spiffe.onChangeField();"
             title="The protobuf message as JSON. A bytes field takes base64; a google.protobuf wrapper may be sent as a bare value and the api wraps it."></textarea>
   <div class="spiffe-row">
@@ -502,10 +568,13 @@ the SPIRE Server API and find out who that makes you.</p>
   <p class="spiffe-note" id="spiffe_server_peer"></p>
   <div id="spiffe_server_result"></div>
 </fieldset>
+</div>
 
 <!-- ===================== Certification request ===================== -->
-<fieldset class="spiffe-pane" id="pane_csr">
-  <legend>Certification Request</legend>
+<div class="spiffe-pane dbg-pane" id="pane_csr">
+  <legend class="dbg-legend" id="spiffe_csr_expand_button">Certification Request</legend>
+  <fieldset name="spiffe_csr_fieldset" id="spiffe_csr_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>Why there is a certification request builder on this page</summary>
   <p class="spiffe-note"><strong>Five of the forty-nine methods take a PKCS#10
@@ -547,26 +616,35 @@ the SPIRE Server API and find out who that makes you.</p>
            id="spiffe_csr_status" readonly
            title="What the builder last did, and which key it used.">
   </div>
-  <label class="spiffe-label" for="spiffe_csr_base64">The request, base64 DER
+  <label class="spiffe-label" for="spiffe_csr_base64"
+         title="The certification request as base64 DER, which is what a gRPC bytes field takes.">The request, base64 DER
   &mdash; which is what a gRPC <code>bytes</code> field takes</label>
-  <textarea class="spiffe-output" id="spiffe_csr_base64" rows="3"
+  <textarea class="spiffe-output" id="spiffe_csr_base64" rows="2"
+            data-min-rows="2" data-max-rows="6"
             readonly
   title="The certification request as base64 DER, which is what a gRPC bytes field takes."></textarea>
-  <label class="spiffe-label" for="spiffe_csr_pem">The same request as
+  <label class="spiffe-label" for="spiffe_csr_pem"
+         title="The same request in PEM, for openssl req -text -noout or for a tool that wants a file.">The same request as
   PEM</label>
-  <textarea class="spiffe-output" id="spiffe_csr_pem" rows="4"
+  <textarea class="spiffe-output" id="spiffe_csr_pem" rows="2"
+            data-min-rows="2" data-max-rows="8"
             readonly
   title="The same request in PEM, for openssl req -text -noout or for a tool that wants a file."></textarea>
-  <label class="spiffe-label" for="spiffe_csr_key">The private key &mdash; it
+  <label class="spiffe-label" for="spiffe_csr_key"
+         title="The private key the request was signed with. It is not stored and not sent anywhere — copy it now if the SVID it earns has to outlive this page.">The private key &mdash; it
   never leaves this page</label>
-  <textarea class="spiffe-output" id="spiffe_csr_key" rows="4"
+  <textarea class="spiffe-output" id="spiffe_csr_key" rows="2"
+            data-min-rows="2" data-max-rows="8"
             readonly
   title="The private key the request was signed with. It is not stored and not sent anywhere — copy it now if the SVID it earns has to outlive this page."></textarea>
 </fieldset>
+</div>
 
 <!-- ===================== SVID inspector ===================== -->
-<fieldset class="spiffe-pane" id="pane_inspector">
-  <legend>SVID Inspector</legend>
+<div class="spiffe-pane dbg-pane" id="pane_inspector">
+  <legend class="dbg-legend" id="spiffe_inspector_expand_button">SVID Inspector</legend>
+  <fieldset name="spiffe_inspector_fieldset" id="spiffe_inspector_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>What makes a certificate an SVID, and where the identity is
       not</summary>
@@ -584,8 +662,10 @@ the SPIRE Server API and find out who that makes you.</p>
   Workload API is what does that, and it is the one method in the family that
   behaves like a production implementation.</p>
   </details>
-  <label class="spiffe-label" for="spiffe_svid_input">An SVID</label>
-  <textarea class="spiffe-field spiffe-code" id="spiffe_svid_input" rows="5"
+  <label class="spiffe-label" for="spiffe_svid_input"
+         title="An X509-SVID as PEM or base64 DER, or a JWT-SVID. Read here with no network; nothing about a signature is checked.">An SVID</label>
+  <textarea class="spiffe-field spiffe-code" id="spiffe_svid_input" rows="3"
+            data-min-rows="3" data-max-rows="10"
             spellcheck="false"
             placeholder="-----BEGIN CERTIFICATE----- … or eyJhbGciOi…"
   title="An X509-SVID as PEM or base64 DER, or a JWT-SVID. Read here with no network; nothing about a signature is checked."></textarea>
@@ -597,14 +677,18 @@ the SPIRE Server API and find out who that makes you.</p>
            id="spiffe_svid_status" readonly
            title="What the reader made of what is in the box.">
   </div>
-  <textarea class="spiffe-output" id="spiffe_svid_output" rows="10"
+  <textarea class="spiffe-output" id="spiffe_svid_output" rows="2"
+            data-min-rows="2" data-max-rows="16"
             readonly
   title="What the SVID says. For a certificate that is its URI subjectAltName, its validity and its extensions; for a JWT-SVID its header and claims."></textarea>
 </fieldset>
+</div>
 
 <!-- ===================== SPIFFE ID grammar ===================== -->
-<fieldset class="spiffe-pane" id="pane_id">
-  <legend>SPIFFE ID</legend>
+<div class="spiffe-pane dbg-pane" id="pane_id">
+  <legend class="dbg-legend" id="spiffe_id_expand_button">SPIFFE ID</legend>
+  <fieldset name="spiffe_id_fieldset" id="spiffe_id_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>The four ways the grammar is stricter than a URL parser</summary>
   <p class="spiffe-note">The grammar is <strong>stricter than a URL
@@ -628,10 +712,13 @@ the SPIRE Server API and find out who that makes you.</p>
   </div>
   <div id="spiffe_id_report"></div>
 </fieldset>
+</div>
 
 <!-- ===================== Exchange ===================== -->
-<fieldset class="spiffe-pane" id="pane_exchange">
-  <legend>Exchange</legend>
+<div class="spiffe-pane dbg-pane" id="pane_exchange">
+  <legend class="dbg-legend" id="spiffe_exchange_expand_button">Exchange</legend>
+  <fieldset name="spiffe_exchange_fieldset" id="spiffe_exchange_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>What is in this pane, and what is left out of it</summary>
   <p class="spiffe-note">What this page asked the api for, and what came back.
@@ -639,21 +726,28 @@ the SPIRE Server API and find out who that makes you.</p>
   &mdash; what is shown is that one was sent, which is the fact that matters
   when reading an exchange.</p>
   </details>
-  <label class="spiffe-label" for="spiffe_exchange_request">Sent to the
+  <label class="spiffe-label" for="spiffe_exchange_request"
+         title="Exactly what this page sent the api, with the private key of a presented identity left out — what is shown is that one was sent.">Sent to the
   api</label>
-  <textarea class="spiffe-output" id="spiffe_exchange_request" rows="10"
+  <textarea class="spiffe-output" id="spiffe_exchange_request" rows="2"
+            data-min-rows="2" data-max-rows="16"
             readonly
   title="Exactly what this page sent the api, with the private key of a presented identity left out — what is shown is that one was sent."></textarea>
-  <label class="spiffe-label" for="spiffe_exchange_response">What the api
+  <label class="spiffe-label" for="spiffe_exchange_response"
+         title="Exactly what the api answered, including the gRPC status and the peer it verified.">What the api
   answered</label>
-  <textarea class="spiffe-output" id="spiffe_exchange_response" rows="10"
+  <textarea class="spiffe-output" id="spiffe_exchange_response" rows="2"
+            data-min-rows="2" data-max-rows="16"
             readonly
   title="Exactly what the api answered, including the gRPC status and the peer it verified."></textarea>
 </fieldset>
+</div>
 
 <!-- ===================== Operations History ===================== -->
-<fieldset class="spiffe-pane" id="pane_history">
-  <legend>Operations History</legend>
+<div class="spiffe-pane dbg-pane" id="pane_history">
+  <legend class="dbg-legend" id="spiffe_history_expand_button">Operations History</legend>
+  <fieldset name="spiffe_history_fieldset" id="spiffe_history_fieldset"
+            style="display: block;">
   <details class="spiffe-more">
     <summary>Why a row that stays <span class="spiffe-pending">Sent</span> is
       not a <span class="spiffe-bad">Failure</span></summary>
@@ -671,6 +765,7 @@ the SPIRE Server API and find out who that makes you.</p>
   </div>
   <div id="spiffe_operation_history"></div>
 </fieldset>
+</div>
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">

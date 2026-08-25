@@ -39,7 +39,7 @@ var log = bunyan.createLogger({ name: "sts_dpop",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var stsBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/, "");
 var TOKEN_ENDPOINT = stsBase + "/oauth2/token";
 var CREDENTIAL_ENDPOINT = stsBase + "/oid4vci/credential";

@@ -759,11 +759,18 @@ function findById(root, id) {
     for (var j = 0; j < e.attributes.length; j++) {
       var a = e.attributes[j];
       var ln = a.localName || a.name;
-      // Id/ID/id cover SAML 2.0 (ID), WS-Security (wsu:Id) and generic ids;
-      // AssertionID is the SAML 1.1 assertion id attribute (WS-Fed tokens are
-      // frequently SAML 1.1), whose enveloped signature references
-      // #<AssertionID>.
-      if ((ln === 'Id' || ln === 'ID' || ln === 'id' || ln === 'AssertionID') &&
+      // Id/ID/id cover SAML 2.0 (ID), WS-Security (wsu:Id) and generic ids.
+      // The other three are SAML 1.1's, which gives every message type its own
+      // spelling of "the id" rather than one shared attribute: AssertionID on
+      // an <Assertion> (WS-Fed and WS-Trust tokens are frequently SAML 1.1),
+      // ResponseID on a <samlp:Response> and RequestID on a <samlp:Request>.
+      // A verifier that knows only the first three resolves #<id> to NOTHING
+      // on a signed SAML 1.1 Response — reported as "referenced element not
+      // found", which reads like a stripped element rather than like a name
+      // this list did not have.
+      if ((ln === 'Id' || ln === 'ID' || ln === 'id' ||
+           ln === 'AssertionID' || ln === 'ResponseID' ||
+           ln === 'RequestID') &&
           a.value === id) {
         log.debug("Leaving findById().");
         return e;

@@ -272,3 +272,54 @@
 .saml-bad { color: #b00; font-weight: 600; }
 /* Dispatched to the IdP, no answer yet — deliberately not green. */
 .saml-pending { color: #8a6d00; font-weight: 600; }
+
+/* -------------------------------------------------------------------------
+ * A CONTROL THAT DOES NOT APPLY TO THE SELECTED PROTOCOL VERSION.
+ *
+ * SAML 1.1 has no request document, so it has nothing to sign, nothing to
+ * encrypt, nowhere to put a subject hint and no Single Logout at all. Those
+ * controls are greyed AND disabled rather than hidden, for two reasons that
+ * pull in the same direction: a reader switching from 2.0 to 1.1 should be able
+ * to see WHAT stopped applying (a control that vanishes says nothing), and a
+ * pane that only LOOKS dead still submits on a Return keypress in a text field.
+ * `pki.css`'s .pki-pane-disabled makes the same argument at pane scale.
+ *
+ * Greyed with COLOURS rather than `opacity`, exactly as that rule is: `opacity`
+ * makes a stacking context, and the one line in a disabled block that has to
+ * stay readable — the note saying why — could then not be brought back to full
+ * contrast by any rule of its own.
+ * ------------------------------------------------------------------------- */
+.saml-unavailable,
+.saml-unavailable label,
+.saml-unavailable .saml-sub-title,
+.saml-unavailable .saml-note {
+  color: #8a8a8a;
+}
+.saml-unavailable input,
+.saml-unavailable select,
+.saml-unavailable textarea,
+.saml-unavailable .saml-btn {
+  color: #8a8a8a;
+  background-color: #f2f2f2;
+  background-image: none;
+  border-color: #ddd;
+  box-shadow: none;
+  text-shadow: none;
+  cursor: not-allowed;
+}
+/* A button greyed on its own (the Logout button, which is not inside a
+ * greyed-out block of its own). */
+input.saml-btn.saml-unavailable {
+  color: #8a8a8a;
+  background-color: #f2f2f2;
+  background-image: none;
+  border-color: #ddd;
+  box-shadow: none;
+  text-shadow: none;
+  cursor: not-allowed;
+}
+/* The reason keeps the contrast the rest of the block has given up. An id, so
+ * it outranks the inherited grey outright rather than relying on source order —
+ * this file is appended to, and a rule that wins on order is a rule the next
+ * addition can lose. */
+#saml_version_warning { color: #8a4a2f; }

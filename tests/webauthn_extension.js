@@ -57,7 +57,7 @@ var waitTime = appconfig.waitTime;
 
 const STS = (process.env.OID4VCI_ISSUER_URL ||
              (process.env.WSTRUST_STS_URL ||
-              "http://localhost:8081/sts").replace(/\/sts\/?$/, ""));
+              "https://localhost:8081/sts").replace(/\/sts\/?$/, ""));
 const CLIENT_ID = "webauthn-extension-test";
 const REDIRECT = STS + "/oauth2/callback-sink";
 const USER = "extuser-" + process.pid.toString(36) + "-" +

@@ -92,12 +92,17 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                document for anything asked for — so --saml-only=sts starts in
                seconds and is the fastest loop.
 
-               The sts half runs one job the keycloak half cannot:
-               tests/saml11_sso.js, the SAML 1.1 browser profiles. That one uses
-               no browser at all — it drives the mock's identity provider over
-               HTTP with a relying party it writes itself, because the
-               debugger's SAML workflow is SAML 2.0 SP-initiated and Keycloak
-               has spoken no SAML 1.1 for years.
+               The sts half runs FIVE jobs the keycloak half cannot, all of
+               them SAML 1.1 and all of them for one reason: Keycloak has
+               spoken no SAML 1.1 for years. Three are tests/saml11_sso.js —
+               the debugger's own SAML 1.1 service provider through its pages,
+               once per binding — and one is tests/saml11_options.js, which
+               asserts which SP/Request settings apply to 1.1 and which are
+               switched off. The fifth is tests/sts_saml11.js, which uses no
+               browser at all: it drives the mock's identity provider over HTTP
+               with a relying party it writes itself, so that a shared
+               misunderstanding between the two ends of the exchange cannot
+               pass unnoticed.
 
   --wsfed-only[=IDP]
                Build + start only api, client, the mock STS and the WS-Fed
@@ -179,13 +184,21 @@ init()
   SAML_SP_ENTITY_ID=http://localhost:3000/saml/sp
   # WS-Trust STS (mock) on the host (local-tests.yml, host networking). Must match
   # the client bundle's baked wstrustStsUrlDefault (local.js).
-  WSTRUST_STS_URL=http://localhost:8081/sts
+  #
+  # **https**, AND SO IS EVERY OTHER STS URL BELOW. That mock binds its main
+  # port as TLS on this stack (STS_HTTPS=true on the `sts` service), because
+  # the RFC 9700 pass is a TRUST REALM on this one instance now rather than a
+  # second container — a realm binds no socket of its own — and that pass is
+  # only honest over TLS. The certificate is self-signed and regenerated on
+  # every start, which trustStsCertificate() deals with once the service
+  # answers; nothing here needs an anchor in order to build a URL.
+  WSTRUST_STS_URL=https://localhost:8081/sts
   export WSTRUST_STS_URL
   # The same mock STS also answers WS-FEDERATION, so the WS-Fed jobs run against
   # it as well as against the Keycloak side-car below. Kept separate from
   # WSTRUST_STS_URL, which may be pointed at a real Apache CXF STS that has no
   # passive endpoint at all.
-  WSFED_STS_METADATA_URL=http://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml
+  WSFED_STS_METADATA_URL=https://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml
   export WSFED_STS_METADATA_URL
   # And the same mock STS answers SAML 2.0 WEB BROWSER SSO since 2026-08-24, so
   # the SAML jobs can be run against it as well as against the Keycloak realm.
@@ -204,74 +217,59 @@ init()
   # the document on the ask, which is why there is no provisioning step for it
   # anywhere in this file.
   SAML_STS_SP_SLUG="app-$(printf '%s' "${SAML_SP_ENTITY_ID}" | sha256sum | cut -c1-12)"
-  SAML_STS_METADATA_URL="http://localhost:8081/saml2/metadata/${SAML_STS_SP_SLUG}"
+  SAML_STS_METADATA_URL="https://localhost:8081/saml2/metadata/${SAML_STS_SP_SLUG}"
   export SAML_STS_SP_SLUG SAML_STS_METADATA_URL
+  # And SAML **1.1**, which that service also answers and which is the ONE
+  # profile here with no Keycloak half — it dropped SAML 1.1 years ago. Same
+  # slug, a different document: /saml11/metadata publishes an IDPSSODescriptor
+  # whose protocolSupportEnumeration names the 1.1 protocol and whose endpoints
+  # are bound with the two browser PROFILE URIs plus Shibboleth's request one.
+  # A SEPARATE variable from the 2.0 URL rather than a path substitution,
+  # because a relying party that trusts this service for one version and not the
+  # other is the ordinary case, and the page reads the version off whichever
+  # document it was given.
+  SAML11_METADATA_URL="https://localhost:8081/saml11/metadata/${SAML_STS_SP_SLUG}"
+  export SAML11_METADATA_URL
   # And it hosts the TLS / mutual-TLS endpoint the PKI page presents a client
-  # certificate to (its two HTTPS listeners, 8443 and 9443). This is its PLAIN
-  # HTTP base: the test configures the far end's truststore over it and reads
+  # certificate to (its two HTTPS listeners, 8443 and 9443). This is its MAIN
+  # port, which is https here too: the test configures the far end's truststore
+  # over it and reads
   # the listeners' ports from the service rather than carrying a copy of them.
   #
   # Separate from WSTRUST_STS_URL for the same reason WSFED_STS_METADATA_URL is
   # — that one may be pointed at a real Apache CXF STS, which has no endpoint of
   # this kind — and it must be reachable by the API as well as by the test,
   # since the api is what opens the socket. Both are on this host here.
-  STS_TLS_URL=http://localhost:8081
+  STS_TLS_URL=https://localhost:8081
   export STS_TLS_URL
-  # RFC 9700 (OAuth 2.0 Security BCP): a SECOND mock STS, started with
-  # STS_OAUTH2_RFC9700=true, so that the OAuth2/OIDC matrix can be run a second
-  # time with BOTH sides compliant. Setting this turns on five jobs in
-  # tests/run-report.js; leaving it unset skips them.
+  # RFC 9700 (OAuth 2.0 Security BCP): the compliant half of the OAuth2/OIDC
+  # matrix, which is a TRUST REALM on the mock above rather than a second mock.
   #
-  # It has to be a second INSTANCE rather than a second setting: oauth2.rfc9700
-  # derives global.https, and the main port's scheme is decided once, when the
-  # listener is bound — so it is restart-only in that service and one process
-  # cannot serve both passes. It is the `sts-rfc9700` service in
-  # local-tests.yml, which is the SAME image as `sts` with a different
-  # environment.
+  # It used to be a second INSTANCE — `sts-rfc9700` in local-tests.yml, on 8091
+  # with all seven of its listeners moved off the first one's — because
+  # `oauth2.rfc9700` derives `global.https` in that service and one process
+  # could not bind its main port two ways. That flag is now the one setting
+  # there marked `realmRuntime`: restart-only for the PROCESS, settable on a
+  # REALM, because a realm binds no socket. So one instance serves both passes,
+  # the twelve permissive jobs at /oauth2/authorize and the five compliant ones
+  # at /realm/rfc9700/oauth2/authorize, each with its own issuer, signing key,
+  # codes and tokens.
   #
-  # https, and 8091: with the mode on there is no plain listener in that
-  # process at all, and under host networking it shares this machine's
-  # namespace with `sts`, so all seven of its listeners are moved off the first
-  # instance's. See the note on the service. docs/rfc9700.md has the rest.
+  # THE SCHEME IS THE PART THAT MOVED TO THE PROCESS. A realm cannot bind one,
+  # and the compliant pass is only honest over TLS — requirement 8.1 is that
+  # every configured endpoint is https, and the debugger enforces it — so
+  # STS_HTTPS=true is set on the `sts` service and every STS URL above is
+  # https. That is the whole cost of dropping the second container.
   #
-  # SET ONLY IF THE SUBMODULE ACTUALLY HAS THE MODE. `oauth2_bcp.js` is where
-  # it lives in the mock, and sts/ may be pinned to a commit that predates it —
-  # in which case STS_OAUTH2_RFC9700 names a setting that does not exist, the
-  # second instance comes up plain HTTP, and the five jobs would run against a
-  # server that agrees with everything they ask. Skipping them says so in one
-  # line and leaves the other 179 to run; the alternative — halting the whole
-  # suite over an un-bumped gitlink — costs more than it catches, because the
-  # jobs themselves already refuse a permissive STS BY NAME.
-  #
-  # AND IT IS LOOKED FOR RATHER THAN NAMED. This probe used to be
-  # `[ -f "sts/oauth2_bcp.js" ]`, which was the whole answer while every module
-  # in that repository sat in its root. mock-sts 0f986b3 ("Reorganizing source
-  # code.") moved them into subdirectories — the file is `oauth-oidc/` now —
-  # and a path test written against the old layout does not fail: it takes the
-  # `else` branch and prints a confident, wrong explanation that the submodule
-  # predates a feature it has, then quietly drops five jobs. A skip with a
-  # stated reason is this project's preferred failure, which is exactly why the
-  # reason has to be true.
-  rfc9700_module=""
-  for candidate in sts/oauth2_bcp.js sts/*/oauth2_bcp.js;
-  do
-    if [ -f "${candidate}" ];
-    then
-      rfc9700_module="${candidate}"
-      break
-    fi
-  done
-  if [ -n "${rfc9700_module}" ];
-  then
-    RFC9700_STS_URL=https://localhost:8091
-    export RFC9700_STS_URL
-  else
-    echo "oauth2_bcp.js is nowhere in sts/, so this checkout of the mock STS has"
-    echo "no RFC 9700 mode and the five RFC 9700 flow jobs will be SKIPPED. Bump"
-    echo "the sts/ submodule to a mock-sts commit that carries it. See"
-    echo "docs/rfc9700.md. (tests/rfc9700_client.js is unaffected — it needs no"
-    echo "service at all and runs either way.)"
-  fi
+  # THE URL IS NOT SET HERE. The realm is held in memory by a service that
+  # persists nothing, so it does not exist until something creates it — which
+  # is configureStsRfc9700Realm(), after the stack is up. That call is also the
+  # capability probe: it replaced a test for `oauth2_bcp.js` in the sts/
+  # submodule, which was a PATH test and silently took its else branch when
+  # mock-sts reorganised its directories, printing a confident and wrong
+  # explanation while quietly dropping five jobs. Asking the running service
+  # answers the same question about the code that is actually running — and
+  # answers it about realms too, which a file probe could not have seen at all.
   # walt.id's issuer-api2 (local-tests.yml, host networking) — the real
   # OpenID4VCI issuer the interoperability job runs against.
   WALTID_ISSUER_URL=http://localhost:7005
@@ -380,7 +378,7 @@ init()
   check_return_code $?
   renderWaltidConfig "${CURRENT_DIR}"
   check_return_code $?
-  EXTENSION_AUTOARM_ORIGINS="http://localhost:8081" \
+  EXTENSION_AUTOARM_ORIGINS="https://localhost:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # the browser is on the host
   check_return_code $?
   NODEJS_BASE_DIR=tests
@@ -446,7 +444,7 @@ startDocker()
   # step downstream fail or skip for reasons that do not name the cause.
   CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml keycloak-wsfed
   check_return_code $?
-  # And BOTH mock STS instances, for the same reason and one more.
+  # And the mock STS, for the same reason and one more.
   #
   # THE ONE MORE, because it cost a whole run on 2026-08-20: 71 of 184 tests
   # failed and not one of them named the cause. Something outside compose — a
@@ -462,18 +460,45 @@ startDocker()
   CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml sts
   check_return_code $?
   # Running is not answering, and on 8081 it is not even enough to know WHO is
-  # answering. This names the port and says what it found.
-  requireStsReachable http http://localhost:8081/healthcheck sts
+  # answering. This names the port and says what it found — including the case
+  # this argument's `scheme` argument exists for, which is now the ORDINARY
+  # arrangement rather than the exception: this instance is https, so anything
+  # answering plain http on 8081 is somebody else's mock.
+  requireStsReachable https https://localhost:8081/healthcheck sts
   check_return_code $?
-  # The compliant instance only has to be there when the five jobs that use it
-  # are scheduled, which is the same condition that sets the URL above.
-  if [ -n "${RFC9700_STS_URL:-}" ];
+
+  # ------------------------------------------------------------------------
+  # THE CERTIFICATE, AND THEN THE RFC 9700 REALM. Both need the service to be
+  # ANSWERING, which is why neither is in init() and both are here.
+  #
+  # The certificate first, because it is what everything downstream verifies
+  # against — including the two curl calls the realm step makes, which do not
+  # need it (they pass -k) but every node test and every browser after them
+  # does. It is self-signed and regenerated on every start of that service, so
+  # this is the earliest moment it exists.
+  #
+  # NEITHER IS FATAL, and that is deliberate in different ways. Without the
+  # certificate the STS-backed jobs fail with their own messages, which name
+  # the certificate; halting here would replace 180 results with none. Without
+  # the realm the five RFC 9700 flow jobs are SKIPPED — RFC9700_STS_URL is left
+  # unset and run-report.js does not schedule them — which is this project's
+  # preferred failure for a capability the mock may not have: a stated reason
+  # and the other 180 still run. The jobs themselves also refuse a permissive
+  # server by name, so a realm that half-worked cannot pass quietly.
+  # ------------------------------------------------------------------------
+  trustStsCertificate https://localhost:8081 || true
+  if configureStsRfc9700Realm https://localhost:8081;
   then
-    CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml \
-        sts-rfc9700
-    check_return_code $?
-    requireStsReachable https https://localhost:8091/healthcheck sts-rfc9700
-    check_return_code $?
+    RFC9700_STS_URL=https://localhost:8081/realm/rfc9700
+    export RFC9700_STS_URL
+  else
+    echo "The mock STS has no RFC 9700 trust realm, so the five RFC 9700 flow"
+    echo "jobs will be SKIPPED. The likeliest cause is an sts/ submodule older"
+    echo "than \`realmRuntime\` on oauth2.rfc9700 — before that the mode could"
+    echo "only be given to a whole process, which is what the deleted"
+    echo "sts-rfc9700 container was for. See docs/rfc9700.md."
+    echo "(tests/rfc9700_client.js is unaffected — it needs no service at all"
+    echo "and runs either way.)"
   fi
 }
 
@@ -590,6 +615,65 @@ runSamlSuiteAgainst()
   return ${rc}
 }
 
+# SAML 1.1, which only the mock answers.
+#
+# NOT part of runSamlSuiteAgainst(), because that function is run once per
+# identity provider and this profile has exactly one: Keycloak has spoken no
+# SAML 1.1 for years, so a second pass would have nothing to run against. The
+# three binding jobs drive the debugger's pages exactly as saml_sso.js does;
+# saml11_options.js needs no identity provider at all; and sts_saml11.js needs
+# no browser, because it writes its own relying party.
+#
+# Nothing has to be provisioned: the mock accepts any relying party identifier,
+# creates the application entry on sight, and mints a metadata document for
+# anything asked for.
+runSaml11Suite()
+{
+  echo "Entering runSaml11Suite()."
+  # Exported HERE rather than inherited: runSamlOnly() sets these inside the
+  # subshell it runs the SAML 2.0 suite in, so at this level they are unset and
+  # the 1.1 jobs would send an empty providerId — which the mock answers by
+  # GUESSING the audience from the TARGET's origin, and the audience assertion
+  # then fails naming a value nobody typed.
+  export SAML_SP_ENTITY_ID
+  export SAML_USER="${SAML_STS_USER:-${SAML_USER:-saml}}"
+  echo "SAML11_METADATA_URL=${SAML11_METADATA_URL}"
+  echo "SAML_SP_ENTITY_ID=${SAML_SP_ENTITY_ID}  SAML_USER=${SAML_USER}"
+  local rc=0
+  local failures=""
+  local binding
+  for binding in redirect post artifact;
+  do
+    (
+      export SAML_BINDING="${binding}"
+      export SAML_METADATA_URL=""
+      runSamlAgainst "the mock STS (SAML 1.1)" saml11_sso.js
+    )
+    if [ $? -ne 0 ]; then rc=1; failures="${failures} sso11/${binding}"; fi
+  done
+  (
+    runSamlAgainst "the mock STS (SAML 1.1)" saml11_options.js
+  )
+  if [ $? -ne 0 ]; then rc=1; failures="${failures} options11"; fi
+  (
+    echo "Entering runStsSaml11(). WSTRUST_STS_URL=${WSTRUST_STS_URL}"
+    node "${NODEJS_BASE_DIR}/sts_saml11.js" --url "${DEBUGGER_BASE_URL}"
+    # The subshell's status is the status of its LAST command, so the rc has to
+    # be carried out deliberately — an echo after the node call would otherwise
+    # make every run of it succeed. runSamlAgainst() does the same.
+    sts_saml11_rc=$?
+    echo "Leaving runStsSaml11(). rc=${sts_saml11_rc}"
+    exit ${sts_saml11_rc}
+  )
+  if [ $? -ne 0 ]; then rc=1; failures="${failures} sts-saml11"; fi
+  if [ ${rc} -ne 0 ];
+  then
+    echo "SAML 1.1 failed:${failures}" >&2
+  fi
+  echo "Leaving runSaml11Suite(). rc=${rc}"
+  return ${rc}
+}
+
 runSamlOnly()
 {
   echo "Entering runSamlOnly(). idp=${SAML_ONLY_IDP}"
@@ -621,6 +705,13 @@ runSamlOnly()
   then
     CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml sts
     check_return_code $?
+    # The mock serves https on a certificate it regenerated when this `up -d`
+    # started it, so nothing can have an anchor for it yet. Every job below
+    # verifies — the node ones through NODE_EXTRA_CA_CERTS, the browser ones
+    # through an SPKI pin — so this has to happen before any of them run. Not
+    # fatal: a job that meets an untrusted certificate says so itself, and its
+    # message names the certificate.
+    trustStsCertificate https://localhost:8081 || true
   fi
   if [ "${SAML_ONLY_IDP}" != "sts" ];
   then
@@ -660,31 +751,7 @@ runSamlOnly()
       runSamlSuiteAgainst "the mock STS"
     )
     if [ $? -ne 0 ]; then rc=1; failures="${failures} mock-STS"; fi
-    # SAML **1.1**, which only the mock answers and which no browser touches.
-    #
-    # It is not part of runSamlSuiteAgainst() because it is not the same kind of
-    # job: the four in there drive the DEBUGGER's service provider against an
-    # identity provider, and this one drives the mock's SAML 1.1 identity
-    # provider directly over HTTP with a relying party it writes itself. It has
-    # to — the debugger's SAML workflow is SAML 2.0 SP-initiated, and selecting
-    # 1.1 on saml_request.html returns an XML comment where a request would be.
-    # So there is no keycloak half of this and there will not be one; Keycloak
-    # has spoken no SAML 1.1 for years.
-    #
-    # It takes WSTRUST_STS_URL, which init() exported, and needs nothing
-    # provisioned: any TARGET is accepted and the application entry is created
-    # on sight.
-    (
-      echo "Entering runSaml11Against(). label=the mock STS"
-      echo "WSTRUST_STS_URL=${WSTRUST_STS_URL}"
-      node "${NODEJS_BASE_DIR}/saml11_sso.js" --url "${DEBUGGER_BASE_URL}"
-      # The subshell's status is the status of its LAST command, so the rc has
-      # to be carried out deliberately — an echo after the node call would
-      # otherwise make every run of it succeed. runSamlAgainst() does the same.
-      saml11_rc=$?
-      echo "Leaving runSaml11Against(). rc=${saml11_rc}"
-      exit ${saml11_rc}
-    )
+    runSaml11Suite
     if [ $? -ne 0 ]; then rc=1; failures="${failures} mock-STS/saml11"; fi
   fi
 
@@ -715,7 +782,7 @@ runSamlOnly()
 declareStsLogoutService()
 {
   echo "Entering declareStsLogoutService()."
-  local api="http://localhost:8081/admin-api/saml2"
+  local api="https://localhost:8081/admin-api/saml2"
   local slo="${SAML_STS_SLO_URL:-http://localhost:4000/samlslo}"
   curl -sS -o /dev/null -X POST "${api}/register" \
     -H 'Content-Type: application/json' \
@@ -796,6 +863,13 @@ runWsfedOnly()
   then
     CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml sts
     check_return_code $?
+    # The mock serves https on a certificate it regenerated when this `up -d`
+    # started it, so nothing can have an anchor for it yet. Every job below
+    # verifies — the node ones through NODE_EXTRA_CA_CERTS, the browser ones
+    # through an SPKI pin — so this has to happen before any of them run. Not
+    # fatal: a job that meets an untrusted certificate says so itself, and its
+    # message names the certificate.
+    trustStsCertificate https://localhost:8081 || true
   fi
 
   export DEBUGGER_BASE_URL CONFIG_FILE KEYCLOAK_BASE_URL
@@ -835,7 +909,7 @@ runWsfedOnly()
       export WSFED_METADATA_URL="${WSFED_STS_METADATA_URL}"
       export WSFED_REALM="${WSFED_STS_REALM:-urn:wsfed:sts:rp}"
       export WSFED_USER="${WSFED_STS_USER:-wsfed}"
-      export WSFED_SIGNIN_ENDPOINT="${WSFED_STS_ENDPOINT:-http://localhost:8081/wsfed}"
+      export WSFED_SIGNIN_ENDPOINT="${WSFED_STS_ENDPOINT:-https://localhost:8081/wsfed}"
       export WSFED_WREQ_TOKEN_TYPE="urn:oasis:names:tc:SAML:2.0:assertion"
       runWsfedAgainst "the mock STS"
     )
@@ -927,7 +1001,8 @@ if [ "${SAML_ONLY}" = "1" ];
 then
   runSamlOnly
   check_return_code $?
-  echo "SAML 2.0 tests passed (idp=${SAML_ONLY_IDP})."
+  echo "SAML tests passed (idp=${SAML_ONLY_IDP}); the sts half includes" \
+       "SAML 1.1, which has no Keycloak equivalent."
   exit 0
 fi
 if [ "${WSFED_ONLY}" = "1" ];

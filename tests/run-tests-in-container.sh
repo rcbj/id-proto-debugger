@@ -32,7 +32,7 @@ init()
   # on the Keycloak client — while API_URL and STS_URL are what the seven
   # LDAP, SCIM and Kerberos-page jobs call THEMSELVES; run-report.js passes
   # them per job and defaults them to a HOST's view, http://localhost:4000 and
-  # http://localhost:8081. Nothing set them here, and in this container those
+  # https://localhost:8081. Nothing set them here, and in this container those
   # two addresses are this container.
   #
   # The cost was silence rather than failure, which is why it survived so long:
@@ -46,7 +46,7 @@ init()
   #
   # Both names resolve in this container AND in the api's, which matters
   # because two of those jobs ask the api to reach the mock for them:
-  # SCIM_BASE_URL (http://sts:8081/scim/v2) and LDAP_URL (ldap://sts:389) are
+  # SCIM_BASE_URL (https://sts:8081/scim/v2) and LDAP_URL (ldap://sts:389) are
   # the API's view and run-report.js already defaults them to the compose name.
   # Defaulted only for the containerized stack, like WSTRUST_STS_URL below: on
   # any other target run-report.js's own localhost defaults are the right
@@ -54,7 +54,7 @@ init()
   case "${DEBUGGER_BASE_URL}" in
     http://client:*)
       API_URL="${API_URL:-http://api:4000}"
-      STS_URL="${STS_URL:-http://sts:8081}"
+      STS_URL="${STS_URL:-https://sts:8081}"
       ;;
   esac
   export API_URL STS_URL
@@ -82,7 +82,7 @@ init()
       SPIFFE_SERVER_ADDRESS="${SPIFFE_SERVER_ADDRESS:-sts:8181}"
       SPIFFE_TEST_WORKLOAD_ADDRESS="${SPIFFE_TEST_WORKLOAD_ADDRESS:-sts:8092}"
       SPIFFE_TEST_SERVER_ADDRESS="${SPIFFE_TEST_SERVER_ADDRESS:-sts:8181}"
-      SPIFFE_BUNDLE_URL="${SPIFFE_BUNDLE_URL:-http://sts:8081/spiffe/bundle}"
+      SPIFFE_BUNDLE_URL="${SPIFFE_BUNDLE_URL:-https://sts:8081/spiffe/bundle}"
       ;;
   esac
   export SPIFFE_WORKLOAD_ADDRESS SPIFFE_SERVER_ADDRESS
@@ -93,16 +93,23 @@ init()
   #
   # ONLY default this for the containerized stack: the bridge DNS name is valid
   # only there. On a DEPLOYED (HTTPS, backend-less) target the browser calls the
-  # STS directly, and Chrome blocks http://sts:8081/sts as mixed content — every
-  # WS-Trust job then times out waiting for the response page. The live-site stack
-  # therefore passes WSTRUST_STS_URL explicitly as http://localhost:8081/sts (its
-  # own host-networked sts service, loopback = potentially trustworthy), which is
-  # what remote-run-tests.sh does. If it arrives unset/empty, run-report.js SKIPS
+  # STS directly, and the compose name resolves to nothing in a browser that is
+  # not on this network — every WS-Trust job then times out waiting for a
+  # response page. The live-site stack therefore passes WSTRUST_STS_URL
+  # explicitly as https://localhost:8081/sts (its own host-networked sts
+  # service), which is what remote-run-tests.sh does.
+  #
+  # **https**, HERE AND IN EVERY STS URL BELOW. That mock binds its main port as
+  # TLS on this stack (STS_HTTPS=true on the `sts` service), because the RFC 9700
+  # pass is a trust realm on it now rather than a second container and a realm
+  # binds no socket of its own. It also settles the mixed-content question this
+  # paragraph used to be about, in the direction that needs no exception: an
+  # https page may call an https service wherever it is. If it arrives unset/empty, run-report.js SKIPS
   # the WS-Trust jobs (as it skips the SAML Artifact job on a backend-less target)
   # rather than failing.
   case "${DEBUGGER_BASE_URL}" in
     http://client:*)
-      WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://sts:8081/sts}"
+      WSTRUST_STS_URL="${WSTRUST_STS_URL:-https://sts:8081/sts}"
       ;;
   esac
   # Exporting an unset variable passes nothing to children, so run-report.js sees
@@ -119,7 +126,7 @@ init()
   # deriving would turn "not this protocol" into a run of failing jobs.
   case "${DEBUGGER_BASE_URL}" in
     http://client:*)
-      WSFED_STS_METADATA_URL="${WSFED_STS_METADATA_URL:-http://sts:8081/FederationMetadata/2007-06/FederationMetadata.xml}"
+      WSFED_STS_METADATA_URL="${WSFED_STS_METADATA_URL:-https://sts:8081/FederationMetadata/2007-06/FederationMetadata.xml}"
       ;;
   esac
   export WSFED_STS_METADATA_URL
@@ -138,33 +145,46 @@ init()
   case "${DEBUGGER_BASE_URL}" in
     http://client:*)
       SAML_STS_SP_SLUG="app-$(printf '%s' "${SAML_SP_ENTITY_ID}" | sha256sum | cut -c1-12)"
-      SAML_STS_METADATA_URL="${SAML_STS_METADATA_URL:-http://sts:8081/saml2/metadata/${SAML_STS_SP_SLUG}}"
+      SAML_STS_METADATA_URL="${SAML_STS_METADATA_URL:-https://sts:8081/saml2/metadata/${SAML_STS_SP_SLUG}}"
+      SAML11_METADATA_URL="${SAML11_METADATA_URL:-https://sts:8081/saml11/metadata/${SAML_STS_SP_SLUG}}"
       ;;
   esac
   export SAML_STS_METADATA_URL
-  # RFC 9700 (OAuth 2.0 Security BCP): the SECOND mock STS, the one started with
-  # STS_OAUTH2_RFC9700=true, which is a separate container here
-  # (docker-compose-run-tests.yml, service sts-rfc9700) rather than a setting on
-  # the one above — that mode derives global.https and the main port's scheme is
-  # decided once, when the listener is bound, so one process cannot serve both
-  # the permissive pass and the compliant one.
+  # And SAML **1.1**, which that service also answers. Same slug, a different
+  # document — /saml11/metadata publishes an IDPSSODescriptor whose
+  # protocolSupportEnumeration names the 1.1 protocol and whose endpoints carry
+  # the two browser PROFILE URIs plus Shibboleth's request one — and a SEPARATE
+  # variable rather than a path substitution, because a relying party that
+  # trusts a service for one version and not the other is the ordinary case.
   #
-  # https, and 8081: on this bridge stack the second instance has a namespace of
-  # its own and keeps every default port, so only the NAME distinguishes the
-  # two.
-  # (The host-networked local stack has to move all seven, and puts this one on
-  # 8091 — see local-tests.yml.)
+  # This is the ONE browser-SSO profile here with no Keycloak half: Keycloak
+  # dropped SAML 1.1 years ago, so unsetting this skips the whole of it rather
+  # than falling back to a second identity provider.
+  export SAML11_METADATA_URL
+  # RFC 9700 (OAuth 2.0 Security BCP): the compliant half of the OAuth2/OIDC
+  # matrix, and it is a TRUST REALM on the mock above rather than a second one.
   #
-  # Same DNS rule as the two above, and it is browser-facing for the same
+  # It used to be a container of its own (`sts-rfc9700`, deleted from
+  # docker-compose-run-tests.yml) because `oauth2.rfc9700` derives `global.https`
+  # in that service and one process could not bind its main port two ways. That
+  # flag is now the one setting there marked `realmRuntime` — restart-only for
+  # the PROCESS, settable on a REALM, because a realm binds no socket — so the
+  # same instance answers permissively at /oauth2/authorize for the twelve
+  # permissive jobs and enforces the BCP at /realm/rfc9700/oauth2/authorize for
+  # these five, each with its own issuer, signing key, codes and tokens.
+  #
+  # THE SCHEME IS THE PART THAT MOVED TO THE PROCESS: a realm cannot bind one,
+  # and this pass is only honest over TLS, so STS_HTTPS=true is set on the `sts`
+  # service and every STS URL above is https.
+  #
+  # Same DNS rule as the three above, and it is browser-facing for the same
   # reason: the page navigates to the authorization endpoint. Unset elsewhere,
   # so run-report.js skips the five RFC 9700 jobs rather than pointing them at
   # something that is not in that mode — which would pass while proving nothing.
-  case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
-      RFC9700_STS_URL="${RFC9700_STS_URL:-https://sts-rfc9700:8081}"
-      ;;
-  esac
-  export RFC9700_STS_URL
+  #
+  # The realm is created below, once, after the certificate is trusted; it is
+  # held in memory by a service that persists nothing, so there is nowhere to
+  # declare it and nothing to declare it in.
   # THE REDIRECT URI THOSE JOBS SEND, and it is loopback ON PURPOSE.
   #
   # RFC 9700 requirement 1.3 (RFC 8252's loopback exception) is that a
@@ -202,7 +222,7 @@ init()
   # rather than pointing a deployed api at a host on somebody's laptop.
   case "${DEBUGGER_BASE_URL}" in
     http://client:*)
-      STS_TLS_URL="${STS_TLS_URL:-http://sts:8081}"
+      STS_TLS_URL="${STS_TLS_URL:-https://sts:8081}"
       ;;
   esac
   export STS_TLS_URL
@@ -245,6 +265,46 @@ init()
   # certificate on the SAML client. Nothing is baked into the image.
   generateSpKeyPair
   check_return_code $?
+
+  # ------------------------------------------------------------------------
+  # THE MOCK STS'S CERTIFICATE, AND THEN ITS RFC 9700 REALM.
+  #
+  # Both are done HERE rather than in a compose file because both need the
+  # service to be answering, and neither can be declared anywhere: the
+  # certificate is self-signed and regenerated on every start of that service,
+  # and the realm is held in memory by a service that persists nothing.
+  # compose's depends_on has already waited for its healthcheck, so this is the
+  # first moment either exists.
+  #
+  # trustStsCertificate() installs the certificate for node
+  # (NODE_EXTRA_CA_CERTS, inherited by every job run-report.js spawns) and for
+  # Chrome (STS_SPKI_PIN, which browser_flags.js turns into an exact key pin).
+  # Neither is fatal: a job that meets an untrusted certificate says so in its
+  # own message, and one that finds no compliant realm is not scheduled at all.
+  #
+  # ONLY ON THE CONTAINERIZED STACK, the same condition as every STS URL above:
+  # a deployed target's mock is somebody else's and this container has no
+  # business reconfiguring it.
+  # ------------------------------------------------------------------------
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      trustStsCertificate https://sts:8081 || true
+      if configureStsRfc9700Realm https://sts:8081;
+      then
+        RFC9700_STS_URL="${RFC9700_STS_URL:-https://sts:8081/realm/rfc9700}"
+        export RFC9700_STS_URL
+      else
+        echo "The mock STS has no RFC 9700 trust realm, so the five RFC 9700"
+        echo "flow jobs will be SKIPPED. The likeliest cause is an sts/"
+        echo "submodule older than \`realmRuntime\` on oauth2.rfc9700 — before"
+        echo "that the mode could only be given to a whole process, which is"
+        echo "what the deleted sts-rfc9700 container was for. See"
+        echo "docs/rfc9700.md. (tests/rfc9700_client.js is unaffected — it"
+        echo "needs no service at all and runs either way.)"
+      fi
+      ;;
+  esac
+
   NODEJS_BASE_DIR=.
 }
 
@@ -311,7 +371,12 @@ waitForSts()
   local code
   while [ $i -lt $max ];
   do
-    code=$(curl -s -o /dev/null -w '%{http_code}' "${WSTRUST_STS_URL}" || true)
+    # -k: that URL is https now (the mock binds its main port as TLS — see
+    # STS_HTTPS on the `sts` service), on a certificate regenerated every start.
+    # This loop asks whether anything is ANSWERING, which is a question about a
+    # socket; whether the certificate is trusted is settled once, by
+    # trustStsCertificate() in init(), for the jobs that actually verify.
+    code=$(curl -s -k -o /dev/null -w '%{http_code}' "${WSTRUST_STS_URL}" || true)
     if [ -n "${code}" ] && [ "${code}" != "000" ];
     then
       echo "STS is ready (HTTP ${code})."

@@ -1,1127 +1,810 @@
-'use strict';
-//
-// File: tests/saml11_sso.js
-//
-// ===========================================================================
-// THE MOCK STS'S SAML 1.1 BROWSER PROFILES, END TO END, OVER HTTP, WITH NO
-// BROWSER.
-//
-// It sits here beside the four other tests that drive that service DIRECTLY —
-// `sts_metadata.js`, `sts_dpop.js`, `admin_api.js`, `vc_did.js` — rather than in
-// the mock's own repository, where it was written on 2026-08-25 and from where
-// it was moved the same day. The reason for the move is not tidiness: a second
-// suite, with a second runner, a second report and a second reason to be
-// forgotten, is how a test stops being run. Everything in this file that is not
-// about SAML 1.1 — the `--url` option nothing reads, the bunyan level off
-// `CONFIG_FILE`, the generated username — is that move rather than the profile.
-//
-// **NOTHING IN THE DEBUGGER IS UNDER TEST HERE**, which is worth saying because
-// every other file in this directory with `saml` in its name drives the
-// debugger's own pages. It cannot drive them for this profile: `saml_tools.html`
-// composes, signs and encrypts a SAML 1.1 ASSERTION, and `wsfed_response.js` /
-// `wstrust_response.js` CONSUME one — but the SAML protocol workflow is SAML 2.0
-// SP-initiated and says so, and selecting 1.1 on `saml_request.html` returns an
-// XML comment where a request would be while `callIdp()` and `singleLogout()`
-// both refuse. So the relying party is written HERE, in the same spirit as
-// `sts_dpop.js` writing its own DPoP client rather than importing the wallet's:
-// the identity provider is the thing under test, and if the other end of the
-// exchange came from the same implementation a shared misunderstanding would
-// pass and interoperate with nobody.
-//
-// Needs the STS mock and nothing else — no browser, no Keycloak — so it is
-// skipped only when there is no STS to talk to.
-//
-// ---------------------------------------------------------------------------
-// WHAT IT IS FOR, WHICH IS NOT "THE HAPPY PATH WORKS".
-//
-// A SAML 1.1 identity provider that hands a working relying party a signed
-// assertion looks finished and can be worth very little: the assertion verifies,
-// somebody is signed in, and four of the things this profile most easily gets
-// wrong are invisible. `tests/sts_dpop.js` says the same thing about DPoP and is
-// almost entirely negatives; this file is written the same way. The four:
-//
-//   1. **THE CONFIRMATION METHOD.** saml-profile-1.1 section 4.1.1.4 requires
-//      `cm:artifact` for Browser/Artifact and section 4.2.1.4 requires
-//      `cm:bearer` for Browser/POST. A relying party that does not check works
-//      perfectly with either, so nothing fails until it meets one that does —
-//      and then the assertion is refused for a reason that reads like a
-//      signature problem.
-//   2. **THE SIGNATURE REFERENCE.** SAML 1.1 spells its ids `AssertionID` and
-//      `ResponseID`, which xml-crypto does not know: told nothing, it INVENTS
-//      `Id="_0"` and points the reference at that instead. It still verifies,
-//      which is how it survived in that repository for years — until a document
-//      carried TWO signatures and both got `Id="_0"`. The checks below verify
-//      each signature THROUGH THE REAL ATTRIBUTE, which is the only way that
-//      regression shows.
-//   3. **`InResponseTo` ON A PROFILE WITH NO REQUEST.** Porting SAML 2.0 code
-//      puts one there. It names a RequestID nobody minted, and a strict relying
-//      party rejects it.
-//   4. **THE ONE-SHOT ARTIFACT.** Section 3.2.3 makes an artifact resolvable
-//      exactly once. Resolving twice is the single easiest thing to get wrong
-//      and the hardest to notice, because the happy path passes either way.
-//
-// ---------------------------------------------------------------------------
-// RUNNING IT
-//
-//   node tests/saml11_sso.js                    # with an STS mock listening
-//
-// `WSTRUST_STS_URL` or `OID4VCI_ISSUER_URL` — which every launcher here already
-// sets — locates the service, exactly as the other four STS tests take theirs;
-// `SAML11_IDP_URL` overrides both. The `--url` the runner hands every job is
-// accepted and ignored: this test needs no browser.
-//
-// **IT RESTORES EVERYTHING IT CHANGES**, and restores it with
-// `/admin-api/config/reset` rather than by writing the old value back. That
-// distinction is `tests/CLAUDE.md`'s and it has already cost a run: the mock
-// records where each value came from, a `set` always produces `source:
-// override` even when the value is byte-identical, and `admin_api.js`'s "no
-// runtime override should be in force" check then fails on the NEXT run against
-// that same container, naming settings and no test at all. A setting that was
-// ALREADY an override when this test arrived is put back with a `set`, because
-// for that one an override is what it goes back to.
-//
-// **IT MUST SURVIVE BEING RUN TWICE, and the first version did not.** The mock
-// holds everything in memory and never restarts between jobs, so the three
-// profile counters are asserted as DELTAS against a baseline read at the top of
-// the run rather than as absolutes, and the flow the `defaultProfile` check
-// starts is COMPLETED and its artifact spent — an incomplete one was held for
-// ten minutes and failed the second run on `flowsHeldForSignIn`.
-//
-// **THE USERNAMES AND THE RELYING PARTY IDENTIFIER ARE GENERATED**, from
-// `random_username.js`, for the reason that module exists: nothing in the mock's
-// user table, audit log or applications registry is ever pruned, so a fixed name
-// makes every run of every test one person and a leftover row says nothing about
-// which file put it there.
-//
-// IT DOES NOT CHECK THAT ANYBODY IS WHO THEY SAY THEY ARE, because the service
-// does not: any username signs in, and the assertion describes whoever was
-// typed. A test that asserted otherwise would be asserting a bug.
-// ===========================================================================
-
-const assert = require('assert');
-const http = require('http');
-const https = require('https');
-const crypto = require('crypto');
-const { URL } = require('url');
+const { Builder, By, until, logging } = require("selenium-webdriver");
+const chrome = require("selenium-webdriver/chrome");
+const assert = require("assert");
+const path = require("path");
 const { Command, Option } = require('commander');
-const { usernameFor, runStamp } = require('./random_username.js');
+// The SP key pair is generated per run and passed in through the environment;
+// it is deliberately not stored in this repository. See common/sp_keypair.js.
+const { readSpKeyPair } = require("../common/sp_keypair.js");
 var appconfig = require(process.env.CONFIG_FILE);
-const bunyan = require('bunyan');
-const { DOMParser } = require('@xmldom/xmldom');
-const { SignedXml } = require('xml-crypto');
 
-const log = bunyan.createLogger({ name: 'saml11_sso',
-                                  level: appconfig.LOG_LEVEL || 'info' });
-log.info('Log initialized. logLevel=' + log.level());
+var bunyan = require("bunyan");
+var log = bunyan.createLogger({ name: 'saml11_sso',
+                                level: appconfig.LOG_LEVEL || 'info' });
+log.info("Log initialized. logLevel=" + log.level());
+var baseUrl = "http://localhost:3000";
+var headless = true;
+var waitTime = appconfig.waitTime;
 
-// The base URL, in the order the other four STS tests take theirs. Trimming a
-// trailing /sts means WSTRUST_STS_URL — which every launcher here already sets —
-// locates this service without a third variable being invented.
-const BASE = (process.env.SAML11_IDP_URL ||
-              process.env.OID4VCI_ISSUER_URL ||
-              (process.env.WSTRUST_STS_URL || '').replace(/\/sts\/?$/, '') ||
-              'http://localhost:8081').replace(/\/$/, '');
-
-// The relying party this run uses, and the three identities it signs in as.
-// Both carry this process's stamp: nothing here is ever deleted from the mock's
-// directory, so two runs against one instance would otherwise read each other's
-// registry entry — and a row left behind names the file that made it.
-const RP = 'urn:test:saml11:' + runStamp();
-
-const USER_POST = usernameFor('saml11-post');
-
-const USER_ARTIFACT = usernameFor('saml11-artifact');
-
-const USER_UNREGISTERED = usernameFor('saml11-unregistered');
-
-const CLAIM_NS = 'http://schemas.xmlsoap.org/ws/2005/05/identity/claims';
-
-const NS_SAML = 'urn:oasis:names:tc:SAML:1.0:assertion';
-
-const NS_SAMLP = 'urn:oasis:names:tc:SAML:1.0:protocol';
-
-const CM_BEARER = 'urn:oasis:names:tc:SAML:1.0:cm:bearer';
-
-const CM_ARTIFACT = 'urn:oasis:names:tc:SAML:1.0:cm:artifact';
-
-// ---------------------------------------------------------------------------
-// The harness. Every check is RECORDED rather than thrown, and the assert comes
-// once at the end — because a profile test that dies on the first failure hides
-// how much else is broken, and the useful output of a run against a half-built
-// change is the whole list.
-// ---------------------------------------------------------------------------
-let passed = 0;
-const failures = [];
-let section = '';
-
-function heading(title) {
-  section = title;
-  log.info('== ' + title + ' ==');
-}
-
-function check(name, ok, detail) {
-  if (ok) {
-    passed++;
-    log.info('  ok   ' + name);
-    return true;
-  }
-  failures.push(section + ' :: ' + name + (detail ? ' :: ' + detail : ''));
-  log.error('  FAIL ' + name + (detail === undefined ? '' : ' :: ' + detail));
-  return false;
-}
-
-// --- HTTP, with a cookie jar, and NO redirect following by default ---------
-// Not following redirects is the point rather than a limitation: the artifact
-// profile's answer IS a redirect, and a client that followed it would test the
-// relying party instead of the identity provider. `signIn()` below follows
-// exactly the hops of the sign-in dance and stops at the first one that leaves
-// it.
-let cookie = '';
-
-function request(method, path, body, headers) {
-  return new Promise(function (resolve, reject) {
-    const url = new URL(path.indexOf('http') === 0 ? path : BASE + path);
-    const opts = {
-      method: method,
-      headers: Object.assign({}, headers || {})
-    };
-    if (cookie) {
-      opts.headers.Cookie = cookie;
-    }
-    if (body) {
-      opts.headers['Content-Length'] = Buffer.byteLength(body);
-    }
-    const lib = url.protocol === 'https:' ? https : http;
-    const req = lib.request(url, opts, function (res) {
-      let data = '';
-      res.on('data', function (chunk) { data += chunk; });
-      res.on('end', function () {
-        const set = res.headers['set-cookie'];
-        if (set) {
-          cookie = set.map(function (c) { return c.split(';')[0]; }).join('; ');
-        }
-        resolve({ status: res.statusCode, headers: res.headers, body: data });
-      });
-    });
-    req.on('error', reject);
-    if (body) {
-      req.write(body);
-    }
-    req.end();
-  });
-}
-
-function form(obj) {
-  return Object.keys(obj).map(function (k) {
-    return encodeURIComponent(k) + '=' + encodeURIComponent(obj[k]);
-  }).join('&');
-}
-
-const FORM = { 'Content-Type': 'application/x-www-form-urlencoded' };
-
-const XML = { 'Content-Type': 'text/xml; charset=utf-8' };
-
-const JSON_H = { 'Content-Type': 'application/json' };
-
-function api(path, payload) {
-  return request('POST', path, JSON.stringify(payload), JSON_H);
-}
-
-// --- XML ------------------------------------------------------------------
-function parse(xml) {
-  return new DOMParser().parseFromString(xml, 'text/xml');
-}
-
-function byLocal(root, name) {
-  const els = root.getElementsByTagNameNS('*', name);
-  return els && els.length ? els[0] : null;
-}
-
-function textOf(root, name) {
-  const el = byLocal(root, name);
-  return el ? (el.textContent || '').trim() : '';
-}
-
-// A DIRECT child by local name. Not `byLocal`, which searches the whole subtree
-// — and on a Response wrapping an Assertion the two answer different questions:
-// the Response's own signature and the assertion's are both `Signature`, and
-// searching finds whichever comes first in the document.
-function childByLocal(el, name) {
-  for (let i = 0; el && i < el.childNodes.length; i++) {
-    const child = el.childNodes[i];
-    if (child.nodeType === 1 && child.localName === name) {
-      return child;
-    }
-  }
-  return null;
-}
-
-// **THE REGRESSION GUARD FOR THE `Id="_0"` BUG**, and the reason this function
-// takes an id attribute name at all.
+// ===========================================================================
+// THE DEBUGGER'S SAML **1.1** SERVICE PROVIDER, END TO END, THROUGH THE PAGES.
 //
-// xml-crypto resolves a reference URI against `Id`, `ID` and `id` only. SAML 1.1
-// uses neither on either document — `AssertionID` on an assertion, `ResponseID`
-// on a response — so a verifier that is not told the name resolves `#_abc` to
-// nothing and reports a good signature as broken. Naming it is also what proves
-// the SIGNER did the right thing: if the signer left it unnamed, xml-crypto
-// invented `Id="_0"` and pointed the reference there, and verifying through the
-// real attribute then fails. So this one function catches both halves.
+// `saml_sso.js`'s sibling, and deliberately its mirror image: the same
+// three-binding matrix, the same metadata load, the same key pair, the same
+// sign-in screen, the same response page. Everything that differs below is
+// marked `1.1:` and every one of those is a place SAML 1.1 is a DIFFERENT
+// PROTOCOL rather than an older spelling of this one.
 //
-// It is safe to name these two because neither is already on that default list.
-// Naming `ID` — SAML 2.0's — would unshift a DUPLICATE onto it and trip
-// xml-crypto's signature-wrapping guard on a healthy document.
-function verifySignature(xml, rootLocalName, idAttribute, certPem) {
-  const doc = parse(xml);
-  const root = rootLocalName === 'Response'
-    ? doc.documentElement
-    : byLocal(doc.documentElement, 'Assertion');
-  if (!root) {
-    return { ok: false, present: false, why: 'there is no <' + rootLocalName + '>' };
-  }
-  const sigEl = childByLocal(root, 'Signature');
-  if (!sigEl) {
-    return { ok: false, present: false,
-             why: 'the ' + rootLocalName + ' carries no ds:Signature' };
-  }
-  try {
-    const sig = new SignedXml({ publicCert: certPem, idAttribute: idAttribute });
-    sig.loadSignature(sigEl);
-    const ok = sig.checkSignature(xml);
-    return { ok: !!ok, present: true, why: ok ? '' : 'the signature did not verify' };
-  } catch (e) {
-    // xml-crypto throws rather than returning false for most failures, and the
-    // message names which — an unresolvable reference reads quite differently
-    // from a digest mismatch, and that distinction is the diagnosis.
-    return { ok: false, present: true, why: e.message };
-  }
-}
-
-// The signing certificate, off the identity provider's own metadata. Taken from
-// there rather than from a file so the test needs no fixture and cannot go stale
-// against a key that is regenerated on every start.
-let signingCertPem = '';
-
-function pemOf(b64) {
-  return '-----BEGIN CERTIFICATE-----\n' +
-    (b64.match(/.{1,64}/g) || []).join('\n') + '\n-----END CERTIFICATE-----\n';
-}
-
-// ---------------------------------------------------------------------------
-// Sign in at the inter-site transfer service and stop at whatever it answers
-// with. `username` is whatever is typed: this service checks no password, which
-// is why there is not one here.
+// **It is not `sts_saml11.js`, which used to have this name.** That file drives
+// the mock STS directly over HTTP with a relying party it writes itself, and it
+// is almost entirely negatives — the one-shot artifact, an `InResponseTo` on a
+// profile with no request, a signature reference through the real
+// `AssertionID`. This one proves the DEBUGGER builds a request that identity
+// provider accepts and renders what comes back, which that file cannot say
+// anything about. Neither replaces the other and both run.
 //
-// The hops followed are exactly the sign-in dance — /authn/* and back to
-// /saml11/sso — and NOTHING ELSE. The redirect OUT to the assertion consumer is
-// the artifact profile's answer and is returned rather than followed.
 // ---------------------------------------------------------------------------
-async function signIn(query, username) {
-  cookie = '';
-  return resume('/saml11/sso?' + form(query), username);
+// THE SIX THINGS THIS FILE ASSERTS THAT `saml_sso.js` CANNOT
+//
+// 1. **THE VERSION COMES OFF THE METADATA.** A SAML 1.1 descriptor declares
+//    `protocolSupportEnumeration="urn:oasis:names:tc:SAML:1.1:protocol"`, and
+//    loading one moves the Protocol Version selector and says so on the status
+//    line. Left on 2.0 the page would build an `<AuthnRequest>` and post it at
+//    an inter-site transfer service, and the refusal would read as an identity
+//    provider problem.
+//
+// 2. **THE REQUEST IS NOT A DOCUMENT.** What is sent is Shibboleth's request
+//    profile — `TARGET`, `shire`, `providerId`, `time` — so the Generated
+//    request box holds a URL or a form, never XML, and the test reads it for
+//    those parameter names by hand. A page that quietly kept building an
+//    AuthnRequest would still round-trip against a permissive identity
+//    provider; this is what notices.
+//
+// 3. **FOUR SETTINGS ARE SWITCHED OFF, not merely greyed.** The username hint,
+//    request signing, request encryption and Single Logout have no meaning in
+//    SAML 1.1, and each is asserted DISABLED — the attribute, not the colour.
+//    A block that only looks dead still submits on a Return keypress, which is
+//    the failure this half exists to prevent. (`saml11_options.js` covers the
+//    same ground without an identity provider and in more detail; it is here
+//    too because a control can be disabled on load and re-enabled by a later
+//    handler, and only a real round trip runs those handlers.)
+//
+// 4. **THE STATUS CODE IS A QName.** SAML 1.1's is `samlp:Success`, resolved
+//    against the document's namespace declarations; SAML 2.0's is a URI ending
+//    `:status:Success`. A reader written for one sees the other as a failure,
+//    so a working sign-in renders red and its Operations History row closes as
+//    a FAILURE. The Details tab and the history row are both asserted.
+//
+// 5. **THE CONFIRMATION METHOD IS THE PROFILE.** saml-profile-1.1 section
+//    4.1.1.4 requires `cm:artifact` for Browser/Artifact and 4.2.1.4 requires
+//    `cm:bearer` for Browser/POST. A relying party that does not check works
+//    perfectly with either — which is exactly why this is asserted PER BINDING
+//    rather than once. `DoNotCacheCondition` is checked the same way: the
+//    Browser/POST profile's single-use policy, and absent from an artifact
+//    assertion because that one never travelled through the browser.
+//
+// 6. **THE ASSERTION'S SIGNATURE VERIFIES THROUGH `AssertionID`.** SAML 1.1
+//    spells its ids `AssertionID` / `ResponseID`, which is on none of the lists
+//    a generic verifier searches — told nothing, one INVENTS an `Id` and points
+//    the reference at that. `common/xmldsig.js`'s findById() was taught all
+//    three; clicking Validate Signature here is what proves it, because a
+//    verifier that cannot resolve the reference reports "referenced element not
+//    found", which reads like a stripped element.
+//
+// ---------------------------------------------------------------------------
+// WHAT IT NEEDS, AND WHY THERE IS NO KEYCLOAK HALF
+//
+// The mock STS and nothing else. **Keycloak has not spoken SAML 1.1 for years**
+// — it dropped the profile — so unlike `saml_sso.js` and `wsfed_sso.js` there
+// is no second identity provider to pair this with and there is not going to
+// be one. Nothing has to be provisioned: that service accepts any relying party
+// identifier, creates the application entry from the first request, and mints a
+// metadata document for anything asked for.
+//
+//   SAML11_METADATA_URL   the mock's per-relying-party SAML 1.1 descriptor.
+//                         Its absence is the skip.
+//   SAML_SP_ENTITY_ID     this service provider, sent as `providerId`.
+//   SAML_USER             who to sign in as.
+//   SAML_BINDING          redirect | post | artifact.
+//
+// The HTTP Artifact profile additionally needs the API: resolving an artifact
+// is a SOAP call over the back channel, which a browser cannot make. The runner
+// skips it on a backend-less target rather than failing.
+// ===========================================================================
+
+// 1.1: the sign-in screen is `authn.js`'s, the same one the SAML 2.0, WS-Fed
+// and OAuth flows reach — this profile has no screen of its own. Written as a
+// list for the reason saml_sso.js gives: if a third identity provider ever
+// turns up with the same fields and a third button, the failure names the
+// button rather than the environment.
+var LOGIN_BUTTONS = ["kc-login", "saml11-login", "saml2-login"];
+
+// The two confirmation methods, and which profile each belongs to.
+var CM_BEARER = "urn:oasis:names:tc:SAML:1.0:cm:bearer";
+var CM_ARTIFACT = "urn:oasis:names:tc:SAML:1.0:cm:artifact";
+
+async function elementExists(driver, id) {
+  log.debug("Entering elementExists().");
+  var found = await driver.findElements(By.id(id));
+  log.debug("Leaving elementExists().");
+  return found.length > 0;
 }
 
-// The same, keeping whatever session the cookie jar already holds — which is how
-// single sign-on is tested: a second flow that never sees the screen.
-async function resume(path, username) {
-  let res = await request('GET', path);
-  if (res.status === 303 && /\/authn\/login/.test(res.headers.location || '')) {
-    const id = decodeURIComponent(/authn=([^&]+)/.exec(res.headers.location)[1]);
-    res = await request('POST', '/authn/login',
-                        form({ authn_id: id, username: username }), FORM);
-  }
-  let hops = 0;
-  while ((res.status === 302 || res.status === 303) && hops++ < 8) {
-    const where = (res.headers.location || '').replace(BASE, '');
-    if (!/^(\/authn\/|\/saml11\/sso)/.test(where)) {
+async function loginAtIdp(driver, user, timeout) {
+  log.debug("Entering loginAtIdp().");
+  var username = By.id("username");
+  await driver.wait(until.elementLocated(username), timeout,
+    "the identity provider never showed its sign-in screen (no #username " +
+        "field).");
+  await driver.wait(until.elementIsVisible(driver.findElement(username)),
+                    timeout);
+  await driver.findElement(username).clear();
+  await driver.findElement(username).sendKeys(user);
+  await driver.findElement(By.id("password")).clear();
+  await driver.findElement(By.id("password")).sendKeys(user);
+
+  var clicked = null;
+  for (var i = 0; i < LOGIN_BUTTONS.length; i++) {
+    if (await elementExists(driver, LOGIN_BUTTONS[i])) {
+      clicked = LOGIN_BUTTONS[i];
+      await driver.findElement(By.id(clicked)).click();
       break;
     }
-    res = await request('GET', where);
   }
-  return res;
+  assert(clicked, "the sign-in screen carries none of the submit " +
+      "buttons this test knows (" + LOGIN_BUTTONS.join(", ") + "). The " +
+      "username field was there, so this is a new identity provider rather " +
+      "than a broken page.");
+  log.info("Signed in at the mock STS sign-in screen (" + clicked + ").");
+  log.debug("Leaving loginAtIdp().");
 }
 
-function samlResponseIn(page) {
-  const m = /name="SAMLResponse" value="([^"]+)"/.exec(page);
-  return m ? Buffer.from(m[1], 'base64').toString('utf8') : '';
-}
-
-function soap(inner) {
-  return '<?xml version="1.0" encoding="UTF-8"?>' +
-    '<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">' +
-    '<soap:Body>' + inner + '</soap:Body></soap:Envelope>';
-}
-
-function samlRequest(inner, id) {
-  return soap('<samlp:Request xmlns:samlp="' + NS_SAMLP + '" ' +
-    'xmlns:saml="' + NS_SAML + '" RequestID="' + (id || ('_r' + Date.now())) + '" ' +
-    'MajorVersion="1" MinorVersion="1" IssueInstant="' + new Date().toISOString() + '">' +
-    inner + '</samlp:Request>');
-}
-
-function statusOf(doc) {
-  const el = byLocal(doc, 'StatusCode');
-  return el ? (el.getAttribute('Value') || '') : '';
-}
-
-// A setting, changed and remembered so the end of the run can put it back.
+// Poll a field's value until the predicate passes (or timeout).
 //
-// The SOURCE is remembered beside the value, and that is not bookkeeping for
-// its own sake — it is the whole of the difference between restoring a setting
-// and merely covering it. See restoreSettings().
-const changedSettings = {};
-
-async function setSetting(key, value) {
-  if (!(key in changedSettings)) {
-    const before = await request('GET', '/admin-api/config');
-    const all = JSON.parse(before.body);
-    const row = (all.settings || []).filter(function (s) { return s.key === key; })[0];
-    changedSettings[key] = { value: row ? row.value : undefined,
-                             wasOverride: !!row && row.source === 'override' };
-  }
-  const body = {};
-  body[key] = value;
-  return api('/admin-api/config/set-many', body);
-}
-
-// ---------------------------------------------------------------------------
-// PUTTING A SETTING BACK IS `reset`, NOT `set` WITH THE OLD VALUE, and the
-// difference has already cost a run in this suite.
-//
-// The mock records where every value came from — `appconfig` for one the
-// process started with, `override` for one changed at runtime — and a `set`
-// always produces the second, even when the value written back is byte
-// identical to what was there. A test that "restored" its settings with `set`
-// therefore leaves a row reading `source: override` on a live container for
-// ever, and `admin_api.js`'s "no runtime override should be in force before
-// this check runs" then fails on the NEXT run against that same container,
-// naming settings and no test at all. `spiffe_protocol.js` did exactly that
-// with four of them.
-//
-// So `reset` is the operation that undoes an override rather than covering it,
-// and the ONE exception is a setting that was ALREADY an override when this
-// test arrived: for that one an override is what it goes back to, so it is put
-// back with a `set`. `reset` also refuses a key with no override in force
-// rather than reporting success, which is why the two cases are told apart here
-// instead of being tried in turn.
-// ---------------------------------------------------------------------------
-async function restoreSettings() {
-  const keys = Object.keys(changedSettings);
-  if (!keys.length) {
-    return;
-  }
-  const putBack = keys.filter(function (k) {
-    return changedSettings[k].wasOverride;
-  });
-  const dropped = keys.filter(function (k) {
-    return !changedSettings[k].wasOverride;
-  });
-  if (putBack.length) {
-    const body = {};
-    putBack.forEach(function (k) { body[k] = changedSettings[k].value; });
-    await api('/admin-api/config/set-many', body);
-  }
-  for (const key of dropped) {
-    await api('/admin-api/config/reset', { key: key });
-  }
-  log.info('restored ' + keys.length + ' setting(s): ' + dropped.length +
-           ' reset' + (putBack.length ? ', ' + putBack.length +
-           ' put back as the override each already was' : '') + ' :: ' +
-           keys.join(', '));
-}
-
-// ===========================================================================
-async function main() {
-  log.debug('Entering main().');
-  log.info('driving the SAML 1.1 browser profiles at ' + BASE +
-           '. relyingParty=' + RP);
-
-  // NOTHING LISTENING IS A SKIP; A SERVICE WITHOUT THE PROFILE IS A FAILURE.
-  // The two are different facts and collapsing them loses the one that matters.
-  // `sts_dpop.js` skips the same way and for the same reason — an environment
-  // with no STS in it has not failed this test — but a service that ANSWERS and
-  // has no /saml11 on it is a submodule pinned before the profile landed, and a
-  // job that skipped there would report a whole protocol family as green while
-  // never having exercised a line of it.
-  let reachable = null;
+// The timeout message carries the LAST value read, the way tests/wait_for.js's
+// helper does. Without it a field that is filled in with something the
+// predicate does not recognise — an error status, say — reads exactly like a
+// field nothing ever wrote to, and the 15 seconds name neither. That cost a
+// diagnosis: see assertSignatureValidates().
+async function waitForValue(driver, locator, predicate, message, timeout) {
+  log.debug("Entering waitForValue().");
+  await driver.wait(until.elementLocated(locator), waitTime);
+  var last = null;
   try {
-    reachable = await request('GET', '/saml11');
-  } catch (e) {
-    log.warn('SKIPPED — nothing is listening at ' + BASE + ' (' + e.message +
-             '). Set WSTRUST_STS_URL or OID4VCI_ISSUER_URL, or start the sts ' +
-             'service.');
-    log.debug('Leaving main().');
-    return;
-  }
-  assert.strictEqual(reachable.status, 200,
-    'GET /saml11 answered ' + reachable.status + ' at ' + BASE + '. This is a ' +
-    'mock STS without the SAML 1.1 browser profiles on it — they landed in ' +
-    'that repository on 2026-08-24, so the sts/ submodule is pinned before ' +
-    'them. Bump the gitlink (see sts/docs/parent-project-migration.md) or ' +
-    'point WSTRUST_STS_URL at a service that has them.');
-
-  // The three profile counters BEFORE this run touches anything. They are
-  // asserted as deltas below rather than as absolutes, and that is not
-  // fastidiousness: the instance may be one somebody else is already driving,
-  // and an earlier run of this very file leaves assertions cached by design.
-  // Absolutes made the second run against one instance fail, which is the
-  // failure that produced this baseline.
-  let baseline = { artifactsAwaitingResolution: 0, assertionsHeldByReference: 0,
-                   flowsHeldForSignIn: 0 };
-  try {
-    baseline = JSON.parse((await request('GET', '/admin-api/saml11')).body);
-  } catch (e) {
-    // The management API is not gated, so this should not fail — but a baseline
-    // of zeroes only makes the deltas below stricter, never looser, so there is
-    // nothing to abandon the run over.
-    log.warn('could not read the counter baseline (' + e.message + '); using zeroes.');
-  }
-
-  // -------------------------------------------------------------------------
-  heading('the pages a person reaches by clicking');
-  check('GET /saml11 describes the profile',
-        /inter-site transfer service/i.test(reachable.body));
-  check('it says up front that SAML 1.1 has no request message',
-        /no request message/i.test(reachable.body));
-  let res = await request('GET', '/saml11/sso');
-  check('GET /saml11/sso with no parameters describes itself rather than 400ing',
-        res.status === 200 && /TARGET/.test(res.body), 'status ' + res.status);
-  res = await request('GET', '/saml11/responder');
-  check('GET on the responder describes it rather than 405ing',
-        res.status === 200 && /AssertionArtifact/.test(res.body), 'status ' + res.status);
-  check('the responder page says nothing authenticates a caller',
-        /Nothing authenticates a caller/i.test(res.body));
-
-  // -------------------------------------------------------------------------
-  heading('the metadata');
-  res = await request('GET', '/saml11/metadata');
-  check('it answers 200', res.status === 200, 'status ' + res.status);
-  check('its content type is application/samlmetadata+xml',
-        /samlmetadata/.test(res.headers['content-type'] || ''),
-        res.headers['content-type']);
-  // The signing key is regenerated on every start, so a cached copy describes a
-  // key that is gone and the failure looks like a broken signature.
-  check('it is served no-store', res.headers['cache-control'] === 'no-store',
-        res.headers['cache-control']);
-  let doc = parse(res.body);
-  const unscopedEntityId = doc.documentElement.getAttribute('entityID');
-  check('protocolSupportEnumeration names the SAML 1.1 PROTOCOL',
-        res.body.indexOf('protocolSupportEnumeration="urn:oasis:names:tc:SAML:1.1:protocol"') >= 0);
-  check('there is an IDPSSODescriptor', !!byLocal(doc, 'IDPSSODescriptor'));
-  // A Shibboleth service provider looks for its attribute authority in the
-  // second descriptor and will not find it inside the first.
-  check('there is an AttributeAuthorityDescriptor for the query half',
-        !!byLocal(doc, 'AttributeAuthorityDescriptor'));
-  check('it advertises Browser/POST',
-        res.body.indexOf('urn:oasis:names:tc:SAML:1.0:profiles:browser-post') >= 0);
-  check('it advertises Browser/Artifact',
-        res.body.indexOf('urn:oasis:names:tc:SAML:1.0:profiles:artifact-01') >= 0);
-  check('it advertises Shibboleth\'s AuthnRequest profile',
-        res.body.indexOf('urn:mace:shibboleth:1.0:profiles:AuthnRequest') >= 0);
-  check('it publishes an AttributeService over the SOAP binding',
-        /AttributeService Binding="urn:oasis:names:tc:SAML:1.0:bindings:SOAP-binding"/.test(res.body));
-  // Not an omission: SAML 1.1 has no Single Logout. Publishing one would be
-  // advertising an endpoint the protocol cannot reach.
-  check('there is NO SingleLogoutService, because SAML 1.1 has no Single Logout',
-        res.body.indexOf('SingleLogoutService') < 0);
-  check('ds:Signature is the FIRST child of EntityDescriptor',
-        doc.documentElement.firstChild &&
-        doc.documentElement.firstChild.localName === 'Signature',
-        doc.documentElement.firstChild ? doc.documentElement.firstChild.localName : 'nothing');
-  const certEl = byLocal(doc, 'X509Certificate');
-  check('it publishes a signing certificate', !!certEl);
-  if (certEl) {
-    signingCertPem = pemOf((certEl.textContent || '').replace(/\s+/g, ''));
-  }
-
-  res = await request('GET', '/saml11/metadata/' + encodeURIComponent(RP));
-  doc = parse(res.body);
-  const scopedEntityId = doc.documentElement.getAttribute('entityID');
-  check('a scoped document names a providerID of its own',
-        scopedEntityId !== unscopedEntityId &&
-        scopedEntityId.indexOf(unscopedEntityId + ':') === 0,
-        scopedEntityId + ' vs ' + unscopedEntityId);
-  check('its endpoints carry the same path segment',
-        res.body.indexOf('/saml11/sso/') >= 0 && res.body.indexOf('/saml11/responder/') >= 0);
-  // The ask is what registers it: a relying party can be pointed at this service
-  // before anything at all has been provisioned.
-  res = await request('GET', '/saml11/metadata/' + encodeURIComponent('urn:test:never:seen'));
-  check('a document is minted for an identifier nobody registered', res.status === 200,
-        'status ' + res.status);
-
-  // -------------------------------------------------------------------------
-  heading('Browser/POST, end to end');
-  const target = BASE + '/done?x=1';
-  const acs = BASE + '/saml11/rp';
-  res = await signIn({ providerId: RP, shire: acs, TARGET: target, profile: 'post' }, USER_POST);
-  check('the flow ends on the auto-post page',
-        res.status === 200 && /saml11-form/.test(res.body), 'status ' + res.status);
-  const csp = res.headers['content-security-policy'] || '';
-  const scriptSrc = (/script-src ([^;]*)/.exec(csp) || [])[1] || '';
-  // The exception is exactly as wide as one named resource and no wider. The
-  // whole family of reflected-content problems depends on it staying that way.
-  check('script-src is relaxed to \'self\' and no wider', scriptSrc.trim() === "'self'",
-        'script-src ' + scriptSrc);
-  // RFC 9700 §4.14, and the clause has no fallback from default-src — a page
-  // that sets the whole header can lose it with nothing failing.
-  check('frame-ancestors survived the relaxation', /frame-ancestors/.test(csp), csp);
-  // With scripting off the button is the whole mechanism, so it is a real
-  // control and not a hidden fallback.
-  check('the page carries a real submit button', /<button type="submit">/.test(res.body));
-  check('the form posts to the shire', res.body.indexOf('action="' + acs + '"') >= 0);
-  // SAML 1.1's RelayState. An identity provider that decoded and re-encoded it
-  // produces the same symptom as a lost session.
-  check('TARGET is echoed back byte for byte',
-        res.body.indexOf('value="' + target.replace(/&/g, '&amp;') + '"') >= 0 ||
-        res.body.indexOf('value="' + target + '"') >= 0);
-
-  const postXml = samlResponseIn(res.body);
-  check('there is a SAMLResponse', !!postXml);
-  doc = parse(postXml);
-  let root = doc.documentElement;
-  check('it is a samlp:Response in the 1.0 PROTOCOL namespace — 1.1 renamed neither schema',
-        root.localName === 'Response' && root.namespaceURI === NS_SAMLP, root.namespaceURI);
-  check('it is identified by ResponseID, not ID',
-        !!root.getAttribute('ResponseID') && !root.getAttribute('ID'));
-  check('the version is two attributes, MajorVersion and MinorVersion',
-        root.getAttribute('MajorVersion') === '1' && root.getAttribute('MinorVersion') === '1');
-  // §4.2.1.4. It is what stops a response being replayed at another relying
-  // party.
-  check('Recipient names the assertion consumer', root.getAttribute('Recipient') === acs,
-        root.getAttribute('Recipient'));
-  // Trap 3. Porting SAML 2.0 code puts one here, naming a RequestID nobody minted.
-  check('InResponseTo is ABSENT — there was no request to be in response to',
-        !root.getAttribute('InResponseTo'), root.getAttribute('InResponseTo'));
-  // Trap: a SAML 1.1 status is a QName resolved against the document's
-  // namespaces, not a URI. The 2.0 spelling resolves to nothing at all.
-  check('the status is the QName samlp:Success, not a URI',
-        statusOf(doc) === 'samlp:Success', statusOf(doc));
-  check('ds:Signature is the FIRST child of the Response',
-        root.firstChild && root.firstChild.localName === 'Signature',
-        root.firstChild ? root.firstChild.localName : 'nothing');
-
-  let assertionEl = byLocal(root, 'Assertion');
-  check('it carries an assertion', !!assertionEl);
-  check('the assertion is in the 1.0 assertion namespace',
-        assertionEl.namespaceURI === NS_SAML, assertionEl.namespaceURI);
-  check('the assertion is identified by AssertionID, not ID',
-        !!assertionEl.getAttribute('AssertionID') && !assertionEl.getAttribute('ID'));
-  // The bug this whole file exists partly to guard: an invented Id attribute
-  // that the schema does not have and that the reference then points at.
-  check('the assertion carries NO invented Id attribute',
-        !assertionEl.getAttribute('Id'), assertionEl.getAttribute('Id'));
-  check('the Response carries no invented Id attribute either',
-        !root.getAttribute('Id'), root.getAttribute('Id'));
-  const refUri = (/<(?:ds:)?Reference URI="([^"]*)"/.exec(postXml) || [])[1] || '';
-  check('the first signature reference names a real id, not #_0',
-        refUri !== '#_0' && refUri.length > 1, refUri);
-  // The Issuer is an ATTRIBUTE in SAML 1.1. A 2.0-shaped reader looking for a
-  // child element finds nothing.
-  check('the Issuer is an ATTRIBUTE of Assertion, not a child element',
-        !!assertionEl.getAttribute('Issuer') && !childByLocal(assertionEl, 'Issuer'),
-        assertionEl.getAttribute('Issuer'));
-  check('the issuer is this relying party\'s own providerID',
-        assertionEl.getAttribute('Issuer') === scopedEntityId,
-        assertionEl.getAttribute('Issuer') + ', expected ' + scopedEntityId);
-  check('ds:Signature is the LAST child of the assertion',
-        assertionEl.lastChild && assertionEl.lastChild.localName === 'Signature',
-        assertionEl.lastChild ? assertionEl.lastChild.localName : 'nothing');
-  check('the condition is AudienceRestrictionCondition, not AudienceRestriction',
-        !!byLocal(assertionEl, 'AudienceRestrictionCondition'));
-  check('the audience is the relying party', textOf(assertionEl, 'Audience') === RP,
-        textOf(assertionEl, 'Audience'));
-  // Trap 1.
-  check('the confirmation method is cm:bearer for Browser/POST',
-        textOf(assertionEl, 'ConfirmationMethod') === CM_BEARER,
-        textOf(assertionEl, 'ConfirmationMethod'));
-  // The single-use policy: the assertion passed through the browser, so the
-  // relying party is told not to keep it.
-  check('a DoNotCacheCondition is present on the POST profile',
-        !!byLocal(assertionEl, 'DoNotCacheCondition'));
-  check('there is a SubjectLocality recording where the browser was',
-        !!byLocal(assertionEl, 'SubjectLocality'));
-  check('there is an AuthenticationStatement',
-        !!byLocal(assertionEl, 'AuthenticationStatement'));
-  const nameIdEl = byLocal(assertionEl, 'NameIdentifier');
-  check('the subject is whoever was typed at the screen',
-        (nameIdEl.textContent || '').trim() === USER_POST);
-  check('the NameIdentifier carries a NameQualifier',
-        !!nameIdEl.getAttribute('NameQualifier'), nameIdEl.getAttribute('NameQualifier'));
-  const attrEls = assertionEl.getElementsByTagNameNS('*', 'Attribute');
-  check('attributes are AttributeName + AttributeNamespace pairs, not one Name',
-        attrEls.length > 0 && !!attrEls[0].getAttribute('AttributeName') &&
-        !!attrEls[0].getAttribute('AttributeNamespace') && !attrEls[0].getAttribute('Name'),
-        attrEls.length + ' attribute(s)');
-  let sawMace = false;
-  for (let i = 0; i < attrEls.length; i++) {
-    if ((attrEls[i].getAttribute('AttributeNamespace') || '').indexOf('urn:mace:dir') === 0) {
-      sawMace = true;
-    }
-  }
-  // Sent beside the AD FS claim URIs so the mock is usable against a service
-  // provider configured for either without a mapper being written first.
-  check('the Shibboleth urn:mace attributes are sent as well as the claim URIs', sawMace);
-
-  // Trap 2, both halves at once.
-  heading('the signatures, resolved through the attributes SAML 1.1 actually uses');
-  let sig = verifySignature(postXml, 'Response', 'ResponseID', signingCertPem);
-  check('the Response signature verifies through ResponseID', sig.ok,
-        sig.present ? sig.why : 'unsigned');
-  sig = verifySignature(postXml, 'Assertion', 'AssertionID', signingCertPem);
-  check('the assertion signature verifies through AssertionID', sig.ok,
-        sig.present ? sig.why : 'unsigned');
-  // Two signed elements in one document is exactly what used to make xml-crypto
-  // refuse both, reporting a signature-wrapping attack on a document this
-  // service built itself. Both verifying above is the regression guard; this
-  // says why it is two rather than one.
-  check('BOTH documents are signed, which is the case the Id="_0" collision broke',
-        !!childByLocal(root, 'Signature') && !!childByLocal(assertionEl, 'Signature'));
-
-  // -------------------------------------------------------------------------
-  heading('Browser/Artifact, end to end');
-  res = await signIn({ providerId: RP, shire: acs, TARGET: target, profile: 'artifact' }, USER_ARTIFACT);
-  check('the artifact profile answers with a redirect, not a form',
-        res.status === 303, 'status ' + res.status);
-  const location = res.headers.location || '';
-  check('the redirect carries SAMLart', /[?&]SAMLart=/.test(location));
-  check('the redirect carries TARGET', /[?&]TARGET=/.test(location));
-  const artifact = decodeURIComponent((/[?&]SAMLart=([^&]+)/.exec(location) || [])[1] || '');
-  const raw = Buffer.from(artifact, 'base64');
-  // SAML 2.0's is 44 bytes and type 0x0004: it added a two-byte EndpointIndex
-  // that 1.1 has no field for. A relying party assuming the newer layout reads
-  // the SourceID two bytes late and matches no identity provider it knows.
-  check('the artifact is 42 bytes, not SAML 2.0\'s 44', raw.length === 42, raw.length + ' bytes');
-  check('its type code is 0x0001, not 0x0004', raw.length >= 2 && raw.readUInt16BE(0) === 1,
-        raw.length >= 2 ? '0x' + raw.readUInt16BE(0).toString(16) : 'too short');
-  check('its SourceID is the SHA-1 of the issuing providerID',
-        raw.length === 42 &&
-        raw.slice(2, 22).equals(crypto.createHash('sha1').update(scopedEntityId, 'utf8').digest()));
-
-  const requestId = '_req' + Date.now();
-  const resolveBody = samlRequest('<samlp:AssertionArtifact>' + artifact +
-                                  '</samlp:AssertionArtifact>', requestId);
-  res = await request('POST', '/saml11/responder', resolveBody, XML);
-  check('the responder answers 200', res.status === 200, 'status ' + res.status);
-  check('the answer is a SOAP envelope', /soap:Envelope/i.test(res.body));
-  doc = parse(res.body);
-  check('the resolved status is samlp:Success', statusOf(doc) === 'samlp:Success', statusOf(doc));
-  // The Response is built AT RESOLUTION TIME, which is what lets it name the
-  // SOAP request. Stashing a pre-built one — what porting the SAML 2.0 code
-  // does — cannot.
-  check('the Response names the SOAP request in InResponseTo',
-        byLocal(doc, 'Response').getAttribute('InResponseTo') === requestId,
-        byLocal(doc, 'Response').getAttribute('InResponseTo'));
-  const artAssertion = byLocal(doc, 'Assertion');
-  check('an assertion came back', !!artAssertion);
-  // Trap 1, the other half. These two values are not interchangeable.
-  check('the confirmation method is cm:artifact, NOT bearer',
-        textOf(artAssertion, 'ConfirmationMethod') === CM_ARTIFACT,
-        textOf(artAssertion, 'ConfirmationMethod'));
-  check('there is NO DoNotCacheCondition — it never passed through the browser',
-        !byLocal(artAssertion, 'DoNotCacheCondition'));
-  check('the subject is the person who signed in',
-        (byLocal(artAssertion, 'NameIdentifier').textContent || '').trim() === USER_ARTIFACT);
-  sig = verifySignature(res.body, 'Assertion', 'AssertionID', signingCertPem);
-  check('the artifact-borne assertion\'s signature verifies', sig.ok,
-        sig.present ? sig.why : 'unsigned');
-
-  // Trap 4.
-  res = await request('POST', '/saml11/responder', resolveBody, XML);
-  doc = parse(res.body);
-  check('resolving the same artifact a second time is REFUSED',
-        statusOf(doc) === 'samlp:Requester', statusOf(doc));
-  check('the refusal explains the one-shot rule rather than saying "not found"',
-        /one-shot/i.test(textOf(doc, 'StatusMessage')), textOf(doc, 'StatusMessage'));
-  check('the refusal still names the SOAP request',
-        byLocal(doc, 'Response').getAttribute('InResponseTo') === requestId);
-  check('no assertion comes back with the refusal', !byLocal(doc, 'Assertion'));
-
-  // -------------------------------------------------------------------------
-  heading('the SAML responder: the other three request types');
-  const heldId = artAssertion.getAttribute('AssertionID');
-  res = await request('POST', '/saml11/responder',
-                      samlRequest('<samlp:AssertionIDReference>' + heldId +
-                                  '</samlp:AssertionIDReference>', '_r2'), XML);
-  doc = parse(res.body);
-  check('an AssertionIDReference returns the assertion',
-        statusOf(doc) === 'samlp:Success' &&
-        byLocal(doc, 'Assertion').getAttribute('AssertionID') === heldId, statusOf(doc));
-  res = await request('POST', '/saml11/responder',
-                      samlRequest('<samlp:AssertionIDReference>' + heldId +
-                                  '</samlp:AssertionIDReference>', '_r3'), XML);
-  doc = parse(res.body);
-  // NOT one-shot, and the difference from an artifact is the point: a reference
-  // is not a credential, because whoever holds it holds the assertion already.
-  check('an AssertionIDReference is NOT one-shot, unlike an artifact',
-        statusOf(doc) === 'samlp:Success', statusOf(doc));
-  res = await request('POST', '/saml11/responder',
-                      samlRequest('<samlp:AssertionIDReference>_no_such_assertion' +
-                                  '</samlp:AssertionIDReference>', '_r3b'), XML);
-  doc = parse(res.body);
-  check('an unknown AssertionID is refused', statusOf(doc) === 'samlp:Requester', statusOf(doc));
-
-  res = await request('POST', '/saml11/responder', samlRequest(
-    '<samlp:AttributeQuery Resource="' + RP + '"><saml:Subject>' +
-    '<saml:NameIdentifier>carol</saml:NameIdentifier></saml:Subject>' +
-    '</samlp:AttributeQuery>', '_r4'), XML);
-  doc = parse(res.body);
-  check('an AttributeQuery is answered', statusOf(doc) === 'samlp:Success', statusOf(doc));
-  check('it is about the subject that was asked for',
-        (byLocal(doc, 'NameIdentifier').textContent || '').trim() === 'carol');
-  check('it carries an AttributeStatement', !!byLocal(doc, 'AttributeStatement'));
-  check('the audience is the query\'s Resource',
-        textOf(byLocal(doc, 'Assertion'), 'Audience') === RP,
-        textOf(byLocal(doc, 'Assertion'), 'Audience'));
-  // The posture, asserted rather than left to be discovered: nobody
-  // authenticated to ask this, and the subject never signed in.
-  check('a query about somebody who never signed in is ANSWERED, not refused',
-        !!byLocal(doc, 'Assertion'));
-
-  res = await request('POST', '/saml11/responder', samlRequest(
-    '<samlp:AuthenticationQuery><saml:Subject>' +
-    '<saml:NameIdentifier>dave</saml:NameIdentifier></saml:Subject>' +
-    '</samlp:AuthenticationQuery>', '_r5'), XML);
-  doc = parse(res.body);
-  check('an AuthenticationQuery is answered', statusOf(doc) === 'samlp:Success', statusOf(doc));
-  check('it carries an AuthenticationStatement and NO AttributeStatement',
-        !!byLocal(doc, 'AuthenticationStatement') && !byLocal(doc, 'AttributeStatement'));
-
-  res = await request('POST', '/saml11/responder',
-                      samlRequest('<samlp:AuthorizationDecisionQuery/>', '_r6'), XML);
-  doc = parse(res.body);
-  check('an AuthorizationDecisionQuery is refused BY NAME',
-        statusOf(doc) === 'samlp:Requester' &&
-        /AuthorizationDecision/i.test(textOf(doc, 'StatusMessage')), textOf(doc, 'StatusMessage'));
-  res = await request('POST', '/saml11/responder', '<not xml at all <<<', XML);
-  doc = parse(res.body);
-  // A SOAP fault is an HTTP-layer failure and this is a SAML-layer refusal;
-  // collapsing the two makes a client throw a transport error where it should be
-  // reading a status code.
-  check('a body that is not XML is a SAML status and still HTTP 200',
-        res.status === 200 && statusOf(doc) === 'samlp:Requester', 'status ' + res.status);
-  res = await request('POST', '/saml11/responder',
-                      soap('<samlp:ArtifactResolve xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"/>'),
-                      XML);
-  doc = parse(res.body);
-  check('a SAML 2.0 ArtifactResolve is refused and pointed at /saml2/ars',
-        /saml2\/ars/.test(textOf(doc, 'StatusMessage')), textOf(doc, 'StatusMessage'));
-
-  // -------------------------------------------------------------------------
-  heading('the scoped endpoints the per-relying-party metadata publishes');
-  const slug = scopedEntityId.slice(unscopedEntityId.length + 1);
-  // Driven through resume() rather than signIn(), because signIn() always starts
-  // at the unscoped path and the scoped one is the whole point here.
-  cookie = '';
-  res = await resume('/saml11/sso/' + encodeURIComponent(slug) + '?' +
-                     form({ shire: acs, TARGET: target, profile: 'post' }), 'erin');
-  const scopedXml = samlResponseIn(res.body);
-  check('a scoped inter-site transfer service answers', !!scopedXml, 'status ' + res.status);
-  if (scopedXml) {
-    // The path segment is what names the relying party when nothing else does —
-    // which matters more here than in SAML 2.0, where the request's own Issuer
-    // always could.
-    check('the path segment named the relying party with no providerId sent',
-          textOf(parse(scopedXml), 'Audience') === RP, textOf(parse(scopedXml), 'Audience'));
-  }
-  res = await request('POST', '/saml11/responder/' + encodeURIComponent(slug),
-                      samlRequest('<samlp:AssertionIDReference>' + heldId +
-                                  '</samlp:AssertionIDReference>', '_r7'), XML);
-  check('a scoped responder answers the same as the unscoped one',
-        statusOf(parse(res.body)) === 'samlp:Success', statusOf(parse(res.body)));
-
-  // -------------------------------------------------------------------------
-  heading('the NameIdentifier formats');
-  // SAML 1.1 has no NameIDPolicy to ask in, so the non-spec `format` parameter
-  // is the only way to exercise these at all — and every one of them is a branch
-  // that would otherwise never run.
-  const formats = [
-    ['urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress', function (v) {
-      return v.indexOf('@') > 0; }, 'a mail address'],
-    ['urn:oasis:names:tc:SAML:1.1:nameid-format:X509SubjectName', function (v) {
-      return v.indexOf('CN=') === 0; }, 'an X.509 subject name'],
-    ['urn:oasis:names:tc:SAML:1.1:nameid-format:WindowsDomainQualifiedName', function (v) {
-      return v.indexOf('\\') > 0; }, 'a domain-qualified name'],
-    ['urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified', function (v) {
-      return v === 'frank'; }, 'the username']
-  ];
-  for (const [format, ok, what] of formats) {
-    cookie = '';
-    res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target,
-                                               profile: 'post', format: format }), 'frank');
-    const xml = samlResponseIn(res.body);
-    const el = xml ? byLocal(parse(xml), 'NameIdentifier') : null;
-    const value = el ? (el.textContent || '').trim() : '';
-    check('format ' + format.split(':').pop() + ' is answered with ' + what,
-          !!el && el.getAttribute('Format') === format && ok(value), value);
-  }
-  // A format nobody has ever heard of is answered with it, rather than refused:
-  // handing a relying party back its own format is the behaviour worth
-  // exercising.
-  cookie = '';
-  res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target,
-                                             profile: 'post', format: 'urn:made:up' }), 'frank');
-  let madeUp = samlResponseIn(res.body);
-  check('a format nobody has heard of is answered with that format, not refused',
-        !!madeUp && byLocal(parse(madeUp), 'NameIdentifier').getAttribute('Format') === 'urn:made:up');
-
-  // -------------------------------------------------------------------------
-  heading('the custom attributes reach a browser-profile assertion');
-  // THE POINT OF NOT WRITING A SECOND BUILDER. The 1.1 set on
-  // /admin/saml-attributes has always reached WS-Federation and WS-Trust
-  // assertions; if the browser profiles had their own builder this would pass
-  // there and silently fail here, and nothing would say so.
-  let added = false;
-  res = await api('/admin-api/saml-attributes/add',
-                  { set: 'saml11', name: 'dept', value: 'engineering' });
-  added = res.status === 200;
-  check('a custom SAML 1.1 attribute can be configured', added, res.body.slice(0, 120));
-  if (added) {
-    cookie = '';
-    res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target,
-                                               profile: 'post' }), 'grace');
-    const xml = samlResponseIn(res.body);
-    const els = xml ? parse(xml).getElementsByTagNameNS('*', 'Attribute') : [];
-    let found = null;
-    for (let i = 0; i < els.length; i++) {
-      if (els[i].getAttribute('AttributeName') === 'dept') {
-        found = els[i];
+    await driver.wait(async function () {
+      try {
+        last = await driver.findElement(locator).getAttribute("value");
+        return predicate(last || "");
+      } catch (e) {
+        return false;
       }
+    }, timeout || waitTime);
+  } catch (e) {
+    e.message = message + " (last value: " +
+        (last === null ? "<never read>" : JSON.stringify(last)) + ") — " +
+        e.message;
+    log.debug("Leaving waitForValue(). Timed out.");
+    throw e;
+  }
+  log.debug("Leaving waitForValue().");
+  return last;
+}
+
+async function clickByValue(driver, value) {
+  log.debug("Entering clickByValue().");
+  var locator = By.xpath("//input[@value='" + value + "']");
+  await driver.wait(until.elementLocated(locator), waitTime);
+  var target = driver.findElement(locator);
+  await driver.wait(until.elementIsVisible(target), waitTime);
+  await driver.executeScript("arguments[0].scrollIntoView({ block: " +
+                             "'center' });", target);
+  await target.click();
+  log.debug("Leaving clickByValue().");
+}
+
+// The same click, dispatched by the PAGE rather than by a synthetic mouse.
+//
+// For a button low on a tall page in the headless viewport (780x437 here), the
+// native Selenium click intermittently lands off-target and fires nothing at
+// all — no intercept error, no console error, no event: chromedriver scrolls,
+// computes a point from the new layout, and dispatches it against a compositor
+// frame that has not caught up, so it hit-tests whatever used to be there. It
+// takes CPU contention to show, which is why it appears in the pool and never
+// alone, and once a session is in that state every later click misses too. The
+// Decrypt button on this same page hit it first and is fixed the same way —
+// see the note in saml_encrypted_sso.js.
+//
+// What is NOT given up is the reason to click at all: a control covered by
+// something drawn over it is a control nobody can use, and only a hit test says
+// so. So the topmost element at the button's own centre is checked here, which
+// is what a native click would have failed on, and then the real
+// `onclick="…"` binding is invoked through the element itself.
+async function clickByValueInPage(driver, value) {
+  log.debug("Entering clickByValueInPage(). " + value);
+  var locator = By.xpath("//input[@value='" + value + "']");
+  await driver.wait(until.elementLocated(locator), waitTime);
+  await driver.wait(until.elementIsVisible(driver.findElement(locator)),
+                    waitTime);
+  // Runs IN THE BROWSER, so it has no bunyan and no `log` — see the repo-root
+  // CLAUDE.md. What is logged is what it returns.
+  var outcome = await driver.executeScript(
+    "var want = arguments[0], b = null, all = document.querySelectorAll(" +
+    "'input');" +
+    "for (var i = 0; i < all.length; i++) {" +
+    "  if (all[i].value === want) { b = all[i]; break; }" +
+    "}" +
+    "if (!b) { return { ok: false, why: 'no input with that value' }; }" +
+    "b.scrollIntoView({ block: 'center' });" +
+    "var r = b.getBoundingClientRect();" +
+    "var top = document.elementFromPoint(r.left + r.width / 2," +
+    "                                    r.top + r.height / 2);" +
+    "if (top !== b && !b.contains(top)) {" +
+    "  return { ok: false, why: 'covered by ' + (top ? (top.tagName + '#' +" +
+    "      top.id + '.' + top.className) : 'nothing (off-screen)') };" +
+    "}" +
+    "b.click();" +
+    "return { ok: true };", value);
+  assert(outcome && outcome.ok,
+    "could not click the '" + value + "' button: " +
+        ((outcome && outcome.why) || "no result from the page"));
+  log.debug("Leaving clickByValueInPage().");
+}
+
+// Whether a control carries the `disabled` attribute. Read as a PROPERTY off
+// the element rather than as a computed colour: the colour is what a reader
+// sees and this is what a Return keypress obeys, and only one of the two stops
+// a request being built.
+async function isDisabled(driver, id) {
+  log.debug("Entering isDisabled().");
+  var v = await driver.executeScript(
+    "var e = document.getElementById(arguments[0]); " +
+    "return e ? !!e.disabled : null;", id);
+  log.debug("Leaving isDisabled().");
+  return v;
+}
+
+async function textOf(driver, id) {
+  log.debug("Entering textOf().");
+  var v = await driver.executeScript(
+    "var e = document.getElementById(arguments[0]); " +
+    "return e ? (e.textContent || '') : '';", id);
+  log.debug("Leaving textOf().");
+  return v || "";
+}
+
+async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
+  log.debug("Entering loadIdpMetadata().");
+  if (metadataFile) {
+    log.info("Upload the SAML 1.1 IdP metadata from a local file: " +
+             metadataFile);
+    var fileInput = By.id("saml_metadata_file");
+    await driver.wait(until.elementLocated(fileInput), waitTime);
+    await driver.findElement(fileInput).sendKeys(path.resolve(metadataFile));
+  } else {
+    log.info("Enter the SAML 1.1 metadata URL and load it.");
+    var mdField = By.id("saml_metadata_url");
+    await driver.wait(until.elementLocated(mdField), waitTime);
+    await driver.findElement(mdField).clear();
+    await driver.findElement(mdField).sendKeys(metadataUrl);
+    await clickByValue(driver, "Load Metadata");
+  }
+  await waitForValue(driver, By.id("saml_metadata_status"),
+    function (v) { return v.indexOf("Loaded and parsed") >= 0; },
+    "The SAML 1.1 metadata was not loaded/parsed.");
+  log.debug("Leaving loadIdpMetadata().");
+}
+
+// 1.1: THE DESCRIPTOR DECIDES THE VERSION. Asserted rather than assumed,
+// because everything after it depends on the page having noticed — and because
+// a page left on 2.0 in front of this document builds an <AuthnRequest>, posts
+// it at an inter-site transfer service, and reports the refusal as though the
+// identity provider were at fault.
+async function assertVersionCameFromMetadata(driver) {
+  log.debug("Entering assertVersionCameFromMetadata().");
+  var status =
+      await driver.findElement(By.id("saml_metadata_status"))
+        .getAttribute("value");
+  assert(status.indexOf("1.1") >= 0,
+    "loading a SAML 1.1 descriptor should say on the status line that it " +
+    "moved the Protocol Version selector; it said: " + status);
+  var version =
+      await driver.findElement(By.id("saml_version")).getAttribute("value");
+  assert.strictEqual(version, "1.1",
+    "the Protocol Version selector should have been set to 1.1 by the " +
+    "metadata load (protocolSupportEnumeration says " +
+    "urn:oasis:names:tc:SAML:1.1:protocol), and is " + version + ".");
+  log.debug("Leaving assertVersionCameFromMetadata().");
+}
+
+// 1.1: A SAML 1.1 identity provider has ONE endpoint — the inter-site transfer
+// service — which its metadata names once per profile it answers. All three SSO
+// fields therefore hold the SAME address, and the artifact resolution field
+// holds the SAML responder. Reading the document as though the fields were
+// exclusive populates none of them, and the page then reports "no IdP endpoint
+// for the selected binding" about a document that named it three times.
+async function assertEndpointsFromMetadata(driver) {
+  log.debug("Entering assertEndpointsFromMetadata().");
+  var ids = ["saml_sso_redirect", "saml_sso_post", "saml_sso_artifact"];
+  var seen = [];
+  for (var i = 0; i < ids.length; i++) {
+    seen.push(await driver.findElement(By.id(ids[i])).getAttribute("value"));
+  }
+  assert(seen[0], "the inter-site transfer service address was not read out " +
+         "of the SAML 1.1 metadata (saml_sso_redirect is empty).");
+  assert(seen[0].indexOf("/saml11/sso") >= 0,
+    "the SSO endpoint should be the SAML 1.1 inter-site transfer service, " +
+    "and is: " + seen[0]);
+  assert.strictEqual(seen[1], seen[0],
+    "SAML 1.1 has one SSO endpoint named once per profile, so all three " +
+    "fields should hold it. redirect=" + seen[0] + " post=" + seen[1]);
+  assert.strictEqual(seen[2], seen[0],
+    "SAML 1.1 has one SSO endpoint named once per profile, so all three " +
+    "fields should hold it. redirect=" + seen[0] + " artifact=" + seen[2]);
+  var ars = await driver.findElement(By.id("saml_ars")).getAttribute("value");
+  assert(ars.indexOf("/saml11/responder") >= 0,
+    "the artifact resolution field should hold the SAML 1.1 SAML responder " +
+    "(ArtifactResolutionService, SOAP binding), and holds: " + ars);
+  // No Single Logout exists in this protocol, so the descriptor publishes none
+  // and the three fields are cleared rather than left holding a previous
+  // document's addresses.
+  var sloEl = await driver.findElement(By.id("saml_slo_redirect"));
+  var slo = await sloEl.getAttribute("value");
+  assert.strictEqual(slo, "",
+    "SAML 1.1 has no Single Logout, so loading its metadata must clear the " +
+    "SLO endpoint fields; saml_slo_redirect holds: " + slo);
+  log.debug("Leaving assertEndpointsFromMetadata(). its=" + seen[0]);
+}
+
+// 1.1: the four settings that have no meaning in this protocol. Each is
+// asserted DISABLED — the attribute a keypress obeys — and the Logout button
+// with them, because SAML 1.1 has no Single Logout at all.
+async function assertUnavailableSettingsAreOff(driver) {
+  log.debug("Entering assertUnavailableSettingsAreOff().");
+  var offs = [
+    ["saml_username_hint", "the username hint goes in <saml:Subject> on an " +
+        "AuthnRequest, and SAML 1.1 has no request document"],
+    ["saml_sign_request", "there is nothing to sign: Shibboleth's request " +
+        "profile is unsigned query parameters"],
+    ["saml_encrypt_request", "there is nothing to encrypt either"],
+    ["saml_logout_btn", "SAML 1.1 has no Single Logout — it is absent from " +
+        "the protocol, not unimplemented here"],
+    ["saml_slo_redirect", "nothing publishes a logout endpoint in SAML 1.1"]
+  ];
+  for (var i = 0; i < offs.length; i++) {
+    var off = await isDisabled(driver, offs[i][0]);
+    assert.strictEqual(off, true, "#" + offs[i][0] + " should be disabled " +
+      "when SAML 1.1 is selected — " + offs[i][1] + ". disabled=" + off);
+  }
+  // And the SP key pair is NOT disabled, which is the one that looks
+  // inconsistent and is deliberate: it still signs the SOAP request that
+  // resolves an artifact, and it is still the KeyDescriptor in the SP metadata
+  // this page downloads. Greying it would take away two things that work.
+  var keyOff = await isDisabled(driver, "saml_sp_private_key");
+  assert.strictEqual(keyOff, false,
+    "the SP key pair must stay usable in SAML 1.1: it signs the artifact " +
+    "back-channel's SOAP request and is the SP metadata's KeyDescriptor.");
+  log.debug("Leaving assertUnavailableSettingsAreOff().");
+}
+
+// The parameters read back out of the preview, decoded. Matched as a MAP
+// rather than as substrings, and that is not fastidiousness: a URL
+// percent-encodes its values, so `indexOf(acsUrl)` is false for a request
+// carrying exactly the right `shire`. A check written that way passes only
+// while every value happens to be free of reserved characters, which no real
+// assertion consumer URL is.
+function previewParams(text) {
+  log.debug("Entering previewParams().");
+  var out = {};
+  if (text.indexOf('POST ') === 0) {
+    // The form shape: a blank line, then `name=value` per line, unencoded —
+    // they are shown as they will be put in the form fields.
+    var lines = text.split('\n');
+    var started = false;
+    for (var i = 0; i < lines.length; i++) {
+      if (!started) {
+        if (lines[i] === '') started = true;
+        continue;
+      }
+      var eq = lines[i].indexOf('=');
+      if (eq > 0) out[lines[i].substring(0, eq)] = lines[i].substring(eq + 1);
     }
-    check('it appears in an assertion issued by the browser profile', !!found);
-    check('its value is what was configured',
-          !!found && (found.textContent || '').trim() === 'engineering',
-          found ? found.textContent : '');
-    check('it carries the default SAML 1.1 namespace',
-          !!found && found.getAttribute('AttributeNamespace') === CLAIM_NS,
-          found ? found.getAttribute('AttributeNamespace') : '');
-    await api('/admin-api/saml-attributes/remove', { set: 'saml11', name: 'dept' });
+    log.debug("Leaving previewParams(). A form.");
+    return out;
+  }
+  var q = text.indexOf('?');
+  var body = q >= 0 ? text.substring(q + 1) : text;
+  var pairs = body.split('&');
+  for (var j = 0; j < pairs.length; j++) {
+    var e = pairs[j].indexOf('=');
+    if (e > 0) {
+      out[decodeURIComponent(pairs[j].substring(0, e))] =
+          decodeURIComponent(pairs[j].substring(e + 1));
+    }
+  }
+  log.debug("Leaving previewParams(). A query string.");
+  return out;
+}
+
+// 1.1: THE REQUEST IS NOT A DOCUMENT. Whatever the binding, what goes out is
+// Shibboleth's four parameters plus the two non-spec ones — so the Generated
+// request box must hold them and must NOT hold an AuthnRequest.
+async function assertRequestIsShibbolethShaped(driver, binding, spEntityId,
+                                               acsUrl) {
+  log.debug("Entering assertRequestIsShibbolethShaped(). binding=" + binding);
+  var text =
+      await driver.findElement(By.id("saml_authn_request")).getAttribute(
+          "value");
+  log.info("Generated SAML 1.1 request:\n" + (text || "").substring(0, 800));
+  var params = previewParams(text);
+
+  assert(text.indexOf('<samlp:AuthnRequest') < 0,
+    "SAML 1.1 has no <samlp:AuthnRequest>; the page built one anyway:\n" +
+        text.substring(0, 800));
+  assert.strictEqual(params.shire, acsUrl,
+    "the request must carry Shibboleth's shire parameter — the only way a " +
+    "SAML 1.1 relying party can say where the assertion goes. want=" +
+    acsUrl + " got=" + params.shire);
+  assert.strictEqual(params.providerId, spEntityId,
+    "the request must carry providerId, which is the only way a SAML 1.1 " +
+    "relying party names itself. want=" + spEntityId + " got=" +
+    params.providerId);
+  assert(params.TARGET,
+    "the request must carry TARGET, which is SAML 1.1's relay state:\n" +
+        text);
+  assert(/^[0-9]+$/.test(params.time || ''),
+    "the request must carry Shibboleth's time parameter, in seconds since " +
+    "the epoch; it is: " + params.time);
+  // The profile parameter is what chooses between the two browser profiles.
+  // Nothing in SAML 1.1 lets a relying party ask, so it is non-spec and named
+  // as such on the page — but it has to be SENT, or the identity provider's own
+  // default decides and the binding under test is not the one exercised.
+  var wantProfile = binding === "artifact" ? "artifact" : "post";
+  assert.strictEqual(params.profile, wantProfile,
+    "the request should ask for the " + wantProfile + " browser profile " +
+    "(binding=" + binding + "), and asks for: " + params.profile);
+  if (binding === "post") {
+    assert(text.indexOf("POST ") === 0,
+      "with the POST binding the request is a form, so the box should show " +
+      "the endpoint and the fields rather than a URL:\n" + text);
+  } else {
+    assert(text.indexOf("/saml11/sso") >= 0,
+      "with the " + binding + " binding the request is a URL at the " +
+      "inter-site transfer service:\n" + text);
+  }
+  log.debug("Leaving assertRequestIsShibbolethShaped().");
+}
+
+// 1.1: the response page, which reads a completely different document from the
+// one saml_sso.js gets. Every check here is a field spelled differently in this
+// version, and each was a blank cell before the page learned to read it.
+async function assertResponsePage(driver, binding, spEntityId, loginWait) {
+  log.debug("Entering assertResponsePage(). binding=" + binding);
+  await waitForValue(driver, By.id("saml_resp_xml"),
+    function (v) { return v.indexOf("Response") >= 0; },
+    "The SAML 1.1 Response XML was not displayed.", loginWait);
+  var respXml =
+      await driver.findElement(By.id("saml_resp_xml")).getAttribute("value");
+  log.info("SAML 1.1 Response (first 2500 chars):\n" +
+           (respXml || "").substring(0, 2500));
+
+  // The document really is SAML 1.1 and not something the mock fell back to.
+  assert(respXml.indexOf('MajorVersion="1"') >= 0 &&
+         respXml.indexOf('MinorVersion="1"') >= 0,
+    "the Response should carry MajorVersion=\"1\" MinorVersion=\"1\" — SAML " +
+    "1.1 has no Version attribute:\n" + respXml.substring(0, 600));
+
+  await waitForValue(driver, By.id("saml_assertion_xml"),
+    function (v) { return v.indexOf("Assertion") >= 0 &&
+              v.indexOf("no <") < 0; },
+    "No <saml:Assertion> in the SAML 1.1 Response — see the logged response " +
+        "above.", loginWait);
+  var assertionXml =
+      await driver.findElement(By.id("saml_assertion_xml"))
+        .getAttribute("value");
+  assert(assertionXml.indexOf("AssertionID=") >= 0,
+    "a SAML 1.1 assertion's id attribute is AssertionID, and the assertion " +
+    "carries none:\n" + assertionXml.substring(0, 600));
+
+  // THE DETAILS TAB. Four rows, and every one of them is read from a
+  // differently-named attribute in this version — the status most of all, which
+  // is a QName here and a URI in 2.0.
+  await driver.wait(async function () {
+    var t = await textOf(driver, "saml_resp_details");
+    return t.indexOf("SAML Version") >= 0;
+  }, loginWait, "The response Details table was never built.");
+  var details = await textOf(driver, "saml_resp_details");
+  log.info("Response details:\n" + details);
+  assert(details.indexOf("1.1") >= 0,
+    "the Details tab should report SAML Version 1.1, read from " +
+    "MajorVersion/MinorVersion:\n" + details);
+  assert(details.indexOf("Success") >= 0,
+    "the Details tab should report a Success status. SAML 1.1's status code " +
+    "is the QName samlp:Success, NOT a URI ending :status:Success — a reader " +
+    "written for 2.0 renders this as a failure:\n" + details);
+  assert(details.indexOf("Recipient") >= 0,
+    "a SAML 1.1 Response says where it was sent with Recipient (there is no " +
+    "Destination attribute):\n" + details);
+
+  // THE ATTRIBUTES TAB.
+  await driver.wait(async function () {
+    var t = await textOf(driver, "saml_attrs_table");
+    return t.indexOf("NameID") >= 0;
+  }, loginWait,
+     "The Attributes table never showed a NameID row. In SAML 1.1 the " +
+     "subject is <saml:NameIdentifier>, not <saml:NameID> — a reader that " +
+     "knows only " +
+     "is <saml:NameIdentifier>, not <saml:NameID> — a reader that knows only " +
+     "2.0 finds nothing and renders the table without it.");
+  var attrs = await textOf(driver, "saml_attrs_table");
+  log.info("Attributes table:\n" + attrs);
+
+  // 1.1: THE CONFIRMATION METHOD IS THE PROFILE, and this is the check that
+  // needs the binding matrix. A relying party that does not look works
+  // perfectly with either method, so nothing fails until it meets one that
+  // does — and the refusal then reads as a signature problem.
+  var wantCm = binding === "artifact" ? CM_ARTIFACT : CM_BEARER;
+  var wrongCm = binding === "artifact" ? CM_BEARER : CM_ARTIFACT;
+  assert(attrs.indexOf(wantCm) >= 0,
+    "the " + binding + " binding uses the " +
+    (binding === "artifact" ? "Browser/Artifact" : "Browser/POST") +
+    " profile, which saml-profile-1.1 requires be confirmed as " + wantCm +
+    ". The assertion says otherwise:\n" + attrs);
+  assert(attrs.indexOf(wrongCm) < 0,
+    "the assertion carries " + wrongCm + " on the " + binding + " binding, " +
+    "which claims it travelled a way it did not:\n" + attrs);
+
+  // The audience restriction, which in SAML 1.1 is
+  // <saml:AudienceRestrictionCondition> — a different element name, so the
+  // whole condition is invisible to a 2.0-only reader.
+  assert(attrs.indexOf("AudienceRestrictionCondition") >= 0,
+    "the assertion should carry a SAML 1.1 AudienceRestrictionCondition:\n" +
+        attrs);
+  assert(attrs.indexOf(spEntityId) >= 0,
+    "the audience should be this service provider (" + spEntityId +
+    "), which the identity provider took from the providerId parameter:\n" +
+        attrs);
+
+  // 1.1: the Browser/POST profile's single-use policy. Present on a POSTed
+  // assertion (it travelled through the browser) and absent on an artifact one
+  // (it did not), which is the other per-binding difference in the document.
+  if (binding === "artifact") {
+    assert(attrs.indexOf("DoNotCacheCondition") < 0,
+      "an artifact-profile assertion never passes through the browser, so " +
+      "the Browser/POST single-use policy should not be on it:\n" + attrs);
+  } else {
+    assert(attrs.indexOf("DoNotCacheCondition") >= 0,
+      "a Browser/POST assertion travels through the browser, so section " +
+      "4.2's single-use policy (<saml:DoNotCacheCondition/>) should be on " +
+      "it:\n" + attrs);
   }
 
-  // -------------------------------------------------------------------------
-  heading('single sign-on across the flows and the other protocols');
-  cookie = '';
-  res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target,
-                                             profile: 'post' }), 'heidi');
-  check('the first flow signs somebody in', !!samlResponseIn(res.body));
-  // The same cookie jar, and no username typed. A second screen here would mean
-  // this profile had a session of its own, which is exactly what it must not
-  // have.
-  const before = cookie;
-  res = await request('GET', '/saml11/sso?' + form({ providerId: RP, shire: acs,
-                                                     TARGET: target, profile: 'post' }));
-  const second = samlResponseIn(res.body);
-  check('a second flow in the same session never sees the sign-in screen',
-        res.status === 200 && !!second, 'status ' + res.status);
-  check('and it is the same person',
-        !!second && (byLocal(parse(second), 'NameIdentifier').textContent || '').trim() === 'heidi');
-  check('the session cookie was not replaced', cookie === before);
-  // The session is authn.js's, shared with OAuth, WS-Federation and SAML 2.0.
-  res = await request('GET', '/saml2/sp');
-  check('the SAML 2.0 profile is still reachable in the same session', res.status === 200,
-        'status ' + res.status);
+  // The attribute statement itself: the identity provider's claims about the
+  // person, whose names in SAML 1.1 are AttributeName + AttributeNamespace.
+  assert(attrs.indexOf("AuthenticationMethod") >= 0,
+    "a SAML 1.1 AuthenticationStatement carries the method as an attribute, " +
+    "and the table should show it:\n" + attrs);
 
-  // -------------------------------------------------------------------------
-  heading('refusals at the inter-site transfer service');
-  cookie = '';
-  res = await request('GET', '/saml11/sso?' + form({ TARGET: target, profile: 'paos' }));
-  check('a profile that is not one of the two is refused BY NAME',
-        res.status === 400 && /paos/.test(res.body), 'status ' + res.status);
-  res = await request('GET', '/saml11/sso?' + form({ providerId: RP, shire: '/relative' }));
-  check('a relative assertion consumer URL is refused',
-        res.status === 400 && /absolute/i.test(res.body), 'status ' + res.status);
-  res = await request('GET', '/saml11/sso?' + form({ fid: 'no-such-flow-id' }));
-  check('a held flow that has expired says so rather than starting a new one',
-        res.status === 400 && /expired/i.test(res.body), 'status ' + res.status);
-
-  // -------------------------------------------------------------------------
-  heading('the guess this service makes out loud');
-  // With no providerId and no scoped path, the audience comes from the origin of
-  // the TARGET. It is the one thing in the assertion that is not a fact, and a
-  // relying party expecting its own name refuses the assertion inside a
-  // signature check with nothing saying why.
-  cookie = '';
-  res = await resume('/saml11/sso?' + form({ TARGET: 'https://guessed.example.com/app/page',
-                                             shire: acs, profile: 'post' }), 'ivan');
-  const guessedXml = samlResponseIn(res.body);
-  check('a flow naming no relying party still completes', !!guessedXml, 'status ' + res.status);
-  if (guessedXml) {
-    check('the audience is the ORIGIN of the TARGET, and not its full URL',
-          textOf(parse(guessedXml), 'Audience') === 'https://guessed.example.com',
-          textOf(parse(guessedXml), 'Audience'));
+  // Exercise the tab UI itself, after the assertions — which are made on the
+  // table's textContent, readable while the tab is the hidden one. A pass that
+  // hinged on the click taking effect is what made the 2.0 POST case flake.
+  try {
+    await driver.findElement(By.id("tab_attrs_btn")).click();
+    await driver.findElement(By.id("tab_resp_details_btn")).click();
+  } catch (e) {
+    /* best-effort UI exercise */
   }
-  res = await request('GET', '/admin-api/saml11?rp=' +
-                      encodeURIComponent('https://guessed.example.com'));
-  const guessedRow = JSON.parse(res.body);
-  check('the console flags a bare-origin identifier as probably guessed',
-        guessedRow.identifierLooksGuessed === true, JSON.stringify(guessedRow.identifierLooksGuessed));
+  log.debug("Leaving assertResponsePage().");
+}
 
-  // -------------------------------------------------------------------------
-  heading('the registry');
-  res = await request('GET', '/admin-api/saml11');
-  const view = JSON.parse(res.body);
-  const mine = (view.relyingParties || []).filter(function (r) {
-    return r.identifier === RP;
-  })[0];
-  check('the relying party was registered on sight', !!mine);
-  if (mine) {
-    check('its assertion consumer was recorded',
-          (mine.assertionConsumerServices || []).indexOf(acs) >= 0,
-          JSON.stringify(mine.assertionConsumerServices));
-    check('BOTH browser profiles it used were recorded',
-          (mine.profiles || []).length === 2, JSON.stringify(mine.profiles));
-    check('its metadata URL is a per-row fact, not a constant',
-          !!mine.metadataUrl && mine.metadataUrl.indexOf('/saml11/metadata/') >= 0,
-          mine.metadataUrl);
-    check('the slug is the SAME one the SAML 2.0 profile uses for this application',
-          mine.slug === slug, mine.slug + ' vs ' + slug);
+// 1.1: the enveloped signature on the assertion, verified in the browser. The
+// reference is `#<AssertionID>`, a name a generic verifier does not search —
+// told nothing it invents an `Id`, and the reference then resolves to nothing
+// here, reported as "referenced element not found".
+async function assertSignatureValidates(driver, loginWait) {
+  log.debug("Entering assertSignatureValidates().");
+  await clickByValueInPage(driver, "Validate Signature");
+  // EVERY status validateAssertionSignature() can write, not just the two that
+  // mean it got as far as verifying. It also reports "No assertion available
+  // to validate." and "Validation error: …", and a predicate blind to those
+  // turns each of them into a fifteen-second timeout naming neither the status
+  // nor the field — which is a slower and much quieter way to say what the
+  // assert below would have said outright.
+  var status = await waitForValue(driver, By.id("saml_sig_status"),
+    function (v) { return v.indexOf("VALID") >= 0 ||
+                          v.indexOf("INVALID") >= 0 ||
+                          v.indexOf("Cannot validate") >= 0 ||
+                          v.indexOf("No assertion available") >= 0 ||
+                          v.indexOf("Validation error") >= 0; },
+    "Validate Signature never reported anything.", loginWait);
+  var detail = await textOf(driver, "saml_sig_details");
+  assert(status.indexOf("VALID") >= 0 && status.indexOf("INVALID") < 0,
+    "the SAML 1.1 assertion's signature should verify. Its reference is " +
+    "#<AssertionID>, which is not one of the id attribute names a generic " +
+    "verifier searches. status=" + status + "\n" + detail);
+  log.info("Assertion signature: " + status);
+  log.debug("Leaving assertSignatureValidates().");
+}
+
+// The Operations History row this round trip closed. It is written on the
+// request page before the browser is handed over and resolved on the response
+// page from the SAML status — so a status code read wrongly shows up HERE as a
+// red row over a sign-in that worked, which is the worst way to be wrong about
+// a working flow.
+async function assertHistoryClosedAsSuccess(driver, binding, loginWait) {
+  log.debug("Entering assertHistoryClosedAsSuccess().");
+  await driver.wait(async function () {
+    var t = await textOf(driver, "saml_operation_history");
+    return t.indexOf("Success") >= 0;
+  }, loginWait,
+     "The Operations History row for this call never closed as Success. " +
+     "It is resolved from <samlp:Status>, whose Value in SAML 1.1 is the " +
+     "QName samlp:Success rather than a URI ending :status:Success.");
+  var history = await textOf(driver, "saml_operation_history");
+  log.info("Operations History:\n" + history);
+  assert(history.indexOf("1.1") >= 0,
+    "the Operations History row should record the protocol version as 1.1:\n" +
+        history);
+  var wantBinding = binding === "post" ? "HTTP-POST"
+    : binding === "artifact" ? "HTTP-Artifact" : "HTTP-Redirect";
+  assert(history.indexOf(wantBinding) >= 0,
+    "the Operations History row should record the binding as " + wantBinding +
+        ":\n" + history);
+  log.debug("Leaving assertHistoryClosedAsSuccess().");
+}
+
+async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
+                                metadataFile) {
+  log.debug("Entering saml11Activities().");
+  // The mock renders in milliseconds, but a POST-binding hop plus a sign-in
+  // screen plus (for artifact) a server-side SOAP round trip is several
+  // navigations, and a generous timeout costs nothing when nothing is slow.
+  var loginWait = Math.max(waitTime, 15000);
+
+  log.info("Load the SAML Test Tools page (SAML 1.1, binding=" + binding +
+           ").");
+  await driver.get(baseUrl + "/saml_request.html");
+
+  await loadIdpMetadata(driver, metadataUrl, metadataFile);
+  await assertVersionCameFromMetadata(driver);
+  await assertEndpointsFromMetadata(driver);
+  await assertUnavailableSettingsAreOff(driver);
+
+  // The relying party identifier, which is what `providerId` carries and what
+  // becomes the assertion's audience.
+  var spField = By.id("saml_sp_entity_id");
+  await driver.findElement(spField).clear();
+  await driver.findElement(spField).sendKeys(spEntityId);
+
+  // This run's SP key pair. Nothing verifies it here — SAML 1.1 has no request
+  // to sign and the mock checks no signature on the SOAP back-channel either —
+  // and it is loaded anyway for the artifact binding, where it is what the API
+  // signs the <samlp:Request> with. That half is about the DEBUGGER rather than
+  // about the identity provider, which is the same argument saml_sso.js makes.
+  log.info("Load this run's SP signing key pair.");
+  var spPair = readSpKeyPair();
+  await driver.executeScript(
+    "document.getElementById('saml_sp_private_key').value = arguments[0];" +
+    "document.getElementById('saml_sp_public_key').value = arguments[1];",
+    spPair.privateKey, spPair.certificate
+  );
+
+  log.info("Select binding: " + binding);
+  await driver.executeScript(
+    "var s=document.getElementById('saml_binding'); if(s){ s.value = " +
+        "arguments[0]; s.dispatchEvent(new Event('change')); }",
+    binding
+  );
+  var selected =
+      await driver.findElement(By.id("saml_binding")).getAttribute("value");
+  assert.strictEqual(selected, binding, "Binding '" + binding +
+                     "' is not available in the selector.");
+
+  // The request is rebuilt by the change handler; wait for it to name the
+  // profile this binding asks for rather than reading whatever was there
+  // before the selection.
+  var wantProfile = binding === "artifact" ? "artifact" : "post";
+  await waitForValue(driver, By.id("saml_authn_request"),
+    function (v) { return v.indexOf("profile=" + wantProfile) >= 0; },
+    "The Generated request was not rebuilt for the " + binding + " binding.",
+    loginWait);
+  var acsUrl = await driver.findElement(By.id('saml_acs_url'))
+      .getAttribute('value');
+  await assertRequestIsShibbolethShaped(driver, binding, spEntityId, acsUrl);
+
+  log.info("Call IdP (SAML 1.1, " + binding + ").");
+  await clickByValue(driver, "Call IdP");
+
+  log.info("Log in at the mock STS.");
+  await loginAtIdp(driver, user, loginWait);
+
+  log.info("Wait for the SAML Response page.");
+  await driver.wait(until.urlContains("saml_response.html"), loginWait);
+
+  await assertResponsePage(driver, binding, spEntityId, loginWait);
+  await assertSignatureValidates(driver, loginWait);
+  await assertHistoryClosedAsSuccess(driver, binding, loginWait);
+
+  log.info("SAML 1.1 SSO round-trip succeeded (" + binding + ").");
+  log.debug("Leaving saml11Activities().");
+}
+
+async function test() {
+  log.debug("Entering test().");
+  const options = new chrome.Options();
+  if (headless) { options.addArguments("--headless"); }
+  options.addArguments("--no-sandbox");
+  options.addArguments("--disable-dev-shm-usage");
+  options.addArguments("--allow-running-insecure-content");
+  options.addArguments(
+      "--disable-features=BlockInsecurePrivateNetworkRequests," +
+      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+
+  // The mock STS serves https on a certificate it generated at startup (see
+  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
+  // makes the whole argument. This file builds its Chrome options by hand
+  // rather than through addBrowserAccessFlags(), which is why the call is here
+  // instead of arriving with the rest.
+  browserFlags.addStsTrustFlags(options);
+
+    const loggingPrefs = new logging.Preferences();
+  loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
+
+  const driver = await new Builder()
+    .forBrowser("chrome")
+    .setChromeOptions(options)
+    .setLoggingPrefs(loggingPrefs)
+    .build();
+
+  try {
+    const metadataUrl = process.env.SAML11_METADATA_URL;
+    const metadataFile = process.env.SAML11_METADATA_FILE;
+    const spEntityId = process.env.SAML_SP_ENTITY_ID;
+    const user = process.env.SAML_USER || "saml";
+    const binding = (process.env.SAML_BINDING || "redirect").toLowerCase();
+    assert(metadataUrl || metadataFile,
+      "Set SAML11_METADATA_URL (URL load) or SAML11_METADATA_FILE (file " +
+      "upload). It names the mock STS's per-relying-party SAML 1.1 " +
+      "descriptor; nothing has to be provisioned first, because that service " +
+      "mints one for any identifier asked for.");
+    assert(spEntityId, "SAML_SP_ENTITY_ID environment variable is not set.");
+    assert(["redirect", "post", "artifact"].indexOf(binding) >= 0,
+           "SAML_BINDING must be redirect, post, or artifact.");
+    log.info("metadata=" + (metadataUrl || metadataFile) + " sp=" +
+             spEntityId + " binding=" + binding);
+
+    await saml11Activities(driver, metadataUrl, spEntityId, user, binding,
+                           metadataFile);
+    log.info("Test completed successfully.");
+  } catch (error) {
+    log.error(error.message);
+    try {
+      log.error("Current URL: " + (await driver.getCurrentUrl()));
+      var src = await driver.getPageSource();
+      log.error("Page source (first 8000 chars):\n" + (src || "").substring(0,
+                8000));
+      var blogs = await driver.manage().logs().get("browser");
+      if (blogs && blogs.length) {
+        log.error("Browser console:\n" +
+                  blogs.map(function (e) { return e.level.name + ": " +
+                  e.message; }).join("\n"));
+      }
+    } catch (e2) {
+      /* ignore */
+    }
+    process.exit(1);
+  } finally {
+    await driver.quit();
   }
-  // A count that only ever rises is a leak. Read as DELTAS against the baseline
-  // taken at the top, so that another run's state cannot make this pass or fail.
-  // The middle one is capped rather than swept, so sitting at its ceiling is its
-  // healthy state and only the direction is worth asserting.
-  check('this run left no artifact unresolved',
-        view.artifactsAwaitingResolution - baseline.artifactsAwaitingResolution === 0,
-        view.artifactsAwaitingResolution + ' now, ' + baseline.artifactsAwaitingResolution +
-        ' before');
-  check('assertions are held for AssertionIDReference', view.assertionsHeldByReference > 0,
-        String(view.assertionsHeldByReference));
-  check('this run left no flow held for sign-in',
-        view.flowsHeldForSignIn - baseline.flowsHeldForSignIn === 0,
-        view.flowsHeldForSignIn + ' now, ' + baseline.flowsHeldForSignIn + ' before');
-
-  // -------------------------------------------------------------------------
-  heading('the settings, one at a time');
-  // An unsigned assertion being ACCEPTED by a relying party is the finding that
-  // matters, and no happy path shows it. Each of these is restored at the end.
-  await setSetting('saml11.signAssertion', false);
-  cookie = '';
-  res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target,
-                                             profile: 'post' }), 'judy');
-  let xml = samlResponseIn(res.body);
-  check('saml11.signAssertion=false issues an UNSIGNED assertion',
-        !!xml && !childByLocal(byLocal(parse(xml), 'Assertion'), 'Signature'));
-  check('and the Response around it is still signed',
-        !!xml && !!childByLocal(parse(xml).documentElement, 'Signature'));
-  await setSetting('saml11.signAssertion', true);
-
-  await setSetting('saml11.signResponse', false);
-  cookie = '';
-  res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target,
-                                             profile: 'post' }), 'judy');
-  xml = samlResponseIn(res.body);
-  check('saml11.signResponse=false issues an unsigned Response',
-        !!xml && !childByLocal(parse(xml).documentElement, 'Signature'));
-  check('and the assertion inside it is still signed',
-        !!xml && !!childByLocal(byLocal(parse(xml), 'Assertion'), 'Signature'));
-  await setSetting('saml11.signResponse', true);
-
-  await setSetting('saml11.perApplicationProviderId', false);
-  res = await request('GET', '/saml11/metadata/' + encodeURIComponent(RP));
-  check('perApplicationProviderId=false makes every document name one identity provider',
-        parse(res.body).documentElement.getAttribute('entityID') === unscopedEntityId,
-        parse(res.body).documentElement.getAttribute('entityID'));
-  // The endpoints stay per-application either way, because that is what makes
-  // the documents worth having separately.
-  check('but the ENDPOINTS stay per-application', res.body.indexOf('/saml11/sso/') >= 0);
-  await setSetting('saml11.perApplicationProviderId', true);
-
-  await setSetting('saml11.defaultProfile', 'artifact');
-  cookie = '';
-  // No `profile` parameter at all: the setting is what decides, because nothing
-  // in SAML 1.1 lets a relying party ask. The flow is COMPLETED rather than
-  // abandoned at the sign-in screen — an earlier version of this check stopped
-  // at the redirect and left a held flow behind, which made the SECOND run
-  // against one instance fail. A test that leaks state is a test that has to be
-  // run first.
-  res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target }),
-                     'lana');
-  const wentByArtifact = res.status === 303 && /[?&]SAMLart=/.test(res.headers.location || '');
-  check('saml11.defaultProfile decides the profile when the request does not',
-        wentByArtifact, 'status ' + res.status);
-  if (wentByArtifact) {
-    // Spend it, so this run leaves the artifact store as it found it.
-    const spent = decodeURIComponent(
-      (/[?&]SAMLart=([^&]+)/.exec(res.headers.location) || [])[1] || '');
-    await request('POST', '/saml11/responder',
-                  samlRequest('<samlp:AssertionArtifact>' + spent +
-                              '</samlp:AssertionArtifact>', '_r8'), XML);
-  }
-  await setSetting('saml11.defaultProfile', 'post');
-
-  await setSetting('saml11.autocreateApplications', false);
-  const unregistered = 'urn:test:not:registered:' + process.pid;
-  cookie = '';
-  res = await resume('/saml11/sso?' + form({ providerId: unregistered, shire: acs,
-                                             TARGET: target, profile: 'post' }), USER_UNREGISTERED);
-  check('autocreateApplications=false still ANSWERS the flow', !!samlResponseIn(res.body),
-        'status ' + res.status);
-  res = await request('GET', '/admin-api/saml11?rp=' + encodeURIComponent(unregistered));
-  check('it simply records nothing', JSON.parse(res.body).registered === false,
-        res.body.slice(0, 120));
-  await setSetting('saml11.autocreateApplications', true);
-
-  // -------------------------------------------------------------------------
-  heading('the other two doors still carry the same builder');
-  // The browser profiles and WS-Federation share `saml11.js`. This is the check
-  // that a change made for one has not broken the other — which is not
-  // hypothetical: fixing the reference attribute for these profiles changed
-  // every WS-Federation assertion this service issues.
-  res = await request('GET', '/wsfed?' + form({ wa: 'wsignin1.0', wtrealm: 'urn:test:wsfed',
-                                                wreply: BASE + '/wsfed/rp' }));
-  check('WS-Federation still answers', res.status === 200 || res.status === 303,
-        'status ' + res.status);
-  res = await request('GET', '/saml2/metadata');
-  check('the SAML 2.0 profile still publishes its metadata', res.status === 200,
-        'status ' + res.status);
-  // The drift checks the parent project's tests/sts_metadata.js enforces. Even
-  // without that test here, a 200 with the group on it says the endpoints were
-  // described rather than silently added.
-  res = await request('GET', '/admin-api/sts-metadata');
-  if (res.status === 200) {
-    check('every /saml11 route is described on /admin/sts-metadata',
-          res.body.indexOf('/saml11/sso') >= 0 && res.body.indexOf('/saml11/responder') >= 0);
-  }
-
-  await restoreSettings();
-
-  // -------------------------------------------------------------------------
-  log.info('===============================');
-  log.info(passed + ' passed, ' + failures.length + ' failed');
-  if (failures.length) {
-    log.error('FAILURES:');
-    failures.forEach(function (f) { log.error('  - ' + f); });
-  }
-  assert.strictEqual(failures.length, 0,
-    failures.length + ' SAML 1.1 check(s) failed. The list is above.');
-  log.info('SAML 1.1 browser profiles: ' + passed + ' checks passed.');
-  log.info('Test completed successfully.');
-  log.debug('Leaving main().');
+  log.debug("Leaving test().");
 }
 
 const program = new Command();
 program
   .name('saml11_sso')
-  .description('Drive the mock STS\'s SAML 1.1 browser profiles — ' +
-      'Browser/POST, Browser/Artifact, the SOAP responder and the metadata — ' +
-      'over HTTP with no browser.')
-  // Accepted and ignored: run-report.js passes --url to every job, and
-  // commander exits 1 on an option it has not been told about.
-  .addOption(new Option('-u, --url <url>',
-      'base url (unused: this test needs no browser)'))
-  .parse(process.argv);
+  .description("Run the SAML 1.1 browser-profile SSO test against the " +
+               "debugger's SAML workflow.")
+  .addOption(new Option("-u, --url <url>",
+      "Set base URL.").makeOptionMandatory())
+  .addOption(new Option("-b, --browser",
+      "Display browser (only works within device)."))
+  .action((options) => {
+    if (!!options.url) { log.info("Setting url to " + options.url); baseUrl =
+        options.url; }
+    if (!!options.browser) { log.info("Using browser. " +
+        "headless = false."); headless = false; }
+  });
 
-main().then(function () {
-  process.exit(0);
-}).catch(async function (e) {
-  // Settings are restored even on the way out, so a run that dies half way
-  // through does not leave an instance somebody else is using in a state they
-  // did not choose.
-  try {
-    await restoreSettings();
-  } catch (restoreError) {
-    // Nothing useful to do about it, and the original failure is what matters —
-    // but saying so beats a silent second failure inside the first.
-    log.error('could not restore settings: ' + restoreError.message);
-  }
-  log.error(e && e.stack ? e.stack : (e && e.message ? e.message : e));
-  process.exit(1);
-});
+program.parse(process.argv).opts();
+
+test();

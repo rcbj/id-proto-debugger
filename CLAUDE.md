@@ -7,11 +7,12 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | Working on | Read |
 |---|---|
 | the Express backend, its outbound calls, the SSRF guard, the timeouts and size/redirect caps | `api/CLAUDE.md` |
-| any page, bundle, layout or in-browser protocol implementation | `client/CLAUDE.md`, which indexes nine topic docs under `docs/` |
+| any page, bundle, layout or in-browser protocol implementation | `client/CLAUDE.md`, which indexes ten topic docs under `docs/` |
 | the Selenium suite, the launchers, the per-test map, the environment hazards | `tests/CLAUDE.md` |
 | the deployed static sites, Terraform, the Lambda@Edge landings | `infra/CLAUDE.md` |
 | the walt.id issuer/verifier containers and their configuration | `waltid/CLAUDE.md` |
 | the WS-Federation Keycloak 8.0.1 side-car | `keycloak-wsfed/CLAUDE.md` |
+| **SAML 1.1** — the second protocol version the SAML workflow speaks, which is a different protocol rather than an older spelling: no request message, no Single Logout, a QName status code, and five settings switched off | `docs/saml11.md` |
 | **RFC 9700** — the OAuth 2.0 Security BCP compliance checkbox on the OAuth2/OIDC workflow, what it enforces, and why it is off by default | `docs/rfc9700.md` |
 | the WebAuthn workflow, its decoder, or the read-only browser extension | `docs/webauthn.md` |
 | the Kerberos workflow, its six pages, `common/krb5/`, the PAC, delegation, or the mock KDC | `docs/kerberos.md` |

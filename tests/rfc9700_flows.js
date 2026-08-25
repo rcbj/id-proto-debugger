@@ -3,8 +3,26 @@
 // ---------------------------------------------------------------------------
 // Every OAuth2 / OIDC grant this debugger supports, driven through
 // oauth2_oidc_1.html and oauth2_oidc_2.html with **BOTH SIDES IN RFC 9700
-// MODE** — the debugger's compliance checkbox on, and the mock STS started
-// with STS_OAUTH2_RFC9700=true.
+// MODE** — the debugger's compliance checkbox on, and a mock STS enforcing the
+// BCP.
+//
+// THE COMPLIANT SERVER IS A TRUST REALM, NOT A SECOND INSTANCE, since
+// 2026-08-25. It used to be a container of its own (`sts-rfc9700`) because
+// `oauth2.rfc9700` derives `global.https` over there and one process could not
+// bind its main port two ways. That flag is now the one setting in that service
+// marked `realmRuntime` — restart-only for the process, settable on a realm,
+// because a realm binds no socket — so the SAME instance answers permissively
+// at `/oauth2/authorize` and enforces the BCP at
+// `/realm/rfc9700/oauth2/authorize`, with its own issuer, signing key, codes
+// and tokens. common/common.sh's configureStsRfc9700Realm() creates it; the
+// realm is in memory and gone on restart, which is why it is a launcher step.
+//
+// NOTHING IN THIS FILE KNOWS THAT. Every URL it uses is built from the base it
+// is given, so RFC9700_STS_URL simply carries the prefix
+// (https://localhost:8081/realm/rfc9700) and the metadata document, the
+// requirement report and the management API call all land in the realm. That
+// property is worth keeping: a test that had to compose realm prefixes itself
+// would be a test that could compose one wrongly and still pass.
 //
 // That pairing is the point of the file. The existing OAuth2 / OIDC jobs run
 // this same matrix with both sides permissive, and between them the two passes
@@ -276,10 +294,13 @@ async function requireCompliantSts(stsUrl) {
     "predates its own RFC 9700 support. This job needs a build that has it.");
   const parsed = JSON.parse(report.body);
   assert.strictEqual(parsed.enabled, true,
-    "The STS at " + stsUrl + " is NOT in RFC 9700 mode. Start it with " +
-    "STS_OAUTH2_RFC9700=true. Running this job against a permissive server " +
-    "would exercise the client's checks against a server that never " +
-    "disagrees with them, which is the one arrangement that proves nothing.");
+    "The STS at " + stsUrl + " is NOT in RFC 9700 mode. That URL should carry " +
+    "a trust realm prefix (.../realm/rfc9700) and the realm should have been " +
+    "put into the mode by configureStsRfc9700Realm() in common/common.sh — " +
+    "check the launcher's output for its WARNING. Running this job against a " +
+    "permissive server would exercise the client's checks against a server " +
+    "that never disagrees with them, which is the one arrangement that proves " +
+    "nothing.");
   log.info("The STS is in RFC 9700 mode.");
   log.debug("Leaving requireCompliantSts().");
   return parsed;
@@ -352,12 +373,19 @@ async function buildDriver() {
   }
   options.addArguments("--no-sandbox");
   options.addArguments("--disable-dev-shm-usage");
-  // The mock STS in RFC 9700 mode is HTTPS on a certificate it generated at
-  // startup, so nothing has an anchor for it. This is the whole reason the
-  // pairing needs a flag the permissive pass does not: with the mode off the
-  // STS is plain http and every one of these runs happily without it.
-  options.addArguments("--ignore-certificate-errors");
-  options.setAcceptInsecureCerts(true);
+  // The mock STS is HTTPS on a certificate it generated at startup, so nothing
+  // has an anchor for it — and since 2026-08-25 that is true of the WHOLE
+  // suite rather than of this job alone, because the compliant server is a
+  // trust realm on the one instance now and a realm cannot bind a scheme of
+  // its own. So the certificate is handled where every browser job can reach
+  // it: common/common.sh's trustStsCertificate() fetches it and exports an
+  // SPKI pin, and this trusts that one key.
+  //
+  // It replaced --ignore-certificate-errors + setAcceptInsecureCerts(true),
+  // which accepted ANY certificate. That was defensible while this was the
+  // only job talking to a TLS mock; it is not now, and it never sat well in a
+  // file whose subject is a client that refuses what it should refuse.
+  browserFlags.addStsTrustFlags(options);
   // Where a loopback redirect URI actually resolves to. Nothing on a host run,
   // where the pages and the callback share an origin already.
   const rule = hostResolverRule();
@@ -532,8 +560,12 @@ async function runFlow(driver, flowKey, stsUrl) {
     "value");
   assert.ok(issuer.indexOf("https://") === 0,
     "Requirement 8.1: the STS in RFC 9700 mode published a plain-http " +
-    "issuer (" + issuer + "). It binds its main port as HTTPS in that mode, " +
-    "so this means the pairing is not what it claims to be.");
+    "issuer (" + issuer + "). A trust realm cannot bind a scheme of its own, " +
+    "so this is a property of the PROCESS: the mock has to have been started " +
+    "with STS_HTTPS=true (it is set on the `sts` service in local-tests.yml, " +
+    "docker-compose-run-tests.yml and keycloak-tests.yml). Without it the " +
+    "realm enforces every check and still publishes http, which is a real " +
+    "configuration of that service and is not the pairing this job claims.");
 
   if (!flow.exchangesCode) {
     // The Client Credentials grant never visits the authorization endpoint,

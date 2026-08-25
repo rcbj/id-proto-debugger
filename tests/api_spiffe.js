@@ -47,7 +47,7 @@ var log = bunyan.createLogger({ name: "api_spiffe",
 log.info("Log initialized. logLevel=" + log.level());
 
 const API_URL = process.env.API_URL || "http://localhost:4000";
-const STS_URL = process.env.STS_URL || "http://localhost:8081";
+const STS_URL = process.env.STS_URL || "https://localhost:8081";
 // The API's view of the mock, which on the containerized stack is a different
 // name from this test's. Its own variable for the reason LDAP_URL is.
 const WORKLOAD_ADDRESS = process.env.SPIFFE_WORKLOAD_ADDRESS ||

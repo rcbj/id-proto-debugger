@@ -91,7 +91,7 @@ const keyMaterial = paths.requireSharedModule(
   [__dirname + "/../client/src/key_material.js",
    __dirname + "/key_material.js"], "key_material.js");
 
-const STS_URL = process.env.STS_URL || "http://localhost:8081";
+const STS_URL = process.env.STS_URL || "https://localhost:8081";
 const WORKLOAD_ADDRESS = process.env.SPIFFE_WORKLOAD_ADDRESS ||
   "localhost:8092";
 const SERVER_ADDRESS = process.env.SPIFFE_SERVER_ADDRESS || "localhost:8181";

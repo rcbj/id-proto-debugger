@@ -1068,6 +1068,239 @@ requireStsReachable()
   return 0
 }
 
+# ---------------------------------------------------------------------------
+# INSTALL THE MOCK STS'S CERTIFICATE, FOR NODE AND FOR CHROME.
+#
+# The mock serves its main port over TLS in every stack here (STS_HTTPS=true in
+# local-tests.yml, docker-compose-run-tests.yml and keycloak-tests.yml). That is
+# not a preference: the RFC 9700 pass is a TRUST REALM on that one instance now
+# rather than a second container, a realm binds no socket of its own, and the
+# pass is only honest over TLS — requirement 8.1 is that every configured
+# endpoint is https and the debugger enforces it. So the scheme belongs to the
+# process, and everything in this suite that talks to the mock talks https.
+#
+# THE CERTIFICATE IS SELF-SIGNED AND REGENERATED ON EVERY START of that service,
+# which is deliberate on its side and is the whole difficulty on ours: nothing
+# can hold an anchor for it ahead of time. It cannot be committed, baked into an
+# image, or installed by hand — it does not exist until the mock is up. So it is
+# fetched, once, here, after the service answers and before anything verifies.
+#
+# TWO CONSUMERS, TWO MECHANISMS, AND BOTH ARE TRUSTSTORES RATHER THAN SWITCHES:
+#
+#   node   — NODE_EXTRA_CA_CERTS names a PEM that is ADDED to the default store.
+#            Every other certificate every node process here meets is still
+#            verified. `NODE_TLS_REJECT_UNAUTHORIZED=0` would have been one line
+#            and would also have disarmed api_ssrf_guard.js, api_tls_probe.js
+#            and url_safety_schemes.js, which assert refusals — a test that
+#            cannot fail is worse than a test that is missing.
+#
+#   Chrome — --ignore-certificate-errors-spki-list takes the base64 SHA-256 of
+#            the certificate's SUBJECT PUBLIC KEY INFO and trusts that key and
+#            no other. It is exact-key pinning: a different self-signed
+#            certificate — including the one the mock generates on its NEXT
+#            start — is still refused with an interstitial. The blunt
+#            --ignore-certificate-errors would have accepted anything at all,
+#            in a suite where several jobs exist to prove that a bad
+#            certificate is refused.
+#
+#            NSS was the other candidate (certutil -A into ~/.pki/nssdb) and was
+#            not taken: it needs libnss3-tools in the tests image, it writes
+#            per-user state that survives the run, and Chrome's own verifier
+#            wants a trust anchor to look like a CA — this certificate is
+#            basicConstraints CA:FALSE, because it is a server certificate and
+#            says so.
+#
+# Exports STS_CA_FILE, NODE_EXTRA_CA_CERTS and STS_SPKI_PIN. browser_flags.js
+# reads the last one; everything else is inherited by every child process.
+#
+# $1 the STS base URL, https, no trailing slash (e.g. https://localhost:8081).
+# Non-fatal on failure, and that is deliberate: the jobs that need the mock
+# should fail with their own message rather than the launcher stopping the run
+# before any of them is scheduled.
+# ---------------------------------------------------------------------------
+trustStsCertificate()
+{
+  echo "Entering trustStsCertificate(). url=${1}"
+  local base="${1%/}"
+  if [ -z "${base}" ];
+  then
+    echo "ERROR: trustStsCertificate() needs the STS base URL." >&2
+    echo "Leaving trustStsCertificate(). No URL."
+    return 1
+  fi
+
+  # A throwaway directory, the same shape generateSpKeyPair() uses and for the
+  # same reasons: this runs from the repository root on a host launcher and from
+  # /usr/src/app inside the tests container, so a relative path would have to be
+  # right in two places, and the certificate is worthless after the mock next
+  # restarts. STS_CA_DIR overrides it for anybody who wants to look at what was
+  # trusted.
+  local dir="${STS_CA_DIR:-$(mktemp -d)}"
+  mkdir -p "${dir}"
+  STS_CA_FILE="${dir}/sts-ca.pem"
+
+  # -k, and it is the ordinary bootstrap rather than a hole: fetching the PEM
+  # over a connection you cannot yet verify is the same act as trusting the PEM
+  # it hands back, done one step earlier. The mock's own /tls page says so.
+  if ! curl -sk --fail -m 20 -o "${STS_CA_FILE}" \
+         "${base}/tls/server-certificate";
+  then
+    echo "WARNING: could not fetch the mock STS certificate from" \
+         "${base}/tls/server-certificate." >&2
+    echo "         Every STS-backed job will fail verification" \
+         "(DEPTH_ZERO_SELF_SIGNED_CERT in node, an interstitial in Chrome)." >&2
+    echo "Leaving trustStsCertificate(). Not fetched."
+    return 1
+  fi
+
+  # A PEM, not an HTML error page. curl --fail catches a 4xx/5xx, but a proxy
+  # or a wrong path can answer 200 with something else entirely, and the
+  # failure would then arrive one layer down as a TLS error naming nothing.
+  if ! grep -q "BEGIN CERTIFICATE" "${STS_CA_FILE}";
+  then
+    echo "WARNING: ${base}/tls/server-certificate did not answer with a PEM." >&2
+    head -c 200 "${STS_CA_FILE}" >&2
+    echo >&2
+    echo "Leaving trustStsCertificate(). Not a certificate."
+    return 1
+  fi
+
+  NODE_EXTRA_CA_CERTS="$(cd "$(dirname "${STS_CA_FILE}")" && pwd)/$(basename "${STS_CA_FILE}")"
+  export STS_CA_FILE NODE_EXTRA_CA_CERTS
+
+  # The SPKI pin Chrome wants. openssl three times rather than once because the
+  # hash is of the DER-encoded SubjectPublicKeyInfo — not of the certificate,
+  # and not of the PEM text — and getting that wrong produces a pin that is
+  # simply never matched, which looks exactly like no pin at all.
+  STS_SPKI_PIN="$(openssl x509 -in "${STS_CA_FILE}" -pubkey -noout \
+                    | openssl pkey -pubin -outform der \
+                    | openssl dgst -sha256 -binary \
+                    | openssl enc -base64)"
+  export STS_SPKI_PIN
+  if [ -z "${STS_SPKI_PIN}" ];
+  then
+    echo "WARNING: could not compute the SPKI pin from ${STS_CA_FILE}; the" \
+         "browser jobs will meet a certificate interstitial." >&2
+  fi
+
+  echo "Leaving trustStsCertificate(). NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS}," \
+       "STS_SPKI_PIN=${STS_SPKI_PIN}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# THE RFC 9700 TRUST REALM, WHICH REPLACED A WHOLE SECOND MOCK INSTANCE.
+#
+# The five RFC 9700 flow jobs run the OAuth2/OIDC matrix a second time with the
+# debugger AND the server both enforcing the BCP. That used to need a mock of
+# its own — `oauth2.rfc9700` derives `global.https` over there, so it binds the
+# main port as TLS, and one process could not serve the permissive pass and the
+# compliant one at the same time.
+#
+# It can now, because that flag is the one setting in that service marked
+# `realmRuntime`: restart-only for the PROCESS, settable on a TRUST REALM. The
+# reason it is restart-only is a bound socket, and a realm binds none — it
+# answers on the port the process already opened, in the scheme that port was
+# opened in. So `/oauth2/authorize` stays permissive for the twelve jobs that
+# want a server implementing none of this, and `/realm/rfc9700/oauth2/authorize`
+# enforces every check for the five that want one that does. Two issuers, two
+# signing keys, two sets of codes and tokens, one process.
+#
+# THE REALM IS IN MEMORY AND GONE ON RESTART, which is why this is a launcher
+# step and not a setting in a compose file. There is nowhere to declare it: that
+# service persists nothing at all, on purpose.
+#
+# IT IS ALSO THE CAPABILITY PROBE, and it replaced a worse one. local-run-tests.sh
+# used to decide whether to schedule those jobs by looking for `oauth2_bcp.js`
+# in the sts/ submodule — a path test, which silently took its else branch and
+# printed a confident, wrong explanation when mock-sts reorganised its
+# directories. Asking the running service to create the realm answers the same
+# question about the code that is actually running, and answers it about REALMS
+# too, which that probe could not have seen at all.
+#
+# $1 the STS base URL, https, no trailing slash. Prints nothing to stdout that a
+# caller should parse; returns non-zero when the realm is not there afterwards,
+# so the caller can leave RFC9700_STS_URL unset and let run-report.js skip the
+# five jobs with a reason.
+# ---------------------------------------------------------------------------
+configureStsRfc9700Realm()
+{
+  echo "Entering configureStsRfc9700Realm(). url=${1}"
+  local base="${1%/}"
+  local realm="${RFC9700_STS_REALM:-rfc9700}"
+  if [ -z "${base}" ];
+  then
+    echo "ERROR: configureStsRfc9700Realm() needs the STS base URL." >&2
+    echo "Leaving configureStsRfc9700Realm(). No URL."
+    return 1
+  fi
+
+  # -k throughout: this runs before trustStsCertificate() has necessarily been
+  # called, and it is curl talking to a mock rather than a client under test.
+  #
+  # `create` carries the override, so the realm is never briefly permissive.
+  # That matters more than it looks: a realm created first and configured second
+  # would answer /realm/rfc9700/oauth2/authorize permissively for however long
+  # the second call takes, and a test that started in that window would pass
+  # while proving nothing.
+  local body code
+  body="$(curl -sk -m 20 -X POST "${base}/admin-api/realms/create" \
+            -H 'Content-Type: application/json' \
+            -d "{\"id\":\"${realm}\",\"name\":\"RFC 9700 mode\",\"description\":\"The OAuth 2.0 Security Best Current Practice enforced. Created by configureStsRfc9700Realm() in common/common.sh for the five rfc9700_flows.js jobs.\",\"overrides\":{\"oauth2.rfc9700\":true}}" \
+            -w '\n%{http_code}' || true)"
+  code="$(printf '%s' "${body}" | tail -n 1)"
+
+  # A re-run against a mock that is still up is the ORDINARY case on this
+  # project — remote-run-tests.sh reuses a host-run stack — and "already
+  # defined" is success, not failure. The realm is asked to carry the override
+  # again below either way, so a realm left behind by an older launcher that
+  # created it without one is repaired rather than trusted.
+  if [ "${code}" != "200" ];
+  then
+    echo "Note: POST ${base}/admin-api/realms/create answered ${code}." \
+         "If the realm already exists that is expected; the set below is what" \
+         "decides."
+  fi
+
+  body="$(curl -sk -m 20 -X POST "${base}/admin-api/realms/set" \
+            -H 'Content-Type: application/json' \
+            -d "{\"id\":\"${realm}\",\"key\":\"oauth2.rfc9700\",\"value\":true}" \
+            -w '\n%{http_code}' || true)"
+  code="$(printf '%s' "${body}" | tail -n 1)"
+  if [ "${code}" != "200" ];
+  then
+    echo "WARNING: could not put the \"${realm}\" realm into RFC 9700 mode:" \
+         "${code}." >&2
+    printf '%s\n' "${body}" | head -c 500 >&2
+    echo >&2
+    echo "         The mock STS is probably older than \`realmRuntime\` on" \
+         "oauth2.rfc9700 — before that, the setting could only be given to a" >&2
+    echo "         whole process. Bump the sts/ submodule. The five RFC 9700" \
+         "flow jobs will be SKIPPED rather than run against a permissive" >&2
+    echo "         server, which would pass while proving nothing." >&2
+    echo "Leaving configureStsRfc9700Realm(). Not configured."
+    return 1
+  fi
+
+  # ASK THE SERVICE, rather than believing the two calls above. This is the one
+  # assertion that covers both of them AND the path: GET /realm/<id>/oauth2/rfc9700
+  # is the same document the jobs themselves read to refuse a permissive server,
+  # so agreeing with it here is agreeing with them.
+  local enabled
+  enabled="$(curl -sk -m 20 "${base}/realm/${realm}/oauth2/rfc9700" \
+               | tr -d ' \n' | grep -o '"enabled":true' || true)"
+  if [ -z "${enabled}" ];
+  then
+    echo "WARNING: ${base}/realm/${realm}/oauth2/rfc9700 does not report the" \
+         "mode as on." >&2
+    echo "Leaving configureStsRfc9700Realm(). Not in mode."
+    return 1
+  fi
+
+  echo "Leaving configureStsRfc9700Realm(). ${base}/realm/${realm} is in RFC 9700 mode."
+  return 0
+}
+
 verifyComposeServicesRunning()
 {
   echo "Entering verifyComposeServicesRunning()."

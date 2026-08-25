@@ -65,14 +65,14 @@ log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = process.env.BASE_URL || "http://localhost:3000";
 var apiUrl = process.env.API_URL || "http://localhost:4000";
-var stsUrl = process.env.STS_URL || "http://localhost:8081";
+var stsUrl = process.env.STS_URL || "https://localhost:8081";
 // The API's view of each surface, which on the containerized stack is a
 // different name from this test's — the same distinction LDAP_URL draws, and
 // its own variable for the same reason.
 var workloadAddress = process.env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092";
 var serverAddress = process.env.SPIFFE_SERVER_ADDRESS || "sts:8181";
 var bundleUrl = process.env.SPIFFE_BUNDLE_URL ||
-  (process.env.API_STS_URL || "http://sts:8081") + "/spiffe/bundle";
+  (process.env.API_STS_URL || "https://sts:8081") + "/spiffe/bundle";
 var trustDomain = process.env.SPIFFE_TRUST_DOMAIN || "example.org";
 
 // Longer than `waitTime` for anything that crosses a network or does crypto in
@@ -192,7 +192,72 @@ async function open(driver) {
   // control that did nothing.
   await waitFor.waitForPageBundle(driver,
     "the spiffe bundle never finished loading", stepWait);
+  await everyBoxOpensAtItsMinimum(driver);
   log.debug("Leaving open().");
+}
+
+// ---------------------------------------------------------------------------
+// 0. THE PAGE OPENS COMPACT — every readout is sized to nothing, because it
+//    HOLDS nothing.
+//
+// This page has seventeen textareas and most of them are answers: the two
+// Exchange readouts, the SVID Inspector's output, the three certification
+// request boxes, the held identity's two. On a page nobody has done anything
+// on yet, every one of those is EMPTY — and a box that reserves ten rows for
+// an answer it does not have is ten rows of white space between two panes a
+// reader is trying to compare. So each declares `data-min-rows` and
+// `data-max-rows` and `fitTextarea()` in the bundle sizes it to what it
+// actually holds, growing when an answer arrives and shrinking again when one
+// is discarded.
+//
+// This is checked HERE, on a freshly loaded page, because by the time the
+// sections below have finished every one of those boxes has something in it —
+// which is the state that hides the defect this catches. What it catches is a
+// box added with a big `rows` and no ceiling, which is what all of them looked
+// like before, and which nothing else on this page would ever report.
+// ---------------------------------------------------------------------------
+async function everyBoxOpensAtItsMinimum(driver) {
+  log.debug("Entering everyBoxOpensAtItsMinimum().");
+  // Runs IN THE BROWSER, so it has no bunyan and no `log` — see the repo-root
+  // CLAUDE.md. What is logged is what it returns.
+  const boxes = await driver.executeScript(
+    "var all = document.querySelectorAll('textarea');" +
+    "var undeclared = [], oversized = [], unfitted = [];" +
+    "for (var i = 0; i < all.length; i++) {" +
+    "  var e = all[i];" +
+    "  var min = parseInt(e.getAttribute('data-min-rows') || '0', 10);" +
+    "  var max = parseInt(e.getAttribute('data-max-rows') || '0', 10);" +
+    "  if (!min || !max || max < min) { undeclared.push(e.id); continue; }" +
+    "  if (min > 4) { oversized.push(e.id + ' opens at ' + min); }" +
+    "  var lines = String(e.value || '').split('\\n').length;" +
+    "  var want = Math.max(min, Math.min(max, lines));" +
+    "  if (e.rows !== want) { unfitted.push(e.id + ' is ' + e.rows +" +
+    "      ' rows for ' + lines + ' lines, wanted ' + want); }" +
+    "}" +
+    "return { total: all.length, undeclared: undeclared," +
+    "         oversized: oversized, unfitted: unfitted };");
+
+  check("every textarea declares the rows it may take — a box with no " +
+    "ceiling is one that pushes the panes below it off the screen when it " +
+    "is answered, and a box with no floor is one that reserves ten rows for " +
+    "an answer it does not have", function () {
+      assert.deepStrictEqual(boxes.undeclared, []);
+      assert.ok(boxes.total >= 15,
+        "only " + boxes.total + " textareas — the readouts have been " +
+        "changed to something else, and this check now guards nothing");
+    });
+
+  check("and none of them opens taller than four rows, on a page where " +
+    "nothing has been done yet", function () {
+      assert.deepStrictEqual(boxes.oversized, []);
+    });
+
+  check("every box on a freshly loaded page is already sized to what it " +
+    "holds — mountAutoFit() runs at load, so a value restored from storage " +
+    "arrives in a box that fits it", function () {
+      assert.deepStrictEqual(boxes.unfitted, []);
+    });
+  log.debug("Leaving everyBoxOpensAtItsMinimum().");
 }
 
 // ---------------------------------------------------------------------------
@@ -560,6 +625,26 @@ async function theInspectorAndTheGrammarNeedNoNetwork(driver, token) {
           "a pane that read a token and implied it had checked it would be " +
           "the most dangerous thing on this page: " + jwtStatus);
       });
+
+    // The other half of what `open()` asserted: that box opened at two rows
+    // because it was empty, and an answer has just been written into it
+    // through `setVal()`. Runs IN THE BROWSER — no bunyan, no `log`.
+    const grew = await driver.executeScript(
+      "var e = document.getElementById('spiffe_svid_output');" +
+      "return { rows: e.rows," +
+      "         lines: String(e.value || '').split('\\n').length," +
+      "         min: parseInt(e.getAttribute('data-min-rows'), 10)," +
+      "         max: parseInt(e.getAttribute('data-max-rows'), 10) };");
+    check("and the readout GREW to the answer it was given rather than " +
+      "having reserved the room in advance — the page opens with this box " +
+      "at two rows, and a described SVID is a dozen", function () {
+        assert.ok(grew.lines > grew.min,
+          "the inspector wrote " + grew.lines + " lines, which is no more " +
+          "than the box already had — this check is now vacuous");
+        assert.strictEqual(grew.rows,
+          Math.max(grew.min, Math.min(grew.max, grew.lines)),
+          "the box is " + grew.rows + " rows for " + grew.lines + " lines");
+      });
   }
 
   // The grammar, which is stricter than a URL parser in four ways that each
@@ -709,6 +794,12 @@ async function theIdentityOptOutRemovesWhatIsStored(driver) {
 //     looking straight at.
 // ---------------------------------------------------------------------------
 const EDITABLE_OUTSIDE_CONFIG = [
+  // The expand / collapse-all switch. It is editable and it is outside the
+  // settings pane, and it belongs on this list rather than in that pane: it
+  // configures nothing, sends nothing and is not saved — it changes what is on
+  // the screen, which is the one kind of control that must stay above the
+  // panes it opens.
+  "dbg_toggle_all",
   "spiffe_bundle_document",
   "spiffe_workload_method",
   "spiffe_workload_request",
@@ -807,6 +898,203 @@ async function theSettingsAreInOnePaneAndTheProseFolds(driver) {
     });
 
   log.debug("Leaving theSettingsAreInOnePaneAndTheProseFolds().");
+}
+
+// ---------------------------------------------------------------------------
+// 11. THE PANES COLLAPSE, and one switch does all of them.
+//
+// This page is long enough that the answer somebody wants is often four panes
+// below the one they are working in, so every pane shuts. It uses the shared
+// `.dbg-*` chrome from css/debugger.css that the rest of the tree uses rather
+// than a fourth implementation of it — a `div.dbg-pane` holding a
+// `.dbg-legend` title and the `fieldset` that title opens and shuts.
+//
+// Three properties, and each fails silently on its own:
+//
+//   * **THE PAIRING IS BY ID.** `x_expand_button` drives `x_fieldset`, wired
+//     in `wirePanes()` rather than by an inline onclick that would spell the
+//     id twice. A drifted pair is a title that does nothing at all, and the
+//     only other thing that would report it is a console warning — which is
+//     why section 9 asserting a clean console is part of this check rather
+//     than beside it.
+//   * **THE COLLAPSE IS REAL.** The triangle in the legend is a CSS `:has()`
+//     rule reading the fieldset's INLINE display, so a pane can perfectly well
+//     turn its triangle while staying on the screen. This asserts the height,
+//     not the marker.
+//   * **THE SWITCH REACHES EVERY PANE.** `setAllPanes()` discovers the
+//     fieldsets off the DOM instead of holding a list, so this counts them:
+//     a list would be a thing a new pane has to be remembered into, and the
+//     only symptom of forgetting is the one pane the switch skips.
+// ---------------------------------------------------------------------------
+async function everyPaneCollapsesAndOneSwitchDoesAll(driver) {
+  log.debug("Entering everyPaneCollapsesAndOneSwitchDoesAll().");
+  // Runs IN THE BROWSER, so it has no bunyan and no `log` — see the repo-root
+  // CLAUDE.md. What is logged is what it returns.
+  const wiring = await driver.executeScript(
+    "var legends = document.querySelectorAll('.dbg-legend');" +
+    "var drifted = [], shut = 0;" +
+    "for (var i = 0; i < legends.length; i++) {" +
+    "  var id = legends[i].id || '';" +
+    "  var bodyId = id.replace('_expand_button', '_fieldset');" +
+    "  var body = document.getElementById(bodyId);" +
+    "  if (id.indexOf('_expand_button') === -1 || !body) {" +
+    "    drifted.push(id || legends[i].textContent.trim()); continue; }" +
+    "  if (body.style.display === 'none') { shut += 1; }" +
+    "}" +
+    "return { legends: legends.length, drifted: drifted, shut: shut," +
+    "         fieldsets: document.querySelectorAll('.dbg-pane > fieldset')" +
+    "             .length," +
+    "         toggle: !!document.getElementById('dbg_toggle_all') };");
+
+  check("every pane title names the fieldset it opens — the pairing is " +
+    "`x_expand_button` drives `x_fieldset`, and a drifted pair is a title " +
+    "that does nothing with nothing in the page complaining", function () {
+      assert.deepStrictEqual(wiring.drifted, []);
+      assert.ok(wiring.legends >= 9,
+        "only " + wiring.legends + " pane titles — a pane has stopped being " +
+        "one, and this check now guards the rest of them and not it");
+      assert.strictEqual(wiring.fieldsets, wiring.legends,
+        wiring.fieldsets + " collapsible fieldsets for " + wiring.legends +
+        " titles: a pane is either untitled or holds more than one");
+      assert.ok(wiring.toggle, "there is no dbg_toggle_all on the page");
+    });
+
+  // One pane, by its own title. `spiffe_bundle_fieldset` is chosen because the
+  // pane below it is the one this page is most often read alongside.
+  const legend = await el(driver, "spiffe_bundle_expand_button");
+  await legend.click();
+  await driver.wait(async function () {
+    const shut = await driver.executeScript(
+      "return document.getElementById('spiffe_bundle_fieldset')" +
+      "  .offsetHeight === 0;");
+    return shut === true;
+  }, stepWait, "the Trust Bundle pane never closed when its title was clicked");
+  const closed = await driver.executeScript(
+    "var f = document.getElementById('spiffe_bundle_fieldset');" +
+    "return { height: f.offsetHeight, display: f.style.display," +
+    "         marker: getComputedStyle(document.getElementById(" +
+    "             'spiffe_bundle_expand_button'), '::before').content };");
+  check("a pane's own title shuts it, and the triangle in that title turns " +
+    "with it — the marker is a CSS :has() rule reading the inline display, " +
+    "so it can turn over a pane that is still on the screen, which is why " +
+    "the HEIGHT is what is asserted here", function () {
+      assert.strictEqual(closed.height, 0);
+      assert.strictEqual(closed.display, "none");
+      assert.ok(/\u25b8/.test(closed.marker), "the collapsed triangle is " +
+        "still " + JSON.stringify(closed.marker));
+    });
+  await legend.click();
+  await driver.wait(async function () {
+    const open = await driver.executeScript(
+      "return document.getElementById('spiffe_bundle_fieldset')" +
+      "  .offsetHeight > 0;");
+    return open === true;
+  }, stepWait, "the Trust Bundle pane never reopened");
+
+  // And the switch, which is the control this page needs most: with every
+  // pane shut it is a table of contents.
+  const before = await driver.executeScript(
+    "return document.documentElement.scrollHeight;");
+  await driver.findElement(By.css(".dbg-toggle-slider")).click();
+  await driver.wait(async function () {
+    const done = await driver.executeScript(
+      "var fs = document.querySelectorAll('.dbg-pane > fieldset');" +
+      "for (var i = 0; i < fs.length; i++) {" +
+      "  if (fs[i].style.display !== 'none') { return false; } }" +
+      "return fs.length > 0;");
+    return done === true;
+  }, stepWait, "the collapse-all switch left at least one pane open");
+  const afterCollapse = await driver.executeScript(
+    "var fs = document.querySelectorAll('.dbg-pane > fieldset');" +
+    "var shut = 0;" +
+    "for (var i = 0; i < fs.length; i++) {" +
+    "  if (fs[i].style.display === 'none') { shut += 1; } }" +
+    "return { total: fs.length, shut: shut," +
+    "         checked: document.getElementById('dbg_toggle_all').checked," +
+    "         text: document.querySelector('.dbg-toggle-text').textContent," +
+    "         height: document.documentElement.scrollHeight };");
+  check("the one switch shuts EVERY pane, not a list of them — " +
+    "setAllPanes() reads the fieldsets off the DOM, so a pane added later is " +
+    "covered by construction rather than by somebody remembering a list",
+    function () {
+      assert.strictEqual(afterCollapse.shut, afterCollapse.total,
+        afterCollapse.shut + " of " + afterCollapse.total + " panes shut");
+      assert.ok(afterCollapse.height < before,
+        "the page is still " + afterCollapse.height + "px with every pane " +
+        "collapsed, against " + before + "px open — the panes turned their " +
+        "markers and stayed where they were");
+      assert.strictEqual(afterCollapse.checked, false);
+    });
+
+  check("and the switch's own label says what it will do NEXT rather than " +
+    "what it just did — a switch reading `Collapse all panes` over a page " +
+    "of collapsed panes is the one state that reads as broken", function () {
+      assert.ok(/Expand all panes/.test(afterCollapse.text),
+        afterCollapse.text);
+    });
+
+  await driver.findElement(By.css(".dbg-toggle-slider")).click();
+  await driver.wait(async function () {
+    const open = await driver.executeScript(
+      "var fs = document.querySelectorAll('.dbg-pane > fieldset');" +
+      "for (var i = 0; i < fs.length; i++) {" +
+      "  if (fs[i].style.display === 'none') { return false; } }" +
+      "return fs.length > 0;");
+    return open === true;
+  }, stepWait, "the switch did not put the panes back");
+  log.debug("Leaving everyPaneCollapsesAndOneSwitchDoesAll().");
+}
+
+// ---------------------------------------------------------------------------
+// 12. THE FIELD NAMES CARRY THE TOOLTIP TOO.
+//
+// Section 10 asserts that every control has one. That is half of it: a reader
+// scanning a pane reads the NAMES, and on this page a name is a `<label>` with
+// its own hit area beside the box rather than on it — so a tooltip that lives
+// only on the control is one that is not there when the pointer is over the
+// word that made somebody wonder.
+//
+// The two must be the SAME text, which is the part that decays: a tooltip
+// improved on the control and left alone on the label is a page that explains
+// one field two different ways depending on where the pointer is.
+// ---------------------------------------------------------------------------
+async function everyFieldNameCarriesItsTooltip(driver) {
+  log.debug("Entering everyFieldNameCarriesItsTooltip().");
+  // Runs IN THE BROWSER — no bunyan, no `log`.
+  const labels = await driver.executeScript(
+    "var all = document.querySelectorAll('label');" +
+    "var untitled = [], mismatched = [], paired = 0;" +
+    "for (var i = 0; i < all.length; i++) {" +
+    "  var l = all[i];" +
+    "  var text = l.textContent.trim().slice(0, 40);" +
+    "  if (!l.title || !l.title.trim()) { untitled.push(text); continue; }" +
+    "  var c = l.htmlFor ? document.getElementById(l.htmlFor) :" +
+    "      l.querySelector('input, select, textarea');" +
+    "  if (!c) { continue; }" +
+    "  paired += 1;" +
+    "  if (c.title && c.title !== l.title) {" +
+    "    mismatched.push(c.id || text); } }" +
+    "return { total: all.length, untitled: untitled," +
+    "         mismatched: mismatched, paired: paired };");
+
+  check("every field NAME carries a tooltip and not only the box beside it " +
+    "— a label has its own hit area, and an explanation that is absent over " +
+    "the word which raised the question is an explanation nobody finds",
+    function () {
+      assert.deepStrictEqual(labels.untitled, []);
+      assert.ok(labels.total >= 30,
+        "only " + labels.total + " labels on the page");
+    });
+
+  check("and the label says exactly what its control says — one field " +
+    "explained two different ways depending on where the pointer is would " +
+    "be worse than explaining it once", function () {
+      assert.deepStrictEqual(labels.mismatched, []);
+      assert.ok(labels.paired >= 30,
+        "only " + labels.paired + " labels are paired with a control, so " +
+        "this check compared almost nothing");
+    });
+  log.debug("Leaving everyFieldNameCarriesItsTooltip().");
 }
 
 // ---------------------------------------------------------------------------
@@ -939,6 +1227,8 @@ async function test() {
     await theHistoryTellsARefusalFromNoAnswer(driver);
     await theIdentityOptOutRemovesWhatIsStored(driver);
     await theSettingsAreInOnePaneAndTheProseFolds(driver);
+    await everyPaneCollapsesAndOneSwitchDoesAll(driver);
+    await everyFieldNameCarriesItsTooltip(driver);
     await everyStyleClassIsDefined(driver);
     await theConsoleIsClean(driver);
     log.info(checks + " checks passed.");

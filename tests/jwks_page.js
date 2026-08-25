@@ -56,7 +56,7 @@ var baseUrl = "http://localhost:3000";
 // distinction has cost this suite a run before, on the LDAP and SPNEGO
 // workflows.
 var jwksUrl = process.env.JWKS_BROWSER_URL ||
-    (process.env.STS_URL || "http://localhost:8081") + "/oauth2/jwks";
+    (process.env.STS_URL || "https://localhost:8081") + "/oauth2/jwks";
 
 let checks = 0;
 let skips = [];

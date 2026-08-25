@@ -120,8 +120,54 @@ var LIMITS = null;
 // that CALL these keep their logging, which is where a trace actually lives.
 function el(id) { return document.getElementById(id); }
 function val(id) { var e = el(id); return e ? String(e.value || '') : ''; }
-function setVal(id, v) { var e = el(id); if (e) e.value = v == null ? '' : v; }
+function setVal(id, v) {
+  var e = el(id);
+  if (!e) return;
+  e.value = v == null ? '' : v;
+  fitTextarea(e);
+}
 function isOn(id) { var e = el(id); return !!(e && e.checked); }
+
+// Size a textarea to what is actually in it, between the `data-min-rows` and
+// `data-max-rows` the markup declares.
+//
+// THIS IS THE PAGE'S BIGGEST SOURCE OF WHITE SPACE and it is not a style
+// preference: the two Exchange readouts, the SVID Inspector's output and the
+// three certification-request boxes are EMPTY until something is done, and a
+// ten-row empty box is ten rows of nothing between two panes. Every one of
+// them now opens at two rows and grows to the answer it is given, which is
+// what puts the panes below back on the screen. The maximum is what keeps a
+// two-hundred-line gRPC answer scrolling inside its own box rather than
+// pushing every pane under it out of sight.
+//
+// It carries no entering/leaving pair for the reason `el` and `val` above do
+// not: `setVal()` calls it on every write, and a rendered history or a
+// described SVID is hundreds of those.
+function fitTextarea(e) {
+  if (!e || e.tagName !== 'TEXTAREA') return;
+  var max = parseInt(e.getAttribute('data-max-rows') || '0', 10);
+  if (!max) return;
+  var min = parseInt(e.getAttribute('data-min-rows') || '2', 10);
+  var lines = String(e.value || '').split('\n').length;
+  e.rows = Math.max(min, Math.min(max, lines));
+}
+
+// Every box that declares a ceiling, sized to what it holds — on load, and
+// again on every keystroke in one somebody is typing into. The `input`
+// listener is what makes a request editor grow as a JSON body is pasted into
+// it; `setVal()` covers everything this page writes itself.
+function mountAutoFit() {
+  log.debug("Entering mountAutoFit().");
+  var boxes = document.querySelectorAll('textarea[data-max-rows]');
+  for (var i = 0; i < boxes.length; i++) {
+    fitTextarea(boxes[i]);
+    if (boxes[i].readOnly) continue;
+    boxes[i].addEventListener('input', function (event) {
+      fitTextarea(event.target);
+    });
+  }
+  log.debug("Leaving mountAutoFit(). boxes=" + boxes.length);
+}
 function setText(id, v) {
   var e = el(id);
   if (e) e.textContent = v == null ? '' : String(v);
@@ -1496,6 +1542,109 @@ function seed(id, configured, fallback) {
   log.debug("Leaving seed(). value=" + value);
 }
 
+// ---------------------------------------------------------------------------
+// PANE COLLAPSE, using the shared `.dbg-*` chrome rather than a fourth
+// implementation of it.
+//
+// The markup contract is `scim.html`'s, which is the Kerberos pages':
+//
+//   <div class="spiffe-pane dbg-pane" id="pane_x">
+//     <legend class="dbg-legend" id="spiffe_x_expand_button">Title</legend>
+//     <fieldset name="spiffe_x_fieldset" id="spiffe_x_fieldset"
+//               style="display: block;">…</fieldset>
+//   </div>
+//
+// The legend and the fieldset are PAIRED BY CONVENTION — `x_expand_button`
+// drives `x_fieldset` — rather than by an inline
+// `onclick="spiffe.togglePane('x_fieldset')"`. The inline spelling writes the
+// id twice and fails silently when the two drift: a pane title that does
+// nothing at all, with nothing anywhere complaining. Here a drifted pair is a
+// console warning, and this page's console is asserted clean by
+// `tests/spiffe_page.js`, so it is a failure rather than a shrug.
+//
+// The `style="display: block"` in the markup is not decoration either:
+// css/debugger.css turns the triangle with
+// `.dbg-pane:has(fieldset[style*="display: none"])`, which reads the INLINE
+// style, so a pane that started with no inline display at all would show an
+// expanded triangle over a pane the switch had never touched.
+// ---------------------------------------------------------------------------
+function togglePane(bodyId) {
+  log.debug("Entering togglePane(). id=" + bodyId);
+  var body = el(bodyId);
+  if (!body) {
+    log.debug("Leaving togglePane(). No such pane.");
+    return false;
+  }
+  body.style.display = (body.style.display === 'none') ? 'block' : 'none';
+  log.debug("Leaving togglePane(). " + body.style.display);
+  return false;
+}
+
+// Expand or collapse every pane on the page.
+//
+// The fieldsets are DISCOVERED rather than listed. Several workflows here keep
+// an array of pane ids instead, and every one of those is a list a new pane
+// has to be remembered into — an omission whose only symptom is the one pane
+// the switch skips. Reading them off the DOM covers a pane added later by
+// construction.
+function setAllPanes(expand) {
+  log.debug("Entering setAllPanes(). expand=" + !!expand);
+  var panes = document.querySelectorAll('.dbg-pane > fieldset');
+  for (var i = 0; i < panes.length; i++) {
+    panes[i].style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) {
+    text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  }
+  log.debug("Leaving setAllPanes(). " + panes.length + " pane(s).");
+  return false;
+}
+
+// Bind every pane's title to its fieldset, and the one switch to all of them.
+//
+// A legend whose fieldset is missing is REPORTED rather than skipped: that is
+// exactly the drift the id convention exists to prevent, and a silent
+// `continue` would hide it again behind a title that does nothing.
+function wirePanes() {
+  log.debug("Entering wirePanes().");
+  var legends = document.querySelectorAll('.dbg-legend');
+  var wired = 0;
+  for (var i = 0; i < legends.length; i++) {
+    var legend = legends[i];
+    var id = legend.id || '';
+    if (id.indexOf('_expand_button') === -1) {
+      log.warn('a .dbg-legend has id ' + JSON.stringify(id) + ', which does ' +
+          'not end in _expand_button, so it cannot be paired with a fieldset');
+      continue;
+    }
+    var bodyId = id.replace('_expand_button', '_fieldset');
+    if (!el(bodyId)) {
+      log.warn('legend ' + id + ' names no fieldset ' + bodyId + ' — the ' +
+          "pane's ids have drifted and the title will do nothing");
+      continue;
+    }
+    legend.addEventListener('click', (function (target) {
+      return function () {
+        togglePane(target);
+        return false;
+      };
+    })(bodyId));
+    wired += 1;
+  }
+  var toggleAll = el('dbg_toggle_all');
+  if (toggleAll) {
+    toggleAll.addEventListener('change', function () {
+      setAllPanes(toggleAll.checked);
+    });
+  } else {
+    log.warn('there is no dbg_toggle_all on this page, so nothing expands ' +
+        'or collapses every pane at once');
+  }
+  log.debug("Leaving wirePanes(). " + wired + " pane(s) wired.");
+  return wired;
+}
+
 function init() {
   log.debug("Entering init().");
   loadState();
@@ -1519,6 +1668,8 @@ function init() {
   seed('spiffe_server_address', appconfig.spiffeServerAddressDefault, '');
   seed('spiffe_bundle_url', appconfig.spiffeBundleUrlDefault, '');
   seed('spiffe_csr_subject', null, 'C=US,O=SPIRE');
+  wirePanes();
+  mountAutoFit();
   loadLimits();
   log.debug("Leaving init().");
 }
@@ -1546,6 +1697,8 @@ module.exports = {
   onToggleSaveIdentity: onToggleSaveIdentity,
   onChangeField: onChangeField,
   clearOperationHistory: clearOperationHistory,
+  togglePane: togglePane,
+  setAllPanes: setAllPanes,
   renderHistory: renderHistory,
   init: init
 };

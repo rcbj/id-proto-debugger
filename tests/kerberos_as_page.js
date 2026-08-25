@@ -51,7 +51,7 @@ var baseUrl = "http://localhost:3000";
 // them. Set KRB5_KDC_HOST to point at something else.
 var kdcHost = process.env.KRB5_KDC_HOST || null;
 var kdcPort = process.env.KRB5_KDC_PORT || "88";
-var stsUrl = process.env.STS_URL || "http://localhost:8081";
+var stsUrl = process.env.STS_URL || "https://localhost:8081";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
 // Generated per run, with a prefix naming this file. The mock KDC creates an
 // account for any username on first sight (findOrCreateUser(), which

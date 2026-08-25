@@ -18,21 +18,41 @@ var config = {
   wsfedAcsUrl: "http://localhost:4000/wsfed",
   wsfedMetadataUrlDefault: "http://localhost:8082/auth/realms/wsfed-testing/protocol/wsfed/descriptor",
   samlMetadataUrlDefault: "http://localhost:8080/realms/debugger-testing/protocol/saml/descriptor",
+  // ---------------------------------------------------------------------------
+  // EVERY MOCK-STS DEFAULT BELOW IS **https**, AND THE PORT IS STILL 8081.
+  //
+  // That service binds its main port as TLS on this stack (STS_HTTPS=true on
+  // the `sts` service in local-tests.yml). The reason is the RFC 9700 pass: it is a
+  // TRUST REALM on that one instance now — /realm/rfc9700/... — rather than a
+  // second container, a realm binds no socket of its own, and the pass is only
+  // honest over TLS, since requirement 8.1 is that every configured endpoint is
+  // https and the client under test enforces it. So the scheme belongs to the
+  // process and every default here follows.
+  //
+  // The certificate is self-signed and REGENERATED ON EVERY START of that
+  // service, which is why nothing is baked anywhere: common/common.sh's
+  // trustStsCertificate() fetches it once the service answers and installs it
+  // for node (NODE_EXTRA_CA_CERTS) and for Chrome (an exact SPKI pin).
+  //
+  // `spiffeServerAddressDefault` is deliberately NOT changed — see its own note
+  // below. It is a gRPC address rather than a URL, and the scheme in it is the
+  // thing that value exists to demonstrate.
+  // ---------------------------------------------------------------------------
   // Default WS-Trust STS endpoint (the mock STS service on :8081).
-  wstrustStsUrlDefault: "http://localhost:8081/sts",
+  wstrustStsUrlDefault: "https://localhost:8081/sts",
   // Default OID4VCI Credential Issuer base URL (the mock issuer the STS
   // service also hosts) for the SD-JWT VC issuance workflow.
-  oid4vciIssuerUrlDefault: "http://localhost:8081",
+  oid4vciIssuerUrlDefault: "https://localhost:8081",
   // Where the OID4VP verifier lives, for the PRESENTATION workflow. Separate
   // from the issuer above: they share an origin only on this suite's mock STS,
   // and deriving one from the other breaks the moment issuance is run against
   // walt.id (its issuer is :7005/openid4vci, its verifier a different service
   // on :7003).
-  oid4vpVerifierUrlDefault: "http://localhost:8081",
+  oid4vpVerifierUrlDefault: "https://localhost:8081",
   // Default RFC 8414 (OAuth 2.0 Authorization Server Metadata) endpoint for
   // the Metadata Retrieval panes. The mock authorization server metadata the
   // STS service publishes.
-  rfc8414MetadataUrlDefault: "http://localhost:8081/.well-known/oauth-authorization-server",
+  rfc8414MetadataUrlDefault: "https://localhost:8081/.well-known/oauth-authorization-server",
 
   // ---------------------------------------------------------------------------
   // Kerberos. These fill kerberos.html so the workflow runs against this project's
@@ -72,7 +92,7 @@ var config = {
   // nobody. Set it only for a service whose SPN does not match its URL host, which
   // is the case that needs saying out loud anyway.
   // ---------------------------------------------------------------------------
-  krb5SpnegoUrlDefault: "http://localhost:8081/spnego/protected",
+  krb5SpnegoUrlDefault: "https://localhost:8081/spnego/protected",
   krb5SpnegoSpnDefault: "",
 
   // ---------------------------------------------------------------------------
@@ -143,7 +163,7 @@ var config = {
   spiffeTrustDomainDefault: "example.org",
   spiffeWorkloadAddressDefault: "sts:8092",
   spiffeServerAddressDefault: "http://localhost:8081",
-  spiffeBundleUrlDefault: "http://sts:8081/spiffe/bundle",
+  spiffeBundleUrlDefault: "https://sts:8081/spiffe/bundle",
 
   // ---------------------------------------------------------------------------
   // SCIM 2.0 (client/public/scim.html, docs/scim.md).
@@ -165,7 +185,7 @@ var config = {
   // this default therefore has to read it off the page rather than assume it.
   // See tests/CLAUDE.md.
   // ---------------------------------------------------------------------------
-  scimBaseUrlDefault: "http://localhost:8081/scim/v2",
+  scimBaseUrlDefault: "https://localhost:8081/scim/v2",
   // Where the cookie scheme's "sign in at the server" button goes. Empty means
   // the page uses the service root's own ORIGIN, which is the honest default:
   // a service's login screen is usually reached through a protocol flow (an

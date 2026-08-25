@@ -17,11 +17,46 @@
 // trip): the Redirect binding signs the query string, and the POST binding
 // produces an enveloped XML-DSIG, both with node-forge + a small Canonical XML
 // (C14N) implementation (deflate-raw via the native CompressionStream). The API
-// is only involved for the artifact RESPONSE binding, where the ACS must run a
-// SOAP ArtifactResolve (a server back-channel) — the browser registers the SP
-// context via /samlartifactctx, then still signs+sends the request itself. Only
-// SAML 2.0 is functional; 1.0/1.1 are reference-only (IdP-initiated, no signed
-// SP request).
+// is only involved for the artifact RESPONSE binding, where the back-channel
+// resolution is a SOAP call the browser cannot make — the browser registers the
+// SP context via /samlartifactctx, then still signs+sends the request itself.
+//
+// ---------------------------------------------------------------------------
+// TWO PROTOCOL VERSIONS ARE FUNCTIONAL HERE, AND THEY ARE TWO PROTOCOLS.
+//
+// **SAML 1.1 has no request message.** There is no `<AuthnRequest>` in it: the
+// browser profiles (saml-profile-1.1 sections 4.1 and 4.2) are
+// IDENTITY-PROVIDER-INITIATED, and a flow begins when a browser arrives at the
+// inter-site transfer service carrying a `TARGET`. What a real SAML 1.1 service
+// provider actually sends is Shibboleth's request profile — identified by
+// `urn:mace:shibboleth:1.0:profiles:AuthnRequest`, four query parameters
+// (`TARGET`, `shire`, `providerId`, `time`), not a standard, and the one every
+// deployment used. That is what this page sends, and it is why five settings in
+// the SP / Request pane are greyed out and switched off when 1.1 is selected:
+// there is nothing to sign, nothing to encrypt, nowhere to put a subject hint,
+// and SAML 1.1 has no Single Logout at all. See applyVersionAvailability(),
+// which is the one place that decision is written down.
+//
+// The three binding choices keep their meanings and get 1.1 spellings:
+//
+//   redirect  the Shibboleth request as a top-level GET to the inter-site
+//             transfer service; the response comes back on Browser/POST.
+//   post      the same parameters as a form POST to that endpoint; the response
+//             again on Browser/POST. (SAML 1.1 defines no POST-bound request —
+//             this is the same non-standard request delivered the other way,
+//             which the mock STS accepts and a Shibboleth IdP would not.)
+//   artifact  the request as a GET, and the response on Browser/Artifact: a
+//             `SAMLart` on a redirect to the assertion consumer, resolved by
+//             the API over the SOAP binding at the IdP's SAML responder.
+//
+// Two of the parameters this page sends are NON-SPEC and are marked as such
+// wherever they appear: `profile=post|artifact`, because nothing in SAML 1.1
+// lets a relying party choose between the two browser profiles, and `format`,
+// because nothing lets it ask for a NameIdentifier format either. Both are
+// ignored by an identity provider that does not know them.
+//
+// SAML 1.0 remains reference-only: it is 1.1 with a MinorVersion of 0 and
+// nothing here has an implementation to point at.
 //
 // Everything the user configures is persisted to localStorage (keyed by element
 // id) so it survives a page reload — including, per design, the generated SP
@@ -86,6 +121,58 @@ var SIG_ALG_RSA_SHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 // signer certificate back out under this same prefix.
 var STORE_PREFIX = "samltools_";
 var NAMEID_OPTIONS_KEY = STORE_PREFIX + "nameid_options";
+
+// SAML 1.1's vocabulary. Every URI here carries `1.0` EXCEPT the protocol
+// support one, and that is not a typo anywhere: the assertion and protocol
+// schemas were never renamed between SAML 1.0 and 1.1 — the version travels in
+// MajorVersion/MinorVersion attributes instead — while
+// `protocolSupportEnumeration` names the PROTOCOL and is spelled 1.1. Writing
+// `urn:oasis:names:tc:SAML:1.1:profiles:browser-post` produces a document that
+// looks right in a diff and that nothing will match.
+var SAML11 = {
+  // The two browser profiles. In a SAML 1.1 metadata descriptor the `Binding`
+  // attribute carries a PROFILE identifier rather than a binding one, which
+  // reads wrong and is what Shibboleth's own metadata does — the 1.1 profiles
+  // bundle their binding into the profile.
+  post: 'urn:oasis:names:tc:SAML:1.0:profiles:browser-post',
+  artifact: 'urn:oasis:names:tc:SAML:1.0:profiles:artifact-01',
+  // Shibboleth's request profile: the only way a SAML 1.1 service provider can
+  // tell an identity provider where to send the assertion.
+  authnRequest: 'urn:mace:shibboleth:1.0:profiles:AuthnRequest',
+  // What the artifact resolution / attribute endpoints are bound with.
+  soap: 'urn:oasis:names:tc:SAML:1.0:bindings:SOAP-binding',
+  protocol: 'urn:oasis:names:tc:SAML:1.1:protocol'
+};
+var SAML20_PROTOCOL = 'urn:oasis:names:tc:SAML:2.0:protocol';
+
+// Set by parseMetadata() when a loaded document moved the Protocol Version
+// selector, and read by applyMetadata() so the status line says so. A metadata
+// load is the only thing here that changes a selector the user set, and a
+// change nothing announces is one that reads as this page ignoring them.
+var metadataVersionSwitch = '';
+
+// The selected protocol version, and the two questions asked of it everywhere
+// below. `samlVersion()` never returns '' — an unreadable selector falls back
+// to 2.0, which is the version every other default on this page assumes.
+function samlVersion() {
+  log.debug("Entering samlVersion().");
+  log.debug("Leaving samlVersion().");
+  return val('saml_version') || '2.0';
+}
+function isSaml11() {
+  log.debug("Entering isSaml11().");
+  log.debug("Leaving isSaml11().");
+  return samlVersion() === '1.1';
+}
+// SAML 1.0 is 1.1 with a MinorVersion of 0 and nothing here implements it, so
+// it stays what it has always been: a version that builds a note and sends
+// nothing.
+function isReferenceOnly() {
+  log.debug("Entering isReferenceOnly().");
+  log.debug("Leaving isReferenceOnly().");
+  var v = samlVersion();
+  return v !== '2.0' && v !== '1.1';
+}
 
 // ---------------------------------------------------------------------------
 // Small DOM helpers
@@ -282,7 +369,10 @@ function applyMetadata(xmlText, url) {
   setVal('saml_metadata_doc', xmlText);
   try {
     parseMetadata(xmlText);
-    setStatus('saml_metadata_status', 'Loaded and parsed.');
+    setStatus('saml_metadata_status', 'Loaded and parsed.' +
+      (metadataVersionSwitch ? ' The document describes a SAML ' +
+       metadataVersionSwitch + ' identity provider, so Protocol Version was ' +
+       'set to ' + metadataVersionSwitch + '.' : ''));
     // Recorded after the parse so the IdP entityID it just populated is shown.
     opSuccess('Load IdP Metadata', url ? ('loaded from ' +
               url) : 'loaded from a local file', { binding: '—' });
@@ -341,6 +431,7 @@ function tags(root, localName) {
 
 function parseMetadata(xmlText) {
   log.debug("Entering parseMetadata().");
+  metadataVersionSwitch = '';
   var doc = new DOMParser().parseFromString(xmlText, 'application/xml');
   if (doc.getElementsByTagName('parsererror').length) {
     throw new Error('malformed XML');
@@ -350,9 +441,18 @@ function parseMetadata(xmlText) {
   setVal('saml_idp_entity_id', ed.getAttribute('entityID') || '');
 
   var idp = tags(doc, 'IDPSSODescriptor')[0] || ed;
+  var version = metadataProtocolVersion(idp);
 
-  // SSO endpoints by binding.
-  var ssoPost = '', ssoRedirect = '', ssoArtifact = '';
+  // SSO endpoints by binding — and, in SAML 1.1, by PROFILE.
+  //
+  // A SAML 1.1 descriptor names one endpoint (the inter-site transfer service)
+  // three times, once per profile it answers: Browser/POST, Browser/Artifact,
+  // and Shibboleth's request profile. There is no separate redirect endpoint
+  // and no separate artifact endpoint, so all three fields below take that one
+  // address. Reading it as though the fields were exclusive is how a SAML 1.1
+  // document ends up populating none of them and the page reports "no IdP
+  // endpoint for the selected binding" about a document that named it.
+  var ssoPost = '', ssoRedirect = '', ssoArtifact = '', its = '';
   var ssos = tags(idp, 'SingleSignOnService');
   for (var i = 0; i < ssos.length; i++) {
     var b = ssos[i].getAttribute('Binding'), loc =
@@ -360,12 +460,23 @@ function parseMetadata(xmlText) {
     if (b === BINDING.post) ssoPost = loc;
     else if (b === BINDING.redirect) ssoRedirect = loc;
     else if (b === BINDING.artifact) ssoArtifact = loc;
+    else if (b === SAML11.post || b === SAML11.artifact ||
+             b === SAML11.authnRequest) {
+      if (!its) its = loc;
+    }
+  }
+  if (version === '1.1' && its) {
+    ssoPost = its;
+    ssoRedirect = its;
+    ssoArtifact = its;
   }
   setVal('saml_sso_post', ssoPost);
   setVal('saml_sso_redirect', ssoRedirect);
   setVal('saml_sso_artifact', ssoArtifact);
 
-  // SLO endpoints by binding.
+  // SLO endpoints by binding. A SAML 1.1 descriptor has none — the protocol has
+  // no Single Logout — and the loop below simply finds nothing, which clears
+  // the three fields rather than leaving a 2.0 document's addresses behind.
   var sloPost = '', sloRedirect = '', sloArtifact = '';
   var slos = tags(idp, 'SingleLogoutService');
   for (var j = 0; j < slos.length; j++) {
@@ -379,8 +490,14 @@ function parseMetadata(xmlText) {
   setVal('saml_slo_redirect', sloRedirect);
   setVal('saml_slo_artifact', sloArtifact);
 
-  // Artifact Resolution Service (SOAP back-channel).
-  var ars = tags(idp, 'ArtifactResolutionService')[0];
+  // Artifact Resolution Service (SOAP back-channel). SAML 1.1 publishes the
+  // same address twice — once here and once as the AttributeService of an
+  // <AttributeAuthorityDescriptor>, because a Shibboleth service provider reads
+  // the second one and will not look for it inside the IDPSSODescriptor. Either
+  // will do for resolving an artifact, so the second is a fallback rather than
+  // a separate field.
+  var ars = tags(idp, 'ArtifactResolutionService')[0] ||
+      tags(doc, 'AttributeService')[0];
   setVal('saml_ars', ars ? (ars.getAttribute('Location') || '') : '');
 
   // NameIDFormat list.
@@ -414,7 +531,51 @@ function parseMetadata(xmlText) {
   // edits persist (localStorage). loadMetadata() calls saveState() after this.
   if (signerCert) setVal('saml_enc_cert', signerCert);
   onNameIdFormatChange();
+  // THE DOCUMENT DECIDES THE PROTOCOL VERSION, because it is the only thing
+  // here that knows: `protocolSupportEnumeration` is what an identity provider
+  // says it speaks, and a page left on 2.0 in front of a 1.1-only descriptor
+  // would build a request that endpoint cannot read and report the refusal as
+  // an IdP problem. It is applied only when the document is unambiguous (one
+  // version, and not the one already selected) and the status line says so —
+  // an unannounced change to a selector the user set is worse than the wrong
+  // default.
+  if (version && version !== samlVersion()) {
+    setVal('saml_version', version);
+    metadataVersionSwitch = version;
+  } else {
+    metadataVersionSwitch = '';
+  }
+  applyVersionAvailability();
   log.debug("Leaving parseMetadata().");
+}
+
+// What `protocolSupportEnumeration` says the identity provider speaks. '' when
+// the document does not say, or says both — in which case whatever the user
+// selected stands.
+function metadataProtocolVersion(idp) {
+  log.debug("Entering metadataProtocolVersion().");
+  var pse = (idp && idp.getAttribute &&
+      idp.getAttribute('protocolSupportEnumeration')) || '';
+  var has20 = pse.indexOf(SAML20_PROTOCOL) >= 0;
+  // A descriptor declaring the SAML **1.0** protocol counts as 1.1 here, and
+  // that is a decision rather than sloppiness: the two share every namespace
+  // they have, their browser profiles are the same two profiles, and 1.1 is the
+  // one this page can drive. Selecting the reference-only 1.0 entry on the
+  // strength of a `1.0:protocol` string would leave the user in front of a
+  // version that builds nothing, from a document describing a service that
+  // works.
+  var has11 = pse.indexOf(SAML11.protocol) >= 0 ||
+      pse.indexOf('urn:oasis:names:tc:SAML:1.0:protocol') >= 0;
+  if (has20 && !has11) {
+    log.debug("Leaving metadataProtocolVersion(). 2.0.");
+    return '2.0';
+  }
+  if (has11 && !has20) {
+    log.debug("Leaving metadataProtocolVersion(). 1.1.");
+    return '1.1';
+  }
+  log.debug("Leaving metadataProtocolVersion(). The document does not say.");
+  return '';
 }
 
 function populateNameIdOptions(formats) {
@@ -550,12 +711,215 @@ function validateHint() {
 }
 
 function onVersionChange() {
-  log.debug("Entering onVersionChange().");
-  var v = val('saml_version');
-  show('saml_version_warning', v !== '2.0');
+  log.debug("Entering onVersionChange(). version=" + samlVersion());
+  // A version the user chose is not a version a metadata load chose, so the
+  // note that says a load moved the selector stops being true here.
+  metadataVersionSwitch = '';
+  applyVersionAvailability();
   saveState();
   log.debug("Leaving onVersionChange().");
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// WHICH OF THIS PANE'S SETTINGS APPLY TO THE SELECTED VERSION.
+//
+// SAML 1.1 is not SAML 2.0 with older element names — it has NO REQUEST
+// MESSAGE. Five settings follow from that, and each one is DISABLED and greyed
+// rather than silently ignored, because a control that quietly does nothing is
+// the version of this that costs somebody an afternoon:
+//
+//   the username hint      goes in <saml:Subject> on an AuthnRequest, and there
+//                          is no request document to put one in.
+//   sign the request       there is nothing to sign. Shibboleth's request
+//                          profile is four unsigned query parameters.
+//   encrypt the request    there is nothing to encrypt either. (The 2.0 option
+//                          is already marked non-standard on the page.)
+//   Single Logout          SAML 1.1 has none — absent from the protocol, not
+//                          unimplemented here.
+//   the SLO endpoints      nothing publishes them, so the fields go with it.
+//
+// **THE SP KEY PAIR IS NOT DISABLED, and that is the one that looks
+// inconsistent.** It still signs the SOAP <samlp:Request> that resolves an
+// artifact, and it is still the KeyDescriptor in the SP metadata this page
+// downloads — so greying that pane would take away two things that work.
+//
+// Both halves matter, and the second is the one that is easy to leave out: a
+// block that only LOOKS dead still submits on a Return keypress in a text
+// field, and the refusal in callIdp() is then the first thing that says
+// anything. `pki.js`'s disableTlsPane() makes the same argument at pane scale.
+// ---------------------------------------------------------------------------
+function applyVersionAvailability() {
+  log.debug("Entering applyVersionAvailability(). version=" + samlVersion());
+  var v = samlVersion();
+  var isEleven = v === '1.1';
+  var reference = isReferenceOnly();
+  // Everything a request document brings with it is gone in 1.1, and gone in
+  // 1.0 for the additional reason that nothing here builds one at all.
+  var noRequestDoc = isEleven || reference;
+
+  setUnavailable('saml_hint_field', noRequestDoc, ['saml_username_hint']);
+  setUnavailable('saml_sign_field', noRequestDoc, ['saml_sign_request']);
+  setUnavailable('saml_encrypt_field', noRequestDoc, ['saml_encrypt_request']);
+  setUnavailable('saml_slo_section', v !== '2.0',
+                 ['saml_slo_post', 'saml_slo_redirect', 'saml_slo_artifact']);
+  var logout = el('saml_logout_btn');
+  if (logout) {
+    logout.disabled = (v !== '2.0');
+    if (v !== '2.0') logout.classList.add('saml-unavailable');
+    else logout.classList.remove('saml-unavailable');
+  }
+  // The binding selector keeps all three options in 1.1 and they keep their
+  // meanings; only the words change, because "HTTP-Redirect" names a SAML 2.0
+  // binding URI that does not exist in 1.1.
+  var bindingOpts = {
+    redirect: isEleven ? 'HTTP Redirect (GET to the inter-site transfer ' +
+        'service)' : 'HTTP-Redirect (GET)',
+    post: isEleven ? 'HTTP POST (form POST to the inter-site transfer ' +
+        'service)' : 'HTTP-POST',
+    artifact: isEleven ? 'HTTP Artifact (Browser/Artifact, section 4.1)' :
+        'HTTP-Artifact'
+  };
+  var sel = el('saml_binding');
+  if (sel) {
+    for (var i = 0; i < sel.options.length; i++) {
+      var o = sel.options[i];
+      if (bindingOpts[o.value]) o.text = bindingOpts[o.value];
+    }
+  }
+
+  setText('saml_version_warning', versionNote(v));
+  show('saml_version_warning', v !== '2.0');
+  setText('saml_binding_note', bindingNote(v));
+  setText('saml_sso_endpoints_note', ssoEndpointsNote(v));
+  setText('saml_slo_note', v === '2.0' ? '' :
+      'SAML ' + v + ' has no Single Logout. There is no message for one and ' +
+      'nothing publishes an endpoint, so these fields do not apply.');
+  setText('saml_sp_entity_id_note', isEleven ?
+      'Sent as the non-standard providerId parameter, which is the only ' +
+      'way a SAML 1.1 relying party can name itself. It becomes the ' +
+      'assertion\'s audience restriction.' : '');
+  setText('saml_acs_url_note', isEleven ?
+      'Sent as Shibboleth\'s shire parameter. It is where the identity ' +
+      'provider POSTs the Response, or redirects with a SAMLart.' : '');
+  // Note the wording: the checkbox above is DISABLED and still shows whatever
+  // it was ticked to, because its state is the SAML 2.0 preference and is
+  // persisted — unticking it here would mean a reload on 1.1 silently turned
+  // request signing off for 2.0 as well. So the note says the setting does not
+  // apply rather than that it is off, which is what a greyed tick would
+  // otherwise be read as contradicting.
+  setText('saml_keypair_role_note', isEleven ?
+      'SAML 1.1 has no request document, so the setting above does not apply ' +
+      'here whatever it shows — it is remembered for SAML 2.0. This key pair ' +
+      'IS still used: it signs the SOAP <samlp:Request> that resolves an ' +
+      'artifact on the HTTP Artifact binding, and it is the KeyDescriptor in ' +
+      'the SP metadata this page downloads.' : '');
+
+  // The two sub-sections these checkboxes open have to follow the checkbox
+  // rather than their own handler, or switching to 1.1 leaves an encryption
+  // pane open over a checkbox that can no longer be ticked.
+  onSignChange();
+  onEncryptChange();
+  log.debug("Leaving applyVersionAvailability().");
+}
+
+// Grey a block and switch off the controls in it. Both halves, always: see the
+// note above applyVersionAvailability() for why one without the other is worse
+// than neither.
+function setUnavailable(containerId, off, controlIds) {
+  log.debug("Entering setUnavailable(). id=" + containerId + ", off=" + !!off);
+  var c = el(containerId);
+  if (c) {
+    if (off) c.classList.add('saml-unavailable');
+    else c.classList.remove('saml-unavailable');
+  }
+  for (var i = 0; i < (controlIds || []).length; i++) {
+    var e = el(controlIds[i]);
+    if (e) e.disabled = !!off;
+  }
+  log.debug("Leaving setUnavailable().");
+}
+
+// textContent, not innerHTML: these are messages, not markup.
+//
+// An EMPTY note is hidden rather than left as an empty element, because these
+// are block-level paragraphs with margins — six of them on one pane, each
+// contributing its margin on the version that has nothing to say, is a pane
+// that grew for no reason and a page a little further from fitting on one
+// screen.
+function setText(id, text) {
+  log.debug("Entering setText().");
+  var e = el(id);
+  if (!e) {
+    log.debug("Leaving setText(). No such element.");
+    return;
+  }
+  e.textContent = text || '';
+  show(id, !!text);
+  log.debug("Leaving setText().");
+}
+
+function versionNote(v) {
+  log.debug("Entering versionNote().");
+  if (v === '1.1') {
+    log.debug("Leaving versionNote(). 1.1.");
+    return 'SAML 1.1 has no <AuthnRequest>. Its browser profiles are ' +
+      'identity-provider-initiated, and what this page sends is ' +
+      'Shibboleth\'s request profile ' +
+      '(urn:mace:shibboleth:1.0:profiles:AuthnRequest): the ' +
+      'query parameters TARGET, shire, providerId and time, plus the ' +
+      'non-standard profile and format. Nothing in that is signed or ' +
+      'encrypted, there is no subject hint to send, and the protocol has no ' +
+      'Single Logout — so those settings are switched off below rather than ' +
+      'ignored. Keycloak has not spoken SAML 1.1 for years; the mock STS ' +
+      'does.' + (hasSamlLanding() ? '' :
+      ' NOTE: this deployment has nowhere for the identity provider to POST ' +
+      'a response, and SAML 1.1 has no redirect-bound response binding to ' +
+      'fall back to — Browser/POST is a form POST and Browser/Artifact needs ' +
+      'the API. SAML 1.1 cannot complete here.');
+  }
+  if (v === '2.0') {
+    log.debug("Leaving versionNote(). 2.0.");
+    return '';
+  }
+  log.debug("Leaving versionNote(). Reference only.");
+  return 'SAML 1.0 is reference only. It is SAML 1.1 with a MinorVersion of ' +
+    '0 and nothing here builds one, so no request is sent. Select SAML 1.1 ' +
+    'for a working browser-profile round trip, or SAML 2.0 for an ' +
+    'SP-initiated one.';
+}
+
+function bindingNote(v) {
+  log.debug("Entering bindingNote().");
+  if (v !== '1.1') {
+    log.debug("Leaving bindingNote(). Not 1.1.");
+    return '';
+  }
+  log.debug("Leaving bindingNote(). 1.1.");
+  return 'In SAML 1.1 this chooses two things at once. Redirect and POST ' +
+    'differ only in how the request reaches the inter-site transfer ' +
+    'service — the answer comes back on Browser/POST either way (section ' +
+    '4.2), as a form POST of a SAMLResponse to the shire URL. Artifact asks ' +
+    'for Browser/Artifact (section 4.1): the browser is redirected to the ' +
+    'shire with a SAMLart, and the API resolves it over the SOAP binding at ' +
+    'the SAML responder, which destroys it — an artifact is one-shot. Note ' +
+    'that SAML 1.1 defines no POST-bound request at all; that option sends ' +
+    'the same non-standard parameters as a form and needs an identity ' +
+    'provider that reads one.';
+}
+
+function ssoEndpointsNote(v) {
+  log.debug("Entering ssoEndpointsNote().");
+  if (v !== '1.1') {
+    log.debug("Leaving ssoEndpointsNote(). Not 1.1.");
+    return '';
+  }
+  log.debug("Leaving ssoEndpointsNote(). 1.1.");
+  return 'A SAML 1.1 identity provider has ONE endpoint here — the ' +
+    'inter-site transfer service — which its metadata names once per ' +
+    'profile it answers, so all three fields above hold the same address. ' +
+    'The Artifact Resolution Service is its SAML responder, over the SOAP ' +
+    'binding.';
 }
 
 // Toggle the SP Signing Key Pair section with the "Digitally sign the
@@ -563,7 +927,11 @@ function onVersionChange() {
 function onSignChange() {
   log.debug("Entering onSignChange().");
   var e = el('saml_sign_request');
-  show('saml_signing_section', !e || e.checked);
+  // In SAML 1.1 the checkbox is off and disabled, and the section stays VISIBLE
+  // anyway: the key pair still signs the artifact back-channel's SOAP request
+  // and is still the SP metadata's KeyDescriptor. See
+  // applyVersionAvailability().
+  show('saml_signing_section', isSaml11() || !e || e.checked);
   saveState();
   log.debug("Leaving onSignChange().");
   return false;
@@ -608,7 +976,9 @@ function onSaveKeyPairChange() {
 function onEncryptChange() {
   log.debug("Entering onEncryptChange().");
   var e = el('saml_encrypt_request');
-  show('saml_encryption_section', !!(e && e.checked));
+  // Closed and kept closed on a version with no request document to encrypt,
+  // whatever a preference stored during a 2.0 session says.
+  show('saml_encryption_section', encEnabled());
   saveState();
   log.debug("Leaving onEncryptChange().");
   return false;
@@ -726,22 +1096,38 @@ function buildSpMetadata() {
     : '';
   var nameIdFmt = fmt ? '\n    <md:NameIDFormat>' + xmlEscape(fmt) +
       '</md:NameIDFormat>' : '';
+  // WHICH BINDINGS THE ASSERTION CONSUMER ANSWERS, and in SAML 1.1 they are
+  // PROFILE URIs rather than binding ones — the 1.1 profiles bundle their
+  // binding into the profile, which is what Shibboleth's own metadata does. A
+  // 1.1 document that advertised the 2.0 HTTP-POST binding URI here describes
+  // an endpoint no SAML 1.1 identity provider will use.
+  var eleven = isSaml11();
   var acsSvc = acs
-    ? '\n    <md:AssertionConsumerService Binding="' + BINDING.post +
+    ? '\n    <md:AssertionConsumerService Binding="' +
+        (eleven ? SAML11.post : BINDING.post) +
         '" Location="' + xmlEscape(acs) + '" index="0" isDefault="true"/>' +
-      '\n    <md:AssertionConsumerService Binding="' + BINDING.artifact +
+      '\n    <md:AssertionConsumerService Binding="' +
+        (eleven ? SAML11.artifact : BINDING.artifact) +
           '" Location="' + xmlEscape(acs) + '" index="1"/>'
     : '';
+  // SAML 1.1 has no Single Logout and no request to sign, so a descriptor for
+  // it carries neither the SingleLogoutService endpoints nor
+  // AuthnRequestsSigned. Both are attributes an identity provider reads and
+  // acts on, so writing them into a 1.1 document is not harmless decoration:
+  // it claims this service provider will send something it cannot.
+  var elevenSlo = eleven ? '' : sloSvc;
+  var signedAttr = eleven ? '' : 'AuthnRequestsSigned="true" ';
 
   log.debug("Leaving buildSpMetadata().");
   return '<?xml version="1.0" encoding="UTF-8"?>' +
          '\n<md:EntityDescriptor ' +
              'xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="' +
              xmlEscape(entityId) + '">' +
-         '\n  <md:SPSSODescriptor AuthnRequestsSigned="true" ' +
+         '\n  <md:SPSSODescriptor ' + signedAttr +
              'WantAssertionsSigned="true"' +
-         ' protocolSupportEnumeration="urn:oasis:names:tc:SAML:2.0:protocol">' +
-         keyDescriptor + sloSvc + nameIdFmt + acsSvc +
+         ' protocolSupportEnumeration="' +
+             (eleven ? SAML11.protocol : SAML20_PROTOCOL) + '">' +
+         keyDescriptor + elevenSlo + nameIdFmt + acsSvc +
          '\n  </md:SPSSODescriptor>' +
          '\n</md:EntityDescriptor>\n';
 }
@@ -765,6 +1151,16 @@ function downloadSpMetadata() {
 // ---------------------------------------------------------------------------
 function ssoDestination(binding) {
   log.debug("Entering ssoDestination().");
+  // SAML 1.1 has ONE endpoint — the inter-site transfer service — which its
+  // metadata names once per profile, so parseMetadata() puts the same address
+  // in all three fields. Any of them will do, and taking the first non-empty
+  // one means a document that advertised only Browser/POST still works.
+  if (isSaml11()) {
+    var its = val('saml_sso_redirect') || val('saml_sso_post') ||
+        val('saml_sso_artifact');
+    log.debug("Leaving ssoDestination(). The inter-site transfer service.");
+    return its;
+  }
   // The AuthnRequest itself is delivered via HTTP-POST or HTTP-Redirect. The
   // "artifact" choice affects only how the *response* comes back
   // (ProtocolBinding = HTTP-Artifact), so the request is still sent to the
@@ -775,6 +1171,75 @@ function ssoDestination(binding) {
   }
   log.debug("Leaving ssoDestination().");
   return val('saml_sso_redirect');
+}
+
+// ---------------------------------------------------------------------------
+// THE SAML 1.1 REQUEST, WHICH IS NOT A DOCUMENT.
+//
+// Shibboleth's AuthnRequest profile: four parameters, unsigned, on the query
+// string of a top-level GET (or, for the POST binding here, as form fields).
+// Two more are NON-SPEC and are named as such everywhere they appear —
+// `profile`, because nothing in SAML 1.1 lets a relying party choose between
+// the two browser profiles, and `format`, because nothing lets it ask for a
+// NameIdentifier format. An identity provider that does not know them ignores
+// them, which is why sending them costs nothing.
+//
+// `TARGET` is the relay state. The profile intends it as the URL of the
+// resource the person was trying to reach, and what the binding actually
+// GUARANTEES is that it comes back byte for byte — which is what this page
+// needs it for, exactly as RelayState is used on the 2.0 side: the artifact
+// flow carries the API's `art:<id>` context handle in it, and there is nowhere
+// else in the protocol to put one.
+// ---------------------------------------------------------------------------
+function saml11RequestParams(target) {
+  log.debug("Entering saml11RequestParams().");
+  var out = [];
+  out.push(['TARGET', target || '']);
+  var acs = val('saml_acs_url');
+  if (acs) out.push(['shire', acs]);
+  var sp = val('saml_sp_entity_id');
+  if (sp) out.push(['providerId', sp]);
+  // Seconds since the epoch, which is what Shibboleth sends. Not checked by
+  // anything here; it is in the profile and a service provider that omitted it
+  // would be sending a request no Shibboleth identity provider recognises.
+  out.push(['time', String(Math.floor(Date.now() / 1000))]);
+  out.push(['profile',
+            val('saml_binding') === 'artifact' ? 'artifact' : 'post']);
+  var fmt = val('saml_nameid_format');
+  if (fmt) out.push(['format', fmt]);
+  log.debug("Leaving saml11RequestParams(). " + out.length + " parameters.");
+  return out;
+}
+
+function saml11QueryString(params) {
+  log.debug("Entering saml11QueryString().");
+  var parts = [];
+  for (var i = 0; i < params.length; i++) {
+    parts.push(encodeURIComponent(params[i][0]) + '=' +
+               encodeURIComponent(params[i][1]));
+  }
+  log.debug("Leaving saml11QueryString().");
+  return parts.join('&');
+}
+
+// The request as it will actually be sent, for the read-only box on the page.
+// A URL for the two GET bindings; the endpoint and the form fields for the POST
+// one, because there is no URL to show — the parameters are in the body.
+function saml11RequestText(dest, params) {
+  log.debug("Entering saml11RequestText().");
+  var qs = saml11QueryString(params);
+  if (val('saml_binding') === 'post') {
+    var lines = ['POST ' + (dest || '(no inter-site transfer service — ' +
+                 'load metadata)'),
+                 'Content-Type: application/x-www-form-urlencoded', ''];
+    for (var i = 0; i < params.length; i++) {
+      lines.push(params[i][0] + '=' + params[i][1]);
+    }
+    log.debug("Leaving saml11RequestText(). A form POST.");
+    return lines.join('\n');
+  }
+  log.debug("Leaving saml11RequestText(). A URL.");
+  return dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') + qs) : qs;
 }
 
 // Which binding the IdP should use to return the response.
@@ -843,15 +1308,24 @@ function buildAuthnRequest() {
   var hint = val('saml_username_hint').trim();
   var rule = hintRuleFor(fmt);
 
+  // SAML 1.1: there is no request DOCUMENT, so what goes in this box is the
+  // request itself — the inter-site transfer URL, or the endpoint and the form
+  // fields. buildRequestUi() and callIdp() both compose it from the same
+  // saml11RequestParams(), so what is shown is what is sent.
+  if (version === '1.1') {
+    log.debug("Leaving buildAuthnRequest(). SAML 1.1 sends no document.");
+    return saml11RequestText(dest, saml11RequestParams('saml_request'));
+  }
+
   if (version !== '2.0') {
     log.debug("Leaving buildAuthnRequest().");
     return '<!-- SAML ' + version +
-        ' has no SP-initiated AuthnRequest. SAML 1.x Web SSO\n' +
-           '     is IdP-initiated (Browser/Artifact or Browser/POST) with no ' +
-               'signed SP\n' +
-           '     request, and SAML 2.0 IdPs (e.g. Keycloak) will not accept ' +
-               'a 1.x request.\n' +
-           '     Switch to SAML 2.0 to build and send a real request. -->';
+        ' is reference only here. It is SAML 1.1 with a MinorVersion of\n' +
+           '     0, and nothing in this page builds one. Select SAML 1.1 for ' +
+               'a working\n' +
+           '     browser-profile round trip (Browser/POST or ' +
+               'Browser/Artifact), or\n' +
+           '     SAML 2.0 for an SP-initiated one. -->';
   }
 
   var id = genId();
@@ -1062,16 +1536,31 @@ function encryptAuthnRequest(xml) {
     '</xenc:EncryptedData>';
 }
 
-// Whether signing / encryption are enabled (checkbox state). Signing defaults
-// to on when the checkbox is somehow absent; encryption defaults to off.
+// Whether signing / encryption are enabled. Signing defaults to on when the
+// checkbox is somehow absent; encryption defaults to off.
+//
+// **BOTH READ THE VERSION FIRST, and that is the enforcement rather than a
+// convenience.** The checkboxes are disabled on a version with no request
+// document, but their state is PERSISTED — so a page restored from a 2.0
+// session arrives with "sign" ticked, and a caller that read the checkbox alone
+// would try to sign a document that does not exist. The disabled attribute is
+// what the reader sees; this is what the code obeys.
 function signEnabled() {
   log.debug("Entering signEnabled().");
+  if (samlVersion() !== '2.0') {
+    log.debug("Leaving signEnabled(). No request document to sign.");
+    return false;
+  }
   var e = el('saml_sign_request');
   log.debug("Leaving signEnabled().");
   return !e || e.checked;
 }
 function encEnabled() {
   log.debug("Entering encEnabled().");
+  if (samlVersion() !== '2.0') {
+    log.debug("Leaving encEnabled(). No request document to encrypt.");
+    return false;
+  }
   var e = el('saml_encrypt_request');
   log.debug("Leaving encEnabled().");
   return !!(e && e.checked);
@@ -1103,7 +1592,10 @@ function autoBuildRequest() {
 
 function buildRequestUi() {
   log.debug("Entering buildRequestUi().");
-  if (!validateHint()) {
+  // The hint is only sent on a version that has a request document to carry it,
+  // and its field is disabled on the others — so a value left over from a 2.0
+  // session must not be able to refuse a 1.1 build.
+  if (samlVersion() === '2.0' && !validateHint()) {
     setStatus('saml_call_status',
               'Username hint does not match the selected NameIDFormat.');
     log.debug("Leaving buildRequestUi().");
@@ -1113,9 +1605,23 @@ function buildRequestUi() {
   setVal('saml_authn_request', xml);
   saveState();
 
-  if (val('saml_version') !== '2.0') {
+  if (isSaml11()) {
+    var dest11 = ssoDestination(val('saml_binding'));
+    setStatus('saml_call_status', dest11
+      ? ('Built the SAML 1.1 ' + (val('saml_binding') === 'post' ?
+         'form POST' : 'inter-site transfer request') + ' for the ' +
+         (val('saml_binding') === 'artifact' ? 'Browser/Artifact' :
+          'Browser/POST') + ' profile. Nothing in it is signed — SAML 1.1 ' +
+         'has no request document.')
+      : 'Built the SAML 1.1 request parameters — load metadata for the ' +
+        'inter-site transfer service address.');
+    log.debug("Leaving buildRequestUi(). SAML 1.1.");
+    return false;
+  }
+
+  if (isReferenceOnly()) {
     setStatus('saml_call_status',
-              'SAML 1.x is reference-only — see the request box.');
+              'SAML 1.0 is reference-only — see the request box.');
     log.debug("Leaving buildRequestUi().");
     return false;
   }
@@ -1180,13 +1686,17 @@ function buildRequestUi() {
 // ArtifactResolve later; we register the SP context, then sign+send in-browser.
 // ---------------------------------------------------------------------------
 function callIdp() {
-  log.debug("Entering callIdp().");
-  if (val('saml_version') !== '2.0') {
-    setStatus('saml_call_status', 'Only SAML 2.0 can be sent. SAML 1.x is ' +
-              'IdP-initiated (reference only).');
+  log.debug("Entering callIdp(). version=" + samlVersion());
+  if (isSaml11()) {
+    log.debug("Leaving callIdp(). Handed to the SAML 1.1 path.");
+    return callIdpSaml11();
+  }
+  if (isReferenceOnly()) {
+    setStatus('saml_call_status', 'SAML 1.0 is reference only — nothing is ' +
+              'built to send. Select SAML 1.1 or SAML 2.0.');
     log.debug("Leaving callIdp().");
     return opFailure('Send AuthnRequest',
-                     'SAML 1.x is IdP-initiated — nothing to send.');
+                     'SAML 1.0 is reference only — nothing to send.');
   }
   var signOn = signEnabled();
   var encOn = encEnabled();
@@ -1328,6 +1838,156 @@ function callIdp() {
   log.debug("Leaving callIdp().");
 }
 
+// ---------------------------------------------------------------------------
+// SEND THE SAML 1.1 REQUEST.
+//
+// There is nothing to sign, nothing to encrypt and no document to build, so
+// this is much shorter than its 2.0 sibling and the whole of the difference
+// between the three bindings is here:
+//
+//   redirect  navigate to the inter-site transfer service with the parameters
+//             on the query string. A top-level GET, which is what carries a
+//             SameSite=Lax session cookie — so an identity provider that has
+//             already signed this browser in answers without a screen.
+//   post      the same parameters as a form POST. SAML 1.1 defines no
+//             POST-bound request; this is Shibboleth's parameters delivered
+//             the other way, and it needs an identity provider that reads one.
+//   artifact  register the SP context with the API first (it is the API that
+//             will have to make the SOAP call), then send the request as a GET
+//             carrying the returned `art:<id>` handle IN TARGET — which is
+//             the only round-tripped value SAML 1.1 has, RelayState not
+//             existing until 2.0.
+//
+// Every path records a "Sent" entry BEFORE handing the browser over, for the
+// reason the 2.0 one does: after the navigation this page is gone, and an entry
+// written afterwards is an entry never written.
+// ---------------------------------------------------------------------------
+function callIdpSaml11() {
+  log.debug("Entering callIdpSaml11().");
+  var binding = val('saml_binding');
+  var dest = ssoDestination(binding);
+  if (!dest) {
+    setStatus('saml_call_status', 'No inter-site transfer service address — ' +
+              'load the IdP metadata first, or fill in one of the SSO ' +
+              'endpoint fields.');
+    log.debug("Leaving callIdpSaml11().");
+    return opFailure('Send AuthnRequest',
+                     'no inter-site transfer service address.');
+  }
+  if (!val('saml_acs_url')) {
+    // shire is what tells the identity provider where the assertion goes. With
+    // no request message there is no other way to say it, and an IdP that has
+    // to guess sends the response to its own mock relying party — which looks
+    // exactly like this page never being answered.
+    setStatus('saml_call_status', 'Set the ACS URL first — SAML 1.1 has no ' +
+              'request message, so the shire parameter is the only way to ' +
+              'say where the assertion should go.');
+    log.debug("Leaving callIdpSaml11().");
+    return opFailure('Send AuthnRequest',
+                     'no ACS URL to send as the shire parameter.');
+  }
+
+  if (binding === 'artifact') {
+    if (!appconfig.backendAvailable) {
+      setStatus('saml_call_status', 'The Artifact profile needs the API ' +
+                'backend: resolving an artifact is a SOAP call a browser ' +
+                'cannot make.');
+      log.debug("Leaving callIdpSaml11().");
+      return opFailure('Send AuthnRequest',
+                       'the Browser/Artifact profile needs the API backend.');
+    }
+    var artifactSent = false;
+    setStatus('saml_call_status', 'Preparing the Browser/Artifact request…');
+    fetch(appconfig.apiUrl + '/samlartifactctx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        // SAML 1.1's responder, not a SAML 2.0 Artifact Resolution Service:
+        // the API builds a <samlp:Request> carrying an <AssertionArtifact>
+        // rather than an <ArtifactResolve>, and this is what tells it which.
+        samlVersion: '1.1',
+        arsUrl: val('saml_ars'),
+        privateKeyPem: val('saml_sp_private_key'),
+        certPem: val('saml_sp_public_key'),
+        spEntityId: val('saml_sp_entity_id'),
+        sigAlg: selectedSigAlg(),
+        wsa: {
+          enabled: (function () { var w =
+                    el('saml_wsa_support'); return !!(w && w.checked); })(),
+          to: val('saml_wsa_to'),
+          action: val('saml_wsa_action'),
+          replyTo: val('saml_wsa_replyto'),
+          from: val('saml_wsa_from'),
+          messageId: val('saml_wsa_messageid')
+        }
+      })
+    })
+      .then(function (r) { return r.json()
+          .then(function (j) { if (!r.ok) { throw new Error(j && j.error ?
+          j.error : ('HTTP ' + r.status)); } return j; }); })
+      .then(function (ctx) {
+        var params = saml11RequestParams(ctx.relayState);
+        var url = dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
+            saml11QueryString(params);
+        setVal('saml_authn_request', saml11RequestText(dest, params));
+        artifactSent = true;
+        var id = opSent('Send AuthnRequest', 'sent to ' + dest +
+                        ' (Browser/Artifact)');
+        try {
+          window.location.assign(urlSafety.safeExternalUrl(url,
+                                 'The IdP inter-site transfer service'));
+        } catch (e) {
+          opFailed(id, e.message);
+          throw e;
+        }
+      })
+      .catch(function (e) {
+        log.error('callIdpSaml11 artifact: ' + e.message);
+        setStatus('saml_call_status', 'Artifact request failed: ' + e.message);
+        if (!artifactSent) opFailure('Send AuthnRequest', e.message);
+      });
+    log.debug("Leaving callIdpSaml11(). Browser/Artifact.");
+    return false;
+  }
+
+  var postParams = saml11RequestParams('saml_request');
+  setVal('saml_authn_request', saml11RequestText(dest, postParams));
+  saveState();
+
+  if (binding === 'post') {
+    var form = {};
+    for (var i = 0; i < postParams.length; i++) {
+      form[postParams[i][0]] = postParams[i][1];
+    }
+    var postId = opSent('Send AuthnRequest', 'sent to ' + dest +
+                        ' (form POST, Browser/POST profile)');
+    try {
+      submitPostForm(dest, form);
+    } catch (e) {
+      setStatus('saml_call_status', 'Send failed: ' + e.message);
+      log.debug("Leaving callIdpSaml11().");
+      return opFailed(postId, e.message);
+    }
+    log.debug("Leaving callIdpSaml11(). Form POST.");
+    return false;
+  }
+
+  var redirectUrl = dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
+      saml11QueryString(postParams);
+  var sentId = opSent('Send AuthnRequest', 'sent to ' + dest +
+                      ' (GET, Browser/POST profile)');
+  try {
+    window.location.assign(urlSafety.safeExternalUrl(redirectUrl,
+                           'The IdP inter-site transfer service'));
+  } catch (e) {
+    setStatus('saml_call_status', 'Send failed: ' + e.message);
+    log.debug("Leaving callIdpSaml11().");
+    return opFailed(sentId, e.message);
+  }
+  log.debug("Leaving callIdpSaml11(). GET.");
+  return false;
+}
+
 // Auto-submit an HTTP-POST-binding request to the IdP SSO endpoint.
 function submitPostForm(action, params) {
   log.debug("Entering submitPostForm().");
@@ -1385,10 +2045,17 @@ function singleLogout() {
   log.debug("Entering singleLogout().");
   var sloBinding = bindingLabel(val('saml_binding') === 'post' ?
       'post' : 'redirect');
-  if (val('saml_version') !== '2.0') {
-    setStatus('saml_call_status', 'Single Logout requires SAML 2.0.');
+  if (samlVersion() !== '2.0') {
+    // Not "unimplemented here" — SAML 1.1 has no Single Logout at all. There is
+    // no LogoutRequest in the protocol, nothing publishes an endpoint for one,
+    // and the button is disabled on this version. This refusal is the guard
+    // behind that, for a caller that reaches the function some other way.
+    setStatus('saml_call_status', 'SAML ' + samlVersion() + ' has no Single ' +
+              'Logout — the protocol has no logout message and no endpoint ' +
+              'for one. Single Logout arrived with SAML 2.0.');
     log.debug("Leaving singleLogout().");
-    return opFailure('Single Logout', 'Single Logout requires SAML 2.0.',
+    return opFailure('Single Logout',
+                     'SAML ' + samlVersion() + ' has no Single Logout.',
                      { binding: sloBinding });
   }
   var priv = val('saml_sp_private_key');
@@ -1751,10 +2418,12 @@ window.onload = function () {
   show('saml_edge_acs_notice', appconfig.backendAvailable === false &&
        hasSamlLanding());
   show('saml_redirect_fallback_notice', !hasSamlLanding());
-  onVersionChange();
+  // applyVersionAvailability() rather than onVersionChange(): the latter clears
+  // the "a metadata load moved this" note, which is a statement about a load
+  // that has not happened yet. It calls onSignChange()/onEncryptChange()
+  // itself, so the two sub-sections still open to match their checkboxes.
+  applyVersionAvailability();
   onNameIdFormatChange();
-  onSignChange();
-  onEncryptChange();
   onWsaChange();
 
   // Persist on any change, and auto-regenerate the AuthnRequest. 'change' (not
@@ -1801,6 +2470,11 @@ module.exports = {
   generateKeys,
   downloadKeys,
   downloadSpMetadata,
+  // The DOCUMENT rather than the download. Exported because what has to be
+  // asserted about it is its content, and the download goes through a browser
+  // save dialogue — tests/saml11_options.js reads it here instead, which is
+  // also the only way to compare the SAML 1.1 and SAML 2.0 shapes in one run.
+  buildSpMetadata,
   buildRequestUi,
   callIdp,
   singleLogout,

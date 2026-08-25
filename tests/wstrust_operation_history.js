@@ -29,7 +29,7 @@ var log = bunyan.createLogger({ name: 'wstrust_operation_history',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000";
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var callWait = Math.max(waitTime, 20000);
@@ -245,6 +245,13 @@ async function test() {
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        baseUrl.replace(/\/+$/, ""));
+  // The mock STS serves https on a certificate it generated at startup (see
+  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
+  // makes the whole argument. This file builds its Chrome options by hand
+  // rather than through addBrowserAccessFlags(), which is why the call is here
+  // instead of arriving with the rest.
+  browserFlags.addStsTrustFlags(options);
   // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
   // and two starting in the same millisecond would share a profile —
   // one Chrome then refuses to start on the other's. See CONCURRENCY
