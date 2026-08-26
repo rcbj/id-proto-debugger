@@ -28,11 +28,14 @@
 //     from the node one `spiffe_engine.js` checks against OpenSSL. Without it
 //     five methods on this page are unreachable in practice, which would make
 //     "every method is here" a claim about a list.
-//  4. **THE THREE OFFLINE PANES.** The bundle reader, the SVID inspector and
-//     the SPIFFE ID checker each need no network at all, and each answers a
-//     question somebody asks while holding a value and nothing else. They are
-//     also the only part of this page that would work on a deployment with no
-//     api — which this one is not, but the panes must not depend on one.
+//  4. **THE THREE OFFLINE READERS.** The bundle reader, the SVID inspector
+//     and the SPIFFE ID checker each need no network at all, and each answers
+//     a question somebody asks while holding a value and nothing else. They
+//     are also the only part of this page that would work on a deployment
+//     with no api — which this one is not, but they must not depend on one.
+//     Two of them are panes; the bundle reader is the **Trust Bundle group**
+//     inside the settings pane, folded in there on 2026-08-26 because what it
+//     produces — the trust anchor — is a setting two groups below it.
 //  5. **A REFUSAL IS THE INTERESTING ANSWER.** `PERMISSION_DENIED` has to
 //     reach the status line as SPIFFE's answer rather than as an error, and
 //     the Operations History has to tell Failure (the far end said no) from
@@ -327,9 +330,12 @@ async function thePickersHoldEveryMethod(driver) {
 
 // ---------------------------------------------------------------------------
 // 2. THE TRUST BUNDLE, fetched and then read with no network.
+//
+// It is a GROUP in the Configuration Parameters pane rather than a pane of its
+// own — the ids did not change with the fold, which is why nothing below did.
 // ---------------------------------------------------------------------------
-async function theBundlePaneFetchesAndReads(driver) {
-  log.debug("Entering theBundlePaneFetchesAndReads().");
+async function theBundleGroupFetchesAndReads(driver) {
+  log.debug("Entering theBundleGroupFetchesAndReads().");
   await setField(driver, "spiffe_bundle_url", bundleUrl);
   const status = await clickAndWait(driver, "btn_spiffe_fetch_bundle",
     "spiffe_bundle_status");
@@ -397,8 +403,8 @@ async function theBundlePaneFetchesAndReads(driver) {
   const anchored = await clickAndWait(driver, "btn_spiffe_bundle_anchor",
     "spiffe_bundle_status", waitTime * 2);
   const anchor = await getField(driver, "spiffe_server_bundle");
-  check("the x509-svid authorities become the trust anchor for the SPIRE " +
-    "Server API pane — and ALL of them do, because a trust domain that has " +
+  check("the x509-svid authorities become the trust anchor in the SPIRE " +
+    "Server API group — and ALL of them do, because a trust domain that has " +
     "rotated publishes the old one too and dropping it is the difference " +
     "between a rotation and an outage", function () {
       assert.ok(/trust anchor/.test(anchored), anchored);
@@ -407,7 +413,7 @@ async function theBundlePaneFetchesAndReads(driver) {
         anchored + " — and the anchor field held " +
         JSON.stringify(String(anchor).slice(0, 120)));
     });
-  log.debug("Leaving theBundlePaneFetchesAndReads().");
+  log.debug("Leaving theBundleGroupFetchesAndReads().");
 }
 
 // ---------------------------------------------------------------------------
@@ -778,8 +784,12 @@ async function theIdentityOptOutRemovesWhatIsStored(driver) {
 //   * **ONE PANE OWNS THE SETTINGS.** Every editable setting is in
 //     `#pane_config`, grouped under the name of the pane it acts on. What is
 //     allowed to be editable OUTSIDE it is a fixed list — the method pickers,
-//     the two request editors, the bundle document and the two offline inputs
-//     — because those ARE the operation rather than a setting for it. A new
+//     the two request editors and the two offline inputs — because those ARE
+//     the operation rather than a setting for it. The **trust bundle** used
+//     to be on that list and is not any more: its pane was folded into this
+//     one whole on 2026-08-26, buttons and document and all, so its document
+//     box is now INSIDE `#pane_config` and a copy of it left behind
+//     somewhere else is what the check below would report. A new
 //     field added to a pane below is what this catches, and a settings pane
 //     that quietly grows a second copy of a field somewhere else is what the
 //     duplicate-id check beside it catches: getElementById answers with the
@@ -800,7 +810,6 @@ const EDITABLE_OUTSIDE_CONFIG = [
   // the screen, which is the one kind of control that must stay above the
   // panes it opens.
   "dbg_toggle_all",
-  "spiffe_bundle_document",
   "spiffe_workload_method",
   "spiffe_workload_request",
   "spiffe_server_service",
@@ -812,7 +821,7 @@ const EDITABLE_OUTSIDE_CONFIG = [
 
 const CONFIG_GROUPS = [
   "Trust Domain",
-  "Discovery",
+  "Trust Bundle",
   "Workload API",
   "Held Identity",
   "SPIRE Server API",
@@ -856,15 +865,37 @@ async function theSettingsAreInOnePaneAndTheProseFolds(driver) {
     "  if (!prose[q].closest('details.spiffe-more')) {" +
     "    unfolded.push(prose[q].textContent.trim().slice(0, 40)); }" +
     "}" +
+    "var bundle = ['spiffe_bundle_ssl', 'btn_spiffe_fetch_bundle'," +
+    "  'btn_spiffe_read_bundle', 'btn_spiffe_bundle_anchor'," +
+    "  'spiffe_bundle_status', 'spiffe_bundle_document'," +
+    "  'spiffe_bundle_report'];" +
+    "var strayed = [];" +
+    "for (var b = 0; b < bundle.length; b++) {" +
+    "  var node = document.getElementById(bundle[b]);" +
+    "  if (!node || !(conf && conf.contains(node))) {" +
+    "    strayed.push(bundle[b]); }" +
+    "}" +
     "return { outside: outside, untitled: untitled, dupes: dupes," +
     "         openFolds: openFolds, folds: folds.length, titles: titles," +
-    "         unfolded: unfolded };");
+    "         unfolded: unfolded, strayed: strayed," +
+    "         ownPane: !!document.getElementById('pane_bundle') };");
 
   check("every editable setting is in the Configuration Parameters pane — " +
     "what is editable outside it is the operation itself, and that list is " +
     "fixed", function () {
       assert.deepStrictEqual(shape.outside.slice().sort(),
         EDITABLE_OUTSIDE_CONFIG.slice().sort());
+    });
+
+  check("the trust bundle is in that pane WHOLE — the switch, the three " +
+    "buttons, the status line, the document and the report — and has no " +
+    "pane of its own left behind: a fold that moved the document and left " +
+    "the buttons where they were would read as a reader with nothing to " +
+    "read", function () {
+      assert.deepStrictEqual(shape.strayed, []);
+      assert.strictEqual(shape.ownPane, false,
+        "#pane_bundle is still in the page, so the trust bundle is in two " +
+        "places at once");
     });
 
   check("no id appears twice — a settings pane that mirrors a field instead " +
@@ -875,7 +906,8 @@ async function theSettingsAreInOnePaneAndTheProseFolds(driver) {
     });
 
   check("the pane's groups are the panes the settings came from, in order, " +
-    "with the trust bundle's called Discovery", function () {
+    "and the Trust Bundle group is the one that is not a settings group at " +
+    "all — the whole of that pane was folded in here", function () {
       assert.deepStrictEqual(shape.titles, CONFIG_GROUPS);
     });
 
@@ -959,21 +991,24 @@ async function everyPaneCollapsesAndOneSwitchDoesAll(driver) {
       assert.ok(wiring.toggle, "there is no dbg_toggle_all on the page");
     });
 
-  // One pane, by its own title. `spiffe_bundle_fieldset` is chosen because the
-  // pane below it is the one this page is most often read alongside.
-  const legend = await el(driver, "spiffe_bundle_expand_button");
+  // One pane, by its own title. `spiffe_workload_fieldset` is chosen because
+  // it is the pane a reader is most often in, and because it is the first one
+  // BELOW the settings pane — the trust bundle used to be that pane and was
+  // folded into the settings one, which is exactly the kind of move that
+  // leaves a check pointing at an id nothing answers to.
+  const legend = await el(driver, "spiffe_workload_expand_button");
   await legend.click();
   await driver.wait(async function () {
     const shut = await driver.executeScript(
-      "return document.getElementById('spiffe_bundle_fieldset')" +
+      "return document.getElementById('spiffe_workload_fieldset')" +
       "  .offsetHeight === 0;");
     return shut === true;
-  }, stepWait, "the Trust Bundle pane never closed when its title was clicked");
+  }, stepWait, "the Workload API pane never closed when its title was clicked");
   const closed = await driver.executeScript(
-    "var f = document.getElementById('spiffe_bundle_fieldset');" +
+    "var f = document.getElementById('spiffe_workload_fieldset');" +
     "return { height: f.offsetHeight, display: f.style.display," +
     "         marker: getComputedStyle(document.getElementById(" +
-    "             'spiffe_bundle_expand_button'), '::before').content };");
+    "             'spiffe_workload_expand_button'), '::before').content };");
   check("a pane's own title shuts it, and the triangle in that title turns " +
     "with it — the marker is a CSS :has() rule reading the inline display, " +
     "so it can turn over a pane that is still on the screen, which is why " +
@@ -986,10 +1021,10 @@ async function everyPaneCollapsesAndOneSwitchDoesAll(driver) {
   await legend.click();
   await driver.wait(async function () {
     const open = await driver.executeScript(
-      "return document.getElementById('spiffe_bundle_fieldset')" +
+      "return document.getElementById('spiffe_workload_fieldset')" +
       "  .offsetHeight > 0;");
     return open === true;
-  }, stepWait, "the Trust Bundle pane never reopened");
+  }, stepWait, "the Workload API pane never reopened");
 
   // And the switch, which is the control this page needs most: with every
   // pane shut it is a table of contents.
@@ -1219,7 +1254,7 @@ async function test() {
   try {
     await open(driver);
     await thePickersHoldEveryMethod(driver);
-    await theBundlePaneFetchesAndReads(driver);
+    await theBundleGroupFetchesAndReads(driver);
     const token = await theWorkloadApiHandsOverAnIdentity(driver);
     await theServerApiPresentsTheHeldIdentity(driver);
     await theCsrBuilderMakesOneAndPlacesIt(driver);
@@ -1248,8 +1283,9 @@ program
     "forty-nine methods reach its pickers, that an SVID fetched from a " +
     "surface which authenticates nobody is then PRESENTED on one that " +
     "requires mutual TLS, that the certification request five methods need " +
-    "is built in the browser, that the three offline panes need no network, " +
-    "and that the key-material opt-out removes what is already stored.")
+    "is built in the browser, that the three offline readers need no " +
+    "network, and that the key-material opt-out removes what is already " +
+    "stored.")
   .addOption(new Option("-u, --url <url>",
     "base url of the site under test").default(baseUrl))
   .parse(process.argv);

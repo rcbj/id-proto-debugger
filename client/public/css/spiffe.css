@@ -320,6 +320,11 @@ input.spiffe-status { margin-bottom: 0; }
    again. What is here is the ONE element with its id; nothing below mirrors
    it.
 
+   ONE group is not a group of settings at all: Trust Bundle is a whole pane
+   that was folded in here on 2026-08-26, buttons, status line, document box
+   and report together, because what it produces — the trust anchor — is a
+   field two groups below it in this same pane.
+
    A group is a heading and a rule rather than a nested <fieldset>. A fieldset
    inside a fieldset would need its own `min-inline-size: 0` (see the header)
    and would put a second border around content that is already inside one.
