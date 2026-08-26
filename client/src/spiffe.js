@@ -524,8 +524,9 @@ function loadLimits() {
             error.message + '). Either it is not running or it is an older ' +
             'build with no SPIFFE support — which is a different thing from ' +
             'a SPIRE server that will not answer, and worth telling apart ' +
-            'before blaming the server. The three offline panes below still ' +
-            'work.');
+            'before blaming the server. The three things this page does with ' +
+            'no network still work: the trust bundle reader in this pane, ' +
+            'and the two offline panes below.');
     log.debug("Leaving loadLimits(). Failed.");
     return null;
   });
@@ -1049,7 +1050,7 @@ function fetchBundle() {
 }
 
 // The offline half. Reads whatever is in the document box with no network at
-// all, which is what makes this pane useful on a static deployment and when
+// all, which is what makes this group useful on a static deployment and when
 // somebody has a bundle in a file and a question about it.
 function readBundle() {
   log.debug("Entering readBundle().");
@@ -1167,7 +1168,7 @@ function useBundleAsAnchor() {
   setVal('spiffe_server_bundle', pem);
   IDENTITY.bundle = pem;
   statusOk('spiffe_bundle_status', anchors.length + ' X.509 authority/ies ' +
-           'are now the trust anchor for the SPIRE Server API pane. Note ' +
+           'are now the trust anchor in the SPIRE Server API group. Note ' +
            'that ALL of them go across: a trust domain that has rotated ' +
            'publishes the old authority too, and dropping it is the ' +
            'difference between a rotation and an outage.');

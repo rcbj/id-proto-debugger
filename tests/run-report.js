@@ -2425,7 +2425,7 @@ function buildJobs() {
     name: "SPIFFE page (all 49 methods in its pickers, the SVID hand-off " +
         "from an unauthenticated surface to a mutual-TLS one, the " +
         "certification request built in the browser, the three offline " +
-        "panes, and what it remembers)",
+        "readers, and what it remembers)",
     script: "spiffe_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",

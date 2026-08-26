@@ -41,8 +41,9 @@ cannot present the client certificate the SPIRE Server API requires. So both
 live in `api/spiffe_client.js`, which vendors the SPIFFE project's and the
 `spire-api-sdk`'s own protos **verbatim** into `api/protos/` because the whole
 point of the dependency is that the wire matches what a real client expects.
-What SPIFFE gives up that Kerberos and LDAP do not: three of its panes — the
-trust bundle reader, the SVID inspector and the SPIFFE ID checker — need **no
+What SPIFFE gives up that Kerberos and LDAP do not: three of its readers —
+the trust bundle one (a group in the settings pane since 2026-08-26), the SVID
+inspector and the SPIFFE ID checker — need **no
 network at all**, and they go with the page anyway, because a page whose two
 biggest panes are permanently dead is worse than a card that says why. It is
 the **fourth page** `client/static_site.js` drops and the **fourth landing
@@ -159,6 +160,15 @@ TEST_CONCURRENCY=6 ./docker-run-tests.sh
 # Against a site that is ALREADY DEPLOYED, with everything on the other side
 # of each protocol started locally
 ./remote-run-tests.sh [base-url]
+
+# Just the FEDERATED sign-in — an OIDC application in the trust realm
+# `federation-realm-1`, authenticated over SAML 2.0 in `federation-realm-2`,
+# both of them logical copies of the ONE mock STS told apart by a path prefix.
+# Only client + api + the mock. It leaves both realms configured on a running
+# stack, which is where the sign-in it just performed is visible: /admin on
+# either realm. This replaced the mock's own three-container `federation-e2e/`
+# on 2026-08-26 — trust realms made the extra containers unnecessary.
+./local-run-tests.sh --federation-only
 
 # The containerized stack again, under Istanbul/c8 instrumentation
 ./run-coverage.sh

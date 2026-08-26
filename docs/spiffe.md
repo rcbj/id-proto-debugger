@@ -33,8 +33,9 @@ bundle and `css/spiffe.css` from `dist/` while `client/build.js` greys the
 landing card.
 
 **Note what that costs, because it is more than Kerberos and LDAP give up.**
-The bundle endpoint *is* plain HTTPS, and three of the page's panes — the
-bundle reader, the SVID inspector and the SPIFFE ID checker — need **no network
+The bundle endpoint *is* plain HTTPS, and three of the page's readers — the
+bundle reader (a group in the settings pane since 2026-08-26), the SVID
+inspector and the SPIFFE ID checker — need **no network
 at all**. A page whose two biggest panes are permanently dead is still worse
 than a card that says why, which is the same judgement made about SPNEGO and
 the opposite of the one made about PKI and SCIM, whose api-less halves are the
@@ -367,7 +368,8 @@ other JWK member and the mistake to look for first) — and handed on.
 
 ## The page
 
-`spiffe.html`, nine panes. Every readout is a `<textarea>` and never a `<pre>`,
+`spiffe.html`, **nine panes** — it was ten until 2026-08-26, when the *Trust
+Bundle* pane was folded into *Configuration Parameters* whole. Every readout is a `<textarea>` and never a `<pre>`,
 and the pane carries `min-inline-size: 0` — a `<fieldset>` computes its
 min-content width from its contents and `overflow` on it does **not** clamp
 that, so one base64 DER certificate makes the pane itself thousands of pixels
@@ -375,8 +377,7 @@ wide rather than scrolling inside it.
 
 | Pane | What it is for |
 |---|---|
-| **Configuration Parameters** | **every editable setting on the page**, grouped under the name of the pane it acts on — see below |
-| **Trust Bundle** | fetch through the api (a bundle endpoint sends no CORS headers), or **read what is in the box with no network at all**; make the `x509-svid` authorities the trust anchor for the SPIRE Server API group |
+| **Configuration Parameters** | **every editable setting on the page**, grouped under the name of the pane it acts on — and, in its **Trust Bundle** group, the one operation that is here whole: fetch through the api (a bundle endpoint sends no CORS headers), or **read what is in the box with no network at all**; make the `x509-svid` authorities the trust anchor for the SPIRE Server API group two below it. See below |
 | **Workload API** | all seven methods, the request, and what came back |
 | **Held Identity** | the SVID **and its private key**, and what the page holds of each |
 | **SPIRE Server API** | all forty-two, the request, and what came back |
@@ -395,15 +396,25 @@ more: every editable setting moved into a single **Configuration Parameters**
 pane, which is the arrangement `scim.html` arrived at and is documented in
 `docs/scim.md` for the same reason — a setting a screen away from the button
 that reads it is what people actually complain about. The groups inside it are
-named after the panes the fields came from, with one rename: the trust
-bundle's group is **Discovery**, because what it configures is how this page
-finds a trust domain's keys rather than the reading of a document it already
-has.
+named after the panes the fields came from.
+
+**The Trust Bundle group is the exception, and it is a whole pane rather than
+a group of settings.** It was the *Trust Bundle* pane, second on the page, and
+on 2026-08-26 it moved in here entire — the TLS-verification switch, the three
+buttons, the status line, the document box and the report. Nothing about it
+was split: a fold that moved the document and left the buttons where they were
+would be a reader with nothing to read, and `spiffe_page.js` section 10 now
+names all seven of its ids and fails if any of them is outside `#pane_config`.
+The reason it belongs here rather than below is what the group *produces*: the
+`x509-svid` authorities in that document become the **trust anchor** the SPIRE
+Server API presents to, and that anchor is a field two groups further down
+this same pane. Its one setting used to be a group of its own called
+*Discovery*, and that name is gone with it.
 
 **What stayed below is what *is* the operation** — the method pickers, the two
-request editors, the bundle document, and the SVID inspector's and SPIFFE ID
-checker's inputs. A "Call" button a screen away from the JSON it sends would
-be the same defect in the other direction.
+request editors, and the SVID inspector's and SPIFFE ID checker's inputs. A
+"Call" button a screen away from the JSON it sends would be the same defect in
+the other direction.
 
 **Nothing is mirrored.** Each of those boxes is the one element with its id;
 there is no second field anywhere that holds the same setting. That is the
@@ -462,8 +473,11 @@ panes below the one they are working in. Every pane therefore shuts, using the
 **shared `.dbg-*` chrome in `css/debugger.css`** that twenty-odd pages here
 already link — the same clickable title, the same triangle and the same
 top-of-page switch as the OAuth2 / OIDC workflow — rather than a fourth
-implementation of it. With every pane collapsed the page is **1,657px** against
-3,416px open, which is a table of contents.
+implementation of it. With every pane collapsed the page is **1,657px**
+against 3,416px open, which is a table of contents. Both numbers were measured
+with ten panes, before the trust bundle was folded into the settings pane; the
+open height is the same content either way and the collapsed one is a legend
+shorter.
 
 The markup contract is `scim.html`'s, which is the Kerberos pages':
 
@@ -674,7 +688,7 @@ contract, and in the fourth a page.
 | `spiffe_engine.js` | **nothing** — never gated, runs on every target including the static ones | the grammar against the specification's own rules; the bundle reader against documents wrong in one way each; the 49-method catalogue against the vendored protos **both ways round**; those protos against the mock's copies byte for byte; every address and socket refusal **by its code**; a PKCS#10 request in four key algorithms verified with **OpenSSL** |
 | `spiffe_protocol.js` | the mock's SPIFFE surfaces | all forty-nine methods **actually sent**, as four different entities, with every authorization refusal asserted as the answer it is — and an SVID rotation watched on a held stream |
 | `api_spiffe.js` | the api | the **status-code rule**: 400 / 502 / 200-with-the-code |
-| `spiffe_page.js` | the api and Chrome | that all forty-nine reach the pickers; the SVID hand-off; the CSR built with Web Crypto (a different implementation from the node one); the three offline panes; the key-material opt-out; and the **shape of the page** — one pane owning every setting, no duplicated id, every fold closed, every control with a tooltip |
+| `spiffe_page.js` | the api and Chrome | that all forty-nine reach the pickers; the SVID hand-off; the CSR built with Web Crypto (a different implementation from the node one); the three offline readers; the key-material opt-out; and the **shape of the page** — one pane owning every setting, no duplicated id, every fold closed, every control with a tooltip |
 
 **The coverage floor in `spiffe_protocol.js` is a count of methods SENT, not of
 assertions.** A method can be in the catalogue, in the picker and on the page

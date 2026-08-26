@@ -213,3 +213,58 @@ The **protected service** (`krb5_service.js`) is the other half: a raw TCP accep
 **Delegation is configured two different ways on purpose**, because the two are the same protocol messages with opposite trust and that is the whole security story. `HTTP/frontend` is trusted for **classic** constrained delegation: the permission is `msDS-AllowedToDelegateTo` on the FRONT-END account, listing what it may reach, and only a domain admin can set it. `HTTP/rbcd` authorizes **resource-based** delegation itself: the permission is `msDS-AllowedToActOnBehalfOfOtherIdentity` on the BACK-END account, listing who may act on its behalf — and whoever controls that object can set it, which is how "I can write to this computer account" becomes "I can reach this service as anybody". `HTTP/notrusted` exists to isolate one attribute: it has the same classic permission as `frontend` and lacks only TRUSTED_TO_AUTHENTICATE_FOR_DELEGATION, which produces the two-step failure that points at the wrong thing — S4U2Self *succeeds* and returns a ticket that merely is not forwardable, and classic S4U2Proxy then refuses it complaining about the evidence. Note the asymmetries the KDC reproduces: classic requires forwardable evidence, RBCD does not; RBCD requires PA-PAC-OPTIONS with bit 3, and [MS-SFU] says a KDC MUST answer `KDC_ERR_BADOPTION` without it — an error that mentions nothing about padata. Every delegated ticket carries **S4U_DELEGATION_INFO**, which is the only record inside the ticket that a delegation happened at all: the service that asked appears nowhere else in it. **S4U2Self is not itself a privilege** — the ticket is to yourself — and S4U2Proxy is; what stands between them is one attribute on one account.
 
 **Unconstrained delegation is the other half, and the mock draws the contrast deliberately.** With `FORWARDED`, a client asks for a second ticket-granting ticket and hands it to a service in a `KRB-CRED` — after which that service can obtain tickets to *anything* as the client, for the ticket's lifetime, with the KDC never consulted again. There is no list of permitted targets because there is no constraint, which is the whole difference from S4U2Proxy, where every hop returns to the KDC and is checked against an attribute. The service's `ok-as-delegate` flag is only **advice to the client**; nothing enforces it. So the only enforceable control sits on the account being protected: `sensitive` is flagged `NOT_DELEGATED` ([MS-SAMR]'s `USER_ACCOUNT` code 0x4000), and the KDC refuses it a forwardable ticket **at the AS exchange** — not as an error, but by simply omitting the flag, so the user still logs on and no service anywhere can forward those credentials. It is re-checked at the TGS exchange as well, because a forwardable ticket issued before the flag was set would otherwise keep working until it expired.
+
+## FEDERATION, TRUST REALMS, AND THE ONE ATTRIBUTE THAT SENDS SOMEBODY TO A PARTNER
+
+The mock can be **either end of a federation relationship** in five protocols
+(SAML 2.0, SAML 1.1, WS-Federation, OpenID Connect and OAuth 2.0), and it is the
+**only feature there that has to be configured before it does anything**.
+Everywhere else that service accepts what it is given — any username, any
+`client_id`, any entityID; it cannot do that at an assertion consumer service,
+because what arrives there is an unauthenticated HTTP request claiming to be a
+person and the session it would produce is the one `/oauth2/authorize`,
+`/saml2/sso`, `/wsfed` and `/admin` all read. So a relationship is created
+**disabled**, and an assertion is refused unless it verifies against the
+certificate configured on that relationship — the gate is on the SIGNER, not on
+the subject. Configure it through `POST /admin-api/federation/{action}`
+(`create`, `set`, `add-value`, `enable`); the `/admin` console is gated and a
+JSON caller is refused 401 there.
+
+**A TRUST REALM is a whole logical copy of that service** — its own signing key,
+sessions, tokens, applications, federation register and directory subtree —
+answering on the same socket under `/realm/<id>/…`, created at runtime with
+`POST /admin-api/realms/create`. That is what lets ONE mock be two identity
+services, which is how `tests/federation_sso.js` federates without a second
+container. Two things about it catch people once: the realms share a browser
+COOKIE NAME, so a session minted in one realm is presented to the other and must
+not be honoured there (it is not — the session store is per realm); and the mock
+mints **per-service-provider** SAML metadata, so the entityID a partner's
+assertions will carry is the one in the document fetched *by the service
+provider's own entityID*, not the one in a document fetched without it.
+
+**`appFederationRelationship` on an application entry is what sends that
+application's users to a partner**, with `appFederationAutoRedirect` beside it,
+both added on 2026-08-26. They are the only two attributes in that registry that
+the service READS — `appAllowedProtocol` and the four per-family identifiers say
+in capitals that nothing does — and what they answer is a question it could not
+answer before: a relationship says how to reach a foreign identity provider and
+nothing about WHO should be sent there. Before them the only home realm
+discovery available was a person pressing a button at the foot of the mock's
+sign-in screen, once per sign-in.
+
+With one named and the auto-redirect at its default of TRUE, a sign-in for that
+application never reaches the mock's own screen: `authn.js` answers with the
+federated flow's entry point and the browser goes straight to the partner. With
+the auto-redirect off, the screen appears and that partner is the only button on
+it. Set them with `POST /admin-api/applications/create` (in `fields`) or
+`POST /admin-api/applications/set`.
+
+**Four checks are made when the attribute is READ, not when it is written** —
+the relationship must exist in that realm, be service-provider-side, be enabled
+and be fully configured — because the attribute is a string on a directory entry
+that `ldapmodify` reaches and the relationship it names can be disabled later by
+somebody who never looked at the application. A failure of any of them is shown
+in the sign-in screen's error banner rather than falling back to the password
+box, which is the failure worth being loud about: a federated application
+authenticating people locally looks exactly like a federated application
+working.

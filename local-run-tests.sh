@@ -33,6 +33,14 @@ set -x
 #                DELEGATION MAP behind as SVG files — which is the only way to
 #                see that picture at all, since the mock's register is in
 #                memory and dies with the container.
+#   --federation-only
+#                Bring up ONLY what the federated sign-in needs (client and the
+#                mock STS) and run that one test: two TRUST REALMS of the one
+#                mock, an OIDC application in the first and a SAML 2.0 identity
+#                provider in the second. A ~1-minute loop instead of the whole
+#                suite. It leaves the two realms — and everything they recorded
+#                — behind on a running stack, which is the point: /admin on
+#                either realm is where the sign-in it just performed is visible.
 #   --krb5-real-dc[=WHAT]
 #                Spin up a real Windows Server 2025 domain controller on AWS,
 #                run the Kerberos interoperability work against it, and tear it
@@ -72,6 +80,12 @@ WSFED_ONLY_IDP=both
 # token-exchange permission per pair provisioned first, and the compliant realm
 # refuses half of what this scenario does on purpose.
 DELEGATION_ONLY=0
+# --federation-only: the federated sign-in across two trust realms of the one
+# mock STS. No identity provider to choose between either, and for a sharper
+# reason than the delegation chain has: the partner in this scenario IS the mock,
+# in a second realm of the same process, so there is no second implementation for
+# an option to select.
+FEDERATION_ONLY=0
 # --krb5-real-dc: 0 = off, else the work to run against the live DC.
 KRB5_REAL_DC=0
 KRB5_REAL_DC_WHAT=test
@@ -82,7 +96,7 @@ usage()
   cat <<USAGE
 Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                         [--wsfed-only[=keycloak|sts|both]]
-                        [--delegation-only]
+                        [--delegation-only] [--federation-only]
                         [--krb5-real-dc[=test|capture|both]] [-h|--help]
 
   (default)    Build + start the stack, provision Keycloak (SAML AuthnRequest
@@ -143,6 +157,20 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                DELEGATION_ARTIFACT_DIR). There is no second identity provider
                to choose between: see the note beside DELEGATION_ONLY above.
 
+  --federation-only
+               Build + start only client and the mock STS, and run just
+               tests/federation_sso.js: the debugger's OAuth2/OIDC workflow
+               standing in for an application registered in the trust realm
+               federation-realm-1, which federates the sign-in over SAML 2.0 to
+               federation-realm-2 — two logical identity services in one
+               process, told apart by a path prefix.
+
+               It leaves the stack up with both realms configured, which is
+               worth having: /realm/federation-realm-1/admin/federation shows
+               the relationship and its counters, and /admin/users on either
+               realm shows the same person from the two ends. The realms live in
+               the mock's memory and go with the container.
+
   --krb5-real-dc[=WHAT]
                Create a Windows Server 2025 domain controller on AWS, run the
                Kerberos interoperability work against it, then destroy every
@@ -171,6 +199,7 @@ while [ $# -gt 0 ]; do
     --wsfed-only) WSFED_ONLY=1 ;;
     --wsfed-only=*) WSFED_ONLY=1; WSFED_ONLY_IDP="${1#*=}" ;;
     --delegation-only) DELEGATION_ONLY=1 ;;
+    --federation-only) FEDERATION_ONLY=1 ;;
     --krb5-real-dc) KRB5_REAL_DC=1 ;;
     --krb5-real-dc=*) KRB5_REAL_DC=1; KRB5_REAL_DC_WHAT="${1#*=}" ;;
     -h|--help)  usage; exit 0 ;;
@@ -208,6 +237,14 @@ if [ "${DELEGATION_ONLY}" = "1" ] && { [ "${SAML_ONLY}" = "1" ] ||
 then
   echo "--delegation-only, --saml-only, --wsfed-only and --krb5-real-dc each" \
        "run one thing; pick one." >&2
+  exit 1
+fi
+if [ "${FEDERATION_ONLY}" = "1" ] && { [ "${SAML_ONLY}" = "1" ] ||
+     [ "${WSFED_ONLY}" = "1" ] || [ "${DELEGATION_ONLY}" = "1" ] ||
+     [ "${KRB5_REAL_DC}" = "1" ]; };
+then
+  echo "--federation-only, --delegation-only, --saml-only, --wsfed-only and" \
+       "--krb5-real-dc each run one thing; pick one." >&2
   exit 1
 fi
 export SAML_SIG_VALIDATION
@@ -904,6 +941,65 @@ runDelegationOnly()
   return ${rc}
 }
 
+# ---------------------------------------------------------------------------
+# --federation-only: the federated sign-in, and the fastest way to LOOK at what
+# it left in the two realms.
+#
+# Both identity services in this scenario are the SAME mock STS process, told
+# apart by a path prefix, so this loop is two containers rather than three — and
+# it needs no api at all: the Token Request is made browser-direct, and every
+# configuration call goes to /admin-api over HTTP from the test itself. `api` is
+# started anyway because `client` declares it in local-tests.yml and compose
+# would pull it in regardless; naming it here is the honest spelling of what
+# comes up.
+#
+# The realms are created by the TEST rather than here. A trust realm lives in
+# the mock's memory and there is nowhere to declare one, so provisioning it in
+# this script would only move the same management API calls somewhere the
+# containerized suite could not reach them.
+# ---------------------------------------------------------------------------
+runFederationOnly()
+{
+  echo "Entering runFederationOnly()."
+  local services="api client sts"
+  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml build ${services}
+  check_return_code $?
+  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml up -d ${services}
+  check_return_code $?
+  echo "Waiting for the mock STS ..."
+  sleep 5
+  CONFIG_FILE=./env/local.js verifyComposeServicesRunning local-tests.yml
+  CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml sts
+  check_return_code $?
+  # The mock serves https on a certificate regenerated when this `up -d` started
+  # it, so nothing can have an anchor for it yet. This job verifies in node (the
+  # management API calls and the metadata read) and in Chrome (the sign-in
+  # screens and the browser-direct Token Request), so both anchors have to be in
+  # place before it runs. Not fatal: the test says so itself.
+  trustStsCertificate https://localhost:8081 || true
+
+  export DEBUGGER_BASE_URL CONFIG_FILE WSTRUST_STS_URL
+  node "${NODEJS_BASE_DIR}/federation_sso.js" --url "${DEBUGGER_BASE_URL}"
+  local rc=$?
+  if [ ${rc} -eq 0 ];
+  then
+    cat <<FEDERATION
+The stack is still up, and both realms are configured. What they now hold is the
+interesting part:
+  ${WSTRUST_STS_URL}/realm/federation-realm-1/admin/federation
+      the relationship, its counters and its last error
+  ${WSTRUST_STS_URL}/realm/federation-realm-1/admin/users
+      somebody who has never had a credential checked in that realm
+  ${WSTRUST_STS_URL}/realm/federation-realm-2/admin/users
+      the same person, in the realm where a name was actually typed
+The console needs a sign-on session from /authn/login (any name, any password).
+Both realms are in the mock's memory and go with the container.
+FEDERATION
+  fi
+  echo "Leaving runFederationOnly(). rc=${rc}"
+  return ${rc}
+}
+
 runWsfedOnly()
 {
   echo "Entering runWsfedOnly(). idp=${WSFED_ONLY_IDP}"
@@ -1106,6 +1202,14 @@ then
   runDelegationOnly
   check_return_code $?
   echo "The delegation chain passed: one OIDC sign-in and two RFC 8693 hops."
+  exit 0
+fi
+if [ "${FEDERATION_ONLY}" = "1" ];
+then
+  runFederationOnly
+  check_return_code $?
+  echo "The federated sign-in passed: an OIDC application in one trust realm," \
+       "authenticated over SAML 2.0 in another."
   exit 0
 fi
 startDocker

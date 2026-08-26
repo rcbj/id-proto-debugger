@@ -89,10 +89,14 @@ the SPIRE Server API and find out who that makes you.</p>
   <p class="spiffe-note">Every editable setting on this page, in one place
   and under the name of the pane it acts on. What stayed in the panes below
   is what <em>is</em> the operation &mdash; the method pickers, the two
-  request editors, the bundle document and the buttons &mdash; so nothing
-  here is a second spelling of a field that also exists somewhere else:
-  each of these boxes is the one element with its id, and an edit here is an
-  edit to the value the call is made with.</p>
+  request editors and the two offline inputs &mdash; so nothing here is a
+  second spelling of a field that also exists somewhere else: each of these
+  boxes is the one element with its id, and an edit here is an edit to the
+  value the call is made with. The <strong>Trust Bundle</strong> group is the
+  exception and is here whole, buttons and document and all: everything it
+  needs is in this pane already, and what it produces &mdash; the trust
+  anchor the SPIRE Server API group presents &mdash; is a setting two groups
+  below it rather than a call to somewhere else.</p>
   </details>
   <div class="spiffe-group">
   <h4 class="spiffe-group-title">Trust Domain</h4>
@@ -144,7 +148,20 @@ the SPIRE Server API and find out who that makes you.</p>
   do&hellip;</p>
   </div>
   <div class="spiffe-group">
-  <h4 class="spiffe-group-title">Discovery</h4>
+  <h4 class="spiffe-group-title">Trust Bundle</h4>
+  <details class="spiffe-more">
+    <summary>What a trust bundle is, and the one defect that verifies nothing
+      silently</summary>
+  <p class="spiffe-note">A SPIFFE trust bundle is a JWK Set with two extra
+  members, <code>spiffe_sequence</code> and <code>spiffe_refresh_hint</code>.
+  <strong>Every JWK in it must carry <code>use</code></strong>, and a consumer
+  <em>MUST IGNORE</em> one whose <code>use</code> is missing or unrecognised
+  &mdash; which is why a bundle full of keys with no <code>use</code> is not
+  slightly imperfect but <em>verifies nothing</em>, silently: the failure shows
+  up as an SVID that will not validate and never as anything naming the bundle.
+  The two registered values are <code>x509-svid</code> and
+  <code>jwt-svid</code>.</p>
+  </details>
   <details class="spiffe-more">
     <summary>What this switch reaches, and what it cannot</summary>
   <p class="spiffe-note">The bundle endpoint is the one SPIFFE
@@ -158,6 +175,31 @@ the SPIRE Server API and find out who that makes you.</p>
            title="Clear it to read a bundle endpoint carrying a self-signed certificate, which a development trust domain usually has. It governs the api's call and nothing else."><input type="checkbox" id="spiffe_bundle_ssl"
            checked
     title="Clear it to read a bundle endpoint carrying a self-signed certificate, which a development trust domain usually has. It governs the api's call and nothing else."> Verify the endpoint&rsquo;s TLS certificate</label>
+  <div class="spiffe-row">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_fetch_bundle"
+           value="Fetch through the api" onclick="return spiffe.fetchBundle();"
+           title="A bundle endpoint sends no CORS headers, so this goes through the api like the gRPC calls do.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_read_bundle"
+           value="Read what is below" onclick="return spiffe.readBundle();"
+           title="Reads the document in the box with no network at all. Works on a static deployment and on a bundle you have in a file.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_bundle_anchor"
+           value="Use as the trust anchor"
+           onclick="return spiffe.useBundleAsAnchor();"
+           title="Puts every x509-svid authority into the SPIRE Server API group's trust anchor field, further down this pane.">
+  </div>
+  <div class="spiffe-row">
+    <input class="spiffe-status spiffe-grow" type="text"
+           id="spiffe_bundle_status" readonly
+           title="The last thing this group did, and how it went.">
+  </div>
+  <label class="spiffe-label" for="spiffe_bundle_document"
+         title="Fetched, or pasted. The reader below works on whatever is here.">The bundle
+  document</label>
+  <textarea class="spiffe-output" id="spiffe_bundle_document" rows="3"
+            data-min-rows="3" data-max-rows="14"
+            spellcheck="false"
+            title="Fetched, or pasted. The reader below works on whatever is here."></textarea>
+  <div id="spiffe_bundle_report"></div>
   </div>
   <div class="spiffe-group">
   <h4 class="spiffe-group-title">Workload API</h4>
@@ -351,52 +393,6 @@ the SPIRE Server API and find out who that makes you.</p>
     </div>
   </div>
   </div>
-</fieldset>
-</div>
-
-<!-- ===================== Trust bundle ===================== -->
-<div class="spiffe-pane dbg-pane" id="pane_bundle">
-  <legend class="dbg-legend" id="spiffe_bundle_expand_button">Trust Bundle</legend>
-  <fieldset name="spiffe_bundle_fieldset" id="spiffe_bundle_fieldset"
-            style="display: block;">
-  <details class="spiffe-more">
-    <summary>What a trust bundle is, and the one defect that verifies nothing
-      silently</summary>
-  <p class="spiffe-note">A SPIFFE trust bundle is a JWK Set with two extra
-  members, <code>spiffe_sequence</code> and <code>spiffe_refresh_hint</code>.
-  <strong>Every JWK in it must carry <code>use</code></strong>, and a consumer
-  <em>MUST IGNORE</em> one whose <code>use</code> is missing or unrecognised
-  &mdash; which is why a bundle full of keys with no <code>use</code> is not
-  slightly imperfect but <em>verifies nothing</em>, silently: the failure shows
-  up as an SVID that will not validate and never as anything naming the bundle.
-  The two registered values are <code>x509-svid</code> and
-  <code>jwt-svid</code>.</p>
-  </details>
-  <div class="spiffe-row">
-    <input type="button" class="spiffe-btn" id="btn_spiffe_fetch_bundle"
-           value="Fetch through the api" onclick="return spiffe.fetchBundle();"
-           title="A bundle endpoint sends no CORS headers, so this goes through the api like the gRPC calls do.">
-    <input type="button" class="spiffe-btn" id="btn_spiffe_read_bundle"
-           value="Read what is below" onclick="return spiffe.readBundle();"
-           title="Reads the document in the box with no network at all. Works on a static deployment and on a bundle you have in a file.">
-    <input type="button" class="spiffe-btn" id="btn_spiffe_bundle_anchor"
-           value="Use as the trust anchor"
-           onclick="return spiffe.useBundleAsAnchor();"
-           title="Puts every x509-svid authority into the SPIRE Server API group's trust anchor field, in the Configuration Parameters pane.">
-  </div>
-  <div class="spiffe-row">
-    <input class="spiffe-status spiffe-grow" type="text"
-           id="spiffe_bundle_status" readonly
-           title="The last thing this pane did, and how it went.">
-  </div>
-  <label class="spiffe-label" for="spiffe_bundle_document"
-         title="Fetched, or pasted. The reader below works on whatever is here.">The bundle
-  document</label>
-  <textarea class="spiffe-output" id="spiffe_bundle_document" rows="3"
-            data-min-rows="3" data-max-rows="14"
-            spellcheck="false"
-            title="Fetched, or pasted. The reader below works on whatever is here."></textarea>
-  <div id="spiffe_bundle_report"></div>
 </fieldset>
 </div>
 
