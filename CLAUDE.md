@@ -161,14 +161,23 @@ TEST_CONCURRENCY=6 ./docker-run-tests.sh
 # of each protocol started locally
 ./remote-run-tests.sh [base-url]
 
-# Just the FEDERATED sign-in — an OIDC application in the trust realm
-# `federation-realm-1`, authenticated over SAML 2.0 in `federation-realm-2`,
-# both of them logical copies of the ONE mock STS told apart by a path prefix.
-# Only client + api + the mock. It leaves both realms configured on a running
-# stack, which is where the sign-in it just performed is visible: /admin on
-# either realm. This replaced the mock's own three-container `federation-e2e/`
-# on 2026-08-26 — trust realms made the extra containers unnecessary.
-./local-run-tests.sh --federation-only
+# Just the FEDERATED sign-ins. `=single` is ONE hop — an OIDC application in
+# the trust realm `federation-realm-1`, authenticated over SAML 2.0 in
+# `federation-realm-2`. `=chain` is TWO hops and THREE protocols: an
+# application in `federation-realm-3`, SAML 2.0 on to `federation-realm-4`,
+# which has no password box of its own and federates AGAIN over
+# WS-Federation to `federation-realm-5`, where the only password field in
+# the chain is drawn. That makes realm 4 a pure IDENTITY BRIDGE, and the
+# attribute that makes it one — `fedAuthnMechanism` on its
+# identity-provider-side relationship — is what that case exercises.
+# `=both` is the default; the realms are disjoint so either runs alone.
+# Every realm is a logical copy of the ONE mock STS told apart by a path
+# prefix, so this is client + api + the mock and nothing else. It leaves the
+# realms configured on a running stack, which is where the sign-ins it just
+# performed are visible: /admin on any of them. The single-hop case replaced
+# the mock's own three-container `federation-e2e/` on 2026-08-26 — trust
+# realms made the extra containers unnecessary.
+./local-run-tests.sh --federation-only[=single|chain|both]
 
 # The containerized stack again, under Istanbul/c8 instrumentation
 ./run-coverage.sh

@@ -812,6 +812,33 @@ function buildJobs() {
     });
   }
 
+  // ---------------------------------------------------------------------
+  // N-LAYER FEDERATION, which is the job above with the bottom knocked out
+  // of it: the realm that receives the SAML 2.0 request has no password box
+  // of its own and answers by federating AGAIN, over WS-Federation, to a
+  // third realm. Three protocols, four parties, one sign-in — and the middle
+  // realm is a pure identity BRIDGE that authenticates nobody.
+  //
+  // THE MOCK ONLY, like the job above, and for the same reason: three trust
+  // realms of one process are three identity services, and the debugger is
+  // the application tier.
+  //
+  // NO JOB LOCK, and the argument is the one above PLUS one more. It creates
+  // realms 3, 4 and 5 — deliberately not 1 and 2, which belong to
+  // federation_sso.js and whose counters that test asserts are EXACTLY ONE.
+  // Sharing a realm between the two would make each job's arithmetic depend
+  // on whether the other had run, which in a pool is a flake rather than a
+  // failure.
+  // ---------------------------------------------------------------------
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "N-layer federated sign-in (OIDC to federation-realm-3, SAML 2.0 " +
+          "on to federation-realm-4, WS-Federation on to federation-realm-5)",
+      script: "federation_chain_sso.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
   // Device Authorization Grant (RFC 8628). Requests a device/user code,
   // approves the device at the Keycloak verification URI, then polls for the
   // access token.
