@@ -168,6 +168,13 @@ TEST_CONCURRENCY=6 ./docker-run-tests.sh
 # narrows it to one; `=sts` skips the twenty-second WildFly boot entirely.
 ./local-run-tests.sh --wsfed-only[=keycloak|sts|both]
 
+# Just the three-tier delegation chain — an OIDC sign-in as webapp1, then two
+# RFC 8693 hops as apigw1 and esb1 — with only api + client + the mock STS. It
+# LEAVES THE DELEGATION MAP BEHIND as SVG under tests/report/delegation/, which
+# is the only way to see that picture at all: the mock's delegation register is
+# in memory and dies with the container.
+./local-run-tests.sh --delegation-only
+
 # Kerberos against a REAL Windows Server 2025 domain controller, spun up on AWS
 # and destroyed afterwards. Needs AWS credentials and NOTHING else — no docker,
 # no local stack, because the test loads the api's relay modules in-process and

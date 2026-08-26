@@ -1,42 +1,55 @@
 #FROM node:lts
-FROM ubuntu:latest
-
-# replace shell with bash so we can source files
-RUN rm /bin/sh && ln -s /bin/bash /bin/sh
-
-RUN apt-get update
-# libxml2-utils supplies xmllint, the XSD validator the WS-Trust schema test
-# falls back to when the optional native libxmljs2 binding is unusable (no
-# prebuilt binary for this ABI, or one built against a different Node version).
 #
-# fonts-liberation is here for the LAYOUT tests, and is the one thing in this list
-# that is about rendering rather than about a tool. This image installed no
-# fonts-* package at all, so the app's font stacks — bootstrap's
-# `"Helvetica Neue", Helvetica, Arial, sans-serif` and common.css's
-# `arial, sans-serif` — had no Arial-metric font to land on and fell through to
-# whatever fontconfig happened to pull in transitively, which is wider. A host run
-# resolves Arial to Liberation Sans and lays the pages out several pixels
-# narrower, so the two environments disagree about geometry and only the
-# containerized one trips panesContainTheirContent()'s no-horizontal-scroll
-# assertion. Liberation is the metric-compatible substitute for Arial, which is
-# what Chrome's own .deb depends on for the same reason.
-RUN apt-get -y install curl \
-        jq \
-        openssl \
-        fonts-liberation \
-        libxml2-utils \
-        libatomic1 \
-        libasound2t64 \
-        libatk-bridge2.0-0 \
-        libgtk-4-1 \
-        libnss3 \
-        xdg-utils \
-        wget \
-        unzip \
-        util-linux \
-        bsdextrautils
- 
+# THIS IMAGE IS BUILT IN THREE STAGES, AND THE SPLIT IS A HARD LIMIT RATHER
+# THAN A PREFERENCE. Docker's layer store refuses a chain deeper than 125
+# layers — `maxDepth` in moby's layer package — and every RUN, COPY and ADD
+# adds one. This file is almost entirely COPY: one line per test script, per
+# borrowed module and per vendored directory, each with the comment saying why
+# it is there, and the count grows with every protocol this suite learns. On
+# 2026-08-25 it reached 126 and the build died at `RUN ls` with
+#
+#   Step 132/136 : RUN ls
+#   ...
+#   max depth exceeded
+#
+# — a message that names no instruction, no file and no limit, printed AFTER
+# the step's own output had scrolled past, so it reads as the `ls` failing.
+#
+# The fix keeps every COPY and every comment exactly where it was and moves
+# them into two staging stages that are never shipped. Each stage starts its
+# own chain from the base image, so each has the full 125 to itself, and the
+# final image takes both in with two `COPY --from` lines. Adding a COPY costs
+# a layer in ONE staging stage now, not in the image.
+#
+# THREE RULES FOR ANYTHING ADDED BELOW:
+#
+#  * A new COPY goes in `files1` or `files2` — never in the final stage, which
+#    must stay at its dozen-odd layers. Put it where its neighbours are; the
+#    split point is arbitrary (it falls between the client-side Kerberos files
+#    and the sts/ submodule block) and carries no meaning.
+#  * ORDER STILL DECIDES COLLISIONS. This directory is flat, several COPYs
+#    deliberately land on paths an earlier one wrote, and the LAST one wins —
+#    which is why the comments throughout warn about a module and a test
+#    sharing a basename. That is preserved because `files1` is copied into the
+#    image before `files2`, so a later line still wins. A COPY moved BACKWARDS
+#    across the stage boundary silently reverses that.
+#  * Everything lands under /usr/src — /usr/src/app (the WORKDIR),
+#    /usr/src/client and /usr/src/common. The two `COPY --from` lines carry
+#    that one directory. A COPY writing outside it would be staged and never
+#    reach the image, with no error anywhere.
+#
+# Nothing about adding one more COPY looks different from the last hundred, so
+# the headroom is CHECKED rather than remembered:
+# everyDockerfileStaysUnderTheLayerLimit() in tests/jwk_pem_encoding.js counts
+# every stage of every Dockerfile in the tree and fails at a budget of 100,
+# naming the file and the stage. When it does, add a `files3` beside these two
+# rather than merging COPY lines together: the comments here are attached to
+# the lines they explain.
 
+# ---------------------------------------------------------------------------
+# Staging stage 1 of 2. Not shipped: the final stage copies /usr/src out of it.
+# ---------------------------------------------------------------------------
+FROM ubuntu:latest AS files1
 # Create app directory
 WORKDIR /usr/src/app
 
@@ -46,29 +59,6 @@ WORKDIR /usr/src/app
 COPY tests/package*.json ./
 COPY tests/run-tests-in-container.sh .
 COPY common/common.sh .
-
-# Install NVM
-ENV NVM_DIR /usr/local/nvm
-ENV NODE_VERSION=24.16.0
-RUN mkdir -p ${NVM_DIR}
-RUN set -o pipefail && curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash
-
-# Load NVM and install Node.js
-RUN . $NVM_DIR/nvm.sh && nvm version && echo -e ". $NVM_DIR/nvm.sh\nexport PATH=\$NVM_DIR/versions/node/\$(nvm version)/bin:\$PATH" >> ~/.bashrc
-RUN cat ~/.bashrc
-
-RUN source $NVM_DIR/nvm.sh \
-    && nvm install $NODE_VERSION \
-    && nvm alias default $NODE_VERSION \
-    && nvm use default
-
-# add node and npm to path so the commands are available
-ENV NODE_PATH $NVM_DIR/v$NODE_VERSION/lib/node_modules
-ENV PATH $NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
-
-# confirm installation
-RUN node -v
-RUN npm -v
 
 # Bundle app source
 COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml11_sso.js tests/saml11_options.js tests/sts_saml11.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js tests/jws_engine.js ./
@@ -312,6 +302,16 @@ COPY client/public/css/kerberos.css /usr/src/client/public/css/
 COPY client/src/spnego.js /usr/src/client/src/
 COPY client/public/spnego.html /usr/src/client/public/
 COPY tests/captures ./captures
+
+# ---------------------------------------------------------------------------
+# Staging stage 2 of 2. Same rules as stage 1; see the header. It starts a
+# fresh layer chain, which is the whole point — but note that it therefore
+# knows nothing of what stage 1 copied, and must not: nothing here reads a
+# file, every line is a COPY from the build context.
+# ---------------------------------------------------------------------------
+FROM ubuntu:latest AS files2
+WORKDIR /usr/src/app
+
 # The mock KDC and the ticket-protected service, out of the sts/ SUBMODULE, so that
 # krb5_as_exchange.js and krb5_tgs_ap.js can start them in-process and drive the real
 # exchanges with no docker and no running service.
@@ -693,8 +693,81 @@ COPY common/tests.js /usr/src/common/tests.js
 COPY common/sp_keypair.js /usr/src/common/sp_keypair.js
 # Centralized test config (waitTime, etc.); selected via CONFIG_FILE.
 COPY tests/env ./env
-# Fixed SP signing key/cert for the SAML signature-validation test + provisioning.
-RUN ls
+
+# ---------------------------------------------------------------------------
+# The image itself. Keep this stage SHORT — it is the only one whose layers
+# count against the 125 the header describes.
+# ---------------------------------------------------------------------------
+FROM ubuntu:latest
+
+# replace shell with bash so we can source files
+RUN rm /bin/sh && ln -s /bin/bash /bin/sh
+
+RUN apt-get update
+# libxml2-utils supplies xmllint, the XSD validator the WS-Trust schema test
+# falls back to when the optional native libxmljs2 binding is unusable (no
+# prebuilt binary for this ABI, or one built against a different Node version).
+#
+# fonts-liberation is here for the LAYOUT tests, and is the one thing in this list
+# that is about rendering rather than about a tool. This image installed no
+# fonts-* package at all, so the app's font stacks — bootstrap's
+# `"Helvetica Neue", Helvetica, Arial, sans-serif` and common.css's
+# `arial, sans-serif` — had no Arial-metric font to land on and fell through to
+# whatever fontconfig happened to pull in transitively, which is wider. A host run
+# resolves Arial to Liberation Sans and lays the pages out several pixels
+# narrower, so the two environments disagree about geometry and only the
+# containerized one trips panesContainTheirContent()'s no-horizontal-scroll
+# assertion. Liberation is the metric-compatible substitute for Arial, which is
+# what Chrome's own .deb depends on for the same reason.
+RUN apt-get -y install curl \
+        jq \
+        openssl \
+        fonts-liberation \
+        libxml2-utils \
+        libatomic1 \
+        libasound2t64 \
+        libatk-bridge2.0-0 \
+        libgtk-4-1 \
+        libnss3 \
+        xdg-utils \
+        wget \
+        unzip \
+        util-linux \
+        bsdextrautils
+ 
+
+# Create app directory
+WORKDIR /usr/src/app
+
+# Install NVM
+ENV NVM_DIR /usr/local/nvm
+ENV NODE_VERSION=24.16.0
+RUN mkdir -p ${NVM_DIR}
+RUN set -o pipefail && curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash
+
+# Load NVM and install Node.js
+RUN . $NVM_DIR/nvm.sh && nvm version && echo -e ". $NVM_DIR/nvm.sh\nexport PATH=\$NVM_DIR/versions/node/\$(nvm version)/bin:\$PATH" >> ~/.bashrc
+RUN cat ~/.bashrc
+
+RUN source $NVM_DIR/nvm.sh \
+    && nvm install $NODE_VERSION \
+    && nvm alias default $NODE_VERSION \
+    && nvm use default
+
+# add node and npm to path so the commands are available
+ENV NODE_PATH $NVM_DIR/v$NODE_VERSION/lib/node_modules
+ENV PATH $NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
+
+# confirm installation
+RUN node -v
+RUN npm -v
+
+# Chrome and chromedriver, pinned to 121.0.6167.85 and installed BEFORE the
+# staged files rather than after them. Nothing in this step reads anything
+# copied out of the staging stages, and putting it above them is what keeps
+# ~200 MB of download out of every rebuild: a layer's cache key includes its
+# parent, so while this sat below the COPYs, editing one test script
+# re-downloaded the browser.
 RUN wget -q -O chrome-linux64.zip https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/121.0.6167.85/linux64/chrome-linux64.zip && \
     unzip chrome-linux64.zip && \
     rm chrome-linux64.zip && \
@@ -704,6 +777,17 @@ RUN wget -q -O chrome-linux64.zip https://edgedl.me.gvt1.com/edgedl/chrome/chrom
     unzip -j chromedriver-linux64.zip chromedriver-linux64/chromedriver && \
     rm chromedriver-linux64.zip && \
     mv chromedriver /usr/local/bin/
+
+# Everything the two staging stages assembled, in their original order so that
+# a later COPY still overwrites an earlier one (see the header). /usr/src is
+# the whole of it: /usr/src/app is the WORKDIR the tests run in,
+# /usr/src/client and /usr/src/common are the repository-shaped layout several
+# tests resolve as ../client and ../common.
+COPY --from=files1 /usr/src /usr/src
+COPY --from=files2 /usr/src /usr/src
+
+# Fixed SP signing key/cert for the SAML signature-validation test + provisioning.
+RUN ls
 RUN . $NVM_DIR/nvm.sh && npm install chromedriver
 
 # Install modules needed for the test scripts

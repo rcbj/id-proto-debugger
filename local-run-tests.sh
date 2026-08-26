@@ -25,6 +25,14 @@ set -x
 #                (the default): the mock alone starts in seconds where the
 #                WildFly side-car needs twenty, so --wsfed-only=sts is the
 #                fastest loop of all.
+#   --delegation-only
+#                Bring up ONLY what the three-tier delegation chain needs (api,
+#                client and the mock STS) and run that one test: an OIDC
+#                sign-in, then two RFC 8693 hops made as two further clients.
+#                A ~1-minute loop instead of the whole suite, and it leaves the
+#                DELEGATION MAP behind as SVG files — which is the only way to
+#                see that picture at all, since the mock's register is in
+#                memory and dies with the container.
 #   --krb5-real-dc[=WHAT]
 #                Spin up a real Windows Server 2025 domain controller on AWS,
 #                run the Kerberos interoperability work against it, and tear it
@@ -58,6 +66,12 @@ WSFED_ONLY=0
 # Which identity provider(s) --wsfed-only drives. See docs/wsfed.md for why
 # there are two and what each covers that the other cannot.
 WSFED_ONLY_IDP=both
+# --delegation-only: the OIDC + two-hop RFC 8693 chain on its own, against the
+# mock STS. There is no second identity provider to choose between here and
+# there will not be one — Keycloak would need three clients, a user and a
+# token-exchange permission per pair provisioned first, and the compliant realm
+# refuses half of what this scenario does on purpose.
+DELEGATION_ONLY=0
 # --krb5-real-dc: 0 = off, else the work to run against the live DC.
 KRB5_REAL_DC=0
 KRB5_REAL_DC_WHAT=test
@@ -68,6 +82,7 @@ usage()
   cat <<USAGE
 Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                         [--wsfed-only[=keycloak|sts|both]]
+                        [--delegation-only]
                         [--krb5-real-dc[=test|capture|both]] [-h|--help]
 
   (default)    Build + start the stack, provision Keycloak (SAML AuthnRequest
@@ -113,6 +128,21 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                starts in seconds and the WildFly side-car does not, so
                --wsfed-only=sts is the fastest loop.
 
+  --delegation-only
+               Build + start only api, client and the mock STS, and run just
+               tests/oauth2_delegation_chain.js: bob_end_user signs in to
+               webapp1 through the OIDC Authorization Code flow, apigw1
+               exchanges that token for one aimed at esb1, and esb1 exchanges
+               again for sp1 — each hop as its own client, out of a debugger
+               workflow of its own.
+
+               It leaves the DELEGATION MAP behind, as SVG. That register lives
+               in the mock's memory and dies with the container, so the picture
+               of a chain can only be drawn while the run is happening; the
+               documents are written to tests/report/delegation/ (or to
+               DELEGATION_ARTIFACT_DIR). There is no second identity provider
+               to choose between: see the note beside DELEGATION_ONLY above.
+
   --krb5-real-dc[=WHAT]
                Create a Windows Server 2025 domain controller on AWS, run the
                Kerberos interoperability work against it, then destroy every
@@ -140,6 +170,7 @@ while [ $# -gt 0 ]; do
     --saml-only=*) SAML_ONLY=1; SAML_ONLY_IDP="${1#*=}" ;;
     --wsfed-only) WSFED_ONLY=1 ;;
     --wsfed-only=*) WSFED_ONLY=1; WSFED_ONLY_IDP="${1#*=}" ;;
+    --delegation-only) DELEGATION_ONLY=1 ;;
     --krb5-real-dc) KRB5_REAL_DC=1 ;;
     --krb5-real-dc=*) KRB5_REAL_DC=1; KRB5_REAL_DC_WHAT="${1#*=}" ;;
     -h|--help)  usage; exit 0 ;;
@@ -170,6 +201,13 @@ fi
 if [ "${SAML_ONLY}" = "1" ] && { [ "${WSFED_ONLY}" = "1" ] || [ "${KRB5_REAL_DC}" = "1" ]; };
 then
   echo "--saml-only, --wsfed-only and --krb5-real-dc each run one thing; pick one." >&2
+  exit 1
+fi
+if [ "${DELEGATION_ONLY}" = "1" ] && { [ "${SAML_ONLY}" = "1" ] ||
+     [ "${WSFED_ONLY}" = "1" ] || [ "${KRB5_REAL_DC}" = "1" ]; };
+then
+  echo "--delegation-only, --saml-only, --wsfed-only and --krb5-real-dc each" \
+       "run one thing; pick one." >&2
   exit 1
 fi
 export SAML_SIG_VALIDATION
@@ -815,6 +853,57 @@ runWsfedAgainst()
   return ${rc}
 }
 
+# ---------------------------------------------------------------------------
+# --delegation-only: the three-tier delegation chain on its own, and the only
+# way to LOOK at the picture it makes.
+#
+# The mock STS keeps its delegation register in memory, so /admin/delegation/map
+# can only draw this chain while the container that recorded it is still
+# running. The full suite takes twenty minutes and then tears the stack down,
+# which is a poor loop for a job whose product is a drawing. This brings up the
+# three services the test needs, runs it, and says where the SVGs landed.
+#
+# One identity provider and no choice of one: see the note beside
+# DELEGATION_ONLY at the top of this file.
+# ---------------------------------------------------------------------------
+runDelegationOnly()
+{
+  echo "Entering runDelegationOnly()."
+  local services="api client sts"
+  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml build ${services}
+  check_return_code $?
+  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml up -d ${services}
+  check_return_code $?
+  echo "Waiting for the mock STS ..."
+  sleep 5
+  CONFIG_FILE=./env/local.js verifyComposeServicesRunning local-tests.yml
+  CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml sts
+  check_return_code $?
+  # The mock serves https on a certificate it regenerated when this `up -d`
+  # started it, so nothing can have an anchor for it yet. This job verifies in
+  # node (NODE_EXTRA_CA_CERTS, for the admin API and the introspection call) and
+  # in Chrome (an SPKI pin, for the browser-direct token requests), so it has to
+  # happen before the test runs. Not fatal: the test says so itself, and its
+  # message names the certificate.
+  trustStsCertificate https://localhost:8081 || true
+
+  # Where the drawings go. Named here rather than left to the test's default so
+  # that the path printed below and the path written to are the same string.
+  DELEGATION_ARTIFACT_DIR="${CURRENT_DIR}/tests/report/delegation"
+  export DELEGATION_ARTIFACT_DIR
+  export DEBUGGER_BASE_URL CONFIG_FILE WSTRUST_STS_URL
+  node "${NODEJS_BASE_DIR}/oauth2_delegation_chain.js" \
+    --url "${DEBUGGER_BASE_URL}"
+  local rc=$?
+  if [ ${rc} -eq 0 ];
+  then
+    echo "The delegation map is in ${DELEGATION_ARTIFACT_DIR}:"
+    ls -l "${DELEGATION_ARTIFACT_DIR}" || true
+  fi
+  echo "Leaving runDelegationOnly(). rc=${rc}"
+  return ${rc}
+}
+
 runWsfedOnly()
 {
   echo "Entering runWsfedOnly(). idp=${WSFED_ONLY_IDP}"
@@ -1010,6 +1099,13 @@ then
   runWsfedOnly
   check_return_code $?
   echo "WS-Federation test passed (idp=${WSFED_ONLY_IDP})."
+  exit 0
+fi
+if [ "${DELEGATION_ONLY}" = "1" ];
+then
+  runDelegationOnly
+  check_return_code $?
+  echo "The delegation chain passed: one OIDC sign-in and two RFC 8693 hops."
   exit 0
 fi
 startDocker
