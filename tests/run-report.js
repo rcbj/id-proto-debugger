@@ -779,6 +779,39 @@ function buildJobs() {
     });
   }
 
+  // ---------------------------------------------------------------------
+  // A FEDERATED SIGN-IN, across two TRUST REALMS of the one mock STS.
+  //
+  // The debugger's OAuth2/OIDC workflow stands in for an application called
+  // `webapp-sso-test1`, registered in `federation-realm-1`; that realm is an
+  // OpenID Provider to it and a SAML 2.0 SERVICE PROVIDER of a federation
+  // relationship with `federation-realm-2`, which is where a name is actually
+  // typed.
+  //
+  // THE MOCK ONLY, and it needs nothing else — no Keycloak, no api, no second
+  // container. It replaces `federation-e2e/` in the sts/ submodule, which
+  // built the same topology out of three containers because trust realms did
+  // not exist when it was written; the mock's realms make two identity
+  // services out of one process, and the debugger supplies the application
+  // tier that test had to build for itself.
+  //
+  // NO JOB LOCK. It creates its own two realms and asserts only on what it
+  // put in them — its own application, its own relationship, its own
+  // username — so it collides with nothing, and nothing else in this suite
+  // touches those realms. It creates them on every run because a realm lives
+  // in memory and there is nowhere to declare one, and it deletes and
+  // re-creates the application and the relationship inside them so that the
+  // counters it asserts on start at zero on a re-run.
+  // ---------------------------------------------------------------------
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "Federated sign-in (OIDC to federation-realm-1, SAML 2.0 on to " +
+          "federation-realm-2)",
+      script: "federation_sso.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
   // Device Authorization Grant (RFC 8628). Requests a device/user code,
   // approves the device at the Keycloak verification URI, then polls for the
   // access token.
