@@ -1384,6 +1384,135 @@ function everyJobDeclaresTheUrlOption() {
   log.debug("Leaving everyJobDeclaresTheUrlOption().");
 }
 
+// ---------------------------------------------------------------------------
+// NO DOCKERFILE STAGE MAY OUTGROW DOCKER'S LAYER LIMIT.
+//
+// Docker's layer store refuses a chain deeper than 125 layers (`maxDepth` in
+// moby's layer package) and every RUN, COPY and ADD adds one. tests/Dockerfile
+// is almost entirely COPY — one line per test script, per borrowed module and
+// per vendored directory — so it grows with every protocol this suite learns,
+// and on 2026-08-25 it reached 126 and the build died with
+//
+//   Step 132/136 : RUN ls
+//   ...
+//   max depth exceeded
+//
+// naming no instruction, no file and no limit, three lines after that step's
+// own output. It reads as the `ls` failing. The fix was to split the COPYs
+// into two staging stages the final image copies /usr/src out of, which is
+// documented at the top of tests/Dockerfile — and a split is exactly the kind
+// of headroom that gets used up again without anybody noticing, because
+// nothing about adding one more COPY line looks different from the last
+// hundred.
+//
+// So this counts. It fails at a BUDGET well below the real ceiling, on
+// purpose: a check that fires at 125 fires only once the build is already
+// broken, which is the situation it exists to replace. At 100 there is room
+// for the base image's own layers (which count too — a `node:` base is about
+// eight) and enough warning to add a stage deliberately rather than under a
+// build failure.
+//
+// It reads every Dockerfile in the tree, not only this one: client/Dockerfile
+// is the next closest and has the same shape (one COPY per bundle). Runs in a
+// checkout; the tests image has no repository to walk and says so.
+// ---------------------------------------------------------------------------
+function everyDockerfileStaysUnderTheLayerLimit() {
+  log.debug("Entering everyDockerfileStaysUnderTheLayerLimit().");
+  // 125 is docker's; 100 is ours, and the gap is the base image plus warning.
+  const DOCKER_MAX_DEPTH = 125;
+  const BUDGET = 100;
+  const repo = path.join(__dirname, "..");
+  if (!fs.existsSync(path.join(repo, "client"))) {
+    log.info("[layers] skipped: no repository tree here, so this is the " +
+      "tests image rather than a checkout.");
+    log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
+    return;
+  }
+  // The submodules' own Dockerfiles ARE walked — sts/Dockerfile builds in
+  // this stack and a gitlink bump is exactly the kind of change that could
+  // push one over. node_modules and .git are not.
+  const skip = /(^|\/)(node_modules|\.git)(\/|$)/;
+  const found = [];
+  const walk = function (dir) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
+      const full = path.join(dir, entry.name);
+      if (skip.test(full)) {
+        return;
+      }
+      if (entry.isDirectory()) {
+        walk(full);
+        return;
+      }
+      if (entry.name === "Dockerfile" || /^Dockerfile\./.test(entry.name)) {
+        found.push(full);
+      }
+    });
+  };
+  walk(repo);
+
+  const over = [];
+  const counted = [];
+  found.forEach(function (file) {
+    const lines = fs.readFileSync(file, "utf8").split("\n");
+    // Per STAGE, because each FROM starts a fresh chain — that is what makes
+    // the split in tests/Dockerfile work at all.
+    let stage = "(before any FROM)";
+    let layers = 0;
+    let continued = false;
+    const report = function () {
+      if (layers === 0 && stage === "(before any FROM)") {
+        // Nothing between the top of the file and its first FROM; a stage
+        // with no layers of its own is not worth naming in the summary.
+        return;
+      }
+      const rel = path.relative(repo, file);
+      counted.push(rel + " [" + stage + "]: " + layers);
+      if (layers > BUDGET) {
+        over.push(rel + " stage " + stage + " has " + layers + " layer " +
+          "instructions");
+      }
+    };
+    lines.forEach(function (line) {
+      const wasContinued = continued;
+      continued = /\\\s*$/.test(line);
+      if (wasContinued) {
+        return;
+      }
+      const text = line.trim();
+      if (text.charAt(0) === "#" || text === "") {
+        return;
+      }
+      if (/^FROM\s/i.test(text)) {
+        report();
+        stage = text.replace(/^FROM\s+/i, "");
+        layers = 0;
+        return;
+      }
+      if (/^(RUN|COPY|ADD)\s/i.test(text)) {
+        layers++;
+      }
+    });
+    report();
+  });
+
+  assert.deepStrictEqual(over, [],
+    "docker refuses a layer chain deeper than " + DOCKER_MAX_DEPTH + " and " +
+    "every RUN/COPY/ADD adds one; these stages are past this suite's budget " +
+    "of " + BUDGET + ": " + over.join(" | ") + ". Split the stage the way " +
+    "tests/Dockerfile is split — a staging stage the image copies /usr/src " +
+    "out of — rather than merging COPY lines, whose comments are attached to " +
+    "the lines they explain. Left alone, the build fails with `max depth " +
+    "exceeded`, which names no instruction and no file.");
+
+  log.info("[layers] OK — " + found.length + " Dockerfile(s), " +
+    counted.length + " stage(s), the deepest at " +
+    counted.reduce(function (a, b) {
+      return Number(a.split(": ").pop()) > Number(b.split(": ").pop()) ? a : b;
+    }) + " layer instructions, budget " + BUDGET + " of docker's " +
+    DOCKER_MAX_DEPTH + ".");
+  log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
+}
+
 async function test() {
   log.debug("Entering test().");
   rsaKeys();
@@ -1398,6 +1527,7 @@ async function test() {
   appendedBeaconNeedsNoModuleSystem();
   coverageListCoversEveryBundle();
   testsImageHasNoCollidingFilenames();
+  everyDockerfileStaysUnderTheLayerLimit();
   stagedSharedModuleListsAreComplete();
   everyJobDeclaresTheUrlOption();
   log.info("Test completed successfully.");

@@ -730,6 +730,55 @@ function buildJobs() {
     },
   });
 
+  // A THREE-TIER DELEGATION CHAIN, which is the job above's exchange done
+  // TWICE, by two different clients, out of two workflows of its own — the
+  // shape an API gateway and an enterprise service bus actually produce. The
+  // token one hop issues is the token the next hop presents, so after two hops
+  // the far end holds a credential for somebody who never spoke to it, and the
+  // only place that chain exists is the issuer's own delegation register: no
+  // actor token is sent, so nothing about the middle tiers travels in any
+  // token. It asserts the wire, the mock's reading of the final token
+  // (introspection), the two acts the register recorded — matched by the jti of
+  // the tokens this test actually received — and the GRAPH the delegation map
+  // is drawn from, where the whole point is that the middle tier is ONE box
+  // that was reached by the first hop and did the second.
+  //
+  // IT PROVISIONS THE FOUR APPLICATIONS FIRST, through POST
+  // /admin-api/applications/create: each declared for `oauth2` and `oidc`, and
+  // the three a token can be ADDRESSED to registering the URI it is addressed
+  // by on `oauthAudience` (apigw1 → https://apigw1.example.com, and so on).
+  // webapp1 registers none, which the test asserts — a browser application is
+  // issued tokens and is never the audience of one. That attribute is READ:
+  // each hop asks for the downstream tier's URI, and the mock resolves it back
+  // to the application that registered it when it records the act, which is
+  // what keeps the picture one chain instead of two halves joined by nothing.
+  // It needs a mock STS from 2026-08-26 or later; an older one refuses the
+  // create by name, which is what the job then fails with.
+  //
+  // Then it SAVES THE PICTURES. That register is in memory and dies with the
+  // process, so the only moment the map of this chain can be drawn is while the
+  // run is happening; the SVGs land in this run's own report directory. See
+  // docs/test-suite-map.md.
+  //
+  // The mock only. It needs three clients nobody registered, a user with no
+  // password and a token endpoint that will exchange anything for anything —
+  // Keycloak would need all of that provisioned first, and the compliant realm
+  // has opinions about a public client and about a scope that grows, which is a
+  // different test.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "OAuth2 delegation chain (OIDC sign-in, then two RFC 8693 hops " +
+          "as two more clients)",
+      script: "oauth2_delegation_chain.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        // Where the delegation map's SVGs are written. The run's own directory,
+        // so the picture sits beside the report that says the job passed.
+        DELEGATION_ARTIFACT_DIR: path.join(RUN_DIR, "delegation"),
+      },
+    });
+  }
+
   // Device Authorization Grant (RFC 8628). Requests a device/user code,
   // approves the device at the Keycloak verification URI, then polls for the
   // access token.
