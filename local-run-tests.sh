@@ -33,14 +33,18 @@ set -x
 #                DELEGATION MAP behind as SVG files — which is the only way to
 #                see that picture at all, since the mock's register is in
 #                memory and dies with the container.
-#   --federation-only
-#                Bring up ONLY what the federated sign-in needs (client and the
-#                mock STS) and run that one test: two TRUST REALMS of the one
-#                mock, an OIDC application in the first and a SAML 2.0 identity
-#                provider in the second. A ~1-minute loop instead of the whole
-#                suite. It leaves the two realms — and everything they recorded
-#                — behind on a running stack, which is the point: /admin on
-#                either realm is where the sign-in it just performed is visible.
+#   --federation-only[=single|chain|both]
+#                Bring up ONLY what the federated sign-ins need (client and the
+#                mock STS) and run them. `single` is two TRUST REALMS of the one
+#                mock — an OIDC application in the first, a SAML 2.0 identity
+#                provider in the second. `chain` is THREE, where the middle one
+#                answers the SAML 2.0 request by federating onward over
+#                WS-Federation instead of asking for a password: an identity
+#                BRIDGE, and the only case that exercises fedAuthnMechanism.
+#                `both` is the default. A ~1-minute loop instead of the whole
+#                suite. It leaves the realms — and everything they recorded —
+#                behind on a running stack, which is the point: /admin on any
+#                of them is where the sign-in it just performed is visible.
 #   --krb5-real-dc[=WHAT]
 #                Spin up a real Windows Server 2025 domain controller on AWS,
 #                run the Kerberos interoperability work against it, and tear it
@@ -80,12 +84,21 @@ WSFED_ONLY_IDP=both
 # token-exchange permission per pair provisioned first, and the compliant realm
 # refuses half of what this scenario does on purpose.
 DELEGATION_ONLY=0
-# --federation-only: the federated sign-in across two trust realms of the one
-# mock STS. No identity provider to choose between either, and for a sharper
-# reason than the delegation chain has: the partner in this scenario IS the mock,
-# in a second realm of the same process, so there is no second implementation for
-# an option to select.
+# --federation-only: the federated sign-ins across trust realms of the one mock
+# STS. No identity provider to choose between either, and for a sharper reason
+# than the delegation chain has: the partner in these scenarios IS the mock, in
+# another realm of the same process, so there is no second implementation for an
+# option to select.
+#
+# WHAT there IS to select is the DEPTH, because there are two of these now and
+# the second is not the first with a bigger number. `single` is one hop, into a
+# realm that asks for a password; `chain` is two, into a realm that asks for
+# nothing and federates AGAIN over a different protocol — which is the thing
+# that has a name of its own, an identity BRIDGE, and the only one of the two
+# that exercises fedAuthnMechanism at all. `both` is the default because they
+# use disjoint realms and cost about fifteen seconds together.
 FEDERATION_ONLY=0
+FEDERATION_ONLY_DEPTH=both
 # --krb5-real-dc: 0 = off, else the work to run against the live DC.
 KRB5_REAL_DC=0
 KRB5_REAL_DC_WHAT=test
@@ -96,7 +109,8 @@ usage()
   cat <<USAGE
 Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                         [--wsfed-only[=keycloak|sts|both]]
-                        [--delegation-only] [--federation-only]
+                        [--delegation-only]
+                        [--federation-only[=single|chain|both]]
                         [--krb5-real-dc[=test|capture|both]] [-h|--help]
 
   (default)    Build + start the stack, provision Keycloak (SAML AuthnRequest
@@ -157,19 +171,32 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                DELEGATION_ARTIFACT_DIR). There is no second identity provider
                to choose between: see the note beside DELEGATION_ONLY above.
 
-  --federation-only
-               Build + start only client and the mock STS, and run just
-               tests/federation_sso.js: the debugger's OAuth2/OIDC workflow
-               standing in for an application registered in the trust realm
-               federation-realm-1, which federates the sign-in over SAML 2.0 to
-               federation-realm-2 — two logical identity services in one
-               process, told apart by a path prefix.
+  --federation-only[=single|chain|both]
+               Build + start only client and the mock STS, and run the
+               federated sign-ins. The debugger's OAuth2/OIDC workflow stands in
+               for the application in both; the realms are logical identity
+               services in one process, told apart by a path prefix. WHICH is
+               one of:
 
-               It leaves the stack up with both realms configured, which is
-               worth having: /realm/federation-realm-1/admin/federation shows
-               the relationship and its counters, and /admin/users on either
-               realm shows the same person from the two ends. The realms live in
-               the mock's memory and go with the container.
+                 single  tests/federation_sso.js — ONE hop. An application in
+                         federation-realm-1, federated over SAML 2.0 to
+                         federation-realm-2, where a password is typed.
+                 chain   tests/federation_chain_sso.js — TWO hops and three
+                         protocols. An application in federation-realm-3,
+                         federated over SAML 2.0 to federation-realm-4, which
+                         asks for nothing itself and federates AGAIN over
+                         WS-Federation to federation-realm-5, where a password
+                         is typed. Realm 4 is a pure identity BRIDGE, and the
+                         attribute that makes it one — fedAuthnMechanism on its
+                         identity-provider-side relationship — is what this
+                         case exists to exercise.
+                 both    the default. Disjoint realms, about fifteen seconds.
+
+               It leaves the stack up with every realm configured, which is the
+               point of the option: /realm/<id>/admin/federation shows the
+               relationships and their counters, and /admin/users on each realm
+               shows the same person from each end of the chain. The realms live
+               in the mock's memory and go with the container.
 
   --krb5-real-dc[=WHAT]
                Create a Windows Server 2025 domain controller on AWS, run the
@@ -200,6 +227,8 @@ while [ $# -gt 0 ]; do
     --wsfed-only=*) WSFED_ONLY=1; WSFED_ONLY_IDP="${1#*=}" ;;
     --delegation-only) DELEGATION_ONLY=1 ;;
     --federation-only) FEDERATION_ONLY=1 ;;
+    --federation-only=*) FEDERATION_ONLY=1
+                         FEDERATION_ONLY_DEPTH="${1#*=}" ;;
     --krb5-real-dc) KRB5_REAL_DC=1 ;;
     --krb5-real-dc=*) KRB5_REAL_DC=1; KRB5_REAL_DC_WHAT="${1#*=}" ;;
     -h|--help)  usage; exit 0 ;;
@@ -215,6 +244,11 @@ esac
 case "${WSFED_ONLY_IDP}" in
   keycloak|sts|both) ;;
   *) echo "Unknown --wsfed-only identity provider: ${WSFED_ONLY_IDP}" >&2
+     usage; exit 1 ;;
+esac
+case "${FEDERATION_ONLY_DEPTH}" in
+  single|chain|both) ;;
+  *) echo "Unknown --federation-only depth: ${FEDERATION_ONLY_DEPTH}" >&2
      usage; exit 1 ;;
 esac
 case "${KRB5_REAL_DC_WHAT}" in
@@ -942,8 +976,17 @@ runDelegationOnly()
 }
 
 # ---------------------------------------------------------------------------
-# --federation-only: the federated sign-in, and the fastest way to LOOK at what
-# it left in the two realms.
+# --federation-only: the federated sign-ins, and the fastest way to LOOK at what
+# they left in the realms.
+#
+# TWO TESTS, and the second is not the first with a bigger number. One hop into
+# a realm that asks for a password is federation; two hops, where the middle
+# realm asks for nothing at all and federates onward over a DIFFERENT protocol,
+# is an identity bridge — and only the second exercises fedAuthnMechanism, the
+# attribute on an identity-provider-side relationship that says what this
+# service does when a partner asks it to authenticate somebody. They use
+# disjoint realms (1-2 and 3-4-5) precisely so that either can be run alone and
+# neither asserts on the other's counters.
 #
 # Both identity services in this scenario are the SAME mock STS process, told
 # apart by a path prefix, so this loop is two containers rather than three — and
@@ -979,11 +1022,29 @@ runFederationOnly()
   trustStsCertificate https://localhost:8081 || true
 
   export DEBUGGER_BASE_URL CONFIG_FILE WSTRUST_STS_URL
-  node "${NODEJS_BASE_DIR}/federation_sso.js" --url "${DEBUGGER_BASE_URL}"
-  local rc=$?
+  local rc=0
+  # BOTH ARE RUN EVEN WHEN THE FIRST FAILS, and the `rc` is the worse of the
+  # two. They configure disjoint realms and share no state, so a failure in one
+  # says nothing about the other — and stopping at the first would hide which
+  # of the two layers broke, which is the only question worth asking when a
+  # chain stops working.
+  if [ "${FEDERATION_ONLY_DEPTH}" != "chain" ];
+  then
+    node "${NODEJS_BASE_DIR}/federation_sso.js" --url "${DEBUGGER_BASE_URL}"
+    rc=$?
+  fi
+  if [ "${FEDERATION_ONLY_DEPTH}" != "single" ];
+  then
+    node "${NODEJS_BASE_DIR}/federation_chain_sso.js" \
+         --url "${DEBUGGER_BASE_URL}"
+    local chainRc=$?
+    [ ${chainRc} -ne 0 ] && rc=${chainRc}
+  fi
   if [ ${rc} -eq 0 ];
   then
-    cat <<FEDERATION
+    if [ "${FEDERATION_ONLY_DEPTH}" != "chain" ];
+    then
+      cat <<FEDERATION
 The stack is still up, and both realms are configured. What they now hold is the
 interesting part:
   ${WSTRUST_STS_URL}/realm/federation-realm-1/admin/federation
@@ -995,6 +1056,24 @@ interesting part:
 The console needs a sign-on session from /authn/login (any name, any password).
 Both realms are in the mock's memory and go with the container.
 FEDERATION
+    fi
+    if [ "${FEDERATION_ONLY_DEPTH}" != "single" ];
+    then
+      cat <<CHAIN
+And the THREE realms of the N-layer chain, where the middle one is the thing to
+go and look at:
+  ${WSTRUST_STS_URL}/realm/federation-realm-4/admin/federation
+      TWO relationships, one in each direction — realm 4 consumes realm 5's
+      WS-Federation tokens and asserts SAML 2.0 to realm 3, which is the whole
+      of what an identity bridge is. The identity-provider-side one carries
+      fedAuthnMechanism=federation and the id of the other beside it.
+  ${WSTRUST_STS_URL}/realm/federation-realm-5/admin/users
+      the only realm of the three that ever drew a password field
+  ${WSTRUST_STS_URL}/realm/federation-realm-3/admin/users
+      the same person, two hops and two protocols away, in the realm the
+      application actually asked
+CHAIN
+    fi
   fi
   echo "Leaving runFederationOnly(). rc=${rc}"
   return ${rc}
