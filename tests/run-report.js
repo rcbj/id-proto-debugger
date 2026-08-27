@@ -2461,8 +2461,20 @@ function buildJobs() {
     script: "krb5_mit_client.js",
     env: {
       STS_URL: env.STS_URL || "https://localhost:8081",
-      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
-      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+      // KRB5_TEST_* AND NOT KRB5_KDC_HOST, which every job above carries —
+      // the same split SPIFFE_TEST_* draws against SPIFFE_*, and the one
+      // this variable's own note further up already names as the mistake to
+      // avoid. Those jobs TYPE the address into a page and the api's relay
+      // resolves it, so `sts` is right on both stacks. This one has no page
+      // and no relay: `kinit` opens the socket out here, in the test's own
+      // process, where on a host launcher `sts` resolves to nothing and MIT
+      // answers `Cannot contact any KDC for realm 'EXAMPLE.COM'` — which is
+      // exactly what it did on 2026-08-27, the first run after this job
+      // existed, against a KDC that was up. So the default is this
+      // process's view, and run-tests-in-container.sh overrides it to the
+      // compose name for the bridge stack, as it does STS_URL.
+      KRB5_TEST_KDC_HOST: env.KRB5_TEST_KDC_HOST || "localhost",
+      KRB5_TEST_KDC_PORT: env.KRB5_TEST_KDC_PORT || "88",
       KRB5_REALM: env.KRB5_REALM || "EXAMPLE.COM",
     },
   });

@@ -111,8 +111,31 @@ log.info("Log initialized. logLevel=" + log.level());
 // this file at all.
 var stsUrl = (process.env.STS_URL || "https://localhost:8081")
     .replace(/\/+$/, "");
-var kdcHost = process.env.KRB5_KDC_HOST || "localhost";
-var kdcPort = process.env.KRB5_KDC_PORT || "88";
+// THE KDC AS THIS PROCESS DIALS IT, AND ITS OWN VARIABLE RATHER THAN THE ONE
+// EVERY OTHER KERBEROS JOB CARRIES — the same split SPIFFE_TEST_* draws
+// against SPIFFE_*, and for the identical reason.
+//
+// `KRB5_KDC_HOST` is the API'S view: the five page jobs type that address into
+// a page and the api's relay resolves it, so it is the compose name `sts` on
+// both stacks (local-tests.yml gives the api an `extra_hosts` entry for it).
+// NOTHING resolves a name for this file — `kinit` opens the socket itself, out
+// here — so `sts` means nothing on a host run and MIT says
+// `Cannot contact any KDC for realm 'EXAMPLE.COM'`, a message naming neither
+// the variable nor the stack. That is what it said on 2026-08-27, on the first
+// run after this file was written, while the KDC was up and reachable from the
+// same shell.
+//
+// So: `localhost` by default, which is right on a host launcher (every service
+// on local-tests.yml is host-networked, so the mock's port 88 IS the host's),
+// and `run-tests-in-container.sh` sets these two to `sts` for the bridge stack
+// exactly as it does STS_URL and SPIFFE_TEST_*.
+//
+// `KRB5_KDC_HOST` is DELIBERATELY not read here as a fallback. Falling back to
+// it would be the same variable standing for both views again, one layer down:
+// a shell that exports it for the page jobs would silently re-break this one,
+// and the failure would look like a KDC defect rather than an address.
+var kdcHost = process.env.KRB5_TEST_KDC_HOST || "localhost";
+var kdcPort = process.env.KRB5_TEST_KDC_PORT || "88";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
 // One password for every USER account in this KDC — a published test
 // credential from its own principal table, not a secret.
