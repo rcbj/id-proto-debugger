@@ -321,9 +321,16 @@ async function registerApplication(spBase, callbackUri) {
   assert.ok(entry.found, "The application " + APPLICATION + " is not in " +
             SP_REALM + "'s registry after being created there.");
   const fields = entry.fields || {};
-  assert.strictEqual(fields.appFederationRelationship, RELATIONSHIP,
-    "The application entry should name the federation relationship \"" +
-    RELATIONSHIP + "\" and names \"" + fields.appFederationRelationship + "\".");
+  // A LIST since 2026-08-26 — the mock's `appFederationRelationship` is
+  // multi-valued, so an application can offer several identity providers and a
+  // person picks between them at `/authn/select-idp`. This test names ONE, and
+  // the assertion is that the list is exactly that one: a second value here
+  // would draw the chooser instead of the redirect every assertion below
+  // assumes. `tests/federation_choice_sso.js` is the job that drives two.
+  const named = [].concat(fields.appFederationRelationship || []);
+  assert.deepStrictEqual(named, [RELATIONSHIP],
+    "The application entry should name exactly the federation relationship \"" +
+    RELATIONSHIP + "\" and names [" + named.join(", ") + "].");
   const registered = [].concat(fields.oauthRedirectUri || []);
   assert.ok(registered.indexOf(REGISTERED_REDIRECT_URI) >= 0,
     "The application should be registered with " + REGISTERED_REDIRECT_URI +
@@ -653,14 +660,19 @@ async function forgedCallbackIsRefused(spBase, partner) {
 async function clearingTheTieRestoresTheLocalScreen(driver, spBase,
                                                     callbackUri) {
   log.debug("Entering clearingTheTieRestoresTheLocalScreen().");
-  await must(spBase, "/applications/set",
+  // REMOVE, NOT SET. The attribute holds a list, so the mock refuses a `set`
+  // by name — "a set would replace the list with one value and read afterwards
+  // as the others having been forgotten" — and values are added and removed
+  // instead. This used to be `/applications/set` with an empty value.
+  await must(spBase, "/applications/remove",
              { application: APPLICATION,
-               attribute: "appFederationRelationship", value: "" },
+               attribute: "appFederationRelationship", value: RELATIONSHIP },
              "clearing the application's federation relationship");
   try {
     const entry = await adminGet(spBase,
       "/applications?application=" + encodeURIComponent(APPLICATION));
-    assert.ok(!((entry.fields || {}).appFederationRelationship || "").trim(),
+    assert.deepStrictEqual(
+      [].concat((entry.fields || {}).appFederationRelationship || []), [],
       "The federation relationship was not actually cleared off the entry, so " +
       "the check below would be measuring nothing.");
 
@@ -683,7 +695,7 @@ async function clearingTheTieRestoresTheLocalScreen(driver, spBase,
     log.info("With the tie cleared the same request stops at realm 1's own " +
              "sign-in screen: " + url);
   } finally {
-    await must(spBase, "/applications/set",
+    await must(spBase, "/applications/add",
                { application: APPLICATION,
                  attribute: "appFederationRelationship",
                  value: RELATIONSHIP },

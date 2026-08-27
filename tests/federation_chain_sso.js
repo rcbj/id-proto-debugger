@@ -73,9 +73,14 @@
 // Every interesting failure here still ends with an access token — that is
 // what makes brokered authentication worth testing at all. So:
 //
-//   * the browser reaches REALM 5's screen, and it is the WS-FEDERATION one
-//     (`wsfed-login`, not `kc-login`) — realm 4's own screen must never be
-//     drawn, which is the whole claim;
+//   * the browser reaches REALM 5's screen, and that screen says it is
+//     answering a WS-FEDERATION request — realm 4's own screen must never be
+//     drawn, which is the whole claim. It used to be read off the BUTTON
+//     (`wsfed-login`, not `kc-login`), because that profile drew a screen of
+//     its own; since 2026-08-26 it goes through the shared funnel like the
+//     other three, so what is read is what the screen SAYS it is signing in
+//     for. That is the stronger of the two: a button says which module
+//     rendered a page, and this says which request it is answering;
 //   * realm 4's IdP-side relationship is created DISABLED, and setting the
 //     mechanism to `federation` with nothing to broker to reports
 //     `fedAuthnRelationship` as MISSING rather than half-working;
@@ -321,9 +326,16 @@ async function registerApplication(appBase, callbackUri) {
   assert.ok(entry.found, "The application " + APPLICATION + " is not in " +
             APP_REALM + "'s registry after being created there.");
   const fields = entry.fields || {};
-  assert.strictEqual(fields.appFederationRelationship, REL_3_TO_4,
-    "The application entry should name the federation relationship \"" +
-    REL_3_TO_4 + "\" and names \"" + fields.appFederationRelationship + "\".");
+  // A LIST, not a string. `appFederationRelationship` is multi-valued in the
+  // mock's schema — an application may offer several partners and a person
+  // picks between them at `/authn/select-idp` — so the registry answers with
+  // an array. This chain names exactly ONE at each layer, and the assertion
+  // says so: a second value here would draw the chooser instead of the
+  // redirect that every hop below depends on.
+  const named = [].concat(fields.appFederationRelationship || []);
+  assert.deepStrictEqual(named, [REL_3_TO_4],
+    "The application entry should name exactly the federation relationship \"" +
+    REL_3_TO_4 + "\" and names [" + named.join(", ") + "].");
   const registered = [].concat(fields.oauthRedirectUri || []);
   assert.ok(registered.indexOf(callbackUri) >= 0,
     "The debugger's own callback (" + callbackUri + ") is not in the " +
@@ -648,13 +660,13 @@ async function prepareAuthorizationRequest(driver, appBase, callbackUri) {
 // ---------------------------------------------------------------------------
 // REALM 5'S SIGN-IN SCREEN, WHICH IS NOT THE ONE EVERY OTHER TEST HERE DRIVES.
 //
-// WS-Federation's passive profile has a screen of ITS OWN inside `wsfed.js`,
-// because section 13.2.1's POST cannot be answered with a redirect chain
-// through another endpoint without losing the wresult. So its buttons are
-// `wsfed-login` / `wsfed-cancel` and not the Keycloak-shaped `kc-login` /
-// `kc-cancel` that `authn.js`'s screen reuses — and that difference is what
-// this test reads to prove WHICH screen it reached, so it must not be papered
-// over with a selector that matches both.
+// WS-Federation's passive profile HAD a screen of its own inside `wsfed.js`
+// until 2026-08-26, with `wsfed-login` / `wsfed-cancel` buttons rather than the
+// Keycloak-shaped `kc-login` / `kc-cancel` that `authn.js`'s screen reuses —
+// and that difference is what this test used to read to prove which screen it
+// had reached. It goes through the shared funnel now (see
+// federation_matrix_sso.js's header), so there is one screen, one button, and
+// the thing to read is what the screen SAYS it is answering.
 // ---------------------------------------------------------------------------
 async function signInAtWsFed(driver, user) {
   log.debug("Entering signInAtWsFed(). user=" + user);
@@ -677,7 +689,10 @@ async function signInAtWsFed(driver, user) {
     await passwords[0].clear();
     await passwords[0].sendKeys("no password is checked here");
   }
-  await driver.findElement(By.id("wsfed-login")).click();
+  // `kc-login`, not `wsfed-login`: WS-Federation reaches the SHARED sign-in
+  // screen since 2026-08-26 rather than drawing one of its own. See the note
+  // beside the protocol assertion in test().
+  await driver.findElement(By.id("kc-login")).click();
   log.debug("Leaving signInAtWsFed().");
 }
 
@@ -734,7 +749,13 @@ async function whereDoesTheSignInStop(driver, appBase, callbackUri, label) {
   const where = {
     url: at,
     realm: (at.match(/\/realm\/([^/?]+)/) || [])[1] || "(none)",
-    wsfed: source.indexOf("wsfed-login") >= 0,
+    // WHAT THIS SCREEN SAYS IT IS ANSWERING, which is the shared screen's own
+    // line built from `beginAuthentication`'s `protocol` argument. It replaced
+    // a check on `wsfed-login` when that profile stopped drawing a screen of
+    // its own — see the note above signInAtWsFed().
+    protocol: (source.match(
+      /Signing in for:\s*<code>([^<]+)<\/code>/) || [])[1] || "",
+    wsfed: /Signing in for:\s*<code>WS-Federation<\/code>/.test(source),
     local: source.indexOf("kc-login") >= 0,
     mfaLocked: mfa.locked,
     passwordlessLocked: passwordless.locked,
@@ -742,9 +763,10 @@ async function whereDoesTheSignInStop(driver, appBase, callbackUri, label) {
       ? await (await driver.findElement(By.css("div.err"))).getText() : "")
   };
   log.info(label + ": stopped in " + where.realm +
-           (where.wsfed ? " at the WS-Federation screen"
-                        : where.local ? " at the local sign-in screen"
-                                      : " at something else") +
+           (where.local
+              ? " at a sign-in screen answering " +
+                (where.protocol || "(an unnamed protocol)")
+              : " at something that is not a sign-in screen") +
            (where.problem ? " — \"" + where.problem.slice(0, 90) + "\"" : ""));
   log.debug("Leaving whereDoesTheSignInStop().");
   return where;
@@ -799,8 +821,9 @@ async function theMechanismIsWhatDecides(driver, bridgeBase, appBase,
       "this test is about that instead.");
     assert.ok(stop.local && !stop.wsfed,
       "With the mechanism set to `password` the screen at realm 4 should be " +
-      "its own (kc-login present=" + stop.local + ", wsfed-login present=" +
-      stop.wsfed + ").");
+      "answering realm 3's SAML 2.0 request rather than a wsignin1.0 it " +
+      "brokered onward (sign-in screen present=" + stop.local +
+      ", it says it is signing in for \"" + stop.protocol + "\").");
     assert.ok(!stop.mfaLocked && !stop.passwordlessLocked,
       "The plain password screen has a box ticked and locked (mfa=" +
       stop.mfaLocked + ", passwordless=" + stop.passwordlessLocked + "), so " +
@@ -894,8 +917,9 @@ async function theMechanismIsWhatDecides(driver, bridgeBase, appBase,
       "After restoring the mechanism the chain should reach realm 5 again " +
       "and it stopped in \"" + stop.realm + "\".");
     assert.ok(stop.wsfed,
-      "The restored chain reached realm 5 and did not draw its " +
-      "WS-Federation screen.");
+      "The restored chain reached realm 5 and the screen there says it is " +
+      "signing in for \"" + stop.protocol + "\" rather than for " +
+      "WS-Federation, so the second hop used some other protocol.");
   } finally {
     await adminPost(bridgeBase, "/federation/set",
       { id: REL_4_FROM_3, field: "fedAuthnMechanism", value: "federation" });
@@ -1096,18 +1120,27 @@ async function test() {
              "realm 5: " + screenUrl);
 
     const screen = await driver.getPageSource();
-    // THE PROTOCOL OF THE SECOND HOP, in one string. `wsfed-login` is
-    // `wsfed.js`'s own button and `authn.js`'s screen has never had one, so
-    // this is the assertion that the last hop was WS-Federation and not the
-    // SAML 2.0 the first hop used.
-    assert.ok(screen.indexOf("id=\"wsfed-login\"") >= 0,
-      "Realm 5's screen is not the WS-Federation one — it has no " +
-      "`wsfed-login` button — so realm 4 reached it over some other protocol " +
-      "than the one its relationship is configured for.");
-    assert.ok(screen.indexOf("id=\"kc-login\"") === -1,
-      "The screen at realm 5 carries `kc-login`, which is authn.js's own " +
-      "sign-in screen rather than the WS-Federation passive profile's. The " +
-      "chain reached a realm but not through the protocol configured.");
+    // THE PROTOCOL OF THE SECOND HOP, in one string — and it used to be a
+    // different string. Until 2026-08-26 this asserted on `wsfed-login`, the
+    // button on the sign-in screen `wsfed.js` drew for itself, against
+    // `kc-login`, which `authn.js`'s screen has always had. That profile goes
+    // through the shared funnel now (see federation_matrix_sso.js's header for
+    // why: owning a screen meant owning the funnel, and three features that
+    // live in the funnel were inert for WS-Federation alone), so BOTH halves of
+    // that assertion are now false for a service that is working — there is one
+    // screen and its button is `kc-login`.
+    //
+    // What replaces it is what the shared screen SAYS. It prints the protocol
+    // it was reached for, from `beginAuthentication`'s `protocol` argument, and
+    // it prints the caller's own parameters from `details` — so `wtrealm` on a
+    // screen is still the evidence that a wsignin1.0 is what is being answered.
+    // The two together are a stronger statement than the button was: a button
+    // is a fact about which module rendered a page, and these are facts about
+    // which request it is answering.
+    assert.ok(/Signing in for:\s*<code>WS-Federation<\/code>/.test(screen),
+      "Realm 5's screen does not say it is signing somebody in for " +
+      "WS-Federation, so realm 4 reached it over some other protocol than " +
+      "the one its relationship is configured for.");
     assert.ok(/wtrealm/.test(screen),
       "Realm 5's screen does not mention a wtrealm, so it is not answering a " +
       "wsignin1.0 from realm 4.");

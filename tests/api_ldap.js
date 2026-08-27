@@ -1060,12 +1060,21 @@ async function wsTrustSeedsAnEntryToo(described) {
 // session is single sign-on rather than a second authentication.
 //
 // So what this section pins is that the ONE moment it happens is wired to the
-// funnel. It is not driven through a browser: the sign-in screen posts
-// `signin_id` and a username to /wsfed/login, and the pending request is held
-// server-side under that id rather than in the session, so the whole exchange
-// is two ordinary HTTP calls. `wsfed_sso.js` covers the workflow through a
-// browser against both identity providers; this covers one property of the
-// mock, and keeping them apart means a failure names which of the two broke.
+// funnel. It is not driven through a browser: the sign-in screen posts an
+// `authn_id` and a username, and the interrupted request is held server-side
+// under that id rather than in the session, so the whole exchange is two
+// ordinary HTTP calls. `wsfed_sso.js` covers the workflow through a browser
+// against both identity providers; this covers one property of the mock, and
+// keeping them apart means a failure names which of the two broke.
+//
+// THE SCREEN IS `authn.js`'s SINCE 2026-08-26, and this section changed with
+// it. WS-Federation used to draw one of its own and post `signin_id` to
+// `/wsfed/login`; it goes through `beginAuthentication()` now like the other
+// three browser SSO profiles, so a `wsignin1.0` with no session answers a
+// REDIRECT to `/authn/login` rather than a 200 with a form. What the section
+// asserts is unchanged, and is if anything sharper: the one place this
+// protocol authenticates anybody is `startSession()`, and now there is one
+// screen in front of it rather than two.
 // ---------------------------------------------------------------------------
 async function wsFederationSeedsAnEntryToo(described) {
   log.debug("Entering wsFederationSeedsAnEntryToo().");
@@ -1076,6 +1085,8 @@ async function wsFederationSeedsAnEntryToo(described) {
 
   const signInUrl = stsUrl + "/wsfed?wa=wsignin1.0&wtrealm=" +
     encodeURIComponent("urn:api-ldap-test:" + stamp);
+  // `fetch` follows the redirect to /authn/login by itself, which is what a
+  // browser would do and is the whole of what this hop is.
   const screen = await fetch(signInUrl);
   if (screen.status === 404) {
     log.warn("this mock has no /wsfed, so it has no WS-Federation. Skipping.");
@@ -1083,28 +1094,34 @@ async function wsFederationSeedsAnEntryToo(described) {
     return;
   }
   assert.strictEqual(screen.status, 200,
-    "a wsignin1.0 with no session should answer the sign-in screen; got " +
+    "a wsignin1.0 with no session should end at the sign-in screen; got " +
     screen.status);
+  assert.ok(String(screen.url).indexOf("/authn/login") >= 0,
+    "a wsignin1.0 with no session should be handed to the SHARED " +
+    "authentication service and it ended at " + screen.url + ". A mock that " +
+    "answers this itself is one where `appFederationRelationship` and " +
+    "`fedAuthnMechanism` do nothing for this profile — see the note above.");
   const html = await screen.text();
 
   // The form's own hidden field. It is read out of the page rather than
   // invented because it is what holds the interrupted request: the sign-in
   // POST is accepted on the strength of this id and not of a cookie, which is
   // also why this section needs no cookie jar.
-  const idMatch = html.match(/name="signin_id"[^>]*value="([^"]+)"/);
+  const idMatch = html.match(/name="authn_id"[^>]*value="([^"]+)"/);
   assert.ok(idMatch,
-    "the sign-in screen must carry a signin_id, which is the handle the " +
+    "the sign-in screen must carry an authn_id, which is the handle the " +
     "login POST is accepted on. Without one this test would be posting a form the " +
     "service has no pending request for, and the 400 that came back would " +
     "read as a broken sign-in rather than as a changed page. Got: " +
     html.slice(0, 300));
 
   const who = "wsfed" + stamp;
-  const login = await fetch(stsUrl + "/wsfed/login", {
+  const login = await fetch(stsUrl + "/authn/login", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "signin_id=" + encodeURIComponent(idMatch[1]) +
-      "&username=" + encodeURIComponent(who) + "&password=whatever",
+    body: "authn_id=" + encodeURIComponent(idMatch[1]) +
+      "&username=" + encodeURIComponent(who) +
+      "&password=whatever&action=login",
     redirect: "manual"
   });
   // A REDIRECT back to the passive endpoint is the success shape: the screen is
@@ -1133,7 +1150,7 @@ async function wsFederationSeedsAnEntryToo(described) {
     "with 307, which replays the method and the body onto the next hop.");
 
   assert.strictEqual(await entriesFor(who), 1,
-    "signing in at the WS-Federation screen must seed uid=" + who + "," +
+    "signing in for a WS-Federation request must seed uid=" + who + "," +
     usersDn + ". That screen calls authn.js's startSession(), which is the " +
     "one place this protocol authenticates anybody — every later wsignin1.0 " +
     "on the session is single sign-on and authenticates nobody a second " +
