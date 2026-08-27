@@ -1906,6 +1906,11 @@ async function test() {
     .setLoggingPrefs(loggingPrefs)
     .build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     if (MECHANISM === "webauthn") {
       // A CTAP2 authenticator inside the browser. It lives only as long as
@@ -1947,9 +1952,13 @@ async function test() {
              LABELS[FED_PROTOCOL] + " / " + MECHANISM + ".");
   } catch (error) {
     log.error(error.stack || error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

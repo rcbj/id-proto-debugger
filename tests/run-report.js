@@ -1253,6 +1253,24 @@ function buildJobs() {
     env: {},
   });
 
+  // No test may call process.exit() while a WebDriver session is open.
+  // process.exit() is synchronous termination, so it SKIPS the finally that
+  // quits the driver — and an unquit session leaves a whole headless Chrome
+  // (~15 OS processes) resident. Thirty-nine files in this directory were
+  // written that way; on 2026-08-26 one failing job left 11 Chrome processes
+  // behind and a run of this suite left 559, which exhausted the machine's
+  // memory and cost a reboot. The detached spawn and group kill in runJob()
+  // above are the backstop for a suite run; this is what protects somebody
+  // running `node tests/foo.js` by hand, which is how a browser test gets
+  // written. It also asserts that runJob() still does its half. Parses this
+  // directory's sources with acorn: node only, no browser, never skipped.
+  jobs.push({
+    name: "No process.exit() while a driver is open (and the runner still " +
+        "reaps process groups)",
+    script: "driver_quit_reachable.js",
+    env: {},
+  });
+
   // The page-load guard the browser tests navigate through (tests/page_load.js)
   // against a socket that behaves like a CDN edge on a bad day. A connection
   // that is established and then dropped is the failure driver.get() does NOT
@@ -3886,6 +3904,104 @@ function logHeader(name, script, startedAt) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Reaping a job's PROCESS TREE, which is not the same thing as its process.
+//
+// A browser job is `node` -> `chromedriver` -> `chrome`, and Chrome is itself
+// about FIFTEEN processes (browser, two crashpad handlers, two zygotes, a gpu
+// process, the network and storage services, a renderer per frame). Only the
+// first of those three is this runner's child. When a test dies without
+// reaching `driver.quit()` -- the `process.exit(1)`-inside-a-`catch` that
+// skipped its own `finally` was the usual way until 2026-08-26, and a Ctrl-C
+// is the other -- selenium's own exit hook (`io/exec.js`) sends SIGTERM to
+// CHROMEDRIVER and nothing at all to the browser it launched. Chromedriver
+// dies, Chrome is orphaned, and it keeps its share of the machine's memory
+// until somebody reboots. Measured that day: ONE failing job left 11 Chrome
+// processes behind, and a run of this suite left 559, which is what took the
+// laptop out.
+//
+// So every job is spawned `detached`, which gives it a process GROUP of its
+// own whose id is the child's pid. chromedriver inherits that group from node
+// and chrome inherits it from chromedriver, so a single `process.kill(-pgid)`
+// reaches the whole tree however deep it got. That is what makes this a
+// BACKSTOP rather than a second copy of the per-script fix: it does not care
+// why the tree survived, or whether the script that made it had been written
+// yet. It runs after every job, passing or failing -- a job that passed can
+// still have left a browser behind.
+//
+// `detached` has one consequence that has to be paid for right here, and
+// forgetting it would be worse than the leak: a child in its own process group
+// NO LONGER RECEIVES the terminal's Ctrl-C. Without the signal handlers below,
+// interrupting the runner would leave the entire pool running with nothing
+// left alive to reap it.
+// ---------------------------------------------------------------------------
+
+// A job that has printed nothing and not exited is not necessarily hung, so
+// this is deliberately far above the slowest real job rather than near it: the
+// longest single job in the 2026-08-26 run was 389 seconds and the run before
+// it had one at 415. Fifteen minutes bounds a hang without turning a slow
+// machine into a failure. TEST_JOB_TIMEOUT_MS overrides it, and 0 disables the
+// timeout while leaving the process-group reaping in place.
+const JOB_TIMEOUT_MS = (function () {
+  const asked = parseInt(process.env.TEST_JOB_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(asked) && asked >= 0) {
+    return asked;
+  }
+  return 900000;
+})();
+
+// The process group of every job currently running: added at spawn, removed
+// once the group has been reaped.
+const liveJobGroups = new Set();
+
+// Kill one job's whole process group. Every failure here is ordinary rather
+// than exceptional, which is why nothing is thrown and nothing is returned.
+function killJobGroup(pgid, signal) {
+  log.debug("Entering killJobGroup().");
+  if (!pgid) {
+    log.debug("Leaving killJobGroup(). No group.");
+    return;
+  }
+  try {
+    process.kill(-pgid, signal);
+  } catch (e) {
+    // ESRCH is the ordinary case and means the group has already gone, which
+    // is exactly what a clean exit looks like. EPERM would mean the group is
+    // not ours, which cannot happen for one we created, so it is worth a line.
+    if (e.code !== "ESRCH") {
+      log.warn("killJobGroup(" + pgid + ", " + signal + "): " + e.message);
+    }
+  }
+  log.debug("Leaving killJobGroup().");
+}
+
+// Every live job's tree, killed synchronously. Safe to call from an 'exit'
+// handler, which cannot await anything -- process.kill() is a syscall that
+// returns immediately, and that is precisely why the backstop is a signal
+// rather than a driver.quit().
+function reapAllJobGroups() {
+  log.debug("Entering reapAllJobGroups().");
+  liveJobGroups.forEach(function (pgid) {
+    killJobGroup(pgid, "SIGKILL");
+  });
+  liveJobGroups.clear();
+  log.debug("Leaving reapAllJobGroups().");
+}
+
+process.on("exit", reapAllJobGroups);
+
+// Ctrl-C and friends. The runner exits with the conventional status for the
+// signal rather than a tidy 0, so a run that was interrupted does not read as
+// a run that finished.
+["SIGINT", "SIGTERM", "SIGHUP"].forEach(function (sig) {
+  process.on(sig, function () {
+    log.warn("Received " + sig + "; killing " + liveJobGroups.size +
+        " running job process group(s) before exiting.");
+    reapAllJobGroups();
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  });
+});
+
 // Run one test, streaming its stdout AND stderr live to the console while
 // simultaneously writing them to a per-test log file (a tee). The log is
 // opened and the header written before the child starts, and flushed as
@@ -3912,6 +4028,11 @@ function runJob(job, index, live) {
     logStream.write(logHeader(job.name, job.script, startedAt));
 
     let output = "";
+    // The job's process group, its watchdog, and the guard that keeps the
+    // timeout path and the 'close' that follows it from finishing twice.
+    let pgid = null;
+    let timer = null;
+    let finished = false;
     const tee = (chunk) => {
       log.debug("Entering tee().");
       const s = chunk.toString();
@@ -3925,6 +4046,23 @@ function runJob(job, index, live) {
 
     const finish = (code, codeLabel) => {
       log.debug("Entering finish().");
+      // The timeout path kills the tree and finishes the job itself, so the
+      // 'close' that follows must not finish it a second time.
+      if (finished) {
+        log.debug("Leaving finish(). Already finished.");
+        return;
+      }
+      finished = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      // The backstop, and the whole reason the job was spawned detached:
+      // whatever it left running -- a chromedriver, a Chrome, both -- goes
+      // now. The PASSING path reaches this too, because a job that passed can
+      // still have leaked a browser.
+      killJobGroup(pgid, "SIGKILL");
+      liveJobGroups.delete(pgid);
       const durationMs = Date.now() - startMs;
       const passed = code === 0;
       logStream.end(
@@ -3967,7 +4105,21 @@ function runJob(job, index, live) {
     const child = spawn("node", [path.join(TESTS_DIR, job.script), "--url",
         BASE_URL], {
       env: childEnv,
+      // A process group of this job's own, so its whole tree can be killed as
+      // one. See the reaping note above this function.
+      detached: true,
     });
+    pgid = child.pid;
+    liveJobGroups.add(pgid);
+    if (JOB_TIMEOUT_MS > 0) {
+      timer = setTimeout(() => {
+        const secs = (JOB_TIMEOUT_MS / 1000).toFixed(0);
+        tee("\n[runner] no exit after " + secs + "s; killing this job's " +
+            "process tree. Raise or disable with TEST_JOB_TIMEOUT_MS.\n");
+        killJobGroup(pgid, "SIGKILL");
+        finish(1, "timeout after " + secs + "s");
+      }, JOB_TIMEOUT_MS);
+    }
     child.stdout.on("data", tee);
     child.stderr.on("data", tee);
     child.on("error", (err) => {

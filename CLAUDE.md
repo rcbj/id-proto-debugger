@@ -154,6 +154,18 @@ Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automat
 # configures a shared service.
 TEST_CONCURRENCY=6 ./docker-run-tests.sh
 
+# Each job is spawned in a PROCESS GROUP of its own and the whole group is
+# killed when the job ends — passing or failing. A browser job is node ->
+# chromedriver -> chrome and one headless Chrome is ~15 OS processes, of which
+# only the first is the runner's child; before 2026-08-26 a test that died
+# without reaching driver.quit() left the whole browser resident, and a run of
+# this suite left 559 Chrome processes behind and cost a reboot. A watchdog
+# (TEST_JOB_TIMEOUT_MS, default 900000 — 15 minutes; 0 disables) additionally
+# kills a job's tree if it never exits. See tests/CLAUDE.md — and note that
+# `process.exit()` in a catch SKIPS the finally that quits the driver, which
+# is the bug that made the backstop necessary.
+TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
+
 # Tests from local shell, dependencies still in containers
 ./local-run-tests.sh
 
