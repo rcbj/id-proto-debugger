@@ -192,9 +192,12 @@ TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
 # ONE point, which is how a failing combination is reproduced — add -b to
 # watch it. The ordinary suite runs those forty-nine as pooled jobs;
 # this loop runs them in order, for a live stack to look at afterwards.
-# SPNEGO is deliberately not a third mechanism yet: the mock's SPNEGO acceptor
-# is real and is not wired to a session, so twenty-five further points are
-# deferred rather than faked. See tests/CLAUDE.md.
+# SPNEGO is deliberately not a third mechanism yet, and since the 2026-08-27
+# sts/ bump the reason has NARROWED to one: the acceptor IS wired to a
+# session now (/authn/spnego calls startSession(), and a relationship can
+# carry fedAuthnMechanism: spnego), so what is left is where a HEADLESS
+# browser gets a ticket and an allow-listed host to send it to. Twenty-five
+# further points are deferred rather than faked. See tests/CLAUDE.md.
 # Every realm is a logical copy of the ONE mock STS told apart by a path
 # prefix, so this is client + api + the mock and nothing else. It leaves the
 # realms configured on a running stack, which is where the sign-ins it just
@@ -212,12 +215,22 @@ TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
 # narrows it to one; `=sts` skips the twenty-second WildFly boot entirely.
 ./local-run-tests.sh --wsfed-only[=keycloak|sts|both]
 
-# Just the three-tier delegation chain — an OIDC sign-in as webapp1, then two
-# RFC 8693 hops as apigw1 and esb1 — with only api + client + the mock STS. It
-# LEAVES THE DELEGATION MAP BEHIND as SVG under tests/report/delegation/, which
-# is the only way to see that picture at all: the mock's delegation register is
-# in memory and dies with the container.
-./local-run-tests.sh --delegation-only
+# The three-tier delegation chains — a sign-in, then two hops through a middle
+# tier — with only api + client + the mock STS. THE SAME SCENARIO IN TWO
+# PROTOCOL FAMILIES, because the delegation register and the map drawn from it
+# are ONE model for both. `=oauth` is an OIDC sign-in as webapp1 then two RFC
+# 8693 exchanges as apigw1 and esb1, where the audience travels in an `aud`
+# claim. `=wstrust` is a SAML 2.0 HTTP-POST sign-in as portal1, then two
+# WS-Trust hops to https://esb.example.com and https://soap1.example.com, where
+# the audience travels in the assertion's <saml:AudienceRestriction> — which
+# says exactly what `aud` says — and it runs TWICE, once carrying
+# <wst:OnBehalfOf> (impersonation) and once <wst14:ActAs> (composite
+# delegation). `=both` is the default; the two use different people and
+# different applications, so the pictures stay separate. It all LEAVES THE
+# DELEGATION MAPS BEHIND as SVG under tests/report/delegation/, which is the
+# only way to see those pictures at all: the mock's delegation register is in
+# memory and dies with the container.
+./local-run-tests.sh --delegation-only[=oauth|wstrust|both]
 
 # Kerberos against a REAL Windows Server 2025 domain controller, spun up on AWS
 # and destroyed afterwards. Needs AWS credentials and NOTHING else — no docker,

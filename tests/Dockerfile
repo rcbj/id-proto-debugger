@@ -61,7 +61,7 @@ COPY tests/run-tests-in-container.sh .
 COPY common/common.sh .
 
 # Bundle app source
-COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml11_sso.js tests/saml11_options.js tests/sts_saml11.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/federation_sso.js tests/federation_chain_sso.js tests/wstrust.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js tests/jws_engine.js ./
+COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml11_sso.js tests/saml11_options.js tests/sts_saml11.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/federation_sso.js tests/federation_chain_sso.js tests/wstrust.js tests/wstrust_delegation_chain.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js tests/jws_engine.js ./
 # The per-run username minter, required by tests across four protocols (OAuth2,
 # RFC 9700, Kerberos, LDAP) and by both mock-KDC page jobs. A SHARED MODULE
 # rather than a test, so nothing schedules it and the run-report cross-check in
@@ -462,6 +462,14 @@ COPY sts/kerberos/krb5_ndr.js sts/kerberos/krb5_pac.js ./sts/kerberos/
 # with "COPY sts/kerberos/spnego.js: not found", which says nothing about
 # submodules.
 COPY sts/kerberos/spnego.js sts/kerberos/krb5_spnego.js ./sts/kerberos/
+# ...and the acceptor's exchange half, which spnego.js requires as of mock-sts
+# 1405318 ("Kerberos sign-in, the federation picture, and UserInfo claims.").
+# It was one file until that commit, so this line has nothing to do with a test
+# being added here and everything to do with the sts/ gitlink moving: without
+# it the image builds and tests/krb5_spnego_http.js dies at load with "Cannot
+# find module './spnego_exchange.js'", naming a file this image has never
+# heard of. The closure walk in tests/jwk_pem_encoding.js is what catches it.
+COPY sts/kerberos/spnego_exchange.js ./sts/kerberos/
 # And the submodule's own env/, which is NOT optional: helpers.js does
 # require(process.env.CONFIG_FILE), and a RELATIVE CONFIG_FILE ('./env/test.js')
 # resolves against the requiring file's own directory — so it means sts/env/test.js
