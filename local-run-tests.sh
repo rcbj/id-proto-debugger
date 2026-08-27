@@ -81,12 +81,28 @@ WSFED_ONLY=0
 # Which identity provider(s) --wsfed-only drives. See docs/wsfed.md for why
 # there are two and what each covers that the other cannot.
 WSFED_ONLY_IDP=both
-# --delegation-only: the OIDC + two-hop RFC 8693 chain on its own, against the
+# --delegation-only: the three-tier delegation chains on their own, against the
 # mock STS. There is no second identity provider to choose between here and
 # there will not be one — Keycloak would need three clients, a user and a
-# token-exchange permission per pair provisioned first, and the compliant realm
-# refuses half of what this scenario does on purpose.
+# token-exchange permission per pair provisioned first, it has no WS-Trust
+# endpoint at all, and the compliant realm refuses half of what these scenarios
+# do on purpose.
 DELEGATION_ONLY=0
+# WHICH FAMILY, because there are two of these now and they are the same
+# scenario in two protocols: one sign-in and two hops through a middle tier,
+# recorded against ONE delegation model and drawn by ONE map.
+#
+#   oauth    tests/oauth2_delegation_chain.js — an OIDC sign-in, then two RFC
+#            8693 token exchanges. The audience travels in an `aud` claim.
+#   wstrust  tests/wstrust_delegation_chain.js — a SAML 2.0 HTTP-POST sign-in,
+#            then two WS-Trust hops, run TWICE: once carrying <wst:OnBehalfOf>
+#            and once <wst14:ActAs>. The audience travels in an assertion's
+#            <saml:AudienceRestriction>, which is the same statement.
+#   both     all three runs (the default). They share no name — different
+#            person, different applications — so the pictures stay separate,
+#            and the whole-map drawing then holds both chains, which is the
+#            point of having one model for two families.
+DELEGATION_ONLY_WHAT=both
 # --federation-only: the federated sign-ins across trust realms of the one mock
 # STS. No identity provider to choose between either, and for a sharper reason
 # than the delegation chain has: the partner in these scenarios IS the mock, in
@@ -112,7 +128,7 @@ usage()
   cat <<USAGE
 Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                         [--wsfed-only[=keycloak|sts|both]]
-                        [--delegation-only]
+                        [--delegation-only[=oauth|wstrust|both]]
                         [--federation-only[=single|chain|both]]
                         [--krb5-real-dc[=test|capture|both]] [-h|--help]
 
@@ -159,15 +175,28 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                starts in seconds and the WildFly side-car does not, so
                --wsfed-only=sts is the fastest loop.
 
-  --delegation-only
-               Build + start only api, client and the mock STS, and run just
-               tests/oauth2_delegation_chain.js: bob_end_user signs in to
-               webapp1 through the OIDC Authorization Code flow, apigw1
-               exchanges that token for one aimed at esb1, and esb1 exchanges
-               again for sp1 — each hop as its own client, out of a debugger
-               workflow of its own.
+  --delegation-only[=oauth|wstrust|both]
+               Build + start only api, client and the mock STS, and run the
+               three-tier delegation chains. WHICH is:
 
-               It leaves the DELEGATION MAP behind, as SVG. That register lives
+               oauth    tests/oauth2_delegation_chain.js. bob_end_user signs in
+                        to webapp1 through the OIDC Authorization Code flow,
+                        apigw1 exchanges that token for one aimed at esb1, and
+                        esb1 exchanges again for sp1 — each hop as its own
+                        client, out of a debugger workflow of its own. The
+                        audience travels in an `aud` claim.
+               wstrust  tests/wstrust_delegation_chain.js, TWICE. carol_end_user
+                        signs in to portal1 over SAML 2.0 (HTTP-POST binding),
+                        portal1 exchanges that assertion at the STS for one
+                        addressed to https://esb.example.com, and esb exchanges
+                        again for https://soap1.example.com. The audience
+                        travels in the assertion's <saml:AudienceRestriction>,
+                        which says exactly what an `aud` claim says. The first
+                        run carries <wst:OnBehalfOf> (impersonation), the second
+                        <wst14:ActAs> (composite delegation).
+               both     all three (the default).
+
+               They leave the DELEGATION MAP behind, as SVG. That register lives
                in the mock's memory and dies with the container, so the picture
                of a chain can only be drawn while the run is happening; the
                documents are written to tests/report/delegation/ (or to
@@ -250,6 +279,8 @@ while [ $# -gt 0 ]; do
     --wsfed-only) WSFED_ONLY=1 ;;
     --wsfed-only=*) WSFED_ONLY=1; WSFED_ONLY_IDP="${1#*=}" ;;
     --delegation-only) DELEGATION_ONLY=1 ;;
+    --delegation-only=*) DELEGATION_ONLY=1
+                         DELEGATION_ONLY_WHAT="${1#*=}" ;;
     --federation-only) FEDERATION_ONLY=1 ;;
     --federation-only=*) FEDERATION_ONLY=1
                          FEDERATION_ONLY_DEPTH="${1#*=}" ;;
@@ -263,6 +294,11 @@ done
 case "${SAML_ONLY_IDP}" in
   keycloak|sts|both) ;;
   *) echo "Unknown --saml-only identity provider: ${SAML_ONLY_IDP}" >&2
+     usage; exit 1 ;;
+esac
+case "${DELEGATION_ONLY_WHAT}" in
+  oauth|wstrust|both) ;;
+  *) echo "Unknown --delegation-only family: ${DELEGATION_ONLY_WHAT}" >&2
      usage; exit 1 ;;
 esac
 case "${WSFED_ONLY_IDP}" in
@@ -987,12 +1023,43 @@ runDelegationOnly()
   DELEGATION_ARTIFACT_DIR="${CURRENT_DIR}/tests/report/delegation"
   export DELEGATION_ARTIFACT_DIR
   export DEBUGGER_BASE_URL CONFIG_FILE WSTRUST_STS_URL
-  node "${NODEJS_BASE_DIR}/oauth2_delegation_chain.js" \
-    --url "${DEBUGGER_BASE_URL}"
-  local rc=$?
+
+  # The runs, in the order a reader of the map would want them: the OAuth chain
+  # first because it is the one this scenario was written for, then the two
+  # WS-Trust ones. A FAILURE DOES NOT STOP THE REST — each is a story of its own
+  # and the register keeps whatever completed, so a run that fails the third
+  # still leaves two chains to look at — and the worst return code is what this
+  # function answers with.
+  local rc=0
+  local one=0
+  if [ "${DELEGATION_ONLY_WHAT}" = "oauth" ] ||
+     [ "${DELEGATION_ONLY_WHAT}" = "both" ];
+  then
+    echo "=== The OAuth 2.0 chain: an OIDC sign-in and two RFC 8693 hops ==="
+    node "${NODEJS_BASE_DIR}/oauth2_delegation_chain.js" \
+      --url "${DEBUGGER_BASE_URL}"
+    one=$?
+    [ ${one} -ne 0 ] && rc=${one}
+  fi
+  if [ "${DELEGATION_ONLY_WHAT}" = "wstrust" ] ||
+     [ "${DELEGATION_ONLY_WHAT}" = "both" ];
+  then
+    local element
+    for element in onbehalfof actas;
+    do
+      echo "=== The WS-Trust chain: a SAML 2.0 POST sign-in and two" \
+           "${element} hops ==="
+      WSTRUST_DELEGATION_ELEMENT="${element}" \
+        node "${NODEJS_BASE_DIR}/wstrust_delegation_chain.js" \
+          --url "${DEBUGGER_BASE_URL}"
+      one=$?
+      [ ${one} -ne 0 ] && rc=${one}
+    done
+  fi
+
   if [ ${rc} -eq 0 ];
   then
-    echo "The delegation map is in ${DELEGATION_ARTIFACT_DIR}:"
+    echo "The delegation maps are in ${DELEGATION_ARTIFACT_DIR}:"
     ls -l "${DELEGATION_ARTIFACT_DIR}" || true
   fi
   echo "Leaving runDelegationOnly(). rc=${rc}"
@@ -1435,7 +1502,8 @@ if [ "${DELEGATION_ONLY}" = "1" ];
 then
   runDelegationOnly
   check_return_code $?
-  echo "The delegation chain passed: one OIDC sign-in and two RFC 8693 hops."
+  echo "The delegation chain(s) passed (${DELEGATION_ONLY_WHAT}): a sign-in" \
+       "and two hops through a middle tier, once per protocol family."
   exit 0
 fi
 if [ "${FEDERATION_ONLY}" = "1" ];

@@ -780,6 +780,82 @@ function buildJobs() {
   }
 
   // ---------------------------------------------------------------------
+  // THE SAME CHAIN IN THE OTHER PROTOCOL FAMILY: a SAML 2.0 HTTP-POST sign-in,
+  // then two WS-Trust hops carrying assertions.
+  //
+  // TWO JOBS, one per delegation element, and they are not one job with a loop
+  // because each is a full browser story and a failure should name which
+  // element it was carrying:
+  //
+  //   OnBehalfOf  WS-Trust 1.3 section 9.2 — the assertion names the person and
+  //               says nothing about the requester. IMPERSONATION, and the
+  //               register is then the only place the middle tier exists at
+  //               all, which is the OAuth chain's situation exactly.
+  //   ActAs       WS-Trust 1.4 section 9.3 — composite by definition.
+  //               DELEGATION. What the mock issues carries nothing about the
+  //               requester either, and the row it records says so; that gap is
+  //               in the mock rather than in the profile.
+  //
+  // WHY IT IS WORTH RUNNING BESIDE THE OAUTH ONE. An <saml:AudienceRestriction>
+  // is an `aud` claim — SAML 2.0 section 2.5.1.4 and RFC 7519 section 4.1.3
+  // make the same statement — and <wsp:AppliesTo> is what an STS copies into
+  // one. So each hop is a token exchange in the sense RFC 8693 means it, and
+  // the delegation register and its map are supposed to be ONE model for both
+  // families. A chain that draws correctly for OAuth and comes out as
+  // unconnected boxes for WS-Trust would mean the model only ever worked for
+  // the family it was written against — which is what this job would catch, at
+  // the assertion that says the bus is ONE box.
+  //
+  // It provisions three applications through the management API first, in the
+  // default realm, each registering the address it answers to on
+  // `wstrustAppliesTo` and `samlEntityId`. That registration is READ: the mock
+  // resolves an AppliesTo back to the application that declared it when it
+  // records the act (`applications.forAppliesTo()`), which is what keeps the
+  // picture one chain instead of two halves joined by nothing.
+  //
+  // THE MOCK ONLY, and it needs the api as well: the identity provider POSTs
+  // its response to the assertion consumer service, which is the api's
+  // /samlacs. So it is skipped on a backend-less target, where that endpoint
+  // does not exist — the same gate the HTTP-Artifact binding is under.
+  //
+  // NO JOB LOCK, and the two runs may overlap in the pool: each asserts on acts
+  // recorded after its own baseline sequence AND of its own delegation type,
+  // and the three registry entries they share are provisioned idempotently.
+  if (env.WSTRUST_STS_URL) {
+    const wstrustChainBackend = env.SAML_BACKEND_AVAILABLE !== "false";
+    for (const element of ["onbehalfof", "actas"]) {
+      const chainJob = {
+        name: "WS-Trust delegation chain (SAML 2.0 POST sign-in, then two " +
+            (element === "actas" ? "ActAs" : "OnBehalfOf") + " hops)",
+        script: "wstrust_delegation_chain.js",
+        env: {
+          WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+          WSTRUST_DELEGATION_ELEMENT: element,
+          // Backend routing where there is a backend — the same choice the
+          // WS-Trust jobs below make, and made here rather than left to the
+          // test's default so that the report and the wire agree.
+          WSTRUST_ROUTE: wstrustChainBackend ? "back" : "front",
+          // Where the delegation map's SVGs are written. The run's own
+          // directory, so the pictures sit beside the report that says the job
+          // passed. The same directory the OAuth chain writes to; every file
+          // this job produces is named `wstrust-…` and carries the element, so
+          // the two jobs and the two elements cannot overwrite each other.
+          DELEGATION_ARTIFACT_DIR: path.join(RUN_DIR, "delegation"),
+        },
+      };
+      if (!wstrustChainBackend) {
+        chainJob.skip = "This target has no API backend (POST /wstrust, and " +
+            "the /samlacs the identity provider POSTs its response to). A " +
+            "static deployment CAN receive that POST where the Lambda@Edge " +
+            "landing is deployed — see infra/CLAUDE.md — and this job has " +
+            "never been run against one, so it is skipped rather than " +
+            "reported against an arrangement nobody has checked.";
+      }
+      jobs.push(chainJob);
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // A FEDERATED SIGN-IN, across two TRUST REALMS of the one mock STS.
   //
   // The debugger's OAuth2/OIDC workflow stands in for an application called
@@ -899,11 +975,15 @@ function buildJobs() {
   // and buys a report where the failing row IS the combination.
   //
   // SPNEGO IS NOT A THIRD MECHANISM here, deliberately, and the script's
-  // header says why at length: the mock has a real SPNEGO acceptor and it is
-  // not an authentication mechanism there — `/spnego/protected` renders a page
-  // and never calls `startSession()`, so no browser session comes out of it —
-  // and where a headless browser gets its ticket is an open question rather
-  // than a wiring job. Twenty-five points are deferred rather than faked.
+  // header says why at length. HALF of that argument retired with the
+  // 2026-08-27 sts/ bump: the acceptor IS an authentication mechanism in the
+  // mock now — `/authn/spnego` calls `startSession()`, an application can
+  // carry `appAuthnMechanism: spnego` and a relationship
+  // `fedAuthnMechanism: spnego` — so the wiring is no longer what is
+  // missing. What is still missing is the browser end: where a HEADLESS
+  // Chrome gets a ticket, and the allow-listed host it will answer a
+  // `Negotiate` challenge for. Twenty-five points stay deferred rather than
+  // faked, on that reason alone.
   //
   // NO JOB LOCK, and the argument is `federation_sso.js`'s with one more line.
   // All forty-nine share `federation-matrix-1` and `federation-matrix-2`, and

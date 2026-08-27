@@ -84,19 +84,27 @@
 // ONE THING THE MOCK HAS TO BE CONFIGURED FOR, AND IT IS NOT A HACK
 //
 // `federation.outboundAllowInsecure`. The OpenID Connect relationship redeems
-// its code over a BACK CHANNEL, and this suite reaches the mock over whatever
-// scheme it was started with — plain `http` on some stacks. That module
-// refuses to dial an `http://` URL by default, because a client secret and an
-// authorization code travel on that request, and it says so by name. The
-// setting is turned on for the run and RESET afterwards with
-// `/admin-api/config/reset` rather than by writing the old value back: a `set`
-// leaves `source: override` on the row for ever, which `tests/admin_api.js`
-// then trips over on the next run against the same container.
+// its code over a BACK CHANNEL, which `federation_http.js` makes, and that
+// module refuses two things by default: an `http://` URL, and a certificate
+// nothing here trusts. A client secret and an authorization code travel on
+// that request, so both refusals are right — and BOTH apply to this suite.
+// Every stack here runs the mock on a self-signed certificate it regenerates
+// at every start, so the `https` stacks need this setting exactly as much as
+// the `http` ones do; the scheme says nothing about whether it is needed.
+// That was the shape of this file's first failure: the SAML 2.0 half passed,
+// the OpenID Connect half timed out coming back, and the reason was a 502
+// naming a certificate on a page nobody was reading.
 //
-// It is only reached when the URL is insecure, so on a TLS stack this changes
-// nothing at all — and the SAML 2.0 half of this test needs no back channel
-// and would pass either way, which is worth knowing when one half fails and
-// the other does not.
+// It is written WHILE REALM 1 IS AMBIENT, so it lands in that realm's own
+// override map rather than process-wide — a mock relaxed process-wide would
+// stop checking certificates for every other job in the pool — and it is put
+// back with `/admin-api/config/reset` rather than by writing the old value
+// back: a `set` leaves `source: override` on the row for ever, which
+// `tests/admin_api.js` then trips over on the next run against the same
+// container.
+//
+// The SAML 2.0 half needs no back channel and passes either way, which is
+// worth knowing when one half fails and the other does not.
 //
 // ---------------------------------------------------------------------------
 // GATING
@@ -217,6 +225,52 @@ async function createRealms(stsBase) {
     "The two realms publish the same kid (" + kids.join(", ") + "), so they " +
     "are signing with one key and nothing below could tell their tokens apart.");
   log.debug("Leaving createRealms().");
+}
+
+// ---------------------------------------------------------------------------
+// THE ONE SETTING THIS TEST CHANGES, and it is realm 1's rather than the
+// mock's.
+//
+// The OpenID Connect relationship is the only one of the two with a BACK
+// CHANNEL: realm 1 redeems the code at realm 2's token endpoint and reads
+// realm 2's JWKS, both through `federation_http.js`, which refuses an
+// `http://` URL and refuses a certificate nothing trusts. Every stack in this
+// suite runs the mock on a self-signed certificate it regenerates at every
+// start, so this is needed on a `https` stack exactly as much as on a plain
+// one — reading the scheme and skipping the write is what made the OpenID
+// Connect half of this test time out coming back, with the reason on an error
+// page nobody was reading.
+//
+// WHICH REALM THE WRITE LANDED IN is asserted, because that is the half that
+// costs somebody else a run: a setting written while a realm is ambient goes
+// into that realm's own override map, and one written WITHOUT one lands
+// process-wide, where it would stop every other job on this mock from checking
+// a certificate. `realm` says which realm answered the read and
+// `realmSettings` is that realm's own override list, so the snapshot answers
+// both questions at once.
+// ---------------------------------------------------------------------------
+async function allowInsecureOutbound(spBase) {
+  log.debug("Entering allowInsecureOutbound().");
+  await must(spBase, "/config/set",
+             { key: "federation.outboundAllowInsecure", value: "true" },
+             "allowing " + SP_REALM + " to dial " + IDP_REALM + " over the " +
+             "mock's own self-signed TLS, which the OpenID Connect " +
+             "relationship needs to redeem its code");
+  const snapshot = await adminGet(spBase, "/config");
+  assert.strictEqual(String(snapshot.realm), SP_REALM,
+    "Reading " + SP_REALM + "'s configuration answered for the \"" +
+    snapshot.realm + "\" realm, so the write above did not land where this " +
+    "test thinks it did either.");
+  assert.ok((snapshot.realmSettings || [])
+              .indexOf("federation.outboundAllowInsecure") >= 0,
+    SP_REALM + " does not list federation.outboundAllowInsecure among its " +
+    "OWN settings (it lists: " + (snapshot.realmSettings || []).join(", ") +
+    "), so the write went process-wide — which is not this test's to do, and " +
+    "would relax the certificate check for every other job on this mock.");
+  log.info(SP_REALM + " may dial a partner whose certificate nothing here " +
+           "trusts, which is what the OpenID Connect relationship's back " +
+           "channel needs.");
+  log.debug("Leaving allowInsecureOutbound().");
 }
 
 // ---------------------------------------------------------------------------
@@ -702,6 +756,24 @@ async function chooseAndSignIn(driver, which, user) {
   log.debug("Leaving chooseAndSignIn().");
 }
 
+// Best effort by definition: this runs when something has already gone wrong,
+// and a browser that will not answer must not replace the original failure
+// with one about this function.
+async function whereAreWe(driver) {
+  log.debug("Entering whereAreWe().");
+  let url = "(unknown)";
+  let text = "(unreadable)";
+  try {
+    url = await driver.getCurrentUrl();
+    text = await driver.findElement(By.css("body")).getText();
+  } catch (e) {
+    text = "(the page could not be read: " + e.message + ")";
+  }
+  log.debug("Leaving whereAreWe(). " + url);
+  return "The browser is at " + url + " and the page says: " +
+         String(text).replace(/\s+/g, " ").slice(0, 800);
+}
+
 function b64uJson(part) {
   return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 }
@@ -746,9 +818,20 @@ async function signInThrough(driver, spBase, callbackUri, which, user) {
   await assertChooser(driver, spBase);
   await chooseAndSignIn(driver, which, user);
 
-  await driver.wait(until.urlContains("/oauth2_oidc_2.html"), waitTime * 8,
-    "The flow never came back to the debugger after the sign-in at " +
-    IDP_REALM + " through \"" + which + "\".");
+  // WHAT THE PAGE SAYS, not just that it never arrived. Everything that can
+  // go wrong between the password and the callback goes wrong at the mock and
+  // is REPORTED BY IT — a back channel that could not be dialled, a signature
+  // that did not verify, a relationship that is not enabled — so the browser
+  // is sitting on an error page naming the cause while this wait counts down.
+  // Without this the failure is a bare TimeoutError and the reason is on a
+  // screen nobody reads.
+  try {
+    await driver.wait(until.urlContains("/oauth2_oidc_2.html"), waitTime * 8);
+  } catch (e) {
+    throw new Error("The flow never came back to the debugger after the " +
+                    "sign-in at " + IDP_REALM + " through \"" + which +
+                    "\". " + (await whereAreWe(driver)));
+  }
   const returned = new URL(await driver.getCurrentUrl());
   const code = returned.searchParams.get("code");
   assert.ok(code, "No authorization code came back to the application after " +
@@ -953,23 +1036,18 @@ async function test() {
   const samlUser = usernameFor("fedchoice-saml");
   const oidcUser = usernameFor("fedchoice-oidc");
 
-  // ---------------------------------------------------------------------
-  // THE ONE PROCESS-WIDE SETTING THIS TEST TOUCHES, and it is restored with
-  // `reset` rather than by writing the old value back — a `set` leaves
-  // `source: override` on the row for ever, which tests/admin_api.js then
-  // trips over on the next run against the same container.
-  //
-  // It is only consulted when the URL being dialled is insecure, so on a TLS
-  // stack this changes nothing.
-  // ---------------------------------------------------------------------
-  const insecure = /^http:/i.test(stsBase);
-  if (insecure) {
-    await must(stsBase, "/config/set",
-               { key: "federation.outboundAllowInsecure", value: "true" },
-               "allowing the OpenID Connect relationship to redeem its code " +
-               "over plain http, which is the scheme this stack runs the mock " +
-               "on");
-  }
+  // Whether the setting below was actually written, so the `finally` resets
+  // exactly what it turned on: a reset of a setting that is not overridden is
+  // refused by the mock, and a `must()` in a `finally` would then replace the
+  // real failure with that one.
+  let relaxedOutbound = false;
+  // process.exit() is synchronous termination, so it would skip both of the
+  // `finally` blocks below — orphaning the browser (one headless Chrome is
+  // ~15 processes, which is how a run of this suite once left 559 of them on
+  // the machine) and leaving the setting above turned on. The failure is
+  // recorded here, the two blocks unwind, and the exit is the last thing this
+  // function does.
+  let testFailed = false;
 
   try {
     // -------------------------------------------------------------------
@@ -979,6 +1057,8 @@ async function test() {
     // configured with.
     // -------------------------------------------------------------------
     await createRealms(stsBase);
+    await allowInsecureOutbound(spBase);
+    relaxedOutbound = true;
     await registerApplication(spBase, callbackUri);
 
     const samlPartner = await readSamlPartner(idpBase,
@@ -1056,12 +1136,6 @@ async function test() {
       .setLoggingPrefs(loggingPrefs)
       .build();
 
-    // process.exit() is synchronous termination, so it would skip the
-    // finally below and orphan the browser — and one headless Chrome is
-    // ~15 processes, which is how a run of this suite once left 559 of
-    // them on the machine. Record the failure, let the finally quit the
-    // driver, THEN exit.
-    let testFailed = false;
     try {
       // ---------------------------------------------------------------
       // SIGN-IN ONE: pick the SAML 2.0 partner.
@@ -1211,16 +1285,19 @@ async function test() {
     } finally {
       await driver.quit();
     }
-    if (testFailed) {
-      log.debug("Leaving test(). Failed.");
-      process.exit(1);
-    }
   } finally {
-    if (insecure) {
-      await must(stsBase, "/config/reset",
+    // The same argument the driver's own finally is written under, one level
+    // out: process.exit() below would skip THIS block too, and the setting
+    // would be left on realm 1 by every failing run.
+    if (relaxedOutbound) {
+      await must(spBase, "/config/reset",
                  { key: "federation.outboundAllowInsecure" },
-                 "resetting federation.outboundAllowInsecure");
+                 "resetting federation.outboundAllowInsecure in " + SP_REALM);
     }
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }
