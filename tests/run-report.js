@@ -839,6 +839,125 @@ function buildJobs() {
     });
   }
 
+  // ---------------------------------------------------------------------
+  // ONE APPLICATION, TWO FEDERATION PARTNERS, AND THE PERSON PICKS.
+  //
+  // The two jobs above drive an application with ONE relationship, where the
+  // browser is sent straight to the partner and no page is drawn in between.
+  // This one drives an application naming TWO, in DIFFERENT PROTOCOLS — a
+  // SAML 2.0 relationship and an OpenID Connect one, both to
+  // `federation-choice-2` — which is what makes the mock draw its chooser at
+  // `/authn/select-idp`: one button per partner and no password field.
+  //
+  // WHY IT SIGNS IN TWICE. Both relationships work, and the jobs above and
+  // the grid below already prove that. What is new is that a choice was
+  // OFFERED and HONOURED, and the assertion that catches both halves is
+  // arithmetic: after picking the SAML button, that relationship has counted
+  // one sign-in and the OpenID Connect one has counted zero — then the other
+  // way round in a second, cookie-less run. A mock that drew a two-button
+  // page and federated through whichever relationship it found first would
+  // pass everything else in that file.
+  //
+  // THE MOCK ONLY, like the two above.
+  //
+  // NO JOB LOCK, and its own realms — `federation-choice-1` and `-2` — for
+  // federation_chain_sso.js's reason exactly: this job asserts EXACT counts
+  // on two relationships and performs two sign-ins, so sharing a realm with
+  // anything else would make its arithmetic depend on what else had run.
+  // ---------------------------------------------------------------------
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "Federation partner choice (one application, SAML 2.0 AND OIDC " +
+          "relationships from federation-choice-1 to federation-choice-2)",
+      script: "federation_choice_sso.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // THE FEDERATION GRID: every combination of the two protocol layers in a
+  // two-tier federation, and of how the far end authenticates.
+  //
+  //   five application protocols  x  five federation protocols
+  //                               x  two authentication mechanisms
+  //
+  // FORTY-NINE JOBS AND NOT FIFTY. The fiftieth point of the grid — an OIDC
+  // application, a SAML 2.0 federation and a password — is `federation_sso.js`
+  // above, which drives exactly that and asserts several things this
+  // parameterised script deliberately does not (its realms are its own, so it
+  // can assert that realm 2 has NO federation relationships at all and that
+  // realm 1's registry has never heard of its application). Running the same
+  // point twice would buy nothing and would put a second job's arithmetic in
+  // the same realms.
+  //
+  // ONE JOB PER POINT, rather than five jobs of fifteen or three of
+  // twenty-five. A grid job that walks its combinations inside one browser is
+  // faster — one Chrome start instead of fifty — and reports a GROUP: the
+  // first failure ends its group, `report.xml` names the group rather than the
+  // combination, and a re-run to reproduce one point runs fourteen others
+  // first. One job per point costs wall clock that the pool takes most of back
+  // and buys a report where the failing row IS the combination.
+  //
+  // SPNEGO IS NOT A THIRD MECHANISM here, deliberately, and the script's
+  // header says why at length: the mock has a real SPNEGO acceptor and it is
+  // not an authentication mechanism there — `/spnego/protected` renders a page
+  // and never calls `startSession()`, so no browser session comes out of it —
+  // and where a headless browser gets its ticket is an open question rather
+  // than a wiring job. Twenty-five points are deferred rather than faked.
+  //
+  // NO JOB LOCK, and the argument is `federation_sso.js`'s with one more line.
+  // All forty-nine share `federation-matrix-1` and `federation-matrix-2`, and
+  // every object each of them asserts on is named after its own combination —
+  // its application, its two relationships, its partner entry, its username —
+  // so the counters it reads are its own arithmetic and nobody else's. What
+  // that costs is stated in the script: nothing here may assert anything
+  // REALM-WIDE, because forty-nine jobs are putting things in those realms at
+  // once. Realms 1 to 5 belong to the two jobs above and are left alone.
+  //
+  // THE MOCK ONLY, plus the client and the api — the api is not optional the
+  // way it is for the two jobs above, because the SAML and WS-Federation
+  // application tiers land their responses on its `/saml` and `/wsfed`
+  // landings.
+  // ---------------------------------------------------------------------
+  if (env.WSTRUST_STS_URL) {
+    const FEDERATION_GRID_LABELS = {
+      oidc: "OIDC",
+      oauth2: "OAuth 2.0",
+      saml2: "SAML 2.0",
+      saml11: "SAML 1.1",
+      wsfed: "WS-Federation",
+    };
+    const FEDERATION_GRID_MECHANISMS = {
+      password: "username + password",
+      webauthn: "WebAuthn",
+    };
+    // The point federation_sso.js already drives, skipped here rather than
+    // duplicated. See the note above.
+    const COVERED_ELSEWHERE = "oidc/saml2/password";
+    for (const app of Object.keys(FEDERATION_GRID_LABELS)) {
+      for (const fed of Object.keys(FEDERATION_GRID_LABELS)) {
+        for (const mech of Object.keys(FEDERATION_GRID_MECHANISMS)) {
+          if (app + "/" + fed + "/" + mech === COVERED_ELSEWHERE) {
+            continue;
+          }
+          jobs.push({
+            name: "Federation grid — " + FEDERATION_GRID_LABELS[app] +
+                " application, " + FEDERATION_GRID_LABELS[fed] +
+                " federation, " + FEDERATION_GRID_MECHANISMS[mech] +
+                " at the far end",
+            script: "federation_matrix_sso.js",
+            env: {
+              WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+              FEDERATION_APP_PROTOCOL: app,
+              FEDERATION_FED_PROTOCOL: fed,
+              FEDERATION_MECHANISM: mech,
+            },
+          });
+        }
+      }
+    }
+  }
+
   // Device Authorization Grant (RFC 8628). Requests a device/user code,
   // approves the device at the Keycloak verification URI, then polls for the
   // access token.

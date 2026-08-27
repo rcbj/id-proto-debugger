@@ -18,7 +18,9 @@
 //
 //   bob_end_user signs in to webapp1 through the OIDC Authorization Code flow,
 //   asking for `openid email profile offline_access apigw1`. The last scope
-//   names the API gateway the resulting access token will be presented to.
+//   names the API gateway the resulting access token will be presented to —
+//   and this issuer READS that name as the audience, so it is what the token
+//   comes back ADDRESSED to rather than a scope the token carries.
 //
 //   apigw1 receives that token on an API call. NOTHING HERE SIMULATES THAT CALL
 //   — there is no resource server in this suite and inventing one would be
@@ -77,6 +79,26 @@
 // because that is what an audience is: the service, not the client that calls
 // it. The `aud` of each issued token is asserted against it.
 //
+// **AND A SCOPE THAT NAMES AN APPLICATION IS READ AS AN AUDIENCE, WHICH IS WHY
+// NO TOKEN HERE CARRIES THE NEXT TIER IN ITS SCOPE.** The mock gained that
+// reading on 2026-08-26 alongside the registry attribute above: a scope value
+// that is the `oauthClientId` of another application in the registry becomes
+// the audience and comes OFF the scope list, because the one fact in
+// `scope=openid email profile offline_access apigw1` that says which party the
+// token is for belongs in the claim that means exactly that. So webapp1's
+// token is addressed to `apigw1` — the scope value VERBATIM, beside this
+// service's own `/resource`, which the `openid` scope keeps so that UserInfo
+// is still reachable — and its scope claim is the base four and nothing else.
+// The two exchanges send `audience` as well, and that parameter WINS the `aud`
+// (an audience a client asked for is never widened by one this service
+// derived), but the scope list is trimmed just the same: `esb1` and `sp1` are
+// audiences, not permissions.
+//
+// So every assertion below reads THE NEXT TIER OUT OF `aud`, and asserts it is
+// NOT in the scope. Reading it out of the scope is what this file did until
+// that change, and the failure that produced named the scope claim rather than
+// the reading that had moved underneath it.
+//
 // **AND THAT IS WHY THE REGISTRY MATTERS RATHER THAN BEING DECORATION.** The
 // register is keyed by the identifier an application PRESENTS — a client_id —
 // so an act recorded for `https://esb1.example.com` would draw a box in the map
@@ -126,13 +148,16 @@
 //      because the question is what the registry holds and not what the write
 //      said it wrote.
 //   2. THE WIRE. Each hop returns HTTP 200 with an access token that decodes,
-//      names bob_end_user, carries the scope that hop asked for — including the
-//      one naming the next tier — and is addressed to the audience URI that was
-//      requested. The final token is printed in full, with its claims, which is
-//      the artifact the scenario is about.
+//      names bob_end_user, carries the scopes that are scopes, and is
+//      ADDRESSED to the next tier — the client_id for the sign-in, whose only
+//      statement of it was a scope, and the requested URI for each exchange,
+//      which sent `audience` outright. Each token is also checked for the tier
+//      it has already left, in the audience and in the scope alike. The final
+//      token is printed in full, with its claims, which is the artifact the
+//      scenario is about.
 //   3. THE SERVER'S OWN READING. The final token is introspected (RFC 7662) at
-//      the mock, so the scope is confirmed by the issuer rather than by this
-//      test decoding a string it was handed.
+//      the mock, so the audience and the scope are confirmed by the issuer
+//      rather than by this test decoding a string it was handed.
 //   4. THE REGISTER AND THE PICTURE. `GET /admin-api/delegation` is read for
 //      the acts recorded SINCE this job started, and each hop must be there
 //      with its parties, its mode and the jti of the token this test actually
@@ -729,6 +754,156 @@ async function assertTheTokensPageLinksIt(session, jti) {
 }
 
 // ---------------------------------------------------------------------------
+// THE TWO CHOOSERS ON /admin/delegation ARE A SEARCH, AND THIS IS THE ONE PLACE
+// IN THE SUITE THAT CAN SAY SO.
+//
+// They were a `<select>` holding every application and every person until
+// 2026-08-26. That control cannot be typed into and cannot be narrowed, and on
+// a register that has been running for a week it is a list nobody can find
+// anything in — so it is a text box now, a scrolling pane of at most twenty
+// matches, and a link per match that IS the selection.
+//
+// This job is where it is checked because this job is the one that PUTS FOUR
+// KNOWN NAMES IN THAT REGISTER. Every other console assertion in the suite is
+// about a page whose content is whatever the run happened to produce; here
+// `apigw1`, `esb1` and `sp1` are in the acts by construction and
+// `bob_end_user` is the person behind all of them, so a search for one of them
+// has an answer this file can state rather than infer.
+//
+// FOUR THINGS, and the last is the one that would catch the control being
+// quietly put back:
+//
+//   * the search NARROWS — a term matching one tier finds it and does not find
+//     the others, which is the whole feature and is the assertion that fails if
+//     the box is drawn and ignored;
+//   * a term nothing matches draws NO results rather than the whole list, which
+//     is the other way a search that is really a decoration behaves;
+//   * the pane holds AT MOST TWENTY, which is the cap the page's own line
+//     promises;
+//   * and there is no `<select>` for either party any more. That is the
+//     regression guard: a select and a search box look alike in a diff three
+//     months from now, and a page that grew the select back would pass every
+//     other assertion here.
+//
+// It is SKIPPED, with the reason named, when the console refuses — the same
+// arrangement the drawings have, and for the same reason: the gate's roster can
+// be narrowed by another job in the pool, and nothing above this depends on the
+// console at all.
+// ---------------------------------------------------------------------------
+
+// The result links one pane drew, in order. Read out of the PANE's own markup
+// rather than off the whole page, because the page carries the same hrefs in
+// its tables: a count taken over the document would be the acts table's links
+// plus the chooser's, which is a number that cannot fail.
+function chooserHits(html, route) {
+  log.debug("Entering chooserHits(). route=" + route);
+  const out = [];
+  const panes = String(html).split('<div class="chooser">');
+  for (let i = 1; i < panes.length; i++) {
+    const pane = panes[i].split("</div>")[0];
+    if (pane.indexOf('href="' + route + "?") < 0) {
+      continue;
+    }
+    pane.split("<li").slice(1).forEach(function (row) {
+      const text = (row.split("</a>")[0] || "").split(">").pop();
+      if (text) {
+        out.push(text);
+      }
+    });
+  }
+  log.debug("Leaving chooserHits(). " + out.length + " hit(s).");
+  return out;
+}
+
+async function delegationPage(session, query) {
+  log.debug("Entering delegationPage(). query=" + query);
+  const url = stsBase() + "/admin/delegation" + query;
+  const r = await common.httpJson(url,
+      session ? { headers: { Cookie: session } } : undefined);
+  log.debug("Leaving delegationPage(). status=" + r.status);
+  return r;
+}
+
+async function assertTheChoosersSearch(session) {
+  log.debug("Entering assertTheChoosersSearch().");
+  const first = await delegationPage(session,
+      "?appq=" + encodeURIComponent(GATEWAY));
+  if (first.status === 401 || first.status === 403) {
+    log.warn("[console] /admin/delegation was refused with " + first.status +
+             ", so the choosers were not checked. The gate's roster has been " +
+             "narrowed by something else in the pool.");
+    log.debug("Leaving assertTheChoosersSearch(). Refused.");
+    return;
+  }
+  assert.strictEqual(first.status, 200,
+    "GET /admin/delegation?appq=" + GATEWAY + " should answer 200 and " +
+    "answered " + first.status + ".");
+  const searched = String(first.raw);
+
+  // THE SELECT IS GONE, both of them, and this is first because everything
+  // below would also pass on a page that drew a search box beside the old one.
+  assert.ok(searched.indexOf('<select id="application"') < 0,
+    "/admin/delegation still draws a <select id=\"application\">. The " +
+    "chooser is a search now — a box, a scrolling pane of at most 20 matches " +
+    "and a link per match — and a select holding every application is the " +
+    "control it replaced.");
+  assert.ok(searched.indexOf('<select id="user"') < 0,
+    "/admin/delegation still draws a <select id=\"user\">, which is the " +
+    "person chooser before it became a search.");
+  assert.ok(searched.indexOf('name="appq"') >= 0 &&
+            searched.indexOf('name="userq"') >= 0,
+    "/admin/delegation draws neither search box (appq, userq), so neither " +
+    "pivot can be reached at all.");
+
+  const hits = chooserHits(searched, "/admin/delegation/application");
+  assert.ok(hits.indexOf(GATEWAY) >= 0,
+    "searching the application chooser for \"" + GATEWAY + "\" does not " +
+    "find it. The pane drew: " + JSON.stringify(hits) + ".");
+  assert.ok(hits.indexOf(ESB) < 0 && hits.indexOf(PROVIDER) < 0,
+    "searching for \"" + GATEWAY + "\" also drew " + ESB + " or " +
+    PROVIDER + ", so the box is being drawn and ignored. The pane drew: " +
+    JSON.stringify(hits) + ".");
+  assert.ok(hits.length <= 20,
+    "the application pane drew " + hits.length + " results, and the page's " +
+    "own line under it promises at most 20.");
+  log.info("[console] the application search for \"" + GATEWAY + "\" drew " +
+           hits.length + " result(s), " + GATEWAY + " among them and neither " +
+           ESB + " nor " + PROVIDER + ".");
+
+  // A term nothing can match. The name is deliberately one no run creates: an
+  // empty pane IS the assertion, so a term that matched something would make
+  // this pass by accident.
+  const none = await delegationPage(session,
+      "?appq=" + encodeURIComponent("zzz-no-such-application-zzz"));
+  assert.strictEqual(none.status, 200,
+    "GET /admin/delegation with a search matching nothing should still " +
+    "answer 200 and answered " + none.status + ".");
+  const empty = chooserHits(String(none.raw), "/admin/delegation/application");
+  assert.strictEqual(empty.length, 0,
+    "a search for a name nothing can match drew " + empty.length +
+    " result(s): " + JSON.stringify(empty) + ". A search that answers with " +
+    "the whole list is a decoration.");
+
+  // And the person chooser, which is the same control over a different
+  // catalogue and a different link.
+  const person = await delegationPage(session,
+      "?userq=" + encodeURIComponent(USER));
+  assert.strictEqual(person.status, 200,
+    "GET /admin/delegation?userq=" + USER + " answered " + person.status +
+    ".");
+  const people = chooserHits(String(person.raw), "/admin/delegation/user");
+  assert.ok(people.some(function (one) { return one.indexOf(USER) >= 0; }),
+    "searching the person chooser for \"" + USER + "\" does not find them, " +
+    "and this job signed them in. The pane drew: " + JSON.stringify(people) +
+    ".");
+  assert.ok(people.length <= 20,
+    "the person pane drew " + people.length + " results against a cap of 20.");
+  log.info("[console] the person search for \"" + USER + "\" drew " +
+           people.length + " result(s).");
+  log.debug("Leaving assertTheChoosersSearch().");
+}
+
+// ---------------------------------------------------------------------------
 // A NEW WORKFLOW. The storage is cleared on the debugger's own origin, then
 // discovery is run again — which is the whole of what a fresh application knows
 // when it is handed a token: where the authorization server is, and nothing
@@ -1085,6 +1260,45 @@ function claimsOf(token, what) {
   return decoded.payload;
 }
 
+// ---------------------------------------------------------------------------
+// THE AUDIENCE, READ THE ONE WAY IT CAN BE. `aud` is a string where there is
+// one party and an array where there are several (RFC 7519 section 4.1.3), and
+// this chain produces BOTH shapes on purpose: the sign-in's token is addressed
+// to the gateway AND to this service's own /resource, because the `openid`
+// scope asks for UserInfo, while each exchange names one URI and gets a
+// string. So every reader here goes through this rather than comparing a claim
+// that is sometimes a list — a `claims.aud === x` would pass on the exchanges
+// and fail on the sign-in, saying nothing about either.
+// ---------------------------------------------------------------------------
+function audienceList(claims) {
+  log.debug("Entering audienceList().");
+  const aud = claims && claims.aud;
+  if (aud === undefined || aud === null) {
+    log.debug("Leaving audienceList(). None.");
+    return [];
+  }
+  log.debug("Leaving audienceList().");
+  return (Array.isArray(aud) ? aud : [aud]).map(String);
+}
+
+function assertAddressedTo(claims, party, what) {
+  log.debug("Entering assertAddressedTo(). party=" + party);
+  assert.ok(audienceList(claims).indexOf(party) >= 0,
+    what + " is not addressed to " + party + ". Its audience is " +
+    JSON.stringify(claims && claims.aud) + ", and the audience is where this " +
+    "issuer puts the party a token is for — a scope naming an application " +
+    "becomes one, and an exchange's `audience` parameter is one outright.");
+  log.debug("Leaving assertAddressedTo().");
+}
+
+function assertNotAddressedTo(claims, party, what, why) {
+  log.debug("Entering assertNotAddressedTo(). party=" + party);
+  assert.ok(audienceList(claims).indexOf(party) < 0,
+    what + " is addressed to " + party + " (" +
+    JSON.stringify(claims && claims.aud) + "). " + why);
+  log.debug("Leaving assertNotAddressedTo().");
+}
+
 // What every token in this chain must be true of, wherever in the chain it is.
 function assertTokenDescribes(token, expect) {
   log.debug("Entering assertTokenDescribes(). what=" + expect.what);
@@ -1101,10 +1315,7 @@ function assertTokenDescribes(token, expect) {
       JSON.stringify(claims.scope) + ".");
   });
   if (expect.audience) {
-    const aud = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
-    assert.ok(aud.indexOf(expect.audience) >= 0,
-      expect.what + " is addressed to " + JSON.stringify(claims.aud) +
-      " rather than to " + expect.audience + ".");
+    assertAddressedTo(claims, expect.audience, expect.what);
   }
   if (expect.clientId) {
     assert.strictEqual(claims.client_id, expect.clientId,
@@ -1358,12 +1569,22 @@ async function test() {
     const first = await authenticateTheUser(driver, WEBAPP, scopeFor(GATEWAY));
     const firstClaims = assertTokenDescribes(first.access_token, {
       what: WEBAPP + "'s access token",
-      scope: scopeFor(GATEWAY),
+      // The BASE alone. The request named the gateway in the scope list, and
+      // this issuer reads a scope naming an application as the audience — so
+      // what the token carries is the scope MINUS that name. See the header.
+      scope: BASE_SCOPE,
+      // The scope value VERBATIM, which is what a derived audience is
+      // addressed to. `aud` is an array here, because an `openid` request
+      // keeps this service's own /resource beside it for UserInfo.
+      audience: GATEWAY,
       clientId: WEBAPP,
     });
-    assert.ok(String(firstClaims.scope).split(/\s+/).indexOf(GATEWAY) >= 0,
-      "the token " + WEBAPP + " obtained does not carry \"" + GATEWAY +
-      "\", so there is nothing in it that says which gateway it is for.");
+    assert.ok(String(firstClaims.scope).split(/\s+/).indexOf(GATEWAY) < 0,
+      "the token " + WEBAPP + " obtained carries \"" + GATEWAY + "\" in its " +
+      "scope as well as in its audience (scope=\"" + firstClaims.scope +
+      "\", aud=" + JSON.stringify(firstClaims.aud) + "). A scope naming an " +
+      "application is that token's AUDIENCE; carrying it in both places says " +
+      "the gateway is a permission as well as a party.");
 
     // --- hop 1: the API gateway -------------------------------------------
     //
@@ -1385,16 +1606,24 @@ async function test() {
     const second = await exchangeAs(driver, hops[0]);
     const secondClaims = assertTokenDescribes(second.access_token, {
       what: GATEWAY + "'s exchanged access token",
-      scope: scopeFor(ESB),
+      // Trimmed the same way, even though this hop sent `audience` outright:
+      // the parameter decides the `aud`, and the scope list loses the name
+      // regardless. Both halves are asserted below.
+      scope: BASE_SCOPE,
       audience: audienceOf(ESB),
       clientId: GATEWAY,
     });
     assert.notStrictEqual(second.access_token, first.access_token,
       "the exchange handed back the token it was given.");
-    assert.ok(String(secondClaims.scope).split(/\s+/).indexOf(GATEWAY) < 0,
-      "the exchanged token still carries \"" + GATEWAY + "\" in its scope. " +
-      "The gateway asked for a token for the NEXT tier; a token carrying " +
-      "both is one the gateway could keep using as itself.");
+    assertNotAddressedTo(secondClaims, GATEWAY,
+      GATEWAY + "'s exchanged access token",
+      "The gateway asked for a token for the NEXT tier; one still addressed " +
+      "to the gateway is one the gateway could keep presenting to itself.");
+    assert.ok(String(secondClaims.scope).split(/\s+/).indexOf(ESB) < 0,
+      "the exchanged token carries \"" + ESB + "\" in its scope (\"" +
+      secondClaims.scope + "\") as well as in its audience. An exchange that " +
+      "sent `audience` is the other branch of that reading, and it trims the " +
+      "scope list too.");
 
     // --- hop 2: the ESB ----------------------------------------------------
     hops[1].subjectToken = second.access_token;
@@ -1402,40 +1631,59 @@ async function test() {
     const third = await exchangeAs(driver, hops[1]);
     const thirdClaims = assertTokenDescribes(third.access_token, {
       what: ESB + "'s exchanged access token",
-      scope: scopeFor(PROVIDER),
+      scope: BASE_SCOPE,
       audience: audienceOf(PROVIDER),
       clientId: ESB,
     });
-    assert.ok(String(thirdClaims.scope).split(/\s+/).indexOf(PROVIDER) >= 0,
-      "the final access token does not carry \"" + PROVIDER + "\" in its " +
-      "scope, which is the whole point of the second hop. It carries: \"" +
-      thirdClaims.scope + "\".");
+    assertNotAddressedTo(thirdClaims, GATEWAY, "the final access token",
+      "The gateway is two hops behind it.");
+    assertNotAddressedTo(thirdClaims, WEBAPP, "the final access token",
+      "The browser application is where the chain started and is not a " +
+      "party a token can be addressed to at all.");
+    assert.ok(String(thirdClaims.scope).split(/\s+/).indexOf(PROVIDER) < 0,
+      "the final access token carries \"" + PROVIDER + "\" in its scope " +
+      "(\"" + thirdClaims.scope + "\") as well as in its audience.");
 
     // The artifact the scenario is about, in full.
     log.info("=== The final access token, after two hops ===");
     log.info(third.access_token);
     log.info("=== Its claims ===");
     log.info(JSON.stringify(thirdClaims, null, 2));
-    log.info("CONFIRMED: \"" + PROVIDER + "\" is in the scope of the access " +
-             "token " + ESB + " received, which names " + USER +
-             " and which " + USER + " never asked for.");
+    log.info("CONFIRMED: the access token " + ESB + " received is addressed " +
+             "to " + audienceOf(PROVIDER) + " (" + PROVIDER + "), it names " +
+             USER + ", and " + USER + " never asked for it.");
 
     // --- the issuer's own reading -----------------------------------------
     const introspection = await introspect(third.access_token, PROVIDER);
     assert.strictEqual(introspection.active, true,
       "the authorization server reports the final token as not active: " +
       JSON.stringify(introspection));
-    assert.ok(String(introspection.scope || "").split(/\s+/)
-        .indexOf(PROVIDER) >= 0,
+    // The AUDIENCE is where the far end is named, so that is what the issuer
+    // is asked to agree about. Introspecting for the scope alone would now
+    // confirm a set of permissions that says nothing about which party the
+    // token is for, which is the fact the whole chain is about.
+    assertAddressedTo(introspection, audienceOf(PROVIDER),
+      "the introspection of the final token");
+    const introspectedScopes = String(introspection.scope || "")
+        .split(/\s+/).filter(Boolean);
+    assert.ok(introspectedScopes.indexOf(PROVIDER) < 0,
       "introspection reports the final token's scope as \"" +
-      introspection.scope + "\", which does not carry " + PROVIDER + ". The " +
-      "token says one thing and the server that signed it says another.");
+      introspection.scope + "\", which carries " + PROVIDER + " — so the " +
+      "signed token and the server that signed it disagree about whether " +
+      "that name is a scope or an audience.");
+    BASE_SCOPE.split(" ").forEach(function (one) {
+      assert.ok(introspectedScopes.indexOf(one) >= 0,
+        "introspection reports the final token's scope as \"" +
+        introspection.scope + "\", which has lost \"" + one + "\". Two " +
+        "exchanges must not narrow the grant by themselves.");
+    });
     assert.strictEqual(introspection.username, USER,
       "introspection says the final token belongs to \"" +
       introspection.username + "\" rather than to " + USER + ".");
     log.info("[introspection] the authorization server agrees: active, " +
-             "scope=\"" + introspection.scope + "\", username=" +
-             introspection.username + ".");
+             "aud=" + JSON.stringify(introspection.aud) + ", scope=\"" +
+             introspection.scope + "\", username=" + introspection.username +
+             ".");
 
     // --- the register and the picture --------------------------------------
     const after = await delegationJson("?q=" + encodeURIComponent(USER) +
@@ -1467,6 +1715,10 @@ async function test() {
     // use it.
     const session = await signInToTheConsole();
     await assertTheTokensPageLinksIt(session, thirdClaims.jti);
+    // The two pivots on the delegation page, which are a SEARCH rather than a
+    // list since 2026-08-26. Here rather than beside the drawings because it
+    // needs the same session and no picture: it reads the page's markup.
+    await assertTheChoosersSearch(session);
     await assertTheLineage(session, {
       // Newest first, which is the order the page walks: the token esb1 was
       // handed, the one apigw1 exchanged for it, and the one bob_end_user's

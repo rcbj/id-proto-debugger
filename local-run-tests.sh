@@ -33,7 +33,7 @@ set -x
 #                DELEGATION MAP behind as SVG files — which is the only way to
 #                see that picture at all, since the mock's register is in
 #                memory and dies with the container.
-#   --federation-only[=single|chain|both]
+#   --federation-only[=single|chain|both|matrix|matrix:<app>/<fed>/<mech>]
 #                Bring up ONLY what the federated sign-ins need (client and the
 #                mock STS) and run them. `single` is two TRUST REALMS of the one
 #                mock — an OIDC application in the first, a SAML 2.0 identity
@@ -41,7 +41,10 @@ set -x
 #                answers the SAML 2.0 request by federating onward over
 #                WS-Federation instead of asking for a password: an identity
 #                BRIDGE, and the only case that exercises fedAuthnMechanism.
-#                `both` is the default. A ~1-minute loop instead of the whole
+#                `both` is the default. `matrix` is the whole GRID — every
+#                combination of the two protocol layers and of how the far end
+#                authenticates, forty-nine points in its own pair of realms —
+#                and `matrix:<app>/<fed>/<mech>` is one point of it. A ~1-minute loop instead of the whole
 #                suite. It leaves the realms — and everything they recorded —
 #                behind on a running stack, which is the point: /admin on any
 #                of them is where the sign-in it just performed is visible.
@@ -171,12 +174,10 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                DELEGATION_ARTIFACT_DIR). There is no second identity provider
                to choose between: see the note beside DELEGATION_ONLY above.
 
-  --federation-only[=single|chain|both]
+  --federation-only[=single|chain|both|matrix|matrix:<app>/<fed>/<mech>]
                Build + start only client and the mock STS, and run the
-               federated sign-ins. The debugger's OAuth2/OIDC workflow stands in
-               for the application in both; the realms are logical identity
-               services in one process, told apart by a path prefix. WHICH is
-               one of:
+               federated sign-ins. The realms are logical identity services in
+               one process, told apart by a path prefix. WHICH is one of:
 
                  single  tests/federation_sso.js — ONE hop. An application in
                          federation-realm-1, federated over SAML 2.0 to
@@ -190,7 +191,30 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                          attribute that makes it one — fedAuthnMechanism on its
                          identity-provider-side relationship — is what this
                          case exists to exercise.
-                 both    the default. Disjoint realms, about fifteen seconds.
+                 choice  tests/federation_choice_sso.js — ONE hop and TWO
+                         partners. An application in federation-choice-1 named
+                         on BOTH a SAML 2.0 and an OpenID Connect relationship
+                         to federation-choice-2, so the mock draws its chooser
+                         at /authn/select-idp instead of redirecting. It signs
+                         in twice, once through each button, because what it
+                         proves is that the CHOICE was honoured rather than a
+                         partner picked — which is arithmetic on the two
+                         relationships' counters.
+                 both    the default: single, chain and choice. Disjoint
+                         realms, about twenty-five seconds.
+                 matrix  tests/federation_matrix_sso.js, forty-nine times —
+                         every combination of five application protocols (oidc,
+                         oauth2, saml2, saml11, wsfed), five federation
+                         protocols (the same five) and two authentication
+                         mechanisms at the far end (password, webauthn), less
+                         the one `single` already drives. Its own pair of realms
+                         (federation-matrix-1 and -2), so it shares nothing with
+                         the two above. MINUTES rather than seconds: the suite
+                         runs these as forty-nine pooled jobs and this loop runs
+                         them in order, for a live stack to look at afterwards.
+                 matrix:<app>/<fed>/<mech>
+                         one point of that grid, which is how to reproduce a
+                         failing combination — add -b to watch it.
 
                It leaves the stack up with every realm configured, which is the
                point of the option: /realm/<id>/admin/federation shows the
@@ -247,7 +271,7 @@ case "${WSFED_ONLY_IDP}" in
      usage; exit 1 ;;
 esac
 case "${FEDERATION_ONLY_DEPTH}" in
-  single|chain|both) ;;
+  single|chain|choice|both|matrix|matrix:*/*/*) ;;
   *) echo "Unknown --federation-only depth: ${FEDERATION_ONLY_DEPTH}" >&2
      usage; exit 1 ;;
 esac
@@ -1001,6 +1025,101 @@ runDelegationOnly()
 # this script would only move the same management API calls somewhere the
 # containerized suite could not reach them.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# --federation-only=matrix: the whole grid, one point at a time, against the
+# stack runFederationOnly() has already brought up.
+#
+# FORTY-NINE POINTS — five application protocols by five federation protocols by
+# two authentication mechanisms, less the one federation_sso.js already drives.
+# The suite runs them as forty-nine POOLED jobs; this loop runs them in order,
+# on one machine, which is minutes rather than seconds and is not the normal
+# path. It exists for the two things the pool cannot give: a live stack with
+# every combination's realm state left in it, and a way to reproduce ONE point
+# with the browser visible.
+#
+#   ./local-run-tests.sh --federation-only=matrix
+#   ./local-run-tests.sh --federation-only=matrix:wsfed/oauth2/webauthn
+#
+# EVERY POINT RUNS EVEN WHEN AN EARLIER ONE FAILS, and the return code is the
+# worst of them. Stopping at the first would answer the least interesting
+# question — a grid is run to find out WHICH combinations are broken, and
+# "the third one" is not that answer.
+# ---------------------------------------------------------------------------
+runFederationMatrix()
+{
+  echo "Entering runFederationMatrix()."
+  local rc=0
+  local one="${FEDERATION_ONLY_DEPTH#matrix}"
+  one="${one#:}"
+  local apps="oidc oauth2 saml2 saml11 wsfed"
+  local feds="oidc oauth2 saml2 saml11 wsfed"
+  local mechs="password webauthn"
+  local ran=0
+  local failed=""
+  local app fed mech point
+  for app in ${apps};
+  do
+    for fed in ${feds};
+    do
+      for mech in ${mechs};
+      do
+        point="${app}/${fed}/${mech}"
+        # The one point federation_sso.js drives. Skipped here for the reason
+        # tests/run-report.js skips it: running it twice buys nothing and puts
+        # a second job's arithmetic in the same realms.
+        if [ "${point}" = "oidc/saml2/password" ]; then continue; fi
+        if [ -n "${one}" ] && [ "${point}" != "${one}" ]; then continue; fi
+        echo "--- federation grid: ${point} ---"
+        FEDERATION_APP_PROTOCOL="${app}" \
+        FEDERATION_FED_PROTOCOL="${fed}" \
+        FEDERATION_MECHANISM="${mech}" \
+          node "${NODEJS_BASE_DIR}/federation_matrix_sso.js" \
+               --url "${DEBUGGER_BASE_URL}"
+        local pointRc=$?
+        ran=$((ran + 1))
+        if [ ${pointRc} -ne 0 ];
+        then
+          rc=${pointRc}
+          failed="${failed} ${point}"
+        fi
+      done
+    done
+  done
+  # A NARROWED RUN THAT MATCHED NOTHING IS A FAILURE, not a pass. A typo in the
+  # point — `wsfed/oauth/webauthn`, say — would otherwise run nothing at all and
+  # report success, which is the "test that quietly does nothing" this suite
+  # keeps finding.
+  if [ ${ran} -eq 0 ];
+  then
+    echo "No point of the federation grid matched \"${one}\". It is" \
+         "<app>/<fed>/<mech>, each of oidc, oauth2, saml2, saml11, wsfed and" \
+         "each of password, webauthn." >&2
+    echo "Leaving runFederationMatrix(). rc=1"
+    return 1
+  fi
+  echo "Ran ${ran} point(s) of the federation grid."
+  if [ -n "${failed}" ];
+  then
+    echo "FAILED:${failed}" >&2
+  else
+    cat <<MATRIX
+Every point passed, and the stack is still up. The two realms hold one
+application, two relationships and one person PER COMBINATION:
+  ${WSTRUST_STS_URL}/realm/federation-matrix-1/admin/federation
+      one service-provider-side relationship per point, with its own counters
+  ${WSTRUST_STS_URL}/realm/federation-matrix-2/admin/federation
+      one identity-provider-side relationship per point, each carrying the
+      fedAuthnMechanism that decided how the person was authenticated
+  ${WSTRUST_STS_URL}/realm/federation-matrix-1/admin/users
+      everybody who signed in without a credential ever being checked there
+The console needs a sign-on session from /authn/login (any name, any password).
+Both realms are in the mock's memory and go with the container.
+MATRIX
+  fi
+  echo "Leaving runFederationMatrix(). rc=${rc}"
+  return ${rc}
+}
+
 runFederationOnly()
 {
   echo "Entering runFederationOnly()."
@@ -1028,21 +1147,38 @@ runFederationOnly()
   # says nothing about the other — and stopping at the first would hide which
   # of the two layers broke, which is the only question worth asking when a
   # chain stops working.
-  if [ "${FEDERATION_ONLY_DEPTH}" != "chain" ];
+  if [ "${FEDERATION_ONLY_DEPTH}" = "single" ] || \
+     [ "${FEDERATION_ONLY_DEPTH}" = "both" ];
   then
     node "${NODEJS_BASE_DIR}/federation_sso.js" --url "${DEBUGGER_BASE_URL}"
     rc=$?
   fi
-  if [ "${FEDERATION_ONLY_DEPTH}" != "single" ];
+  if [ "${FEDERATION_ONLY_DEPTH}" = "chain" ] || \
+     [ "${FEDERATION_ONLY_DEPTH}" = "both" ];
   then
     node "${NODEJS_BASE_DIR}/federation_chain_sso.js" \
          --url "${DEBUGGER_BASE_URL}"
     local chainRc=$?
     [ ${chainRc} -ne 0 ] && rc=${chainRc}
   fi
+  if [ "${FEDERATION_ONLY_DEPTH}" = "choice" ] || \
+     [ "${FEDERATION_ONLY_DEPTH}" = "both" ];
+  then
+    node "${NODEJS_BASE_DIR}/federation_choice_sso.js" \
+         --url "${DEBUGGER_BASE_URL}"
+    local choiceRc=$?
+    [ ${choiceRc} -ne 0 ] && rc=${choiceRc}
+  fi
+  case "${FEDERATION_ONLY_DEPTH}" in
+    matrix|matrix:*)
+      runFederationMatrix
+      rc=$?
+      ;;
+  esac
   if [ ${rc} -eq 0 ];
   then
-    if [ "${FEDERATION_ONLY_DEPTH}" != "chain" ];
+    if [ "${FEDERATION_ONLY_DEPTH}" = "single" ] || \
+       [ "${FEDERATION_ONLY_DEPTH}" = "both" ];
     then
       cat <<FEDERATION
 The stack is still up, and both realms are configured. What they now hold is the
@@ -1057,7 +1193,8 @@ The console needs a sign-on session from /authn/login (any name, any password).
 Both realms are in the mock's memory and go with the container.
 FEDERATION
     fi
-    if [ "${FEDERATION_ONLY_DEPTH}" != "single" ];
+    if [ "${FEDERATION_ONLY_DEPTH}" = "chain" ] || \
+       [ "${FEDERATION_ONLY_DEPTH}" = "both" ];
     then
       cat <<CHAIN
 And the THREE realms of the N-layer chain, where the middle one is the thing to
@@ -1073,6 +1210,24 @@ go and look at:
       the same person, two hops and two protocols away, in the realm the
       application actually asked
 CHAIN
+    fi
+    if [ "${FEDERATION_ONLY_DEPTH}" = "choice" ] || \
+       [ "${FEDERATION_ONLY_DEPTH}" = "both" ];
+    then
+      cat <<CHOICE
+And the pair where one application has TWO identity providers:
+  ${WSTRUST_STS_URL}/realm/federation-choice-1/admin/applications
+      webapp-sso-1, whose appFederationRelationship names both partners. Adding
+      or removing a value there is what turns the chooser on and off.
+  ${WSTRUST_STS_URL}/realm/federation-choice-1/admin/federation
+      the two relationships side by side — one SAML 2.0, one OpenID Connect,
+      both to the same realm — each having counted exactly one sign-in.
+  ${WSTRUST_STS_URL}/realm/federation-choice-2/admin/users
+      the two people, and the realm where both names were actually typed
+To see the chooser itself, start an authorization request for webapp-sso-1 at
+  ${WSTRUST_STS_URL}/realm/federation-choice-1/oauth2/authorize
+in a browser with no session for that realm.
+CHOICE
     fi
   fi
   echo "Leaving runFederationOnly(). rc=${rc}"

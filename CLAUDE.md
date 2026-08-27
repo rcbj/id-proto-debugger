@@ -171,13 +171,26 @@ TEST_CONCURRENCY=6 ./docker-run-tests.sh
 # attribute that makes it one — `fedAuthnMechanism` on its
 # identity-provider-side relationship — is what that case exercises.
 # `=both` is the default; the realms are disjoint so either runs alone.
+# `=matrix` is the GRID: every combination of the two protocol layers and of
+# how the far realm authenticates — five application protocols (oidc, oauth2,
+# saml2, saml11, wsfed) by five federation protocols (the same five) by two
+# mechanisms (password, webauthn), less the one `=single` already drives, so
+# FORTY-NINE points. It has its own pair of realms (federation-matrix-1 and
+# -2) and shares nothing with the two above. `=matrix:<app>/<fed>/<mech>` runs
+# ONE point, which is how a failing combination is reproduced — add -b to
+# watch it. The ordinary suite runs those forty-nine as pooled jobs;
+# this loop runs them in order, for a live stack to look at afterwards.
+# SPNEGO is deliberately not a third mechanism yet: the mock's SPNEGO acceptor
+# is real and is not wired to a session, so twenty-five further points are
+# deferred rather than faked. See tests/CLAUDE.md.
 # Every realm is a logical copy of the ONE mock STS told apart by a path
 # prefix, so this is client + api + the mock and nothing else. It leaves the
 # realms configured on a running stack, which is where the sign-ins it just
 # performed are visible: /admin on any of them. The single-hop case replaced
 # the mock's own three-container `federation-e2e/` on 2026-08-26 — trust
 # realms made the extra containers unnecessary.
-./local-run-tests.sh --federation-only[=single|chain|both]
+./local-run-tests.sh --federation-only[=single|chain|both|matrix]
+./local-run-tests.sh --federation-only=matrix:wsfed/oauth2/webauthn
 
 # The containerized stack again, under Istanbul/c8 instrumentation
 ./run-coverage.sh
