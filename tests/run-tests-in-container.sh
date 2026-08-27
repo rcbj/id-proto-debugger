@@ -88,6 +88,30 @@ init()
   export SPIFFE_WORKLOAD_ADDRESS SPIFFE_SERVER_ADDRESS
   export SPIFFE_TEST_WORKLOAD_ADDRESS SPIFFE_TEST_SERVER_ADDRESS
   export SPIFFE_BUNDLE_URL
+  # THE MOCK KDC AS *THIS CONTAINER* DIALS IT, and the SPIFFE_TEST_* pair above
+  # is the precedent rather than a coincidence.
+  #
+  # KRB5_KDC_HOST — which run-report.js still defaults to the compose name for
+  # the five Kerberos PAGE jobs — is the API's view: that address is typed into
+  # a page and resolved by the relay inside the api container.
+  # krb5_mit_client.js has no page and no relay; `kinit` opens the socket in
+  # the test's own process, so it reads KRB5_TEST_KDC_HOST and run-report.js
+  # defaults THAT to localhost, which is right on a host launcher
+  # (local-tests.yml is host-networked, so the mock's port 88 is the host's).
+  # Here it is not: nothing listens on 88 in this
+  # container, and `kinit` would answer `Cannot contact any KDC for realm
+  # EXAMPLE.COM` — a message naming neither the variable nor the stack.
+  #
+  # Only for the containerized stack, like STS_URL and WSTRUST_STS_URL above:
+  # on any other target run-report.js's own localhost default is the right
+  # answer, and the job says for itself when the KDC is not there.
+  case "${DEBUGGER_BASE_URL}" in
+    http://client:*)
+      KRB5_TEST_KDC_HOST="${KRB5_TEST_KDC_HOST:-sts}"
+      KRB5_TEST_KDC_PORT="${KRB5_TEST_KDC_PORT:-88}"
+      ;;
+  esac
+  export KRB5_TEST_KDC_HOST KRB5_TEST_KDC_PORT
   # WS-Trust STS (mock) reachable by its compose DNS name on the test network.
   # Must match the client bundle's baked wstrustStsUrlDefault (docker-tests.js).
   #
