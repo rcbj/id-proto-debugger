@@ -949,6 +949,40 @@ async function mockKnowsTheMechanism(stsBase) {
   return knows;
 }
 
+// ---------------------------------------------------------------------------
+// THE TWO THINGS THAT WEAR `a.fedbtn`, AND WHY THIS FUNCTION EXISTS.
+//
+// The mock's sign-in screen styles two OFFERS with the same class. The
+// federation partners are the ones this test is about: one per usable
+// relationship, each leading to `/federation/login/<id>`. Under them sits the
+// Kerberos door — `integratedOptionHtml()`'s SPNEGO link, offered to every
+// application on every screen with nothing configured anywhere, because the
+// mechanism is a property of the person's machine rather than of the relying
+// party. A class is what a button LOOKS like and an href is what it DOES, so
+// the counting above reads the href.
+//
+// This is the other half of that: a narrowed selector stops seeing anything
+// that arrives under a different href, so everything else wearing the class
+// has to be accounted for by name. Anything that is neither a partner nor the
+// Kerberos door is a button this screen should not be drawing at all.
+// ---------------------------------------------------------------------------
+async function assertOnlyOtherButtonIsKerberos(driver, where) {
+  log.debug("Entering assertOnlyOtherButtonIsKerberos().");
+  const buttons = await driver.findElements(By.css("a.fedbtn"));
+  for (const button of buttons) {
+    const href = await button.getAttribute("href");
+    if (href.indexOf("/federation/login/") >= 0) {
+      continue;
+    }
+    assert.ok(href.indexOf("/authn/spnego") >= 0,
+      where + " carries a button styled like a federation partner that " +
+      "points at \"" + href + "\". It is neither a partner nor the ambient " +
+      "Kerberos door, so it is an offer this screen should not be making.");
+  }
+  log.debug("Leaving assertOnlyOtherButtonIsKerberos(). " + buttons.length +
+            " button(s) on the screen.");
+}
+
 function b64uJson(part) {
   return JSON.parse(Buffer.from(part, "base64url").toString("utf8"));
 }
@@ -1151,10 +1185,20 @@ async function test() {
       "wsignin1.0 from realm 4.");
     // And realm 5 offers no partners of its own: the three realms run one
     // codebase and differ only in configuration.
-    const partnerButtons = await driver.findElements(By.css("a.fedbtn"));
+    //
+    // THE SELECTOR IS THE HREF AND NOT THE CLASS, and that distinction cost a
+    // run on 2026-08-27. `a.fedbtn` is a STYLE the mock's sign-in screen puts
+    // on the federation partners AND on the ambient Kerberos door beneath
+    // them, which is offered on every screen with nothing configured anywhere
+    // (`krb5.spnegoLoginButton`, on by default). Counting the class made that
+    // one button read as a partner realm 5 does not have. See
+    // assertOnlyOtherButtonIsKerberos() for the other half of the check.
+    const partnerButtons = await driver.findElements(
+      By.css("a.fedbtn[href*=\"/federation/login/\"]"));
     assert.strictEqual(partnerButtons.length, 0,
       "Realm 5's screen offers " + partnerButtons.length + " federation " +
       "partner(s). It is the end of the chain and has no relationships.");
+    await assertOnlyOtherButtonIsKerberos(driver, "Realm 5's screen");
 
     await signInAtWsFed(driver, user);
 
