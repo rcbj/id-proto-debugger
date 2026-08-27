@@ -196,6 +196,9 @@ async function test() {
   assert.ok(meta && meta.credential_endpoint,
     "no credential issuer metadata at " + issuerBase + ". Start the STS mock.");
 
+  await common.provisionWallet(issuerBase, { clientId: CLIENT_ID,
+    why: "the wallet whose encrypted credential requests this job sends" });
+
   // --- what the issuer advertises -------------------------------------------
   log.info("=== The metadata (section 12.2.3) ===");
   const offered = meta.credential_request_encryption;

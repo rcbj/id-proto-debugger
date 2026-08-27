@@ -214,6 +214,13 @@ async function test() {
     Object.keys(found.meta.credential_configurations_supported ||
                 {}).join(", "));
 
+  // The wallet, declared at the mock issuer before it asks for anything, and
+  // after the checks above so that a missing service still fails with the
+  // message naming what to start. A no-op against any other issuer — see
+  // common.provisionWallet().
+  await common.provisionWallet(issuerBase,
+    { why: "the wallet this job collects a jwt_vc_json credential with" });
+
   await metadataAdvertisesTheFormat();
   const held = await issuesARealVcJwt(found);
 

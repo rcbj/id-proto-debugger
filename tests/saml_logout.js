@@ -7,6 +7,7 @@ const { Command, Option } = require('commander');
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -177,6 +178,41 @@ async function ssoLogin(driver, metadataUrl, spEntityId, user, binding,
     "document.getElementById('saml_sp_public_key').value = arguments[1];",
     spKey, spCert
   );
+
+  // ---------------------------------------------------------------------
+  // THE SERVICE PROVIDER, IN THE MOCK'S REGISTRY, BEFORE THE AUTHNREQUEST.
+  //
+  // Mock only, for the reason tests/saml_sso.js gives beside its own copy.
+  // What this job registers that its sibling does not is the SINGLE LOGOUT
+  // service, because this is the job that uses one: the mock reads
+  // `samlSingleLogoutService` as its fallback destination for a LogoutRequest,
+  // so an entry without it describes a service provider that can sign in and
+  // cannot be signed out — which is precisely the half this test is about.
+  // ---------------------------------------------------------------------
+  var acsUrl = await driver.findElement(By.id("saml_acs_url"))
+      .getAttribute("value");
+  // The SP's own Single Logout endpoint, which is NOT on the page: a
+  // <samlp:LogoutRequest> carries no return address, so where a LogoutResponse
+  // goes is something the service provider has to have DECLARED. common.sh
+  // exports it (SAML_SLO_URL) and local-run-tests.sh has its own name for the
+  // mock's copy of it. With neither set, nothing is registered and the mock
+  // falls back to the last assertion consumer service URL — which is a guess,
+  // is logged as one by that service, and is right on this stack because the
+  // api answers /samlacs and /samlslo with one handler.
+  var sloUrl = process.env.SAML_SLO_URL || process.env.SAML_STS_SLO_URL || "";
+  log.info("Assertion consumer service: " + acsUrl + "; SP Single Logout: " +
+           (sloUrl || "(the page publishes none)"));
+  await registry.provision(registry.stsBaseFor(metadataUrl), {
+    identifier: spEntityId,
+    name: "SAML 2.0 test service provider",
+    protocols: ["saml2"],
+    fields: Object.assign({
+      samlEntityId: [spEntityId],
+      samlSigningCertificate: spCert
+    }, acsUrl ? { samlAssertionConsumerService: [acsUrl] } : {},
+       sloUrl ? { samlSingleLogoutService: [sloUrl] } : {}),
+    why: "the service provider this job signs in and then signs out"
+  });
 
   await selectBinding(driver, binding);
   await clickByValue(driver, "Call IdP");

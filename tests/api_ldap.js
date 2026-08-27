@@ -117,6 +117,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 const { Command, Option } = require("commander");
 const { usernameFor, runStamp } = require("./random_username.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1083,8 +1084,19 @@ async function wsFederationSeedsAnEntryToo(described) {
     "LDAP_AUTOCREATE_USERS is off on this mock, so nothing below could pass " +
     "for a reason worth having. See section 9.");
 
+  // The relying party, before the wsignin1.0 that would otherwise create its
+  // entry. It carries this run's stamp, so nothing else in the suite shares it
+  // and the entry left behind names the file that made it.
+  const wtrealm = "urn:api-ldap-test:" + stamp;
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: wtrealm,
+    name: "api_ldap WS-Federation relying party",
+    protocols: ["wsfed", "saml11"],
+    fields: { wsfedRealm: [wtrealm], samlEntityId: [wtrealm] },
+    why: "the wtrealm this section signs in to"
+  });
   const signInUrl = stsUrl + "/wsfed?wa=wsignin1.0&wtrealm=" +
-    encodeURIComponent("urn:api-ldap-test:" + stamp);
+    encodeURIComponent(wtrealm);
   // `fetch` follows the redirect to /authn/login by itself, which is what a
   // browser would do and is the whole of what this hop is.
   const screen = await fetch(signInUrl);
@@ -2195,6 +2207,31 @@ async function test() {
   log.info("the api is at " + apiUrl + ", the directory it will open is " +
            ldapUrl + " (base " + baseDn + "), and this run's names are " +
            userDn + " and " + groupDn);
+
+  // ---------------------------------------------------------------------
+  // THE DIRECTORY CLIENT, IN THE APPLICATIONS REGISTRY, BEFORE THE FIRST
+  // BIND.
+  //
+  // `ldapBindDn` is the identifier attribute of the `ldap` family, and this is
+  // the DN every operation below binds as. The mock REFUSES no bind — any DN,
+  // any password, anonymous, on 389 and 636 alike — so this changes nothing
+  // about whether the test runs, which is the point: what the entry adds is
+  // that the party doing all of it is a declared one rather than a string that
+  // turned up on a socket.
+  //
+  // It is NOT stamped, unlike the WS-Federation realm further down. The bind
+  // DN is the environment's (LDAP_BIND_DN, `cn=admin,…` by default) and is
+  // genuinely shared with every other job that binds — so a per-run identifier
+  // here would invent a party that does not exist. The reconcile path is what
+  // makes that safe.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: bindDn,
+    name: "LDAP directory client",
+    protocols: ["ldap"],
+    fields: { ldapBindDn: [bindDn] },
+    why: "the DN every operation in this job binds as"
+  });
 
   await theLimitsAreHonest(ready.limits);
   await theBindAcceptsAnythingExceptOnePassword();

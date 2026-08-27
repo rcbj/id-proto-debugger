@@ -7,6 +7,7 @@ const { Command, Option } = require('commander');
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -679,6 +680,38 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
     spPair.privateKey, spPair.certificate
   );
 
+  // ---------------------------------------------------------------------
+  // THE RELYING PARTY, IN THE MOCK'S REGISTRY, BEFORE THE FLOW STARTS.
+  //
+  // It matters more here than it does in SAML 2.0 and for a reason particular
+  // to this profile: SAML 1.1 HAS NO REQUEST MESSAGE. A flow begins when a
+  // browser arrives carrying a TARGET, and the relying party cannot identify
+  // itself in the protocol at all — what stands in for an entityID is
+  // Shibboleth's `providerId`, a path segment, or a GUESS at the TARGET's
+  // origin. So the registry entry is not a convenience: it is the only place
+  // this relying party's audience and its assertion consumer service are
+  // written down as facts rather than inferred per request.
+  //
+  // ONE APPLICATION ACROSS BOTH PROFILES. `samlEntityId` is the identifier
+  // attribute of SAML 2.0 and SAML 1.1 alike — one attribute rather than two
+  // that would disagree the first time an application was declared for both —
+  // so this run and tests/saml_sso.js's run land on the same entry, each
+  // declaring its own family. That is why `saml11` is declared here and
+  // `saml2` is not: what this job is entitled to assert is what IT did.
+  // ---------------------------------------------------------------------
+  var acsUrl = await driver.findElement(By.id("saml_acs_url"))
+      .getAttribute("value");
+  log.info("Assertion consumer service (Shibboleth's shire): " + acsUrl);
+  await registry.provision(registry.stsBaseFor(metadataUrl), {
+    identifier: spEntityId,
+    name: "SAML 1.1 test relying party",
+    protocols: ["saml11"],
+    fields: Object.assign({
+      samlEntityId: [spEntityId]
+    }, acsUrl ? { samlAssertionConsumerService: [acsUrl] } : {}),
+    why: "the relying party providerId names and the assertion is audienced to"
+  });
+
   log.info("Select binding: " + binding);
   await driver.executeScript(
     "var s=document.getElementById('saml_binding'); if(s){ s.value = " +
@@ -698,7 +731,10 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
     function (v) { return v.indexOf("profile=" + wantProfile) >= 0; },
     "The Generated request was not rebuilt for the " + binding + " binding.",
     loginWait);
-  var acsUrl = await driver.findElement(By.id('saml_acs_url'))
+  // Re-read rather than reusing the value the registration above took: the
+  // binding selection rebuilds the request, and `shire` has to be asserted
+  // against what the page holds NOW.
+  acsUrl = await driver.findElement(By.id('saml_acs_url'))
       .getAttribute('value');
   await assertRequestIsShibbolethShaped(driver, binding, spEntityId, acsUrl);
 

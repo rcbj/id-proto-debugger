@@ -57,6 +57,7 @@ const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
@@ -5844,6 +5845,39 @@ async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. issuer=" + issuerMetadataUrl + ", as=" +
            asMetadataUrl);
+
+  // ---------------------------------------------------------------------
+  // THE WALLET, IN THE MOCK ISSUER'S REGISTRY, BEFORE THE PRE-AUTHORIZED
+  // GRANT IS REDEEMED.
+  //
+  // This job is the one with a foot in both camps and the registration has to
+  // say so honestly. The OIDC LEG runs against KEYCLOAK — that half's client
+  // is provisioned by common.sh's configureKeycloak() and nothing here
+  // touches it — but the pre-authorized code IS redeemed at the mock's own
+  // /oauth2/token with this same client_id, and that is the sighting this
+  // registration gets in ahead of.
+  //
+  // So what is declared is the mock-facing half only: the pre-authorized code
+  // grant and refresh_token, which are the two grants this file sends THERE.
+  // No redirect URI, because the authorization request that would use one
+  // goes to Keycloak, and registering Keycloak's callback in the mock's
+  // registry would be a configuration nothing has.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.stsBaseFor(issuerBase), {
+    identifier: clientId,
+    name: "SD-JWT VC wallet (mock issuer half)",
+    protocols: ["oauth2", "oid4vci"],
+    fields: {
+      oauthClientId: clientId,
+      oauthGrantType: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
+                       "refresh_token"],
+      oauthScope: ["openid", "profile", "email"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the wallet that redeems this issuer's pre-authorized codes"
+  });
+
   await issuerNegatives();
 
   var prefs = new logging.Preferences();

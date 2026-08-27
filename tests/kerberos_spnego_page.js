@@ -46,6 +46,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
@@ -765,6 +766,25 @@ async function test() {
         "ticket. Set KRB5_SPN to override, or KRB5_SERVICE_DOMAINS on the mock " +
         "to include this host.");
   }
+
+  // ---------------------------------------------------------------------
+  // THE SPNEGO SERVICE, IN THE APPLICATIONS REGISTRY, BEFORE THE HANDSHAKE.
+  //
+  // The SPN registered is the DERIVED one — `HTTP/<the protected URL's host>`,
+  // which is the name a browser actually asks for — and never `advertisedSpn`,
+  // for the reason the block above is at such length about: substituting the
+  // mock's canonical name for the derived guess is exactly what kept this test
+  // green while the workflow led a person into KDC_ERR_S_PRINCIPAL_UNKNOWN.
+  // The registration has to describe the ticket that will really be asked
+  // for, or it is one more place agreeing with the wrong answer.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: spn,
+    name: "SPNEGO-protected service",
+    protocols: ["krb5"],
+    fields: { krb5ServicePrincipalName: [spn] },
+    why: "the SPN a browser derives from " + protectedUrl
+  });
 
   const options = new chrome.Options();
   // --headless=new, never bare --headless: the image's Chrome 121 ignores

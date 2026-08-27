@@ -276,6 +276,30 @@ const JOB_LOCKS = {
   // at all, so nothing it does can collide with this.
   "sts_saml11.js": "sts-saml11",
   "saml11_sso.js": "sts-saml11",
+  // The mock's SPNEGO SIGN-IN, which is `krb5.spnegoAuthentication` — a
+  // process-wide setting on a shared service. `kerberos_spnego_signin.js` turns
+  // it OFF to assert that a closed door answers 403 naming the setting and
+  // signs nobody in, then resets it; inside that window every other Kerberos
+  // job that reaches `/authn/spnego` would be refused and would report it as
+  // its own failure.
+  //
+  // It also holds the KDC's REPLAY CACHE against a second sign-in, which is
+  // why the lock covers the two page jobs rather than only this one: each of
+  // them spends an AP-REQ, and this file's replay negative asserts that a
+  // second one is refused. Two jobs presenting tickets for the same SPN in the
+  // same window cannot make that assertion mean anything.
+  //
+  // `kerberos_as_page.js` is deliberately absent: an AS exchange spends no
+  // service ticket and never touches the sign-in door, so nothing it does can
+  // collide with this.
+  "kerberos_spnego_signin.js": "sts-spnego-signin",
+  "kerberos_spnego_page.js": "sts-spnego-signin",
+  "kerberos_tgs_ap_page.js": "sts-spnego-signin",
+  // And the MIT-client job, for both of the same reasons: it turns
+  // `krb5.spnegoAuthentication` off to assert the closed door, and it asserts
+  // that a REPLAYED AP-REQ is refused — which a concurrent job spending its
+  // own tickets against the same acceptor would disturb.
+  "krb5_mit_client.js": "sts-spnego-signin",
 };
 
 const CONCURRENCY = (function () {
@@ -444,9 +468,14 @@ function buildJobs() {
         jobs.push({
           name: `${label} — mock STS, DPoP ${OIDC_DPOP}`,
           script: "oidc_flows.js",
-          // The client id, scope and username are the script's own: the mock
-          // registers no clients and checks no passwords, so there is nothing
-          // for the suite to provision and nothing to keep in step here.
+          // The client id, scope and username are the script's own, and the
+          // script is what REGISTERS the client: it puts it in the mock's
+          // application registry before the browser starts, with the redirect
+          // URI, response type and scope this job is about to send. That
+          // sentence used to read "the mock registers no clients … so there is
+          // nothing for the suite to provision", which described what the mock
+          // REQUIRES and was the reason the entry it left behind knew the
+          // client_id and nothing else. See tests/sts_applications.js.
           env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL, OIDC_FLOW, OIDC_DPOP },
         });
       }
@@ -2354,6 +2383,90 @@ function buildJobs() {
   if (kerberosPagesSkip) spnegoPageJob.skip = kerberosPagesSkip;
   jobs.push(spnegoPageJob);
 
+  // ---------------------------------------------------------------------
+  // KERBEROS AS A WAY OF SIGNING IN, which is the door the job above does not
+  // touch.
+  //
+  // `/spnego/protected` authenticates a person and throws the identity away.
+  // `/authn/spnego` is the same handshake with the last step added: past it
+  // there is a browser SESSION on that service, and `/oauth2/authorize`,
+  // `wsignin1.0`, a SAML AuthnRequest and `/admin` all read it. Nothing in
+  // either repository drove that door until 2026-08-27 — it shipped on
+  // 2026-08-26, was hand-verified once against a throwaway instance, and the
+  // driver that did it was a scratch script nobody kept.
+  //
+  // The job drives the debugger's own AS, TGS and SPNEGO pages to build the
+  // service ticket, spends it at the door, and then runs an ordinary OIDC
+  // Authorization Code flow on the session that comes back — with `amr` and
+  // `acr` read off the TICKET'S OWN FLAGS, which is the one place in that
+  // service where those claims are derived from a credential rather than from
+  // what somebody ticked on a screen.
+  //
+  // THE BROWSER DOES NOT ANSWER THE CHALLENGE, and the file's header says so
+  // at length: RFC 4559 is answered from GSSAPI, which needs a credential cache
+  // and an `--auth-server-allowlist` entry that this suite cannot assume. The
+  // debugger is the Kerberos client instead, which shows more of the protocol
+  // than a browser handing the work to GSSAPI ever would.
+  //
+  // Same gate and same three variables as the page job above, plus the OAuth
+  // client it registers before the flow starts.
+  const spnegoSignInJob = {
+    name: "SPNEGO sign-in (a Kerberos ticket becomes a session, and an OIDC " +
+        "flow completes on it)",
+    script: "kerberos_spnego_signin.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
+      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+      KRB5_REALM: env.KRB5_REALM || "EXAMPLE.COM",
+    },
+  };
+  if (kerberosPagesSkip) spnegoSignInJob.skip = kerberosPagesSkip;
+  jobs.push(spnegoSignInJob);
+
+  // ---------------------------------------------------------------------
+  // THE MOCK KDC, DRIVEN BY MIT KERBEROS ITSELF.
+  //
+  // Every other Kerberos job here — including the two above — drives that KDC
+  // with a client this project wrote, and not one of them can answer the
+  // question this one exists for: does any of it interoperate with a real
+  // Kerberos? The answer was NO until 2026-08-27, for as long as the mock KDC
+  // had existed, and nothing noticed: its KDC_ERR_PREAUTH_REQUIRED named the
+  // salt without naming the METHOD, so `kinit` could not authenticate and no
+  // browser could ever have signed in with Kerberos. Both ends of every test
+  // shared the assumption, so every test passed.
+  //
+  // NO BROWSER. It is `kinit`, `klist`, `kvno`, `kdestroy` and
+  // `curl --negotiate`, and it writes its own krb5.conf and credential cache
+  // under the system temp directory — so it needs no root, does not touch
+  // /etc/krb5.conf, and cannot disturb a Kerberos setup the machine already
+  // has.
+  //
+  // It SKIPS with a named reason where MIT Kerberos is absent or curl was
+  // built without GSS-API, which is most developer machines.
+  // `tests/Dockerfile` installs `krb5-user`, so the containerized suite always
+  // runs it — which is where this needs to be true.
+  // **NOT gated on `kerberosPagesSkip`**, and that is deliberate rather than an
+  // omission. That gate is about a deployment having the Kerberos PAGES — the
+  // api's port-88 relay and the five pages a static build drops — and this job
+  // uses neither: it talks to the mock's KDC over its own socket and to its
+  // HTTP doors with curl. Gating it there would skip the one job that can find
+  // an interoperability defect on precisely the targets where the mock is
+  // still reachable. Its own preconditions() decides, and says which of the
+  // four things was missing.
+  jobs.push({
+    name: "Kerberos with the REAL client (kinit, klist, kvno, kdestroy, " +
+        "curl --negotiate against the mock KDC)",
+    script: "krb5_mit_client.js",
+    env: {
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
+      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+      KRB5_REALM: env.KRB5_REALM || "EXAMPLE.COM",
+    },
+  });
+
   // ---------------------------------------------------------------------------
   // LDAP. Two jobs, and the split between them is the same one the Kerberos
   // family has: the protocol has no browser in it, and the page has no protocol
@@ -3210,6 +3323,11 @@ function buildJobs() {
         SAML_METADATA_FILE: env.SAML_METADATA_FILE,
         SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
         SAML_USER: env.SAML_USER,
+        SAML_SLO_URL: env.SAML_SLO_URL,
+        // Where the MOCK is, which this half is not. Passed to both halves and
+        // self-selecting: the service provider is registered only when the
+        // identity provider this job was given is on that origin.
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
       },
     },
     {
@@ -3224,14 +3342,27 @@ function buildJobs() {
         SAML_IDP: "sts",
         SAML_METADATA_URL: env.SAML_STS_METADATA_URL,
         // The SAME service provider entityID Keycloak's client is provisioned
-        // for. It can be, and that is the point rather than a shortcut: the
-        // mock registers no service providers, accepts any entityID, and
-        // creates the application entry from the first valid AuthnRequest — so
-        // there is nothing here to collide with a provisioned client
-        // somewhere else, and the two runs describe the same service provider
-        // to two identity providers, which is what a federation looks like.
+        // for. It can be, and that is the point rather than a shortcut: the two
+        // runs describe the same service provider to two identity providers,
+        // which is what a federation looks like — and since 2026-08-27 each
+        // half REGISTERS it with the identity provider it is about to speak to,
+        // so both stores hold an entry rather than one holding an entry and the
+        // other holding whatever a sighting inferred. The mock still requires
+        // none of it and still accepts any entityID; what changed is that its
+        // entry now knows the ACS and the signing certificate too.
         SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
         SAML_USER: env.SAML_STS_USER || env.SAML_USER || "saml",
+        // Where a LogoutResponse is to be returned to. Only saml_logout.js
+        // reads it, and only to put it on the application entry: a
+        // LogoutRequest carries no return address, so this is a fact the
+        // service provider has to have DECLARED somewhere.
+        SAML_SLO_URL: env.SAML_STS_SLO_URL || env.SAML_SLO_URL,
+        // And its management API, so the service provider is in the registry
+        // before the first AuthnRequest rather than created by it. The comment
+        // above about there being nothing to provision described what the mock
+        // REQUIRES; it is still true, and it is exactly why the entry the
+        // sighting would have made knows nothing but the entityID.
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
       },
     },
   ];
@@ -3304,6 +3435,12 @@ function buildJobs() {
         SAML11_METADATA_FILE: env.SAML11_METADATA_FILE,
         SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
         SAML_USER: env.SAML_STS_USER || env.SAML_USER || "saml",
+        // The mock's management API: the relying party is put in the registry
+        // before the flow starts. It matters more here than it does for SAML
+        // 2.0, because SAML 1.1 has no request message for the relying party
+        // to identify itself in — so what the entry holds is the only place
+        // this profile's audience is written down.
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
       },
     };
     if (!env.SAML11_METADATA_URL && !env.SAML11_METADATA_FILE) {
@@ -3516,6 +3653,12 @@ function buildJobs() {
           WSFED_METADATA_URL: env.WSFED_METADATA_URL,
           WSFED_REALM: env.WSFED_REALM,
           WSFED_USER: env.WSFED_USER,
+          // Where the MOCK is, which this half is not. It is passed to both
+          // halves on purpose and selects itself out: the test registers the
+          // relying party only when the identity provider it was given is on
+          // that origin, so Keycloak's provisioned client is never also
+          // created in the mock's registry. See tests/sts_applications.js.
+          WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         },
       },
       {
@@ -3528,10 +3671,13 @@ function buildJobs() {
         env: {
           WSFED_IDP: "sts",
           WSFED_METADATA_URL: env.WSFED_STS_METADATA_URL,
-          // The mock registers no relying parties, so the wtrealm is any string
-          // and becomes the assertion's audience. It is given one that says
-          // where it came from rather than reusing Keycloak's provisioned
-          // client id, so an audience seen in a log names its own test.
+          // The mock REQUIRES no relying party registration, so the wtrealm is
+          // any string and becomes the assertion's audience. It is given one
+          // that says where it came from rather than reusing Keycloak's
+          // provisioned client id, so an audience seen in a log names its own
+          // test — and the job registers it before the first wsignin1.0, with
+          // the wreply the page will actually use. See
+          // tests/sts_applications.js.
           WSFED_REALM: env.WSFED_STS_REALM || "urn:wsfed:sts:rp",
           // It authenticates nobody: the username becomes the subject and the
           // only password refused is the literal "invalid".
@@ -3548,6 +3694,9 @@ function buildJobs() {
           // offer — so the jobs that send one ask for an assertion type it
           // advertises. See the note on WREQ_TOKEN_TYPE in wsfed_sso.js.
           WSFED_WREQ_TOKEN_TYPE: "urn:oasis:names:tc:SAML:2.0:assertion",
+          // And where its management API is, so the relying party is in the
+          // registry before the first wsignin1.0 rather than created by it.
+          WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         },
       },
     ];

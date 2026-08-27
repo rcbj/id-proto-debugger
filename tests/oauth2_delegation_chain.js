@@ -354,6 +354,16 @@ async function delegationJson(query) {
 // console's own forms go through, which is what makes this provisioning and not
 // a fixture.
 //
+// THIS IS A HAND-WRITTEN COPY AND IT IS STAYING THAT WAY. Since 2026-08-27 the
+// shared implementation is `tests/sts_applications.js`, and every other job in
+// the suite that presents an identifier to the mock calls it — this file and
+// `wstrust_delegation_chain.js` are two of the three it was written FROM. What
+// it does not do is what keeps this one here: `provision()` asserts CONTAINMENT
+// (everything this job needs is on the entry), and the assertion below that
+// matters most is an ABSENCE — webapp1 must be the audience of NOTHING, and an
+// entry that acquired one would still pass a containment check. Change this and
+// change that module only if the two can be made to agree without losing it.
+//
 // `POST /admin-api/applications/create` takes the whole entry in one call:
 // the identifier, a name, the declared protocol families and the attribute
 // values. It REFUSES an identifier that is already there, which is right — an

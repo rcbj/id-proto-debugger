@@ -44,6 +44,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
@@ -508,6 +509,30 @@ async function test() {
         ready.servicePort + "; using that.");
     servicePort = ready.servicePort;
   }
+
+  // ---------------------------------------------------------------------
+  // THE KERBEROS SERVICE, IN THE APPLICATIONS REGISTRY, BEFORE THE TGS
+  // EXCHANGE ASKS FOR A TICKET FOR IT.
+  //
+  // `krb5ServicePrincipalName` is the identifier attribute of the `krb5`
+  // family, and the SPN is what a Kerberos application IS: there is no other
+  // name for it in the protocol. The mock issues a ticket for any SPN it can
+  // find a key for and creates the entry from that sighting, so this changes
+  // nothing about whether the exchange works — what it changes is that the
+  // entry knows the service was DECLARED rather than only that a ticket was
+  // once asked for.
+  //
+  // The SPN is the environment's (KRB5_SPN) and is genuinely shared with the
+  // other Kerberos jobs, so it is not stamped the way the principals in this
+  // file are — a per-run service would be a service nothing has a key for.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: spn,
+    name: "Kerberos ticket-protected service",
+    protocols: ["krb5"],
+    fields: { krb5ServicePrincipalName: [spn] },
+    why: "the service the TGS and AP pages obtain and present a ticket for"
+  });
 
   const options = new chrome.Options();
   // --headless=new, never bare --headless: the image's Chrome 121 ignores

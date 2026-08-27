@@ -118,6 +118,7 @@ const crypto = require('crypto');
 const { URL } = require('url');
 const { Command, Option } = require('commander');
 const { usernameFor, runStamp } = require('./random_username.js');
+const registry = require('./sts_applications.js');
 var appconfig = require(process.env.CONFIG_FILE);
 const bunyan = require('bunyan');
 const { DOMParser } = require('@xmldom/xmldom');
@@ -565,6 +566,29 @@ async function main() {
   heading('Browser/POST, end to end');
   const target = BASE + '/done?x=1';
   const acs = BASE + '/saml11/rp';
+
+  // THE RELYING PARTY, IN THE REGISTRY, BEFORE THE FIRST FLOW.
+  //
+  // It goes here rather than at the top of main() because `acs` is what makes
+  // it worth registering, and this is the line that settles it. The section
+  // just above proved the OTHER half of the same fact — that a metadata
+  // document is minted for an identifier nobody registered — and the two are
+  // not in tension: the mock REQUIRES no registration, and an entry created by
+  // a sighting knows the identifier and nothing else. This one knows where a
+  // response is posted and what family this party was declared for.
+  //
+  // `RP` carries this process's stamp, so nothing here is shared with another
+  // run and every assertion below is still on this job's own litter.
+  await registry.provision(registry.baseOf(BASE), {
+    identifier: RP,
+    name: 'SAML 1.1 protocol test relying party',
+    protocols: ['saml11'],
+    fields: {
+      samlEntityId: [RP],
+      samlAssertionConsumerService: [acs]
+    },
+    why: 'the relying party providerId names in every flow below'
+  });
   res = await signIn({ providerId: RP, shire: acs, TARGET: target, profile: 'post' }, USER_POST);
   check('the flow ends on the auto-post page',
         res.status === 200 && /saml11-form/.test(res.body), 'status ' + res.status);

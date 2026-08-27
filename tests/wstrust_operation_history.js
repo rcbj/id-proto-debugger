@@ -23,6 +23,7 @@ const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -34,6 +35,13 @@ var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var callWait = Math.max(waitTime, 20000);
+
+// The relying party every RST here names. Set explicitly rather than left to
+// wstrust_tools.html's markup default, for the reason tests/wstrust.js gives
+// beside its own copy of this constant: a `.stored` field is at the mercy of
+// whatever an earlier run left in localStorage, and the registration below has
+// to be registered against the string that is actually sent.
+var APPLIES_TO = process.env.WSTRUST_APPLIES_TO || "urn:wstrust:test:rp";
 
 async function click(driver, locator) {
   log.debug("Entering click().");
@@ -115,6 +123,7 @@ async function configureRequest(driver, opts) {
   await setInput(driver, 'wst_sts_url', opts.stsUrl === undefined ?
                  stsUrl : opts.stsUrl);
   await selectValue(driver, 'wst_cred_mode', 'usernametoken');
+  await setInput(driver, 'wst_applies_to', APPLIES_TO);
   await setInput(driver, 'wst_username', opts.user || 'wstrust');
   await setInput(driver, 'wst_password', opts.password || 'wstrust');
   // Call the STS straight from the browser: the mock sends permissive CORS, and
@@ -269,6 +278,21 @@ async function test() {
   let testFailed = false;
   try {
     log.info("Starting Test run. STS=" + stsUrl);
+    // The relying party, before the first call that actually reaches the STS.
+    // Several of the calls below are deliberate FAILURES — an empty STS URL, a
+    // refused password — and those never present an AppliesTo to anything;
+    // this registration is for the ones that succeed, which is what the
+    // history pane is reading when it records an issued token.
+    await registry.provision(registry.baseOf(stsUrl), {
+      identifier: APPLIES_TO,
+      name: "WS-Trust test relying party",
+      protocols: ["wstrust"],
+      fields: {
+        wstrustAppliesTo: [APPLIES_TO],
+        samlEntityId: [APPLIES_TO]
+      },
+      why: "the relying party the recorded operations name"
+    });
     await driver.manage().deleteAllCookies();
     await operationHistoryActivities(driver);
     log.info("Test completed successfully.");

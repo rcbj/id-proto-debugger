@@ -43,6 +43,7 @@ const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 const { waitForFocus } = require("./wait_for.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -226,6 +227,27 @@ async function test() {
     log.debug("Leaving test().");
     return;
   }
+
+  // The relying party, in the mock's registry, before the extension is asked to
+  // do anything with it. `acr_values=mfa` travels on the request rather than on
+  // the entry, deliberately: what a client ASKS for at sign-in time is not a
+  // property of its registration, and putting it on one here would suggest this
+  // mock enforced an application-level authentication policy that it does not.
+  await registry.provision(registry.baseOf(STS), {
+    identifier: CLIENT_ID,
+    name: "WebAuthn extension test",
+    protocols: ["oauth2", "oidc"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      oauthRedirectUri: [REDIRECT],
+      oauthResponseType: ["code"],
+      oauthGrantType: ["authorization_code"],
+      oauthScope: ["openid", "profile", "email"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the client the extension performs the ceremony for"
+  });
 
   await section("the CI build differs from the shipped build in " +
                 "exactly one file", () => {

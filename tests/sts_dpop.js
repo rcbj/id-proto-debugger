@@ -31,6 +31,7 @@
 
 const assert = require("assert");
 const crypto = require("crypto");
+const registry = require("./sts_applications.js");
 const { Command, Option } = require("commander");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -46,6 +47,12 @@ var CREDENTIAL_ENDPOINT = stsBase + "/oid4vci/credential";
 var NONCE_ENDPOINT = stsBase + "/oid4vci/nonce";
 var NOTIFICATION_ENDPOINT = stsBase + "/oid4vci/notification";
 var CLIENT_ID = "dpop-test-client";
+// Where the authorization endpoint is told to send the code. Nothing listens
+// there — the redirect is read, not followed — but it is named here rather
+// than inside the one function that uses it, because it is now also what this
+// client is REGISTERED with, and a registered URI that disagrees with the one
+// sent is precisely the mismatch pre-registration exists to make visible.
+var REDIRECT_URI = "http://localhost:9999/callback";
 
 function b64u(buf) {
   log.debug("Entering b64u().");
@@ -741,7 +748,7 @@ async function authorizationCodeCanBeBoundToTheKey() {
   // login screen the way oauth2_sts_endpoints.js does: post the form, read the
   // redirect, take the code out of it.
   var key = newKey("ec");
-  var redirectUri = "http://localhost:9999/callback";
+  var redirectUri = REDIRECT_URI;
   var authorize = stsBase + "/oauth2/authorize?" + new URLSearchParams({
     response_type: "code", client_id: CLIENT_ID, redirect_uri: redirectUri,
     scope: "openid", state: "dpop-state", dpop_jkt: jkt(key)
@@ -886,6 +893,35 @@ async function test() {
     log.debug("Leaving test().");
     return;
   }
+  // The client, in the registry, before any proof is made. This file writes its
+  // OWN DPoP client rather than importing the wallet's — so that a shared
+  // misunderstanding between the two ends cannot pass unnoticed — and the
+  // registration is the same idea one step earlier: what the client says it is
+  // before it says anything else.
+  //
+  // The grants declared are the four this file actually drives. The DPoP axis
+  // is not among them and is not a registration property here: nothing in this
+  // mock requires DPoP of a client, and an attribute claiming it did would be
+  // describing a service that does not exist (see the mock's
+  // oauth-oidc/CLAUDE.md on nonce mode making proofs fresher rather than
+  // mandatory).
+  await registry.provision(registry.baseOf(stsBase), {
+    identifier: CLIENT_ID,
+    name: "DPoP protocol test client",
+    protocols: ["oauth2", "oidc", "oid4vci"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      oauthRedirectUri: [REDIRECT_URI],
+      oauthResponseType: ["code"],
+      oauthGrantType: ["authorization_code", "refresh_token",
+                       "client_credentials", "password"],
+      oauthScope: ["openid"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the client every proof in this file is made for"
+  });
+
   await serverAdvertisesDpop();
   await bearerStillWorks();
   var bound = await tokenIsBoundToTheProofKey();
