@@ -108,6 +108,11 @@ async function test() {
     .setLoggingPrefs(loggingPrefs)
     .build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     // Read test configuration from environment variables and assert all are
     // present
@@ -133,8 +138,12 @@ async function test() {
     } else if (pkce_enabled === "false") {
       pkce_enabled = false;
     } else {
-      log.info("PKCE_ENABLED must be true or false.");
-      process.exit(1);
+      // Throw rather than exit. This is inside the try whose finally quits
+      // the browser, and process.exit() is synchronous termination: it would
+      // skip that finally and orphan a full Chrome. The catch below records
+      // the failure and the exit happens once the driver is gone.
+      throw new Error("PKCE_ENABLED must be true or false. Got: " +
+                      pkce_enabled);
     }
 
     // Drive the full flow: load the app, populate IdP metadata, run the auth
@@ -155,9 +164,13 @@ async function test() {
     log.info("Test completed successfully.")
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

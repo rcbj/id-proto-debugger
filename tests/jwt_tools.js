@@ -520,6 +520,11 @@ async function test() {
     /* older Chrome/driver — the user-preferences download dir applies */
   }
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     log.info("Starting Test run.");
 
@@ -565,7 +570,7 @@ async function test() {
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
     try {
@@ -573,6 +578,10 @@ async function test() {
     } catch (e) {
       /* ignore */
     }
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

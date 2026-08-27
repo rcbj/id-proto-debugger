@@ -291,8 +291,13 @@ async function tokenDetailPage(driver, type)
                       waitTime);
     log.info("Leaving tokenDetailPage().");
   } catch(e) {
+    // Rethrow rather than exit. This helper is called from inside test()'s
+    // try, whose finally quits the browser; process.exit() here would skip
+    // that finally and leave a full Chrome resident. test()'s own catch logs
+    // this and exits after the driver has gone.
     log.error("An error occurred: " + e.stack);
-    process.exit(1);
+    log.debug("Leaving tokenDetailPage(). Failed.");
+    throw e;
   }
   log.debug("Leaving tokenDetailPage().");
 }
@@ -585,6 +590,11 @@ async function test() {
     .setChromeOptions(options)
     .build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     const discovery_endpoint = process.env.DISCOVERY_ENDPOINT;
     const client_id = process.env.CLIENT_ID;
@@ -608,8 +618,12 @@ async function test() {
     } else if (pkce_enabled === "false") {
       pkce_enabled = false;
     } else {
-      log.info("PKCE_ENABLED must be true or false.");
-      process.exit(1);
+      // Throw rather than exit. This is inside the try whose finally quits
+      // the browser, and process.exit() is synchronous termination: it would
+      // skip that finally and orphan a full Chrome. The catch below records
+      // the failure and the exit happens once the driver is gone.
+      throw new Error("PKCE_ENABLED must be true or false. Got: " +
+                      pkce_enabled);
     }
 
     log.info("Clear all cookies.");
@@ -670,9 +684,13 @@ async function test() {
     log.info("Test completed successfully.")
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

@@ -14,6 +14,8 @@
     "@noble/hashes": "1.4.0",
     "@noble/post-quantum": "^0.4.1",
     "@xmldom/xmldom": "^0.9.8",
+    "acorn": "^8.18.0",
+    "acorn-walk": "^8.3.5",
     "asn1js": "^3.0.10",
     "body-parser": "^2.2.2",
     "bunyan": "latest",

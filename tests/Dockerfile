@@ -632,6 +632,7 @@ COPY tests/admin_api.js ./
 # line is the fix it asked for.
 COPY tests/token_http_exchange.js ./
 COPY tests/browser_tests_headless.js ./
+COPY tests/driver_quit_reachable.js ./
 COPY tests/run-report.js ./
 # Shared test helpers (populateMetadata, ...). The test scripts require it as
 # ../common/tests.js; WORKDIR is /usr/src/app, so it must land in /usr/src/common.
