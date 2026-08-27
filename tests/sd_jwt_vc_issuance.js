@@ -774,6 +774,20 @@ async function stepTwo(driver) {
   // The whole request is built up front, so the pane shows what Approve will
   // send rather than filling in after the fact — by which point this page has
   // already handed over to step 3.
+  //
+  // "Up front" is still a promise chain: prepareRequest() fetches the c_nonce
+  // over the network, then signs the proof, then builds the body. Reading the
+  // pane the moment the holder key appears is therefore a race with that fetch,
+  // and it lost on the run of 2026-08-27T17-49-28 — the nonce was still the
+  // page's "—" placeholder, which reads as an issuer that published no nonce
+  // endpoint. Wait for the content, in the order the chain fills it; the other
+  // two readers of this pane (stepTwoWithoutTokens, staleProofRecovery) already
+  // do.
+  await waitForStatus(driver, "vc_nonce",
+    function (v) { return v !== "" && v !== "—"; },
+    "step 2 never fetched a c_nonce.");
+  await waitForFilled(driver, "vc_proof_jwt",
+    "step 2 never signed the proof of possession.");
   var preview = await driver.executeScript(
     "return { nonce: document.getElementById('vc_nonce').textContent.trim()," +
     "         proof: document.getElementById('vc_proof_jwt').value," +

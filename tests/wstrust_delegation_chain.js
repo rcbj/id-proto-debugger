@@ -1114,16 +1114,30 @@ function assertGraphIsAChain(graph) {
     log.debug("Leaving nodeOf().");
     return found[0];
   };
+  // MATCHED ON THE ELEMENT AS WELL AS THE TWO ENDS, and that is the whole of
+  // why this helper takes a type. The map keys an edge by (from, to, relation,
+  // TYPE), the register survives between jobs, and the OnBehalfOf run and the
+  // ActAs run of this same file use the same person and the same three
+  // applications on purpose — so `carol_end_user -acts-for-> portal1` is TWO
+  // lines in that picture, one per element, and a match on the ends alone
+  // returns whichever run recorded first. That is how this passed for the
+  // ActAs job and failed for the OnBehalfOf one in the same pool: the mode
+  // asserted below was the other job's.
   const edgeOf = function (from, to, relation) {
     log.debug("Entering edgeOf(). " + from + " -> " + to);
-    const found = (graph.edges || []).filter(function (e) {
+    const between = (graph.edges || []).filter(function (e) {
       return e.from === from && e.to === to && e.relation === relation;
+    });
+    const found = between.filter(function (e) {
+      return e.type === DELEGATION.type;
     });
     assert.ok(found.length,
       "the picture should draw a \"" + relation + "\" line from " + from +
-      " to " + to + ", and draws none. Its lines are: " +
+      " to " + to + " for " + DELEGATION.spelling + " (" + DELEGATION.type +
+      "), and draws " + between.length + " line(s) between them, none of " +
+      "them this run's element. Its lines are: " +
       JSON.stringify((graph.edges || []).map(function (e) {
-        return e.from + " -" + e.relation + "-> " + e.to;
+        return e.from + " -" + e.relation + "/" + e.type + "-> " + e.to;
       })) + ".");
     log.debug("Leaving edgeOf().");
     return found[0];
