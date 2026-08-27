@@ -3,6 +3,7 @@ const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
 const { addBrowserAccessFlags } = require("./browser_flags");
+const registry = require("./sts_applications.js");
 const { assertEdgeLandingContract } = require("./edge_landing_contract");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -455,6 +456,35 @@ async function wsfedActivities(driver, metadataUrl, realm, user, combo) {
   log.info("Sign-in endpoint: " + endpoint);
   await setField(driver, "wsfed_realm", realm);
 
+  // ---------------------------------------------------------------------
+  // THE RELYING PARTY, IN THE MOCK'S REGISTRY, BEFORE THE SIGN-IN REQUEST.
+  //
+  // Only against the mock: stsBaseFor() compares the identity provider this
+  // run was given with the mock's own origin, so the Keycloak half — whose
+  // client common.sh's configureKeycloakWsfed() provisions — creates nothing
+  // here.
+  //
+  // `samlEntityId` is set beside `wsfedRealm` because of what this profile
+  // actually issues: the token inside a wsignin1.0 response is a SAML
+  // assertion whose AudienceRestriction is the wtrealm, so the same string is
+  // this application's name in two vocabularies. One entry holds both rather
+  // than two entries disagreeing the first time somebody looks at the
+  // delegation map.
+  //
+  // The wreply is NOT registered here and is added below, once it has been
+  // read: it is the PAGE's default rather than something this test chooses,
+  // and registering a guess at it would be the entry describing a deployment
+  // that does not exist.
+  // ---------------------------------------------------------------------
+  const stsBase = registry.stsBaseFor(metadataUrl);
+  await registry.provision(stsBase, {
+    identifier: realm,
+    name: "WS-Federation test relying party",
+    protocols: ["wsfed", "saml11"],
+    fields: { wsfedRealm: [realm], samlEntityId: [realm] },
+    why: "the wtrealm every wsignin1.0 in this job carries"
+  });
+
   // Apply the option combination for this run (signing, initiate-from, optional
   // params, inline wreq), then — for a signed run — confirm the debugger built
   // the requested signature before we hand off to the IdP.
@@ -474,6 +504,18 @@ async function wsfedActivities(driver, metadataUrl, realm, user, combo) {
   log.info("wreply (the page's default): " + reply);
   assert(reply, "wsfed_reply (wreply) is empty, so the IdP has nowhere to " +
          "return the token.");
+  // Now that it is known, it goes on the entry — this is where the deployment
+  // says where its landing is, and the registry is where that belongs. The
+  // call reconciles rather than creates, so it adds the one attribute to the
+  // entry made a moment ago.
+  await registry.provision(stsBase, {
+    identifier: realm,
+    name: "WS-Federation test relying party",
+    protocols: ["wsfed", "saml11"],
+    fields: { wsfedRealm: [realm], samlEntityId: [realm],
+              wsfedReplyUrl: [reply] },
+    why: "the wreply this deployment's landing actually is"
+  });
   assert(!/\/wsfed_response\.html(\?|$)/.test(reply),
     "wreply defaults to the static response page (" + reply +
         "), which cannot receive the IdP's POST. " +

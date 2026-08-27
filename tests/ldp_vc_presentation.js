@@ -321,6 +321,9 @@ async function test() {
   assert.ok(meta && (meta.credential_configurations_supported ||
             {})[LDP_CONFIG_ID],
     "this issuer offers no ldp_vc configuration \"" + LDP_CONFIG_ID + "\".");
+
+  await common.provisionWallet(issuerBase,
+    { why: "the wallet whose ldp_vc credential this job presents" });
   const held = await common.mintJwtVcJson(issuerBase, LDP_CONFIG_ID);
   assert.strictEqual(typeof held.credential, "object",
                      "an ldp_vc credential is a JSON object.");

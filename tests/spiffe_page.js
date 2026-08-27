@@ -57,6 +57,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 const waitFor = require("./wait_for.js");
 const { loadPage } = require("./page_load.js");
 
@@ -1229,6 +1230,20 @@ async function test() {
   }
   log.info("driving " + baseUrl + "/spiffe.html against the api at " + apiUrl +
     ", which will dial " + workloadAddress + " and " + serverAddress);
+
+  // The workload the CSR pane mints an SVID for, in the applications registry,
+  // before it does. The SPIFFE REGISTRATION — what decides whether an SVID is
+  // issued at all — is a different register and is the SPIRE API's business;
+  // this is the record of the party, under `spiffeWorkloadId`, which is the
+  // identifier attribute of that family. tests/spiffe_protocol.js's copy of
+  // this argues the distinction at length.
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: "spiffe://" + trustDomain + "/page-minted",
+    name: "SPIFFE page CSR workload",
+    protocols: ["spiffe"],
+    fields: { spiffeWorkloadId: ["spiffe://" + trustDomain + "/page-minted"] },
+    why: "the identity the certification request pane asks MintX509SVID for"
+  });
 
   const options = new chrome.Options();
   // --headless=new, never bare --headless, and headless is not optional: a CI

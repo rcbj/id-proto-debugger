@@ -7,6 +7,7 @@ const { Command, Option } = require('commander');
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -211,6 +212,47 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
     "document.getElementById('saml_sp_public_key').value = arguments[1];",
     spKey, spCert
   );
+
+  // ---------------------------------------------------------------------
+  // THE SERVICE PROVIDER, IN THE MOCK'S REGISTRY, BEFORE THE AUTHNREQUEST.
+  //
+  // Only against the mock — stsBaseFor() answers "" for the Keycloak half,
+  // whose client common.sh provisions with this same entityID and this run's
+  // certificate. Both identity providers therefore end up knowing about one
+  // service provider, each in its own store, which is what a federation looks
+  // like and is the arrangement the IDP note above describes.
+  //
+  // The ACS is read off the PAGE rather than composed here: it is the
+  // deployment's own statement about where a response is posted (the static
+  // deployments answer it from an edge function, which is a different URL from
+  // the container stack's), and a registration naming a URL this run will not
+  // use would be exactly the plausible-and-wrong entry pre-registration is
+  // supposed to replace.
+  //
+  // THE MOCK STILL REQUIRES NONE OF IT, and the IDP note above says so. What
+  // it buys is the difference between an entry that knows an entityID and one
+  // that knows what the service provider IS: its ACS, its signing certificate,
+  // and that it was declared for SAML 2.0 rather than inferred from a sighting.
+  // ---------------------------------------------------------------------
+  var acsUrl = await driver.findElement(By.id("saml_acs_url"))
+      .getAttribute("value");
+  log.info("Assertion consumer service (the page's own): " + acsUrl);
+  await registry.provision(registry.stsBaseFor(metadataUrl), {
+    identifier: spEntityId,
+    name: "SAML 2.0 test service provider",
+    protocols: ["saml2"],
+    fields: Object.assign({
+      samlEntityId: [spEntityId],
+      // The certificate this run's AuthnRequests are signed with. The mock
+      // VERIFIES no request signature — it records that one was there — so
+      // this changes nothing about whether the flow works, and that is the
+      // reason to register it rather than a reason not to: it is the one place
+      // the two identity providers can be compared, since Keycloak's client
+      // carries the same certificate and DOES verify against it.
+      samlSigningCertificate: spCert
+    }, acsUrl ? { samlAssertionConsumerService: [acsUrl] } : {}),
+    why: "the service provider every AuthnRequest in this job comes from"
+  });
 
   // Select the binding under test (redirect / post / artifact).
   log.info("Select binding: " + binding);

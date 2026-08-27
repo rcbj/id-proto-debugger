@@ -186,6 +186,16 @@ async function test() {
   assert.ok((meta.credential_configurations_supported || {})[LDP_CONFIG_ID],
     "this issuer offers no ldp_vc configuration \"" + LDP_CONFIG_ID + "\".");
 
+  // The wallet, declared before the token endpoint is called. This job uses the
+  // PASSWORD grant to get the token set it then refreshes, so both grants are
+  // declared: a registration naming only the pre-authorized code would describe
+  // a client that cannot reach the first line of this test.
+  await common.provisionWallet(issuerBase, { clientId: CLIENT_ID,
+    grantTypes: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
+                 "password", "refresh_token"],
+    scopes: ["openid"],
+    why: "the wallet whose refresh token this job spends twice" });
+
   // --- the credential the wallet already holds ------------------------------
   log.info("=== The credential in hand ===");
   const initial = await common.httpJson(issuerBase + "/oauth2/token", {

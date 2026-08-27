@@ -65,6 +65,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1009,6 +1010,18 @@ async function test() {
   log.info("driving " + baseUrl + "/ldap.html against the api at " + apiUrl +
            ", which will open " + ldapUrl + " (base " + baseDn + "). This " +
            "run's names are " + userDn + " and " + groupDn);
+
+  // The directory client, in the applications registry, before the page binds
+  // as it. Same DN and same argument as tests/api_ldap.js's copy — the bind DN
+  // is the environment's and genuinely shared, so it is not stamped and the
+  // reconcile path is what makes two jobs provisioning it concurrently safe.
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: bindDn,
+    name: "LDAP directory client",
+    protocols: ["ldap"],
+    fields: { ldapBindDn: [bindDn] },
+    why: "the DN the connection pane binds as"
+  });
 
   const options = new chrome.Options();
   // --headless=new, never bare --headless, and headless is not optional: a CI

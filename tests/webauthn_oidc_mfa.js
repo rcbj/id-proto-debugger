@@ -34,6 +34,7 @@ const { VirtualAuthenticatorOptions, Transport, Protocol } =
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 const { waitForFocus } = require("./wait_for.js");
 const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
@@ -171,6 +172,29 @@ async function test() {
     log.debug("Leaving test().");
     return;
   }
+
+  // The relying party, in the mock's registry, before the first ceremony. It
+  // is an ordinary OIDC client here and nothing about WebAuthn belongs on the
+  // entry: the second factor is a property of the SIGN-IN, which is why what
+  // this test asserts is `amr` and `acr` on the token rather than anything the
+  // application declared. `oauthRedirectUri` is the mock's own callback sink,
+  // which is where this job sends the code because there is no application
+  // tier in it at all.
+  await registry.provision(registry.baseOf(STS), {
+    identifier: CLIENT_ID,
+    name: "WebAuthn OIDC second factor",
+    protocols: ["oauth2", "oidc"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      oauthRedirectUri: [REDIRECT],
+      oauthResponseType: ["code"],
+      oauthGrantType: ["authorization_code"],
+      oauthScope: ["openid", "profile", "email"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the client whose sign-in earns amr=[\"pwd\", \"webauthn\"]"
+  });
 
   const options = new chrome.Options();
   if (headless) {

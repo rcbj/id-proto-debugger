@@ -45,10 +45,18 @@ log.info("Log initialized. logLevel=" + log.level());
 
 const browserFlags = require("./browser_flags.js");
 const waitForContent = require("./wait_for.js");
+const registry = require("./sts_applications.js");
 
 var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 const STS = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/, "");
 let BASE = "http://localhost:3000";
+
+// The wallet's client_id, named once. It is seeded into the page's own storage
+// below AND declared in the mock's application registry before the page is
+// opened, and the two have to be the same string: the entry a sighting would
+// have created is the identifier and nothing else, while the one this test
+// creates carries what the wallet is about to do with it.
+const CLIENT_ID = process.env.DPOP_WORKFLOW_CLIENT_ID || "dpop-workflow-client";
 
 // "The page's bundle has run", which is a different question from "the page's
 // markup is there" and the one that matters before pressing anything: every
@@ -128,9 +136,9 @@ async function paneBeforeAnythingIsSent(driver) {
     "localStorage.setItem('token_endpoint', arguments[0] + '/oauth2/token');" +
     "localStorage.setItem('vci_credential_configuration_id', " +
         "'IdentityCredential');" +
-    "localStorage.setItem('client_id', 'dpop-workflow-client');" +
+    "localStorage.setItem('client_id', arguments[1]);" +
     "localStorage.setItem('dpop_signing_alg_values_supported', " +
-        "'ES256, RS256');", STS);
+        "'ES256, RS256');", STS, CLIENT_ID);
   await driver.navigate().refresh();
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_dpop_enabled")), 20000);
@@ -419,6 +427,24 @@ async function turningItOffDiscardsTheKey(driver) {
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. client=" + BASE + ", sts=" + STS);
+
+  // The wallet, in the mock's registry, before it collects anything. It is
+  // declared for `oauth2` as well as `oid4vci` because that is what it does: a
+  // wallet redeeming a pre-authorized code at /oauth2/token IS an OAuth client
+  // there, which is why one attribute — oauthClientId — is the identifier of
+  // both families.
+  await registry.provision(registry.baseOf(STS), {
+    identifier: CLIENT_ID,
+    name: "DPoP workflow wallet",
+    protocols: ["oauth2", "oid4vci"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      oauthGrantType: ["urn:ietf:params:oauth:grant-type:pre-authorized_code"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the wallet whose DPoP key the issued credential is bound to"
+  });
 
   var options = new chrome.Options();
   options.addArguments("--headless=new", "--no-sandbox",

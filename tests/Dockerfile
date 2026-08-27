@@ -72,6 +72,17 @@ COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js
 # demands.
 COPY tests/random_username.js ./
 
+# THE APPLICATIONS REGISTRY CLIENT, required by every job that presents an
+# identifier to the mock STS — which since 2026-08-27 is most of them: the OAuth
+# and OIDC jobs, the OID4VC family, WS-Trust, WS-Federation, both SAML profiles,
+# SCIM, SPIFFE, LDAP and the two Kerberos page jobs. A SHARED MODULE rather than
+# a test, exactly like random_username.js above, and with the same failure mode
+# when this line is missing: a job that requires it dies with MODULE_NOT_FOUND
+# in a tenth of a second, naming this file rather than a build, and nothing
+# schedules it so no cross-check notices it gone. Its name collides with nothing
+# under client/src or sts/, which is what this flat directory demands.
+COPY tests/sts_applications.js ./
+
 # THE FEDERATION GRID — one parameterised script that run-report schedules
 # forty-nine times, once per combination of application protocol, federation
 # protocol and authentication mechanism — and the management-API client it and
@@ -270,6 +281,18 @@ COPY tests/kerberos_page_density.js ./
 # written, rather than by remembering.
 COPY tests/krb5_spnego_codec.js tests/krb5_spnego_http.js ./
 COPY tests/kerberos_spnego_page.js ./
+# And the SIGN-IN, which is a different door from the protected page the job
+# above drives: `/authn/spnego` turns a ticket into a SESSION, and this job then
+# completes an OIDC Authorization Code flow on it. It requires
+# tests/sts_applications.js — staged further up — because it registers its
+# application with `appAuthnMechanism: spnego` before the flow starts.
+COPY tests/kerberos_spnego_signin.js ./
+# And the same two doors driven by MIT KERBEROS ITSELF — kinit, klist, kvno,
+# kdestroy and curl --negotiate — which is the only job here that exercises the
+# mock KDC with a client nobody in this project wrote. `krb5-user` in the apt
+# list above is what makes it run rather than skip. It needs no browser and no
+# api.
+COPY tests/krb5_mit_client.js ./
 # The field names on those ranges. It also reads the PAGES and their bundles as
 # text, which arrive through the client/public and client/src COPY lines.
 COPY tests/krb5_field_naming.js ./
@@ -746,7 +769,30 @@ RUN apt-get update
 # containerized one trips panesContainTheirContent()'s no-horizontal-scroll
 # assertion. Liberation is the metric-compatible substitute for Arial, which is
 # what Chrome's own .deb depends on for the same reason.
-RUN apt-get -y install curl \
+#
+# krb5-user supplies kinit, klist, kvno and kdestroy, which
+# tests/krb5_mit_client.js drives against the mock KDC. It is the only thing in
+# this suite that exercises that KDC with a client NOBODY HERE WROTE, and that
+# is the whole point of it: the debugger's client and every other Kerberos test
+# send PA-ENC-TIMESTAMP whether the KDC offered it or not, so when the mock
+# stopped offering it nothing noticed for as long as the feature had existed —
+# and no browser could have signed in with Kerberos at all. Without this
+# package that job SKIPS with a reason rather than failing, which is right on a
+# developer's machine and would be a silent hole here.
+#
+# curl above is the GSSAPI HTTP client for the SPNEGO half of the same file.
+# Ubuntu's is built with GSS-API and SPNEGO; the test reads `curl -V` for both
+# and skips naming them rather than reporting a refusal for a ticket that was
+# never offered.
+#
+# DEBIAN_FRONTEND=noninteractive is here FOR krb5-user. That package configures
+# itself through debconf and ASKS for a default realm; without this the build
+# either stops on a prompt nobody can answer or hangs until the daemon gives
+# up. It is set on the RUN rather than as an ENV so it does not follow the
+# image into a running container, where a later interactive apt-get would
+# silently take defaults. The realm it picks does not matter: that test writes
+# its own krb5.conf and points KRB5_CONFIG at it.
+RUN DEBIAN_FRONTEND=noninteractive apt-get -y install curl \
         jq \
         openssl \
         fonts-liberation \
@@ -760,7 +806,8 @@ RUN apt-get -y install curl \
         wget \
         unzip \
         util-linux \
-        bsdextrautils
+        bsdextrautils \
+        krb5-user
  
 
 # Create app directory

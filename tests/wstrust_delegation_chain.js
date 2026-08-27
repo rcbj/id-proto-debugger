@@ -411,6 +411,14 @@ async function delegationJson(query) {
   return r.body;
 }
 
+// THE APPLICATIONS REGISTRY, and this is a HAND-WRITTEN COPY that is staying
+// that way. Since 2026-08-27 the shared implementation is
+// `tests/sts_applications.js` and every other job in the suite calls it; this
+// file and `oauth2_delegation_chain.js` are two of the three it was written
+// FROM. What keeps this one here is what it asserts that the shared one does
+// not: `provision()` checks CONTAINMENT, and the interesting assertion below is
+// that the web application's `wstrustAppliesTo` is EMPTY — an absence, which a
+// containment check cannot see. See tests/CLAUDE.md.
 async function applicationsApi(action, body) {
   log.debug("Entering applicationsApi(). action=" + action);
   const url = stsBase() + "/admin-api/applications/" + action;

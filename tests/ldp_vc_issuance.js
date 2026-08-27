@@ -88,6 +88,11 @@ async function test() {
             LDP_CONFIG_ID + "\". Offered: " +
     Object.keys(configs).join(", "));
 
+  // The wallet, after the checks above so a missing service still fails with
+  // the message naming what to start.
+  await common.provisionWallet(issuerBase,
+    { why: "the wallet this job collects an ldp_vc credential with" });
+
   log.info("=== What the issuer advertises ===");
   assert.strictEqual(entry.format, "ldp_vc",
                      "the configuration should name the format.");

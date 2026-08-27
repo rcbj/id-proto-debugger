@@ -50,6 +50,7 @@ const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -465,6 +466,32 @@ async function test() {
       "This OP publishes no userinfo_endpoint, so there is nothing for these " +
           "links to call. " +
       "Metadata: " + discovery);
+    // -----------------------------------------------------------------
+    // THE APPLICATION, BEFORE THE FLOW THAT PRODUCES THE TOKENS.
+    //
+    // The mock half only — stsBaseFor() answers "" for the Keycloak job,
+    // whose client common.sh provisions. The declared scope is the one the
+    // pane will actually send and nothing more; `refresh_token` IS declared
+    // beside it, because the second of this test's three token sets comes
+    // from a refresh call, and a grant a client performs is part of what it
+    // is even where the scope that usually asks for it is absent.
+    // -----------------------------------------------------------------
+    await registry.provision(registry.stsBaseFor(discovery), {
+      identifier: clientId,
+      name: "OIDC UserInfo (mock STS)",
+      protocols: ["oauth2", "oidc"],
+      fields: {
+        oauthClientId: clientId,
+        oauthRedirectUri: [baseUrl + "/callback"],
+        oauthResponseType: ["code"],
+        oauthGrantType: ["authorization_code", "refresh_token"],
+        oauthScope: scope.split(/\s+/).filter(Boolean),
+        oauthTokenEndpointAuthMethod: "none",
+        oauthConfidential: "FALSE"
+      },
+      why: "the client whose three token sets each call UserInfo"
+    });
+
     const expected = { user: user,
         userinfoEndpoint: metadata.userinfo_endpoint };
     log.info("Running against " + metadata.issuer + ", UserInfo at " +

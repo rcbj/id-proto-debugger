@@ -69,6 +69,7 @@
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
+const registry = require("./sts_applications.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -1348,6 +1349,39 @@ async function test() {
     log.info("Test completed successfully (skipped).");
     log.debug("Leaving test(). Skipped.");
     return;
+  }
+
+  // ---------------------------------------------------------------------
+  // THE WORKLOADS THIS RUN WILL ASK FOR, IN THE APPLICATIONS REGISTRY,
+  // BEFORE THE FIRST SVID IS MINTED.
+  //
+  // This is the one family where the registration is NOT the whole story and
+  // it is worth being precise about which register is which. A SPIFFE
+  // REGISTRATION ENTRY — what BatchCreateEntry writes, and what decides
+  // whether an SVID is issued — lives in the mock's SPIFFE registry and is
+  // created below through the SPIRE Server API, which is that protocol's own
+  // door and the only honest way for a test to create one. The APPLICATIONS
+  // registry is a different claim: it is the record of what parties this
+  // service has dealt with, and `spiffeWorkloadId` is the identifier a
+  // workload appears there under.
+  //
+  // So both, and neither stands in for the other: the entries below are
+  // declared here as the parties this job is about to be, and the SPIRE API
+  // creates the registration that actually authorizes them.
+  //
+  // The ids carry this run's stamp — nothing is ever deleted from that
+  // directory — so a second run cannot read the first one's rows.
+  // ---------------------------------------------------------------------
+  const stsBase = registry.baseOf(STS_URL);
+  for (const suffix of ["/one", "/two"]) {
+    const id = spiffeId.make(TRUST_DOMAIN, MINE + suffix);
+    await registry.provision(stsBase, {
+      identifier: id,
+      name: "SPIFFE protocol test workload",
+      protocols: ["spiffe"],
+      fields: { spiffeWorkloadId: [id] },
+      why: "a workload this run creates a registration entry for"
+    });
   }
 
   const restore = [];

@@ -65,6 +65,7 @@ const https = require("https");
 const { URL } = require("url");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -110,9 +111,13 @@ const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
 // this file so a row in any of them can be traced back to it. Pin it with
 // RFC9700_USER (or RANDOM_USERNAME_STAMP) to re-drive a failed run.
 const USER = process.env.RFC9700_USER || usernameFor("rfc9700-flows");
-// The mock registers no clients, so this is any string — but it must be the
-// same one throughout, because requirement 13.1 compares the token's sub
-// against it.
+// The client this run is. It must be the same string throughout, because
+// requirement 13.1 compares the token's `sub` against it — and since
+// 2026-08-27 it is also REGISTERED before the browser starts, which is what
+// makes the redirect-URI check below mean anything. That sentence used to read
+// "the mock registers no clients, so this is any string": true of what the mock
+// requires, and exactly the reason this job was proving less than it looked
+// like it was.
 const CLIENT_ID = "rfc9700-debugger";
 
 // ---------------------------------------------------------------------------
@@ -340,10 +345,64 @@ function hostResolverRule() {
   return rule;
 }
 
-// An RFC 9700 authorization server compares redirect_uri by exact string
-// match against URIs it was given, so the debugger's callback has to be one of
-// them. This is not a workaround for the test: it is the registration step the
-// specification requires, and doing it here is what makes the pairing honest.
+// ---------------------------------------------------------------------------
+// THE REGISTRATION, WHICH IS TWO STEPS AND USED TO BE ONE.
+//
+// An RFC 9700 authorization server compares redirect_uri by exact string match
+// against URIs the client was given, so the debugger's callback has to be one
+// of them. This is not a workaround for the test: it is the registration step
+// the specification requires, and doing it here is what makes the pairing
+// honest.
+//
+// WHAT WAS WRONG WITH DOING ONLY THE SETTING. The mock chooses the list to
+// judge against per client (sts/oauth-oidc/oauth2_bcp.js, registeredUrisFor):
+// a client with an entry of its own is judged against THAT, and everything else
+// falls back to the `oauth2.redirectUris` setting. This job registered nothing
+// and therefore took the fallback — so what it demonstrated was a global list
+// of URIs that no client in it had registered, which is the one arrangement
+// where the check cannot catch a client sending somebody else's callback.
+//
+// So the application is created first, with this run's redirect URI on it, and
+// the setting is written as well. Both, deliberately: the setting is what the
+// `refused` job's negatives are judged against when they arrive with no
+// client_id at all, and removing it would turn several refusals into refusals
+// for a second reason — which passes, and stops testing what it names.
+// ---------------------------------------------------------------------------
+async function registerApplication(stsUrl) {
+  log.debug("Entering registerApplication().");
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: CLIENT_ID,
+    name: "RFC 9700 debugger client",
+    protocols: ["oauth2", "oidc"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      // EXACTLY the URI this run will send, resolved by resolveRedirectUri()
+      // a few lines before this is called. A registration naming the URI this
+      // file would send on somebody else's stack is the failure mode the whole
+      // check exists to catch, so it is read from the variable rather than
+      // rebuilt from baseUrl.
+      oauthRedirectUri: [redirectUri],
+      oauthResponseType: Object.keys(FLOWS).map(function (key) {
+        return FLOWS[key].responseType;
+      }).filter(Boolean),
+      // No `implicit` and no `password`: requirement 1.11 and requirement 5.1
+      // are what this job exists to see REFUSED, and declaring them would be
+      // an entry asserting that this client expects to be allowed them.
+      oauthGrantType: ["authorization_code", "refresh_token",
+                       "client_credentials"],
+      oauthScope: ["openid", "profile", "email", "offline_access"],
+      // PKCE with no secret: requirement 2.1.1 makes PKCE a MUST for a public
+      // client, and this run has none to send. Saying so on the entry is what
+      // lets the server judge it as the public client it is rather than as one
+      // whose method was never stated.
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the client requirement 13.1 compares every token's sub against"
+  });
+  log.debug("Leaving registerApplication().");
+}
+
 async function registerRedirectUri(stsUrl) {
   log.debug("Entering registerRedirectUri().");
   const body = JSON.stringify({ key: "oauth2.redirectUris",
@@ -858,6 +917,7 @@ async function test() {
   // explains every browser failure that would have followed it.
   await checkAlwaysOnPosture();
   await requireCompliantSts(stsUrl);
+  await registerApplication(stsUrl);
   await registerRedirectUri(stsUrl);
 
   const driver = await buildDriver();

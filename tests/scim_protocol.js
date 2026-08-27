@@ -100,6 +100,7 @@
 
 const assert = require("assert");
 const { Command, Option } = require("commander");
+const registry = require('./sts_applications.js');
 const { usernameFor, runStamp } = require("./random_username.js");
 const paths = require("./module_paths.js");
 
@@ -123,6 +124,10 @@ var apiUrl = process.env.API_URL || "http://localhost:4000";
 // The mock's HTTP side as THIS TEST reaches it — for /admin-api and the token
 // endpoint.
 var stsUrl = process.env.STS_URL || "https://localhost:8081";
+// The SCIM client this run authenticates as, named once. It is presented at the
+// mock's own token endpoint for the OAuth schemes and it is the identifier the
+// registry entry below is created under, so the two cannot drift apart.
+var SCIM_CLIENT_ID = process.env.SCIM_CLIENT_ID || "scim-test-client";
 // The SCIM service root as the API must reach it. A different question from the
 // line above, and on the containerized stack a different answer: the api
 // resolves this name, and the api's view of the mock is not the test's.
@@ -1660,7 +1665,8 @@ async function accessToken(scope) {
   const response = await fetch(stsUrl + '/oauth2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'grant_type=client_credentials&client_id=scim-test-client' +
+    body: 'grant_type=client_credentials&client_id=' +
+        encodeURIComponent(SCIM_CLIENT_ID) +
         '&client_secret=secret&scope=' + encodeURIComponent(scope)
   });
   const text = await response.text();
@@ -2208,6 +2214,39 @@ async function test() {
     log.debug("Leaving test(). Skipped.");
     return;
   }
+  // ---------------------------------------------------------------------
+  // THE SCIM CLIENT, IN THE REGISTRY, BEFORE THE FIRST CREDENTIAL IS SENT.
+  //
+  // SCIM is one of the four surfaces on this mock that REQUIRE a credential,
+  // which makes the entry worth more here than almost anywhere else: it is
+  // the record of which party was handed `scim:read` and `scim:write`, on a
+  // surface that creates and DELETES accounts.
+  //
+  // It is declared for `scim` AND `oauth2`, because this run is both: it
+  // presents `scimClientId` at /scim/v2 and the same string as a client_id at
+  // /oauth2/token to get the token it presents there. One entry, two families
+  // — the arrangement the registry is built around.
+  //
+  // What is NOT registered is the Basic, Digest, HOBA and the rest that
+  // everySchemeIsExercised() drives. Those authenticate a USER rather than an
+  // application, and putting them on this entry would be claiming the
+  // application holds credentials it does not.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: SCIM_CLIENT_ID,
+    name: "SCIM protocol test client",
+    protocols: ["scim", "oauth2"],
+    fields: {
+      scimClientId: [SCIM_CLIENT_ID],
+      oauthClientId: [SCIM_CLIENT_ID],
+      oauthGrantType: ["client_credentials"],
+      oauthScope: ["scim:read", "scim:write"],
+      oauthTokenEndpointAuthMethod: "client_secret_post",
+      oauthConfidential: "TRUE"
+    },
+    why: "the client this job provisions and deprovisions accounts as"
+  });
+
   await discoveryAnswers();
   await credentialForEverySection();
   const subject = await aFullUserRoundTrips();

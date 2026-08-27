@@ -299,6 +299,9 @@ async function test() {
     "presented. Offered: " +
         Object.keys(found.meta.credential_configurations_supported ||
         {}).join(", "));
+
+  await common.provisionWallet(issuerBase,
+    { why: "the wallet whose credential this job presents" });
   const held = await common.mintJwtVcJson(issuerBase, found.id);
   common.assertIsJwtVcJson(held.credential, "the issuer");
 

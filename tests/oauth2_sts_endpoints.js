@@ -36,6 +36,7 @@ const assert = require("assert");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
 const { usernameFor } = require("./random_username.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -968,6 +969,7 @@ async function testRegistration(meta) {
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. metadata=" + metadataUrl);
+
   const metaResponse = await get(metadataUrl);
   assert.strictEqual(metaResponse.status, 200,
                      "the metadata document is not available: HTTP " +
@@ -976,6 +978,45 @@ async function test() {
   const jwks = await (await get(meta.jwks_uri)).json();
   assert.ok(jwks.keys && jwks.keys.length, "jwks_uri returned no keys.");
   const verify = makeVerifier(jwks);
+
+  // ---------------------------------------------------------------------
+  // THE CLIENT, IN THE REGISTRY, BEFORE ANY OF IT IS SENT.
+  //
+  // This file is the one that walks EVERY endpoint the metadata advertises,
+  // so the registration it makes is the widest in the suite: five grants and
+  // five response types, because it drives all of them with this one
+  // client_id. Declaring less than it uses would be a registration that
+  // describes a different client from the one doing the asking — and the
+  // point of registering at all is that the two agree.
+  //
+  // What is NOT declared is the deliberately invalid material this test also
+  // sends — `no-such-grant`, `cwazy`, a missing client_id. Those are what it
+  // exists to have REFUSED, and an entry that declared them would be
+  // asserting that the mock is expected to accept them.
+  //
+  // testRegistration() further down registers a client of its own through RFC
+  // 7591 and deletes it again; that one is not pre-registered here, because
+  // its whole subject is what the registration endpoint does.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.baseOf(stsBase), {
+    identifier: CLIENT_ID,
+    name: "OAuth2 STS endpoints",
+    protocols: ["oauth2", "oidc"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      oauthRedirectUri: [REDIRECT_URI],
+      oauthResponseType: ["code", "token", "id_token", "code id_token",
+                          "code id_token token"],
+      oauthGrantType: ["authorization_code", "refresh_token",
+                       "client_credentials", "password",
+                       "urn:ietf:params:oauth:grant-type:device_code",
+                       "urn:ietf:params:oauth:grant-type:token-exchange"],
+      oauthScope: ["openid", "profile", "email", "api"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the one client this file drives every advertised endpoint with"
+  });
 
   await testEveryAdvertisedEndpointAnswers(meta);
   await testLoginScreen(meta, verify);

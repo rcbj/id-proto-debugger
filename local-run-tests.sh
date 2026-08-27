@@ -384,7 +384,12 @@ init()
   #
   # It does NOT have to exist first. That service accepts any entityID and mints
   # the document on the ask, which is why there is no provisioning step for it
-  # anywhere in this file.
+  # anywhere in THIS file. Since 2026-08-27 the TEST registers it — the service
+  # provider goes into the mock's application registry, with its assertion
+  # consumer service and this run's signing certificate, before the first
+  # AuthnRequest — because an entry created by a sighting knows the entityID and
+  # nothing else. It is done there rather than here so that what is registered
+  # is what the page is about to send; see tests/sts_applications.js.
   SAML_STS_SP_SLUG="app-$(printf '%s' "${SAML_SP_ENTITY_ID}" | sha256sum | cut -c1-12)"
   SAML_STS_METADATA_URL="https://localhost:8081/saml2/metadata/${SAML_STS_SP_SLUG}"
   export SAML_STS_SP_SLUG SAML_STS_METADATA_URL
