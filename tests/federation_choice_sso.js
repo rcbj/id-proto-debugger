@@ -123,6 +123,12 @@ const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+// Cookie clearing that reaches the IDENTITY PROVIDER's origin and not only the
+// page's own. See session_reset.js: WebDriver's Delete All Cookies is scoped to
+// the active document, the mock STS is a different HOST from the client on the
+// containerized stack, and a session that survives the clear answers the very
+// request these tests need to see refused.
+const { clearSessionsAt } = require("./session_reset.js");
 const { loadPage } = require("./page_load.js");
 const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
@@ -793,7 +799,7 @@ function b64uJson(part) {
 // ---------------------------------------------------------------------------
 async function signInThrough(driver, spBase, callbackUri, which, user) {
   log.debug("Entering signInThrough(). which=" + which);
-  await driver.manage().deleteAllCookies();
+  await clearSessionsAt(driver, spBase);
   await loadPage(driver, baseUrl + "/oauth2_oidc_1.html",
                  "authorization_grant_type", { timeout: waitTime * 5 });
   // AND localStorage, WHICH THE COOKIES ABOVE DO NOT COVER. These pages
@@ -926,7 +932,16 @@ async function removingOnePartnerRestoresTheRedirect(driver, spBase,
       [].concat((entry.fields || {}).appFederationRelationship || [])
         .join(", ") + "], so the check below would be measuring nothing.");
 
-    await driver.manage().deleteAllCookies();
+    // THE MOCK'S OWN ORIGIN, not this page's — and this is the one call site
+    // in the file where getting it wrong is invisible on a host run and fatal
+    // on the containerized one. Two sign-ins have just happened, so realm 1
+    // holds a session; `deleteAllCookies()` alone empties the jar of whatever
+    // document is active, which here is the debugger on `client`, and leaves
+    // the mock's on `sts` exactly where it was. The mock then answers this
+    // authorization request FROM THAT SESSION — correctly — no sign-in screen
+    // is drawn at all, and the wait below times out saying realm 2 never
+    // appeared. See session_reset.js.
+    await clearSessionsAt(driver, spBase);
     await loadPage(driver, baseUrl + "/oauth2_oidc_1.html",
                    "authorization_grant_type", { timeout: waitTime * 5 });
     await driver.executeScript("window.localStorage.clear();");

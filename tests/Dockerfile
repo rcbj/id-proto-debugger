@@ -101,6 +101,15 @@ COPY tests/federation_matrix_sso.js tests/federation_admin.js ./
 # other job that does.
 COPY tests/federation_choice_sso.js ./
 
+# CLEARING A SESSION THAT IS NOT ON THE PAGE'S ORIGIN, required by all four
+# federation jobs above. It exists because THIS stack is the one where the
+# distinction is real: WebDriver's Delete All Cookies acts on the active
+# document's origin, and here the client and the mock STS are two different
+# HOSTS (`client` and `sts`) rather than two ports on `localhost`. Missing from
+# the image, each of those jobs dies with MODULE_NOT_FOUND in a tenth of a
+# second while passing on every host run.
+COPY tests/session_reset.js ./
+
 # What the static deployments leave out. The test reads the list itself
 # (client/static_site.js), the landing page it greys a card on, the stylesheet
 # that greys it, and client/Dockerfile — which must still build the excluded
@@ -753,7 +762,27 @@ FROM ubuntu:latest
 # replace shell with bash so we can source files
 RUN rm /bin/sh && ln -s /bin/bash /bin/sh
 
-RUN apt-get update
+# apt-get update and apt-get install are ONE RUN on purpose, and splitting
+# them back apart breaks this build on a schedule nothing in this repository
+# controls. A `RUN apt-get update` of its own is a LAYER, and Docker reuses it
+# for as long as every instruction above it is unchanged — so the package
+# index baked into that layer goes on naming the versions that were current
+# the day it was built, while archive.ubuntu.com and security.ubuntu.com drop
+# each .deb from the pool the moment a newer one supersedes it. The install
+# then asks for versions that no longer exist and every -updates/-security
+# package in the list 404s at once:
+#
+#   E: Failed to fetch .../libssl3t64_3.5.5-1ubuntu3.3_amd64.deb
+#      404  Not Found [IP: 91.189.92.22 80]
+#
+# repeated twenty times, ending in `Unable to fetch some archives, maybe run
+# apt update`, and the failing step named in the build log is the INSTALL. It
+# reads as a broken mirror, a DNS problem or a VPN, and is none of those: the
+# 404s are all for -updates/-security versions and none for a package that
+# never moved, which is the signature. Joined into one RUN the two cannot
+# disagree — either the layer is cached and neither runs, or both run and the
+# index is exactly as fresh as the pool it will fetch from.
+#
 # libxml2-utils supplies xmllint, the XSD validator the WS-Trust schema test
 # falls back to when the optional native libxmljs2 binding is unusable (no
 # prebuilt binary for this ABI, or one built against a different Node version).
@@ -792,7 +821,8 @@ RUN apt-get update
 # image into a running container, where a later interactive apt-get would
 # silently take defaults. The realm it picks does not matter: that test writes
 # its own krb5.conf and points KRB5_CONFIG at it.
-RUN DEBIAN_FRONTEND=noninteractive apt-get -y install curl \
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -y install curl \
         jq \
         openssl \
         fonts-liberation \

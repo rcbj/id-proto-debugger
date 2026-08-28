@@ -97,9 +97,36 @@ function originOf(url) {
   }
 }
 
+// THE api's OWN ORIGIN, AS THIS PROCESS WAS TOLD TO REACH IT.
+//
+// Read from the environment for the same reason addStsTrustFlags() reads
+// STS_SPKI_PIN there: the launchers already publish it, every caller of
+// addBrowserAccessFlags() needs the same answer, and a per-test argument is a
+// per-test chance to forget.
+//
+// TWO NAMES BECAUSE THE LAUNCHERS EXPORT DIFFERENT ONES, and neither alone
+// covers every stack. `API_BASE_URL` is the SAML / WS-Federation variable —
+// the address an identity provider is told to POST to (common/common.sh) —
+// and remote-run-tests.sh exports it. `API_URL` is a process's own view of
+// that same service, and it is what tests/run-tests-in-container.sh exports
+// on the containerized stack, which is the one where any of this matters.
+// Both unset is a run that never involves the api, and nothing is added.
+function apiOrigins() {
+  log.debug("Entering apiOrigins().");
+  var found = [process.env.API_BASE_URL, process.env.API_URL]
+    .map(originOf)
+    .filter(function (one) {
+      return one;
+    });
+  log.debug("Leaving apiOrigins(). " + found.length + " address(es).");
+  return found;
+}
+
 // Adds both sets of flags as appropriate. Returns the same options object so it
-// can be used inline.
-function addBrowserAccessFlags(options, baseUrl) {
+// can be used inline. `extraOrigins` is optional and is for a test that POSTs
+// to a service neither the base URL nor the api covers; the api's own address
+// arrives without anybody passing it.
+function addBrowserAccessFlags(options, baseUrl, extraOrigins) {
   log.debug("Entering addBrowserAccessFlags().");
   // (1) Always: the services this suite runs are on loopback, and any page that
   // is not itself on loopback needs these to reach them. Harmless when it is.
@@ -109,14 +136,61 @@ function addBrowserAccessFlags(options, baseUrl) {
                        "PrivateNetworkAccessSendPreflights," +
                            "LocalNetworkAccessChecks");
 
-  // (2) Only for an origin that would not otherwise be a secure context.
-  var origin = originOf(baseUrl);
-  if (origin && !ALREADY_SECURE.test(origin)) {
+  // ---------------------------------------------------------------------
+  // (2) EVERY INSECURE ORIGIN THIS SUITE OWNS, not just the page's own, and
+  // the second one is what cost the containerized run of 2026-08-27 — 53 of
+  // its 77 failures, across WS-Federation, WS-Trust delegation and the
+  // federation grid.
+  //
+  // The flag was here for SECURE CONTEXT (see the header): a page on
+  // http://client:3000 has no `crypto.subtle` until Chrome is told to treat
+  // that origin as trustworthy. What it ALSO governs is Chrome's INSECURE
+  // FORM SUBMISSION interstitial: a form on a potentially-trustworthy page
+  // whose action is not potentially-trustworthy is not submitted at all, and
+  // the browser stops on a full-page warning titled "Form is not secure"
+  // ("The information you're about to submit is not secure ... Go back /
+  // Send anyway").
+  //
+  // Every SAML and WS-Federation response in this suite is exactly that
+  // shape. The mock STS serves https (STS_HTTPS=true in every compose file
+  // here, because the RFC 9700 pass is only honest over TLS), and its
+  // auto-posting form targets the api's landing — http://api:4000/samlacs,
+  // http://api:4000/wsfed. Secure page, insecure action, no POST.
+  //
+  // IT DOES NOT HAPPEN ON A HOST RUN, and that is why it went unseen for so
+  // long: there the api is http://localhost:4000, and Chrome already counts
+  // loopback as potentially trustworthy, so the interstitial never fires and
+  // the flag has nothing to do. It also does not happen under the OLD
+  // headless implementation, which is what the SAML jobs that PASSED on the
+  // same run use — `--headless` rather than `--headless=new` — so the run
+  // failed in a pattern that looked like a WS-Federation and federation
+  // problem and named a Lambda@Edge, an assertion consumer service and a
+  // missing sign-in screen. The one thing none of those messages named was
+  // the browser.
+  //
+  // The origins are ONE comma-separated flag: Chrome keeps the last
+  // occurrence of a switch, so a second --unsafely-treat-insecure-origin-as-
+  // secure would silently discard the first.
+  // ---------------------------------------------------------------------
+  var insecure = [originOf(baseUrl)]
+    .concat(apiOrigins())
+    .concat([].concat(extraOrigins || []).map(originOf))
+    .filter(function (one) {
+      return one && !ALREADY_SECURE.test(one);
+    })
+    .filter(function (one, at, all) {
+      return all.indexOf(one) === at;
+    });
+  if (insecure.length) {
+    // Chrome ignores --unsafely-treat-insecure-origin-as-secure unless a
+    // --user-data-dir is set too, so the two go together and the profile is a
+    // throwaway.
     var profile = fs.mkdtempSync(path.join(os.tmpdir(),
         "chrome-secure-origin-"));
     options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
-                         origin);
+                         insecure.join(","));
     options.addArguments("--user-data-dir=" + profile);
+    log.info("Treating " + insecure.join(", ") + " as secure origin(s).");
   }
 
   // (4) The mock STS's key, when a run has one. See addStsTrustFlags() below

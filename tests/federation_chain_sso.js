@@ -115,6 +115,12 @@ const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+// Cookie clearing that reaches the IDENTITY PROVIDER's origin and not only the
+// page's own. See session_reset.js: WebDriver's Delete All Cookies is scoped to
+// the active document, the mock STS is a different HOST from the client on the
+// containerized stack, and a session that survives the clear answers the very
+// request these tests need to see refused.
+const { clearSessionsAt } = require("./session_reset.js");
 const { loadPage } = require("./page_load.js");
 const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
@@ -713,7 +719,7 @@ async function signInAtWsFed(driver, user) {
 // ---------------------------------------------------------------------------
 async function whereDoesTheSignInStop(driver, appBase, callbackUri, label) {
   log.debug("Entering whereDoesTheSignInStop(). " + label);
-  await driver.manage().deleteAllCookies();
+  await clearSessionsAt(driver, appBase);
   const url = appBase + "/oauth2/authorize?response_type=code" +
     "&client_id=" + encodeURIComponent(APPLICATION) +
     "&redirect_uri=" + encodeURIComponent(callbackUri) +
