@@ -62,10 +62,10 @@
   width: auto;
 }
 
-/* Social accounts. The same six networks, in the same order, as the footer of
-   rcbj.net -- see the comment in partials/footer.html. The icons are inline
-   <svg> so they inherit this rule's colour through fill="currentColor", which
-   is what makes one hover rule enough for all of them.
+/* Social accounts. The networks of the footer of rcbj.net, in that order --
+   see the comment in partials/footer.html. The icons are inline <svg> so they
+   inherit this rule's colour through fill="currentColor", which is what makes
+   one hover rule enough for all of them.
 
    float and padding are overridden rather than inherited: .footer_debugger a
    above floats every link left, which would take these out of the flex row. */
