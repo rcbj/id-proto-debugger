@@ -208,6 +208,51 @@ async function waitForSettled(driver, prefix, message, timeout) {
   return value;
 }
 
+// ---------------------------------------------------------------------------
+// A DECRYPT THAT NEVER FILLED THE BOX HAS ALREADY SAID WHY, ONE FIELD ABOVE.
+//
+// Every one of these panes writes its outcome to a status line and its result
+// to an output box, and a refusal fills the first and leaves the second empty —
+// which is exactly the shape of a wait on the output box timing out. So the
+// bare message from that wait ("Decrypt never refilled the box") is the one
+// piece of information the page did NOT have to offer, and the sentence that
+// would have identified the fault is thrown away with it. It cost a remote run
+// on 2026-08-28: 150 seconds of waiting reported as an empty box, with the
+// pane's own explanation sitting unread in the status line the whole time.
+//
+// Note what this does NOT do: it never turns a timeout into a pass. The
+// original error is re-thrown, with the status appended.
+// ---------------------------------------------------------------------------
+async function waitForOutput(driver, prefix, field, message, timeout) {
+  log.debug("Entering waitForOutput(). " + prefix + "/" + field);
+  try {
+    const value = await waitForContent.waitForValue(driver,
+      fieldId(prefix, field),
+      function (text) { return text.length > 0; },
+      message, timeout);
+    log.debug("Leaving waitForOutput().");
+    return value;
+  } catch (e) {
+    let said = "";
+    try {
+      said = await getField(driver, prefix, 'status');
+    } catch (ignored) {
+      // The pane is gone or the session has died. Either way there is no
+      // status to add and the original timeout is still the right error.
+      said = "";
+    }
+    if (said && said.trim()) {
+      e.message = e.message + " — the pane's status line says: " +
+        said.trim();
+    } else {
+      e.message = e.message + " — and the pane's status line is EMPTY too, " +
+        "so the button's handler never ran at all rather than refusing.";
+    }
+    log.debug("Leaving waitForOutput(). Timed out.");
+    throw e;
+  }
+}
+
 // EMPTY THE STATUS LINE BEFORE ACTING, ALWAYS — AND AUTOMATICALLY.
 //
 // waitForSettled() is satisfied by any non-empty line that is not still
@@ -489,9 +534,7 @@ async function symmetricPane(driver, pane) {
       "pass on a leftover value");
 
     await clickButton(driver, pane.pane, 'Decrypt');
-    await waitForContent.waitForValue(driver,
-      fieldId(pane.prefix, 'plaintext'),
-      function (text) { return text.length > 0; },
+    await waitForOutput(driver, pane.prefix, 'plaintext',
       alg + ": Decrypt never refilled the plaintext box", cryptoWait);
     assert.strictEqual(await getField(driver, pane.prefix, 'plaintext'),
                        MESSAGE,
@@ -613,8 +656,7 @@ async function rsaPane(driver) {
 
       await setField(driver, 'rsa', 'plaintext', "");
       await clickButton(driver, 'pane_rsa', 'Decrypt');
-      await waitForContent.waitForValue(driver, 'enc_rsa_plaintext',
-        function (text) { return text.length > 0; },
+      await waitForOutput(driver, 'rsa', 'plaintext',
         "RSA " + mode + "/" + padding + ": Decrypt never refilled the box",
         cryptoWait);
       assert.strictEqual(await getField(driver, 'rsa', 'plaintext'), MESSAGE,
@@ -744,9 +786,7 @@ async function agreementPane(driver, pane) {
 
     await setField(driver, pane.prefix, 'plaintext', "");
     await clickButton(driver, pane.pane, 'Decrypt');
-    await waitForContent.waitForValue(driver,
-      fieldId(pane.prefix, 'plaintext'),
-      function (text) { return text.length > 0; },
+    await waitForOutput(driver, pane.prefix, 'plaintext',
       pane.name + " " + label + ": Decrypt never refilled the box",
       cryptoWait);
     assert.strictEqual(await getField(driver, pane.prefix, 'plaintext'),
@@ -889,8 +929,7 @@ async function jwePane(driver) {
 
     await setField(driver, 'jwe', 'plaintext', "");
     await clickButton(driver, 'pane_jwe', 'Decrypt');
-    await waitForContent.waitForValue(driver, 'enc_jwe_plaintext',
-      function (text) { return text.length > 0; },
+    await waitForOutput(driver, 'jwe', 'plaintext',
       "JWE " + alg + ": Decrypt never refilled the payload", cryptoWait);
     assert.strictEqual(await getField(driver, 'jwe', 'plaintext'), payload,
       "JWE " + alg + " did not round-trip the payload");
@@ -963,8 +1002,7 @@ async function pbePane(driver) {
 
     await setField(driver, 'pbe', 'plaintext', "");
     await clickButton(driver, 'pane_pbe', 'Decrypt');
-    await waitForContent.waitForValue(driver, 'enc_pbe_plaintext',
-      function (text) { return text.length > 0; },
+    await waitForOutput(driver, 'pbe', 'plaintext',
       kdf.id + ": Decrypt never refilled the box", keyWait);
     assert.strictEqual(await getField(driver, 'pbe', 'plaintext'), MESSAGE,
       kdf.id + " did not round-trip the message");

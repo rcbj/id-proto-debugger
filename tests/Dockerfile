@@ -692,6 +692,13 @@ COPY tests/admin_api.js ./
 COPY tests/token_http_exchange.js ./
 COPY tests/browser_tests_headless.js ./
 COPY tests/driver_quit_reachable.js ./
+# The authored-markup check. It READS client/public, which this image does not
+# carry, so in here it skips by name and does its work on a host run and in CI —
+# the same arrangement as xml_parse_inert.js. It is copied anyway, and must be:
+# run-report.js schedules it, and a scheduled script that never reaches the
+# image dies with MODULE_NOT_FOUND in 0.0s, which reads as a broken test rather
+# than as a missing line here.
+COPY tests/page_markup_well_formed.js ./
 COPY tests/run-report.js ./
 # Shared test helpers (populateMetadata, ...). The test scripts require it as
 # ../common/tests.js; WORKDIR is /usr/src/app, so it must land in /usr/src/common.

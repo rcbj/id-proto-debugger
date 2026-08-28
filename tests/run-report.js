@@ -1324,6 +1324,25 @@ function buildJobs() {
     env: {},
   });
 
+  // The authored pages' attribute values, which is a check on THE STATIC BUILD
+  // as much as on the markup. A double-quoted value ends at the next double
+  // quote, so a title that quotes something ends early and the rest of the tag
+  // becomes junk attributes — legal input that every browser recovers from,
+  // differently. Chrome's recovery kept encryption_tools.html working locally;
+  // the minifier on the deploy path dropped the closing tags around the field
+  // and `enc_pbe_tag` did not exist on the hosted site, so AES-GCM had no tag
+  // to verify and the encryption job spent 150 seconds waiting for a box that
+  // was never going to fill. Nothing in that failure named the page, the
+  // attribute or the minifier, and the same job was green against a local
+  // stack — which is why this reads the SOURCE rather than a browser. Node
+  // only, never skipped.
+  jobs.push({
+    name: "Page markup (no attribute value closed early, which is what makes " +
+        "the minifier drop the tags around it)",
+    script: "page_markup_well_formed.js",
+    env: {},
+  });
+
   // The scheme allowlist applied before the app navigates anywhere
   // (client/src/url_safety.js). Every URL it guards is caller-supplied — a
   // typed IdP endpoint, or one out of fetched metadata — and reaches

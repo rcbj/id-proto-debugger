@@ -851,6 +851,14 @@ async function everySchemeIsOfferedAndExplained(driver) {
           .textContent || ''),
         backendDisabled:
             document.getElementById('scim_cfg_callPath').disabled,
+        // WHY the row is disabled, which the boolean above cannot say. A
+        // static deployment has no api at all and disables it for EVERY
+        // scheme; a browser-only scheme disables it for itself. Both read as
+        // a true above, and only one of them is this section's subject.
+        pathNote: (function () {
+          var n = document.getElementById('scim_call_path_note');
+          return n ? (n.textContent || '') : '';
+        })(),
         tokenShown: shown('scim_auth_token_row'),
         passwordShown: shown('scim_auth_password_row'),
         dpopShown: shown('scim_dpop_row'),
@@ -920,26 +928,56 @@ async function everySchemeIsOfferedAndExplained(driver) {
           'concluding a scope restriction works when nothing was restricted.');
     });
   });
-  check('the two browser-only schemes LOCK the call path', function () {
-    schemes.forEach(function (row) {
-      if (row.id === 'cookie' || row.id === 'clientcert') {
-        assert.strictEqual(row.backendDisabled, true,
-            'Selecting "' + row.id + '" left the api call path available. ' +
-            'The api has no cookie jar and would present ITS OWN ' +
-            'certificate — so such a call goes out with no credential at ' +
-            'all and the 401 reads as the server\'s fault.');
-      }
+  // THE LOCK IS ONLY OBSERVABLE WHERE THERE IS SOMETHING TO LOCK. On a static
+  // deployment `backendAvailable` is false, so refreshCallPathControls()
+  // disables the row for every scheme and says so in the note — which makes
+  // the cookie/clientcert assertion below pass while testing nothing, and the
+  // bearer one fail while nothing is wrong. Both are skipped by name rather
+  // than left to pass or fail on the deployment. The note is what tells the
+  // two apart: it is written from `BACKEND_AVAILABLE` before any scheme is
+  // consulted.
+  const bearerRow = schemes.filter(function (row) {
+    return row.id === 'bearer';
+  })[0];
+  const noBackendAtAll = /no api behind it/.test(bearerRow.pathNote);
+  if (noBackendAtAll) {
+    skip('the call path lock',
+        'this build has no api behind it, so the callPath row is disabled ' +
+        'for every scheme and a lock cannot be told from the absence of a ' +
+        'backend. The page says so: "' + bearerRow.pathNote.trim() + '"');
+  } else {
+    check('the two browser-only schemes LOCK the call path', function () {
+      schemes.forEach(function (row) {
+        if (row.id === 'cookie' || row.id === 'clientcert') {
+          assert.strictEqual(row.backendDisabled, true,
+              'Selecting "' + row.id + '" left the api call path ' +
+              'available. The api has no cookie jar and would present ITS ' +
+              'OWN certificate — so such a call goes out with no credential ' +
+              'at all and the 401 reads as the server\'s fault.');
+        }
+      });
     });
-  });
-  check('the call path is unlocked again for a header-carried scheme',
+    check('the call path is unlocked again for a header-carried scheme',
+        function () {
+      assert.strictEqual(bearerRow.backendDisabled, false,
+          'The Bearer scheme is a header the api can carry perfectly well, ' +
+          'and the lock did not come back off — so once somebody selects a ' +
+          'cookie the backend path is dead for the rest of the session.');
+    });
+  }
+  // WHAT IS ASSERTED ON EVERY DEPLOYMENT: a disabled row always carries a
+  // reason, and an enabled one never does. That is the half of this contract
+  // a missing api does not take away, and without it the skip above would
+  // leave the note itself unchecked.
+  check('a locked call path always says why, and an open one says nothing',
       function () {
-    const bearer = schemes.filter(function (row) {
-      return row.id === 'bearer';
-    })[0];
-    assert.strictEqual(bearer.backendDisabled, false,
-        'The Bearer scheme is a header the api can carry perfectly well, ' +
-        'and the lock did not come back off — so once somebody selects a ' +
-        'cookie the backend path is dead for the rest of the session.');
+    schemes.forEach(function (row) {
+      assert.strictEqual(row.backendDisabled, row.pathNote.trim().length > 0,
+          'With the "' + row.id + '" scheme selected the callPath row is ' +
+          (row.backendDisabled ? 'disabled with no reason on screen' :
+           'enabled and still showing a reason it is not') + '. A control ' +
+          'that goes dead without saying why reads as a broken page.');
+    });
   });
   log.debug("Leaving everySchemeIsOfferedAndExplained().");
 }

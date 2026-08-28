@@ -160,6 +160,69 @@ function findInMockSts(root, name) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// CONFIG_FILE HAS TO MEAN THE SAME FILE INSIDE THE MOCK AS IT DOES OUT HERE.
+//
+// Every test script here opens with `require(process.env.CONFIG_FILE)`, and
+// node resolves that relative path against the MODULE doing the requiring —
+// tests/ — so `./env/test-idptools-com.js` is tests/env/test-idptools-com.js
+// and always has been. The mock STS cannot use that rule: thirteen of its
+// modules read the same variable from four different directories, so
+// sts/common/config_file.js resolves it ONCE against two candidates of its own
+// — the mock's package root, then the process's CWD.
+//
+// Neither candidate is tests/. On a local run that goes unnoticed because
+// sts/env/local.js exists and the first candidate hits; on a run against a
+// deployed site CONFIG_FILE is ./env/test-idptools-com.js, the mock has no such
+// file, and run-report.js spawns every job from the REPOSITORY ROOT rather than
+// from tests/, so the CWD candidate misses too. config_file.js then leaves the
+// path relative — deliberately, so its guarded readers still load — and
+// sts/common/config.js, which is the one unguarded reader, dies on
+// `require('./env/test-idptools-com.js')` resolved against sts/common/. The
+// message names a file nobody typed a path to and no line of it says
+// "CONFIG_FILE", "sts" or "tests".
+//
+// So the gap is closed on THIS side, where the file actually lives, and only
+// when the mock's own two candidates would both miss. That last part is what
+// keeps a local run byte-identical: sts/env/local.js is still preferred over
+// tests/env/local.js, because it is the mock's OWN configuration and carries
+// its keys, and this project must not start quietly substituting one for the
+// other. The rewrite is to an ABSOLUTE path, which is what config_file.js
+// itself would have written and what makes it idempotent for the next reader.
+// ---------------------------------------------------------------------------
+function alignConfigFileForMockSts(stsRoot, say) {
+  const given = process.env.CONFIG_FILE;
+  // The same three cases config_file.js leaves alone: unset (a leaf module
+  // loaded with no configuration at all), already absolute, or a bare
+  // specifier naming an installed package rather than a path.
+  if (!given || path.isAbsolute(given) || !given.startsWith(".")) {
+    return given;
+  }
+  const mockWouldFind = [
+    path.resolve(stsRoot, given),
+    path.resolve(process.cwd(), given)
+  ];
+  for (const candidate of mockWouldFind) {
+    if (fs.existsSync(candidate)) {
+      return given;
+    }
+  }
+  const here = path.resolve(__dirname, given);
+  if (!fs.existsSync(here)) {
+    // Nothing this side can offer either. Left exactly as it was, so the
+    // failure is the one the operator's own path produces rather than one
+    // invented here about a file that was never found.
+    return given;
+  }
+  say("CONFIG_FILE=" + given + " names no file the mock STS can resolve " +
+    "(it looks under " + stsRoot + " and under the current directory, " +
+    process.cwd() + "). It does name " + here + ", which is what every test " +
+    "script here means by it, so CONFIG_FILE is being made absolute to that " +
+    "before the mock's modules read it.");
+  process.env.CONFIG_FILE = here;
+  return here;
+}
+
 function mockStsModule(name, warn) {
   const say = warn || function () {};
   const override = process.env.MOCK_STS_DIR;
@@ -169,6 +232,7 @@ function mockStsModule(name, warn) {
       say("MOCK_STS_DIR is set, so " + overridden + " is being used INSTEAD of the sts/ " +
         "submodule. This run reflects a working copy rather than the commit the gitlink points " +
         "at. Unset MOCK_STS_DIR to test what is committed.");
+      alignConfigFileForMockSts(override, say);
       return overridden;
     }
     say("MOCK_STS_DIR is set to " + override + " but it does not contain " + name +
@@ -181,15 +245,19 @@ function mockStsModule(name, warn) {
   ];
   for (const root of roots) {
     const found = findInMockSts(root, name);
-    if (found) return found;
+    if (found) {
+      alignConfigFileForMockSts(root, say);
+      return found;
+    }
   }
   // The tests image also flattens two modules with a prefix, because they are
   // loaded on their own and have no relative requires to satisfy.
   const flattened = path.join(__dirname, "sts_" + name);
   if (fs.existsSync(flattened)) return flattened;
-  const sibling = findInMockSts(
-    path.join(__dirname, "..", "..", "mock-sts"), name);
+  const siblingRoot = path.join(__dirname, "..", "..", "mock-sts");
+  const sibling = findInMockSts(siblingRoot, name);
   if (sibling) {
+    alignConfigFileForMockSts(siblingRoot, say);
     say("USING AN UNPUSHED WORKING COPY: " + sibling + ". The sts/ submodule does not carry " +
       name + " yet, so this run reflects a sibling checkout rather than the commit this " +
       "repository's gitlink points at. Push mock-sts and bump the gitlink before trusting a " +
@@ -207,5 +275,8 @@ module.exports = {
   // the mock keep its modules now" answer for a whole DIRECTORY rather than
   // for one file, and must not grow a second copy of the layout.
   mockStsSearchDirs: mockStsSearchDirs,
-  findInMockSts: findInMockSts
+  findInMockSts: findInMockSts,
+  // Exported so a test can assert the rewrite rather than only benefit from
+  // it — see tests/config_file_resolution.js.
+  alignConfigFileForMockSts: alignConfigFileForMockSts
 };
