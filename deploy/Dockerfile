@@ -12,8 +12,13 @@ RUN rm /bin/sh && ln -s /bin/bash /bin/sh
 
 WORKDIR /usr/src/app
 
-RUN apt-get update
-RUN apt-get -y install curl \
+# ONE RUN, deliberately: see the note above the same pair in
+# tests/Dockerfile. A cached `RUN apt-get update` layer keeps naming package
+# versions the archive pool has already superseded and dropped, and the
+# install below then 404s on every -updates/-security package at once — a
+# failure that reads as a broken mirror and is not one.
+RUN apt-get update \
+    && apt-get -y install curl \
         jq \
         wget \
         unzip \

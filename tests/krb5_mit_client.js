@@ -317,7 +317,8 @@ async function adminPost(pathname, body) {
 // Written rather than assumed, because the machine's own /etc/krb5.conf knows
 // nothing about a mock KDC on a high port and must not be touched to teach it.
 //
-// Three settings are load-bearing:
+// Six settings are load-bearing, and the last three were added after runs in
+// which their absence cost this whole job — see the block beside them:
 //
 //   `kdc = host:port`     the only way to reach a KDC that is not on 88.
 //   `udp_preference_limit = 1`
@@ -329,6 +330,13 @@ async function adminPost(pathname, body) {
 //                         for EXAMPLE.COM, which on a machine with a wildcard
 //                         resolver is a delay and on a corporate one is a
 //                         different KDC entirely.
+//   `dns_canonicalize_hostname = false`, `rdns = false`
+//                         never ask DNS about the HOST either.
+//   `qualify_shortname = ""`
+//                         and do not append the RESOLVER'S SEARCH DOMAIN to a
+//                         short one, which is a separate step the two above do
+//                         not disable. Together they are what makes the name
+//                         in the URL the name in the SPN.
 //
 // The enctype lists are deliberately the MODERN defaults and RC4 is
 // deliberately
@@ -346,6 +354,63 @@ function writeKrb5Config() {
     "    default_realm = " + realm,
     "    dns_lookup_kdc = false",
     "    dns_lookup_realm = false",
+    // TWO MORE DNS LOOKUPS, AND THEY ARE THE ONES THAT BROKE THE
+    // CONTAINERIZED RUN OF 2026-08-27. The two above stop MIT looking for a
+    // KDC in DNS; neither stops it looking up the HOST. Before deriving the
+    // SPN from a URL's hostname, GSSAPI canonicalizes that name — forward
+    // (`dns_canonicalize_hostname`, on) and then in reverse (`rdns`, on) — and
+    // uses whatever comes back.
+    //
+    // On a host run the mock is `localhost`, whose PTR is `localhost`, so the
+    // SPN stays HTTP/localhost and nothing is visible. On the compose network
+    // it is `sts`, and Docker's embedded resolver answers the PTR for that
+    // container's address with `sts.<compose-network>.` — so GSSAPI asked the
+    // KDC for HTTP/sts.<compose-network>, a host that is NOT in this service's
+    // SERVICE_DOMAINS, got KDC_ERR_S_PRINCIPAL_UNKNOWN, and `curl --negotiate`
+    // sent no Authorization header at all. What the test then saw was the
+    // ORDINARY bare 401 — the same answer an unauthenticated request gets —
+    // so the failure named the protected page and the SPN the mock volunteers,
+    // and nothing named DNS.
+    //
+    // Off, DNS is not asked about the host at all.
+    "    dns_canonicalize_hostname = false",
+    "    rdns = false",
+    // AND THE THIRD ONE, WHICH IS THE ONE THAT ACTUALLY FIXED IT — the two
+    // above are necessary and were not sufficient, and the containerized run
+    // of 2026-08-27 failed IDENTICALLY with them in place.
+    //
+    // Qualifying a SHORT hostname is a step of its own, and MIT does it
+    // whether or not DNS canonicalization is on: with
+    // `dns_canonicalize_hostname` false it appends `qualify_shortname`, whose
+    // default is the RESOLVER'S SEARCH DOMAIN — the `search` line of
+    // /etc/resolv.conf, which docker COPIES INTO EVERY CONTAINER from the
+    // host's. So `sts` became `sts.<the host's search domain>` on the bridge
+    // stack, and reproducing it needed no container at all: on the machine
+    // this was found on the search domain is `lan`, so pointing this file at
+    // any short name of the host turned `nakita` into `nakita.lan` and failed
+    // in exactly the same place. No DNS query is made for either, and neither
+    // setting above is in a position to stop it.
+    //
+    // GSSAPI then asked the KDC for a host that is not in
+    // this service's SERVICE_DOMAINS, got KDC_ERR_S_PRINCIPAL_UNKNOWN, and
+    // `curl --negotiate` sent NO Authorization header at all — so what the
+    // test saw was the ORDINARY bare 401, the same answer an unauthenticated
+    // request gets, and the failure named the protected page and the SPN the
+    // mock volunteers while naming nothing about a hostname.
+    //
+    // The empty string is how MIT spells "do not qualify it at all", and the
+    // QUOTES ARE PART OF THE SYNTAX: `qualify_shortname =` with nothing after
+    // it is a parse error, and every command dies with `Improper format of
+    // Kerberos configuration file while initializing krb5 library` — a message
+    // about the file rather than about the line.
+    //
+    // The section 5 assertion is what proves this works, and it is worth
+    // knowing that it cannot: `kvno HTTP/<host>` is handed a principal
+    // ALREADY WRITTEN OUT and qualifies nothing, so it passed on the
+    // containerized stack while the derivation curl performs was broken. Only
+    // a hostbased name — GSSAPI's, and `kvno -S HTTP <host>` — goes through
+    // this code path.
+    "    qualify_shortname = \"\"",
     "    udp_preference_limit = 1",
     "    default_tkt_enctypes = aes256-cts-hmac-sha1-96 " +
     "aes128-cts-hmac-sha1-96",
@@ -824,8 +889,16 @@ function theProtectedPageAcceptsARealTicket() {
     "`curl --negotiate` could not authenticate to " + stsUrl +
     "/spnego/protected. This is a REAL GSSAPI client and nothing in this " +
     "project wrote a byte of what it sent, which is what makes this the only " +
-    "assertion here that can find an interoperability defect. Headers: " +
-    result.headers.slice(0, 400));
+    "assertion here that can find an interoperability defect.\n\n" +
+    // WHICH OF THE TWO FAILURES THIS IS, because they look identical and are
+    // in different repositories. A bare `Negotiate` with no token after it is
+    // the answer to a request carrying NO Authorization header, so the ticket
+    // never left this machine and the defect is HERE — read the KDC errors
+    // below, which are libkrb5's own out of curl's trace and name the SPN it
+    // asked for. A `Negotiate <base64>` is the acceptor REFUSING a ticket it
+    // was given, which is the mock's end.
+    "The KDC told curl: " + JSON.stringify(result.kdcErrors) + "\n" +
+    "Headers: " + result.headers.slice(0, 400));
   assert.ok(new RegExp("alice@" + realm).test(result.body),
     "and the page must name the principal from INSIDE the ticket, which is " +
     "the only evidence the AP-REQ was decrypted rather than merely parsed. " +

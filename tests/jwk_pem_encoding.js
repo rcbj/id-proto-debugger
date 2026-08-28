@@ -1422,8 +1422,19 @@ function everyDockerfileStaysUnderTheLayerLimit() {
   const DOCKER_MAX_DEPTH = 125;
   const BUDGET = 100;
   const repo = path.join(__dirname, "..");
-  if (!fs.existsSync(path.join(repo, "client"))) {
-    log.info("[layers] skipped: no repository tree here, so this is the " +
+  // `client/` IS NOT THE MARKER, AND THAT COST THE CONTAINERIZED RUN OF
+  // 2026-08-27. The tests image stages client/src at /usr/src/client/src (see
+  // tests/Dockerfile) precisely so the Kerberos and SPIFFE jobs can require
+  // their modules by the path a checkout uses — so this directory exists in
+  // the image, the guard did not fire, and the walk below found NO Dockerfile
+  // at all. The failure was the summary's `counted.reduce()` on an empty array
+  // — "Reduce of empty array with no initial value", naming Array.reduce and
+  // nothing about docker, layers or the missing tree. What the image does not
+  // carry is a Dockerfile, so that is what is asked about, and the walk's own
+  // result is checked below as well: this function is about Dockerfiles, and
+  // "none found" is the one condition it can never usefully assert on.
+  if (!fs.existsSync(path.join(repo, "tests", "Dockerfile"))) {
+    log.info("[layers] skipped: no tests/Dockerfile here, so this is the " +
       "tests image rather than a checkout.");
     log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
     return;
@@ -1449,6 +1460,12 @@ function everyDockerfileStaysUnderTheLayerLimit() {
     });
   };
   walk(repo);
+  if (found.length === 0) {
+    log.info("[layers] skipped: the tree at " + repo + " holds no Dockerfile " +
+      "to walk.");
+    log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
+    return;
+  }
 
   const over = [];
   const counted = [];
