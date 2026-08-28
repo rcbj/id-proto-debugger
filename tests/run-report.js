@@ -275,6 +275,14 @@ const JOB_LOCKS = {
   // `saml11_options.js` is deliberately absent — it needs no identity provider
   // at all, so nothing it does can collide with this.
   "sts_saml11.js": "sts-saml11",
+  // SAML 2.0 ENCRYPTION SHARES THE SAML 2.0 LOCK, and it has to: it turns
+  // `saml2.encryptAssertion` and the two algorithm rows on for service
+  // providers of its own, and it flips `saml2EncryptLogoutNameId` — but it
+  // also drives /saml2/slo, which ENDS WHATEVER SESSION the cookie jar it
+  // shares with a concurrent binding job is holding. A saml_sso.js round trip
+  // running inside that window loses its session mid-flow and fails naming the
+  // sign-in screen, with nothing to say which other job did it.
+  "sts_saml_encryption.js": "saml2",
   "saml11_sso.js": "sts-saml11",
   // The mock's SPNEGO SIGN-IN, which is `krb5.spnegoAuthentication` — a
   // process-wide setting on a shared service. `kerberos_spnego_signin.js` turns
@@ -3326,6 +3334,25 @@ function buildJobs() {
     script: "saml_tools.js",
     env: {},
   });
+
+  // The SAML Request Decoder (saml_authnrequest.html): read an AuthnRequest
+  // off the wire on all three bindings, check the signature in both of the
+  // two completely different places it can live, and decrypt. No identity
+  // provider — every fixture is built in the test by the same modules the
+  // page uses — so this one is never skipped.
+  //
+  // The assertion worth knowing about is the REDIRECT TAMPER case. A
+  // redirect-binding signature covers the query string as SENT, so a decoder
+  // that rebuilds those octets in its own order reports INVALID on a good
+  // signature, and in a browser that is indistinguishable from a wrong
+  // certificate. Checking only that a good signature verifies would pass with
+  // the octets rebuilt any which way.
+  jobs.push({
+    name: "SAML Request Decoder (three bindings, query-string + enveloped " +
+        "signature, XML-Enc decrypt)",
+    script: "saml_authnrequest_page.js",
+    env: {},
+  });
   
  // SAML 2.0 SP-initiated SSO across all three bindings: load IdP metadata, sign
   // the AuthnRequest (redirect = query-string sig; post = enveloped XML-DSIG;
@@ -3541,6 +3568,40 @@ function buildJobs() {
       name: "SAML 1.1 identity provider on the mock STS (Browser/POST, " +
           "Browser/Artifact, the SOAP responder, per-RP metadata)",
       script: "sts_saml11.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+  }
+
+  // SAML 2.0 ENCRYPTION on the mock STS, driven over HTTP with a service
+  // provider the test writes itself — its own RSA key pair, its own XML
+  // Encryption decryptor built on node's `crypto`, and a PKCS#1 v1.5 unwrap done
+  // with BigInt because node refuses `RSA_PKCS1_PADDING` for private decryption.
+  //
+  // NOTHING IS BORROWED FROM THE MOCK, which is `sts_dpop.js`'s rule and matters
+  // more here than anywhere else in this suite: if both ends of the encryption
+  // came from one implementation, a shared misunderstanding about where the IV
+  // lives or whether the GCM tag is appended would pass and interoperate with
+  // nobody.
+  //
+  // It is the counterpart of `saml_encrypted_sso.js` and does not replace it.
+  // That job proves the DEBUGGER can consume an encrypted assertion from
+  // Keycloak, in a browser, with the SP key in the page. This one proves the
+  // MOCK can produce one — and, mostly, that it REFUSES what it should: an
+  // altered ciphertext, an EncryptedID encrypted to somebody else's key, and a
+  // decrypted fragment that does not carry its own namespace.
+  //
+  // Gated on the STS alone, like the five tests it sits with. It restores every
+  // setting it changes through /admin-api/config/reset rather than by writing
+  // the old value back, so it leaves no runtime override for admin_api.js to
+  // trip over on the next run against the same container.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "SAML 2.0 encryption on the mock STS (EncryptedAssertion, " +
+          "EncryptedID both ways, four ciphers x two key transports)",
+      script: "sts_saml_encryption.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",

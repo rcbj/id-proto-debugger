@@ -196,6 +196,8 @@ function setReturnLink() {
                                label: 'SAML Assertion Tool' },
     'saml_response.html':     { href: '/saml_response.html',
                                label: 'SAML Response' },
+    'saml_authnrequest.html': { href: '/saml_authnrequest.html',
+                               label: 'SAML Request Decoder' },
     'wstrust_tools.html':     { href: '/wstrust_tools.html',
                                label: 'WS-Trust Test Tools' },
     'wstrust_response.html':  { href: '/wstrust_response.html',
