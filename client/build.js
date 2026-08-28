@@ -497,9 +497,24 @@ if (MINIFY) {
       '--remove-comments',
       '--minify-css', 'true',
       '--minify-js', 'true',
-      // Some source pages contain minor markup quirks (e.g. a stray quote in a
-      // tag). Don't fail the deploy build over them — skip and pass through.
-      '--continue-on-parse-error',
+      // NO --continue-on-parse-error, and that is the whole point of this
+      // comment. It used to be here, with a note saying that some source pages
+      // contained minor markup quirks and the deploy build should not fail over
+      // them. "Skip and pass through" is not what the flag does: the minifier
+      // recovers from the quirk and keeps going, and its recovery is not the
+      // browser's. On encryption_tools.html a title attribute containing
+      // unescaped quotes made it drop the </label> and </textarea> around one
+      // field, so <textarea id="enc_pbe_ciphertext"> swallowed the next field
+      // whole and enc_pbe_tag DID NOT EXIST on the deployed site — AES-GCM had
+      // no tag to verify and Decrypt refused every ciphertext. The page was
+      // fine locally, because Chrome recovers differently; the only symptom was
+      // a remote test waiting 150 seconds for a box to fill.
+      //
+      // So a parse error fails the build now, naming the file and the tag. The
+      // three quirks in this tree were fixed with it (two stray quotes in
+      // oauth2_oidc_1.html, three unescaped ones in encryption_tools.html), and
+      // tests/page_markup_well_formed.js keeps new ones from being written —
+      // which is the check that runs without a deploy.
     ], file);
     log.info('html-minifier-terser ' + path.relative(DIST, file));
   });

@@ -208,11 +208,91 @@ function request(url, options) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// THE CALLBACK IS ONE CONTRACT WITH TWO IMPLEMENTATIONS, AND ONLY ONE OF THEM
+// CAN REDIRECT.
+//
+// `client/server.js` answers GET and POST /callback with a 303 to
+// oauth2_oidc_2.html. A STATIC DEPLOYMENT has no Express at all — S3 serves
+// bytes and CloudFront hands them on — so `client/build.js` writes a
+// `/callback/index.html` shim that does the same forwarding from inside the
+// browser with `location.replace()`. That is not a lesser version of the route
+// for the purposes of this file: requirements 11.1 and 12.1 are about where
+// the authorization response is sent NEXT and whether the request can choose
+// that destination, and a shim answers both questions just as a 303 does.
+//
+// So this returns which of the two is in front of us, and it REFUSES anything
+// that is neither. A test that fell back to the static branch whenever the 303
+// was missing would report a broken Express landing as a static deployment and
+// pass — which is the failure mode this suite has had before, and the reason
+// the unrecognised case is an assertion rather than a default.
+// ---------------------------------------------------------------------------
+async function callbackKind(landing) {
+  log.debug("Entering callbackKind(). status=" + landing.status);
+  if (landing.status === 303) {
+    log.info("The deployment answers /callback with a 303: this is the " +
+      "Express client.");
+    log.debug("Leaving callbackKind(). express");
+    return "express";
+  }
+  const staticShim = landing.status === 200 &&
+      /location\.replace/.test(landing.body) &&
+      landing.body.indexOf("/oauth2_oidc_2.html") !== -1;
+  assert.ok(staticShim,
+    "GET /callback answered " + landing.status + " and the body is neither " +
+    "a 303 to the token page nor the static shim client/build.js writes " +
+    "(a location.replace() onto /oauth2_oidc_2.html). One of the two has to " +
+    "be there: it is where every authorization response this debugger " +
+    "receives arrives. Body began: " +
+    landing.body.slice(0, 200).replace(/\s+/g, " "));
+  log.info("The deployment answers /callback with the static shim: there is " +
+    "no Express here.");
+  log.debug("Leaving callbackKind(). static");
+  return "static";
+}
+
+// Requirements 11.1 and 12.1 against the STATIC shim. What is asserted is the
+// same claim the 303 branch makes — the response is forwarded to this
+// deployment's own token page, and the request cannot choose where it goes —
+// read off the only thing there is to read: the script the browser will run.
+function checkStaticCallback(landing, hostile) {
+  log.debug("Entering checkStaticCallback().");
+  assert.ok(/window\.location\.replace\(/.test(landing.body),
+    "Requirement 12.1: the static callback shim does not use " +
+    "location.replace(), so the landing stays in the history and the Back " +
+    "button walks a person into the authorization response's URL again.");
+  assert.ok(/'\/oauth2_oidc_2\.html'/.test(landing.body),
+    "Requirement 11.1: the static callback shim's destination is not the " +
+    "LITERAL '/oauth2_oidc_2.html'. It is built from location.search and " +
+    "location.hash, and a destination assembled out of either would be an " +
+    "open redirector reachable at a registered redirect_uri.");
+  // The same hostile parameters the Express branch sends. A static file cannot
+  // vary with them — which is the point, and is worth asserting rather than
+  // assuming, because a build step that templated this page per request would
+  // be exactly the change that broke it.
+  assert.strictEqual(hostile.body, landing.body,
+    "Requirement 11.1: /callback answered differently when the request " +
+    "carried redirect_uri / return_to / url pointing elsewhere. The static " +
+    "shim must be one file that ignores them.");
+  assert.strictEqual(hostile.body.indexOf("evil.example.com"), -1,
+    "Requirement 11.1: an attacker's host from the query string reached the " +
+    "body of the callback landing.");
+  log.info("The static callback shim forwards to this deployment's own token " +
+    "page and takes nothing from the request.");
+  log.debug("Leaving checkStaticCallback().");
+}
+
 // The always-on posture, over the wire rather than over the source.
 // tests/rfc9700_client.js asserts the same properties by reading
 // client/server.js; this asserts that the running deployment actually sends
 // them, which is a different claim — a reverse proxy, a CDN or a build that
 // serves public/ some other way can drop every one of them.
+//
+// THE HEADERS ARE ASSERTED ON EVERY TARGET, static included. There is no
+// middleware chain on a static site, so they come from a CloudFront response
+// headers policy instead (infra/terraform/cloudfront.tf) — a different
+// mechanism for the same three headers on the same pages, and this is what
+// holds the two together.
 async function checkAlwaysOnPosture() {
   log.debug("Entering checkAlwaysOnPosture().");
   log.info("Entering checkAlwaysOnPosture().");
@@ -232,8 +312,35 @@ async function checkAlwaysOnPosture() {
     "frame-ancestors. RFC 9700 section 4.16 asks for CSP Level 2 and that " +
     "is the clause it means.");
 
-  // 12.1 and 11.1, on the GET landing.
+  // 12.1 and 11.1, on the GET landing — in whichever of its two forms this
+  // deployment has. Both requests are made before the branch, because the
+  // static shim is judged on the two bodies together.
   const got = await request(baseUrl + "/callback?code=abc&state=xyz");
+  const openRedirect = await request(baseUrl +
+    "/callback?code=abc&state=xyz&redirect_uri=https://evil.example.com/" +
+    "&return_to=https://evil.example.com/&url=https://evil.example.com/");
+  const kind = await callbackKind(got);
+  if (kind === "static") {
+    checkStaticCallback(got, openRedirect);
+    // AND THE ONE THING A STATIC DEPLOYMENT STRUCTURALLY CANNOT HAVE. The
+    // form_post landing below is a POST that answers 303 with the response in
+    // a FRAGMENT, and neither S3 nor a CloudFront function in front of it can
+    // receive a POST for a path that has no Lambda@Edge behind it. That is not
+    // a posture this deployment gets wrong; it is a response mode it does not
+    // offer. Said out loud rather than passed over, because the same sentence
+    // is what somebody needs when they wonder why response_mode=form_post does
+    // nothing on the hosted site — and the mechanism that WOULD fix it already
+    // exists here, for the SAML and WS-Federation landings.
+    log.warn("SKIPPED — requirement 10.4 (the form_post landing) — a static " +
+      "deployment has no POST /callback at all: the three POST landings on " +
+      "these sites are Lambda@Edge behaviors (/wsfed, /samlacs, /samlslo) " +
+      "and there is none for /callback. response_mode=form_post is " +
+      "unavailable here rather than mishandled.");
+    log.info("Leaving checkAlwaysOnPosture(). The always-on posture holds " +
+      "for a static deployment.");
+    log.debug("Leaving checkAlwaysOnPosture(). Static.");
+    return;
+  }
   assert.strictEqual(got.status, 303,
     "Requirement 12.1: GET /callback answered " + got.status + " rather " +
     "than 303.");
@@ -251,9 +358,6 @@ async function checkAlwaysOnPosture() {
   // deployment's own page is not a redirect anywhere. Getting that distinction
   // wrong in the assertion is how a test comes to demand a fix that would
   // break every identity provider sending a vendor parameter.
-  const openRedirect = await request(baseUrl +
-    "/callback?code=abc&state=xyz&redirect_uri=https://evil.example.com/" +
-    "&return_to=https://evil.example.com/&url=https://evil.example.com/");
   const landed = new URL(openRedirect.headers.location);
   assert.strictEqual(landed.origin + landed.pathname,
     new URL(baseUrl).origin + "/oauth2_oidc_2.html",

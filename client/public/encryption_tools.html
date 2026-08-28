@@ -376,7 +376,7 @@
         <textarea rows="3" id="enc_ecc_public_key" name="enc_ecc_public_key" title="The recipient's public key, used by Encrypt."></textarea>
       </div>
       <div class="ds-row">
-        <select class="ds-grow" id="enc_ecc_ks_format" name="enc_ecc_ks_format" title="PEM here is raw-byte framing; JWK is a real EC or OKP key with use="enc".">
+        <select class="ds-grow" id="enc_ecc_ks_format" name="enc_ecc_ks_format" title="PEM here is raw-byte framing; JWK is a real EC or OKP key with use=&quot;enc&quot;.">
           <option value="jwk" selected="selected">JWK</option>
           <option value="pem">PEM (raw framing)</option>
         </select>
@@ -724,8 +724,8 @@
         <textarea rows="2" id="enc_pbe_iv" name="enc_pbe_iv" title="The cipher's IV."></textarea>
       </div>
       <div class="ds-field">
-        <label class="ds-has-copy" title="The encrypted value. "As PBES2 JWE" writes a compact JWE here instead, which carries its own salt and iteration count.">Ciphertext (Base64, or a compact JWE) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
-        <textarea rows="4" id="enc_pbe_ciphertext" name="enc_pbe_ciphertext" title="The encrypted value. "As PBES2 JWE" writes a compact JWE here instead, which carries its own salt and iteration count."></textarea>
+        <label class="ds-has-copy" title="The encrypted value. &quot;As PBES2 JWE&quot; writes a compact JWE here instead, which carries its own salt and iteration count.">Ciphertext (Base64, or a compact JWE) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_ciphertext');" title="Copy to clipboard">Copy</button></span></label>
+        <textarea rows="4" id="enc_pbe_ciphertext" name="enc_pbe_ciphertext" title="The encrypted value. &quot;As PBES2 JWE&quot; writes a compact JWE here instead, which carries its own salt and iteration count."></textarea>
       </div>
       <div class="ds-field">
         <label class="ds-has-copy" title="The cipher's tag. Empty for the JWE form, which carries its tag inside.">Authentication Tag (Base64) <span class="ds-label-controls"><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_pbe_tag');" title="Copy to clipboard">Copy</button></span></label>
