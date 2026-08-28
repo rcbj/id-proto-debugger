@@ -1183,7 +1183,10 @@ async function theConsoleIsClean(driver) {
       // sections above drive a refusal on purpose, and Chrome logs the failed
       // fetch as SEVERE either way.
       !/the server responded with a status of (400|401|403|404|502)/
-        .test(entry.message);
+        .test(entry.message) &&
+      // Nor is a load the browser abandoned because its own certificate or
+      // network configuration changed under it. See browser_flags.js.
+      !browserFlags.isTransientLoadError(entry.message);
   });
   check("nothing threw in the page", function () {
     assert.deepStrictEqual(severe.map(function (entry) {

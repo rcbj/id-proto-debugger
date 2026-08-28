@@ -256,6 +256,86 @@ function addStsTrustFlags(options) {
   return options;
 }
 
+// (5) THE CONSOLE ENTRY THAT REPORTS THE BROWSER RECONFIGURING ITSELF, which
+// every "the console is clean" assertion in this suite would otherwise read as
+// a page error.
+//
+// Chrome fails a request that is in flight when the configuration the request
+// depends on is REPLACED under it, and it says so with an error code of its
+// own rather than with the one the failure would have had:
+//
+//   net::ERR_CERT_VERIFIER_CHANGED  the certificate verifier's configuration
+//                                   changed mid-request
+//   net::ERR_NETWORK_CHANGED        the network configuration did
+//
+// Neither is a verdict on anything. The server was never asked and no
+// certificate was rejected on its merits: the request was ABANDONED so that it
+// could be made again against the new configuration, which is why Chrome's own
+// net_error_list.h describes both as errors the caller should retry. What
+// reaches the console is one line of `Failed to load resource`, naming the URL
+// that happened to be in flight.
+//
+// It costs a run when the URL in flight belongs to the page under test. On
+// 2026-08-28 (./remote-run-tests.sh against https://test.idptools.com) the one
+// failure of 270 jobs was
+//
+//   the workflow logged browser errors while talking to walt.id:
+//   https://test.idptools.com/css/bootstrap.css - Failed to load resource:
+//       net::ERR_CERT_VERIFIER_CHANGED
+//
+// on a job whose every functional assertion had already passed — walt.id had
+// issued a credential, it verified, and it was bound to the holder key. A
+// stylesheet is what a page that is otherwise working loses to this.
+//
+// TWO THINGS CAN CHANGE THAT CONFIGURATION MID-RUN and this suite does not
+// control either: Chrome's component updater landing a new CRLSet or root
+// store while the browser is up, and the verifier configuration that carries
+// addStsTrustFlags()' own --ignore-certificate-errors-spki-list being applied
+// after the first navigations have started. Which one it was is not
+// recoverable from the console line, and it does not change what the line
+// means.
+//
+// THE FILTER IS TWO EXACT CODES AND NOTHING ELSE, which is the whole point. A
+// filter on `Failed to load resource` would swallow every 404, every refused
+// connection and every certificate this suite deliberately makes a browser
+// reject — url_safety_schemes.js, api_tls_probe.js and the mock's own
+// certificate are all about a load that MUST fail — so those keep failing the
+// run. net::ERR_CERT_AUTHORITY_INVALID is a certificate that was verified and
+// found wanting and stays a failure; net::ERR_CONNECTION_REFUSED is a service
+// that is not there and stays a failure.
+//
+// Every drop is logged at info, so a run that hit one says so in its own log
+// rather than passing with a silence that reads the same as never meeting it.
+const TRANSIENT_LOAD_ERRORS = [
+  /net::ERR_CERT_VERIFIER_CHANGED/,
+  /net::ERR_NETWORK_CHANGED/
+];
+
+function isTransientLoadError(message) {
+  log.debug("Entering isTransientLoadError().");
+  var text = String(message === undefined || message === null ? "" : message);
+  var transient = TRANSIENT_LOAD_ERRORS.some(function (one) {
+    return one.test(text);
+  });
+  if (transient) {
+    log.info("Ignoring a browser load error the browser itself caused by " +
+             "changing its configuration mid-request: " + text.slice(0, 200));
+  }
+  log.debug("Leaving isTransientLoadError(). " + transient);
+  return transient;
+}
+
+// The same judgement over an array of console MESSAGES, for the callers that
+// have already mapped their log entries down to strings.
+function withoutTransientLoadErrors(messages) {
+  log.debug("Entering withoutTransientLoadErrors().");
+  var kept = [].concat(messages || []).filter(function (one) {
+    return !isTransientLoadError(one);
+  });
+  log.debug("Leaving withoutTransientLoadErrors(). " + kept.length + " kept.");
+  return kept;
+}
+
 // (3) Ed25519 in Web Crypto, for the browser that has it and does not offer it.
 //
 // Chrome enabled Ed25519 in the Web Cryptography API by default in Chrome 137.
@@ -295,6 +375,8 @@ function addWebCryptoEd25519Flags(options) {
 
 module.exports = {
   addBrowserAccessFlags: addBrowserAccessFlags,
+  isTransientLoadError: isTransientLoadError,
+  withoutTransientLoadErrors: withoutTransientLoadErrors,
   addWebCryptoEd25519Flags: addWebCryptoEd25519Flags,
   addStsTrustFlags: addStsTrustFlags,
   originOf: originOf

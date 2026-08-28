@@ -316,7 +316,11 @@ async function test() {
     const all = (await driver.manage().logs().get(logging.Type.BROWSER))
       .filter((e) => e.level.name === "SEVERE");
     const severe = all.filter((e) => !EXPECTED_404.some((p) =>
-        p.test(e.message)));
+        p.test(e.message)))
+      // And a load the browser abandoned because its own certificate or
+      // network configuration changed under it, which is a browser event
+      // rather than a ceremony one. See browser_flags.js.
+      .filter((e) => !browserFlags.isTransientLoadError(e.message));
     assert.strictEqual(severe.length, 0,
       "the ceremony pages logged browser errors:\n" + severe.map((e) =>
           e.message).join("\n"));

@@ -1768,6 +1768,9 @@ async function theBrowserConsoleIsClean(driver) {
     // A failed fetch to an api that is not there is this page saying so, not
     // a defect in it; the assertions above cover whether it said so.
     if (/favicon/.test(entry.message)) return false;
+    // Nor is a load the browser abandoned because its own certificate or
+    // network configuration changed under it. See browser_flags.js.
+    if (browserFlags.isTransientLoadError(entry.message)) return false;
     return true;
   });
   assert.deepStrictEqual(severe.map(function (e) { return e.message; }), [],

@@ -241,6 +241,11 @@ function severeErrors(driver) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
       // A favicon that is not there is not a page error.
       .filter(function (e) { return !/favicon/.test(e.message); })
+      // Nor is a load the BROWSER abandoned because its own certificate or
+      // network configuration changed underneath it. See browser_flags.js.
+      .filter(function (e) {
+        return !browserFlags.isTransientLoadError(e.message);
+      })
       .map(function (e) { return e.message; });
   });
 }

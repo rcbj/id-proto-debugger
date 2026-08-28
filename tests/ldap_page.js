@@ -989,7 +989,11 @@ async function theConsoleIsClean(driver) {
     // A 404 for a favicon variant is noise from the icon set every page here
     // carries and says nothing about this workflow.
     return entry.level.name === "SEVERE" &&
-      !/favicon|apple-icon|android-icon|ms-icon/.test(entry.message);
+      !/favicon|apple-icon|android-icon|ms-icon/.test(entry.message) &&
+      // And a load the browser abandoned because its own certificate or
+      // network configuration changed under it says nothing about this
+      // workflow either. See browser_flags.js.
+      !browserFlags.isTransientLoadError(entry.message);
   });
   assert.deepStrictEqual(severe.map(function (e) { return e.message; }), [],
     "the page must produce no severe console errors. A bundle that failed to " +

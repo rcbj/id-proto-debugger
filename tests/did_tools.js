@@ -568,6 +568,9 @@ async function severeErrors(driver) {
   return entries.filter(function (e) {
     if (!e.level || e.level.name !== "SEVERE") return false;
     if (/favicon|manifest/i.test(e.message)) return false;
+    // A load the browser abandoned because its own configuration changed
+    // under it is not a page error either. See browser_flags.js.
+    if (browserFlags.isTransientLoadError(e.message)) return false;
     if (e.message.indexOf(DELIBERATE_404) !== -1) return false;
     return true;
   }).map(function (e) { return e.message; });

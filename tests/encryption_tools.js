@@ -1217,7 +1217,10 @@ async function severeErrors(driver) {
   const entries = await driver.manage().logs().get(logging.Type.BROWSER);
   const severe = entries.filter(function (entry) {
     return entry.level && entry.level.name === "SEVERE" &&
-        !/favicon|manifest/i.test(entry.message);
+        !/favicon|manifest/i.test(entry.message) &&
+        // Nor a load the browser abandoned when its own certificate or
+        // network configuration changed under it. See browser_flags.js.
+        !browserFlags.isTransientLoadError(entry.message);
   }).map(function (entry) { return entry.message; });
   const logged = severe.filter(isPageLoggerRecord);
   const faults = severe.filter(function (message) {

@@ -885,7 +885,13 @@ async function test() {
     var severe = [];
     try {
       severe = (await driver.manage().logs().get(logging.Type.BROWSER))
-        .filter(function (e) { return e.level && e.level.name === "SEVERE"; });
+        .filter(function (e) { return e.level && e.level.name === "SEVERE"; })
+        // A load the browser abandoned because its own certificate or network
+        // configuration changed under it is not this page's doing. See
+        // browser_flags.js.
+        .filter(function (e) {
+          return !browserFlags.isTransientLoadError(e.message);
+        });
     } catch (e) {
       // No browser log on this driver, so there is nothing to assert about.
       log.info("the browser log is unavailable here: " + e.message);

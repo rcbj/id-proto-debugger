@@ -1385,6 +1385,128 @@ function everyJobDeclaresTheUrlOption() {
 }
 
 // ---------------------------------------------------------------------------
+// A BROWSER RECONFIGURING ITSELF MUST NOT COUNT AS A PAGE ERROR — AND MUST
+// NOT BECOME A LICENCE TO IGNORE FAILED LOADS.
+//
+// Chrome abandons a request whose certificate-verifier or network
+// configuration is replaced while it is in flight, and reports it with a code
+// of its own: net::ERR_CERT_VERIFIER_CHANGED, net::ERR_NETWORK_CHANGED. The
+// server was never asked and no certificate was rejected on its merits, so
+// neither is a verdict on the page — but the console line looks like every
+// other failed load, and the twenty-odd tests here that assert a clean console
+// read it as one. That is the single failure of 270 jobs on the
+// ./remote-run-tests.sh run of 2026-08-28: a stylesheet on a job whose every
+// functional assertion had already passed. browser_flags.js drops exactly
+// those two codes and logs every drop.
+//
+// Two properties, because each is silent when it breaks:
+//
+//   A. The filter still passes REAL failures through. Widening it to
+//      `Failed to load resource` would swallow every 404, every refused
+//      connection and every certificate this suite deliberately makes a
+//      browser reject — and those tests would keep passing while testing
+//      nothing.
+//   B. Every test that asserts a clean console actually applies it. A new
+//      browser test is written by copying the nearest one, and the copy that
+//      misses this reintroduces a flake that reproduces on nobody's machine.
+//
+// A file that only LOGS severe entries on its way to failing has nothing to
+// filter and is listed as an exception here rather than edited.
+//
+// Node only, no browser, no network: never skipped.
+// ---------------------------------------------------------------------------
+function transientLoadErrorsAreFilteredNotSwallowed() {
+  log.debug("Entering transientLoadErrorsAreFilteredNotSwallowed().");
+  const browserFlags = require("./browser_flags.js");
+
+  // (A) What it drops, and — the half that matters — what it does not.
+  const DROPPED = [
+    "https://test.idptools.com/css/bootstrap.css - Failed to load resource: " +
+        "net::ERR_CERT_VERIFIER_CHANGED",
+    "https://example.test/js/app.js - Failed to load resource: " +
+        "net::ERR_NETWORK_CHANGED"
+  ];
+  const KEPT = [
+    // A certificate that WAS verified and found wanting.
+    "https://sts.test/token - Failed to load resource: " +
+        "net::ERR_CERT_AUTHORITY_INVALID",
+    "https://sts.test/token - Failed to load resource: " +
+        "net::ERR_CERT_COMMON_NAME_INVALID",
+    // A service that is not there.
+    "http://localhost:4000/claimdescription - Failed to load resource: " +
+        "net::ERR_CONNECTION_REFUSED",
+    // A status the page asked for and got.
+    "https://idp.test/metadata - Failed to load resource: the server " +
+        "responded with a status of 404 (Not Found)",
+    // The thing every one of these assertions exists to catch.
+    "https://idptools.com/js/saml_tools.js 12:3 Uncaught ReferenceError: " +
+        "samlToolsInit is not defined"
+  ];
+  DROPPED.forEach(function (message) {
+    assert.strictEqual(browserFlags.isTransientLoadError(message), true,
+      "browser_flags.isTransientLoadError() must drop the browser's own " +
+      "configuration change, and did not for:\n  " + message);
+  });
+  KEPT.forEach(function (message) {
+    assert.strictEqual(browserFlags.isTransientLoadError(message), false,
+      "browser_flags.isTransientLoadError() must keep a real failure, and " +
+      "dropped this one — which would make every console assertion in this " +
+      "suite decorative:\n  " + message);
+  });
+  assert.deepStrictEqual(
+    browserFlags.withoutTransientLoadErrors(DROPPED.concat(KEPT)), KEPT,
+    "withoutTransientLoadErrors() must remove exactly the transient codes " +
+    "and preserve the rest, in order.");
+  // Neither an empty log nor a missing one is an error.
+  assert.deepStrictEqual(browserFlags.withoutTransientLoadErrors([]), []);
+  assert.deepStrictEqual(browserFlags.withoutTransientLoadErrors(null), []);
+  assert.strictEqual(browserFlags.isTransientLoadError(undefined), false);
+
+  // (B) Every test that JUDGES severe console entries applies it.
+  //
+  // The candidates are the files that compare a log entry's level against
+  // SEVERE. A file is satisfied by calling the helper, or by already dropping
+  // every failed load — `Failed to load resource` — which is a wider filter
+  // this cannot make wider.
+  const SATISFIED = new RegExp("isTransientLoadError|" +
+      "withoutTransientLoadErrors|Failed to load resource");
+  // Files that only PRINT severe entries while reporting a failure of their
+  // own. There is no assertion to protect, and filtering the diagnostic would
+  // remove the line that explains the failure.
+  const LOG_ONLY = ["kerberos_spnego_signin.js", "rfc9700_flows.js"];
+  const self = path.basename(__filename);
+  const missing = [];
+  var candidates = 0;
+  fs.readdirSync(__dirname).filter(function (name) {
+    return /\.js$/.test(name) && name !== self;
+  }).forEach(function (name) {
+    const src = fs.readFileSync(path.join(__dirname, name), "utf8");
+    if (!/name\s*[!=]==\s*(["'])SEVERE\1/.test(src)) {
+      return;
+    }
+    candidates++;
+    if (LOG_ONLY.indexOf(name) !== -1) {
+      return;
+    }
+    if (!SATISFIED.test(src)) {
+      missing.push(name);
+    }
+  });
+  assert.deepStrictEqual(missing, [],
+    "these tests assert on SEVERE browser console entries without filtering " +
+    "the browser's own configuration changes, so each carries the flake that " +
+    "cost the remote run of 2026-08-28: " + missing.join(", ") + ". Add\n" +
+    '  .filter(function (e) {\n' +
+    '    return !browserFlags.isTransientLoadError(e.message);\n' +
+    '  })\n' +
+    "to the filter, or list the file in LOG_ONLY here if it only logs them.");
+  log.info("[console noise] OK — the two configuration-change codes are " +
+    "dropped, five real failures are not, and all " + candidates +
+    " console-judging test(s) filter them.");
+  log.debug("Leaving transientLoadErrorsAreFilteredNotSwallowed().");
+}
+
+// ---------------------------------------------------------------------------
 // NO DOCKERFILE STAGE MAY OUTGROW DOCKER'S LAYER LIMIT.
 //
 // Docker's layer store refuses a chain deeper than 125 layers (`maxDepth` in
@@ -1547,6 +1669,7 @@ async function test() {
   everyDockerfileStaysUnderTheLayerLimit();
   stagedSharedModuleListsAreComplete();
   everyJobDeclaresTheUrlOption();
+  transientLoadErrorsAreFilteredNotSwallowed();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

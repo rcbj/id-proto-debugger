@@ -293,6 +293,16 @@ function checkStaticCallback(landing, hostile) {
 // headers policy instead (infra/terraform/cloudfront.tf) — a different
 // mechanism for the same three headers on the same pages, and this is what
 // holds the two together.
+//
+// It RETURNS which of the two landings it found, because the browser half of
+// this job needs the same answer: requirement 10.4 asks a client to request
+// response_mode=form_post only where there is something to receive the POST,
+// so what the authorization request must carry differs between the two
+// deployments. Probing it once here and passing it down keeps the two halves
+// from disagreeing — which is exactly what they did until 2026-08-27, when
+// this function said 10.4 was unavailable on a static site and runFlow()
+// asserted the request had asked for it anyway, failing all three flow jobs
+// on ./remote-run-tests.sh for a property the client had right.
 async function checkAlwaysOnPosture() {
   log.debug("Entering checkAlwaysOnPosture().");
   log.info("Entering checkAlwaysOnPosture().");
@@ -339,7 +349,7 @@ async function checkAlwaysOnPosture() {
     log.info("Leaving checkAlwaysOnPosture(). The always-on posture holds " +
       "for a static deployment.");
     log.debug("Leaving checkAlwaysOnPosture(). Static.");
-    return;
+    return "static";
   }
   assert.strictEqual(got.status, 303,
     "Requirement 12.1: GET /callback answered " + got.status + " rather " +
@@ -390,6 +400,7 @@ async function checkAlwaysOnPosture() {
 
   log.info("Leaving checkAlwaysOnPosture(). The always-on posture holds.");
   log.debug("Leaving checkAlwaysOnPosture().");
+  return "express";
 }
 
 // The other side of the pairing this file is named for. A run against an STS
@@ -704,9 +715,11 @@ function assertNotRefused(text, what) {
 // The jobs.
 // ---------------------------------------------------------------------------
 
-// The happy path for one grant, both sides compliant.
-async function runFlow(driver, flowKey, stsUrl) {
-  log.debug("Entering runFlow(). flowKey=" + flowKey);
+// The happy path for one grant, both sides compliant. `landing` is what
+// checkAlwaysOnPosture() found in front of /callback — "express" or "static" —
+// and it decides one assertion below.
+async function runFlow(driver, flowKey, stsUrl, landing) {
+  log.debug("Entering runFlow(). flowKey=" + flowKey + " landing=" + landing);
   const flow = FLOWS[flowKey];
   assert.ok(flow, "Unknown RFC9700_FLOW: " + flowKey);
 
@@ -763,13 +776,30 @@ async function runFlow(driver, flowKey, stsUrl) {
     "Requirement 2.1: the request carries no state:\n" + preview);
   assert.ok(/nonce=\S+/.test(preview),
     "Requirement 3.3: the request carries no nonce:\n" + preview);
-  // Requirement 10.4. The mock STS advertises form_post in RFC 9700 mode and
-  // this build has a backend to receive it, so both conditions hold and the
-  // client must ask for it.
-  assert.ok(/response_mode=form_post/.test(preview),
-    "Requirement 10.4: the STS advertises form_post and this build has a " +
-    "/callback to receive it, so the request should have asked for it:\n" +
-    preview);
+  // Requirement 10.4, which is TWO conditions rather than one — and the second
+  // is a property of the deployment this job is pointed at, not of the client.
+  // The mock STS advertises form_post in RFC 9700 mode, so the first always
+  // holds here; the second is whether there is anything to receive the POST.
+  // Against a STATIC deployment there is not (no Express, and no Lambda@Edge
+  // behavior for /callback — see checkAlwaysOnPosture()), so wantsFormPost()
+  // correctly declines to ask for a response mode whose answer would arrive
+  // nowhere. That case is asserted rather than skipped: a client that asked
+  // for form_post there would send every authorization response into a POST
+  // that S3 answers 405 to, and the run would show a page that never loaded
+  // instead of the reason it did not.
+  if (landing === "static") {
+    assert.ok(!/response_mode=form_post/.test(preview),
+      "Requirement 10.4: this deployment has no POST /callback, so asking " +
+      "for response_mode=form_post would send the authorization response " +
+      "somewhere nothing can read it. The request asked anyway:\n" + preview);
+    log.info("Requirement 10.4: form_post correctly not requested — this " +
+      "deployment has no backend to receive the POST.");
+  } else {
+    assert.ok(/response_mode=form_post/.test(preview),
+      "Requirement 10.4: the STS advertises form_post and this build has a " +
+      "/callback to receive it, so the request should have asked for it:\n" +
+      preview);
+  }
 
   const sentState = await driver.findElement(By.id("state")).getAttribute(
     "value");
@@ -812,9 +842,10 @@ async function runFlow(driver, flowKey, stsUrl) {
   // filled, which is where the token request will take it from.
   const code = await driver.findElement(By.id("code")).getAttribute("value");
   assert.ok(code && code.length > 4,
-    "The Token Request pane opened with no authorization code in it. With " +
-    "response_mode=form_post the code arrives in the landing's fragment " +
-    "rather than in a query string, so this is where that goes wrong.");
+    "The Token Request pane opened with no authorization code in it. The " +
+    "code arrives in the landing's fragment with response_mode=form_post and " +
+    "in its query string without it (" + landing + " landing here), and the " +
+    "page reads both — so this is where that goes wrong.");
 
   // Exchange it.
   await driver.executeScript("arguments[0].scrollIntoView({block:'center'});",
@@ -1019,7 +1050,7 @@ async function test() {
 
   // Everything that needs no browser, first: it is cheap, and a failure here
   // explains every browser failure that would have followed it.
-  await checkAlwaysOnPosture();
+  const landing = await checkAlwaysOnPosture();
   await requireCompliantSts(stsUrl);
   await registerApplication(stsUrl);
   await registerRedirectUri(stsUrl);
@@ -1034,7 +1065,7 @@ async function test() {
     if (flowKey === "refused") {
       await runRefusals(driver, stsUrl);
     } else {
-      await runFlow(driver, flowKey, stsUrl);
+      await runFlow(driver, flowKey, stsUrl, landing);
     }
     log.info("Test completed successfully. flow=" + flowKey);
   } catch (error) {
