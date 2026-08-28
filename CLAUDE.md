@@ -26,7 +26,25 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 
 ## Overview
 
-OAuth2/OIDC Debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust, WS-Federation, SD-JWT VC (issuance and presentation), WebAuthn and **Kerberos v5** flows against real identity providers, issuers, verifiers, key distribution centers and security keys. It **provisions** the identities those protocols then authenticate, over **SCIM 2.0** — one endpoint at a time, or as scenario batches that create, modify and deprovision populations of users and groups and check every step against what the plan said would happen. It hands those workloads the identities they authenticate WITH, over **SPIFFE** — an X509-SVID or a JWT-SVID from a Workload API that authenticates nobody, then all forty-two SPIRE Server API methods as whoever that credential makes you. It also builds the **X.509** certificate authorities those protocols run on — a Root, an Intermediate and an Issuing CA, with full X.509v3 extension control — and makes real **TLS and mutual-TLS** connections with what it issues. Supports Authorization Code, Implicit, Client Credentials, Resource Owner Password, and Refresh grants, plus all three OIDC authentication flows (Authorization Code, Implicit, Hybrid).
+**The project was renamed on 2026-08-28.** It was `oauth2-oidc-debugger`,
+and it is `id-proto-debugger` now — the old name described the first two of
+the fifteen-odd protocols below, and stopped being accurate a long way back.
+The rename reached the git remote
+(`git@github.com:rcbj/id-proto-debugger.git`), this file, `README.md` and the
+three `package.json`/`package-lock.json` name pairs, which are now
+`id-proto-debugger-api`, `-client` and `-tests` (they were `idptools-api`,
+`docker_web_server` and `idptools-tests`; nothing reads those names, and
+`client/version.js` only ever touches the version field). It has NOT reached
+everything else, and there a stale `oauth2-oidc-debugger` is expected rather
+than a bug: the deployed sites, which keep their own names (idptools.com and
+test.idptools.com), the logo file under `docs/images/` (its filename
+still spells the old name), the one Medium article URL in `README.md`
+— an external link, so changing it would break it — and every mention
+inside `sts/`, which is somebody else's checkout. The working copy
+itself is still nested under a directory of the old name. Nothing about
+the code, the layout or the commands changed with the name.
+
+id-proto-debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust, WS-Federation, SD-JWT VC (issuance and presentation), WebAuthn and **Kerberos v5** flows against real identity providers, issuers, verifiers, key distribution centers and security keys. It **provisions** the identities those protocols then authenticate, over **SCIM 2.0** — one endpoint at a time, or as scenario batches that create, modify and deprovision populations of users and groups and check every step against what the plan said would happen. It hands those workloads the identities they authenticate WITH, over **SPIFFE** — an X509-SVID or a JWT-SVID from a Workload API that authenticates nobody, then all forty-two SPIRE Server API methods as whoever that credential makes you. It also builds the **X.509** certificate authorities those protocols run on — a Root, an Intermediate and an Issuing CA, with full X.509v3 extension control — and makes real **TLS and mutual-TLS** connections with what it issues. Supports Authorization Code, Implicit, Client Credentials, Resource Owner Password, and Refresh grants, plus all three OIDC authentication flows (Authorization Code, Implicit, Hybrid).
 
 **Kerberos is the exception to "two-service web application", and to almost everything else here.** It is not an HTTP protocol: it speaks DER over TCP and UDP port 88, so a browser cannot reach a KDC and the api acts as a guarded byte relay rather than a proxy of anything HTTP-shaped. That makes it the one workflow absent from the deployed static sites — **all six of its pages**, the decoder included: it needs no network, but it has no landing card of its own and the only route to it is a link on `kerberos.html`, which is not there either. **SPNEGO goes with them and looks like it should not**: its own exchange is ordinary HTTP, but the ticket it carries comes from a KDC on port 88 and the two pages that obtain one are not deployed, so it would be a page whose only button says "no service ticket held" for ever. `client/static_site.js` holds the list, `client/build.js` acts on it, and the landing page's two cards for this workflow — Kerberos and SPNEGO — are greyed out and unclickable on those sites. See `docs/kerberos.md` and `docs/spnego.md`.
 

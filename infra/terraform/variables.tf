@@ -60,5 +60,5 @@ variable "create_github_oidc_provider" {
 variable "github_subject_claims" {
   description = "GitHub OIDC 'sub' claims allowed to assume the deploy role. Defaults to any ref/environment in the repo; tighten to e.g. 'repo:OWNER/REPO:ref:refs/heads/main' or 'repo:OWNER/REPO:environment:prod' to restrict."
   type        = list(string)
-  default     = ["repo:rcbj/oauth2-oidc-debugger:*"]
+  default     = ["repo:rcbj/id-proto-debugger:*"]
 }
