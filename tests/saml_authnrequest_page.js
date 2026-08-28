@@ -750,6 +750,13 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) options.addArguments("--headless=new");
+  // The tests image gives Chrome no user namespaces for its sandbox and
+  // docker's default 64MB /dev/shm, which a renderer outgrows. Without these
+  // two the browser exits during startup and chromedriver reports
+  // `session not created: ... DevToolsActivePort file doesn't exist`, which
+  // names neither flag — and a host run passes.
+  options.addArguments("--no-sandbox");
+  options.addArguments("--disable-dev-shm-usage");
   browserFlags.addBrowserAccessFlags(options, baseUrl);
   // Date.now() alone is NOT unique: run-report.js runs jobs in a pool, and two
   // starting in the same millisecond would share a profile — one Chrome then
