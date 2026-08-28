@@ -567,6 +567,9 @@ async function theBrowserConsoleIsClean(driver) {
   const severe = entries.filter(function (entry) {
     if (entry.level.name !== "SEVERE") return false;
     if (/favicon/.test(entry.message)) return false;
+    // Nor is a load the browser abandoned because its own certificate or
+    // network configuration changed under it. See browser_flags.js.
+    if (browserFlags.isTransientLoadError(entry.message)) return false;
     return true;
   });
   assert.deepStrictEqual(severe.map(function (e) { return e.message; }), [],
@@ -662,6 +665,11 @@ async function test() {
   // than inherited.
   await driver.manage().setTimeouts({ script: 60000 });
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     const backendNoticeShown = await (async function () {
       await openThePageFromTheLandingCard(driver);
@@ -692,7 +700,7 @@ async function test() {
     } catch (e) {
       log.error("could not collect the browser log: " + e.message);
     }
-    process.exit(1);
+    testFailed = true;
   } finally {
     // Leave the far end as it was found. The truststore is process state on a
     // service other tests share, and a CA left in it would make the next run's
@@ -705,6 +713,10 @@ async function test() {
                e.message);
     }
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

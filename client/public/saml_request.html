@@ -24,7 +24,9 @@
 
 <p class="saml-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
 
-<p class="saml-intro">Drive a <strong>SAML 2.0</strong> SP-initiated SSO round-trip against an Identity Provider. Load the IdP's metadata, configure the Service Provider request, generate an SP signing key pair, and send a digitally signed <code>AuthnRequest</code>. The IdP's response is captured by the ACS endpoint and shown on the <a href="/saml_response.html">SAML Response</a> page. <strong>Note:</strong> SAML 1.0/1.1 are provided for reference only &mdash; they are IdP-initiated with no signed SP request and are <em>not</em> accepted by SAML 2.0 IdPs such as Keycloak.</p>
+<p class="saml-intro">Drive a SAML SSO round-trip against an Identity Provider, in <strong>SAML 2.0</strong> or <strong>SAML 1.1</strong>. Load the IdP's metadata, configure the Service Provider request, generate an SP signing key pair, and send the request over the chosen binding. The IdP's response is captured by the ACS endpoint and shown on the <a href="/saml_response.html">SAML Response</a> page.</p>
+
+<p class="saml-intro"><strong>The two versions are different protocols, not two spellings of one.</strong> SAML 2.0 is SP-initiated: the request is a <code>&lt;samlp:AuthnRequest&gt;</code> document, which can be signed and (here, for inspection) encrypted. <strong>SAML 1.1 has no request message at all</strong> &mdash; its browser profiles are IdP-initiated, and what a service provider actually sends is Shibboleth's <code>urn:mace:shibboleth:1.0:profiles:AuthnRequest</code>: the four query parameters <code>TARGET</code>, <code>shire</code>, <code>providerId</code> and <code>time</code>, with nothing to sign and nothing to encrypt. Every setting below that has no meaning in 1.1 is <strong>greyed out and switched off</strong> when 1.1 is selected, rather than silently ignored. SAML 1.0 remains reference-only. Keycloak speaks no SAML 1.1; the mock STS does.</p>
 
 <p id="saml_backend_notice" class="saml-notice saml-hidden">This is the static (backend-less) deployment. Loading IdP metadata, building/signing the <code>AuthnRequest</code>, and capturing the IdP's response all run entirely in the browser.<span id="saml_edge_acs_notice" class="saml-hidden"> The Assertion Consumer Service is answered at the CDN edge by a function that hands the response to the <a href="/saml_response.html">SAML Response</a> page, so the request asks for the <strong>HTTP-POST</strong> binding exactly as it would with a backend &mdash; which is what the profile requires, and what lets an <strong>encrypted assertion</strong> work here (ciphertext does not compress, so a redirect-bound encrypted response runs into URL-length limits).</span><span id="saml_redirect_fallback_notice" class="saml-hidden"> With no ACS server to receive a POST, the request asks the IdP to return its response over the <strong>HTTP-Redirect</strong> binding, which <a href="/saml_response.html">SAML Response</a> reads from the URL. Note that <a href="https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf">saml-profiles-2.0-os</a> &sect;4.1.2 says the Redirect binding <em>MUST NOT</em> be used for the response, "as the response will typically exceed the URL length permitted by most user agents" &mdash; it works here for a modest assertion, it needs the IdP to permit it, and a large or encrypted assertion may not fit browser/CDN URL-length limits.</span> The <strong>HTTP-Artifact</strong> binding needs the server-side SOAP back-channel and is unavailable here.</p>
 
@@ -97,6 +99,7 @@ function samlSetAllPanes(expand) {
 
     <div class="saml-sub">
       <div class="saml-sub-title">Single Sign-On (SSO) Endpoints</div>
+      <p class="saml-note" id="saml_sso_endpoints_note"></p>
       <div class="saml-field">
         <label title="SingleSignOnService with Binding urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST.">HTTP-POST binding URL</label>
         <input class="stored" type="text" id="saml_sso_post" name="saml_sso_post" value="http://localhost:8080/samlp/sso/post" />
@@ -115,8 +118,9 @@ function samlSetAllPanes(expand) {
       </div>
     </div>
 
-    <div class="saml-sub">
+    <div class="saml-sub" id="saml_slo_section">
       <div class="saml-sub-title">Single Logout (SLO) Endpoints</div>
+      <p class="saml-note" id="saml_slo_note"></p>
       <div class="saml-field">
         <label title="SingleLogoutService HTTP-POST Location.">HTTP-POST logout URL</label>
         <input class="stored" type="text" id="saml_slo_post" name="saml_slo_post" value="http://localhost:8080/samlp/slo/post" />
@@ -156,25 +160,26 @@ function samlSetAllPanes(expand) {
     <div class="saml-pane-body" id="pane_request_body">
 
     <div class="saml-field">
-      <label for="saml_version" title="SAML protocol version. Only 2.0 is functional against modern IdPs (Keycloak).">Protocol Version</label>
+      <label for="saml_version" title="SAML protocol version. 2.0 and 1.1 are both functional; 1.0 is reference only. Changing this changes which of the settings below apply — the ones that do not are greyed out.">Protocol Version</label>
       <select class="stored" id="saml_version" name="saml_version" onchange="return saml_request.onVersionChange();">
         <option value="2.0" selected="selected">SAML 2.0</option>
-        <option value="1.1">SAML 1.1 (reference only)</option>
+        <option value="1.1">SAML 1.1</option>
         <option value="1.0">SAML 1.0 (reference only)</option>
       </select>
     </div>
-    <p id="saml_version_warning" class="saml-notice saml-hidden">SAML 1.0/1.1 Web SSO is IdP-initiated and has no signed SP request; SAML 2.0 IdPs (including Keycloak) will not accept a 1.x request. This option builds a reference request only.</p>
+    <p id="saml_version_warning" class="saml-notice saml-hidden"></p>
 
-    <div class="saml-field">
-      <label for="saml_binding" title="Binding used to deliver the AuthnRequest to the IdP.">Binding</label>
+    <div class="saml-field" id="saml_binding_field">
+      <label for="saml_binding" title="Binding used to deliver the request to the IdP, and — for HTTP-Artifact — how the response comes back.">Binding</label>
       <select class="stored" id="saml_binding" name="saml_binding">
         <option value="redirect" selected="selected">HTTP-Redirect (GET)</option>
         <option value="post">HTTP-POST</option>
         <option value="artifact">HTTP-Artifact</option>
       </select>
     </div>
+    <p class="saml-note" id="saml_binding_note"></p>
 
-    <div class="saml-field">
+    <div class="saml-field" id="saml_hint_field">
       <label for="saml_username_hint" title="Optional subject hint. Its allowed structure is constrained by the selected NameIDFormat.">Username hint (optional)</label>
       <input class="stored" type="text" id="saml_username_hint" name="saml_username_hint" oninput="return saml_request.validateHint();" />
       <div id="saml_hint_help" class="saml-status" style="border:none;background:none;padding-left:0;"></div>
@@ -183,19 +188,22 @@ function samlSetAllPanes(expand) {
     <div class="saml-field">
       <label class="saml-has-copy" title="This SP's entityID (Issuer of the AuthnRequest).">SP entityID <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_sp_entity_id');">Copy</button></label>
       <input class="stored" type="text" id="saml_sp_entity_id" name="saml_sp_entity_id" />
+      <div class="saml-note" id="saml_sp_entity_id_note"></div>
     </div>
     <div class="saml-field">
       <label class="saml-has-copy" title="Assertion Consumer Service URL (where the IdP posts the SAMLResponse). Hosted by the API layer.">ACS URL <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_acs_url');">Copy</button></label>
       <input class="stored" type="text" id="saml_acs_url" name="saml_acs_url" />
+      <div class="saml-note" id="saml_acs_url_note"></div>
     </div>
 
-    <div class="saml-field saml-check">
+    <div class="saml-field saml-check" id="saml_sign_field">
       <input class="stored" type="checkbox" id="saml_sign_request" name="saml_sign_request" checked="checked" onchange="return saml_request.onSignChange();" />
       <label for="saml_sign_request" title="When enabled, the AuthnRequest is digitally signed with the SP signing key pair below. Disable to hide the SP Signing Key Pair fields.">Digitally sign the AuthnRequest</label>
     </div>
 
     <div class="saml-sub" id="saml_signing_section">
       <div class="saml-sub-title">SP Signing Key Pair (X.509 / RSA)</div>
+      <p class="saml-note" id="saml_keypair_role_note"></p>
       <div class="saml-field">
         <label for="saml_sig_alg" title="XML Signature algorithm (SignatureMethod) — the public-key algorithm plus digest — used to sign the AuthnRequest. Applies to both the HTTP-Redirect query-string signature (SigAlg) and the HTTP-POST enveloped signature. The SP key pair is RSA, so the RSA-based methods apply.">Signature Algorithm</label>
         <select class="stored" id="saml_sig_alg" name="saml_sig_alg">
@@ -235,7 +243,7 @@ function samlSetAllPanes(expand) {
       </div>
     </div>
 
-    <div class="saml-field saml-check">
+    <div class="saml-field saml-check" id="saml_encrypt_field">
       <input class="stored" type="checkbox" id="saml_encrypt_request" name="saml_encrypt_request" onchange="return saml_request.onEncryptChange();" />
       <label for="saml_encrypt_request" title="Encrypt the AuthnRequest with XML Encryption. Applied AFTER any digital signature (sign-then-encrypt). Encryption without a signature is allowed but unusual.">Encrypt the AuthnRequest</label>
     </div>
@@ -314,7 +322,7 @@ function samlSetAllPanes(expand) {
 
     <div class="saml-sub" id="saml_wsa_section">
       <div class="saml-sub-title">WS-Addressing (SOAP / HTTP-Artifact back-channel)</div>
-      <p class="saml-note">WS-Addressing is a <strong>SOAP header</strong> mechanism &mdash; it is <em>not</em> part of the <code>AuthnRequest</code> and has no effect on the HTTP-Redirect/POST bindings. These values are added to the SOAP envelope of the <code>&lt;ArtifactResolve&gt;</code> the API sends to the IdP's Artifact Resolution Service, so they apply <strong>only when the HTTP-Artifact binding is used</strong>.</p>
+      <p class="saml-note">WS-Addressing is a <strong>SOAP header</strong> mechanism &mdash; it is <em>not</em> part of the request document and has no effect on the HTTP-Redirect/POST bindings. These values are added to the SOAP envelope the API sends to the IdP's artifact resolution endpoint &mdash; a SAML 2.0 <code>&lt;samlp:ArtifactResolve&gt;</code>, or a SAML 1.1 <code>&lt;samlp:Request&gt;</code> carrying an <code>&lt;AssertionArtifact&gt;</code> &mdash; so they apply <strong>only when the HTTP-Artifact binding is used</strong>. They apply to both versions.</p>
       <div class="saml-field">
         <label for="saml_wsa_to" title="wsa:To — destination endpoint. Defaults to the Artifact Resolution Service URL.">wsa:To</label>
         <input class="stored" type="text" id="saml_wsa_to" name="saml_wsa_to" placeholder="(defaults to the ARS URL)" />
@@ -338,13 +346,13 @@ function samlSetAllPanes(expand) {
     </div>
 
     <div class="saml-field">
-      <label class="saml-has-copy" title="The AuthnRequest that will be sent — regenerated automatically whenever a setting above changes.">Generated AuthnRequest <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_authn_request');">Copy</button></label>
+      <label class="saml-has-copy" id="saml_authn_request_label" title="The request that will be sent — regenerated automatically whenever a setting above changes. In SAML 2.0 this is the AuthnRequest document (or, for the Redirect binding, the signed request URL); in SAML 1.1 there is no request document, so it is the inter-site transfer request itself.">Generated AuthnRequest <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml_authn_request');">Copy</button></label>
       <textarea rows="6" id="saml_authn_request" name="saml_authn_request" readonly></textarea>
     </div>
 
     <div class="saml-row">
       <input type="button" class="saml-btn" value="Call IdP" onclick="return saml_request.callIdp();" title="Sign the AuthnRequest and send it to the IdP SSO endpoint." />
-      <input type="button" class="saml-btn" value="Logout" onclick="return saml_request.singleLogout();" title="Build and send a signed LogoutRequest for the last-authenticated session." />
+      <input type="button" class="saml-btn" id="saml_logout_btn" value="Logout" onclick="return saml_request.singleLogout();" title="Build and send a signed LogoutRequest for the last-authenticated session. SAML 1.1 has no Single Logout, so this is unavailable there." />
       <input type="button" class="saml-btn" value="Download SP Metadata" onclick="return saml_request.downloadSpMetadata();" title="Download this Service Provider's SAML EntityDescriptor (metadata) to register on the IdP." />
     </div>
     <input class="saml-status" type="text" id="saml_call_status" name="saml_call_status" readonly title="Status of the last build/call." />

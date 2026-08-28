@@ -16,6 +16,9 @@ set -x
 # Usage:
 #   ./docker-run-tests.sh
 #   CONFIG_FILE=./env/docker-tests.js ./docker-run-tests.sh
+#   STS_LOG_LEVEL=info ./docker-run-tests.sh   # quieten the mock STS; see below
+#   TEST_CONCURRENCY=6 ./docker-run-tests.sh   # jobs at once; see below
+#   TEST_CONCURRENCY=1 ./docker-run-tests.sh   # sequential, live output
 #
 
 # CONFIG_FILE selects the api/client build-time config baked into their images.
@@ -32,6 +35,88 @@ set -x
 # no SAML env exports are needed (or reachable) from this host launcher.
 CONFIG_FILE="${CONFIG_FILE:-./env/docker-tests.js}"
 export CONFIG_FILE
+
+# ---------------------------------------------------------------------------
+# THE MOCK STS'S LOG LEVEL, exposed here so a run can turn it down.
+#
+# `STS_LOG_LEVEL` is a setting of the mock (see sts/common/config.js), and an
+# environment variable there OUTRANKS the appconfig file `CONFIG_FILE` selects
+# — so this one variable overrides whatever env/local.js or env/docker-tests.js
+# says without either file being edited. The compose files pass it through to
+# every sts service in the BARE form, which means "only if the shell that ran
+# this launcher has it": unset here, unset in the container, and the appconfig
+# file's own level applies exactly as it did before this existed.
+#
+# WHY YOU WOULD SET IT. The mock logs every request, every response and every
+# token or assertion both before and after signing, and it does that at DEBUG,
+# which is its default and the point of a mock — when a test fails, that log is
+# the only record of what was issued. It is also expensive: it is about half of
+# that service's CPU, and a benchmark of it wrote 156MB in sixteen seconds. With
+# several test jobs driving ONE instance at once, `STS_LOG_LEVEL=info` roughly
+# doubles what that instance can answer.
+#
+# DEBUG IS DELIBERATELY STILL THE DEFAULT. Turning it down trades the record of
+# what the mock did for throughput, and that is a choice a run makes rather than
+# one that should be made for it.
+#
+#   STS_LOG_LEVEL=info ./docker-run-tests.sh
+#
+# EXPORTED ONLY WHEN IT HAS A VALUE, and the guard is not decoration. `export`
+# on an unset variable does leave it unset, so the `if` changes nothing today —
+# it is here to stop this being "simplified" later into a plain assignment with
+# an empty default. An empty STS_LOG_LEVEL is not a harmless default: bunyan
+# throws `unknown level name: ""` while the mock is still loading its modules,
+# so the service does not start, and on the containerized stack that arrives as
+# a compose healthcheck timeout rather than as anything naming a log level.
+# ---------------------------------------------------------------------------
+if [ -n "${STS_LOG_LEVEL:-}" ]; then
+  export STS_LOG_LEVEL
+fi
+
+# ---------------------------------------------------------------------------
+# HOW MANY JOBS RUN AT ONCE, and how long one may take before it is killed.
+#
+# The suite is ~200 independent jobs and run-report.js runs them in a POOL. Both
+# settings are read INSIDE the tests container, so both have to cross two
+# boundaries to get there: `sudo`, which empties the environment and forwards
+# only what common/common.sh lists in COMPOSE_FORWARDED_VARS, and compose, which
+# substitutes them into the tests service (docker-compose-run-tests.yml). Until
+# 2026-08-27 neither name was on that list, so a value set here reached compose
+# as empty and the pool sized itself from the CONTAINER's view of the cores as
+# though nothing had been asked for — no warning, and a wall clock that looked
+# like the default because it WAS the default.
+#
+#   TEST_CONCURRENCY   jobs at once. Unset means decide in the container: one
+#                      less than its cores, held between 2 and 4. The cap is not
+#                      politeness — the longest jobs are CPU-bound in-browser
+#                      crypto, and on THIS stack Keycloak, Postgres, the mock
+#                      STS, both walt.id containers and the WS-Fed side-car are
+#                      all on the same machine, so raising it past the cores
+#                      trades the suite's wall clock for those services'
+#                      response times and buys nothing.
+#   TEST_JOB_TIMEOUT_MS  per-job watchdog in ms (default 900000 — 15 minutes;
+#                      0 disables it). Raise it if a heavily loaded pool starts
+#                      reporting timeouts on jobs that pass alone.
+#
+#   TEST_CONCURRENCY=6 ./docker-run-tests.sh
+#   TEST_CONCURRENCY=1 ./docker-run-tests.sh   # sequential, live output
+#
+# TEST_CONCURRENCY=1 IS THE FIRST THING TO TRY when a job fails in the pool and
+# passes on its own: it restores the old one-at-a-time run exactly, streamed
+# output included. What must not overlap is declared in JOB_LOCKS at the top of
+# tests/run-report.js — the mock STS keeps its /admin configuration in memory
+# and it survives between jobs, so a test that reconfigures a shared service
+# and does not hold a lock fails in somebody ELSE's assertion.
+#
+# NEITHER IS ASSIGNED OR EXPORTED HERE, and unlike STS_LOG_LEVEL above that is
+# not an oversight to be corrected. `VAR=x ./this-script` already puts the name
+# in this shell, docker_compose()'s forwarding loop reads it with an `eval` on
+# the shell variable rather than out of the exported environment, and it skips
+# a name whose value is empty. So an assignment with an empty default would add
+# nothing and a default with a VALUE would silently override what the caller
+# asked for — the pool's own sizing (which can see the container's cores, as
+# this shell cannot) is the better fallback. Leave this a comment.
+# ---------------------------------------------------------------------------
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose-run-tests.yml}"
 
@@ -90,7 +175,7 @@ generateWaltidVerifierKey
 check_return_code $?
 renderWaltidConfig "${CURRENT_DIR}"
 check_return_code $?
-EXTENSION_AUTOARM_ORIGINS="http://sts:8081" \
+EXTENSION_AUTOARM_ORIGINS="https://sts:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # the browser runs inside the compose network
 check_return_code $?
 

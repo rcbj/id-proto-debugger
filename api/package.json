@@ -8,6 +8,8 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.8.1",
     "@xmldom/xmldom": "^0.9.8",
     "axios": "^1.16.0",
     "body-parser": "^2.2.2",
@@ -18,7 +20,7 @@
     "express-swagger-generator": "^1.1.17",
     "ldapjs": "file:node-ldapjs",
     "logops": "latest",
-    "xml-crypto": "^6.0.0",
+    "node-forge": "^1.3.1",
     "xpath": "^0.0.34"
   },
   "overrides": {

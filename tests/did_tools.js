@@ -45,6 +45,7 @@ const { Command, Option } = require("commander");
 const common = require("./jwt_vc_json_common.js");
 const paths = require("./module_paths.js");
 const browserFlags = require("./browser_flags.js");
+const waitForContent = require("./wait_for.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -59,7 +60,7 @@ const did = paths.requireSharedModule(
   [path.join(__dirname, "did.js"), path.join(ROOT, "client", "src", "did.js")],
   "the wallet's DID module");
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 var baseUrl = "http://localhost:3000";
@@ -189,6 +190,12 @@ async function openPage(driver) {
     return await driver.executeScript(
         "return !!document.getElementById('did_identifier');");
   }, waitTime * 4, "did-tools.html did not load its DID pane");
+  // The pane above is static markup and is there as soon as the page parses.
+  // Every control on it is wired INLINE — `onclick="didtools.resolveDid()"` —
+  // so it is the bundle behind that name, not the element, that has to have
+  // arrived before anything here presses a button. See waitForBundle().
+  await waitForContent.waitForBundle(driver, "didtools",
+    "did-tools.html's bundle", waitTime * 6);
   log.debug("Leaving openPage().");
 }
 
@@ -561,6 +568,9 @@ async function severeErrors(driver) {
   return entries.filter(function (e) {
     if (!e.level || e.level.name !== "SEVERE") return false;
     if (/favicon|manifest/i.test(e.message)) return false;
+    // A load the browser abandoned because its own configuration changed
+    // under it is not a page error either. See browser_flags.js.
+    if (browserFlags.isTransientLoadError(e.message)) return false;
     if (e.message.indexOf(DELIBERATE_404) !== -1) return false;
     return true;
   }).map(function (e) { return e.message; });

@@ -74,7 +74,20 @@ var EXCLUDED_PAGES = [
   // call to the api, and there is not one thing left on it that works without
   // one. Unlike the Kerberos family there is no decoder half to consider — the
   // page has no offline mode at all.
-  'ldap'
+  'ldap',
+  // SPIFFE, and it is the FOURTH page here and the least ambiguous of the
+  // four. A browser cannot produce gRPC at all — no HTTP/2 stream of its own,
+  // no trailers, no way to read a `grpc-status`, and no way to present a
+  // client certificate — so both of SPIFFE's gRPC surfaces live entirely in
+  // the api (api/spiffe_client.js). Note what this costs and what it does not:
+  // the bundle endpoint IS plain HTTPS and the page's bundle reader, SVID
+  // inspector and SPIFFE ID checker each need no network at all, so unlike
+  // Kerberos there is a real offline half here. It goes anyway, because a page
+  // whose two biggest panes are permanently dead is worse than a card that
+  // says why — the same judgement made about SPNEGO, and the opposite of the
+  // one made about PKI and SCIM, whose api-less halves are the majority of
+  // those pages rather than a corner of them.
+  'spiffe'
 ];
 
 // Everything else those pages own, as paths relative to the site root. Only
@@ -106,7 +119,10 @@ var EXCLUDED_ASSETS = [
   'partials/krb_tickets.html',
   // The LDAP page's own stylesheet. It has no partials — the page is one file —
   // so this is the whole of what it owns beyond the page and the bundle.
-  'css/ldap.css'
+  'css/ldap.css',
+  // The SPIFFE page's own stylesheet. It has no partials — the page is one
+  // file — so this is the whole of its assets.
+  'css/spiffe.css'
 ];
 
 // The marker an <a class="landing-card"> carries in client/public/index.html to

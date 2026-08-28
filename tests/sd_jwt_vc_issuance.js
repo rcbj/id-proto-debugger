@@ -57,11 +57,13 @@ const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({ name: 'sd_jwt_vc_issuance',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
@@ -74,7 +76,7 @@ var fetchWait = Math.max(waitTime, 20000);
 // runs per process.
 require("./wait_for").configure({ timeout: fetchWait });
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 var issuerMetadataUrl = issuerBase + "/.well-known/openid-credential-issuer";
@@ -97,6 +99,21 @@ var SD_JWT_VC_TYP = "dc+sd-jwt";
 // OID4VCI's pre-authorized code grant, used by the cross-device use cases.
 var PRE_AUTHORIZED_GRANT =
     "urn:ietf:params:oauth:grant-type:pre-authorized_code";
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -161,6 +178,61 @@ const {
   text, value, waitFor, waitForStatus, waitForValue, waitForFilled, waitForJson
 } = require("./wait_for");
 
+// ---------------------------------------------------------------------------
+// STEP 3's CHECKS TABLE IS FILLED IN TWO PASSES, and reading it after the first
+// one is what failed the run of 2026-08-24T12-43-25.
+//
+// vc_issuance_3.js's verify() renders the rows it can decide from the
+// credential alone — typ, alg, vct, cnf, _sd_alg, the validity window, the
+// KB-JWT — and then appends two more when their promises settle: "Disclosure
+// digests", once every Disclosure has been hashed, and "Issuer signature",
+// once the issuer's keys have been FETCHED OVER THE NETWORK (the JWT VC issuer
+// metadata, then its jwks_uri) and the JWS verified against them.
+//
+// So the table is legitimately seven rows for as long as that fetch takes, and
+// a test that reads it the moment the credential appears reads seven rows,
+// none of them FAILED, and no signature verdict at all — the assertion then
+// reports "the page must verify the issuer signature ... Got: undefined",
+// which names a product bug for what is a network round-trip that had not
+// finished. The gap it used to win by is only the slack in `until.urlContains`
+// plus click()'s sleep, a few hundred milliseconds; on a machine running the
+// whole suite in a pool that slack is not enough.
+//
+// Both late rows are appended on the FAILURE path too — the catch pushes a row
+// saying why the signature could not be checked — so waiting for the pair is a
+// wait on the page having FINISHED, never a wait on it having succeeded: a
+// credential that genuinely does not verify still arrives here and still fails
+// the assertions below.
+// ---------------------------------------------------------------------------
+var CHECK_ROWS_SCRIPT =
+  "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
+      "tbody tr')).map(function (tr) {" +
+  "  var td = tr.querySelectorAll('td');" +
+  "  return { name: td[0].textContent.trim(), result: " +
+      "td[1].textContent.trim(), detail: td[2].textContent.trim() };" +
+  "});";
+
+// The two rows that arrive late. See the note above.
+var LATE_CHECKS = ["Disclosure digests", "Issuer signature"];
+
+async function readStepThreeChecks(driver, message) {
+  log.debug("Entering readStepThreeChecks().");
+  var rows = await waitFor(driver,
+    function () {
+      return driver.executeScript(CHECK_ROWS_SCRIPT);
+    },
+    function (got) {
+      var names = (got || []).map(function (c) { return c.name; });
+      return LATE_CHECKS.every(function (name) {
+        return names.indexOf(name) !== -1;
+      });
+    },
+    (message || "step 3") + " should finish its checks — the digests and " +
+        "the issuer signature are appended after their promises settle");
+  log.debug("Leaving readStepThreeChecks().");
+  return rows;
+}
+
 function severeErrors(driver) {
   log.debug("Entering severeErrors().");
   log.debug("Leaving severeErrors().");
@@ -169,6 +241,11 @@ function severeErrors(driver) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
       // A favicon that is not there is not a page error.
       .filter(function (e) { return !/favicon/.test(e.message); })
+      // Nor is a load the BROWSER abandoned because its own certificate or
+      // network configuration changed underneath it. See browser_flags.js.
+      .filter(function (e) {
+        return !browserFlags.isTransientLoadError(e.message);
+      })
       .map(function (e) { return e.message; });
   });
 }
@@ -242,10 +319,12 @@ async function stepOne(driver) {
   log.debug("Entering stepOne().");
   log.info("=== Step 1: discover the issuer ===");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.sleep(500);
@@ -307,6 +386,7 @@ async function stepOne(driver) {
     "window.localStorage.setItem('oidc_discovery_endpoint', arguments[0]);",
         "https://localhost/oidc/.well-known");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.sleep(500);
@@ -326,6 +406,7 @@ async function stepOne(driver) {
   // Back to the clean slate the rest of this step assumes.
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.sleep(500);
@@ -471,6 +552,7 @@ async function stepOne(driver) {
   // ... and that survives a reload, where the values come back out of local
   // storage as plain strings.
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_display")), waitTime);
   await driver.sleep(700);
   var afterReload = await driver.executeScript(
@@ -697,6 +779,20 @@ async function stepTwo(driver) {
   // The whole request is built up front, so the pane shows what Approve will
   // send rather than filling in after the fact — by which point this page has
   // already handed over to step 3.
+  //
+  // "Up front" is still a promise chain: prepareRequest() fetches the c_nonce
+  // over the network, then signs the proof, then builds the body. Reading the
+  // pane the moment the holder key appears is therefore a race with that fetch,
+  // and it lost on the run of 2026-08-27T17-49-28 — the nonce was still the
+  // page's "—" placeholder, which reads as an issuer that published no nonce
+  // endpoint. Wait for the content, in the order the chain fills it; the other
+  // two readers of this pane (stepTwoWithoutTokens, staleProofRecovery) already
+  // do.
+  await waitForStatus(driver, "vc_nonce",
+    function (v) { return v !== "" && v !== "—"; },
+    "step 2 never fetched a c_nonce.");
+  await waitForFilled(driver, "vc_proof_jwt",
+    "step 2 never signed the proof of possession.");
   var preview = await driver.executeScript(
     "return { nonce: document.getElementById('vc_nonce').textContent.trim()," +
     "         proof: document.getElementById('vc_proof_jwt').value," +
@@ -782,6 +878,7 @@ async function stepTwo(driver) {
   // Back to step 2 to approve. The tokens are still in storage, so the page
   // stands on its own.
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.sleep(600);
   await click(driver, By.id("vc_approve_button"));
@@ -804,13 +901,7 @@ async function stepThree(driver, context) {
       "step 3 should show the credential");
 
   // ---- what the page says --------------------------------------------------
-  var checks = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
-        "tbody tr')).map(function (tr) {" +
-    "  var td = tr.querySelectorAll('td');" +
-    "  return { name: td[0].textContent.trim(), result: " +
-        "td[1].textContent.trim(), detail: td[2].textContent.trim() };" +
-    "});");
+  var checks = await readStepThreeChecks(driver, "step 3");
   assert.ok(checks.length >= 7, "step 3 should report its checks, got " +
             checks.length + ".");
   var failed = checks.filter(function (c) { return c.result === "FAILED"; });
@@ -1415,12 +1506,14 @@ async function didConfigurationPane(driver) {
   log.debug("Entering didConfigurationPane().");
   log.info("=== The DID Configuration pane ===");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
   // This section needs an empty pane to measure, and the sections after it need
   // the credential the workflow issued. See preservingLocalStorage().
   var restoreStorage = await preservingLocalStorage(driver);
   await driver.executeScript("localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
 
   // The resource's path is fixed by the specification, so the pane should offer
@@ -1589,6 +1682,7 @@ async function stepOneFitsInOneRow(driver) {
   var before = await driver.manage().window().getRect();
   await driver.manage().window().setRect({ width: 1512, height: 982 });
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
   // Measured empty first and populated second, so the workflow's own state has
   // to be put back before the sections that need it. See
@@ -1596,6 +1690,7 @@ async function stepOneFitsInOneRow(driver) {
   var restoreStorage = await preservingLocalStorage(driver);
   await driver.executeScript("localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("didcfg_url")), waitTime * 4);
   await driver.sleep(300);
 
@@ -1797,6 +1892,7 @@ async function chooserFitsOnOneScreen(driver) {
   var before = await driver.manage().window().getRect();
   await driver.manage().window().setRect({ width: 1512, height: 982 });
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_usecases")), waitTime * 4);
   await driver.sleep(300);
 
@@ -1991,6 +2087,7 @@ async function metadataSignatureValidation(driver) {
   var openStep1 = async function () {
     log.debug("Entering openStep1().");
     await driver.get(baseUrl + "/vc-issuance-1.html");
+    await pageBundleReady(driver);
     await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                       waitTime);
     log.debug("Leaving openStep1().");
@@ -2000,8 +2097,16 @@ async function metadataSignatureValidation(driver) {
   // finished verdict from a pane still working. Waiting on content rather than
   // sleeping also means a hung promise fails HERE, naming the pane, instead of
   // somewhere downstream.
+  // The status line is EMPTIED before the click, so what comes back can only
+  // be the verdict this click produced. Every one of these calls follows a page
+  // load, where the line is empty anyway — but "anyway" is the assumption that
+  // makes a stale read indistinguishable from a real verdict, and this pane
+  // states four verdicts in a row that differ only in their text.
   var verdictOf = async function (pane, why) {
     log.debug("Entering verdictOf().");
+    await driver.executeScript(
+      "var e = document.getElementById(arguments[0]);" +
+      "if (e) { e.textContent = ''; }", pane.statusId);
     await click(driver, By.id(pane.buttonId));
     log.debug("Leaving verdictOf().");
     return await waitForStatus(driver, pane.statusId,
@@ -2009,15 +2114,58 @@ async function metadataSignatureValidation(driver) {
       "the " + pane.name + " pane never reached a verdict " + why);
   };
   // Rewrite the stored document, then reload so the page picks it up.
+  //
+  // AND THEN PROVE THE REWRITE IS STILL THERE, which is the point of the last
+  // half of this function. The page validates the document it is USING, and it
+  // takes that from storage on load — so anything that puts the pristine
+  // document back between the write and the read turns every assertion below
+  // into a statement about a document nobody tampered with. That is not
+  // hypothetical: the containerized run of 2026-08-21 reported "a tampered
+  // signed_metadata must be rejected. Got: VALID — signature verified", which
+  // reads as the product accepting a broken signature and is equally
+  // consistent with the tamper never having survived the reload. Nothing in
+  // that failure could tell the two apart. This can: the setup is asserted
+  // where it is made, so a lost write fails HERE, naming the pane and the key.
   var tamperStored = async function (pane, mutate) {
     log.debug("Entering tamperStored().");
-    await driver.executeScript(
-      "var doc = JSON.parse(localStorage.getItem(arguments[0]));" +
+    var written = await driver.executeScript(
+      "var before = localStorage.getItem(arguments[0]);" +
+      "var doc = JSON.parse(before);" +
       "(" + mutate + ")(doc);" +
-      "localStorage.setItem(arguments[0], JSON.stringify(doc));",
-          pane.storeKey);
+      "var after = JSON.stringify(doc);" +
+      "localStorage.setItem(arguments[0], after);" +
+      "return { before: before, after: after };", pane.storeKey);
+    // A mutation that changed nothing would leave every check below asserting
+    // against a pristine document and passing or failing for its own reasons.
+    assert.notStrictEqual(written.after, written.before,
+      pane.name + ": the mutation left " + pane.storeKey +
+          " byte-for-byte unchanged, so nothing below is testing a tampered " +
+      "document.");
+    // A marker on THIS document, which a real navigation destroys. The page
+    // validates the copy it is HOLDING — documentForValidation() prefers the
+    // in-memory document over the stored one — so a `get()` that did not
+    // actually replace the document would go on validating the pristine copy
+    // this page read at load while storage says something else entirely, and
+    // the storage check below would pass while the verdict was about the wrong
+    // bytes.
+    await driver.executeScript("window.__tamperMarker = 'set';");
     await openStep1();
     await driver.sleep(500);
+    var stale = await driver.executeScript(
+      "return window.__tamperMarker || null;");
+    assert.strictEqual(stale, null,
+      pane.name + ": vc-issuance-1.html was not reloaded after the tamper — " +
+      "the document from before it is still in the tab, so the page is still " +
+      "holding the untampered copy it read at load.");
+    var reloaded = await driver.executeScript(
+      "return localStorage.getItem(arguments[0]);", pane.storeKey);
+    assert.strictEqual(reloaded, written.after,
+      pane.name + ": " + pane.storeKey + " no longer holds the tampered " +
+      "document after reloading vc-issuance-1.html, so the page is " +
+      "validating something this test did not write and every verdict below " +
+      "is about the wrong bytes. Something on that page put a document back " +
+      "into storage — look for a retrieval that ran on load. Stored now:\n" +
+      String(reloaded).slice(0, 400));
     log.debug("Leaving tamperStored().");
   };
 
@@ -2088,6 +2236,7 @@ async function metadataSignatureValidation(driver) {
 
     // --- THE FIX: navigate away, come back, do not retrieve ----------------
     await driver.get(baseUrl + "/vc-issuance-0.html");
+    await pageBundleReady(driver);
     await driver.sleep(400);
     await openStep1();
     await driver.sleep(600);
@@ -2638,6 +2787,7 @@ async function panesContainTheirContent(driver) {
   // own width — a <pre> and a <textarea> in the same pane must come out the
   // same.
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_request_body")), waitTime);
   await driver.sleep(700);
   var boxes = await driver.executeScript(
@@ -2676,6 +2826,7 @@ async function credentialHistoryNavigation(driver, generations) {
   log.debug("Entering credentialHistoryNavigation().");
   log.info("=== Step 4: the Credential History pane ===");
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_reissue_proof"));
@@ -2845,6 +2996,7 @@ async function credentialHistoryNavigation(driver, generations) {
     return /^generation 1 of 2/.test((await navState()).position);
   }, fetchWait, "Older should move back again.");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   // The table element is in the HTML; the pane renders into it from
   // localStorage after load. Wait for the position to say so, the same as the
@@ -2856,6 +3008,7 @@ async function credentialHistoryNavigation(driver, generations) {
   // ... and step 3 verifies whatever the history activated, including the cnf
   // binding, which is the check that would fail if the key had not travelled.
   await driver.get(baseUrl + "/vc-issuance-3.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_credential_raw")), waitTime);
   // Waiting for the RIGHT value, not just any value: this is the assertion.
   await waitForValue(driver, "vc_credential_raw",
@@ -2870,6 +3023,7 @@ async function credentialHistoryNavigation(driver, generations) {
   // Seeded rather than made by 120 real refreshes: what is under test is the
   // pane's behaviour with a long log, not the issuer's patience.
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.executeScript(
     "var real = " +
@@ -2886,6 +3040,7 @@ async function credentialHistoryNavigation(driver, generations) {
     "localStorage.setItem('sdjwtvc_credential_history', " +
         "JSON.stringify(padded.concat(real)));");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.sleep(900);
   var longLog = await driver.executeScript(
@@ -2930,6 +3085,7 @@ async function credentialHistoryNavigation(driver, generations) {
     "var one = JSON.parse(localStorage.getItem('sdjwtvc_credential_history')).slice(-1);" +
     "localStorage.setItem('sdjwtvc_credential_history', JSON.stringify(one));");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_table")), waitTime);
   await driver.sleep(700);
   var shortLog = await driver.executeScript(
@@ -2946,6 +3102,7 @@ async function credentialHistoryNavigation(driver, generations) {
 
   // ---- clearing forgets the list, not the credential ----------------------
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_history_clear_button")),
                     waitTime);
   await driver.sleep(600);
@@ -2988,11 +3145,13 @@ async function refreshNegatives(driver) {
   // than removed: "the server refused it" and "there is none" are different
   // states and the page has to distinguish them.
   await driver.get(baseUrl + "/vc-issuance-4.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_refresh_button")), waitTime);
   await driver.executeScript(
     "localStorage.setItem('token_refresh_token', arguments[0]);",
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJub3QtYS1yZWFsLXJlZnJlc2gtdG9rZW4ifQ.bm90LWEtc2lnbmF0dXJl");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_refresh_button")), waitTime);
   await driver.sleep(500);
   await click(driver, By.id("vc_refresh_button"));
@@ -3040,6 +3199,7 @@ async function refreshNegatives(driver) {
   // normally leaves behind.
   await driver.executeScript("localStorage.removeItem('token_refresh_token');");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_reissue_button")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_reissue_proof"));
@@ -3139,6 +3299,7 @@ async function inspectLinksReturnHere(driver) {
   log.debug("Entering inspectLinksReturnHere().");
   log.info("=== The Inspect links on step 2 ===");
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_access_token")), waitTime);
   // Both fields exist in the HTML before the page restores them from
   // localStorage, so wait for the values rather than for the elements.
@@ -3220,6 +3381,7 @@ async function stepTwoWithoutTokens(driver) {
     "localStorage.removeItem('token_id_token');" +
     "localStorage.removeItem('token_refresh_token');");
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
@@ -3264,6 +3426,7 @@ async function staleProofRecovery(driver) {
   log.debug("Entering staleProofRecovery().");
   log.info("=== A proof that went stale before Approve ===");
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_approve_button")), waitTime);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
@@ -3337,6 +3500,7 @@ var WRONG_ISSUER = "http://localhost:8181/not-the-offering-issuer";
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -3365,6 +3529,7 @@ async function credentialOfferSameDevice(driver) {
 
   // ---- step 0: the chooser ------------------------------------------------
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")),
                     waitTime);
   // Start with no use case chosen and no offer in hand — and then say which
@@ -3378,6 +3543,7 @@ async function credentialOfferSameDevice(driver) {
     "window.localStorage.setItem('vci_metadata_endpoint', arguments[0] + " +
     "  '/.well-known/openid-credential-issuer');", issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")),
                     waitTime);
   await driver.sleep(300);
@@ -3548,6 +3714,7 @@ async function credentialOfferSameDevice(driver) {
   await driver.get(logoutUrl);
   await driver.sleep(600);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("start_issuance_button")),
                     waitTime);
   await driver.sleep(400);
@@ -3602,13 +3769,9 @@ async function credentialOfferSameDevice(driver) {
     assert.ok(String(payload.sub).indexOf(signInUser) !== -1,
       "it should describe the user who signed in. Got: " + payload.sub);
   }
-  var failed = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
-        "tbody tr'))" +
-    "  .filter(function (tr) { return " +
-        "tr.querySelectorAll('td')[1].textContent.trim() === 'FAILED'; })" +
-    "  .map(function (tr) { return " +
-        "tr.querySelectorAll('td')[0].textContent.trim(); });");
+  var failed = (await readStepThreeChecks(driver, "the H.1 credential"))
+    .filter(function (c) { return c.result === "FAILED"; })
+    .map(function (c) { return c.name; });
   assert.strictEqual(failed.length, 0,
                      "no check should fail on the H.1 credential: " +
                      failed.join(", "));
@@ -3680,6 +3843,7 @@ async function crossDeviceOffer(driver) {
   // Step 0 needs to know which issuer to send the End-User to; the offer that
   // comes back is what configures everything else.
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")),
                     waitTime);
   await driver.executeScript(
@@ -3688,6 +3852,7 @@ async function crossDeviceOffer(driver) {
     "window.localStorage.setItem('vci_metadata_endpoint', arguments[0] + " +
     "  '/.well-known/openid-credential-issuer');", issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id(
                     "vc_usecase_offer-cross-device")), waitTime);
   await click(driver, By.id("vc_usecase_offer-cross-device"));
@@ -3729,6 +3894,7 @@ async function crossDeviceOffer(driver) {
   // the offer itself (see misconfigureTheWallet).
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -3904,6 +4070,7 @@ async function deferredIssuance(driver) {
         "this one should.");
 
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.css("button.vc-usecase")),
                     waitTime);
   await driver.executeScript(
@@ -3912,6 +4079,7 @@ async function deferredIssuance(driver) {
     "window.localStorage.setItem('vci_metadata_endpoint', arguments[0] + " +
     "  '/.well-known/openid-credential-issuer');", issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_usecase_offer-deferred")),
                     waitTime);
   await click(driver, By.id("vc_usecase_offer-deferred"));
@@ -3924,6 +4092,7 @@ async function deferredIssuance(driver) {
         "document.getElementById('offer_uri').textContent.trim() };");
 
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -4046,14 +4215,7 @@ async function deferredIssuance(driver) {
 // Step 3's verdicts, for a credential that a working issuer has just issued.
 async function assertStepThreeIsHappy(driver, label) {
   log.debug("Entering assertStepThreeIsHappy(). label=" + label);
-  var checks = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
-        "tbody tr')).map(function (tr) {" +
-    "  var td = tr.querySelectorAll('td');" +
-    "  return { name: td[0].textContent.trim(), result: " +
-        "td[1].textContent.trim()," +
-    "           detail: td[2].textContent.trim() };" +
-    "});");
+  var checks = await readStepThreeChecks(driver, label);
   assert.ok(checks.length >= 7, "step 3 should report its checks, got " +
             checks.length + ".");
   var failed = checks.filter(function (c) { return c.result === "FAILED"; });
@@ -4328,6 +4490,7 @@ async function claimsSelection(driver) {
   // The selection is configuration like everything else on this page, so it
   // has to survive the hand-off it is about to make.
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
   var reloaded = await driver.executeScript(readRows);
   assert.deepStrictEqual(reloaded.filter(function (r) { return !r.checked; })
@@ -4416,6 +4579,7 @@ async function claimsSelection(driver) {
   // Left as it was found, because the sections after this one issue credentials
   // of their own and a selection nobody made would quietly narrow them.
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_all_button")),
                     waitTime);
   await click(driver, By.id("vc_claims_all_button"));
@@ -4459,10 +4623,12 @@ async function authorizationDetailsIsTheDefault(driver) {
   // explicitly, which is the one thing this section must not do.
   await signOutOfMockAs(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   var atLoad = await driver.executeScript(
@@ -4508,6 +4674,7 @@ async function authorizationDetailsIsTheDefault(driver) {
     "document.getElementById('handoff_request_mechanism').value = 'scope';" +
     "vcissuance1.onRequestMechanismChange();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
   var chosen = await driver.executeScript(
     "return document.getElementById('handoff_request_mechanism').value;");
@@ -4529,6 +4696,7 @@ async function authorizationDetailsIsTheDefault(driver) {
     "});" +
     "window.localStorage.setItem('vci_info', JSON.stringify(doc));");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_table")), waitTime);
   var noClaims = await driver.executeScript(
     "return { mechanism: " +
@@ -4566,10 +4734,12 @@ async function authorizationDetailsIsTheDefault(driver) {
   // URL, which is why the positive control is here rather than implied by the
   // sections that set the mechanism themselves.
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -4703,6 +4873,7 @@ async function claimsCannotTravelOnAScope(driver) {
   // afresh also proves the warning is not a one-off from the click that caused
   // it: the selection and the mechanism both come out of storage.
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_claims_use_details_button")),
                     fetchWait);
   await driver.wait(async function () {
@@ -4765,6 +4936,7 @@ async function preAuthorizedClaimsThroughThePages(driver) {
 
   await stepOneConfigured(driver, "scope");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -5283,6 +5455,7 @@ async function encryptedCredentialRequest(driver) {
   // the previous run's ciphertext at the wrong moment leaves the pane showing a
   // request that is no longer the one being sent.
   await driver.get(baseUrl + "/vc-issuance-2.html");
+  await pageBundleReady(driver);
   await driver.wait(async function () {
     return !!(await value(driver, "vc_proof_jwt"));
   }, fetchWait, "step 2 should reassemble on a fresh load.");
@@ -5496,10 +5669,12 @@ async function stepOneConfigured(driver, mechanism) {
             "scope"));
   await signOutOfMockAs(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript("window.localStorage.clear();");
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   // The ISSUER's own authorization server, not Keycloak: authorization_details
@@ -5640,6 +5815,7 @@ async function handoffParameterCheck(driver) {
   log.debug("Entering handoffParameterCheck().");
   log.info("=== The ?sdjwtvc=1 hand-off parameter ===");
   await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("oidc_discovery_endpoint")),
                     waitTime);
   // Empty the two values the hand-off needs, but leave the page "initialized"
@@ -5670,6 +5846,7 @@ async function handoffParameterCheck(driver) {
 
   // And with no parameter, none of it happens.
   await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await pageBundleReady(driver);
   await driver.sleep(700);
   var banners = await driver.executeScript(
       "return document.querySelectorAll('.vc-handoff-banner').length;");
@@ -5687,6 +5864,39 @@ async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. issuer=" + issuerMetadataUrl + ", as=" +
            asMetadataUrl);
+
+  // ---------------------------------------------------------------------
+  // THE WALLET, IN THE MOCK ISSUER'S REGISTRY, BEFORE THE PRE-AUTHORIZED
+  // GRANT IS REDEEMED.
+  //
+  // This job is the one with a foot in both camps and the registration has to
+  // say so honestly. The OIDC LEG runs against KEYCLOAK — that half's client
+  // is provisioned by common.sh's configureKeycloak() and nothing here
+  // touches it — but the pre-authorized code IS redeemed at the mock's own
+  // /oauth2/token with this same client_id, and that is the sighting this
+  // registration gets in ahead of.
+  //
+  // So what is declared is the mock-facing half only: the pre-authorized code
+  // grant and refresh_token, which are the two grants this file sends THERE.
+  // No redirect URI, because the authorization request that would use one
+  // goes to Keycloak, and registering Keycloak's callback in the mock's
+  // registry would be a configuration nothing has.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.stsBaseFor(issuerBase), {
+    identifier: clientId,
+    name: "SD-JWT VC wallet (mock issuer half)",
+    protocols: ["oauth2", "oid4vci"],
+    fields: {
+      oauthClientId: clientId,
+      oauthGrantType: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
+                       "refresh_token"],
+      oauthScope: ["openid", "profile", "email"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the wallet that redeems this issuer's pre-authorized codes"
+  });
+
   await issuerNegatives();
 
   var prefs = new logging.Preferences();

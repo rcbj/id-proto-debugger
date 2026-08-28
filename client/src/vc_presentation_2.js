@@ -956,6 +956,8 @@ function onload() {
     // unreachable — which reads as a broken issuer rather than as a wallet that
     // cannot follow a DID. did.js handles both forms.
     didLib.resolveVerificationMethod(vm,
+        // allowHttp PERMITS plain http rather than choosing it: resolve()
+        // tries https first and falls back. See did.js.
         { allowHttp: true }).then(function (resolved) {
       var multibase = resolved.method.publicKeyMultibase;
       if (!multibase) {

@@ -1,0 +1,13 @@
+# Transient copy of common/data.js staged during the image build
+# (api/Dockerfile: `COPY common/data.js .`). A local run of api/server.js needs
+# it here too, since server.js requires './data.js'. The same entry exists in
+# client/.gitignore for the same file and the same reason.
+data.js
+
+# The same thing for the two other files api/Dockerfile stages flat and a bare
+# `node server.js` therefore needs staged by hand: `COPY common/xmldsig.js .`
+# and `COPY VERSION /usr/src/app/VERSION`. Without the first, server.js dies at
+# require time with "Cannot find module './xmldsig.js'", which names a file that
+# is in the repository — just not here.
+xmldsig.js
+VERSION

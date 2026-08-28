@@ -8,8 +8,13 @@ RUN rm /bin/sh && ln -s /bin/bash /bin/sh
 # Create app directory
 WORKDIR /usr/src/app
 
-RUN apt-get update
-RUN apt-get -y install curl \
+# ONE RUN, deliberately: see the note above the same pair in
+# tests/Dockerfile. A cached `RUN apt-get update` layer keeps naming package
+# versions the archive pool has already superseded and dropped, and the
+# install below then 404s on every -updates/-security package at once — a
+# failure that reads as a broken mirror and is not one.
+RUN apt-get update \
+    && apt-get -y install curl \
         jq \
         wget \
         unzip \
@@ -86,6 +91,16 @@ RUN npm install --omit=dev
 COPY api/. .
 COPY api/env/ /usr/src/app/env/
 COPY common/data.js .
+# The XML Signature engine. api/server.js signs the SAML redirect binding and
+# the enveloped POST binding with it — it used to reach for the `xml-crypto`
+# package instead, which made this application's THIRD implementation of XML
+# Signature. Requires @xmldom/xmldom, which is already a dependency here.
+COPY common/xmldsig.js .
+# The SPIFFE ID grammar and the trust-bundle reader. WORKDIR is /usr/src/app, so
+# this lands where `require('../common/spiffe/spiffe_id.js')` resolves it — the
+# same relative path that works in a bare checkout, which is what keeps this
+# from becoming a checked-in copy the way common/data.js had to.
+COPY common/spiffe/ /usr/src/common/spiffe/
 
 # Application version: the repo-root VERSION file (M.N) plus the shared stamping
 # module, which is the client's — there is one implementation of the scheme and
@@ -109,4 +124,15 @@ ARG COVERAGE=false
 RUN if [ "$COVERAGE" = "true" ]; then npm install -g c8; fi
 
 EXPOSE 4000
+
+# ---------------------------------------------------------------------------
+# The entrypoint installs the mock STS's certificate in node's truststore when
+# STS_CERT_URL names one, and does nothing at all when it does not — see
+# api/sts_truststore.sh for why that cannot be done at build time. It ends in
+# `exec "$@"`, so CMD below is unchanged and so is docker-compose-coverage.yml's
+# `command:` override, which replaces it with c8.
+# ---------------------------------------------------------------------------
+COPY api/sts_truststore.sh /usr/src/app/sts_truststore.sh
+RUN chmod +x /usr/src/app/sts_truststore.sh
+ENTRYPOINT [ "/usr/src/app/sts_truststore.sh" ]
 CMD [ "npm", "start" ]

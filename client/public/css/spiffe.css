@@ -1,0 +1,392 @@
+/* spiffe.css — the SPIFFE Protocol Debugger's look.
+ *
+ * Every class here is prefixed `spiffe-`, and tests/navigation.js's
+ * checkStylesheetsLoaded() knows that prefix: a page using a `spiffe-` class
+ * this sheet does not define fails that test. That guard exists because the
+ * WS-Federation pages once linked the wrong stylesheet after a rename and
+ * rendered completely unstyled — the link resolved, so nothing 404'd and
+ * nothing noticed.
+ *
+ * THIS PAGE DOES NOT LINK css/saml_common.css, for the reason ldap.css records:
+ * `saml-*` names on a page that has nothing to do with SAML are what the guard
+ * above is written to catch, in the halfway state where a page uses one
+ * family's classes and loads the other's sheet.
+ *
+ * THREE LAYOUT CONSTRAINTS, and all three are already-paid-for lessons.
+ *
+ * The first is the one every page here that renders somebody else's values has
+ * had to learn: this page shows base64 DER certificates, base64url JWT-SVIDs
+ * and JSON with no spaces in it, and bootstrap's `code { white-space: nowrap }`
+ * plus an auto-layout table sized to min-content is exactly how one such value
+ * pushes a pane past the edge of the viewport. So every readout is a
+ * `<textarea>` rather than a `<pre>`, the tables are `table-layout: fixed`, and
+ * the cells that can hold an unbroken string break on any character.
+ *
+ * The second is narrower and cost more: a `<fieldset>` computes its
+ * min-content width from its contents and `overflow` on it does NOT clamp that,
+ * so one long unbroken descendant makes the PANE itself thousands of pixels
+ * wide rather than scrolling inside it. `min-inline-size: 0` on the pane is
+ * what stops that, and it has to be on the fieldset — putting it on the child
+ * does nothing.
+ *
+ * The third is the whole reason the numbers below are as small as they are:
+ * this page is LONG — nine panes, forty-nine methods and seventeen text boxes
+ * — so every margin here is paid ten times over, and the page was 5,152px
+ * tall before this sheet was tightened and is 3,355px after it. Nothing was
+ * cut to get there. Two rules follow. Spacing is in single-figure pixels
+ * throughout, and a new one should match its neighbours rather than a habit
+ * from another sheet. And a `<textarea>` gets its height from what is IN it —
+ * `data-min-rows` / `data-max-rows` in the markup and `fitTextarea()` in the
+ * bundle — never from a fixed `rows` chosen for the biggest answer it might
+ * one day hold, because most of these boxes are empty most of the time and an
+ * empty ten-row box is ten rows of white space. `tests/spiffe_page.js` asserts
+ * both halves; see docs/spiffe.md.
+ */
+
+.spiffe-return {
+  float: right;
+  margin: 2px 0 0;
+  font-size: 0.95em;
+}
+
+.spiffe-title { margin-bottom: 2px; margin-top: 0; line-height: 1.2; }
+
+.spiffe-intro {
+  max-width: 900px;
+  margin: 2px 0 4px;
+}
+
+/* The explanation of why the two gRPC surfaces are authenticated in opposite
+   ways. It is the one thing on this page a reader has to take in before
+   anything else makes sense, so it is set apart rather than left as the third
+   paragraph of four. Since the prose on this page folds, the class is on the
+   `<details>` and not on the paragraph inside it — otherwise the summary line
+   that opens the box would sit outside it. */
+.spiffe-callout {
+  background: #f6f6fa;
+  border-left: 3px solid #12107c;
+  padding: 2px 10px;
+}
+
+/* ---------------------------------------------------------------------------
+   THE PANES, and why they carry TWO class names.
+
+   `dbg-pane` / `dbg-legend` / `dbg-toggle` are the shared collapse chrome in
+   css/debugger.css that twenty-odd pages here link — the clickable title, the
+   triangle that tracks the real state, and the one switch that opens or shuts
+   the lot. This page links that sheet FIRST and its own second, so where the
+   two disagree the rules below win: the border, the padding and the margins
+   stay the tight ones the density pass arrived at, and only the behaviour is
+   borrowed. The legend keeps this workflow's colour and size the same way —
+   `.spiffe-pane > legend` is (0,1,1) and `.dbg-legend` is (0,1,0), so it wins
+   on the properties it names whatever order the sheets load in, and inherits
+   the cursor, the block display and the triangle from the ones it does not.
+
+   THE PANE IS A `<div>` AND THE COLLAPSE TARGET IS THE `<fieldset>` INSIDE IT.
+   That is the markup contract the rest of the tree uses and it is not
+   arbitrary: the title has to stay visible when the pane is shut, so it cannot
+   be inside the element that is hidden. It also moves the `min-inline-size: 0`
+   the header describes onto the INNER fieldset, which is the element that
+   still computes a min-content width from a base64 certificate.
+   ------------------------------------------------------------------------ */
+.spiffe-pane {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 4px 10px 6px;
+  margin: 0 0 6px;
+  background: #fcfcfd;
+  min-inline-size: 0;
+}
+
+/* See the header. Without this one long base64 string makes the fieldset
+   itself wider than the viewport, and no amount of overflow on a child brings
+   it back — and it has to be on the fieldset, which is now the inner element
+   rather than the pane. */
+.spiffe-pane > fieldset {
+  min-inline-size: 0;
+}
+
+.spiffe-pane > legend {
+  width: auto;
+  border: 0;
+  margin: 0 0 2px;
+  padding: 0;
+  font-size: 15px;
+  font-weight: bold;
+  color: #12107c;
+  line-height: 1.2;
+}
+
+/* The collapse-all switch row. css/debugger.css draws the switch itself; this
+   only takes the margins down to the rest of the page's. */
+.spiffe-pane-controls {
+  margin: 2px 0 4px;
+}
+
+/* THE ELEMENT-AND-ATTRIBUTE SELECTOR OUTRANKS A BARE CLASS, so the class has to
+   name the element too. Bootstrap's `input[type="text"], select, textarea
+   { margin-bottom: 10px }` is (0,1,1) and a bare `.spiffe-field` is (0,1,0) —
+   the 4px asked for here would lose to 10px on every text input on the page,
+   which looks like generous spacing rather than a rule that is not applying.
+   The LDAP and Kerberos sheets both record this trap; it is not specific to
+   any one workflow. */
+.spiffe-field {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+}
+
+input.spiffe-field,
+select.spiffe-field,
+textarea.spiffe-field {
+  margin-bottom: 4px;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* A request editor. Monospace and a tab that does not leave the field, because
+   what goes in one is JSON somebody is editing by hand. */
+textarea.spiffe-code {
+  white-space: pre;
+  overflow-x: auto;
+  tab-size: 2;
+}
+
+textarea.spiffe-small { font-size: 11px; }
+
+/* A readout. Always a textarea rather than a <pre> — see the header. */
+.spiffe-output {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+  overflow-x: auto;
+  background: #fbfbfd;
+  margin-bottom: 3px;
+}
+
+.spiffe-label {
+  display: block;
+  font-weight: bold;
+  margin-top: 3px;
+  margin-bottom: 1px;
+  font-size: 12px;
+}
+
+.spiffe-check {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: normal;
+  margin: 2px 12px 2px 0;
+}
+
+.spiffe-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0 14px;
+}
+
+.spiffe-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 2px;
+  flex-wrap: wrap;
+}
+
+.spiffe-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: #f4f4f8;
+  cursor: pointer;
+}
+
+.spiffe-btn:hover { background: #ececf4; }
+
+.spiffe-primary {
+  border-color: #12107c;
+  background: #e8e8f6;
+  font-weight: bold;
+}
+
+.spiffe-status {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+/* The same specificity trap `.spiffe-field` above records, and here it costs
+   height rather than spacing: bootstrap's `input[type="text"] { margin-bottom:
+   10px }` outranks a bare class, and a status line is often the ONLY thing in
+   its flex row — so that margin made a 20px row 30px tall in four panes. */
+input.spiffe-status { margin-bottom: 0; }
+
+.spiffe-grow { flex: 1 1 320px; min-width: 220px; }
+
+.spiffe-ok { color: #2e7d32; }
+.spiffe-bad { color: #b00; }
+.spiffe-pending { color: #8a6d00; }
+
+/* The same three as text in a paragraph rather than in a status field. Separate
+   names because the status ones sit on an <input> whose background is white and
+   these sit on the pane. */
+.spiffe-ok-text { color: #2e7d32; }
+.spiffe-bad-text { color: #b00; }
+.spiffe-warn-text { color: #8a6d00; }
+
+.spiffe-note {
+  font-size: 12px;
+  color: #555;
+  margin: 2px 0 3px;
+  max-width: 900px;
+}
+
+.spiffe-limits {
+  font-size: 12px;
+  color: #444;
+  background: #f6f6fa;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  padding: 3px 6px;
+  margin: 3px 0;
+}
+
+.spiffe-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 3px 0;
+}
+
+.spiffe-table th,
+.spiffe-table td {
+  border: 1px solid #e0e0e6;
+  padding: 2px 5px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.spiffe-table th { background: #f0f0f5; }
+
+/* A key id, a SPIFFE ID and an address are all unbroken strings with nothing
+   worth breaking at, so they have to be allowed to break anywhere or one row
+   widens the whole table past the container. */
+.spiffe-wrap,
+.spiffe-history-uri {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+/* The Operations History pane. op_history.js emits `<prefix>-history-scroll`,
+   `<prefix>-table`, `<prefix>-history`, `<prefix>-history-time` and
+   `<prefix>-history-empty` with the prefix this workflow passes it (`spiffe`),
+   so all five have to be defined here or checkStylesheetsLoaded() fails the
+   page — which is exactly the mistake the Kerberos pages made when they first
+   reused that module. */
+.spiffe-history-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+.spiffe-history { margin: 0; }
+
+.spiffe-history-time {
+  white-space: nowrap;
+  color: #666;
+  width: 6.5em;
+}
+
+.spiffe-history-empty {
+  font-size: 12px;
+  color: #666;
+  margin: 3px 0;
+}
+
+/* ---------------------------------------------------------------------------
+   THE CONFIGURATION PARAMETERS PANE, and the groups inside it.
+
+   Every editable setting on this page is in that one pane, under the name of
+   the pane it acts on — the arrangement scim.html arrived at, for the reason
+   that page records: a setting a screen away from the button that uses it is
+   the thing readers complain about, and two boxes for one setting is worse
+   again. What is here is the ONE element with its id; nothing below mirrors
+   it.
+
+   ONE group is not a group of settings at all: Trust Bundle is a whole pane
+   that was folded in here on 2026-08-26, buttons, status line, document box
+   and report together, because what it produces — the trust anchor — is a
+   field two groups below it in this same pane.
+
+   A group is a heading and a rule rather than a nested <fieldset>. A fieldset
+   inside a fieldset would need its own `min-inline-size: 0` (see the header)
+   and would put a second border around content that is already inside one.
+   ------------------------------------------------------------------------ */
+.spiffe-group {
+  border-top: 1px solid #e4e4ec;
+  padding-top: 3px;
+  margin-top: 5px;
+  /* The pane's own rule, repeated: a base64 trust anchor pasted into the
+     SPIRE Server API group is an unbroken string, and a grid track sized to
+     min-content is exactly how one widens everything above it. */
+  min-inline-size: 0;
+}
+
+.spiffe-group:first-of-type {
+  border-top: 0;
+  margin-top: 0;
+}
+
+.spiffe-group-title {
+  font-size: 13px;
+  font-weight: bold;
+  color: #12107c;
+  margin: 0 0 2px;
+  line-height: 1.2;
+}
+
+/* ---------------------------------------------------------------------------
+   FOLDED PROSE, the way scim.html folds its own (`.scim-more`) and the
+   Kerberos pages theirs (`.krb-more`).
+
+   The explanations are the reason this page is worth using — why a bundle of
+   keys with no `use` verifies nothing while reporting no error, why
+   UNAUTHENTICATED and PERMISSION_DENIED are different instructions — so they
+   are kept verbatim and FOLDED rather than cut. They ship CLOSED: prose that
+   shipped open is prose back on the page.
+
+   The page's own ANSWERS are not in one of these. `spiffe_workload_about`,
+   `spiffe_server_about`, the two streaming lines, `spiffe_identity_holds_key`,
+   `spiffe_server_peer` and `spiffe_limits` are written by the bundle and stay
+   on the page, because a result behind a click nobody knows to make is a
+   result nobody sees.
+   ------------------------------------------------------------------------ */
+.spiffe-more {
+  margin: 2px 0;
+}
+
+.spiffe-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 12px;
+  padding: 0;
+  line-height: 1.35;
+}
+
+.spiffe-more > summary:hover {
+  text-decoration: underline;
+}
+
+/* The callout is now the FOLD rather than the paragraph inside it, so that the
+   summary line is inside the box it introduces rather than above it. */
+.spiffe-more.spiffe-callout > summary {
+  color: #12107c;
+  font-weight: bold;
+}

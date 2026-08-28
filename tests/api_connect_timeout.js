@@ -37,6 +37,7 @@ const net = require("net");
 const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
+const builtinModules = require("module").builtinModules;
 const paths = require("./module_paths.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -664,11 +665,29 @@ function userAgentIsConfigured() {
         line)) return;
     sites++;
     var window_ = lines.slice(i, i + 20).join("\n");
-    assert.ok(/headers:\s*withUserAgent\(/.test(window_),
+    if (/headers:\s*withUserAgent\(/.test(window_)) {
+      return;
+    }
+    // The headers may be HOISTED rather than built at the call site, and one
+    // call site has to hoist them: POST /token puts the headers it sent into
+    // the HTTP trace it hands back, and building them a second time for the
+    // trace is how a trace comes to describe a request that was never made.
+    // So a `headers:` naming a local is followed ONE step — to the assignment
+    // that gave it its value, which must itself be withUserAgent(). A plain
+    // object, or a local assigned from anything else, still fails: what is
+    // checked is where the value came from, not how it was spelled.
+    var named = window_.match(/headers:\s*([A-Za-z_$][\w$]*)\s*[,}\n]/);
+    var above = lines.slice(Math.max(0, i - 40), i).join("\n");
+    var assigned = !!named && new RegExp("(?:var|let|const)\\s+" +
+        named[1] + "\\s*=\\s*withUserAgent\\(").test(above);
+    assert.ok(assigned,
       "the axios call at server.js:" + (i + 1) +
           " does not take its headers from " +
       "withUserAgent(), so it announces itself as axios rather than as " +
-          "this service.");
+          "this service. Write `headers: withUserAgent(...)` at the call, or " +
+          "assign one to a local in the 40 lines above it and pass that" +
+          (named ? " — `" + named[1] + "` is passed here and nothing above " +
+              "assigns it from withUserAgent()." : "."));
   });
   assert.ok(sites >= 11, "expected the api's axios call sites; found " + sites +
             ".");
@@ -833,6 +852,155 @@ async function keepAliveIsConfigured() {
   log.debug("Leaving keepAliveIsConfigured().");
 }
 
+
+// --- the manifest declares everything the service requires ------------------
+//
+// This one exists because its absence cost a whole run. On 2026-08-24 the XML
+// Signature engine moved to common/xmldsig.js and api/server.js started signing
+// the SAML bindings with it — and that module requires `node-forge`, which was
+// a client dependency and was not in api/package.json. The image still BUILT
+// (the COPY succeeded, npm installed what the manifest named), and the
+// container then died at CMD with `Cannot find module 'node-forge'`, before it
+// listened. 80 of 202 tests failed and not one of them said "api": the browser
+// saw XHR status 0, the SAML pages said "Metadata was not loaded/parsed", the
+// WS-Federation cases said the IdP's POST never reached a landing, and the PKI
+// page said "Failed to fetch". A service that cannot start is invisible to
+// every test that talks to it.
+//
+// What makes it worth a check rather than a memory is the direction the code
+// moves in: modules keep being lifted OUT of client/src into common/ so that
+// one implementation serves both services, and each such move hands the api a
+// dependency graph that was only ever satisfied by client/package.json.
+//
+// The staged files are read out of api/Dockerfile rather than listed here, so
+// the next `COPY common/...` is covered on the day it is added and not on the
+// day somebody remembers this test.
+function manifestDeclaresEveryRequire() {
+  log.debug("Entering manifestDeclaresEveryRequire().");
+  log.info("=== The api manifest declares every package it requires ===");
+  const repoRoot = path.join(__dirname, "..");
+  const apiDir = path.join(repoRoot, "api");
+  const manifestPath = path.join(apiDir, "package.json");
+  const dockerfilePath = path.join(apiDir, "Dockerfile");
+  // The tests image copies modules flat and has no api/ directory, so there is
+  // no manifest to read. Say so rather than reporting a pass over nothing.
+  if (!fs.existsSync(manifestPath) || !fs.existsSync(dockerfilePath)) {
+    log.info("[manifest] SKIPPED — no api/package.json + api/Dockerfile in " +
+             "this layout, so this is the tests image rather than a " +
+             "checkout; this check runs in a checkout.");
+    log.debug("Leaving manifestDeclaresEveryRequire().");
+    return;
+  }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const declared = Object.keys(manifest.dependencies || {});
+
+  // Everything that ends up on the image's require path: the api's own sources,
+  // plus whatever the Dockerfile stages in beside them. A staged file's
+  // requires are the service's requires — that is the whole point of the move
+  // that broke this.
+  const roots = [{ dir: apiDir, label: "api" }];
+  const staged = [];
+  fs.readFileSync(dockerfilePath, "utf8").split("\n").forEach(function (line) {
+    if (/^\s*#/.test(line)) {
+      return;
+    }
+    const m = /^\s*COPY\s+((?:common|client)\/\S+)/.exec(line);
+    if (!m) {
+      return;
+    }
+    const full = path.join(repoRoot, m[1]);
+    if (!fs.existsSync(full)) {
+      return;
+    }
+    staged.push(m[1]);
+    if (fs.statSync(full).isDirectory()) {
+      roots.push({ dir: full, label: m[1] });
+    } else {
+      roots.push({ file: full, label: m[1] });
+    }
+  });
+  assert.ok(staged.length > 0,
+    "api/Dockerfile stages no common/ or client/ file into the image, which " +
+        "cannot be right —\nit COPYs at least common/data.js. The COPY " +
+        "pattern this reads has changed, and the check\nis now scanning only " +
+        "api/ while the staged modules go unread.");
+
+  const files = [];
+  function walk(dir, label) {
+    log.debug("Entering walk().");
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
+      // node_modules is what is being checked against, not part of the source;
+      // node-ldapjs is a submodule with a manifest of its own.
+      if (entry.name === "node_modules" || entry.name === "node-ldapjs") {
+        return;
+      }
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(full, label + "/" + entry.name);
+      } else if (/\.js$/.test(entry.name)) {
+        files.push({ path: full, label: label + "/" + entry.name });
+      }
+    });
+    log.debug("Leaving walk().");
+  }
+  roots.forEach(function (root) {
+    if (root.file) {
+      files.push({ path: root.file, label: root.label });
+    } else {
+      walk(root.dir, root.label);
+    }
+  });
+  assert.ok(files.length > 5,
+    "found only " + files.length + " source files to scan; the layout has " +
+        "moved and this check is\nno longer reading the service.");
+
+  // Only LITERAL requires. `require(process.env.CONFIG_FILE)` names a path at
+  // runtime and there is nothing here to check it against.
+  const wanted = new Map();
+  files.forEach(function (file) {
+    const text = fs.readFileSync(file.path, "utf8");
+    const re = /require\(\s*['"]([^'"]+)['"]\s*\)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const spec = m[1];
+      if (spec.startsWith(".") || spec.startsWith("/")) {
+        continue;
+      }
+      const bare = spec.replace(/^node:/, "");
+      if (builtinModules.indexOf(bare.split("/")[0]) !== -1) {
+        continue;
+      }
+      const pkg = bare.startsWith("@")
+        ? bare.split("/").slice(0, 2).join("/")
+        : bare.split("/")[0];
+      if (!wanted.has(pkg)) {
+        wanted.set(pkg, file.label);
+      }
+    }
+  });
+  assert.ok(wanted.size > 5,
+    "found only " + wanted.size + " package requires across " + files.length +
+        " files; the regex has\nstopped matching and this check now passes " +
+        "over anything.");
+
+  const missing = [];
+  wanted.forEach(function (where, pkg) {
+    if (declared.indexOf(pkg) === -1) {
+      missing.push(pkg + "  (required by " + where + ")");
+    }
+  });
+  assert.deepStrictEqual(missing, [],
+    "api/package.json does not declare these packages, so `npm install` in " +
+        "api/Dockerfile will not\ninstall them and the container dies at " +
+        "startup with `Cannot find module '<name>'` — before it\nlistens, " +
+        "which makes it invisible to every test that talks to it:\n  " +
+    missing.join("\n  "));
+  log.info("[manifest] OK — " + wanted.size + " packages required across " +
+           files.length + " files (" + staged.length +
+           " staged into the image), all declared.");
+  log.debug("Leaving manifestDeclaresEveryRequire().");
+}
+
 async function test() {
   log.debug("Entering test().");
   await stalledConnectIsAborted();
@@ -845,6 +1013,7 @@ async function test() {
   userAgentIsConfigured();
   await keepAliveIsConfigured();
   shippedConfiguration();
+  manifestDeclaresEveryRequire();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

@@ -7,37 +7,104 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | Working on | Read |
 |---|---|
 | the Express backend, its outbound calls, the SSRF guard, the timeouts and size/redirect caps | `api/CLAUDE.md` |
-| any page, bundle, layout or in-browser protocol implementation | `client/CLAUDE.md`, which indexes nine topic docs under `docs/` |
+| any page, bundle, layout or in-browser protocol implementation | `client/CLAUDE.md`, which indexes ten topic docs under `docs/` |
 | the Selenium suite, the launchers, the per-test map, the environment hazards | `tests/CLAUDE.md` |
 | the deployed static sites, Terraform, the Lambda@Edge landings | `infra/CLAUDE.md` |
 | the walt.id issuer/verifier containers and their configuration | `waltid/CLAUDE.md` |
 | the WS-Federation Keycloak 8.0.1 side-car | `keycloak-wsfed/CLAUDE.md` |
+| **SAML 1.1** — the second protocol version the SAML workflow speaks, which is a different protocol rather than an older spelling: no request message, no Single Logout, a QName status code, and five settings switched off | `docs/saml11.md` |
+| **RFC 9700** — the OAuth 2.0 Security BCP compliance checkbox on the OAuth2/OIDC workflow, what it enforces, and why it is off by default | `docs/rfc9700.md` |
 | the WebAuthn workflow, its decoder, or the read-only browser extension | `docs/webauthn.md` |
 | the Kerberos workflow, its six pages, `common/krb5/`, the PAC, delegation, or the mock KDC | `docs/kerberos.md` |
 | **SPNEGO** — Kerberos over HTTP: `spnego.html`, `krb5_spnego.js`, `POST /krb5/spnego`, the mock's protected page | `docs/spnego.md` |
 | **LDAP** — `ldap.html`, `api/ldap_client.js`, the eight `POST /ldap/*` endpoints, the mock's embedded directory, the `node-ldapjs` submodules | `docs/ldap.md` |
+| **SCIM** — the SCIM 2.0 provisioning page, its scenario harness, `client/src/scim*.js`, `api/scim_proxy.js` and `POST /scim` | `docs/scim.md` |
+| **SPIFFE** — the SPIFFE / SPIRE page, `api/spiffe_client.js`, the vendored `api/protos/`, `common/spiffe/`, and all forty-nine methods | `docs/spiffe.md` |
 | **PKI** — the certificate authority page, `x509.js`, `key_material.js`, the keystore formats, and the api's TLS / mutual-TLS test | `docs/pki.md` |
+| **encryption** — the Encryption / Decryption page, its nine panes, and the DOM-free engines behind them (`symmetric_crypto.js`, `pk_encryption.js`, `crypto_bytes.js`) | `docs/encryption.md` |
 | the mock STS — **a submodule**, so its notes cannot live under `sts/` | `docs/mock-sts.md` |
 
 ## Overview
 
-OAuth2/OIDC Debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust, WS-Federation, SD-JWT VC (issuance and presentation), WebAuthn and **Kerberos v5** flows against real identity providers, issuers, verifiers, key distribution centers and security keys. It also builds the **X.509** certificate authorities those protocols run on — a Root, an Intermediate and an Issuing CA, with full X.509v3 extension control — and makes real **TLS and mutual-TLS** connections with what it issues. Supports Authorization Code, Implicit, Client Credentials, Resource Owner Password, and Refresh grants, plus all three OIDC authentication flows (Authorization Code, Implicit, Hybrid).
+OAuth2/OIDC Debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust, WS-Federation, SD-JWT VC (issuance and presentation), WebAuthn and **Kerberos v5** flows against real identity providers, issuers, verifiers, key distribution centers and security keys. It **provisions** the identities those protocols then authenticate, over **SCIM 2.0** — one endpoint at a time, or as scenario batches that create, modify and deprovision populations of users and groups and check every step against what the plan said would happen. It hands those workloads the identities they authenticate WITH, over **SPIFFE** — an X509-SVID or a JWT-SVID from a Workload API that authenticates nobody, then all forty-two SPIRE Server API methods as whoever that credential makes you. It also builds the **X.509** certificate authorities those protocols run on — a Root, an Intermediate and an Issuing CA, with full X.509v3 extension control — and makes real **TLS and mutual-TLS** connections with what it issues. Supports Authorization Code, Implicit, Client Credentials, Resource Owner Password, and Refresh grants, plus all three OIDC authentication flows (Authorization Code, Implicit, Hybrid).
 
 **Kerberos is the exception to "two-service web application", and to almost everything else here.** It is not an HTTP protocol: it speaks DER over TCP and UDP port 88, so a browser cannot reach a KDC and the api acts as a guarded byte relay rather than a proxy of anything HTTP-shaped. That makes it the one workflow absent from the deployed static sites — **all six of its pages**, the decoder included: it needs no network, but it has no landing card of its own and the only route to it is a link on `kerberos.html`, which is not there either. **SPNEGO goes with them and looks like it should not**: its own exchange is ordinary HTTP, but the ticket it carries comes from a KDC on port 88 and the two pages that obtain one are not deployed, so it would be a page whose only button says "no service ticket held" for ever. `client/static_site.js` holds the list, `client/build.js` acts on it, and the landing page's two cards for this workflow — Kerberos and SPNEGO — are greyed out and unclickable on those sites. See `docs/kerberos.md` and `docs/spnego.md`.
 
 **LDAP is the second exception, and it is the cleaner one.** RFC 4511 is BER over a TCP socket on port 389, so a browser cannot speak it either — and unlike Kerberos, where the protocol runs in the browser and the api merely carries the bytes, here the whole protocol lives in the **api**: `api/ldap_client.js` encodes and performs the operation and `client/src/ldap.js` never touches a socket. So `ldap.html` has no offline half at all — not even a decoder — and it is the **third page** `client/static_site.js` drops and the **third landing card** greyed out on the deployed sites. One consequence catches everybody once: the URL in its connection pane is resolved by the API, not by the browser, so `localhost` there means the machine the api runs on. See `docs/ldap.md`.
 
+**SPIFFE is the third exception, and the one that gives up the most to be
+one.** Its server side is three surfaces and only the bundle endpoint is
+ordinary HTTPS; the other two are **gRPC**, which is HTTP/2 with a binary
+framing and its status in the trailers — `fetch` will not open an HTTP/2 stream
+of its own, cannot send or read trailers, cannot see a `grpc-status`, and
+cannot present the client certificate the SPIRE Server API requires. So both
+live in `api/spiffe_client.js`, which vendors the SPIFFE project's and the
+`spire-api-sdk`'s own protos **verbatim** into `api/protos/` because the whole
+point of the dependency is that the wire matches what a real client expects.
+What SPIFFE gives up that Kerberos and LDAP do not: three of its readers —
+the trust bundle one (a group in the settings pane since 2026-08-26), the SVID
+inspector and the SPIFFE ID checker — need **no
+network at all**, and they go with the page anyway, because a page whose two
+biggest panes are permanently dead is worse than a card that says why. It is
+the **fourth page** `client/static_site.js` drops and the **fourth landing
+card** greyed on the deployed sites. Two things about it surprise everybody
+once, and both are the specifications rather than this code: the Workload API
+**must not** authenticate anybody (a workload has no root of trust until that
+call gives it one) while the SPIRE Server API's TCP port is mutual TLS; and a
+SPIRE server's certificate carries **no DNS name**, so hostname verification
+cannot apply and is REPLACED by a check on the SPIFFE ID in its URI
+subjectAltName. See `docs/spiffe.md`.
+
 ## Architecture
 
 The project is split into two independent Node.js services:
 
-- **`/api/`** — Express backend (port 4000). Proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It fetches URLs its **caller** chooses, so its outbound calls are governed by an address policy and **nine** settings in `api/env/*.js` — none of which may be dropped from a new call site. Two of its capabilities are not HTTP fetches at all and reuse that policy's *decision* over a raw socket: the Kerberos relay, and `POST /tls/connect`, which opens a TLS or mutual-TLS connection for the PKI page because a browser cannot choose a client certificate, cannot be given a truststore, and cannot read the handshake it made. See `api/CLAUDE.md` before touching `api/server.js`.
+- **`/api/`** — Express backend (port 4000). Proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It fetches URLs its **caller** chooses, so its outbound calls are governed by an address policy and **sixteen** settings in `api/env/*.js` — none of which may be dropped from a new call site. Four of its capabilities are worth knowing before adding a rule for a fifth. `POST /scim` is an ordinary fetch and needs none of its own — the SCIM page calls a SCIM server straight from the browser and works with no api at all, which is what separates it from LDAP and Kerberos. The other three are not HTTP fetches and reuse that policy's *decision* over a raw socket: the Kerberos relay; `POST /tls/connect`, which opens a TLS or mutual-TLS connection for the PKI page because a browser cannot choose a client certificate, cannot be given a truststore, and cannot read the handshake it made; and `POST /spiffe/call`, which carries BOTH of SPIFFE's gRPC surfaces and is the only endpoint here that connects to a **filesystem path its caller chose** — an address policy cannot judge one, so `spiffeAllowedSocketPaths` stands in its place. See `api/CLAUDE.md` before touching `api/server.js`.
 - **`/api/node-ldapjs/`** — a fork of [`ldapjs`](https://github.com/ldapjs/node-ldapjs), linked here as a **submodule** on branch `master` ([`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs)), for the LDAP support of issue #257. It is a submodule rather than a line in `api/package.json` because **upstream is decommissioned** — its maintainer stopped the project on 2024-05-14 and said so in its README — so the fork is pinned at that final commit and there is nobody upstream to publish a fix to npm. **Nothing in this tree requires it yet**: no `require`, no `COPY`, no compose service, so an uninitialised checkout currently breaks nothing and no launcher initialises it the way `requireMockStsCheckout()` does `sts/`. That stops being true at the first call site, and whatever adds one adds the initialisation with it. Until then, treat an edit under `api/node-ldapjs/` the way you treat one under `sts/` — it is somebody else's checkout, and `git status` reports it as a modified submodule rather than as a modified file.
 - **`/client/`** — Express frontend (port 3000). Serves static HTML/JS pages and handles the OAuth2 redirect callback at `/callback`, forwarding query params to `oauth2_oidc_2.html`. Every protocol implementation that runs in the browser is here; see `client/CLAUDE.md`.
 - **`/common/data.js`** — Shared `convertToOAuth2Format()` function used by both services to normalize grant parameters (including PKCE and custom params).
 - **`/api/node-ldapjs/` and `/sts/node-ldapjs/`** — [`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs) (ldapjs 3.0.7), pinned as a submodule and used **UNMODIFIED**, twice: once for the api's LDAP client and once, inside the mock STS submodule, for its embedded directory. **Two copies rather than one shared, and the reason is npm rather than taste** — npm installs a `file:` dependency as a symlink and node resolves that package's own requires by walking up from where the REAL directory lives, so a copy outside the package root never reaches the `node_modules` the install just wrote (`Cannot find module 'abstract-logging'`, from inside ldapjs). Two further consequences: `sts/node-ldapjs` is a submodule of a submodule, so `git submodule update --init` stops one level short of it and **`--recursive` is required**; and `npm install` on a `file:` dependency installs that package's devDependencies too — ldapjs's are tap and eslint, about 200 packages and a dozen advisories — which is why both repositories carry an `.npmrc` with `omit=dev` and both Dockerfiles pass `--omit=dev` as well. An uninitialised submodule is an EMPTY DIRECTORY, so the build succeeds and the service dies at startup with `Cannot find module 'ldapjs'`. See `docs/ldap.md`.
+- **`/common/xmldsig.js`** — **the** XML Signature and XML Encryption
+  implementation, in `common/` because both services sign with it: eight
+  browser bundles require it (staged into `client/src/` at build time the way
+  `common/data.js` is) and `api/server.js` signs the SAML redirect and POST
+  bindings with it. It was `client/src/xmldsig.js` until 2026-08-24, when the
+  other two implementations were deleted — a private copy of the canonicalizer
+  inside `saml_request.js`, and the `xml-crypto` package in the api. A
+  canonicalizer is a READING of a specification, and three readings is three
+  chances to disagree with the verifier at the far end, which for SAML is an
+  identity provider that says only *invalid signature*. Both of the deleted
+  copies had in fact already drifted: `saml_request.js`'s dropped processing
+  instructions (C14N 1.0 retains them in both variants), and the api's redirect
+  binding signed with SHA-256 whatever `SigAlg` it advertised. See
+  `docs/wsfed.md` and `tests/xmlsec_interop.js`.
+- **`/client/src/jws.js`** — **the** JWS implementation (RFC 7515/7518/7797/
+  8037/8812), for the same reason and with the same history: six call sites had
+  their own before 2026-08-24, two of them defining the same four verification
+  functions under the same four names. It is not in `common/` because no
+  service outside the browser signs a JWS. It has **two crypto backends** — the
+  pure-JS one, which is what lets the Digital Signature page work over plain
+  HTTP and offer secp256k1 and Ed448, and a Web Crypto one that exists so the
+  four workflows it absorbed emit exactly the bytes they emitted before.
+  `tests/jws_engine.js` holds the two backends to producing identical output.
 - **`/common/krb5/`** — the **Kerberos v5** codec and crypto, shared by the browser bundles, the api's frame checks and the test suite, because one wire codec must not exist twice. It is the only protocol implementation here that is not under `client/src/`, and eight of its modules are additionally **vendored** into the `sts/` submodule (a Docker build cannot COPY from outside its context) with `tests/krb5_codec_sync.js` keeping the copies honest. `krb5_spnego.js` (RFC 4178) is the newest of them and the one with most to lose from drift — the browser encodes what the mock decodes and the mock encodes what the browser decodes, so every field crosses between the two copies in both directions. See `docs/kerberos.md` and `docs/spnego.md`.
-- **`/client/src/x509.js` and `/client/src/key_material.js`** — the **X.509 / PKI** pair, and the one place in the tree where a client module was extracted *out* of a page rather than written for one. `key_material.js` is the bottom third of `jwt_tools.js` — key pairs, PEM↔JWK, and the PEM/DER/JWK/PKCS#12 export matrix — moved so that the PKI page has the same pane rather than a second implementation of it; `jwt_tools.js` is now a caller and is 340 lines shorter. `x509.js` is certificate authoring: the profiles, every X.509v3 extension, issuing, describing and chain checks. Neither has a DOM, which is what lets `tests/pki_x509.js` drive ~240 certificates through the real encoder in node and hand every one of them to **OpenSSL** — the only kind of check that catches an encoding that is wrong and self-consistent, of which `docs/pki.md` records four that were real. See `docs/pki.md`.
+- **`/client/src/crypto_bytes.js`, `/client/src/symmetric_crypto.js` and `/client/src/pk_encryption.js`** — the **encryption** engines, and the second place in this tree where cryptography was pulled *out* of a page rather than written for one. `crypto_bytes.js` is the bytes/base64/base64url/hex/PEM set that `jose_jwe.js`, `digital_signature.js` and `key_material.js` each had a copy of; `symmetric_crypto.js` is the block and stream ciphers plus the MAC constructions the Digital Signature page's three MAC panes were built on — Poly1305 forced that move, because ChaCha20-Poly1305 needs the same RFC 8439 section 2.5 implementation and two readings of it can agree with each other and be wrong together; `pk_encryption.js` is RSA, ECIES, ML-KEM and the finite-field family. **None of the three has a DOM**, which is what lets `tests/crypto_engines.js` drive every one of them in node against the RFCs' own vectors and against OpenSSL — the only kind of check that catches an AEAD tag which is self-consistent and interoperates with nothing. The DOM half is `client/src/tool_panes.js`, shared with the Digital Signature page. See `docs/encryption.md`.
+- **`/client/src/scim_client.js` and `/client/src/scim_scenarios.js`** — the **SCIM 2.0** engines, and the third place in this tree where the interesting half of a workflow was kept OUT of the page on purpose. `scim_client.js` composes every request RFC 7644 defines, applies the seven authentication schemes, and generates a User carrying every optional attribute RFC 7643 section 4.1 has; `scim_scenarios.js` turns "create ten users, put them in a group, change five and delete the lot" into a list of steps each carrying its own EXPECTATION, which is what makes a 409 on a duplicate `userName` a **pass**. **Neither has a DOM**, which is what lets `tests/scim_engine.js` drive the whole of it in node against the RFCs' own text — the only kind of check that catches a double-encoded id (a 404 that reads exactly like a deleted user) or a wrong Digest hash (a 401 that reads exactly like a wrong password). Digest is implemented here for all three registered algorithms and NONE of them is Web Crypto, which has neither MD5 nor SHA-512/256. See `docs/scim.md`.
+- **`/common/spiffe/` and `/api/protos/`** — the **SPIFFE** halves that are not
+  a page. `spiffe_id.js` is the ID grammar and `spiffe_bundle.js` reads a trust
+  bundle document; both are DOM-free and both live in `common/` because the
+  api, the browser bundle and `tests/` all need them, and a grammar implemented
+  three times is a grammar that disagrees with itself. The grammar is
+  **stricter than a URL parser** in four ways that each produce an identifier
+  looking perfectly fine in a log — a trust domain is lower-case and
+  `new URL()` lower-cases a host for you, hiding it — and the bundle reader's
+  one consequential rule is that a JWK with no `use` is one a consumer MUST
+  IGNORE, so a bundle of them **verifies nothing** and reports no error
+  anywhere. `api/protos/` is 21 `.proto` files vendored VERBATIM, byte-identical
+  to the mock STS's copies, which `tests/spiffe_engine.js` compares file by
+  file: an edit to one would make this debugger agree with that mock and
+  interoperate with nothing. See `docs/spiffe.md`.
+- **`/client/src/x509.js` and `/client/src/key_material.js`** — the **X.509 / PKI** pair, and the one place in the tree where a client module was extracted *out* of a page rather than written for one. `key_material.js` is the bottom third of `jwt_tools.js` — key pairs, PEM↔JWK, and the PEM/DER/JWK/PKCS#12 export matrix — moved so that the PKI page has the same pane rather than a second implementation of it; `jwt_tools.js` is now a caller and is 340 lines shorter. `x509.js` is certificate authoring: the profiles, every X.509v3 extension, issuing, describing and chain checks. Neither has a DOM, which is what lets `tests/pki_x509.js` drive ~240 certificates through the real encoder in node and hand every one of them to **OpenSSL** — the only kind of check that catches an encoding that is wrong and self-consistent, of which `docs/pki.md` records five that were real. See `docs/pki.md`.
 - **`/sts/`** — A mock Security Token Service used by the test suite (OAuth2 AS, OIDC OP, WS-Trust, **WS-Federation IdP**, OID4VCI issuer, OID4VP verifier, DID publisher, and — on two HTTPS listeners of its own — a **TLS / mutual-TLS endpoint** whose whole content is what the server saw of the connection, which is what the PKI page presents a client certificate to). **Its code is no longer in this repository** — it is the [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts) submodule, so `git submodule update --init --recursive sts` is required once per checkout — **`--recursive`, because the mock STS has a submodule of its own** (`node-ldapjs`, which its package.json takes as `"ldapjs": "file:node-ldapjs"`), and an uninitialised submodule is an empty DIRECTORY, so plain `--init` builds an image whose container dies at startup with `Cannot find module 'ldapjs'`, a message naming a package rather than a submodule. An edit under `sts/` is an edit to somebody else's checkout. Since 2026-08-19 its **`/admin` console has a management API beside it at `/admin-api`** — the same pages and the same forms over JSON, with a generated OpenAPI 3.1 document at `/admin-api/openapi.json` and an explorer that calls it at `/admin-api/docs` — which is how a test pins what that service issues without driving a form. It is unprotected, like everything else there, and `tests/admin_api.js` asserts the rule it is written under: a control added to the console gets an operation in the same commit. See `docs/mock-sts.md`.
 - **`/waltid/`** — walt.id's own `issuer-api2` and `verifier-api2` containers, behind CORS proxies, for interoperability testing. See `waltid/CLAUDE.md`.
 - **`/keycloak-wsfed/`** — A dedicated Keycloak 8.0.1 side-car carrying the cloudtrust `keycloak-wsfed` extension, because the main stack's Keycloak 26.x has no WS-Federation support at all. Since 2026-08 the mock STS answers that profile too and **every WS-Federation case runs against both**; they are complementary, not redundant — the side-car is somebody else's implementation, and the mock is the one that reads what the debugger sends. See `keycloak-wsfed/CLAUDE.md` and `docs/wsfed.md`.
@@ -77,12 +144,77 @@ Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automat
 # Full battery of tests entirely in containers
 ./docker-run-tests.sh
 
+# The jobs run in a POOL — TEST_CONCURRENCY at a time, defaulting to one less
+# than the machine's cores and held between 2 and 4. It reaches every launcher,
+# the two CONTAINERIZED ones included, and there it crosses TWO boundaries:
+# docker-compose-run-tests.yml substitutes it into the tests service, and
+# common/common.sh forwards it past `sudo`, which empties the environment and
+# passes only what COMPOSE_FORWARDED_VARS names. Both halves are needed — until
+# 2026-08-27 only the first existed, so this line reached compose as EMPTY and
+# the pool sized itself from the container's cores with no warning anywhere.
+# tests/compose_env_forwarding.js now fails when a variable a compose file
+# reads is not forwarded. TEST_CONCURRENCY=1 restores the old one-at-a-time run
+# with live streamed output, which is the first thing to try when a job fails
+# in the pool and passes on its own. What must not overlap is declared in
+# JOB_LOCKS at the top of tests/run-report.js — read tests/CLAUDE.md before
+# adding a test that configures a shared service.
+TEST_CONCURRENCY=6 ./docker-run-tests.sh
+TEST_CONCURRENCY=6 ./run-coverage.sh
+
+# Each job is spawned in a PROCESS GROUP of its own and the whole group is
+# killed when the job ends — passing or failing. A browser job is node ->
+# chromedriver -> chrome and one headless Chrome is ~15 OS processes, of which
+# only the first is the runner's child; before 2026-08-26 a test that died
+# without reaching driver.quit() left the whole browser resident, and a run of
+# this suite left 559 Chrome processes behind and cost a reboot. A watchdog
+# (TEST_JOB_TIMEOUT_MS, default 900000 — 15 minutes; 0 disables) additionally
+# kills a job's tree if it never exits. See tests/CLAUDE.md — and note that
+# `process.exit()` in a catch SKIPS the finally that quits the driver, which
+# is the bug that made the backstop necessary.
+# It is forwarded to the containerized launchers the same way TEST_CONCURRENCY
+# is, so it works on all three.
+TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
+
 # Tests from local shell, dependencies still in containers
 ./local-run-tests.sh
 
 # Against a site that is ALREADY DEPLOYED, with everything on the other side
 # of each protocol started locally
 ./remote-run-tests.sh [base-url]
+
+# Just the FEDERATED sign-ins. `=single` is ONE hop — an OIDC application in
+# the trust realm `federation-realm-1`, authenticated over SAML 2.0 in
+# `federation-realm-2`. `=chain` is TWO hops and THREE protocols: an
+# application in `federation-realm-3`, SAML 2.0 on to `federation-realm-4`,
+# which has no password box of its own and federates AGAIN over
+# WS-Federation to `federation-realm-5`, where the only password field in
+# the chain is drawn. That makes realm 4 a pure IDENTITY BRIDGE, and the
+# attribute that makes it one — `fedAuthnMechanism` on its
+# identity-provider-side relationship — is what that case exercises.
+# `=both` is the default; the realms are disjoint so either runs alone.
+# `=matrix` is the GRID: every combination of the two protocol layers and of
+# how the far realm authenticates — five application protocols (oidc, oauth2,
+# saml2, saml11, wsfed) by five federation protocols (the same five) by two
+# mechanisms (password, webauthn), less the one `=single` already drives, so
+# FORTY-NINE points. It has its own pair of realms (federation-matrix-1 and
+# -2) and shares nothing with the two above. `=matrix:<app>/<fed>/<mech>` runs
+# ONE point, which is how a failing combination is reproduced — add -b to
+# watch it. The ordinary suite runs those forty-nine as pooled jobs;
+# this loop runs them in order, for a live stack to look at afterwards.
+# SPNEGO is deliberately not a third mechanism yet, and since the 2026-08-27
+# sts/ bump the reason has NARROWED to one: the acceptor IS wired to a
+# session now (/authn/spnego calls startSession(), and a relationship can
+# carry fedAuthnMechanism: spnego), so what is left is where a HEADLESS
+# browser gets a ticket and an allow-listed host to send it to. Twenty-five
+# further points are deferred rather than faked. See tests/CLAUDE.md.
+# Every realm is a logical copy of the ONE mock STS told apart by a path
+# prefix, so this is client + api + the mock and nothing else. It leaves the
+# realms configured on a running stack, which is where the sign-ins it just
+# performed are visible: /admin on any of them. The single-hop case replaced
+# the mock's own three-container `federation-e2e/` on 2026-08-26 — trust
+# realms made the extra containers unnecessary.
+./local-run-tests.sh --federation-only[=single|chain|both|matrix]
+./local-run-tests.sh --federation-only=matrix:wsfed/oauth2/webauthn
 
 # The containerized stack again, under Istanbul/c8 instrumentation
 ./run-coverage.sh
@@ -91,6 +223,23 @@ Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automat
 # api + client + the mock STS + the Keycloak side-car. `=sts` or `=keycloak`
 # narrows it to one; `=sts` skips the twenty-second WildFly boot entirely.
 ./local-run-tests.sh --wsfed-only[=keycloak|sts|both]
+
+# The three-tier delegation chains — a sign-in, then two hops through a middle
+# tier — with only api + client + the mock STS. THE SAME SCENARIO IN TWO
+# PROTOCOL FAMILIES, because the delegation register and the map drawn from it
+# are ONE model for both. `=oauth` is an OIDC sign-in as webapp1 then two RFC
+# 8693 exchanges as apigw1 and esb1, where the audience travels in an `aud`
+# claim. `=wstrust` is a SAML 2.0 HTTP-POST sign-in as portal1, then two
+# WS-Trust hops to https://esb.example.com and https://soap1.example.com, where
+# the audience travels in the assertion's <saml:AudienceRestriction> — which
+# says exactly what `aud` says — and it runs TWICE, once carrying
+# <wst:OnBehalfOf> (impersonation) and once <wst14:ActAs> (composite
+# delegation). `=both` is the default; the two use different people and
+# different applications, so the pictures stay separate. It all LEAVES THE
+# DELEGATION MAPS BEHIND as SVG under tests/report/delegation/, which is the
+# only way to see those pictures at all: the mock's delegation register is in
+# memory and dies with the container.
+./local-run-tests.sh --delegation-only[=oauth|wstrust|both]
 
 # Kerberos against a REAL Windows Server 2025 domain controller, spun up on AWS
 # and destroyed afterwards. Needs AWS credentials and NOTHING else — no docker,

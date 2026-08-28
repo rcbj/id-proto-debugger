@@ -1,0 +1,154 @@
+syntax = "proto3";
+package spire.api.server.trustdomain.v1;
+option go_package = "github.com/spiffe/spire-api-sdk/proto/spire/api/server/trustdomain/v1;trustdomain";
+
+import "google/protobuf/empty.proto";
+import "spire/api/types/federationrelationship.proto";
+import "spire/api/types/status.proto";
+
+// Manages the federation relationships with foreign trust domains.
+service TrustDomain {
+    // Lists federation relationships with foreign trust domains.
+    //
+    // The caller must be local or present an admin X509-SVID.
+    rpc ListFederationRelationships(ListFederationRelationshipsRequest) returns (ListFederationRelationshipsResponse);
+
+    // Gets a federation relationship with a foreign trust domain.
+    // If there is no federation relationship with the specified
+    // trust domain, NOT_FOUND is returned.
+    //
+    // The caller must be local or present an admin X509-SVID.
+    rpc GetFederationRelationship(GetFederationRelationshipRequest) returns (spire.api.types.FederationRelationship);
+
+    // Batch creates one or more federation relationships with
+    // foreign trust domains.
+    //
+    // The caller must be local or present an admin X509-SVID.
+    rpc BatchCreateFederationRelationship(BatchCreateFederationRelationshipRequest) returns (BatchCreateFederationRelationshipResponse);
+
+    // Batch updates one or more federation relationships with
+    // foreign trust domains.
+    //
+    // The caller must be local or present an admin X509-SVID.
+    rpc BatchUpdateFederationRelationship(BatchUpdateFederationRelationshipRequest) returns (BatchUpdateFederationRelationshipResponse);
+
+    // Batch deletes federation relationships with foreign trust domains.
+    //
+    // The caller must be local or present an admin X509-SVID.
+    rpc BatchDeleteFederationRelationship(BatchDeleteFederationRelationshipRequest) returns (BatchDeleteFederationRelationshipResponse);
+
+    // Refreshes the bundle from the specified federated trust domain.
+    // If there is not a federation relationship configured with the
+    // specified trust domain, NOT_FOUND is returned.
+    //
+    // The caller must be local or present an admin X509-SVID.
+    rpc RefreshBundle(RefreshBundleRequest) returns (google.protobuf.Empty);
+}
+
+message ListFederationRelationshipsRequest {
+    // An output mask indicating which federation replationship fields
+    // are set in the response.
+    spire.api.types.FederationRelationshipMask output_mask = 1;
+
+    // The maximum number of results to return. The server may further
+    // constrain this value, or if zero, choose its own.
+    int32 page_size = 2;
+
+    // The next_page_token value returned from a previous request, if any.
+    string page_token = 3;
+}
+
+message ListFederationRelationshipsResponse {
+    // The federation relationships with foreign trust domains.
+    repeated spire.api.types.FederationRelationship federation_relationships = 1;
+
+    // The page token for the next request. Empty if there are no more results.
+    // This field should be checked by clients even when a page_size was not
+    // requested, since the server may choose its own (see page_size).
+    string next_page_token = 2;
+}
+
+message GetFederationRelationshipRequest {
+    // Required. The trust domain name of the federation relationship
+    // (e.g., "example.org").
+    string trust_domain = 1;
+
+    // An output mask indicating which federation relationship fields
+    // are set in the response.
+    spire.api.types.FederationRelationshipMask output_mask = 2;
+}
+
+message BatchCreateFederationRelationshipRequest {
+    // The federation relationships to be created.
+    repeated spire.api.types.FederationRelationship federation_relationships = 1;
+
+    // An output mask indicating the federation relationship fields set in the response.
+    spire.api.types.FederationRelationshipMask output_mask = 2;
+}
+
+message BatchCreateFederationRelationshipResponse {
+    message Result {
+        // The status of creating the federation relationship.
+        // Status code will be ALREADY_EXISTS if there is already a
+        // federation relationship with the specified trust domain.
+        spire.api.types.Status status = 1;
+
+        // The federation relationship that was created.
+        // This will be set if the status is OK.
+        spire.api.types.FederationRelationship federation_relationship = 2;
+    }
+
+    // Result for each federation relationship in the request (order is maintained).
+    repeated Result results = 1;
+}
+
+message BatchUpdateFederationRelationshipRequest {
+    // The federation relationships to be updated.
+    repeated spire.api.types.FederationRelationship federation_relationships = 1;
+
+    // An input mask indicating what federation relationship fields should be updated.
+    spire.api.types.FederationRelationshipMask input_mask = 2;
+
+    // An output mask indicating what federation relationship fields are set in the response.
+    spire.api.types.FederationRelationshipMask output_mask = 3;
+}
+
+message BatchUpdateFederationRelationshipResponse {
+    message Result {
+        // The status of updating the federation relationship.
+        spire.api.types.Status status = 1;
+
+        // The federation relationship that was updated.
+        // This will be set if the status is OK.
+        spire.api.types.FederationRelationship federation_relationship = 2;
+    }
+
+    // Result for each federation relationship in the request (order is maintained).
+    repeated Result results = 1;
+}
+
+message BatchDeleteFederationRelationshipRequest {
+    // Required. The trust domain names of the federation relationships
+    // to delete.
+    repeated string trust_domains = 1;
+}
+
+message BatchDeleteFederationRelationshipResponse {
+    message Result {
+        // The status of delating the federation relationship.
+        spire.api.types.Status status = 1;
+
+        // The trust domain name of the federation relationship
+        // that was deleted.
+        string trust_domain = 2;
+    }
+
+    // Result for each trust domain name in the request (order is maintained).
+    repeated Result results = 1;
+}
+
+message RefreshBundleRequest {
+    // Required. The federated trust domain name of the
+    // bundle to refresh (e.g., "example.org").
+    string trust_domain = 1;
+}

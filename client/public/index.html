@@ -231,6 +231,63 @@
       <span class="landing-card-desc">LDAP v3 (RFC 4511) against a real directory: bind, search by filter and scope, create and delete users and groups, change membership, read every result code.</span>
       <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: LDAP is BER over port 389, which a browser cannot open. Run the debugger locally for it.</span>
     </a>
+    <!-- The FOURTEENTH card, and the first addition since the twelfth that
+         costs no layout change at all: seven across turns 7+6 into a filled
+         7+7, which is the same two rows and therefore the same height. It
+         still needs its own :nth-child(14) accent rule in css/landing.css, or
+         landingFitsOnOneScreen() fails naming this card rather than that file.
+
+         NO data-not-on-static MARKER, and that is the deliberate part. SCIM is
+         ordinary HTTPS with a JSON body, so scim.html calls a SCIM server
+         directly from the browser and works with no api behind it — which is
+         what separates it from the three cards above. What it loses on a static
+         deployment is the api call path, and with it the ability to reach a
+         server that sends no CORS headers; the page says so itself in the
+         Connection pane rather than the card being greyed. Same trade PKI
+         makes. -->
+    <a class="landing-card" href="/scim.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8.5" cy="8" r="3"/>
+          <path d="M3 19v-1.2c0-2 2.5-3.3 5.5-3.3 1 0 2 .15 2.8.42"/>
+          <circle cx="17.5" cy="15.5" r="4"/>
+          <path d="M17.5 13.6v3.8M15.6 15.5h3.8"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">SCIM</span>
+      <span class="landing-card-desc">SCIM 2.0 (RFC 7644) provisioning: every endpoint by hand, or scenario batches that create, modify and deprovision users and groups and check every step.</span>
+    </a>
+    <!-- The FIFTEENTH card, and the FOURTH that is not on the deployed static
+         sites. SPIFFE's server side is three surfaces and two of them are
+         gRPC, which a browser cannot produce at all: no HTTP/2 stream of its
+         own, no trailers, no way to read a `grpc-status`, and no way to
+         present the client certificate the SPIRE Server API requires. So both
+         live in the api (api/spiffe_client.js) and the page goes with them.
+
+         Note what is being given up, because it is more than the Kerberos and
+         LDAP cards give up: the bundle endpoint IS plain HTTPS, and the
+         page's bundle reader, SVID inspector and SPIFFE ID checker each need
+         no network at all. A page whose two biggest panes are permanently
+         dead is still worse than a card that says why — the same judgement
+         made about SPNEGO, and the opposite of the one made about PKI and
+         SCIM.
+
+         This card cost the layout an eighth column, which was cheap: see the
+         note in css/landing.css. It still needs its own :nth-child(15) accent
+         rule there, or landingFitsOnOneScreen() fails naming this card rather
+         than that file. -->
+    <a class="landing-card" href="/spiffe.html" data-not-on-static>
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2.6 4.5 5.6v5.6c0 4.4 3.1 8.4 7.5 10.2 4.4-1.8 7.5-5.8 7.5-10.2V5.6Z"/>
+          <path d="M12 8.2v7.4"/>
+          <path d="M8.6 10.2h6.8"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">SPIFFE</span>
+      <span class="landing-card-desc">SPIFFE and SPIRE: fetch an X509-SVID or a JWT-SVID from the Workload API, read the trust bundle, attest an agent, and drive all forty-two SPIRE Server API methods.</span>
+      <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: two of SPIFFE&rsquo;s three surfaces are gRPC, which a browser cannot produce. Run the debugger locally for it.</span>
+    </a>
   </div>
 </div>
 

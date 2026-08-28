@@ -480,6 +480,18 @@ function askBridge(action) {
     }, 4000);
     function handler(event) {
       log.debug("Entering handler().");
+      // RFC 9700 section 4.17 (requirement 15.3): a message listener must
+      // exact-match the SENDER ORIGIN, not merely the source window. The two
+      // are different checks — event.source identifies the window object a
+      // message came from, which for a same-window bridge is this one either
+      // way, while event.origin is what says the document in it is still the
+      // document this page trusts. A page navigated to another origin inside
+      // the same window still satisfies the source test.
+      if (event.origin !== window.location.origin) {
+        log.debug("Leaving handler(). Origin " + event.origin +
+                  " is not this page's own.");
+        return;
+      }
       if (event.source !== window) {
         log.debug("Leaving handler().");
         return;

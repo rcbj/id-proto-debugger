@@ -22,6 +22,8 @@ const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -29,10 +31,17 @@ var log = bunyan.createLogger({ name: 'wstrust_operation_history',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000";
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var callWait = Math.max(waitTime, 20000);
+
+// The relying party every RST here names. Set explicitly rather than left to
+// wstrust_tools.html's markup default, for the reason tests/wstrust.js gives
+// beside its own copy of this constant: a `.stored` field is at the mercy of
+// whatever an earlier run left in localStorage, and the registration below has
+// to be registered against the string that is actually sent.
+var APPLIES_TO = process.env.WSTRUST_APPLIES_TO || "urn:wstrust:test:rp";
 
 async function click(driver, locator) {
   log.debug("Entering click().");
@@ -114,6 +123,7 @@ async function configureRequest(driver, opts) {
   await setInput(driver, 'wst_sts_url', opts.stsUrl === undefined ?
                  stsUrl : opts.stsUrl);
   await selectValue(driver, 'wst_cred_mode', 'usernametoken');
+  await setInput(driver, 'wst_applies_to', APPLIES_TO);
   await setInput(driver, 'wst_username', opts.user || 'wstrust');
   await setInput(driver, 'wst_password', opts.password || 'wstrust');
   // Call the STS straight from the browser: the mock sends permissive CORS, and
@@ -245,21 +255,56 @@ async function test() {
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        baseUrl.replace(/\/+$/, ""));
+  // The mock STS serves https on a certificate it generated at startup (see
+  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
+  // makes the whole argument. This file builds its Chrome options by hand
+  // rather than through addBrowserAccessFlags(), which is why the call is here
+  // instead of arriving with the rest.
+  browserFlags.addStsTrustFlags(options);
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
   options.addArguments("--user-data-dir=/tmp/wstrust-history-chrome-" +
-                       Date.now());
+                       Date.now() + "-" + process.pid);
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     log.info("Starting Test run. STS=" + stsUrl);
+    // The relying party, before the first call that actually reaches the STS.
+    // Several of the calls below are deliberate FAILURES — an empty STS URL, a
+    // refused password — and those never present an AppliesTo to anything;
+    // this registration is for the ones that succeed, which is what the
+    // history pane is reading when it records an issued token.
+    await registry.provision(registry.baseOf(stsUrl), {
+      identifier: APPLIES_TO,
+      name: "WS-Trust test relying party",
+      protocols: ["wstrust"],
+      fields: {
+        wstrustAppliesTo: [APPLIES_TO],
+        samlEntityId: [APPLIES_TO]
+      },
+      why: "the relying party the recorded operations name"
+    });
     await driver.manage().deleteAllCookies();
     await operationHistoryActivities(driver);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

@@ -9,7 +9,7 @@
     <link href="/css/footer.css" rel="stylesheet">
     <link href="/css/common.css" rel="stylesheet">
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
-    <link href="/css/digital_signature.css" rel="stylesheet">
+    <link href="/css/tool_panes.css" rel="stylesheet">
   </head>
 
   <body>
@@ -22,9 +22,9 @@
 <script type="text/javascript" src="/js/digital_signature.js">
 </script>
 
-<p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a></p>
+<p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a> &nbsp;|&nbsp; <a href="/encryption_tools.html?from=digital_signature.html">Encryption / Decryption &rarr;</a></p>
 
-<p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. Pane 1 uses the post-quantum <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+) scheme; pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 4 uses the post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium); pane 5 uses <strong>BBS</strong> over BLS12-381 (both ciphersuites), which signs a <em>list</em> of messages and can derive an unlinkable proof over any subset of them. The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those five panes are <strong>asymmetric</strong> digital signatures; the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+<p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. Pane 1 uses the post-quantum <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+) scheme; pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 4 uses the post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium); pane 5 uses <strong>BBS</strong> over BLS12-381 (both ciphersuites), which signs a <em>list</em> of messages and can derive an unlinkable proof over any subset of them. Panes 6 and 7 are about an <em>envelope</em> rather than a primitive: pane 6 is <strong>JWS</strong> (RFC 7515) over a JSON payload &mdash; every registered algorithm, all three serializations, detached and unencoded payloads; pane 7 is the W3C <strong>XML Digital Signature</strong> &mdash; enveloped, enveloping and detached, four canonicalization methods, and a configurable transform chain. Both refuse to sign input that does not parse. The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those seven panes are <strong>digital signature</strong> panes (the JWS and XML ones can also carry an HMAC, which is not one); the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
 
 <p class="ds-controls">
   <label class="ds-toggle" title="Expand or collapse every pane.">
@@ -436,6 +436,371 @@
     </div>
 
     <input class="ds-status" type="text" id="ds_bbs_status" name="ds_bbs_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== JWS (JSON Web Signature) ===================== -->
+  <fieldset id="pane_jws_signature">
+    <legend>JWS &mdash; JSON Web Signature <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-sym">or MAC</span></legend>
+
+    <p class="ds-note" title="A JWS is a serialization, not a new primitive.">RFC 7515 over a <strong>JSON</strong> payload, with every algorithm the JOSE registry defines: <code>HS*</code> (RFC 7518 &sect;3.2), <code>RS*</code>, <code>PS*</code>, <code>ES*</code>, <code>EdDSA</code> over Ed25519 <em>and</em> Ed448 (RFC 8037), <code>ES256K</code> (RFC 8812) and the unsecured <code>none</code>. Only <strong>HS256 is Required</strong>; RS256 and ES256 are Recommended and everything else is Optional &mdash; each option below says which. The signature covers <code>BASE64URL(header) + "." + BASE64URL(payload)</code>, so the payload's own whitespace is <em>inside</em> the signature: this pane never reformats it for you. <strong>Sign refuses a payload that is not well-formed JSON.</strong> Note <code>HS*</code> is a MAC with a shared secret &mdash; a JWS, but not a digital signature.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The JSON document to sign. It must parse as JSON before Sign will do anything.">Payload (JSON) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_jws_payload');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="5" id="ds_jws_payload" name="ds_jws_payload" title="The JSON document to sign. Validated on Sign; also validated on demand by the Validate JSON button."></textarea>
+    </div>
+    <div class="ds-row">
+      <input type="submit" value="Validate JSON" onclick="return digital_signature.jwsValidatePayload();" title="Check that the payload parses as JSON, without signing anything." />
+      <input type="submit" value="Format JSON" onclick="return digital_signature.jwsFormatPayload();" title="Re-indent the payload. This changes the octets the signature covers, so sign again afterwards." />
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The serialized JWS. Produced by Sign; paste one here to Validate.">JWS <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_jws_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="5" id="ds_jws_signature" name="ds_jws_signature" title="The serialized JWS — compact, flattened JSON or general JSON. Populated by Sign; paste one here to Validate."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Algorithm &amp; Serialization</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="The JOSE `alg` header value. The label says the specification's own implementation requirement.">Algorithm</label>
+          <select id="ds_jws_alg" name="ds_jws_alg" title="JWS algorithm. Used for signing, and — unless the box below is ticked — the algorithm verification is held to.">
+            <option value="HS256" selected="selected">HS256 &mdash; HMAC-SHA-256 (required)</option>
+            <option value="HS384">HS384 &mdash; HMAC-SHA-384</option>
+            <option value="HS512">HS512 &mdash; HMAC-SHA-512</option>
+            <option value="RS256">RS256 &mdash; RSASSA-PKCS1-v1_5 SHA-256 (recommended)</option>
+            <option value="RS384">RS384 &mdash; RSASSA-PKCS1-v1_5 SHA-384</option>
+            <option value="RS512">RS512 &mdash; RSASSA-PKCS1-v1_5 SHA-512</option>
+            <option value="PS256">PS256 &mdash; RSASSA-PSS SHA-256</option>
+            <option value="PS384">PS384 &mdash; RSASSA-PSS SHA-384</option>
+            <option value="PS512">PS512 &mdash; RSASSA-PSS SHA-512</option>
+            <option value="ES256">ES256 &mdash; ECDSA P-256 SHA-256 (recommended+)</option>
+            <option value="ES384">ES384 &mdash; ECDSA P-384 SHA-384</option>
+            <option value="ES512">ES512 &mdash; ECDSA P-521 SHA-512</option>
+            <option value="EdDSA-Ed25519">EdDSA &mdash; Ed25519 (RFC 8037)</option>
+            <option value="EdDSA-Ed448">EdDSA &mdash; Ed448 (RFC 8037)</option>
+            <option value="ES256K">ES256K &mdash; ECDSA secp256k1 SHA-256 (RFC 8812)</option>
+            <option value="none">none &mdash; Unsecured JWS (NO signature)</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="RFC 7515 defines three. The compact one is what a JWT is; the JSON ones can carry an unprotected header.">Serialization</label>
+          <select id="ds_jws_serialization" name="ds_jws_serialization" title="How the parts are packed: compact (header.payload.signature), flattened JSON, or general JSON.">
+            <option value="compact" selected="selected">Compact (header.payload.signature)</option>
+            <option value="flattened">JSON &mdash; flattened</option>
+            <option value="general">JSON &mdash; general</option>
+          </select>
+        </div>
+      </div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="JWS header `typ` — the media type of this complete JWS. Optional.">typ</label>
+          <input type="text" id="ds_jws_typ" name="ds_jws_typ" placeholder="e.g. JWT, at+jwt" title="Protected header `typ`. Left empty it is omitted." />
+        </div>
+        <div class="ds-grow">
+          <label title="JWS header `cty` — the media type of the PAYLOAD. Optional.">cty</label>
+          <input type="text" id="ds_jws_cty" name="ds_jws_cty" placeholder="e.g. application/json" title="Protected header `cty`. Left empty it is omitted." />
+        </div>
+        <div class="ds-grow">
+          <label title="JWS header `kid` — which key this is. Also written into a downloaded JWK.">kid</label>
+          <input type="text" id="ds_jws_kid" name="ds_jws_kid" placeholder="key id" title="Protected header `kid`. Left empty it is omitted." />
+        </div>
+      </div>
+      <div class="ds-field">
+        <label title="Any further members for the PROTECTED header, as a JSON object. They are covered by the signature.">Extra protected header (JSON object)</label>
+        <textarea rows="2" id="ds_jws_header_extra" name="ds_jws_header_extra" title="Additional protected header members, merged in after typ/cty/kid. JSON object."></textarea>
+      </div>
+      <div class="ds-field">
+        <label title="The unprotected header of RFC 7515 §7.2. It is NOT signed, and the compact serialization has no place for it.">Unprotected header (JSON serializations only)</label>
+        <textarea rows="2" id="ds_jws_unprotected" name="ds_jws_unprotected" title="Unprotected header members. NOT covered by the signature. Refused in the compact serialization."></textarea>
+      </div>
+      <p class="ds-note">
+        <label title="RFC 7515 App. F: the payload is left out of the serialization. Validate then reads it from the Payload box above."><input type="checkbox" id="ds_jws_detached" name="ds_jws_detached" /> Detached payload</label>
+        &nbsp;
+        <label title="RFC 7797: sign the payload's own octets instead of its base64url. `b64:false` goes in the protected header and is listed in `crit`. The compact serialization then cannot carry a payload containing a period."><input type="checkbox" id="ds_jws_unencoded" name="ds_jws_unencoded" /> Unencoded payload (b64=false)</label>
+        &nbsp;
+        <label title="Put the public key in the protected header as `jwk`. Not for HMAC — that key is secret."><input type="checkbox" id="ds_jws_embed_jwk" name="ds_jws_embed_jwk" /> Embed the public key (jwk)</label>
+        &nbsp;
+        <label title="Minify the payload before signing. Off by default: reformatting changes the signed octets."><input type="checkbox" id="ds_jws_compact_payload" name="ds_jws_compact_payload" /> Compact the JSON before signing</label>
+        &nbsp;
+        <label title="RFC 8725 §3.1 says the VERIFIER decides the algorithm. Ticking this takes it from the token instead — which is how algorithm-confusion attacks work, and is here so you can watch one."><input type="checkbox" id="ds_jws_trust_header" name="ds_jws_trust_header" /> Validate with the algorithm from the header (not recommended)</label>
+      </p>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="How the HMAC secret in the key fields is read. Ignored for RSA (PEM) and for the curves (hex).">Secret encoding (HS*)</label>
+          <select id="ds_jws_secret_encoding" name="ds_jws_secret_encoding" title="Read an HMAC secret as hex, as base64url (a JWK's `k`), or as UTF-8 text.">
+            <option value="hex" selected="selected">Hex</option>
+            <option value="b64u">base64url (JWK "k")</option>
+            <option value="text">UTF-8 text</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="RSA modulus size. Larger sizes are noticeably slower to generate in pure JS.">Key Size (RS*/PS*)</label>
+          <select id="ds_jws_rsa_bits" name="ds_jws_rsa_bits" title="RSA modulus size (bits).">
+            <option value="2048" selected="selected">2048</option>
+            <option value="3072">3072</option>
+            <option value="4096">4096</option>
+            <option value="1024">1024 (insecure)</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.jwsGenerateKeys();" title="Generate key material for the selected algorithm: an HMAC secret, an RSA key pair, or a curve key pair." />
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="RSA: a PKCS#8 PEM. ECDSA/EdDSA: the raw private scalar in hex. HMAC: the shared secret, in the encoding chosen above.">Private Key / Secret <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_jws_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_jws_private_key" name="ds_jws_private_key" title="Signing key. PEM for RSA, hex for a curve, the chosen encoding for an HMAC secret."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="RSA: a SubjectPublicKeyInfo PEM. ECDSA/EdDSA: the raw public point in hex. HMAC: the same shared secret.">Public Key / Secret <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_jws_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_jws_public_key" name="ds_jws_public_key" title="Verification key. PEM for RSA, hex for a curve, the same secret for HMAC."></textarea>
+      </div>
+      <div class="ds-row">
+        <select class="ds-grow" id="ds_jws_ks_format" name="ds_jws_ks_format" title="Keystore format. A raw curve or secret key exports as a JWK, which is the form JOSE defines for it; an RSA pair takes the full matrix.">
+          <option value="jwk" selected="selected">JWK</option>
+          <option value="pem">PEM</option>
+          <option value="der">DER</option>
+          <option value="pkcs12">PKCS#12</option>
+        </select>
+        <input class="ds-grow" type="password" id="ds_jws_ks_password" name="ds_jws_ks_password" placeholder="password (optional)" title="Optional password. Encrypts the private key: PBES2 for PEM/DER, PBES2 JWE for JWK. Required for PKCS#12." />
+        <input type="submit" value="Download Keys" onclick="return digital_signature.jwsDownloadKeys();" title="Download the key material in the selected keystore format." />
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.jwsSign();" title="Validate the payload as JSON, then sign it; the serialized JWS is placed in the JWS box." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.jwsValidate();" title="Verify the JWS in the box against the Public Key / Secret." />
+    </div>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="What was actually signed or read: the protected header, and the signing input or the payload.">Decoded <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_jws_decoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="6" id="ds_jws_decoded" name="ds_jws_decoded" title="The decoded protected header plus the signing input (after Sign) or the payload (after Validate)." readonly></textarea>
+    </div>
+
+    <input class="ds-status" type="text" id="ds_jws_status" name="ds_jws_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ===================== XML Digital Signature ===================== -->
+  <fieldset id="pane_xml_signature">
+    <legend>XML Digital Signature <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-sym">or MAC</span></legend>
+
+    <p class="ds-note" title="Almost everything below is written into the document a verifier reads back.">W3C <strong>XMLDSIG</strong> (RFC 3275) over an XML document, using the same in-browser engine the SAML, WS-Trust and WS-Federation workflows sign with. All three signature types are here &mdash; <strong>enveloped</strong> (the Signature goes inside the document), <strong>enveloping</strong> (the document goes inside a <code>ds:Object</code> in the Signature), <strong>detached</strong> (the Signature stands alone and names what it covers). <strong>Sign refuses XML that is not well-formed</strong>, and nothing here rewrites your input: a signature covers the exact octets that get canonicalized, so any "cleaning" would invalidate what it is about to produce. The transforms are an <em>ordered chain</em> and are applied in the order shown below the fields &mdash; a canonicalization ends the chain. <code>HMAC-*</code> is a MAC with a shared secret, not a digital signature. C14N 1.1 is not offered: its whole difference from 1.0 is <code>xml:base</code> inheritance, which this engine does not implement, and naming a method it does not perform would be worse than leaving it out.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The XML document to sign. For a detached signature this is also the document Validate checks the Reference against.">XML <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_xml_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="6" id="ds_xml_value" name="ds_xml_value" title="The XML document to sign. Must be well-formed. Detached signing may add an ID attribute here — a detached Reference has to name what it covers."></textarea>
+    </div>
+    <div class="ds-row">
+      <input type="submit" value="Validate XML" onclick="return digital_signature.xmlValidateDocument();" title="Check that the XML is well-formed, without signing anything." />
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The signed document, or (detached) the standalone ds:Signature. Produced by Sign; paste one here to Validate.">Signed XML / ds:Signature <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_xml_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="6" id="ds_xml_signature" name="ds_xml_signature" title="The signed XML (enveloped/enveloping) or the standalone ds:Signature (detached). Populated by Sign; paste one here to Validate."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Signature</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Where the Signature sits relative to what it covers.">Signature Type</label>
+          <select id="ds_xml_mode" name="ds_xml_mode" title="Enveloped: inside the document. Enveloping: the document inside a ds:Object. Detached: a standalone ds:Signature naming the document by ID.">
+            <option value="enveloped" selected="selected">Enveloped</option>
+            <option value="enveloping">Enveloping (ds:Object)</option>
+            <option value="detached">Detached</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="Only rsa-sha1 and hmac-sha1 are in the xmldsig# namespace; everything newer is xmldsig-more# (RFC 4051/6931), and RSASSA-PSS is under 2007/05 with the hash FIRST.">SignatureMethod</label>
+          <select id="ds_xml_sigalg" name="ds_xml_sigalg" title="The SignatureMethod URI written into SignedInfo.">
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256" selected="selected">RSA-SHA256</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha384">RSA-SHA384</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#rsa-sha512">RSA-SHA512</option>
+            <option value="http://www.w3.org/2000/09/xmldsig#rsa-sha1">RSA-SHA1 (insecure)</option>
+            <option value="http://www.w3.org/2007/05/xmldsig-more#sha256-rsa-MGF1">RSASSA-PSS SHA-256 (RFC 9231)</option>
+            <option value="http://www.w3.org/2007/05/xmldsig-more#sha384-rsa-MGF1">RSASSA-PSS SHA-384 (RFC 9231)</option>
+            <option value="http://www.w3.org/2007/05/xmldsig-more#sha512-rsa-MGF1">RSASSA-PSS SHA-512 (RFC 9231)</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256">ECDSA-SHA256</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha384">ECDSA-SHA384</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha512">ECDSA-SHA512</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha1">ECDSA-SHA1 (insecure)</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#hmac-sha256">HMAC-SHA256 (a MAC)</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#hmac-sha384">HMAC-SHA384 (a MAC)</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#hmac-sha512">HMAC-SHA512 (a MAC)</option>
+            <option value="http://www.w3.org/2000/09/xmldsig#hmac-sha1">HMAC-SHA1 (a MAC, insecure)</option>
+          </select>
+        </div>
+      </div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="The hash each Reference is digested with. Independent of the SignatureMethod.">DigestMethod</label>
+          <select id="ds_xml_digest" name="ds_xml_digest" title="The DigestMethod URI written into each Reference.">
+            <option value="http://www.w3.org/2001/04/xmlenc#sha256" selected="selected">SHA-256</option>
+            <option value="http://www.w3.org/2001/04/xmldsig-more#sha384">SHA-384</option>
+            <option value="http://www.w3.org/2001/04/xmlenc#sha512">SHA-512</option>
+            <option value="http://www.w3.org/2000/09/xmldsig#sha1">SHA-1 (insecure)</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="How SignedInfo itself is canonicalized before it is signed.">CanonicalizationMethod</label>
+          <select id="ds_xml_c14n" name="ds_xml_c14n" title="The CanonicalizationMethod applied to SignedInfo.">
+            <option value="http://www.w3.org/2001/10/xml-exc-c14n#" selected="selected">Exclusive C14N 1.0</option>
+            <option value="http://www.w3.org/2001/10/xml-exc-c14n#WithComments">Exclusive C14N 1.0 with comments</option>
+            <option value="http://www.w3.org/TR/2001/REC-xml-c14n-20010315">Inclusive C14N 1.0</option>
+            <option value="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments">Inclusive C14N 1.0 with comments</option>
+          </select>
+        </div>
+      </div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Exclusive C14N renders only the prefixes an element visibly uses. A prefix that appears only inside an attribute VALUE (a QName in xsi:type, a SOAP actor) is lost unless it is listed here. Space-separated; #default names the default namespace.">SignedInfo InclusiveNamespaces PrefixList</label>
+          <input type="text" id="ds_xml_c14n_prefixes" name="ds_xml_c14n_prefixes" placeholder="e.g. soap wsse #default" title="PrefixList for the CanonicalizationMethod. Exclusive C14N only." />
+        </div>
+        <div class="ds-grow">
+          <label title="Blank derives it: the root element's ID for enveloped, the ds:Object for enveloping.">Reference URI</label>
+          <input type="text" id="ds_xml_ref_uri" name="ds_xml_ref_uri" placeholder="(derived)" title="The Reference URI. Blank means: derive it. An empty URI covers the whole document." />
+        </div>
+      </div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Where the ds:Signature goes inside the document. Enveloped signatures only.">Placement (enveloped)</label>
+          <select id="ds_xml_placement" name="ds_xml_placement" title="Where the Signature element is inserted in an enveloped signature.">
+            <option value="last" selected="selected">Last child of the root</option>
+            <option value="first">First child of the root</option>
+            <option value="after-issuer">Directly after &lt;Issuer&gt; (SAML 2.0 style)</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="The Id attribute on the ds:Signature. Optional.">Signature Id</label>
+          <input type="text" id="ds_xml_sig_id" name="ds_xml_sig_id" placeholder="(none)" title="Id attribute for the ds:Signature element." />
+        </div>
+        <div class="ds-grow">
+          <label title="The Id on the ds:Object an enveloping signature wraps the document in. Blank generates one.">Object Id (enveloping)</label>
+          <input type="text" id="ds_xml_object_id" name="ds_xml_object_id" placeholder="(generated)" title="Id attribute for the ds:Object of an enveloping signature." />
+        </div>
+      </div>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Transforms &mdash; applied in this order: enveloped-signature &rarr; XPath &rarr; base64 &rarr; canonicalization</div>
+      <p class="ds-note">
+        <label title="Removes the ds:Signature from what the Reference digests. An enveloped signature that omits it can never verify, so it is added automatically when the type is Enveloped."><input type="checkbox" id="ds_xml_t_enveloped" name="ds_xml_t_enveloped" checked="checked" /> enveloped-signature</label>
+        &nbsp;
+        <label title="Digests the base64-DECODED octets of the referenced text rather than its canonical XML."><input type="checkbox" id="ds_xml_t_base64" name="ds_xml_t_base64" /> base64</label>
+      </p>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Both XPath transforms are evaluated by the browser's own XPath engine. The `here()` function is not implemented.">XPath transform</label>
+          <select id="ds_xml_t_xpath_kind" name="ds_xml_t_xpath_kind" title="None, the XPath transform of RFC 3275 §6.6.3 (a predicate over every node), or XPath Filter 2.0 (subtree set operations).">
+            <option value="none" selected="selected">(none)</option>
+            <option value="xpath">XPath filter (RFC 3275 &sect;6.6.3)</option>
+            <option value="filter2">XPath Filter 2.0</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="How the selected subtree combines with what is already in the node-set. XPath Filter 2.0 only.">Filter (Filter 2.0)</label>
+          <select id="ds_xml_t_filter" name="ds_xml_t_filter" title="intersect keeps the selected subtree, subtract removes it, union adds it back.">
+            <option value="intersect" selected="selected">intersect</option>
+            <option value="subtract">subtract</option>
+            <option value="union">union</option>
+          </select>
+        </div>
+      </div>
+      <div class="ds-field">
+        <label title="For the XPath transform this is a predicate evaluated with every node as the context node; for Filter 2.0 it selects subtrees. ds, dsig11 and xenc always resolve.">XPath expression</label>
+        <input type="text" id="ds_xml_t_xpath" name="ds_xml_t_xpath" placeholder="e.g. not(ancestor-or-self::ds:Signature)" title="The XPath expression for the selected transform." />
+      </div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="The canonicalization the Reference ends with. Leaving it out is legal and means INCLUSIVE C14N omitting comments — which is the default most people guess wrong.">Reference canonicalization</label>
+          <select id="ds_xml_t_c14n" name="ds_xml_t_c14n" title="The canonicalization transform on the Reference.">
+            <option value="http://www.w3.org/2001/10/xml-exc-c14n#" selected="selected">Exclusive C14N 1.0</option>
+            <option value="http://www.w3.org/2001/10/xml-exc-c14n#WithComments">Exclusive C14N 1.0 with comments</option>
+            <option value="http://www.w3.org/TR/2001/REC-xml-c14n-20010315">Inclusive C14N 1.0</option>
+            <option value="http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments">Inclusive C14N 1.0 with comments</option>
+            <option value="">(none &mdash; the XMLDSIG default, inclusive, omitting comments)</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="PrefixList for the Reference's exclusive canonicalization transform.">Reference PrefixList</label>
+          <input type="text" id="ds_xml_t_prefixes" name="ds_xml_t_prefixes" placeholder="e.g. soap wsse #default" title="InclusiveNamespaces PrefixList for the Reference canonicalization. Exclusive C14N only." />
+        </div>
+      </div>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key Pair &amp; KeyInfo</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="What the ds:KeyInfo carries. An ECDSA key has no certificate here, so it uses KeyValue; a shared secret has no public half at all.">KeyInfo</label>
+          <select id="ds_xml_keyinfo" name="ds_xml_keyinfo" title="What to put in ds:KeyInfo.">
+            <option value="x509" selected="selected">X509Data / X509Certificate (RSA)</option>
+            <option value="keyvalue">KeyValue (RSAKeyValue or dsig11:ECKeyValue)</option>
+            <option value="x509+keyvalue">X509Data and KeyValue</option>
+            <option value="keyname">KeyName only</option>
+            <option value="none">Omit KeyInfo</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="The ds:KeyName. Added whenever it is non-empty, and required by the KeyName-only choice.">KeyName</label>
+          <input type="text" id="ds_xml_keyname" name="ds_xml_keyname" placeholder="(none)" title="ds:KeyName value." />
+        </div>
+      </div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Curve for an ECDSA SignatureMethod. Written into KeyInfo as the dsig11:NamedCurve OID.">Curve (ECDSA)</label>
+          <select id="ds_xml_curve" name="ds_xml_curve" title="Curve used for ECDSA key generation, signing and validation.">
+            <option value="P-256" selected="selected">P-256</option>
+            <option value="P-384">P-384</option>
+            <option value="P-521">P-521</option>
+            <option value="secp256k1">secp256k1</option>
+          </select>
+        </div>
+        <div class="ds-grow">
+          <label title="RSA modulus size. Pure JS, so larger sizes take longer.">Key Size (RSA)</label>
+          <select id="ds_xml_rsa_bits" name="ds_xml_rsa_bits" title="RSA modulus size (bits).">
+            <option value="2048" selected="selected">2048</option>
+            <option value="3072">3072</option>
+            <option value="4096">4096</option>
+            <option value="1024">1024 (insecure)</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.xmlGenerateKeys();" title="Generate key material for the selected SignatureMethod: an RSA pair plus a self-signed certificate, an ECDSA pair, or a shared secret." />
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="RSA: a PKCS#8 PEM. ECDSA: the raw private scalar in hex. HMAC: the shared secret in hex.">Private Key / Secret <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_xml_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_xml_private_key" name="ds_xml_private_key" title="Signing key. PEM for RSA, hex for ECDSA, hex secret for HMAC."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="RSA: a SubjectPublicKeyInfo PEM (used for RSAKeyValue). ECDSA: the uncompressed public point in hex. HMAC: the same secret.">Public Key / Secret <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_xml_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_xml_public_key" name="ds_xml_public_key" title="Verification key. PEM for RSA, hex point for ECDSA, the same secret for HMAC."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The certificate placed in ds:KeyInfo/X509Data, and the one Validate uses when the signature carries none. Minted with the RSA key pair.">Certificate (PEM) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_xml_cert');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_xml_cert" name="ds_xml_cert" title="X.509 certificate for KeyInfo. Generated with the RSA key pair; paste somebody else's here to verify their signature."></textarea>
+      </div>
+      <div class="ds-row">
+        <select class="ds-grow" id="ds_xml_ks_format" name="ds_xml_ks_format" title="Keystore format. The RSA pair takes the full matrix; a raw ECDSA key exports as a JWK; a shared secret has no keystore format.">
+          <option value="pem" selected="selected">PEM</option>
+          <option value="jwk">JWK</option>
+          <option value="der">DER</option>
+          <option value="pkcs12">PKCS#12</option>
+        </select>
+        <input class="ds-grow" type="password" id="ds_xml_ks_password" name="ds_xml_ks_password" placeholder="password (optional)" title="Optional password. Encrypts the private key: PBES2 for PEM/DER, PBES2 JWE for JWK. Required for PKCS#12." />
+        <input type="submit" value="Download Keys" onclick="return digital_signature.xmlDownloadKeys();" title="Download the key material in the selected keystore format." />
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.xmlSign();" title="Validate the XML as well-formed, then sign it; the result is placed in the Signed XML box." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.xmlValidate();" title="Verify the SignatureValue over SignedInfo and every Reference digest." />
+    </div>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The canonicalized SignedInfo — the exact octets the SignatureValue covers — plus the Reference detail.">Detail <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_xml_report');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="8" id="ds_xml_report" name="ds_xml_report" title="After Sign: the canonicalized SignedInfo, the transforms, the DigestValue and the SignatureValue. After Validate: what each check found." readonly></textarea>
+    </div>
+
+    <input class="ds-status" type="text" id="ds_xml_status" name="ds_xml_status" title="Status / result of the last operation." readonly />
   </fieldset>
 
   <!-- ===================== Keyed-Hash MACs ===================== -->

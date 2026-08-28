@@ -35,6 +35,8 @@
 const assert = require("assert");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
+const { usernameFor } = require("./random_username.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -42,7 +44,7 @@ var log = bunyan.createLogger({ name: 'oauth2_sts_endpoints',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var stsBase = stsUrl.replace(/\/sts\/?$/, "");
 var metadataUrl = process.env.OAUTH_METADATA_URL || (stsBase +
     "/.well-known/oauth-authorization-server");
@@ -51,6 +53,12 @@ var metadataUrl = process.env.OAUTH_METADATA_URL || (stsBase +
 // there — the redirect is read, not followed.
 var REDIRECT_URI = "http://localhost:9999/callback";
 var CLIENT_ID = "sts-endpoint-test-client";
+// The identity the password grant presents. Generated per run rather than
+// fixed: this mock checks no password (only the reserved string "invalid" is
+// refused) and records every authentication against the name presented, so a
+// name shared with every other test makes its users page and audit log
+// unreadable. The prefix names this file.
+var RO_USER = process.env.STS_RO_USER || usernameFor("oauth2-sts-endpoints");
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -203,8 +211,20 @@ async function authorize(meta, params, options) {
                password: options.password || "any-password",
                  action: options.action || "login" })
   });
-  assert.strictEqual(r.status, 302,
+  // The sign-in form is a POST and the answer to it is a redirect. WHICH
+  // redirect is the interesting part, and it is asserted the way RFC 9700
+  // section 4.12 states it rather than as one exact code: 303 is what the mock
+  // sends now and what the BCP asks for, 302 is what it sent before and what
+  // most servers send, and **307 is the one that is forbidden** — it replays
+  // the method and the body, which on this request is the username and
+  // password, onto whatever the redirect names. Pinning 302 exactly made this
+  // fail the day the mock started doing the more correct thing, and it never
+  // checked the code the specification actually cares about.
+  assert.ok(r.status === 303 || r.status === 302,
     "submitting the sign-in form should redirect, got HTTP " + r.status + ".");
+  assert.notStrictEqual(r.status, 307,
+    "RFC 9700 section 4.12: a credential-bearing POST must not be answered " +
+    "with 307, which replays the method and the body onto the next hop.");
   const cookie = String(r.headers.get("set-cookie") || "").split(";")[0];
   let next = r.headers.get("location");
   if (next.indexOf("http") !== 0) next = meta.issuer + next;
@@ -763,18 +783,19 @@ async function testOtherGrants(meta, verify, codeTokens) {
             "client_credentials has no user, so no ID token.");
 
   const ro = await postForm(meta.token_endpoint, {
-    grant_type: "password", username: "alice", password: "s3cret",
+    grant_type: "password", username: RO_USER, password: "s3cret",
         scope: "openid", client_id: CLIENT_ID
   });
   assert.strictEqual(ro.status, 200, "the password grant failed: " + ro.raw);
   const roClaims = verify(ro.body.access_token,
       "the password grant access token");
-  assert.ok(/alice/.test(roClaims.sub),
-            "the password grant should describe the user who authenticated.");
+  assert.ok(roClaims.sub.indexOf(RO_USER) !== -1,
+            "the password grant should describe the user who authenticated (" +
+            RO_USER + "), not " + roClaims.sub + ".");
   verify(ro.body.id_token, "the password grant ID token");
 
   const roBad = await postForm(meta.token_endpoint, {
-    grant_type: "password", username: "alice", password: "invalid",
+    grant_type: "password", username: RO_USER, password: "invalid",
         client_id: CLIENT_ID
   });
   assert.strictEqual(roBad.status, 400,
@@ -948,6 +969,7 @@ async function testRegistration(meta) {
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. metadata=" + metadataUrl);
+
   const metaResponse = await get(metadataUrl);
   assert.strictEqual(metaResponse.status, 200,
                      "the metadata document is not available: HTTP " +
@@ -956,6 +978,45 @@ async function test() {
   const jwks = await (await get(meta.jwks_uri)).json();
   assert.ok(jwks.keys && jwks.keys.length, "jwks_uri returned no keys.");
   const verify = makeVerifier(jwks);
+
+  // ---------------------------------------------------------------------
+  // THE CLIENT, IN THE REGISTRY, BEFORE ANY OF IT IS SENT.
+  //
+  // This file is the one that walks EVERY endpoint the metadata advertises,
+  // so the registration it makes is the widest in the suite: five grants and
+  // five response types, because it drives all of them with this one
+  // client_id. Declaring less than it uses would be a registration that
+  // describes a different client from the one doing the asking — and the
+  // point of registering at all is that the two agree.
+  //
+  // What is NOT declared is the deliberately invalid material this test also
+  // sends — `no-such-grant`, `cwazy`, a missing client_id. Those are what it
+  // exists to have REFUSED, and an entry that declared them would be
+  // asserting that the mock is expected to accept them.
+  //
+  // testRegistration() further down registers a client of its own through RFC
+  // 7591 and deletes it again; that one is not pre-registered here, because
+  // its whole subject is what the registration endpoint does.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.baseOf(stsBase), {
+    identifier: CLIENT_ID,
+    name: "OAuth2 STS endpoints",
+    protocols: ["oauth2", "oidc"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      oauthRedirectUri: [REDIRECT_URI],
+      oauthResponseType: ["code", "token", "id_token", "code id_token",
+                          "code id_token token"],
+      oauthGrantType: ["authorization_code", "refresh_token",
+                       "client_credentials", "password",
+                       "urn:ietf:params:oauth:grant-type:device_code",
+                       "urn:ietf:params:oauth:grant-type:token-exchange"],
+      oauthScope: ["openid", "profile", "email", "api"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the one client this file drives every advertised endpoint with"
+  });
 
   await testEveryAdvertisedEndpointAnswers(meta);
   await testLoginScreen(meta, verify);

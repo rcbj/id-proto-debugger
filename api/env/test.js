@@ -148,6 +148,36 @@ var config = {
   // client's own protocol-level sizeLimit may ask for fewer; it may not ask for
   // more. Omit it for the code default of 1000.
   ldapMaxEntries: 1000,
+
+  // How large a request body POST /scim will forward, in BYTES. A NUMBER.
+  //
+  // A SEPARATE number from maxContentLength above, which bounds what comes
+  // BACK — and both are needed because a SCIM bulk is the asymmetric case: a
+  // BulkRequest creating fifty users with every optional attribute is a large
+  // request and a small response, so one limit standing for both would either
+  // refuse that or leave the response unbounded.
+  //
+  // It is not the same thing as the far end's own limit either. A SCIM server
+  // publishes `bulk.maxPayloadSize` in its ServiceProviderConfig and it is
+  // usually SMALLER than this; that one is the server's promise and this one
+  // exists so a caller cannot make this service buffer an unbounded body on
+  // its way to somewhere that would have refused it anyway.
+  //
+  // Omit it for the code default of 1048576 (1 MiB). A value that is not a
+  // positive number is logged and ignored.
+  //
+  // What this does NOT bound, because nothing here needs to: the ADDRESS
+  // policy already covers this endpoint without a line of its own. POST /scim
+  // is an axios call like /token and /wstrust, so the guard installed once on
+  // the shared instance already applies to it — request interceptor, DNS hook,
+  // wrapped createConnection, redirects included. The two settings that DO
+  // name a transport (krb5AllowedPorts, ldapAllowedPorts) exist because those
+  // are raw sockets that axios never sees. There is deliberately no
+  // scimAllowedPorts: SCIM is HTTP, a port allowlist for HTTP would have to
+  // carry 80, 443 and every alternate somebody runs a service on, and an
+  // allowlist that has to be edited per deployment is one that gets set to
+  // "any".
+  scimMaxRequestBytes: 1048576,
   // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
   // TLS test the PKI page (client/public/pki.html) runs.
   //
@@ -171,6 +201,67 @@ var config = {
   // bound the lookup, the connect, the handshake and the certificate chain.
   // Left as the code default here: this configuration is for the node-only
   // tests, which drive api/tls_probe.js directly and set their own policy.
+  // --- SPIFFE ---------------------------------------------------------------
+  //
+  // The ports POST /spiffe/call may open a gRPC connection to. AN ARRAY OF
+  // NUMBERS, or the string "any".
+  //
+  // The same kind of allowlist ldapAllowedPorts is and for the same reason —
+  // gRPC is a raw socket that the axios guard never sees — with the same
+  // narrowing argument: this endpoint takes a method and a request described in
+  // JSON and encodes the protobuf itself, so a caller cannot choose what goes
+  // on the wire the way it can with a byte relay.
+  //
+  // Omit it for the code default of 8081, 8092 and 8181 — a real spire-server's
+  // own default port, and the two the mock STS had to move its SPIFFE surfaces
+  // to because 8081 is already its HTTP port. "any" is a word rather than an
+  // empty list, so that widening it cannot be a plausible typo.
+  spiffeAllowedPorts: [8081, 8092, 8181],
+  // The Unix socket paths POST /spiffe/call may connect to, as PREFIXES. AN
+  // ARRAY OF ABSOLUTE PATHS, or the string "any".
+  //
+  // THIS IS THE ONLY SETTING IN THIS FILE THAT BOUNDS A FILESYSTEM PATH, and it
+  // is here because SPIFFE is the only workflow that needs one:
+  // SPIFFE_ENDPOINT_SOCKET means a `unix://` path to go-spiffe, spiffe-helper
+  // and the SPIRE agent, so a client that could not reach a Unix socket could
+  // not talk to what every real deployment runs.
+  //
+  // The address policy cannot judge a path — there is no address in one — so
+  // this allowlist stands in its place. What it bounds is not exotic: an api
+  // reachable from anywhere, pointed at a path on the machine it runs on, is a
+  // way to make that machine connect to one of its own local services and
+  // report what came back.
+  //
+  // Omit it for the code default, which is SPIRE's own two directories
+  // (/tmp/spire-agent/, /tmp/spire-server/). "any" is spelled as a word for the
+  // reason it is everywhere else here. Two further checks apply whatever this
+  // is set to and neither is configurable: a path longer than 103 bytes is
+  // refused by name (sun_path is 108 on Linux and 104 on macOS, and past it the
+  // operating system fails the connect with a message about the address being
+  // in use — naming something that is not the problem), and a path that exists
+  // and is not a socket is refused rather than dialled.
+  spiffeAllowedSocketPaths: ["/tmp/spire-agent/", "/tmp/spire-server/"],
+  // How many messages POST /spiffe/call will read from a STREAM before it stops
+  // and says so. A NUMBER.
+  //
+  // Six of SPIFFE's forty-nine methods are streams and a real client holds
+  // FetchX509SVID open for the life of its process, so an HTTP endpoint has to
+  // decide when to stop. One message would make a ROTATION invisible — the
+  // second message on that stream is the new SVID — and the answer always
+  // reports which of the two caps stopped it, so a full stream and a quiet one
+  // are never confused. Omit it for the code default of 4.
+  spiffeMaxStreamMessages: 4,
+  // How long POST /spiffe/call will hold a STREAM open, in MILLISECONDS.
+  //
+  // A separate budget from callTimeout above, because the two bound different
+  // questions: callTimeout asks how long a server may take to ANSWER, and a
+  // stream is not an answer but a subscription. The mock STS re-sends on a
+  // Workload API stream at half the SVID lifetime with a FLOOR of thirty
+  // seconds, so a stream bounded by callTimeout could never observe a rotation
+  // however short the SVID lifetime were set — it would always report a timeout
+  // after one message, which is indistinguishable from a server that sent one
+  // and went quiet. Omit it for the code default of 45000.
+  spiffeStreamTimeout: 45000,
   // SAML Service Provider identity (this debugger acting as an SP).
   spEntityId: "https://tools.test.idptools.io/saml/sp",
   acsUrl: "https://api.tools.test.idptools.io/samlacs",

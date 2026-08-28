@@ -2,9 +2,9 @@
 
 Scope: everything under `api/`. Cross-cutting matters — versioning, `CONFIG_FILE`, the key-material rules, how the suite is run — stay in the repo-root `CLAUDE.md`.
 
-It proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It also speaks two protocols the browser cannot: it relays Kerberos to a KDC (`POST /krb5/*`) and it IS the LDAP client (`POST /ldap/*`). Both are raw TCP, so both enforce the address policy themselves — see the two sections below.
+It proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It also speaks three protocols the browser cannot: it relays Kerberos to a KDC (`POST /krb5/*`), it IS the LDAP client (`POST /ldap/*`), and it makes every SPIFFE gRPC call (`POST /spiffe/call`). All three are raw TCP, so all three enforce the address policy themselves — see the sections below.
 
-## Outbound calls: the address policy and the ten settings
+## Outbound calls: the address policy and the sixteen settings
 
 It fetches URLs its **caller** chooses (token, introspection, revocation, device-authorization and userinfo endpoints, the SAML ArtifactResolve back-channel, the WS-Trust STS, the generic proxy), so `api/ssrf_guard.js` refuses outbound calls to loopback and private networks — otherwise anyone who can reach the api can use it to probe `127.0.0.1`, the deployment's private neighbours, or `169.254.169.254` (cloud metadata, which hands out credentials). It is installed **once** on the shared axios instance in `server.js`, so every call site present and future is covered, and it works in two layers: a request interceptor for a readable error, plus the http/https **agents** — which is what catches **redirects** (axios follows them, so a public host answering `302 → http://127.0.0.1` walks past a URL-only check) and closes most of the DNS-rebinding window. The agent needs **two** hooks, not one: a custom DNS `lookup` for hosts given as names, and a wrapped `createConnection` for hosts given as literal addresses — Node never calls `lookup` for a literal, and a redirect `Location` usually is one. That gap was real and is what `tests/api_ssrf_guard.js` caught on its first run. Hostnames are judged by what they RESOLVE to, so `localtest.me` and `127.0.0.1.nip.io` are caught by the same rule, and IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is reduced to its IPv4 form because that is the address the socket reaches.
 
@@ -33,6 +33,66 @@ A sixth setting, **`keepAlive`** (a boolean, default **true**, and only an expli
 A fifth setting is not a limit but an identity: **`userAgent`**, default `Identity Protocol Debugger/{{VERSION}}`, sent as the `User-Agent` on all eleven calls (`withUserAgent()`, applied per call for the same reason the agents are — a per-call `headers` object replaces the defaults). Without it axios announces `axios/1.18.1`, which tells the operator of somebody else's identity provider nothing about who is calling, and this service turns up in other people's access logs by design. `{{VERSION}}` is the same placeholder the client's footer and error pages use, and it is replaced with the **build** version: `api/Dockerfile` now copies the repo-root `VERSION` and **the client's `version.js`** (one implementation of the M.N.O scheme for both services) and runs `--stamp .`, so the header names the build and does not change when a container restarts — `resolveAppVersion()` falls back to the client's copy and then to `api/package.json` so a bare checkout still starts. Both `BUILD_NUMBER` and `GIT_COMMIT` are now build args on the api service in all three compose files, as they already were on the client. A blank or non-string `userAgent` is refused with the default, because axios would otherwise send a `User-Agent:` with nothing after the colon — worse than what it replaced. Note that adding this made the api the **second** image that must `COPY VERSION`, and the existing warning applies unchanged: omit it and the version silently reads `0.0.x`, which `tests/api_connect_timeout.js` asserts against directly.
 
 `tests/api_connect_timeout.js` covers this (node only, never skipped), and the case that earns its keep is the second one: a host that **connects and then says nothing** must still be waiting well past the connect budget, failing only at `callTimeout`. That assertion fails against an `AbortSignal` implementation and passes against this one. It also checks a stalled TLS handshake, that wrapping a guarded agent keeps the guard's refusal (and keeps it immediate), that an oversized response is refused while the same body is accepted with no cap set (the control that makes the first half mean something, given axios's unlimited default), and — by reading `server.js` — that every axios call site carries all four limits, the User-Agent, and no bare `https.Agent`, which is the only thing that would catch a *new* call site added without them.
+
+## `sts_truststore.sh`: the image's entrypoint, and it is a truststore rather than a switch
+
+The mock STS serves its **main port over TLS** in this project's test stacks
+(`STS_HTTPS=true` on the `sts` service in `local-tests.yml`,
+`docker-compose-run-tests.yml` and `keycloak-tests.yml`). That is not a
+preference: the RFC 9700 pass is a **trust realm** on that one instance now
+rather than a second container, a realm binds no socket of its own, and the pass
+is only honest over https — requirement 8.1 is that every configured endpoint is
+https and the client under test enforces it. `docs/rfc9700.md` argues all of it.
+
+This service reaches that port for SCIM, for the WS-Trust / SAML / OIDC proxying
+the browser asks it to do, and for the Kerberos MS-KKDCP relay, and every one of
+those goes through `outboundHttpsAgent()`, **which verifies**. The certificate
+over there is **self-signed and regenerated on every start**, so nothing can hold
+an anchor for it ahead of time — it cannot be committed, baked into this image,
+or installed by whoever ran the launcher, because it does not exist until the
+mock is up. Without one, those calls fail as `DEPTH_ZERO_SELF_SIGNED_CERT`: a
+message that names a certificate and never names the mock.
+
+So `api/sts_truststore.sh` is this image's `ENTRYPOINT`. When `STS_CERT_URL` is
+set it fetches the PEM before the server starts and points
+`NODE_EXTRA_CA_CERTS` at it; then it `exec "$@"`, so `CMD` is unchanged and so is
+`docker-compose-coverage.yml`'s `command:` override that replaces it with c8.
+**It is a no-op when `STS_CERT_URL` is unset**, which is what lets it be the
+entrypoint rather than a command override in two compose files: a deployed api
+has no mock STS, sets nothing, and starts exactly as it did.
+
+Two things about it are decisions rather than details:
+
+* **It ADDS an anchor; it does not turn verification off.**
+  `NODE_TLS_REJECT_UNAUTHORIZED=0` would have been one line and would also have
+  disarmed `api_ssrf_guard.js`, `api_tls_probe.js` and `url_safety_schemes.js` —
+  three test files whose subject is a certificate being *refused*. A test that
+  cannot fail is worse than a test that is missing.
+* **A failed fetch is a WARNING, not a fatal.** This service has a great deal to
+  do that has nothing to do with the mock, and a stack whose mock never came up
+  should fail on the test that needed it, with that test's message, rather than
+  on an api container that would not start. The warning line is what a reader
+  greps for when a dozen STS-backed jobs report a certificate error at once.
+
+The fetch itself is made without verification (`curl -k`) — the ordinary
+bootstrap for a per-start certificate, and the same act as trusting the PEM that
+endpoint hands back, done one step earlier.
+
+## The HTTP trace on `POST /token`: what only this service can see
+
+The OAuth2/OIDC workflow's token exchange pane has an **HTTP tab** showing the Token Request and its response as they actually went — method, URL, headers and body each way, and how long the far end took. On the browser-direct setting the page records that itself. On the **proxied** setting, which is that pane's default because a great many identity providers refuse a browser-origin Token Request outright, the request is made *here*, and the browser is not party to it: all it ever receives is the parsed token payload. So `POST /token` hands back what it saw, and it is the only thing that can.
+
+It is **opt-in per call**: the request body carries `http_trace: true` and the response then carries an `http_exchange` member beside the token payload. Opt-in rather than always-on because the trace repeats the request verbatim, `Authorization` header and client secret included — a debugging artifact for the caller that asked for it, not something added to every answer this service gives. `convertToOAuth2Format()` builds the outbound form body from named parameters, so the flag reaches no identity provider.
+
+Three things about it are deliberate, and each is the answer to a way it could have been written and been wrong:
+
+- **The shape is `POST /krb5/spnego`'s** — `{request, response, timing}`, with `bodyTruncated`/`bodyLength` on the response — because that is the other endpoint here that hands an HTTP exchange back for display. Two shapes for one idea would mean two renderers in the client for no reason.
+- **The response body is captured RAW**, by `captureRawBody()` standing in for axios's default `transformResponse` (it does the same JSON parse and keeps the text as well). By the time a handler sees `response.data` the bytes are gone, and re-serializing the parsed object gives a body the far end never sent: different whitespace, different key order, and no sign of a duplicated member. It is capped for DISPLAY at `TRACE_BODY_CHARS`, which is not `maxContentLength` — that one bounds the transfer, this one bounds what is put in front of a reader, exactly as `SPNEGO_BODY_CHARS` does.
+- **`withHttpTrace()` attaches nothing it cannot attach cleanly.** A token endpoint's response is a JSON object in every case this service is built for and nothing obliges one to be — an error page is a string — so a payload that cannot carry a member is sent unchanged, and one that already HAS an `http_exchange` member keeps its own. The client falls back to what the browser itself saw and says so in the pane, which is also what happens against an api that predates this.
+
+**All three branches of the handler produce one**, including the one where there was no response at all: a timeout, a refused connection, a blocked address. That branch is the common one (see the handler bug above), and its elapsed time is what tells a timeout apart from a connection refused.
+
+`tests/token_http_exchange.js` covers it from the browser end, and mutation-testing it means switching `wantsTrace` off here: the test then fails at the pane's note, with **this service's own URL** in the message, which is exactly what the fallback looks like when the trace goes missing.
 
 ## The Kerberos relay: a raw socket, and the two bounds that are new because of it
 
@@ -86,6 +146,202 @@ The four existing limits are reused unchanged, and **a tenth setting is new**: `
 Two refusals are published rather than left to be discovered: **a referral is recorded and NOT followed** — chasing one means opening a connection to a URL the *directory* chose, which is a server-side request forgery with a specification citation attached, the same reason WS-Federation's `wreqptr` is never dereferenced — and there is no StartTLS and no SASL, simple bind only.
 
 One implementation detail that is not optional: **the bind waits for the socket.** ldapjs's client is created not-yet-connected, and an operation issued before its `connect` event is refused with result code 80 and the message "connection unavailable" when `queueDisable` is set — which looks exactly like a directory answering `other`. The first working version of this file reported a healthy local server as a failed bind with a code that has nothing to do with credentials. `reconnect` is off for a related reason: a silent retry turns an intermittent failure into a report saying everything worked. See `docs/ldap.md`.
+
+## SCIM: an ordinary HTTP proxy, and the one workflow that does not need it
+
+`POST /scim` (`api/scim_proxy.js`) performs one SCIM 2.0 request on the caller's
+behalf. It is the shortest of the four capabilities in this file and the only one
+whose page **works without it**: RFC 7644 is ordinary HTTPS with a JSON body, so
+`client/public/scim.html` calls a SCIM server directly by default and is on the
+static deployments. That is the opposite of LDAP and Kerberos, where the api
+exists because a browser *cannot* speak the protocol.
+
+So this endpoint is here for three things a browser cannot do, and the page names
+which is which rather than presenting one as a fallback for the other:
+essentially no real SCIM endpoint sends `Access-Control-Allow-Origin` (it is the
+most dangerous URL an identity provider exposes); a staging server's certificate
+is self-signed; and a browser withholds the headers it adds while CORS hides most
+of those that come back, so only the api can report the whole exchange.
+
+**THE THREE OUTCOMES ARE `POST /ldap/*`'s THREE, and the third is the point.** A
+refusal by this service is a **400**; a network failure is a **502**; and **a SCIM
+error from the far end is a 200**, with the status and its `scimType` inside it. A
+409 `uniqueness` on a duplicate `userName`, a 404 on an id that names nothing, a
+403 from an access control policy and the 501 on `/Me` are the server *answering*
+— the most interesting thing a SCIM server ever says — and collapsing them into a
+failure would make a provisioning debugger unable to show the errors it exists to
+show. `tests/scim_protocol.js` asserts the transport status on every negative.
+
+**The address policy is NOT re-implemented here, and adding a copy would be the
+mistake.** This is an axios call like `/token` and `/wstrust`, so the guard
+installed once on the shared instance already covers it — request interceptor,
+DNS `lookup` hook, wrapped `createConnection`, redirects included. The two places
+that *do* carry their own copy (`ldap_client.js`, `tls_probe.js`) are raw sockets
+axios never sees. For the same reason there is **no `scimAllowedPorts`**: a port
+allowlist for HTTP would have to carry 80, 443 and every alternate somebody runs a
+service on, and one that has to be edited per deployment is one that gets set to
+`"any"`.
+
+**Headers are refused by SHAPE rather than by an allowlist**, which is the one
+design decision worth arguing with before changing. A debugger has to be able to
+send the header a server it has never met asks for — a vendor's `X-Tenant-Id`, an
+`If-Match`, a `DPoP` proof — so the forwarded set is not enumerated. What is
+refused is the set that changes the *shape* of the request: `Host` (which would
+make this an open proxy), `Content-Length` and `Transfer-Encoding` (the smuggling
+pair), the hop-by-hop headers of RFC 7230 section 6.1, and anything whose name is
+not a token or whose value carries CR or LF. Five methods only, and **a body on a
+GET or a DELETE is refused rather than dropped** — a proxy that silently discards
+one makes the wrong method invisible.
+
+**The twelfth setting is `scimMaxRequestBytes`** (default 1048576), and it is a
+second cap beside `maxContentLength` rather than a copy of it: a BulkRequest
+creating fifty users with every optional attribute is a large *request* and a
+small *response*, so one number standing for both would either refuse that or
+leave the response unbounded. It is not the far end's limit either — a SCIM server
+publishes `bulk.maxPayloadSize` in its ServiceProviderConfig and it is usually
+smaller.
+
+**`api/scim_proxy.js` has no axios and no network in it.** It validates and
+sanitises; `server.js` makes the call. That split is what lets
+`tests/scim_engine.js` assert every refusal this endpoint can produce with no
+server on the other end — so a rule that stopped being enforced fails a test
+naming the rule rather than timing out against a host. `GET /scim/limits`
+publishes the methods, the refused headers, the caps and the status rule, and is
+also how the page discovers whether there is an api at all. See `docs/scim.md`.
+
+## SPIFFE: gRPC, and the only endpoint here that dials a filesystem path
+
+`POST /spiffe/call` (`api/spiffe_client.js`) carries **both** of SPIFFE's gRPC
+surfaces — the Workload API's seven methods and the SPIRE Server API's
+forty-two. `POST /spiffe/bundle` fetches a bundle endpoint (ordinary axios, so
+the guard already covers it) and describes the document. `GET /spiffe/limits`
+publishes what this service will and will not do, and the whole method
+catalogue with it.
+
+**A browser cannot produce gRPC at all**, which is a stronger statement than
+the Kerberos and LDAP ones and is why this exists: gRPC is HTTP/2 with a
+length-prefixed binary framing and its status in the TRAILERS, so `fetch` will
+not open an HTTP/2 stream of its own, cannot send or read trailers, cannot see
+a `grpc-status`, and cannot present the client certificate the SPIRE Server API
+requires.
+
+**ONE endpoint for forty-nine methods rather than forty-nine endpoints**, which
+is the opposite of `POST /ldap/*`'s choice and is deliberate. There, eight
+operations have eight different shapes and each route documents its own. Here
+every method is `(service, method, request)` over one wire format and the
+method list is DERIVED from the vendored protos, so a route per method would be
+forty-nine places for that list to drift from the protos it mirrors.
+
+**The protos are vendored VERBATIM into `api/protos/`** — the SPIFFE project's
+`workloadapi.proto` and the `spire-api-sdk`'s, 21 files, byte-identical to the
+mock STS's copies. The wire matching what a real client expects is the entire
+reason `@grpc/grpc-js` is a dependency, so a local edit would give that up
+silently. A missing proto throws at require time rather than degrading: a
+client that starts and answers `Unimplemented` to everything is worse than one
+that does not start. `tests/spiffe_engine.js` compares the two copies file by
+file.
+
+**This is the fourth enforcement of the address policy**, for the reason the
+second and third exist: the guard is installed on the shared axios instance and
+grpc-js opens its own socket. It reuses `blockedRangeFor` rather than a copy of
+the ranges, and it resolves then dials the LITERAL — which here costs nothing,
+unlike `ldaps:`, because **SPIFFE identifies the far end by its SPIFFE ID and
+not by a hostname**, so there is no `servername` to preserve. The
+`grpc.default_authority` is still set back to the name the caller gave, because
+gRPC derives SNI from the target and RFC 6066 does not permit an IP address
+there; that string decides nothing about who the far end is proved to be.
+
+**THE THIRTEENTH SETTING IS `spiffeAllowedPorts`** (default `[8081, 8092,
+8181]` — a real `spire-server`'s own default, and the two the mock STS moved its
+surfaces to because 8081 is its HTTP port). `"any"` is accepted, spelled as a
+word.
+
+**THE FOURTEENTH IS `spiffeAllowedSocketPaths`, AND IT IS THE ONLY BOUND IN
+THIS FILE ON A FILESYSTEM PATH.** `SPIFFE_ENDPOINT_SOCKET` means a `unix://`
+path to `go-spiffe`, `spiffe-helper` and the SPIRE agent, so a client that
+could not reach a Unix socket could not talk to what every real deployment
+runs. That makes this the only endpoint here that opens a connection to a path
+its CALLER chose, and the address policy cannot see it: there is no address to
+judge. What it bounds is not exotic — an api reachable from anywhere, pointed
+at a path on the machine it runs on, is a way to make that machine connect to
+one of its own local services and report what came back. It is a PREFIX
+allowlist defaulting to SPIRE's own two directories.
+
+Two further checks come with it and neither is configurable, because each
+otherwise costs a confusing failure. A path longer than **103 bytes** is
+refused by name (`sun_path` is 108 on Linux and 104 on macOS, and past it the
+operating system fails the connect with a message about the address being *in
+use*, naming something that is not the problem). And a path that exists and is
+**not a socket** is refused rather than dialled, because "connection refused"
+on a regular file reads as a service that is down.
+
+**THE FIFTEENTH AND SIXTEENTH BOUND STREAMS**, and the second of them is not a
+copy of `callTimeout`. `spiffeMaxStreamMessages` (default 4) is how many
+messages are read from one; `spiffeStreamTimeout` (default 45000) is how long
+one is held. They are separate from `callTimeout` because the two bound
+different questions: `callTimeout` asks how long a server may take to ANSWER,
+and a stream is not an answer but a subscription a real client holds for the
+life of its process — the interesting event on one is the SECOND message, which
+on a Workload API is a ROTATION. The mock STS puts a floor of thirty seconds
+under that re-send, so a stream bounded by the ten-second call budget could
+never observe one however short the SVID lifetime were set: it would always
+report a timeout after one message, which is indistinguishable from a server
+that sent one and went quiet. Every answer says which cap stopped it —
+`messages`, `timeout`, `size` or `end`.
+
+**A BIDIRECTIONAL STREAM IS WRITTEN TO AND DELIBERATELY LEFT OPEN.** It looks
+like a leak and is the only correct thing to do: `AttestAgent` may answer the
+params with a CHALLENGE rather than an SVID, so a client that half-closes as
+soon as it has written has told the server the conversation is over before
+hearing whether it was. A server that ends its own side on seeing that `end`
+does so while the reply is still being produced, and the write that follows
+lands on a stream nobody is reading — the call completes with status **OK and
+no messages**, which reads as a server that accepted an attestation and issued
+nothing. `tests/spiffe_protocol.js` asserts a non-empty AttestAgent response
+rather than asserting the status alone.
+
+**SERVER VERIFICATION IS REPLACED RATHER THAN RELAXED, and this is the part to
+read before changing anything here.** A SPIRE server's certificate carries no
+DNS subjectAltName and no CN naming a host — its only subjectAltName is
+`URI:spiffe://<trust domain>/spire/server` — so node's ordinary
+`checkServerIdentity` CANNOT pass, and the failure it produces
+(`ERR_TLS_CERT_ALTNAME_INVALID`) reads as a certificate problem rather than as a
+check that was never applicable. The two obvious ways out are both worse:
+turning `rejectUnauthorized` off discards the CHAIN check, which is the one that
+matters, and `ssl_target_name_override` makes the hostname check pass by lying
+about the hostname. So `checkServerIdentity` is replaced with a SPIFFE one in
+three explicit modes (`spiffe-id`, `trust-domain`, `none`), and the chain is
+verified in ALL of them including the last — that mode turns off the SPIFFE-ID
+check and nothing else.
+
+**THE THREE OUTCOMES ARE `POST /ldap/*`'s THREE, and the third matters more
+here than anywhere else in this file.** A refusal by this service is a **400**;
+a network failure is a **502**, and so is a server that answered and turned out
+to be somebody else (flagged `identityMismatch`, because that is a different
+fact from "nothing was there" and only one of them is about the network); and
+**a gRPC status from the far end is a 200**, with `ok: false` and the code.
+`PERMISSION_DENIED` on a method this caller's entity may not use,
+`UNAUTHENTICATED` when it presented nothing, `UNIMPLEMENTED` with the reason a
+server gives for declining, `INVALID_ARGUMENT` on a JWT-SVID request with no
+audience — every one is SPIFFE ANSWERING. SPIRE goes to the trouble of
+distinguishing "authenticate" from "you may not"; an api that reported both as
+failures would throw that away. `tests/api_spiffe.js` asserts the transport
+status on every negative for that reason.
+
+**One trap the load options pay for and one they do not.** `bytes: String`
+makes protobufjs hand every `bytes` field back as base64 and accept base64 on
+the way in, so nothing here walks a message converting buffers — which is most
+of why forty-nine methods share one code path. What it does NOT reach is
+protobufjs's built-in well-known types: a `google.protobuf.Struct` decodes with
+**camelCase** members in a family that is otherwise entirely snake_case, and a
+wrapper (`StringValue` and friends) is a MESSAGE whose bare value serialises to
+NOTHING with no throw and no warning — a `ListEntries` filter sent that way
+returns every entry and looks like a filter that works until somebody counts.
+Both are handled from typed-out tables (`WRAPPED_FIELDS`, `STRUCT_FIELDS`)
+rather than by walking descriptors, because a descriptor's `typeName` is a
+RELATIVE protobuf name and resolving one means implementing protobuf's own
+name-resolution algorithm. `tests/spiffe_engine.js` reads every `.proto` and
+fails if such a field is missing from either table. See `docs/spiffe.md`.
 
 ## The TLS probe: a second raw socket, and the ninth setting
 
@@ -222,6 +478,92 @@ call fails rather than reporting its own limits as somebody else's fault. And **
 no-response branch must answer**, as everywhere else here: a refusal by policy is
 a 400, a network failure is a 502, and a failed HANDSHAKE is neither — it
 resolves with a report, because the alert is the answer. See `docs/pki.md`.
+
+## SAML signing: the same module the browser uses, staged in
+
+`POST /samlsign` signs an AuthnRequest or a LogoutRequest for whichever binding
+the caller asked for — the redirect binding's detached signature over the query
+string, or the POST binding's enveloped XML-DSIG. Both are
+**`common/xmldsig.js`** since 2026-08-24, staged into this directory by
+`api/Dockerfile` exactly the way `common/data.js` is, and needing the two DOM
+constructors that `@xmldom/xmldom` supplies (`server.js` sets them on `global`
+once, near the signing code).
+
+**It was the `xml-crypto` package, and dropping it removed this application's
+THIRD implementation of XML Signature.** The browser had two of its own — the
+shared module, and a full private copy of the canonicalizer inside
+`client/src/saml_request.js` — so the same AuthnRequest could be signed by any
+of three readings of Canonical XML depending on which button was pressed. A
+canonicalizer is a reading of a specification, and the failure mode when two
+readings disagree is an identity provider answering *invalid signature* and
+nothing else. `xml-crypto` is gone from `api/package.json`; it stays in
+`tests/package.json`, where being a **different** implementation is the whole
+point of it.
+
+Two things about the change are worth keeping:
+
+* **The redirect binding now signs with the digest its own `SigAlg` names.** It
+  was `crypto.createSign('RSA-SHA256')` regardless, so a request that declared
+  `…#rsa-sha512` was signed with SHA-256 and said otherwise in the query string
+  it sent. Nothing local catches that — the only symptom is at the identity
+  provider. `tests/xmlsec_interop.js` now signs each of the four SigAlgs and
+  has node's OpenSSL verify under the named digest AND refuse under a different
+  one, so the assertion cannot go vacuous.
+* **`signXmlEnveloped()` lost its `rootLocalName` argument** and gained the
+  `sigAlg` the caller sent. The old one needed the root's name to build an
+  XPath; `signEnveloped()` finds the root's `ID` attribute itself, and its
+  defaults — the enveloped-signature + exclusive-C14N transform pair, X509Data
+  KeyInfo, the `<Signature>` placed directly after `<Issuer>` — ARE the SAML
+  profile, because that is what the function was written for.
+
+A local run outside Docker needs `cp common/xmldsig.js api/xmldsig.js`, the
+same as `api/data.js`; `clean-artifacts.sh` lists both.
+
+## The artifact back-channel answers TWO protocol versions
+
+`POST /samlartifactctx` stashes what will be needed to resolve an artifact later
+— the resolution URL, the SP key pair, the signature algorithm and any
+WS-Addressing headers — and hands back the `art:<id>` handle the browser carries
+to the identity provider. Since 2026-08-25 it also takes `samlVersion`, and the
+difference it selects is not cosmetic:
+
+| | SAML 2.0 | SAML 1.1 |
+|---|---|---|
+| the endpoint is | an Artifact Resolution Service | a **SAML responder** (`saml-bindings-1.1` section 3.1) |
+| the message is | `<samlp:ArtifactResolve>` | `<samlp:Request>` carrying `<AssertionArtifact>` |
+| the id attribute is | `ID` | **`RequestID`** |
+| `ds:Signature` goes | after `<Issuer>` | **first** — a 1.1 request has no `<Issuer>` at all, and its schema's sequence is `RespondWith*`, `ds:Signature?`, then the query |
+| the answer wraps | an `<ArtifactResponse>` around the `<Response>` | the `<Response>` **itself**, built at resolution time so it can carry `InResponseTo` |
+| the artifact is | 44 bytes, type `0x0004`, standing for a MESSAGE | 42 bytes, type `0x0001`, standing for an ASSERTION |
+
+`buildArtifactResolveMessage()` is the fork and returns the reference URI with
+the message, because `signEnveloped()` searches `ID`, `AssertionID` and `Id` and
+finds none of them on a SAML 1.1 request — told nothing, a signer of that shape
+INVENTS an id and points the reference at what it invented. It verifies, and it
+is not the id a SAML 1.1 responder looks for.
+
+Two further changes came with it, and both are improvements to the 2.0 path as
+well:
+
+* **`privateKeyPem` is no longer required.** Neither version requires this
+  message be signed, and SAML 1.1 has no request document to sign in the first
+  place. The refusal used to make "the service provider generated no key pair"
+  fail HERE, in a call whose error text names `privateKeyPem` and nothing else,
+  several steps before anything SAML-shaped happens. `resolveArtifact()` signs
+  when there is a key and says out loud when there is not.
+* **`handleSamlAcs()` reads `TARGET` as well as `RelayState`.** `RelayState` did
+  not exist before SAML 2.0; the 1.1 browser profiles round-trip `TARGET`, and
+  the binding's guarantee that it comes back byte for byte is the whole of what
+  this endpoint needs from it. Reading only `RelayState` made every 1.1 artifact
+  resolution fail with *no artifact context*, which reads as an expired stash
+  rather than as a parameter this handler never looked at.
+
+`extractResponseFromArtifactResponse()` now selects on either protocol
+namespace. Note SAML 1.1's is `urn:oasis:names:tc:SAML:1.0:protocol` and that is
+not a typo: the schemas were never renamed between 1.0 and 1.1 — the version
+travels in `MajorVersion`/`MinorVersion` attributes instead.
+
+See `docs/saml11.md`.
 
 ## Dependency overrides
 

@@ -5,7 +5,8 @@
 // required to reach the same verdict on every one.
 //
 // This is the test the two implementations exist for. `client/src/webauthn.js`
-// (with cbor.js and cose.js) and `sts/webauthn.js` share no code: different
+// (with cbor.js and cose.js) and `sts/authn/webauthn.js` share no code:
+// different
 // CBOR readers, different COSE mappings, and — the part that makes this worth
 // doing — genuinely different signature paths. The browser side must convert an
 // ECDSA signature from DER to raw `r‖s` because Web Crypto refuses DER; node
@@ -50,11 +51,15 @@ const webauthn = shared("webauthn.js", "the wallet's WebAuthn decoder");
 // why this test says WHERE it found the module in its log line — running
 // against a stale submodule while editing the clone would otherwise look like a
 // pass.
+//
+// All three go through mockStsModule() rather than being spelled out here.
+// mock-sts 0f986b3 ("Reorganizing source code.") moved every module into a
+// subdirectory — this one is in authn/ — and it searches all three layouts in
+// that order anyway, so writing the paths out again here would be a second
+// copy of an answer that has already moved once.
 const STS_CANDIDATES = [
-  path.join(__dirname, "sts", "webauthn.js"),
-  path.join(ROOT, "sts", "webauthn.js"),
-  path.join(ROOT, "..", "mock-sts", "webauthn.js"),
-];
+  paths.mockStsModule("webauthn.js", function (message) { log.warn(message); })
+].filter(Boolean);
 const stsWhich =
     STS_CANDIDATES.filter(function (p) { return fs.existsSync(p); })[0];
 

@@ -55,6 +55,14 @@ services:
       # Both are in api/tls_probe.js's default port allowlist already.
       - "8443:8443"
       - "9443:9443"
+      # The two SPIFFE gRPC surfaces. Published for the same reason 8443 and
+      # 9443 are: a tool run on the host — including an api started outside
+      # compose — cannot reach a port that only exists on the bridge. The api
+      # container beside this one reaches them as sts:8092 and sts:8181 and
+      # needs neither line. They are 8092 and 8181 rather than SPIRE's own
+      # 8081 because this service's HTTP port already has that.
+      - "8092:8092"
+      - "8181:8181"
   # Keycloak 8.0.1 + cloudtrust keycloak-wsfed module (WS-Federation IdP side-car
   # for the WS-Fed test). Included here so the Docker Image CI (dockerimage.yml,
   # which runs `docker-compose -f docker-compose.yml build`) builds it too.

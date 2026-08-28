@@ -25,6 +25,7 @@ const crypto = require("crypto");
 const assert = require("assert");
 
 var bunyan = require("bunyan");
+const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({
   name: "jwt_vc_json_common",
   level: (function () {
@@ -49,6 +50,26 @@ const FORMAT = "jwt_vc_json";
 // walt.id, which is exactly the kind of thing an interoperability run is for.
 const WALLET_CLIENT_ID = process.env.OID4VCI_WALLET_CLIENT_ID ||
     "idptools-debugger-tests";
+
+// The applications registry on the mock issuer, and the one call every OID4VC
+// job makes into it. See tests/sts_applications.js for why the wallet is put
+// there before it collects anything.
+const registry = require("./sts_applications.js");
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 function b64u(buf) {
   log.debug("Entering b64u().");
@@ -435,6 +456,7 @@ async function plantIntoWallet(driver, opts) {
   const By = opts.By;
   const until = opts.until;
   await driver.get(opts.baseUrl + "/vc-presentation-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), opts.waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -455,6 +477,7 @@ async function plantIntoWallet(driver, opts) {
         JSON.stringify(opts.privateJwk),
     opts.verifierBase, opts.issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), opts.waitTime);
   await driver.sleep(400);
   log.debug("Leaving plantIntoWallet().");
@@ -490,6 +513,58 @@ async function verdictFor(verifierBase, state) {
   return r.body;
 }
 
+// ---------------------------------------------------------------------------
+// THE WALLET, IN THE MOCK ISSUER'S APPLICATIONS REGISTRY, BEFORE IT COLLECTS.
+//
+// Every job in the OID4VC family presents WALLET_CLIENT_ID at that issuer's
+// token endpoint, so it is one call and it lives here rather than seven times
+// over. It is a no-op against walt.id and against any other issuer this suite
+// is pointed at — stsBaseFor() answers "" for anything that is not the mock —
+// which is what the interoperability jobs need it to be.
+//
+// DECLARED FOR `oauth2` AS WELL AS `oid4vci`, because that is what a wallet
+// does here: redeeming a pre-authorized code at /oauth2/token makes it an OAuth
+// client of that authorization server, which is why one attribute —
+// oauthClientId — is the identifier attribute of both families and of OpenID
+// Connect beside them.
+//
+// NO REDIRECT URI. The pre-authorized code grant has no authorization request
+// and therefore no callback, and the two jobs that DO drive the authorization
+// code flow against this issuer register their own. An entry carrying a
+// redirect URI nothing redirects to is the kind of plausible-and-wrong
+// configuration this whole change exists to stop.
+// ---------------------------------------------------------------------------
+async function provisionWallet(issuerBase, options) {
+  log.debug("Entering provisionWallet(). issuerBase=" + issuerBase);
+  const opts = options || {};
+  const clientId = opts.clientId || WALLET_CLIENT_ID;
+  const fields = {
+    oauthClientId: clientId,
+    oauthGrantType: [].concat(opts.grantTypes ||
+        ["urn:ietf:params:oauth:grant-type:pre-authorized_code"]),
+    // A wallet holds no secret: it is a public client in the RFC 7591 sense
+    // and `none` is that sentence in the registry's own vocabulary.
+    oauthTokenEndpointAuthMethod: "none",
+    oauthConfidential: "FALSE"
+  };
+  if (opts.redirectUris && opts.redirectUris.length) {
+    fields.oauthRedirectUri = [].concat(opts.redirectUris);
+    fields.oauthResponseType = ["code"];
+  }
+  if (opts.scopes && opts.scopes.length) {
+    fields.oauthScope = [].concat(opts.scopes);
+  }
+  const entry = await registry.provision(registry.stsBaseFor(issuerBase), {
+    identifier: clientId,
+    name: opts.name || "OID4VCI wallet (debugger tests)",
+    protocols: ["oauth2", "oid4vci"],
+    fields: fields,
+    why: opts.why || "the wallet that collects credentials from this issuer"
+  });
+  log.debug("Leaving provisionWallet().");
+  return entry;
+}
+
 module.exports = {
   FORMAT: FORMAT,
   b64u: b64u,
@@ -501,6 +576,7 @@ module.exports = {
   mintJwtVcJson: mintJwtVcJson,
   preAuthorizedAccessToken: preAuthorizedAccessToken,
   WALLET_CLIENT_ID: WALLET_CLIENT_ID,
+  provisionWallet: provisionWallet,
   assertIsJwtVcJson: assertIsJwtVcJson,
   holderBindingOf: holderBindingOf,
   didJwkFor: didJwkFor,

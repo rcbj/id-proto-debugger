@@ -30,6 +30,7 @@ const http = require("http");
 const https = require("https");
 const jwt = require("jsonwebtoken");
 const { Command, Option } = require('commander');
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -50,7 +51,7 @@ var fetchWait = Math.max(waitTime, 15000);
 
 // The STS mock serves WS-Trust at <base>/sts and the metadata at the well-known
 // path off the same base.
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var stsBase = stsUrl.replace(/\/sts\/?$/, "");
 var metadataUrl = process.env.OAUTH_METADATA_URL || (stsBase +
     "/.well-known/oauth-authorization-server");
@@ -98,8 +99,32 @@ function get(url, headers) {
   log.debug("Entering get().");
   log.debug("Leaving get().");
   return new Promise(function (resolve, reject) {
-    var mod = url.indexOf("https:") === 0 ? https : http;
-    var req = mod.get(url, { headers: headers || {} }, function (res) {
+    var secure = url.indexOf("https:") === 0;
+    var mod = secure ? https : http;
+    // THE `Host` HEADER MUST NOT DECIDE WHICH CERTIFICATE IS ACCEPTABLE.
+    //
+    // testIssuerTracksHost() sends `Host: sts.test:9999` to ask the mock to
+    // describe a host it was not reached at. node derives TLS's `servername`
+    // from that header when nothing else sets it (calculateServerName() in
+    // _http_client.js), so the certificate is then checked against sts.test —
+    // a name the mock's self-signed certificate has never carried — and the
+    // request dies as ERR_TLS_CERT_ALTNAME_INVALID before the server sees it.
+    // The failure names an altname list and never names the Host header that
+    // produced it. Pinning `servername` to the host actually being dialled
+    // keeps the header a request-routing question and leaves verification
+    // pointed at the real endpoint: this is not a relaxation, and a wrong
+    // certificate on that socket still fails.
+    var opts = { headers: headers || {} };
+    if (secure) {
+      try {
+        opts.servername = new URL(url).hostname;
+      } catch (e) {
+        // Not parseable: leave node to work it out, which is what it did
+        // before this existed.
+        log.debug("get(): " + url + " is not a parseable URL; no servername.");
+      }
+    }
+    var req = mod.get(url, opts, function (res) {
       var body = "";
       res.on("data", function (c) { body += c; });
       res.on("end", function () { resolve({ status: res.statusCode,
@@ -823,7 +848,19 @@ async function test() {
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        baseUrl.replace(/\/+$/, ""));
-  options.addArguments("--user-data-dir=/tmp/rfc8414-chrome-" + Date.now());
+  // The mock STS serves https on a certificate it generated at startup (see
+  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
+  // makes the whole argument. This file builds its Chrome options by hand
+  // rather than through addBrowserAccessFlags(), which is why the call is here
+  // instead of arriving with the rest.
+  browserFlags.addStsTrustFlags(options);
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
+  options.addArguments("--user-data-dir=/tmp/rfc8414-chrome-" +
+                       Date.now() + "-" + process.pid);
   try {
     const prefs = new logging.Preferences();
     prefs.setLevel(logging.Type.BROWSER, logging.Level.SEVERE);
@@ -836,6 +873,11 @@ async function test() {
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     log.info("Starting Test run. metadata=" + metadataUrl);
     await driver.manage().deleteAllCookies();
@@ -843,7 +885,13 @@ async function test() {
     var severe = [];
     try {
       severe = (await driver.manage().logs().get(logging.Type.BROWSER))
-        .filter(function (e) { return e.level && e.level.name === "SEVERE"; });
+        .filter(function (e) { return e.level && e.level.name === "SEVERE"; })
+        // A load the browser abandoned because its own certificate or network
+        // configuration changed under it is not this page's doing. See
+        // browser_flags.js.
+        .filter(function (e) {
+          return !browserFlags.isTransientLoadError(e.message);
+        });
     } catch (e) {
       // No browser log on this driver, so there is nothing to assert about.
       log.info("the browser log is unavailable here: " + e.message);
@@ -854,9 +902,13 @@ async function test() {
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

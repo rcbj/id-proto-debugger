@@ -8,6 +8,14 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var $ = require("jquery");
+// The JWS verification on this page used to be three functions here —
+// verifyHMAC, verifyX509, verifyJWKS — and the SAME three, under the same
+// names, in jwt_tools.js, whose copy carried a comment saying it "mirrors"
+// this one. Both were RSA-only for the certificate and JWKS cases, so a
+// token this application had just signed with ES256 could not be verified by
+// either page. It is one module now, checked in node against OpenSSL and
+// `jsonwebtoken` by tests/jws_engine.js.
+var jwsLib = require("./jws");
 // DOMParser is the browser-native global here (token_detail runs only in the
 // browser). Do not bundle an xmldom implementation: besides being redundant,
 // strict parsers throw on the non-XML body returned when /claimdescription is
@@ -218,136 +226,49 @@ async function verifyJWT() {
   var jwt_verification_key =
       document.getElementById("jwt_verification_key").value;
   var jwt_ = resolveTokenFromParams();
+  var output = "Signature Verified: false";
 
   try {
-    const [headerB64, payloadB64, signatureB64] = jwt_.split('.');
-    if (!headerB64 || !payloadB64 ||
-        !signatureB64) throw new Error('Invalid JWT format.');
-
-    const header = JSON.parse(atobUrl(headerB64));
-    var isValid = false;
+    var keyInput;
     if (jwt_verification_type === 'hmac') {
-      isValid = await verifyHMAC(jwt_, jwt_verification_key, header.alg);
+      // READ AS UTF-8 TEXT, which is what this page has always done and what a
+      // secret copied out of an identity provider's configuration is. The JWT
+      // Tools page reads its own secret field as base64url, because that page
+      // GENERATES the secret and its JWK carries the same string as `k`. The
+      // two are different keys for the same characters; before jws.js made the
+      // encoding a parameter, the two pages simply disagreed and neither said
+      // so.
+      keyInput = { secret: jwt_verification_key, encoding: 'text' };
     } else if (jwt_verification_type === 'x509') {
-      isValid = await verifyX509(jwt_, jwt_verification_key, header.alg);
+      // An actual X.509 certificate now works here. It did not before: the
+      // PEM went to importKey('spki'), which reads a SubjectPublicKeyInfo and
+      // cannot read a Certificate, so this field only ever accepted a bare
+      // public key despite its label.
+      keyInput = jwt_verification_key;
     } else if (jwt_verification_type === 'jwks') {
-      isValid = await verifyJWKS(jwt_, JSON.parse(jwt_verification_key));
+      keyInput = { jwks: JSON.parse(jwt_verification_key) };
     } else if (jwt_verification_type === 'jwks_url') {
       const response = await fetch(jwt_verification_key);
       if (!response.ok) throw new Error('Failed to fetch JWKS.');
-      isValid = await verifyJWKS(jwt_, await response.json());
+      keyInput = { jwks: await response.json() };
     } else {
       throw new Error('Unsupported verification method.');
     }
+    // No algId: this page reads a token somebody else issued and has no
+    // algorithm selector, so the header's `alg` is the only thing to go on.
+    var result = await jwsLib.verifyJwsAsync({
+      jws: jwt_, publicKey: keyInput, backend: 'webcrypto'
+    });
+    var first = result.signatures[0] || {};
+    output = "Signature Verified: " + result.valid +
+      (result.valid || !first.reason ? "" : " — " + first.reason);
   } catch (err) {
     log.error("Error while verifying JWT: " + err.message);
+    output = "Signature Verified: false — " + err.message;
   }
 
-  document.getElementById('jwt_verification_output').value =
-                          "Signature Verified: " + isValid;
+  document.getElementById('jwt_verification_output').value = output;
   log.debug("Leaving verifyJWT().");
-}
-
-function atobUrl(input) {
-  log.debug("Entering atobUrl().");
-  input = input.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = '==='.slice(0, (4 - input.length % 4) % 4);
-  log.debug("Leaving atobUrl().");
-  return atob(input + pad);
-}
-
-function base64UrlToUint8Array(base64UrlString) {
-  log.debug("Entering base64UrlToUint8Array().");
-  const binary = atobUrl(base64UrlString);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-
-  log.debug("Leaving base64UrlToUint8Array().");
-  return bytes;
-}
-
-function pemToArrayBuffer(pem) {
-  log.debug("Entering pemToArrayBuffer().");
-  const binary = atob(pem.replace(/-----[^-]+-----/g, '').replace(/\s+/g, ''));
-  const buffer = new Uint8Array(binary.length);
-
-  for (let i = 0; i < binary.length; i++) {
-    buffer[i] = binary.charCodeAt(i);
-  }
-  
-  log.debug("Leaving pemToArrayBuffer().");
-  return buffer.buffer;
-}
-
-async function verifyHMAC(jwt_, secret, alg = 'HS256') {
-  log.debug("Entering verifyHMAC().");
-  const encoder = new TextEncoder();
-  const algo = { HS256: 'SHA-256', HS384: 'SHA-384', HS512: 'SHA-512' }[alg];
-  if (!algo) throw new Error('Unsupported HMAC algorithm: ' + alg);
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    { name: 'HMAC', hash: { name: algo } },
-    false,
-    ['verify']
-  );
-  const data = encoder.encode(jwt_.split('.').slice(0, 2).join('.'));
-  const signature = base64UrlToUint8Array(jwt_.split('.')[2]);
-
-  log.debug("Leaving verifyHMAC().");
-  return await crypto.subtle.verify('HMAC', key, signature, data);
-}
-
-async function verifyX509(jwt_, pem, alg = 'RS256') {
-  log.debug("Entering verifyX509().");
-  const encoder = new TextEncoder();
-  const algo = { RS256: 'SHA-256', RS384: 'SHA-384', RS512: 'SHA-512' }[alg];
-  if (!algo) throw new Error('Unsupported RSA algorithm: ' + alg);
-
-  const key = await crypto.subtle.importKey(
-    'spki',
-    pemToArrayBuffer(pem),
-    { name: 'RSASSA-PKCS1-v1_5', hash: { name: algo } },
-    false,
-    ['verify']
-  );
-  const data = encoder.encode(jwt_.split('.').slice(0, 2).join('.'));
-  const signature = base64UrlToUint8Array(jwt_.split('.')[2]);
-
-  log.debug("Leaving verifyX509().");
-  return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, data);
-}
-
-async function verifyJWKS(jwt_, jwks) {
-  log.debug("Entering verifyJWKS().");
-  const header = JSON.parse(atobUrl(jwt_.split('.')[0]));
-  if (!header.kid) throw new Error('No "kid" found in JWT header.');
-
-  const jwk = jwks.keys.find(k => k.kid === header.kid);
-  if (!jwk) throw new Error('Matching "kid" not found in JWKS.');
-  if (jwk.kty !== 'RSA') throw new Error('Only RSA keys are supported.');
-
-  const encoder = new TextEncoder();
-  const algo = { RS256: 'SHA-256', RS384: 'SHA-384',
-      RS512: 'SHA-512' }[header.alg];
-  if (!algo) throw new Error('Unsupported algorithm: ' + header.alg);
-
-  const key = await crypto.subtle.importKey(
-    'jwk',
-    { kty: jwk.kty, n: jwk.n, e: jwk.e },
-    { name: 'RSASSA-PKCS1-v1_5', hash: { name: algo } },
-    false,
-    ['verify']
-  );
-  const data = encoder.encode(jwt_.split('.').slice(0, 2).join('.'));
-  const signature = base64UrlToUint8Array(jwt_.split('.')[2]);
-
-  log.debug("Leaving verifyJWKS().");
-  return await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, signature, data);
 }
 
 async function computeAtHash(value, alg) {

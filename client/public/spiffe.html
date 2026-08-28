@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Identity Protocol Debugger — SPIFFE</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/spiffe.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/spiffe.js">
+</script>
+
+<p class="spiffe-return"><a href="/index.html">&larr; All protocols</a></p>
+<h3 class="spiffe-title">SPIFFE Protocol Debugger</h3>
+
+<details class="spiffe-more">
+  <summary>What SPIFFE&rsquo;s three server surfaces are</summary>
+<p class="spiffe-intro">SPIFFE&rsquo;s server side is <strong>three
+surfaces</strong> and they have almost nothing in common. The <strong>bundle
+endpoint</strong> is plain HTTPS &mdash; one GET returning a JWK Set, and the
+whole of the federation protocol&rsquo;s server half. The <strong>Workload
+API</strong> is gRPC, and it is what a <em>workload</em> talks to in order to be
+given an identity. The <strong>SPIRE Server API</strong> is gRPC over
+<strong>mutual TLS</strong> &mdash; forty-two methods across six services &mdash;
+and it is what an <em>operator</em> and an <em>agent</em> talk to. All
+<strong>forty-nine</strong> methods are on this page.</p>
+</details>
+
+<details class="spiffe-more">
+  <summary>Why both gRPC surfaces go through the api, and whose
+    <code>localhost</code> these addresses mean</summary>
+<p class="spiffe-intro">A browser <strong>cannot speak gRPC at all</strong>, and
+that is not a limitation of this page: gRPC is HTTP/2 with a binary framing and
+its status in the <em>trailers</em>, so <code>fetch</code> can neither send
+trailers nor read a <code>grpc-status</code> &mdash; and it cannot present a
+client certificate, which the SPIRE Server API requires. Both gRPC surfaces are
+therefore performed by the debugger&rsquo;s <strong>api</strong>, and the
+<em>Exchange</em> pane at the foot shows both halves of what was asked of it. The
+addresses below are resolved <strong>by the api</strong> and not by this browser
+&mdash; <code>localhost</code> there means the machine the api runs on, and a
+<code>unix://</code> path is a path on <em>that</em> machine.</p>
+</details>
+
+<details class="spiffe-more spiffe-callout">
+  <summary>Why the two gRPC surfaces authenticate in <strong>opposite</strong>
+    ways</summary>
+<p class="spiffe-intro">The two gRPC surfaces are authenticated
+in <strong>opposite</strong> ways, and reading that as an inconsistency is the
+mistake to avoid. The Workload Endpoint specification says that endpoint
+<em>MUST NOT</em> require its clients to authenticate &mdash; a workload has no
+secret and no root of trust until that call gives it one. A SPIRE
+<em>server</em>, by contrast, binds a port whose callers present an X509-SVID
+over mutual TLS and authorizes every method against <em>what the caller is</em>.
+So: fetch an SVID from the Workload API with nothing at all, then present it to
+the SPIRE Server API and find out who that makes you.</p>
+</details>
+
+<p class="dbg-controls spiffe-pane-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane on this page.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked"
+           title="Expand or collapse every pane on this page.">
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane&rsquo;s title to collapse
+  or expand it.</span>
+</p>
+
+<!-- ===================== Configuration parameters ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_config">
+  <legend class="dbg-legend" id="spiffe_config_expand_button">Configuration Parameters</legend>
+  <fieldset name="spiffe_config_fieldset" id="spiffe_config_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>What is in this pane, and what deliberately is not</summary>
+  <p class="spiffe-note">Every editable setting on this page, in one place
+  and under the name of the pane it acts on. What stayed in the panes below
+  is what <em>is</em> the operation &mdash; the method pickers, the two
+  request editors and the two offline inputs &mdash; so nothing here is a
+  second spelling of a field that also exists somewhere else: each of these
+  boxes is the one element with its id, and an edit here is an edit to the
+  value the call is made with. The <strong>Trust Bundle</strong> group is the
+  exception and is here whole, buttons and document and all: everything it
+  needs is in this pane already, and what it produces &mdash; the trust
+  anchor the SPIRE Server API group presents &mdash; is a setting two groups
+  below it rather than a call to somewhere else.</p>
+  </details>
+  <div class="spiffe-group">
+  <h4 class="spiffe-group-title">Trust Domain</h4>
+  <details class="spiffe-more">
+    <summary>Why a trust domain is <strong>lower-case</strong>, and what a URL
+      parser hides</summary>
+  <p class="spiffe-note">A trust domain is the unit of trust in SPIFFE and the
+  authority part of every identifier in it. It is <strong>lower-case</strong>:
+  <code>spiffe://Example.org/x</code> is not a valid SPIFFE ID and is not another
+  spelling of <code>spiffe://example.org/x</code> either &mdash; they are
+  different identifiers, and a URL parser hides that by lower-casing the host
+  for you.</p>
+  </details>
+  <div class="spiffe-grid">
+    <div>
+      <label class="spiffe-label" for="spiffe_trust_domain"
+             title="The name only — no scheme. The SPIRE Server API's own identity is derived from it as spiffe://<trust domain>/spire/server.">Trust domain</label>
+      <input class="spiffe-field" type="text" id="spiffe_trust_domain"
+             name="spiffe_trust_domain" placeholder="example.org"
+             onchange="return spiffe.onChangeField();"
+             title="The name only — no scheme. The SPIRE Server API's own identity is derived from it as spiffe://<trust domain>/spire/server.">
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_workload_address"
+             title="host:port, tcp://host:port or unix:///tmp/spire-agent/public/api.sock — which is what SPIFFE_ENDPOINT_SOCKET means to every real client. Resolved by the api.">Workload API address</label>
+      <input class="spiffe-field" type="text" id="spiffe_workload_address"
+             name="spiffe_workload_address" placeholder="sts:8092"
+             onchange="return spiffe.onChangeField();"
+             title="host:port, tcp://host:port or unix:///tmp/spire-agent/public/api.sock — which is what SPIFFE_ENDPOINT_SOCKET means to every real client. Resolved by the api.">
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_server_address"
+             title="host:port for the mutual-TLS port, or unix:///tmp/spire-server/private/api.sock for the private socket a spire-server CLI uses. A gRPC address takes no other scheme: the api refuses one it does not dial rather than defaulting it, so an http:// address here comes back 'the scheme is not one this service dials' rather than being dialled. The value this box starts with is CONFIG_FILE's spiffeServerAddressDefault.">SPIRE Server API address</label>
+      <input class="spiffe-field" type="text" id="spiffe_server_address"
+             name="spiffe_server_address" placeholder="sts:8181"
+             onchange="return spiffe.onChangeField();"
+             title="host:port for the mutual-TLS port, or unix:///tmp/spire-server/private/api.sock for the private socket a spire-server CLI uses. A gRPC address takes no other scheme: the api refuses one it does not dial rather than defaulting it, so an http:// address here comes back 'the scheme is not one this service dials' rather than being dialled. The value this box starts with is CONFIG_FILE's spiffeServerAddressDefault.">
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_bundle_url"
+             title="Plain HTTPS. The one SPIFFE surface that is not gRPC.">Bundle endpoint URL</label>
+      <input class="spiffe-field" type="text" id="spiffe_bundle_url"
+             name="spiffe_bundle_url" placeholder="http://sts:8081/spiffe/bundle"
+             onchange="return spiffe.onChangeField();"
+             title="Plain HTTPS. The one SPIFFE surface that is not gRPC.">
+    </div>
+  </div>
+  <p class="spiffe-limits" id="spiffe_limits">Asking the api what it will
+  do&hellip;</p>
+  </div>
+  <div class="spiffe-group">
+  <h4 class="spiffe-group-title">Trust Bundle</h4>
+  <details class="spiffe-more">
+    <summary>What a trust bundle is, and the one defect that verifies nothing
+      silently</summary>
+  <p class="spiffe-note">A SPIFFE trust bundle is a JWK Set with two extra
+  members, <code>spiffe_sequence</code> and <code>spiffe_refresh_hint</code>.
+  <strong>Every JWK in it must carry <code>use</code></strong>, and a consumer
+  <em>MUST IGNORE</em> one whose <code>use</code> is missing or unrecognised
+  &mdash; which is why a bundle full of keys with no <code>use</code> is not
+  slightly imperfect but <em>verifies nothing</em>, silently: the failure shows
+  up as an SVID that will not validate and never as anything naming the bundle.
+  The two registered values are <code>x509-svid</code> and
+  <code>jwt-svid</code>.</p>
+  </details>
+  <details class="spiffe-more">
+    <summary>What this switch reaches, and what it cannot</summary>
+  <p class="spiffe-note">The bundle endpoint is the one SPIFFE
+  surface that is plain HTTPS, so it is the one with a TLS
+  certificate to check at all. Its URL is above, with the other
+  three addresses. Clearing this reaches a bundle endpoint
+  carrying a self-signed certificate, which a development trust
+  domain usually does.</p>
+  </details>
+    <label class="spiffe-check"
+           title="Clear it to read a bundle endpoint carrying a self-signed certificate, which a development trust domain usually has. It governs the api's call and nothing else."><input type="checkbox" id="spiffe_bundle_ssl"
+           checked
+    title="Clear it to read a bundle endpoint carrying a self-signed certificate, which a development trust domain usually has. It governs the api's call and nothing else."> Verify the endpoint&rsquo;s TLS certificate</label>
+  <div class="spiffe-row">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_fetch_bundle"
+           value="Fetch through the api" onclick="return spiffe.fetchBundle();"
+           title="A bundle endpoint sends no CORS headers, so this goes through the api like the gRPC calls do.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_read_bundle"
+           value="Read what is below" onclick="return spiffe.readBundle();"
+           title="Reads the document in the box with no network at all. Works on a static deployment and on a bundle you have in a file.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_bundle_anchor"
+           value="Use as the trust anchor"
+           onclick="return spiffe.useBundleAsAnchor();"
+           title="Puts every x509-svid authority into the SPIRE Server API group's trust anchor field, further down this pane.">
+  </div>
+  <div class="spiffe-row">
+    <input class="spiffe-status spiffe-grow" type="text"
+           id="spiffe_bundle_status" readonly
+           title="The last thing this group did, and how it went.">
+  </div>
+  <label class="spiffe-label" for="spiffe_bundle_document"
+         title="Fetched, or pasted. The reader below works on whatever is here.">The bundle
+  document</label>
+  <textarea class="spiffe-output" id="spiffe_bundle_document" rows="3"
+            data-min-rows="3" data-max-rows="14"
+            spellcheck="false"
+            title="Fetched, or pasted. The reader below works on whatever is here."></textarea>
+  <div id="spiffe_bundle_report"></div>
+  </div>
+  <div class="spiffe-group">
+  <h4 class="spiffe-group-title">Workload API</h4>
+  <div class="spiffe-grid">
+    <div>
+      <label class="spiffe-label" for="spiffe_workload_messages"
+             title="Only meaningful on a streaming method. Two on FetchX509SVID shows a rotation; the api caps this and says which cap stopped it.">Messages to
+      read</label>
+      <input class="spiffe-field" type="number" min="1" max="16"
+             id="spiffe_workload_messages" name="spiffe_workload_messages"
+             value="1" onchange="return spiffe.onChangeField();"
+             title="Only meaningful on a streaming method. Two on FetchX509SVID shows a rotation; the api caps this and says which cap stopped it.">
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_workload_metadata"
+             title="One name: value per line. Refused by shape rather than by an allowlist, so anything a real server asks for can be sent.">Extra gRPC
+      metadata</label>
+      <textarea class="spiffe-field spiffe-small" id="spiffe_workload_metadata"
+                name="spiffe_workload_metadata" rows="2" spellcheck="false"
+                data-min-rows="2" data-max-rows="6"
+                onchange="return spiffe.onChangeField();"
+                placeholder="x-sts-mock-workload-selector: unix:uid:1000"
+                title="One name: value per line. Refused by shape rather than by an allowlist, so anything a real server asks for can be sent."></textarea>
+    </div>
+  </div>
+  <label class="spiffe-check"
+         title="The one check a conforming Workload API makes. Clear it to see what such a server does to a client that forgot it, which is a bug nothing else will ever report."><input type="checkbox"
+         id="spiffe_workload_security_header" checked
+         title="The one check a conforming Workload API makes. Clear it to see what such a server does to a client that forgot it, which is a bug nothing else will ever report.">
+    Send <code>workload.spiffe.io: true</code></label>
+  <details class="spiffe-more">
+    <summary>What <code>workload.spiffe.io: true</code> is for, and what it is
+      not</summary>
+  <p class="spiffe-note">That header is the one check a conforming Workload API
+  makes, and it is not a security control &mdash; anybody can send a header. It
+  exists so that a caller cannot reach the endpoint <em>by accident</em>. Clear
+  the box to see what a conforming server does to a client that forgot it, which
+  is a bug nothing else will ever report.</p>
+  </details>
+  </div>
+  <div class="spiffe-group">
+  <h4 class="spiffe-group-title">Held Identity</h4>
+  <label class="spiffe-check"
+         title="Clearing it removes what is already stored, on the spot; the identity then lives only until this page is reloaded. Every other field here is remembered either way."><input type="checkbox" id="spiffe_save_identity"
+         checked onchange="return spiffe.onToggleSaveIdentity();"
+  title="Clearing it removes what is already stored, on the spot; the identity then lives only until this page is reloaded. Every other field here is remembered either way.">
+    Remember this identity in this browser</label>
+  <details class="spiffe-more">
+    <summary>What clearing that box does, and when</summary>
+  <p class="spiffe-note">Clearing that box removes what is already stored, on
+  the spot &mdash; an opt-out that left yesterday&rsquo;s private key in storage
+  would not be one. With it clear the identity lives only until you reload this
+  page. Every other field here is remembered either way.</p>
+  </details>
+  </div>
+  <div class="spiffe-group">
+  <h4 class="spiffe-group-title">SPIRE Server API</h4>
+  <div class="spiffe-grid">
+    <div>
+      <label class="spiffe-label" for="spiffe_server_present"
+             title="Anonymous reaches GetBundle and AttestAgent and nothing else.">Present</label>
+      <select class="spiffe-field" id="spiffe_server_present"
+              name="spiffe_server_present"
+              title="Anonymous reaches GetBundle and AttestAgent and nothing else.">
+        <option value="held">the held identity</option>
+        <option value="none">nothing — call anonymously</option>
+        <option value="pasted">the certificate and key below</option>
+      </select>
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_server_messages"
+             title="Only meaningful on a streaming method. The api caps this and says which cap stopped it.">Messages to
+      read</label>
+      <input class="spiffe-field" type="number" min="1" max="16"
+             id="spiffe_server_messages" name="spiffe_server_messages" value="1"
+             onchange="return spiffe.onChangeField();"
+             title="Only meaningful on a streaming method. The api caps this and says which cap stopped it.">
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_server_identity_mode"
+             title="The chain is verified in all three. The last one turns off the check on WHO the server is and reports what it was instead.">Verify the
+      server as</label>
+      <select class="spiffe-field" id="spiffe_server_identity_mode"
+              name="spiffe_server_identity_mode"
+              onchange="return spiffe.onChangeField();"
+      title="The chain is verified in all three. The last one turns off the check on WHO the server is and reports what it was instead.">
+        <option value="spiffe-id">exactly one SPIFFE ID</option>
+        <option value="trust-domain">any ID in the trust domain</option>
+        <option value="none">check nothing, and report what it was</option>
+      </select>
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_server_id"
+             title="Read only when the mode beside it is exactly one SPIFFE ID. Empty is derived as spiffe://<trust domain>/spire/server, which is what SPIRE calls itself.">Expected SPIFFE
+      ID</label>
+      <input class="spiffe-field" type="text" id="spiffe_server_id"
+             name="spiffe_server_id"
+             placeholder="empty — derived as spiffe://<trust domain>/spire/server"
+             onchange="return spiffe.onChangeField();"
+      title="Read only when the mode beside it is exactly one SPIFFE ID. Empty is derived as spiffe://<trust domain>/spire/server, which is what SPIRE calls itself.">
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_server_metadata"
+             title="One name: value per line. Refused by shape rather than by an allowlist, so anything a real server asks for can be sent.">Extra gRPC
+      metadata</label>
+      <textarea class="spiffe-field spiffe-small" id="spiffe_server_metadata"
+                name="spiffe_server_metadata" rows="2" spellcheck="false"
+                data-min-rows="2" data-max-rows="6"
+                onchange="return spiffe.onChangeField();"
+      title="One name: value per line. Refused by shape rather than by an allowlist, so anything a real server asks for can be sent."></textarea>
+    </div>
+  </div>
+  <details class="spiffe-more">
+    <summary>Why ordinary hostname verification cannot apply to a SPIRE
+      server</summary>
+  <p class="spiffe-note"><strong>A SPIRE server&rsquo;s certificate carries no
+  DNS name</strong>, so ordinary hostname verification cannot pass &mdash; it
+  fails with <code>ERR_TLS_CERT_ALTNAME_INVALID</code>, which reads as a
+  certificate problem rather than as a check that was never applicable. The api
+  therefore <em>replaces</em> that check with a SPIFFE one on the URI
+  subjectAltName. The chain is still verified in every mode above, including the
+  last: that mode turns off the identity check and nothing else.</p>
+  </details>
+  <label class="spiffe-check"
+         title="Dial the port with no TLS at all: nothing is presented and nothing is verified. A server started without mutual TLS, or one behind a mesh that terminates it."><input type="checkbox"
+         id="spiffe_server_plaintext"
+         onchange="return spiffe.onChangeField();"
+         title="Dial the port with no TLS at all: nothing is presented and nothing is verified. A server started without mutual TLS, or one behind a mesh that terminates it.">
+    This port is plain gRPC (mutual TLS is off on the server)</label>
+  <label class="spiffe-label" for="spiffe_server_bundle"
+         title="Empty falls back to the bundle that came with the held identity. Every X509-SVID response carries the bundle beside the identity, for exactly this.">Trust anchor (PEM, or
+  base64 DER)</label>
+  <textarea class="spiffe-field spiffe-code" id="spiffe_server_bundle" rows="2"
+            data-min-rows="2" data-max-rows="8"
+            spellcheck="false"
+            title="Empty falls back to the bundle that came with the held identity. Every X509-SVID response carries the bundle beside the identity, for exactly this."></textarea>
+  <div class="spiffe-grid">
+    <div>
+      <label class="spiffe-label" for="spiffe_server_cert"
+             title="PEM or base64 DER. Used only when Present above is set to the pasted pair.">Client certificate
+      (pasted)</label>
+      <textarea class="spiffe-field spiffe-code" id="spiffe_server_cert" rows="2"
+                data-min-rows="2" data-max-rows="8"
+                spellcheck="false"
+      title="PEM or base64 DER. Used only when Present above is set to the pasted pair."></textarea>
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_server_key"
+             title="Never stored. Only used when Present is set to the pasted pair.">Its private key
+      (pasted)</label>
+      <textarea class="spiffe-field spiffe-code" id="spiffe_server_key" rows="2"
+                data-min-rows="2" data-max-rows="8"
+                spellcheck="false"
+                title="Never stored. Only used when Present is set to the pasted pair."></textarea>
+    </div>
+  </div>
+  </div>
+  <div class="spiffe-group">
+  <h4 class="spiffe-group-title">Certification Request</h4>
+  <div class="spiffe-grid">
+    <div>
+      <label class="spiffe-label" for="spiffe_csr_key_alg"
+             title="EC P-256 is what SPIRE issues by default and what the X509-SVID specification recommends.">Key</label>
+      <select class="spiffe-field" id="spiffe_csr_key_alg"
+              name="spiffe_csr_key_alg"
+              onchange="return spiffe.onChangeField();"
+              title="EC P-256 is what SPIRE issues by default and what the X509-SVID specification recommends.">
+        <option value="ec-p256">EC P-256</option>
+        <option value="ec-p384">EC P-384</option>
+        <option value="rsa-2048">RSA 2048</option>
+        <option value="rsa-4096">RSA 4096</option>
+        <option value="ed25519">Ed25519</option>
+      </select>
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_csr_subject"
+             title="SPIFFE puts no meaning in it — SPIRE issues C=US, O=SPIRE to everything — but PKCS#10 has nowhere to leave it out.">Subject DN</label>
+      <input class="spiffe-field" type="text" id="spiffe_csr_subject"
+             name="spiffe_csr_subject" placeholder="C=US,O=SPIRE"
+             onchange="return spiffe.onChangeField();"
+             title="SPIFFE puts no meaning in it — SPIRE issues C=US, O=SPIRE to everything — but PKCS#10 has nowhere to leave it out.">
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_csr_uri"
+             title="Goes in as a URI subjectAltName. Read by MintX509SVID and ignored by everything else.">SPIFFE ID to ask
+      for</label>
+      <input class="spiffe-field" type="text" id="spiffe_csr_uri"
+             name="spiffe_csr_uri" placeholder="spiffe://example.org/minted"
+             onchange="return spiffe.onChangeField();"
+             title="Goes in as a URI subjectAltName. Read by MintX509SVID and ignored by everything else.">
+    </div>
+  </div>
+  </div>
+</fieldset>
+</div>
+
+<!-- ===================== Workload API ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_workload">
+  <legend class="dbg-legend" id="spiffe_workload_expand_button">Workload API</legend>
+  <fieldset name="spiffe_workload_fieldset" id="spiffe_workload_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>Why this surface authenticates nobody, and what a second message
+      shows</summary>
+  <p class="spiffe-note"><strong>This surface never authenticates anybody</strong>
+  and must not: a workload has no credential until this call gives it one.
+  <code>FetchX509SVID</code> hands back an SVID <em>with its private key</em>,
+  which is what makes the SPIRE Server API pane reachable as somebody.
+  Four of the seven methods are <strong>streams</strong> that a real client holds
+  open for the life of its process &mdash; ask for two messages on
+  <code>FetchX509SVID</code> and the second one is a <strong>rotation</strong>.</p>
+  </details>
+  <div class="spiffe-grid">
+    <div>
+      <label class="spiffe-label" for="spiffe_workload_method"
+             title="The seven Workload API methods, from the api's own catalogue. Four of them are streams.">Method</label>
+      <select class="spiffe-field" id="spiffe_workload_method"
+              name="spiffe_workload_method"
+              onchange="return spiffe.describeWorkloadMethod();"
+      title="The seven Workload API methods, from the api's own catalogue. Four of them are streams."></select>
+    </div>
+  </div>
+  <p class="spiffe-note" id="spiffe_workload_about"></p>
+  <p class="spiffe-note" id="spiffe_workload_streaming"></p>
+  <label class="spiffe-label" for="spiffe_workload_request"
+         title="The protobuf message as JSON, field names exactly as the .proto writes them. A bytes field takes base64.">Request</label>
+  <textarea class="spiffe-field spiffe-code" id="spiffe_workload_request"
+            name="spiffe_workload_request" rows="4" spellcheck="false"
+            data-min-rows="4" data-max-rows="12"
+            onchange="return spiffe.onChangeField();"
+            title="The protobuf message as JSON, field names exactly as the .proto writes them. A bytes field takes base64."></textarea>
+  <div class="spiffe-row">
+    <input type="button" class="spiffe-btn spiffe-primary"
+           id="btn_spiffe_call_workload" value="Call"
+           onclick="return spiffe.callWorkload();"
+           title="Ask the api to make this gRPC call. Nothing is presented: this surface must not authenticate anybody.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_reset_workload"
+           value="Load the example" onclick="return spiffe.resetWorkloadRequest();"
+           title="Puts this method's own example back, discarding what is in the editor.">
+    <input class="spiffe-status spiffe-grow" type="text"
+           id="spiffe_workload_status" readonly
+           title="The last call this pane made, and how it went. A gRPC status is reported by name.">
+  </div>
+  <div id="spiffe_workload_result"></div>
+</fieldset>
+</div>
+
+<!-- ===================== Held identity ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_identity">
+  <legend class="dbg-legend" id="spiffe_identity_expand_button">Held Identity</legend>
+  <fieldset name="spiffe_identity_fieldset" id="spiffe_identity_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>What is held here, and the two ways to come by it</summary>
+  <p class="spiffe-note">An X509-SVID <strong>and the private key that goes with
+  it</strong>. There are exactly two ways to come by one here:
+  <code>FetchX509SVID</code> above, which needs no credential at all, and
+  <code>AttestAgent</code> below, which makes you an agent. An SVID without its
+  key proves nothing, which is why both are kept together and why the pane says
+  when only one of them is here.</p>
+  </details>
+  <div class="spiffe-row">
+    <label class="spiffe-label" for="spiffe_identity_id_view"
+           title="The URI subjectAltName of the held SVID, which is where a SPIFFE identity lives and the only place it does.">SPIFFE ID</label>
+    <input class="spiffe-field spiffe-grow" type="text"
+           id="spiffe_identity_id_view" readonly
+           title="The URI subjectAltName of the held SVID, which is where a SPIFFE identity lives and the only place it does.">
+  </div>
+  <p class="spiffe-note" id="spiffe_identity_holds_key"></p>
+  <div class="spiffe-row">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_forget_identity"
+           value="Discard it" onclick="return spiffe.forgetIdentity();"
+    title="Discards the SVID and its private key from this page and from this browser's storage.">
+    <input class="spiffe-status spiffe-grow" type="text"
+           id="spiffe_identity_status" readonly
+           title="What last happened to the held identity — where it came from, or that it was discarded.">
+  </div>
+  <label class="spiffe-label" for="spiffe_identity_cert_view"
+         title="The held SVID as base64 DER. Its private key is NOT shown: it is held beside this and only ever sent to the api for a call that presents it.">The SVID (base64
+  DER)</label>
+  <textarea class="spiffe-output" id="spiffe_identity_cert_view" rows="2"
+            data-min-rows="2" data-max-rows="8"
+            readonly
+  title="The held SVID as base64 DER. Its private key is NOT shown: it is held beside this and only ever sent to the api for a call that presents it."></textarea>
+  <label class="spiffe-label" for="spiffe_identity_bundle_view"
+         title="Concatenated DER. Note that node reads concatenated DER as ONE certificate, so the api splits it into separate PEM blocks — a trust domain that has rotated publishes more than one authority.">The trust bundle
+  that came with it</label>
+  <textarea class="spiffe-output" id="spiffe_identity_bundle_view" rows="2"
+            data-min-rows="2" data-max-rows="6"
+            readonly
+            title="Concatenated DER. Note that node reads concatenated DER as ONE certificate, so the api splits it into separate PEM blocks — a trust domain that has rotated publishes more than one authority."></textarea>
+</fieldset>
+</div>
+
+<!-- ===================== SPIRE Server API ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_server">
+  <legend class="dbg-legend" id="spiffe_server_expand_button">SPIRE Server API</legend>
+  <fieldset name="spiffe_server_fieldset" id="spiffe_server_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>How SPIRE authorizes a caller, and why the port asks rather than
+      requires</summary>
+  <p class="spiffe-note">Forty-two methods across six services. Its TCP port is
+  <strong>mutual TLS</strong>: the caller presents an X509-SVID and every method
+  is authorized against SPIRE&rsquo;s own table, which classifies a caller as
+  <code>local</code> (it arrived on the private Unix socket),
+  <code>agent</code>, <code>admin</code>, <code>downstream</code>, or nothing at
+  all. The port <em>asks for</em> a client certificate and does not
+  <em>require</em> one, because <code>AttestAgent</code> has to be reachable by
+  somebody who has no SVID yet.</p>
+  </details>
+  <details class="spiffe-more">
+    <summary>Why <code>UNAUTHENTICATED</code> and <code>PERMISSION_DENIED</code>
+      are different instructions</summary>
+  <p class="spiffe-note">A refusal here is the interesting answer, not the
+  disappointing one. <code>UNAUTHENTICATED</code> means &ldquo;authenticate&rdquo;
+  and <code>PERMISSION_DENIED</code> means &ldquo;you may not&rdquo; &mdash; two
+  different instructions, which SPIRE distinguishes and this page keeps apart.
+  <code>Debug.GetInfo</code> is <strong>local-only</strong> in SPIRE&rsquo;s own
+  table, so an administrator&rsquo;s SVID over TCP is refused it; that reads like
+  an omission and is not.</p>
+  </details>
+  <div class="spiffe-grid">
+    <div>
+      <label class="spiffe-label" for="spiffe_server_service"
+             title="The six SPIRE Server API services. The method list below is rebuilt from whichever is chosen.">Service</label>
+      <select class="spiffe-field" id="spiffe_server_service"
+              name="spiffe_server_service"
+              onchange="return spiffe.onChangeService();"
+      title="The six SPIRE Server API services. The method list below is rebuilt from whichever is chosen."></select>
+    </div>
+    <div>
+      <label class="spiffe-label" for="spiffe_server_method"
+             title="Forty-two methods across the six services, from the api's own catalogue — so what is offered here is what the api can actually dial.">Method</label>
+      <select class="spiffe-field" id="spiffe_server_method"
+              name="spiffe_server_method"
+              onchange="return spiffe.describeServerMethod();"
+      title="Forty-two methods across the six services, from the api's own catalogue — so what is offered here is what the api can actually dial."></select>
+    </div>
+  </div>
+  <p class="spiffe-note" id="spiffe_server_about"></p>
+  <p class="spiffe-note" id="spiffe_server_streaming"></p>
+  <label class="spiffe-label" for="spiffe_server_request"
+         title="The protobuf message as JSON. A bytes field takes base64; a google.protobuf wrapper may be sent as a bare value and the api wraps it.">Request</label>
+  <textarea class="spiffe-field spiffe-code" id="spiffe_server_request"
+            name="spiffe_server_request" rows="4" spellcheck="false"
+            data-min-rows="4" data-max-rows="16"
+            onchange="return spiffe.onChangeField();"
+            title="The protobuf message as JSON. A bytes field takes base64; a google.protobuf wrapper may be sent as a bare value and the api wraps it."></textarea>
+  <div class="spiffe-row">
+    <input type="button" class="spiffe-btn spiffe-primary"
+           id="btn_spiffe_call_server" value="Call"
+           onclick="return spiffe.callServer();"
+           title="Ask the api to make this gRPC call, presenting whatever the Present setting names, over mutual TLS unless the plain-gRPC box is checked.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_reset_server"
+           value="Load the example" onclick="return spiffe.resetServerRequest();"
+    title="Puts this method's own example back, discarding what is in the editor.">
+    <input class="spiffe-status spiffe-grow" type="text"
+           id="spiffe_server_status" readonly
+           title="The last call this pane made, and how it went. A refusal here is an answer: the round trip worked and SPIFFE said no.">
+  </div>
+  <p class="spiffe-note" id="spiffe_server_peer"></p>
+  <div id="spiffe_server_result"></div>
+</fieldset>
+</div>
+
+<!-- ===================== Certification request ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_csr">
+  <legend class="dbg-legend" id="spiffe_csr_expand_button">Certification Request</legend>
+  <fieldset name="spiffe_csr_fieldset" id="spiffe_csr_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>Why there is a certification request builder on this page</summary>
+  <p class="spiffe-note"><strong>Five of the forty-nine methods take a PKCS#10
+  certification request</strong> &mdash; <code>AttestAgent</code>,
+  <code>RenewAgent</code>, <code>MintX509SVID</code>,
+  <code>BatchNewX509SVID</code> and <code>NewDownstreamX509CA</code> &mdash;
+  because in SPIFFE the requester keeps its own private key and the authority
+  never sees it. The signature on the request <em>is</em> the proof of
+  possession, and it is what lets an authority certify a key it has never met.
+  The private key generated here stays in this page, so an SVID issued against
+  this request is paired with it automatically.</p>
+  </details>
+  <details class="spiffe-more">
+    <summary>Why <code>MintX509SVID</code> is the one method that reads the
+      SPIFFE ID asked for</summary>
+  <p class="spiffe-note">A CSR&rsquo;s extensions are a <em>request</em> and an
+  authority may ignore every one. <code>MintX509SVID</code> is the exception and
+  the reason the SPIFFE ID field in the Configuration Parameters pane
+  exists: it is the one method with no registration entry to take an identity
+  from, so the URI subjectAltName in the request is the only statement of what
+  is wanted.</p>
+  </details>
+  <div class="spiffe-row">
+    <input type="button" class="spiffe-btn spiffe-primary"
+           id="btn_spiffe_build_csr" value="Generate a key pair and sign"
+           onclick="return spiffe.buildCsr();"
+           title="Generates a key pair in this page and signs a PKCS#10 request with it. The private key never leaves the browser, which is what makes an SVID issued against this request usable.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_insert_csr_server"
+           value="Put it in the SPIRE request"
+           onclick="return spiffe.insertCsr('server');"
+    title="Puts the base64 DER request into the SPIRE Server API request editor, in whichever field that method takes a CSR in.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_insert_csr_workload"
+           value="Put it in the Workload request"
+           onclick="return spiffe.insertCsr('workload');"
+    title="Puts the base64 DER request into the Workload API request editor.">
+  </div>
+  <div class="spiffe-row">
+    <input class="spiffe-status spiffe-grow" type="text"
+           id="spiffe_csr_status" readonly
+           title="What the builder last did, and which key it used.">
+  </div>
+  <label class="spiffe-label" for="spiffe_csr_base64"
+         title="The certification request as base64 DER, which is what a gRPC bytes field takes.">The request, base64 DER
+  &mdash; which is what a gRPC <code>bytes</code> field takes</label>
+  <textarea class="spiffe-output" id="spiffe_csr_base64" rows="2"
+            data-min-rows="2" data-max-rows="6"
+            readonly
+  title="The certification request as base64 DER, which is what a gRPC bytes field takes."></textarea>
+  <label class="spiffe-label" for="spiffe_csr_pem"
+         title="The same request in PEM, for openssl req -text -noout or for a tool that wants a file.">The same request as
+  PEM</label>
+  <textarea class="spiffe-output" id="spiffe_csr_pem" rows="2"
+            data-min-rows="2" data-max-rows="8"
+            readonly
+  title="The same request in PEM, for openssl req -text -noout or for a tool that wants a file."></textarea>
+  <label class="spiffe-label" for="spiffe_csr_key"
+         title="The private key the request was signed with. It is not stored and not sent anywhere — copy it now if the SVID it earns has to outlive this page.">The private key &mdash; it
+  never leaves this page</label>
+  <textarea class="spiffe-output" id="spiffe_csr_key" rows="2"
+            data-min-rows="2" data-max-rows="8"
+            readonly
+  title="The private key the request was signed with. It is not stored and not sent anywhere — copy it now if the SVID it earns has to outlive this page."></textarea>
+</fieldset>
+</div>
+
+<!-- ===================== SVID inspector ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_inspector">
+  <legend class="dbg-legend" id="spiffe_inspector_expand_button">SVID Inspector</legend>
+  <fieldset name="spiffe_inspector_fieldset" id="spiffe_inspector_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>What makes a certificate an SVID, and where the identity is
+      not</summary>
+  <p class="spiffe-note">Reads an <strong>X509-SVID</strong> (PEM or base64 DER)
+  or a <strong>JWT-SVID</strong>, here, with no network. The one thing that makes
+  a certificate an SVID is its <strong>URI subjectAltName</strong>: the identity
+  lives there and nowhere else, and it has <em>exactly one</em>. The subject DN
+  carries no meaning at all in SPIFFE, so a reader who looks there for the
+  identity is looking at the one field that never has it.</p>
+  </details>
+  <details class="spiffe-more">
+    <summary>Why reading a JWT-SVID is not verifying one</summary>
+  <p class="spiffe-note">Reading a JWT-SVID is <strong>not verifying</strong>
+  one. Nothing here checks a signature; <code>ValidateJWTSVID</code> on the
+  Workload API is what does that, and it is the one method in the family that
+  behaves like a production implementation.</p>
+  </details>
+  <label class="spiffe-label" for="spiffe_svid_input"
+         title="An X509-SVID as PEM or base64 DER, or a JWT-SVID. Read here with no network; nothing about a signature is checked.">An SVID</label>
+  <textarea class="spiffe-field spiffe-code" id="spiffe_svid_input" rows="3"
+            data-min-rows="3" data-max-rows="10"
+            spellcheck="false"
+            placeholder="-----BEGIN CERTIFICATE----- … or eyJhbGciOi…"
+  title="An X509-SVID as PEM or base64 DER, or a JWT-SVID. Read here with no network; nothing about a signature is checked."></textarea>
+  <div class="spiffe-row">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_inspect_svid"
+           value="Read it" onclick="return spiffe.inspectSvid();"
+    title="Reads what is in the box above with no network at all — an X509-SVID as PEM or base64 DER, or a JWT-SVID.">
+    <input class="spiffe-status spiffe-grow" type="text"
+           id="spiffe_svid_status" readonly
+           title="What the reader made of what is in the box.">
+  </div>
+  <textarea class="spiffe-output" id="spiffe_svid_output" rows="2"
+            data-min-rows="2" data-max-rows="16"
+            readonly
+  title="What the SVID says. For a certificate that is its URI subjectAltName, its validity and its extensions; for a JWT-SVID its header and claims."></textarea>
+</fieldset>
+</div>
+
+<!-- ===================== SPIFFE ID grammar ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_id">
+  <legend class="dbg-legend" id="spiffe_id_expand_button">SPIFFE ID</legend>
+  <fieldset name="spiffe_id_fieldset" id="spiffe_id_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>The four ways the grammar is stricter than a URL parser</summary>
+  <p class="spiffe-note">The grammar is <strong>stricter than a URL
+  parser</strong>, in four ways that each produce an identifier looking perfectly
+  fine in a log. A trust domain name is lower-case. The path is not a URL path:
+  no percent-encoding, no empty segment, no <code>.</code> and no
+  <code>..</code>. There is no port, no userinfo, no query and no fragment
+  &mdash; each of those is a way of writing an identifier that a naive
+  <code>startsWith()</code> treats as belonging to a trust domain it does not,
+  which is an authorization bug in anything that federates. And
+  <code>/spire</code> is reserved for the implementation itself.</p>
+  </details>
+  <div class="spiffe-row">
+    <input class="spiffe-field spiffe-grow" type="text" id="spiffe_id_input"
+           name="spiffe_id_input" placeholder="spiffe://example.org/ns/default/sa/web"
+           onchange="return spiffe.onChangeField();"
+    title="A SPIFFE ID to check against the grammar. Try one with an upper-case trust domain, a port or a trailing dot segment — each of those looks fine in a log.">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_check_id"
+           value="Check it" onclick="return spiffe.checkSpiffeId();"
+    title="Checks the identifier against the SPIFFE grammar — the same module the api refuses with — and against the trust domain configured above.">
+  </div>
+  <div id="spiffe_id_report"></div>
+</fieldset>
+</div>
+
+<!-- ===================== Exchange ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_exchange">
+  <legend class="dbg-legend" id="spiffe_exchange_expand_button">Exchange</legend>
+  <fieldset name="spiffe_exchange_fieldset" id="spiffe_exchange_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>What is in this pane, and what is left out of it</summary>
+  <p class="spiffe-note">What this page asked the api for, and what came back.
+  The private key of a presented identity is <strong>not</strong> echoed here
+  &mdash; what is shown is that one was sent, which is the fact that matters
+  when reading an exchange.</p>
+  </details>
+  <label class="spiffe-label" for="spiffe_exchange_request"
+         title="Exactly what this page sent the api, with the private key of a presented identity left out — what is shown is that one was sent.">Sent to the
+  api</label>
+  <textarea class="spiffe-output" id="spiffe_exchange_request" rows="2"
+            data-min-rows="2" data-max-rows="16"
+            readonly
+  title="Exactly what this page sent the api, with the private key of a presented identity left out — what is shown is that one was sent."></textarea>
+  <label class="spiffe-label" for="spiffe_exchange_response"
+         title="Exactly what the api answered, including the gRPC status and the peer it verified.">What the api
+  answered</label>
+  <textarea class="spiffe-output" id="spiffe_exchange_response" rows="2"
+            data-min-rows="2" data-max-rows="16"
+            readonly
+  title="Exactly what the api answered, including the gRPC status and the peer it verified."></textarea>
+</fieldset>
+</div>
+
+<!-- ===================== Operations History ===================== -->
+<div class="spiffe-pane dbg-pane" id="pane_history">
+  <legend class="dbg-legend" id="spiffe_history_expand_button">Operations History</legend>
+  <fieldset name="spiffe_history_fieldset" id="spiffe_history_fieldset"
+            style="display: block;">
+  <details class="spiffe-more">
+    <summary>Why a row that stays <span class="spiffe-pending">Sent</span> is
+      not a <span class="spiffe-bad">Failure</span></summary>
+  <p class="spiffe-note">Every call this page has asked for, newest first. A row
+  that stays <span class="spiffe-pending">Sent</span> means the api never
+  answered at all &mdash; which is a different thing from
+  <span class="spiffe-bad">Failure</span>, which here usually means the round
+  trip worked and SPIFFE said no.</p>
+  </details>
+  <div class="spiffe-row">
+    <input type="button" class="spiffe-btn" id="btn_spiffe_clear_history"
+           value="Clear History"
+           onclick="return spiffe.clearOperationHistory();"
+    title="Empties the log below. It does not touch the held identity or any field.">
+  </div>
+  <div id="spiffe_operation_history"></div>
+</fieldset>
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

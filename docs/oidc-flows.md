@@ -21,3 +21,31 @@ What was NOT wrong, and is worth knowing before hunting further: the mock STS im
 Two differences the test has to be told about rather than assume: Keycloak's `sub` is a **UUID**, a different string from the name typed at the login screen, so `configureKeycloak()` now exports `${FLOW}_USERNAME` beside the existing `${FLOW}_USER` (the UUID) and the jobs pass both — `sub` is opaque, and a test that expected the login name there would only pass against an OP that leaks it. And the browser-direct Token Request with a `DPoP` header is a **non-simple cross-origin request**, so Keycloak must both allow the debugger's origin (`webOrigins`) and name `DPoP` in the preflight's `Access-Control-Allow-Headers`. Measured 2026-08-05: it does — all six DPoP-on jobs exchange their code from the browser and come back with `cnf.jkt` equal to the page's key. The `status: 0` annotation stays for the day a deployment gets the `webOrigins` wrong, which is the failure that names nothing.
 
 The twelve jobs exchange the hybrid flows' code **from the browser** rather than through the api proxy. That is deliberate twice over: it keeps them gated on the STS alone (no api service, and no api CORS allow-list that has to name whichever origin the debugger is served from — a mismatch there fails as `status: 0` with no message), and it is the leg that can carry a DPoP proof, which the proxied call cannot.
+
+## This workflow hands access tokens to other workflows
+
+Two hand-offs run through `oauth2_oidc_1.js` and `oauth2_oidc_2.js`, and they
+behave differently on purpose. **Neither does anything at all unless it has
+been started by the workflow that owns it**, so an ordinary visit to either
+page is untouched by both.
+
+* **SD-JWT VC issuance** (`?sdjwtvc=1`, `sd_jwt_vc.js`) arrives with an
+  authorization endpoint and a client id that its own step 1 has just written,
+  **starts the authorization request by itself**, and **navigates back** when
+  the tokens land — this page is a waypoint in a numbered sequence.
+* **The access token hand-off** (`?tokenhandoff=1`, `token_handoff.js`) is the
+  SCIM page asking for a bearer token, because RFC 7644 section 2 names one as
+  a SCIM authentication scheme and says nothing whatever about where one comes
+  from. It **pre-fills nothing** (that page knows a SCIM service root and
+  nothing about an authorization server, so every guess would produce a
+  request that fails for a reason nobody chose), it **starts nothing**, and it
+  **does not navigate away** — a reader who came here for a token is on the one
+  page that shows them what came back, and it offers a link rather than taking
+  the page away from them.
+
+`offerTokenToHandoff()` is called from **all three** of this page's
+token-bearing responses: the token endpoint's success handler, the Refresh
+Token grant, and `renderAuthorizationEndpointResults()` — which is where an
+**Implicit or Hybrid** flow's access token arrives and the only place it does.
+A hand-off wired only to the token endpoint would leave four of the six flows
+above with a banner that never resolved. See `docs/scim.md`.

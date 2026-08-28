@@ -7,6 +7,8 @@ const { Command, Option } = require('commander');
 // two remote runs have failed that way. See page_load.js.
 const { loadPage, describeLoad, describeToString } =
     require("./page_load");
+const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -16,6 +18,19 @@ log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
+
+// The relying party this run asks for a token FOR — the wsp:AppliesTo of every
+// RequestSecurityToken it sends, and the AudienceRestriction of every assertion
+// that comes back.
+//
+// IT IS SET EXPLICITLY, and it was not before. `wst_applies_to` is a `.stored`
+// control whose markup default is exactly this string, so the page filled it in
+// and nothing here ever mentioned it — which left the value at the mercy of
+// whatever an earlier run had put in this profile's localStorage, and left the
+// registration below with nothing to be registered AGAINST. Naming it here is
+// what makes "the application is configured before the protocol starts" a
+// statement about this test rather than about the page's markup.
+const APPLIES_TO = process.env.WSTRUST_APPLIES_TO || "urn:wstrust:test:rp";
 
 // Set a field's value and fire change/input so the page persists it and
 // rebuilds the request (the .stored controls auto-save + auto-rebuild on
@@ -85,6 +100,7 @@ async function configureAndSend(driver, stsUrl, op, opts) {
   if (opts.version) await setField(driver, "wst_trust_version", opts.version);
   await setField(driver, "wst_operation", op);
   await setField(driver, "wst_token_type", opts.tokenType || "saml2");
+  await setField(driver, "wst_applies_to", APPLIES_TO);
   // UsernameToken credential (the mock STS accepts wstrust/wstrust).
   await setField(driver, "wst_cred_mode", "usernametoken");
   await setField(driver, "wst_username", "wstrust");
@@ -227,7 +243,15 @@ async function test() {
       "--disable-features=BlockInsecurePrivateNetworkRequests," +
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
 
-  const loggingPrefs = new logging.Preferences();
+  // The mock STS serves https on a certificate it generated at startup (see
+  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
+  // makes the whole argument. This file builds its Chrome options by hand
+  // rather than through addBrowserAccessFlags(), which is why the call is here
+  // instead of arriving with the rest.
+  browserFlags.addStsTrustFlags(options);
+
+    const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
   const driver = await new Builder()
@@ -236,6 +260,11 @@ async function test() {
     .setLoggingPrefs(loggingPrefs)
     .build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     const stsUrl = process.env.WSTRUST_STS_URL;
     const op = (process.env.WSTRUST_OP || "issue").toLowerCase();
@@ -253,6 +282,29 @@ async function test() {
     assert(version === "" || ["1.0", "1.1", "1.2", "1.3",
            "1.4"].indexOf(version) >= 0,
            "WSTRUST_VERSION must be 1.0–1.4 (or empty for the page default).");
+
+    // The relying party, in the mock's registry, before the first RST is sent.
+    // WS-Trust's identifier attribute is `wstrustAppliesTo`, and `samlEntityId`
+    // is set beside it deliberately: the mock reads that attribute as the
+    // second half of its AppliesTo lookup, because an AppliesTo and the
+    // AudienceRestriction of the assertion issued for it are one string — so an
+    // application that registered only one of them still gets its own box on
+    // the delegation map instead of a URL. See the mock's common/CLAUDE.md.
+    //
+    // stsUrl here is the WS-Trust ENDPOINT (…/sts), which is what baseOf()
+    // exists to turn back into the service. It may carry ?encrypt=1 in the
+    // encrypted-token job; that is a query on the endpoint and not part of the
+    // application, which is why this is done before effectiveStsUrl is built.
+    await registry.provision(registry.baseOf(stsUrl), {
+      identifier: APPLIES_TO,
+      name: "WS-Trust test relying party",
+      protocols: ["wstrust"],
+      fields: {
+        wstrustAppliesTo: [APPLIES_TO],
+        samlEntityId: [APPLIES_TO]
+      },
+      why: "the relying party every RequestSecurityToken in this job names"
+    });
 
     // Encrypted-token scenario: ask the STS to encrypt (?encrypt=1) and sign
     // the request so it carries the requestor cert the STS encrypts to.
@@ -294,9 +346,13 @@ async function test() {
     } catch (e2) {
       /* ignore */
     }
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

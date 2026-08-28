@@ -11,7 +11,7 @@ set -x
 # loopback:
 #
 #   :8080  Keycloak 26.x            the identity provider for OAuth2 / OIDC / SAML
-#   :8081  the mock STS             WS-Trust, and the OID4VCI issuer + OID4VP
+#   :8081  the mock STS (https)     WS-Trust, and the OID4VCI issuer + OID4VP
 #                                   verifier the SD-JWT VC tests drive
 #   :8082  Keycloak 8.0.1 + wsfed   the WS-Federation IdP (26.x cannot do WS-Fed)
 #   :7005  walt.id issuer-api2      a real OpenID4VCI issuer, for interoperability
@@ -117,7 +117,7 @@ init()
       PKI_TLS_AVAILABLE="${PKI_TLS_AVAILABLE:-true}"
       # WS-Trust STS (mock) started on the host (keycloak-tests.yml). A local dev
       # site has the api backend, so the WS-Trust jobs can run here.
-      WSTRUST_STS_URL="${WSTRUST_STS_URL:-http://localhost:8081/sts}"
+      WSTRUST_STS_URL="${WSTRUST_STS_URL:-https://localhost:8081/sts}"
       ;;
     *)
       API_BASE_URL="${API_BASE_URL:-${DEBUGGER_BASE_URL}}"
@@ -184,12 +184,18 @@ init()
       # configureKeycloak registers the client. Set either variable explicitly to
       # override the probe.
       # A deployed static site has no api proxy, so the browser must call the STS
-      # DIRECTLY. That works against the host-run mock STS over LOOPBACK — Chrome
-      # treats http://localhost as potentially trustworthy (no mixed-content block,
-      # unlike a container/bridge name), and the mock sends permissive CORS +
-      # Private-Network-Access headers. run-report.js routes these jobs frontend
-      # when SAML_BACKEND_AVAILABLE=false. Set WSTRUST_STS_URL empty to skip them.
-      WSTRUST_STS_URL="${WSTRUST_STS_URL-http://localhost:8081/sts}"
+      # DIRECTLY. That works against the host-run mock STS over LOOPBACK — and
+      # since 2026-08-25 it is **https** as well as loopback, so the
+      # mixed-content question this paragraph used to turn on does not arise at
+      # all: an https page may call an https service. (The mock binds its main
+      # port as TLS because the RFC 9700 pass is a trust realm on it now rather
+      # than a second container, and a realm binds no socket of its own; see
+      # STS_HTTPS on the `sts` service in keycloak-tests.yml.) The mock still
+      # sends permissive CORS + Private-Network-Access headers, and Chrome is
+      # given the certificate as an exact key pin by trustStsCertificate().
+      # run-report.js routes these jobs frontend when
+      # SAML_BACKEND_AVAILABLE=false. Set WSTRUST_STS_URL empty to skip them.
+      WSTRUST_STS_URL="${WSTRUST_STS_URL-https://localhost:8081/sts}"
       ;;
   esac
 
@@ -217,10 +223,35 @@ init()
   # over loopback as WSTRUST_STS_URL above — the BROWSER navigates to it, and
   # Chrome treats http://localhost as potentially trustworthy even from an https
   # page, which a bridge name would not be. Set it empty to skip these jobs.
-  WSFED_STS_METADATA_URL="${WSFED_STS_METADATA_URL-http://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml}"
+  WSFED_STS_METADATA_URL="${WSFED_STS_METADATA_URL-https://localhost:8081/FederationMetadata/2007-06/FederationMetadata.xml}"
   if [ -n "${WSFED_STS_METADATA_URL:-}" ];
   then
     export WSFED_STS_METADATA_URL
+  fi
+  # And the same mock answers SAML 2.0 Web Browser SSO, which a live-site run
+  # would otherwise have only one identity provider for. Same loopback reasoning
+  # as above — the BROWSER navigates to it. The path segment is a digest of the
+  # service provider entityID, because that service publishes metadata per
+  # service provider; nothing has to be provisioned, since it accepts any
+  # entityID and mints the document on the ask. Set it empty to skip these jobs.
+  if [ -n "${SAML_SP_ENTITY_ID:-}" ];
+  then
+    SAML_STS_SP_SLUG="app-$(printf '%s' "${SAML_SP_ENTITY_ID}" | sha256sum | cut -c1-12)"
+    SAML_STS_METADATA_URL="${SAML_STS_METADATA_URL-https://localhost:8081/saml2/metadata/${SAML_STS_SP_SLUG}}"
+    # And SAML **1.1**, from the same service and the same slug. This is the one
+    # browser-SSO profile with no second identity provider anywhere: Keycloak
+    # dropped SAML 1.1 years ago, so unsetting this skips the whole of it. The
+    # HTTP Artifact job additionally needs the api, and a backend-less target
+    # skips it for the same reason the SAML 2.0 one is skipped there.
+    SAML11_METADATA_URL="${SAML11_METADATA_URL-https://localhost:8081/saml11/metadata/${SAML_STS_SP_SLUG}}"
+  fi
+  if [ -n "${SAML_STS_METADATA_URL:-}" ];
+  then
+    export SAML_STS_METADATA_URL
+  fi
+  if [ -n "${SAML11_METADATA_URL:-}" ];
+  then
+    export SAML11_METADATA_URL
   fi
 
   # ---------------------------------------------------------------------------
@@ -318,7 +349,7 @@ init()
   check_return_code $?
   renderWaltidConfig "${CURRENT_DIR}"
   check_return_code $?
-  EXTENSION_AUTOARM_ORIGINS="http://localhost:8081" \
+  EXTENSION_AUTOARM_ORIGINS="https://localhost:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # the browser is on the host
   check_return_code $?
   NODEJS_BASE_DIR=tests
@@ -331,7 +362,8 @@ prepTestEnv()
 {
   npm install --prefix tests
   # The mock STS's own dependencies: the four host-run tests that load
-  # sts/bbs2023.js in place reach @digitalbazaar/bbs-signatures through a dynamic
+  # sts/common/vendored/bbs2023.js in place reach @digitalbazaar/bbs-signatures
+  # through a dynamic
   # import(), which resolves from that file's own directory and ignores NODE_PATH.
   # See the fuller note in local-run-tests.sh. `npm ci` so the submodule's
   # committed lock is not rewritten under it, and `--omit=dev` spelled out
@@ -477,6 +509,48 @@ startSideCars()
   requireComposeServiceRunning "${KEYCLOAK_COMPOSE_FILE}" keycloak-wsfed
   check_return_code $?
   waitForWaltid "${KEYCLOAK_COMPOSE_FILE}"
+
+  # ------------------------------------------------------------------------
+  # THE MOCK STS'S CERTIFICATE, AND THEN ITS RFC 9700 REALM.
+  #
+  # The mock this launcher starts (keycloak-tests.yml, host networking) binds
+  # its main port as TLS, so every STS URL above is https and the certificate
+  # has to be installed before anything verifies. It is self-signed and
+  # regenerated on every start of that service, so this is the first moment it
+  # exists — there is nothing to bake in and nothing to commit.
+  #
+  # It matters MORE on a deployed target than on either local stack: the pages
+  # are served over https there, the browser calls the STS directly with no api
+  # proxy in front of it, and an untrusted certificate is a fetch that never
+  # resolves rather than an error anybody sees. trustStsCertificate() hands
+  # Chrome an exact SPKI pin for that key and nothing else.
+  #
+  # THE RFC 9700 JOBS RUN HERE NOW, AND THEY NEVER DID BEFORE. They were gated
+  # on a second mock instance, and this launcher starts one mock — so
+  # RFC9700_STS_URL was always unset and all five were skipped on every live-site
+  # run. The compliant server is a trust realm on the instance this file already
+  # starts, so the gap closes for the cost of one call.
+  #
+  # Skipped when WSTRUST_STS_URL is empty, which is this file's way of saying
+  # "there is no mock STS in this run" — the same condition that skips the
+  # WS-Trust jobs. Non-fatal either way: without the realm the five jobs are not
+  # scheduled, with a reason, and the rest of the suite runs.
+  # ------------------------------------------------------------------------
+  if [ -n "${WSTRUST_STS_URL:-}" ];
+  then
+    trustStsCertificate https://localhost:8081 || true
+    if configureStsRfc9700Realm https://localhost:8081;
+    then
+      RFC9700_STS_URL="${RFC9700_STS_URL:-https://localhost:8081/realm/rfc9700}"
+      export RFC9700_STS_URL
+    else
+      echo "The mock STS has no RFC 9700 trust realm, so the five RFC 9700 flow"
+      echo "jobs will be SKIPPED. The likeliest cause is an sts/ submodule older"
+      echo "than \`realmRuntime\` on oauth2.rfc9700. See docs/rfc9700.md."
+      echo "(tests/rfc9700_client.js is unaffected — it needs no service at all"
+      echo "and runs either way.)"
+    fi
+  fi
   echo "Leaving startSideCars()."
 }
 

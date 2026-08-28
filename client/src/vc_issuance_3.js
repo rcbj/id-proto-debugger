@@ -203,6 +203,10 @@ function renderDisclosures(rows, sdDigests) {
 function resolveIssuerDid(iss) {
   log.debug("Entering resolveIssuerDid(). iss=" + String(iss).slice(0, 60));
   log.debug("Leaving resolveIssuerDid().");
+  // allowHttp PERMITS plain http; it does not choose it. resolve() tries the
+  // https URL did:web mandates first and falls back only if that fails, which is
+  // what keeps this working against an issuer on either scheme — this project's
+  // own mock moved from one to the other on 2026-08-25. See did.js.
   return didLib.resolve(iss, { allowHttp: true }).then(function (res) {
     // The conversion lives in did.js because the domain linkage check needs the
     // same one: both are asking whether a key this DID authorises to ASSERT

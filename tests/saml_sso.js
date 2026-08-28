@@ -6,6 +6,8 @@ const { Command, Option } = require('commander');
 // The SP key pair is generated per run and passed in through the environment;
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
+const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -15,6 +17,84 @@ log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
+
+// ---------------------------------------------------------------------------
+// WHICH IDENTITY PROVIDER this run drives. Two of them answer this profile and
+// the same combinations are run against both, which is the arrangement
+// tests/wsfed_sso.js already has for WS-Federation and it is here for the same
+// reason: a mock that is quietly more permissive than the real thing passes
+// every test written against it alone.
+//
+//   keycloak  the Keycloak realm, with a SAML client provisioned by common.sh
+//             carrying THIS RUN's SP certificate — so it validates the
+//             AuthnRequest signature, and a request the debugger builds
+//             sloppily fails there.
+//   sts       the mock STS (sts/saml/saml2_sso.js). Deliberately strict where
+//             Keycloak is permissive — it refuses a ProtocolBinding it does not
+//             implement by name, and answers IsPassive with NoPassive rather
+//             than a screen — and deliberately more permissive in exactly ONE
+//             way that matters to this test: it ACCEPTS ANY entityID and
+//             verifies no request signature, so nothing has to be provisioned
+//             before a run.
+//
+// Everything below marked "IDP:" is a place the two genuinely differ. There are
+// THREE, and none of them is a difference in the protocol: where the metadata
+// document lives, whether the service provider has to be provisioned first, and
+// which of them can be driven with no side-car at all. Anything else that
+// diverges is a FINDING rather than a case to special-case, which is the whole
+// point of running both.
+// ---------------------------------------------------------------------------
+var IDP = (process.env.SAML_IDP || "keycloak").toLowerCase();
+
+// IDP: the sign-in screen. Both use #username / #password — THE MOCK STS COPIES
+// KEYCLOAK'S FIELD IDS ON PURPOSE, so a test does not need to know which screen
+// it is looking at in order to fill it in — and both use #kc-login for the
+// submit button, because the mock reaches the same authentication service its
+// OAuth flow does and that screen was written against Keycloak's ids too. It is
+// written as a LIST anyway, and waiting for whichever arrives, for the reason
+// wsfed_sso.js gives: if a third identity provider turns up with the same
+// fields and a third button, the failure names the button rather than the
+// environment.
+//
+// The password is the username on both: Keycloak's test user is provisioned
+// that way (common.sh) and the mock checks no password at all, refusing only
+// the literal "invalid" so a negative test has something to fail on.
+var LOGIN_BUTTONS = ["kc-login", "saml2-login"];
+
+async function elementExists(driver, id) {
+  log.debug("Entering elementExists().");
+  var found = await driver.findElements(By.id(id));
+  log.debug("Leaving elementExists().");
+  return found.length > 0;
+}
+
+async function loginAtIdp(driver, user, timeout) {
+  log.debug("Entering loginAtIdp().");
+  var username = By.id("username");
+  await driver.wait(until.elementLocated(username), timeout,
+    "the identity provider never showed its sign-in screen (no #username " +
+        "field). idp=" + IDP);
+  await driver.wait(until.elementIsVisible(driver.findElement(username)),
+                    timeout);
+  await driver.findElement(username).clear();
+  await driver.findElement(username).sendKeys(user);
+  await driver.findElement(By.id("password")).clear();
+  await driver.findElement(By.id("password")).sendKeys(user);
+
+  var clicked = null;
+  for (var i = 0; i < LOGIN_BUTTONS.length; i++) {
+    if (await elementExists(driver, LOGIN_BUTTONS[i])) {
+      clicked = LOGIN_BUTTONS[i];
+      await driver.findElement(By.id(clicked)).click();
+      break;
+    }
+  }
+  assert(clicked, "the sign-in screen carries none of the submit buttons this " +
+      "test knows (" + LOGIN_BUTTONS.join(", ") + "). The username field was " +
+      "there, so this is a new identity provider rather than a broken page.");
+  log.info("Signed in at the " + IDP + " sign-in screen (" + clicked + ").");
+  log.debug("Leaving loginAtIdp().");
+}
 
 // Poll a field's value until the predicate passes (or timeout).
 async function waitForValue(driver, locator, predicate, message, timeout) {
@@ -89,6 +169,9 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
   // seconds to render #username on a cold browser, and POST-binding processing
   // + request signature validation add latency — so give the login/response
   // round-trip a generous timeout regardless of the small generic waitTime.
+  // The mock STS renders in milliseconds and needs none of it; one timeout for
+  // both is better than a branch, because the generous one costs nothing when
+  // nothing is slow.
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Load the SAML Test Tools page (binding=" + binding + ").");
@@ -104,16 +187,23 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
   await driver.findElement(spField).sendKeys(spEntityId);
 
   // Leave the NameID format at its default "(none)" — the AuthnRequest then
-  // sends a <NameIDPolicy> without a Format, so Keycloak returns its default
-  // NameID (rather than possibly rejecting a requested format). This exercises
-  // the default "nothing chosen" behavior.
+  // sends a <NameIDPolicy> without a Format, so the identity provider returns
+  // its own default NameID rather than possibly rejecting a requested format.
+  // This exercises the default "nothing chosen" behavior, and the two answer it
+  // differently on purpose: Keycloak picks its client's configured format, and
+  // the mock uses saml2.nameIdFormat. Neither is asserted, because what is
+  // being tested is that the request without one WORKS.
 
-  // The SP signing key pair generated for this run. Its certificate is
-  // registered on the Keycloak client, which validates the AuthnRequest
-  // signature — so the request must be signed with THIS key, not one the page
-  // generates for itself.
-  log.info("Load this run's SP signing key pair (matches the cert registered " +
-           "on Keycloak).");
+  // The SP signing key pair generated for this run.
+  //
+  // IDP: what it is FOR differs, and the test does the same thing either way.
+  // Keycloak has this run's certificate registered on its client and VALIDATES
+  // the AuthnRequest signature, so the request must be signed with THIS key and
+  // not one the page generates for itself. The mock STS records whether a
+  // request was signed and verifies nothing — so signing there proves nothing
+  // about the mock, and it still proves the DEBUGGER produced a signature it
+  // was asked for, which is the half of this test that is about the client.
+  log.info("Load this run's SP signing key pair (idp=" + IDP + ").");
   var spPair = readSpKeyPair();
   var spKey = spPair.privateKey;
   var spCert = spPair.certificate;
@@ -122,6 +212,47 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
     "document.getElementById('saml_sp_public_key').value = arguments[1];",
     spKey, spCert
   );
+
+  // ---------------------------------------------------------------------
+  // THE SERVICE PROVIDER, IN THE MOCK'S REGISTRY, BEFORE THE AUTHNREQUEST.
+  //
+  // Only against the mock — stsBaseFor() answers "" for the Keycloak half,
+  // whose client common.sh provisions with this same entityID and this run's
+  // certificate. Both identity providers therefore end up knowing about one
+  // service provider, each in its own store, which is what a federation looks
+  // like and is the arrangement the IDP note above describes.
+  //
+  // The ACS is read off the PAGE rather than composed here: it is the
+  // deployment's own statement about where a response is posted (the static
+  // deployments answer it from an edge function, which is a different URL from
+  // the container stack's), and a registration naming a URL this run will not
+  // use would be exactly the plausible-and-wrong entry pre-registration is
+  // supposed to replace.
+  //
+  // THE MOCK STILL REQUIRES NONE OF IT, and the IDP note above says so. What
+  // it buys is the difference between an entry that knows an entityID and one
+  // that knows what the service provider IS: its ACS, its signing certificate,
+  // and that it was declared for SAML 2.0 rather than inferred from a sighting.
+  // ---------------------------------------------------------------------
+  var acsUrl = await driver.findElement(By.id("saml_acs_url"))
+      .getAttribute("value");
+  log.info("Assertion consumer service (the page's own): " + acsUrl);
+  await registry.provision(registry.stsBaseFor(metadataUrl), {
+    identifier: spEntityId,
+    name: "SAML 2.0 test service provider",
+    protocols: ["saml2"],
+    fields: Object.assign({
+      samlEntityId: [spEntityId],
+      // The certificate this run's AuthnRequests are signed with. The mock
+      // VERIFIES no request signature — it records that one was there — so
+      // this changes nothing about whether the flow works, and that is the
+      // reason to register it rather than a reason not to: it is the one place
+      // the two identity providers can be compared, since Keycloak's client
+      // carries the same certificate and DOES verify against it.
+      samlSigningCertificate: spCert
+    }, acsUrl ? { samlAssertionConsumerService: [acsUrl] } : {}),
+    why: "the service provider every AuthnRequest in this job comes from"
+  });
 
   // Select the binding under test (redirect / post / artifact).
   log.info("Select binding: " + binding);
@@ -139,19 +270,10 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
   log.info("Call IdP (" + binding + ").");
   await clickByValue(driver, "Call IdP");
 
-  // Keycloak login (same login page as the OIDC tests).
-  log.info("Log in at Keycloak.");
-  var username = By.id("username");
-  var password = By.id("password");
-  var kcLogin = By.id("kc-login");
-  await driver.wait(until.elementLocated(username), loginWait);
-  await driver.wait(until.elementIsVisible(driver.findElement(username)),
-                    loginWait);
-  await driver.findElement(username).clear();
-  await driver.findElement(username).sendKeys(user);
-  await driver.findElement(password).clear();
-  await driver.findElement(password).sendKeys(user);
-  await driver.findElement(kcLogin).click();
+  // The identity provider's sign-in screen. Both of them use the same field
+  // ids; see loginAtIdp() and the IDP note above it.
+  log.info("Log in at the identity provider (idp=" + IDP + ").");
+  await loginAtIdp(driver, user, loginWait);
 
   // Land on the response page (ACS stashed the response and redirected here).
   log.info("Wait for the SAML response page.");
@@ -228,6 +350,17 @@ async function test() {
       "--disable-features=BlockInsecurePrivateNetworkRequests," +
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
 
+  // The mock STS serves https on a certificate it generated at startup (see
+  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
+  // makes the whole argument. Without it the IdP half of this test meets a
+  // certificate interstitial instead of a sign-in screen, and what the log
+  // says is that the identity provider never showed its #username field.
+  // This file builds its Chrome options by hand rather than through
+  // addBrowserAccessFlags(), which is why the call is here instead of
+  // arriving with the rest.
+  browserFlags.addStsTrustFlags(options);
+
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
 
@@ -237,6 +370,11 @@ async function test() {
     .setLoggingPrefs(loggingPrefs)
     .build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     const metadataUrl = process.env.SAML_METADATA_URL;
     // Optional: upload a local metadata file instead of fetching a URL (used by
@@ -247,7 +385,22 @@ async function test() {
     const binding = (process.env.SAML_BINDING || "redirect").toLowerCase();
     assert(metadataUrl || metadataFile, "Set SAML_METADATA_URL (URL load) or " +
            "SAML_METADATA_FILE (file upload).");
+    // IDP: WHAT HAS TO BE PROVISIONED BEFORE THIS RUNS, which is the biggest
+    // practical difference between the two and is worth stating where somebody
+    // reading a failure will see it.
+    //
+    //   keycloak  a SAML client for this entityID, with this run's SP
+    //             certificate on it and the test user created — common.sh does
+    //             all of that, and a missing piece shows up as an error PAGE
+    //             from Keycloak rather than as a sign-in screen.
+    //   sts       nothing at all. The mock accepts any entityID, creates the
+    //             application entry from the first valid AuthnRequest, and
+    //             mints a metadata document for anything asked for — so
+    //             SAML_METADATA_URL can name an entityID nobody has ever
+    //             mentioned and it will answer.
     assert(spEntityId, "SAML_SP_ENTITY_ID environment variable is not set.");
+    log.info("idp=" + IDP + " metadata=" + (metadataUrl || metadataFile) +
+             " sp=" + spEntityId + " binding=" + binding);
     assert(["redirect", "post", "artifact"].indexOf(binding) >= 0,
            "SAML_BINDING must be redirect, post, or artifact.");
 
@@ -273,9 +426,13 @@ async function test() {
     } catch (e2) {
       /* ignore */
     }
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

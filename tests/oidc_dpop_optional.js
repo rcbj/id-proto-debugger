@@ -36,6 +36,7 @@ const crypto = require("crypto");
 const assert = require("assert");
 const { Command, Option } = require('commander');
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -283,11 +284,38 @@ async function test() {
     .forBrowser("chrome").setChromeOptions(options)
         .setLoggingPrefs(loggingPrefs).build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
-    const stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+    const stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
     const stsBase = stsUrl.replace(/\/sts\/?$/, "");
     const discovery = process.env.DISCOVERY_ENDPOINT ||
                       (stsBase + "/.well-known/openid-configuration");
+
+    // The application, in the mock's registry, before anything is sent to it.
+    // This job drives the Authorization Code flow three times over — DPoP off,
+    // DPoP on, and DPoP not inherited from the other workflow — so what is
+    // registered is one client with one flow, and the DPoP axis is not part of
+    // the registration: a proof binds the token this client gets, it does not
+    // make it a different client.
+    await registry.provision(registry.stsBaseFor(discovery), {
+      identifier: CLIENT_ID,
+      name: "OIDC DPoP optional (mock STS)",
+      protocols: ["oauth2", "oidc"],
+      fields: {
+        oauthClientId: CLIENT_ID,
+        oauthRedirectUri: [baseUrl + "/callback"],
+        oauthResponseType: ["code"],
+        oauthGrantType: ["authorization_code"],
+        oauthScope: SCOPE.split(/\s+/).filter(Boolean),
+        oauthTokenEndpointAuthMethod: "none",
+        oauthConfidential: "FALSE"
+      },
+      why: "the client this job signs in as, with and without a DPoP proof"
+    });
 
     await driver.manage().deleteAllCookies();
     await driver.get(baseUrl + "/oauth2_oidc_1.html");
@@ -414,9 +442,13 @@ async function test() {
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.stack || error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

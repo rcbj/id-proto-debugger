@@ -37,6 +37,7 @@ const { VirtualAuthenticatorOptions, Transport, Protocol } =
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { waitForFocus } = require("./wait_for.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -178,6 +179,12 @@ async function test() {
       return "RP ID prefilled as " + rpId;
     });
 
+    // Before ANY ceremony: a headless window is neither focused nor visible
+    // for its first second or so, and WebAuthn refuses on such a page with a
+    // bare NotAllowedError that reads exactly like a declined prompt. See
+    // waitForFocus() in tests/wait_for.js for the measurement.
+    await waitForFocus(driver, waitTime * 8);
+
     await driver.addVirtualAuthenticator(
       authenticatorOptions({ hasUserVerification: true,
                            isUserVerified: true }));
@@ -318,7 +325,10 @@ async function test() {
     });
 
     const severe = (await driver.manage().logs().get(logging.Type.BROWSER))
-      .filter((e) => e.level.name === "SEVERE");
+      .filter((e) => e.level.name === "SEVERE")
+      // A load the browser abandoned because its own certificate or network
+      // configuration changed under it is not a page error. browser_flags.js.
+      .filter((e) => !browserFlags.isTransientLoadError(e.message));
     assert.strictEqual(severe.length, 0,
       "the page logged browser errors:\n" + severe.map((e) =>
           e.message).join("\n"));

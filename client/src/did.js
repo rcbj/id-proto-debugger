@@ -552,9 +552,29 @@ function resolve(did, opts) {
     return Promise.resolve({ document: local.document, from: local.from,
                            url: "" });
   }
-  var url = opts.allowHttp ?
-      didWebToUrlInsecure(parsed.did) : didWebToUrl(parsed.did);
-  if (!url) {
+  // ---------------------------------------------------------------------
+  // `allowHttp` MEANS "http IS PERMITTED", NOT "USE http".
+  //
+  // It used to mean the second, and that was indistinguishable from the first
+  // for as long as every local stack served the DID's host over plain http. It
+  // stopped being indistinguishable on 2026-08-25, when this project's own mock
+  // began binding its main port as TLS (STS_HTTPS=true — the RFC 9700 pass is a
+  // trust realm on that one instance now and a realm binds no socket of its
+  // own). Every caller that had reasoned its way to `allowHttp: true` — the
+  // page's origin is http, or the DID names `localhost`/`sts` — then built an
+  // http URL for a host that no longer answers on it, and `fetch failed` is all
+  // anybody saw. Nothing in that message names a scheme.
+  //
+  // So the https URL the method MANDATES is tried FIRST, always, and the plain
+  // one only as a fallback and only when the caller permitted it. A deployment
+  // where http is the right answer is one where the https attempt fails and the
+  // fallback runs: one wasted request on a local stack, against a failure mode
+  // that costs an afternoon. `allowHttp: false` is unchanged in every respect —
+  // https and nothing else.
+  // ---------------------------------------------------------------------
+  var url = didWebToUrl(parsed.did);
+  var fallbackUrl = opts.allowHttp ? didWebToUrlInsecure(parsed.did) : "";
+  if (!url && !fallbackUrl) {
     log.debug("Leaving resolve().");
     return Promise.reject(new Error("that did:web has no host to fetch from."));
   }
@@ -563,30 +583,57 @@ function resolve(did, opts) {
     log.debug("Leaving resolve().");
     return Promise.reject(new Error("no fetch implementation is available."));
   }
+
+  // One attempt at one URL, whole: fetch, read, parse, and check the id. It is
+  // a function rather than a chain so the fallback can run exactly the same
+  // checks against the other scheme — a fallback that verified less than the
+  // first attempt would be a way in.
+  function attempt(at) {
+    log.debug("Entering attempt(). at=" + at);
+    return doFetch(at).then(function (r) {
+      return r.text().then(function (text) {
+        if (!r.ok) {
+          throw new Error("the DID document at " + at + " answered HTTP " +
+                          r.status + ".");
+        }
+        var doc;
+        try {
+          doc = JSON.parse(text);
+        } catch (e) {
+          throw new Error("the DID document at " + at + " is not JSON: " +
+                          e.message);
+        }
+        // DID Core: the document's id MUST be the DID that was resolved. A
+        // document claiming to be somebody else is the interesting failure, so
+        // it is refused rather than displayed as though it belonged here.
+        if (doc.id && doc.id !== parsed.did) {
+          throw new Error("the document at " + at + ' identifies itself as "' +
+                          doc.id +
+                          '", not "' + parsed.did + '".');
+        }
+        log.debug("Leaving attempt(). Retrieved " + text.length +
+                  " characters.");
+        return { document: doc, from: "retrieved from " + at, url: at };
+      });
+    });
+  }
+
   log.debug("Leaving resolve().");
-  return doFetch(url).then(function (r) {
-    return r.text().then(function (text) {
-      if (!r.ok) {
-        throw new Error("the DID document at " + url + " answered HTTP " +
-                        r.status + ".");
-      }
-      var doc;
-      try {
-        doc = JSON.parse(text);
-      } catch (e) {
-        throw new Error("the DID document at " + url + " is not JSON: " +
-                        e.message);
-      }
-      // DID Core: the document's id MUST be the DID that was resolved. A
-      // document claiming to be somebody else is the interesting failure, so it
-      // is refused rather than displayed as though it belonged here.
-      if (doc.id && doc.id !== parsed.did) {
-        throw new Error("the document at " + url + ' identifies itself as "' +
-                        doc.id +
-                        '", not "' + parsed.did + '".');
-      }
-      log.debug("Leaving resolve(). Retrieved " + text.length + " characters.");
-      return { document: doc, from: "retrieved from " + url, url: url };
+  if (!url) {
+    return attempt(fallbackUrl);
+  }
+  if (!fallbackUrl) {
+    return attempt(url);
+  }
+  return attempt(url).catch(function (httpsError) {
+    log.debug("resolve(): https failed (" + httpsError.message +
+              "); http is permitted, so trying " + fallbackUrl + ".");
+    return attempt(fallbackUrl).catch(function (httpError) {
+      // BOTH messages, because either one alone sends the reader to the wrong
+      // place: the https failure alone reads as a certificate or a firewall,
+      // and the http failure alone reads as a host that is simply not there.
+      throw new Error(httpsError.message + " And over plain http: " +
+                      httpError.message);
     });
   });
 }
@@ -889,8 +936,9 @@ function extraMembers(object, permitted) {
 // how to show it, and every check is reported whether it passed or not.
 //
 // `opts.fetch` is passed through to resolve() so a node test can drive this
-// without a browser; `opts.allowHttp` is needed wherever did:web must be
-// fetched over plain http, as it must on this project's stacks.
+// without a browser; `opts.allowHttp` PERMITS did:web to be fetched over plain
+// http — resolve() still tries the https URL the method mandates first and
+// falls back only when this is set. See the note above that fallback.
 function verifyDomainLinkage(entry, expectedOrigin, opts) {
   log.debug("Entering verifyDomainLinkage(). expectedOrigin=" + expectedOrigin);
   opts = opts || {};

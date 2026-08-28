@@ -11,7 +11,9 @@
 //
 //   report.html        — human-readable report
 //   report.xml         — JUnit XML (for CI dashboards)
-//   logs/NN-<test>.log — full stdout+stderr per test
+//   logs/NN-<test>.log — full stdout+stderr per test (the <test> half
+//                        is the job name slugged and TRUNCATED; NN is
+//                        what makes it unique)
 //
 // Each test's stdout and stderr are streamed live to the console AND written
 // to its log file as they are produced (a tee), so the complete output is
@@ -28,6 +30,7 @@
 //
 const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const bunyan = require("bunyan");
 
@@ -70,6 +73,254 @@ const LOGS_DIR = path.join(RUN_DIR, "logs");
 const BASE_URL = process.env.DEBUGGER_BASE_URL || "http://localhost:3000";
 const env = process.env;
 
+// ---------------------------------------------------------------------------
+// Coverage (opt-in), the THIRD domain.
+//
+// COVERAGE.md describes two: the browser bundles (Istanbul, shipped by the page
+// to the client server) and the api process (c8). Neither of them sees THIS
+// container, and about thirty jobs here never touch a browser at all — they
+// load the real client/src and api modules in-process through
+// module_paths.requireSharedModule() and drive them against the RFCs' own
+// vectors. Every branch those jobs cover was reported as UNCOVERED, because the
+// only instrumented copy of the module was the one running in Chrome.
+//
+// The cost of that was not a low number; it was a low number that pointed the
+// wrong way. On the 2026-08-23 report, 336 of the api's 474 own-code missing
+// branches and roughly 2,935 of the frontend's 10,092 sat in modules that
+// already had a node test — api/krb5_frame.js read 29.7% while
+// api_krb5_relay.js asserts every one of its malformed-frame rejections by
+// name. Anybody writing tests off that report would have written the ones that
+// already existed.
+//
+// The mechanism is node's own: NODE_V8_COVERAGE names a directory, and the
+// child writes raw V8 coverage into it as it exits. No wrapper binary in the
+// spawn path, nothing for a test to opt into, and it applies to EVERY job
+// rather than only the browserless ones — a page test that also loads a shared
+// module in-process (pki_page.js does, with client/src/x509.js) contributes
+// what it ran there too. c8 renders the pile at the end of the run, in this
+// container, where the paths those files were loaded from still resolve.
+// ---------------------------------------------------------------------------
+const COVERAGE = String(process.env.COVERAGE || "") === "true";
+const NODE_COVERAGE_DIR = process.env.NODE_COVERAGE_DIR || "/coverage/node";
+const NODE_COVERAGE_TMP = path.join(NODE_COVERAGE_DIR, "tmp");
+// Flipped off by prepareNodeCoverage() when the directory cannot be made — a
+// COVERAGE=true run with no ./coverage mounted, say. Collecting coverage is
+// never worth failing a test run over, so that case degrades to an ordinary
+// run with a warning rather than to a suite that dies before the first job.
+let nodeCoverageOn = COVERAGE;
+
+// How long the run actually took, which stopped being the sum of the job times
+// the day the jobs started overlapping. Set by main() before the reports are
+// written; 0 on a --demo run, where the report says so itself.
+let runWallMs = 0;
+
+// ---------------------------------------------------------------------------
+// unit or browser.
+//
+// Reported, not scheduled: a unit job is spawned, timed, logged and counted
+// exactly as it was before this existed. The label is there so the report says
+// which half of the suite a failure came from, and so `classname` in the JUnit
+// XML separates the two for a CI dashboard.
+//
+// It is DERIVED rather than listed. A hand-kept list of browserless scripts is
+// a list that goes stale on the next test added, silently and in the direction
+// that mislabels rather than fails — so the classification asks the only
+// question that decides it: does the script require selenium-webdriver? An
+// unreadable script is called a browser job, because that is the label that
+// costs nothing if it is wrong.
+// ---------------------------------------------------------------------------
+const SELENIUM_REQUIRE = /require\(\s*["']selenium-webdriver/;
+
+function jobTypeOf(script) {
+  log.debug("Entering jobTypeOf(). script=" + script);
+  let source;
+  try {
+    source = fs.readFileSync(path.join(TESTS_DIR, script), "utf8");
+  } catch (e) {
+    // Not readable from here (a script this image did not COPY, say). The job
+    // will fail to spawn and say so; the label is not the interesting part.
+    log.debug("Leaving jobTypeOf(). Unreadable, calling it browser.");
+    return "browser";
+  }
+  const type = SELENIUM_REQUIRE.test(source) ? "browser" : "unit";
+  log.debug("Leaving jobTypeOf(). " + type);
+  return type;
+}
+
+
+// ---------------------------------------------------------------------------
+// HOW MANY JOBS RUN AT ONCE, and what stops two of them colliding.
+//
+// These jobs are independent processes: each spawns its own browser, writes its
+// own log, returns its own result, and nothing in buildJobs() declares an order
+// between any two of them. The loop that ran them was sequential all the same,
+// and the price was the whole suite's wall clock — on the 2026-08-23 run, 196
+// jobs and 20.6 minutes, of which the MEDIAN job is 3.2 seconds and the ten
+// longest are 54% of the total. A pool is most of that time back.
+//
+// Size is TEST_CONCURRENCY, and it defaults to one less than this machine's
+// cores, held between 2 and 4. The cap is not politeness: the longest jobs here
+// are CPU-bound in-browser crypto (SLH-DSA and RSA on the Digital Signature
+// page) rather than waiting on a network, a GitHub Actions runner has 2 to 4
+// cores, and on the containerized stack every OTHER service — Keycloak,
+// Postgres, two mock STS instances, two walt.id containers, the WS-Fed
+// side-car — is on that same machine. The floor is 2 rather than 1 so that a
+// two-core runner still overlaps the waiting, which is what most of a browser
+// job is.
+//
+// TEST_CONCURRENCY=1 restores the old behaviour EXACTLY, live streamed output
+// included. That is the first thing to try when a job fails here and passes on
+// its own. Note what changes above 1: a child's output is buffered and written
+// as one block when it finishes, because interleaving the lines of four
+// browsers makes all four unreadable. The per-job LOG FILE is still written as
+// the bytes arrive, so `tail -f report/latest/logs/NN-*.log` follows a running
+// job either way.
+//
+// WHAT MUST NOT OVERLAP is declared below in one table rather than at the ~200
+// call sites, because it is a property of the SERVICE a script drives and not
+// of the script. The mock STS keeps its /admin configuration in memory and it
+// SURVIVES BETWEEN JOBS — that is the hazard the sequential loop hid, and it
+// surfaces as somebody else's assertion failing about a claim set, not as a
+// collision.
+//
+//   * A lock name means "no two of these run at the same time". `sts-vc` is the
+//     mock's credential and verifier configuration (/admin/vc and
+//     /admin/vc-verifier-config: the claims a credential carries and the ones
+//     the Verifier asks for, which sd_jwt_vc_presentation.js pins and the rest
+//     of that family reads off the wire). `waltid` is the same argument for
+//     walt.id's own issuer and verifier containers. `sts-rfc9700` is the mock's
+//     RFC 9700 TRUST REALM, which rfc9700_flows.js reconfigures through
+//     /realm/rfc9700/admin-api/config/set — the name is kept from when that was
+//     a second mock INSTANCE, and what changed is that the state is a realm
+//     override now, so this serialises those jobs against each other and no
+//     longer against anything driving the permissive server. `sts-tls` is the
+//     mock's client TRUSTSTORE, which pki_mutual_tls.js fills and empties on a
+//     live process.
+//   * EXCLUSIVE means the job runs alone, and admin_api.js is the only one: it
+//     changes claim sets globally and compares the count of every artifact the
+//     mock is holding against the same count read through the console, so any
+//     other job minting a token between those two reads flips it. It costs 0.3
+//     seconds and it restores everything it changes — which is what lets it run
+//     FIRST, before the pool starts, instead of draining the pool later.
+//
+// A script that is not in the table runs unlocked, which is the right default:
+// nearly every test here mints an identity of its own (random_username.js, and
+// the `stamp` prefixes in scim_page.js and ldap_page.js) and asserts on what it
+// created rather than on a total. A NEW test that configures a shared service
+// belongs in this table, and the symptom of forgetting is a failure in a job
+// that has nothing to do with it.
+// ---------------------------------------------------------------------------
+const EXCLUSIVE = "*";
+const JOB_LOCKS = {
+  "admin_api.js": EXCLUSIVE,
+  // The mock's credential + verifier configuration.
+  "sd_jwt_vc_issuance.js": "sts-vc",
+  "sd_jwt_vc_presentation.js": "sts-vc",
+  "ldp_vc_issuance.js": "sts-vc",
+  "ldp_vc_presentation.js": "sts-vc",
+  "ldp_vc_refresh.js": "sts-vc",
+  "jwt_vc_json_issuance.js": "sts-vc",
+  "jwt_vc_json_presentation.js": "sts-vc",
+  "vc_did.js": "sts-vc",
+  "oid4vci_request_encryption.js": "sts-vc",
+  "dpop_workflow.js": "sts-vc",
+  "metadata_schema_validation.js": "sts-vc",
+  // walt.id's issuer-api2 and verifier-api2.
+  "sd_jwt_vc_waltid.js": "waltid",
+  "sd_jwt_vc_presentation_waltid.js": "waltid",
+  "jwt_vc_json_issuance_waltid.js": "waltid",
+  "jwt_vc_json_presentation_waltid.js": "waltid",
+  // The mock's RFC 9700 TRUST REALM — `.../realm/rfc9700` — which
+  // rfc9700_flows.js reconfigures through POST
+  // /realm/rfc9700/admin-api/config/set (oauth2.redirectUris, which an RFC 9700
+  // server compares by exact string match and which therefore differs per run).
+  //
+  // It used to be a second mock INSTANCE, and the lock name is kept rather than
+  // renamed because what it protects is the same state under a new address.
+  // What CHANGED is worth knowing: that state is a realm override now, so it is
+  // genuinely separate from the default realm's configuration — this lock
+  // serialises these jobs against each other, and no longer against anything
+  // driving the permissive server.
+  "rfc9700_flows.js": "sts-rfc9700",
+  "rfc9700_client.js": "sts-rfc9700",
+  // The mock's TLS client truststore, which is process state over there.
+  "pki_mutual_tls.js": "sts-tls",
+  "api_tls_probe.js": "sts-tls",
+  // The mock's SPIFFE configuration and registry. `spiffe_protocol.js` sets
+  // `spiffe.adminIds` (the only route from "I can fetch an identity" to "I can
+  // drive the registry" that does not already require an administrator),
+  // shortens `spiffe.svidTtl` to watch a rotation, and turns
+  // `spiffe.autoCreateEntries` off — deleting the invented entry — to run a
+  // client's "I have no identity" path. Each is restored per setting, but not
+  // instantly, so nothing else may be reading that trust domain meanwhile:
+  // a job fetching an SVID inside that window gets an EMPTY LIST, which reads
+  // as a Workload API that stopped issuing.
+  "spiffe_protocol.js": "sts-spiffe",
+  "spiffe_page.js": "sts-spiffe",
+  "api_spiffe.js": "sts-spiffe",
+  // The mock's SAML 1.1 identity provider settings. `sts_saml11.js` turns
+  // `saml11.signAssertion` and `saml11.signResponse` OFF one at a time to check
+  // that an unsigned document is recognised as one, flips `defaultProfile` to
+  // artifact, and turns `autocreateApplications` off so a relying party nobody
+  // registered is refused. Every one of those is restored, and none of them
+  // instantly — so a browser round trip running inside that window gets an
+  // UNSIGNED assertion, or a profile it did not ask for, or a 400 for a relying
+  // party it just named. `saml11_sso.js` asserts a valid signature and the
+  // confirmation method for its binding, so it would fail naming the signature
+  // or the profile and nothing would say which other job did it.
+  //
+  // The three binding jobs therefore serialise against each other as well,
+  // which is the cost of a single-name lock and is worth it here: the
+  // alternative is a flake that appears only in the pool and passes on its own.
+  // `saml11_options.js` is deliberately absent — it needs no identity provider
+  // at all, so nothing it does can collide with this.
+  "sts_saml11.js": "sts-saml11",
+  "saml11_sso.js": "sts-saml11",
+  // The mock's SPNEGO SIGN-IN, which is `krb5.spnegoAuthentication` — a
+  // process-wide setting on a shared service. `kerberos_spnego_signin.js` turns
+  // it OFF to assert that a closed door answers 403 naming the setting and
+  // signs nobody in, then resets it; inside that window every other Kerberos
+  // job that reaches `/authn/spnego` would be refused and would report it as
+  // its own failure.
+  //
+  // It also holds the KDC's REPLAY CACHE against a second sign-in, which is
+  // why the lock covers the two page jobs rather than only this one: each of
+  // them spends an AP-REQ, and this file's replay negative asserts that a
+  // second one is refused. Two jobs presenting tickets for the same SPN in the
+  // same window cannot make that assertion mean anything.
+  //
+  // `kerberos_as_page.js` is deliberately absent: an AS exchange spends no
+  // service ticket and never touches the sign-in door, so nothing it does can
+  // collide with this.
+  "kerberos_spnego_signin.js": "sts-spnego-signin",
+  "kerberos_spnego_page.js": "sts-spnego-signin",
+  "kerberos_tgs_ap_page.js": "sts-spnego-signin",
+  // And the MIT-client job, for both of the same reasons: it turns
+  // `krb5.spnegoAuthentication` off to assert the closed door, and it asserts
+  // that a REPLAYED AP-REQ is refused — which a concurrent job spending its
+  // own tickets against the same acceptor would disturb.
+  "krb5_mit_client.js": "sts-spnego-signin",
+};
+
+const CONCURRENCY = (function () {
+  const asked = parseInt(process.env.TEST_CONCURRENCY || "", 10);
+  if (Number.isFinite(asked) && asked > 0) {
+    return asked;
+  }
+  const cores = (os.cpus() || []).length || 1;
+  return Math.max(2, Math.min(4, cores - 1));
+})();
+
+// The lock a job holds while it runs, or null. A job may name its own (`lock`
+// on the descriptor) for a case the table cannot see; otherwise it is the
+// script's.
+function lockOf(job) {
+  log.debug("Entering lockOf().");
+  const lock = job.lock || JOB_LOCKS[job.script] || null;
+  log.debug("Leaving lockOf(). " + (lock || "none"));
+  return lock;
+}
+
 // Mirror of the *active* (non-commented) test invocations in
 // common/common.sh runTests(). Each job maps the suite's config vars onto the
 // generic names (AUDIENCE, CLIENT_ID, ...) each test script reads.
@@ -102,11 +353,45 @@ function buildJobs() {
     env: {},
   });
 
+  // What crosses `sudo` on the way to compose. docker_compose() in
+  // common/common.sh runs compose under sudo, which empties the environment,
+  // so a variable a compose file reads reaches it only if
+  // COMPOSE_FORWARDED_VARS names it. Every failure of that is silent:
+  // `${NAME:-}` substitutes to the empty string with no warning and a bare
+  // `- NAME` passes nothing, so a setting the launchers document is simply
+  // ignored and the run reports success. That is what TEST_CONCURRENCY did
+  // on the containerized stack for as long as its passthrough existed — the
+  // pool sized itself from the container's cores no matter what was asked
+  // for, and the wall clock was the only evidence. Node only — no browser,
+  // no services — so it never skips.
+  jobs.push({
+    name: "Compose environment forwarding (what survives sudo: " +
+        "TEST_CONCURRENCY, TEST_JOB_TIMEOUT_MS, STS_LOG_LEVEL)",
+    script: "compose_env_forwarding.js",
+    env: {},
+  });
+
   jobs.push({
     name: "OAuth2 Client Credentials",
     script: "oauth2_client_credentials.js",
     env: {
       AUDIENCE: env.CLIENT_CREDENTIALS_AUDIENCE,
+      DISCOVERY_ENDPOINT: env.CLIENT_CREDENTIALS_DISCOVERY_ENDPOINT,
+      CLIENT_ID: env.CLIENT_CREDENTIALS_CLIENT_ID,
+      CLIENT_SECRET: env.CLIENT_CREDENTIALS_CLIENT_SECRET,
+      SCOPE: env.CLIENT_CREDENTIALS_SCOPE,
+    },
+  });
+
+  // The HTTP tab on the token exchange pane: the request and the response as
+  // they actually went. It runs the Client Credentials grant because the pane,
+  // the handler and the trace are the same for every grant this page sends and
+  // that one needs no login — and it takes the same four variables as the job
+  // above for exactly that reason.
+  jobs.push({
+    name: "Token exchange HTTP tab (request, response, headers, timing)",
+    script: "token_http_exchange.js",
+    env: {
       DISCOVERY_ENDPOINT: env.CLIENT_CREDENTIALS_DISCOVERY_ENDPOINT,
       CLIENT_ID: env.CLIENT_CREDENTIALS_CLIENT_ID,
       CLIENT_SECRET: env.CLIENT_CREDENTIALS_CLIENT_SECRET,
@@ -201,14 +486,92 @@ function buildJobs() {
         jobs.push({
           name: `${label} — mock STS, DPoP ${OIDC_DPOP}`,
           script: "oidc_flows.js",
-          // The client id, scope and username are the script's own: the mock
-          // registers no clients and checks no passwords, so there is nothing
-          // for the suite to provision and nothing to keep in step here.
+          // The client id, scope and username are the script's own, and the
+          // script is what REGISTERS the client: it puts it in the mock's
+          // application registry before the browser starts, with the redirect
+          // URI, response type and scope this job is about to send. That
+          // sentence used to read "the mock registers no clients … so there is
+          // nothing for the suite to provision", which described what the mock
+          // REQUIRES and was the reason the entry it left behind knew the
+          // client_id and nothing else. See tests/sts_applications.js.
           env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL, OIDC_FLOW, OIDC_DPOP },
         });
       }
     }
   }
+
+  // ---------------------------------------------------------------------
+  // THE SAME MATRIX A SECOND TIME, WITH BOTH SIDES IN RFC 9700 MODE.
+  //
+  // The twelve jobs above run the debugger and the mock STS both permissive,
+  // which is what almost every identity provider this tool is pointed at
+  // actually is. These run the other pairing: the debugger's RFC 9700
+  // compliance checkbox on, and an STS started with STS_OAUTH2_RFC9700=true.
+  //
+  // The two passes ask different questions and neither substitutes for the
+  // other. Permissive asks whether the debugger still works against a server
+  // that implements none of this — the reason the checkbox exists and is off
+  // by default. Compliant asks whether, when the server DOES enforce the BCP,
+  // the client meets it: exact registered redirect URIs, PKCE it can verify,
+  // https throughout, no response type that would put an access token in the
+  // address bar. A client that quietly sent the wrong thing in the permissive
+  // pass is indistinguishable from one that did not.
+  //
+  // `refused` is a job of its own and is the important one. A compliance mode
+  // that issues a token on the happy path looks finished and can be worth
+  // nothing: what it is FOR is refusing the Implicit Grant, refusing the
+  // password grant, refusing a code presented twice — and being REVERSIBLE,
+  // which a test that only ever switches the mode on can never see.
+  //
+  // Gated on RFC9700_STS_URL, which names a TRUST REALM on the same mock STS
+  // the twelve permissive jobs use — `.../realm/rfc9700` — rather than a second
+  // instance. It used to be a second one: `oauth2.rfc9700` binds the main port
+  // as HTTPS over there and is therefore restart-only, so one process could not
+  // serve both passes. It can now, because that flag is the one setting in that
+  // service marked `realmRuntime`: restart-only for the PROCESS and settable on
+  // a REALM, since a realm binds no socket. common/common.sh's
+  // configureStsRfc9700Realm() creates it and is what leaves this variable
+  // unset — and therefore these five jobs unscheduled — when the mock is too
+  // old to have it. See docs/rfc9700.md.
+  if (env.RFC9700_STS_URL) {
+    const RFC9700_JOBS = [
+      ["refused", "the refusals, and that the mode is reversible"],
+      ["oidc_authorization_code_flow", "OIDC Authorization Code Flow (code)"],
+      ["authorization_grant", "OAuth2 Authorization Code Grant"],
+      ["oidc_hybrid_code_id_token", "OIDC Hybrid (code id_token)"],
+      ["client_credential", "OAuth2 Client Credentials"],
+    ];
+    for (const [RFC9700_FLOW, label] of RFC9700_JOBS) {
+      jobs.push({
+        name: `RFC 9700 — ${label} (debugger AND mock STS both compliant)`,
+        script: "rfc9700_flows.js",
+        // WSTRUST_STS_URL is what the script reads, as every other STS-backed
+        // job does; RFC9700_STS_URL is what SELECTS the compliant REALM.
+        // Naming them differently here is what keeps a permissive STS from
+        // being handed to a job that would then pass while proving nothing —
+        // the script refuses one by name, but the wiring should not offer it.
+        // It matters more now than it did when the two were separate
+        // containers: the permissive and the compliant server are the same
+        // process, told apart only by a path prefix, so a URL that lost its
+        // prefix would reach a running, healthy, permissive server rather than
+        // nothing at all.
+        env: { WSTRUST_STS_URL: env.RFC9700_STS_URL, RFC9700_FLOW },
+      });
+    }
+  }
+
+  // The client half of RFC 9700 with no browser and no services, so it never
+  // skips: the requirement catalogue, the MODE-OFF CONTRACT (which every job
+  // above is blind to, because they all turn the mode on), each of the four
+  // check functions driven directly, and the always-on posture — no open
+  // redirector, 303 rather than 307, no framing, no browser messaging, no
+  // token in a URL — asserted over the source that holds it.
+  jobs.push({
+    name: "RFC 9700 client model (the catalogue, the mode-off contract, the " +
+        "rules, the always-on posture)",
+    script: "rfc9700_client.js",
+    env: {},
+  });
 
   // The same twelve against KEYCLOAK, which asks the other half of the
   // question: whether any of it interoperates with a real OP. Gated on the
@@ -355,6 +718,40 @@ function buildJobs() {
     },
   });
 
+  // The JWKS page — the "Review JWKS meta data" link on both debugger pages,
+  // and until 2026-08-23 the one page in this tree that no test had ever
+  // opened. It was found by the COVERAGE report rather than by a failure, and
+  // the way it hid is worth keeping: the bundle is built by client/build.js,
+  // browserified by client/Dockerfile, and named in that file's COVERAGE list,
+  // so every check that guards the build was satisfied. It was simply ABSENT
+  // from the frontend report — not at 0%, absent — because Istanbul reports on
+  // files that were loaded, and nothing loaded this one.
+  //
+  // Four things need a browser here and nothing else covers any of them: the
+  // fetch is the PAGE'S OWN (jQuery straight to the identity provider, no api
+  // in the path, so CORS and Private Network Access apply and it is what makes
+  // the page work on the static deployments); the PEM column is a per-key try,
+  // so a key this encoder does not cover — an OKP key, increasingly common —
+  // must not empty the table; every string in the table came out of a fetched
+  // document, member NAMES included; and one branch writes into a <textarea>,
+  // where a value carrying "</textarea>" closes the element early and the rest
+  // is parsed as markup.
+  //
+  // Only the live-fetch section needs the mock STS, and it skips with a named
+  // reason without it. Everything else drives the page's own exported
+  // functions with fixtures — in the browser, which is what keeps the Istanbul
+  // instrumentation counting.
+  jobs.push({
+    name: "JWKS page (the page's own fetch, the per-key PEM, nothing " +
+        "fetched reaching the DOM as markup)",
+    script: "jwks_page.js",
+    env: {
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      JWKS_BROWSER_URL: env.JWKS_BROWSER_URL ||
+          (env.STS_URL || "https://localhost:8081") + "/oauth2/jwks",
+    },
+  });
+
   // Token Exchange (RFC 8693). The requesting confidential client obtains a
   // subject token via the auth code flow, exchanges it for a token aimed at the
   // target audience client, and the issued token is confirmed via
@@ -379,6 +776,314 @@ function buildJobs() {
       INTROSPECTION_CLIENT_SECRET: env.TOKEN_EXCHANGE_TARGET_CLIENT_SECRET,
     },
   });
+
+  // A THREE-TIER DELEGATION CHAIN, which is the job above's exchange done
+  // TWICE, by two different clients, out of two workflows of its own — the
+  // shape an API gateway and an enterprise service bus actually produce. The
+  // token one hop issues is the token the next hop presents, so after two hops
+  // the far end holds a credential for somebody who never spoke to it, and the
+  // only place that chain exists is the issuer's own delegation register: no
+  // actor token is sent, so nothing about the middle tiers travels in any
+  // token. It asserts the wire, the mock's reading of the final token
+  // (introspection), the two acts the register recorded — matched by the jti of
+  // the tokens this test actually received — and the GRAPH the delegation map
+  // is drawn from, where the whole point is that the middle tier is ONE box
+  // that was reached by the first hop and did the second.
+  //
+  // IT PROVISIONS THE FOUR APPLICATIONS FIRST, through POST
+  // /admin-api/applications/create: each declared for `oauth2` and `oidc`, and
+  // the three a token can be ADDRESSED to registering the URI it is addressed
+  // by on `oauthAudience` (apigw1 → https://apigw1.example.com, and so on).
+  // webapp1 registers none, which the test asserts — a browser application is
+  // issued tokens and is never the audience of one. That attribute is READ:
+  // each hop asks for the downstream tier's URI, and the mock resolves it back
+  // to the application that registered it when it records the act, which is
+  // what keeps the picture one chain instead of two halves joined by nothing.
+  // It needs a mock STS from 2026-08-26 or later; an older one refuses the
+  // create by name, which is what the job then fails with.
+  //
+  // Then it SAVES THE PICTURES. That register is in memory and dies with the
+  // process, so the only moment the map of this chain can be drawn is while the
+  // run is happening; the SVGs land in this run's own report directory. See
+  // docs/test-suite-map.md.
+  //
+  // The mock only. It needs three clients nobody registered, a user with no
+  // password and a token endpoint that will exchange anything for anything —
+  // Keycloak would need all of that provisioned first, and the compliant realm
+  // has opinions about a public client and about a scope that grows, which is a
+  // different test.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "OAuth2 delegation chain (OIDC sign-in, then two RFC 8693 hops " +
+          "as two more clients)",
+      script: "oauth2_delegation_chain.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        // Where the delegation map's SVGs are written. The run's own directory,
+        // so the picture sits beside the report that says the job passed.
+        DELEGATION_ARTIFACT_DIR: path.join(RUN_DIR, "delegation"),
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // THE SAME CHAIN IN THE OTHER PROTOCOL FAMILY: a SAML 2.0 HTTP-POST sign-in,
+  // then two WS-Trust hops carrying assertions.
+  //
+  // TWO JOBS, one per delegation element, and they are not one job with a loop
+  // because each is a full browser story and a failure should name which
+  // element it was carrying:
+  //
+  //   OnBehalfOf  WS-Trust 1.3 section 9.2 — the assertion names the person and
+  //               says nothing about the requester. IMPERSONATION, and the
+  //               register is then the only place the middle tier exists at
+  //               all, which is the OAuth chain's situation exactly.
+  //   ActAs       WS-Trust 1.4 section 9.3 — composite by definition.
+  //               DELEGATION. What the mock issues carries nothing about the
+  //               requester either, and the row it records says so; that gap is
+  //               in the mock rather than in the profile.
+  //
+  // WHY IT IS WORTH RUNNING BESIDE THE OAUTH ONE. An <saml:AudienceRestriction>
+  // is an `aud` claim — SAML 2.0 section 2.5.1.4 and RFC 7519 section 4.1.3
+  // make the same statement — and <wsp:AppliesTo> is what an STS copies into
+  // one. So each hop is a token exchange in the sense RFC 8693 means it, and
+  // the delegation register and its map are supposed to be ONE model for both
+  // families. A chain that draws correctly for OAuth and comes out as
+  // unconnected boxes for WS-Trust would mean the model only ever worked for
+  // the family it was written against — which is what this job would catch, at
+  // the assertion that says the bus is ONE box.
+  //
+  // It provisions three applications through the management API first, in the
+  // default realm, each registering the address it answers to on
+  // `wstrustAppliesTo` and `samlEntityId`. That registration is READ: the mock
+  // resolves an AppliesTo back to the application that declared it when it
+  // records the act (`applications.forAppliesTo()`), which is what keeps the
+  // picture one chain instead of two halves joined by nothing.
+  //
+  // THE MOCK ONLY, and it needs the api as well: the identity provider POSTs
+  // its response to the assertion consumer service, which is the api's
+  // /samlacs. So it is skipped on a backend-less target, where that endpoint
+  // does not exist — the same gate the HTTP-Artifact binding is under.
+  //
+  // NO JOB LOCK, and the two runs may overlap in the pool: each asserts on acts
+  // recorded after its own baseline sequence AND of its own delegation type,
+  // and the three registry entries they share are provisioned idempotently.
+  if (env.WSTRUST_STS_URL) {
+    const wstrustChainBackend = env.SAML_BACKEND_AVAILABLE !== "false";
+    for (const element of ["onbehalfof", "actas"]) {
+      const chainJob = {
+        name: "WS-Trust delegation chain (SAML 2.0 POST sign-in, then two " +
+            (element === "actas" ? "ActAs" : "OnBehalfOf") + " hops)",
+        script: "wstrust_delegation_chain.js",
+        env: {
+          WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+          WSTRUST_DELEGATION_ELEMENT: element,
+          // Backend routing where there is a backend — the same choice the
+          // WS-Trust jobs below make, and made here rather than left to the
+          // test's default so that the report and the wire agree.
+          WSTRUST_ROUTE: wstrustChainBackend ? "back" : "front",
+          // Where the delegation map's SVGs are written. The run's own
+          // directory, so the pictures sit beside the report that says the job
+          // passed. The same directory the OAuth chain writes to; every file
+          // this job produces is named `wstrust-…` and carries the element, so
+          // the two jobs and the two elements cannot overwrite each other.
+          DELEGATION_ARTIFACT_DIR: path.join(RUN_DIR, "delegation"),
+        },
+      };
+      if (!wstrustChainBackend) {
+        chainJob.skip = "This target has no API backend (POST /wstrust, and " +
+            "the /samlacs the identity provider POSTs its response to). A " +
+            "static deployment CAN receive that POST where the Lambda@Edge " +
+            "landing is deployed — see infra/CLAUDE.md — and this job has " +
+            "never been run against one, so it is skipped rather than " +
+            "reported against an arrangement nobody has checked.";
+      }
+      jobs.push(chainJob);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // A FEDERATED SIGN-IN, across two TRUST REALMS of the one mock STS.
+  //
+  // The debugger's OAuth2/OIDC workflow stands in for an application called
+  // `webapp-sso-test1`, registered in `federation-realm-1`; that realm is an
+  // OpenID Provider to it and a SAML 2.0 SERVICE PROVIDER of a federation
+  // relationship with `federation-realm-2`, which is where a name is actually
+  // typed.
+  //
+  // THE MOCK ONLY, and it needs nothing else — no Keycloak, no api, no second
+  // container. It replaces `federation-e2e/` in the sts/ submodule, which
+  // built the same topology out of three containers because trust realms did
+  // not exist when it was written; the mock's realms make two identity
+  // services out of one process, and the debugger supplies the application
+  // tier that test had to build for itself.
+  //
+  // NO JOB LOCK. It creates its own two realms and asserts only on what it
+  // put in them — its own application, its own relationship, its own
+  // username — so it collides with nothing, and nothing else in this suite
+  // touches those realms. It creates them on every run because a realm lives
+  // in memory and there is nowhere to declare one, and it deletes and
+  // re-creates the application and the relationship inside them so that the
+  // counters it asserts on start at zero on a re-run.
+  // ---------------------------------------------------------------------
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "Federated sign-in (OIDC to federation-realm-1, SAML 2.0 on to " +
+          "federation-realm-2)",
+      script: "federation_sso.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // N-LAYER FEDERATION, which is the job above with the bottom knocked out
+  // of it: the realm that receives the SAML 2.0 request has no password box
+  // of its own and answers by federating AGAIN, over WS-Federation, to a
+  // third realm. Three protocols, four parties, one sign-in — and the middle
+  // realm is a pure identity BRIDGE that authenticates nobody.
+  //
+  // THE MOCK ONLY, like the job above, and for the same reason: three trust
+  // realms of one process are three identity services, and the debugger is
+  // the application tier.
+  //
+  // NO JOB LOCK, and the argument is the one above PLUS one more. It creates
+  // realms 3, 4 and 5 — deliberately not 1 and 2, which belong to
+  // federation_sso.js and whose counters that test asserts are EXACTLY ONE.
+  // Sharing a realm between the two would make each job's arithmetic depend
+  // on whether the other had run, which in a pool is a flake rather than a
+  // failure.
+  // ---------------------------------------------------------------------
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "N-layer federated sign-in (OIDC to federation-realm-3, SAML 2.0 " +
+          "on to federation-realm-4, WS-Federation on to federation-realm-5)",
+      script: "federation_chain_sso.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // ONE APPLICATION, TWO FEDERATION PARTNERS, AND THE PERSON PICKS.
+  //
+  // The two jobs above drive an application with ONE relationship, where the
+  // browser is sent straight to the partner and no page is drawn in between.
+  // This one drives an application naming TWO, in DIFFERENT PROTOCOLS — a
+  // SAML 2.0 relationship and an OpenID Connect one, both to
+  // `federation-choice-2` — which is what makes the mock draw its chooser at
+  // `/authn/select-idp`: one button per partner and no password field.
+  //
+  // WHY IT SIGNS IN TWICE. Both relationships work, and the jobs above and
+  // the grid below already prove that. What is new is that a choice was
+  // OFFERED and HONOURED, and the assertion that catches both halves is
+  // arithmetic: after picking the SAML button, that relationship has counted
+  // one sign-in and the OpenID Connect one has counted zero — then the other
+  // way round in a second, cookie-less run. A mock that drew a two-button
+  // page and federated through whichever relationship it found first would
+  // pass everything else in that file.
+  //
+  // THE MOCK ONLY, like the two above.
+  //
+  // NO JOB LOCK, and its own realms — `federation-choice-1` and `-2` — for
+  // federation_chain_sso.js's reason exactly: this job asserts EXACT counts
+  // on two relationships and performs two sign-ins, so sharing a realm with
+  // anything else would make its arithmetic depend on what else had run.
+  // ---------------------------------------------------------------------
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "Federation partner choice (one application, SAML 2.0 AND OIDC " +
+          "relationships from federation-choice-1 to federation-choice-2)",
+      script: "federation_choice_sso.js",
+      env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // THE FEDERATION GRID: every combination of the two protocol layers in a
+  // two-tier federation, and of how the far end authenticates.
+  //
+  //   five application protocols  x  five federation protocols
+  //                               x  two authentication mechanisms
+  //
+  // FORTY-NINE JOBS AND NOT FIFTY. The fiftieth point of the grid — an OIDC
+  // application, a SAML 2.0 federation and a password — is `federation_sso.js`
+  // above, which drives exactly that and asserts several things this
+  // parameterised script deliberately does not (its realms are its own, so it
+  // can assert that realm 2 has NO federation relationships at all and that
+  // realm 1's registry has never heard of its application). Running the same
+  // point twice would buy nothing and would put a second job's arithmetic in
+  // the same realms.
+  //
+  // ONE JOB PER POINT, rather than five jobs of fifteen or three of
+  // twenty-five. A grid job that walks its combinations inside one browser is
+  // faster — one Chrome start instead of fifty — and reports a GROUP: the
+  // first failure ends its group, `report.xml` names the group rather than the
+  // combination, and a re-run to reproduce one point runs fourteen others
+  // first. One job per point costs wall clock that the pool takes most of back
+  // and buys a report where the failing row IS the combination.
+  //
+  // SPNEGO IS NOT A THIRD MECHANISM here, deliberately, and the script's
+  // header says why at length. HALF of that argument retired with the
+  // 2026-08-27 sts/ bump: the acceptor IS an authentication mechanism in the
+  // mock now — `/authn/spnego` calls `startSession()`, an application can
+  // carry `appAuthnMechanism: spnego` and a relationship
+  // `fedAuthnMechanism: spnego` — so the wiring is no longer what is
+  // missing. What is still missing is the browser end: where a HEADLESS
+  // Chrome gets a ticket, and the allow-listed host it will answer a
+  // `Negotiate` challenge for. Twenty-five points stay deferred rather than
+  // faked, on that reason alone.
+  //
+  // NO JOB LOCK, and the argument is `federation_sso.js`'s with one more line.
+  // All forty-nine share `federation-matrix-1` and `federation-matrix-2`, and
+  // every object each of them asserts on is named after its own combination —
+  // its application, its two relationships, its partner entry, its username —
+  // so the counters it reads are its own arithmetic and nobody else's. What
+  // that costs is stated in the script: nothing here may assert anything
+  // REALM-WIDE, because forty-nine jobs are putting things in those realms at
+  // once. Realms 1 to 5 belong to the two jobs above and are left alone.
+  //
+  // THE MOCK ONLY, plus the client and the api — the api is not optional the
+  // way it is for the two jobs above, because the SAML and WS-Federation
+  // application tiers land their responses on its `/saml` and `/wsfed`
+  // landings.
+  // ---------------------------------------------------------------------
+  if (env.WSTRUST_STS_URL) {
+    const FEDERATION_GRID_LABELS = {
+      oidc: "OIDC",
+      oauth2: "OAuth 2.0",
+      saml2: "SAML 2.0",
+      saml11: "SAML 1.1",
+      wsfed: "WS-Federation",
+    };
+    const FEDERATION_GRID_MECHANISMS = {
+      password: "username + password",
+      webauthn: "WebAuthn",
+    };
+    // The point federation_sso.js already drives, skipped here rather than
+    // duplicated. See the note above.
+    const COVERED_ELSEWHERE = "oidc/saml2/password";
+    for (const app of Object.keys(FEDERATION_GRID_LABELS)) {
+      for (const fed of Object.keys(FEDERATION_GRID_LABELS)) {
+        for (const mech of Object.keys(FEDERATION_GRID_MECHANISMS)) {
+          if (app + "/" + fed + "/" + mech === COVERED_ELSEWHERE) {
+            continue;
+          }
+          jobs.push({
+            name: "Federation grid — " + FEDERATION_GRID_LABELS[app] +
+                " application, " + FEDERATION_GRID_LABELS[fed] +
+                " federation, " + FEDERATION_GRID_MECHANISMS[mech] +
+                " at the far end",
+            script: "federation_matrix_sso.js",
+            env: {
+              WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+              FEDERATION_APP_PROTOCOL: app,
+              FEDERATION_FED_PROTOCOL: fed,
+              FEDERATION_MECHANISM: mech,
+            },
+          });
+        }
+      }
+    }
+  }
 
   // Device Authorization Grant (RFC 8628). Requests a device/user code,
   // approves the device at the Keycloak verification URI, then polls for the
@@ -452,11 +1157,76 @@ function buildJobs() {
   // unlinkability, replay and substituted-disclosure refusals, and the draft's
   // own test vectors driven through the page. Symmetric MACs: keyed-hash
   // (HMAC/KMAC/BLAKE), block-cipher (CMAC/CBC-MAC/ GMAC), universal-hash
-  // (Poly1305/SipHash) — compute + verify + tamper check.
+  // (Poly1305/SipHash) — compute + verify + tamper check. JWS: every
+  // registered algorithm through all three serializations, the JSON payload
+  // check that pane exists for, detached and RFC 7797 unencoded payloads, the
+  // unprotected header and where it may not go, and an algorithm the verifier
+  // did not choose being refused. XML Signature: all three signature types,
+  // four canonicalization methods (with the assertion that WithComments
+  // really changes the digest, which needs a document containing a comment),
+  // every DigestMethod, RSA / RSASSA-PSS / ECDSA over four curves / HMAC, both
+  // XPath transforms — which only a browser can run, since they are evaluated
+  // by the DOM's own XPath engine — and every KeyInfo form.
   jobs.push({
-    name: "Digital Signature (asymmetric sigs incl. BBS + symmetric MACs — " +
-        "generate, sign/MAC, validate, download)",
+    name: "Digital Signature (asymmetric sigs incl. BBS, JWS and XML " +
+        "Signature + symmetric MACs — generate, sign/MAC, validate, " +
+        "download)",
     script: "digital_signature.js",
+    env: {},
+  });
+
+  // The Encryption / Decryption page, its sibling. Nine panes, one per
+  // mechanism, and like the page above it needs no IdP and no api: AES in
+  // every mode and key size, ChaCha20-Poly1305, the legacy 3DES/DES,
+  // password-based encryption through PBKDF2 / scrypt / HKDF / PBES2, RSA in
+  // both paddings both directly and hybrid, ECIES over five curves, ML-KEM at
+  // three parameter sets alone and hybridised with X25519, ElGamal and DHIES
+  // over both RFC 3526 groups, and JWE compact serialization. Drives every
+  // round trip, every refusal (a modified ciphertext, a changed AAD, the wrong
+  // key, the wrong password, an over-long direct-mode message, a key of the
+  // wrong length), the keystore downloads, and the Tools-pane links that reach
+  // the page.
+  jobs.push({
+    name: "Encryption / Decryption (AES, ChaCha20-Poly1305, 3DES/DES, RSA, " +
+        "ECIES, ML-KEM, ElGamal/DHIES, JWE, password-based — encrypt, " +
+        "decrypt, refuse, download)",
+    script: "encryption_tools.js",
+    env: {},
+  });
+
+  // The same page's cryptography, in node with no browser, against things
+  // that are NOT this code: RFC 8439's ChaCha20/Poly1305/AEAD vectors, RFC
+  // 4493's AES-CMAC vectors, the SipHash reference vectors, NIST SP 800-38A's
+  // AES-mode vectors, the FIPS 81 DES vector, node's own OpenSSL in both
+  // directions for thirteen ciphers and for RSA-OAEP, node's ECDH for the
+  // P-256 agreed secret, FIPS 203's key sizes for ML-KEM, and a Miller-Rabin
+  // check that RFC 3526's transcribed primes really are safe primes. It is
+  // deliberately separate from the browser job above: a round trip through the
+  // page agrees with itself whatever the implementation does, so only these
+  // can say the bytes are right. Also asserts that the three modules under
+  // test reach no DOM, which is what lets this job exist at all.
+  jobs.push({
+    name: "Encryption engines (RFC 8439 / 4493 / SP 800-38A / FIPS 81 & 203 " +
+        "vectors, cross-checked against OpenSSL, in node)",
+    script: "crypto_engines.js",
+    env: {},
+  });
+
+  // The Digital Signature page's JWS pane, in node, for the same reason the
+  // job above exists: a round trip through the page agrees with itself
+  // whatever the implementation does, and the defects that matter in a JWS are
+  // the self-consistent ones — an ECDSA signature left in DER where RFC 7518
+  // §3.4 wants R || S, a PSS salt that is not the hash length, a payload
+  // re-serialized between validating it and signing it. So every registered
+  // algorithm (HS/RS/PS/ES, EdDSA over both curves, ES256K, and the unsecured
+  // `none`) is cross-checked against node's own OpenSSL in BOTH directions and
+  // against `jsonwebtoken`, and then the rules no vector can express: RFC
+  // 7515's crit MUST, RFC 7797's period rule, RFC 8725's "the verifier decides
+  // the algorithm", and what an Unsecured JWS is allowed to be.
+  jobs.push({
+    name: "JWS engine (RFC 7515/7518/7797/8037/8812 — every registered " +
+        "algorithm cross-checked against OpenSSL and jsonwebtoken, in node)",
+    script: "jws_engine.js",
     env: {},
   });
 
@@ -508,6 +1278,24 @@ function buildJobs() {
     env: {},
   });
 
+  // The Configuration Parameters pane on both OAuth2/OIDC pages, measured at
+  // seven viewport widths: nothing in it crosses the pane's content edge, and
+  // each field fills its own table cell rather than sitting at bootstrap's
+  // fixed `input, textarea { width: 206px }`. The second assertion is the one
+  // that earns the job — the same markup and stylesheet serve a ~854px pane on
+  // page 1 and a ~419px one on page 2 (three flex columns there), so a field
+  // pinned to a fixed width looks perfectly fine on the first page while
+  // hanging 25px, and at a narrower window 136px, outside the second. Needs
+  // the client alone — no IdP, no api, no STS, and every field it measures is
+  // in the served HTML rather than drawn by the bundle — so it is never
+  // skipped and runs against a deployed static site unchanged.
+  jobs.push({
+    name: "Configuration Parameters pane layout (both OAuth2/OIDC pages, " +
+        "seven viewport widths)",
+    script: "oauth2_config_pane_layout.js",
+    env: {},
+  });
+
   // The "save this key pair in browser localStorage" opt-out on the SAML and
   // WS-Trust request pages, exercised in BOTH states. Worth a browser test
   // because the failure mode is silent and reassuring: if the guard in
@@ -533,6 +1321,25 @@ function buildJobs() {
     name: "XML parsing is inert (no DOMParser HTML mode, no markup sink on " +
         "the XML path)",
     script: "xml_parse_inert.js",
+    env: {},
+  });
+
+  // The authored pages' attribute values, which is a check on THE STATIC BUILD
+  // as much as on the markup. A double-quoted value ends at the next double
+  // quote, so a title that quotes something ends early and the rest of the tag
+  // becomes junk attributes — legal input that every browser recovers from,
+  // differently. Chrome's recovery kept encryption_tools.html working locally;
+  // the minifier on the deploy path dropped the closing tags around the field
+  // and `enc_pbe_tag` did not exist on the hosted site, so AES-GCM had no tag
+  // to verify and the encryption job spent 150 seconds waiting for a box that
+  // was never going to fill. Nothing in that failure named the page, the
+  // attribute or the minifier, and the same job was green against a local
+  // stack — which is why this reads the SOURCE rather than a browser. Node
+  // only, never skipped.
+  jobs.push({
+    name: "Page markup (no attribute value closed early, which is what makes " +
+        "the minifier drop the tags around it)",
+    script: "page_markup_well_formed.js",
     env: {},
   });
 
@@ -589,6 +1396,24 @@ function buildJobs() {
     name: "Browser tests are headless (every driver-building test, by " +
         "default)",
     script: "browser_tests_headless.js",
+    env: {},
+  });
+
+  // No test may call process.exit() while a WebDriver session is open.
+  // process.exit() is synchronous termination, so it SKIPS the finally that
+  // quits the driver — and an unquit session leaves a whole headless Chrome
+  // (~15 OS processes) resident. Thirty-nine files in this directory were
+  // written that way; on 2026-08-26 one failing job left 11 Chrome processes
+  // behind and a run of this suite left 559, which exhausted the machine's
+  // memory and cost a reboot. The detached spawn and group kill in runJob()
+  // above are the backstop for a suite run; this is what protects somebody
+  // running `node tests/foo.js` by hand, which is how a browser test gets
+  // written. It also asserts that runJob() still does its half. Parses this
+  // directory's sources with acorn: node only, no browser, never skipped.
+  jobs.push({
+    name: "No process.exit() while a driver is open (and the runner still " +
+        "reaps process groups)",
+    script: "driver_quit_reachable.js",
     env: {},
   });
 
@@ -988,6 +1813,74 @@ function buildJobs() {
       "containerized stack (./docker-run-tests.sh) or a local dev server, or " +
       "set LDAP_AVAILABLE=true for a remote target that IS api-backed."
     : null;
+  // SCIM's gate is NOT the LDAP one and must not be derived from it, even
+  // though both workflows lean on the same mock. The difference is the whole
+  // shape of this page: SCIM is ordinary HTTPS with a JSON body, so
+  // `scim.html` calls a SCIM server DIRECTLY from the browser and is on the
+  // static deployments — it carries no `data-not-on-static` marker and
+  // client/static_site.js does not drop it. What a static target loses is the
+  // api call path, which the page reports for itself in the callPath row of
+  // its Configuration Parameters pane.
+  //
+  // So there are two different gates rather than one:
+  //
+  //   * `scim_protocol.js` needs the api (it drives POST /scim) and the mock's
+  //     directory, exactly as the LDAP protocol job does, so it rides
+  //     LDAP_AVAILABLE — the same fact, that this target has a backend.
+  //   * `scim_page.js` needs neither and runs against a static target, because
+  //     the browser call path is the one that exists there. Its own
+  //     backend-path section skips itself when the api is absent, which is the
+  //     right granularity: the rest of that file is still worth running.
+  //
+  // Both additionally skip THEMSELVES, with a reason, when the mock STS has no
+  // /scim/v2 routes at all — the ordinary state of a checkout whose sts/
+  // gitlink predates them. That is deliberately not a gate here: the reason is
+  // discovered by asking the server, and it names the submodule rather than
+  // the deployment.
+  // ------------------------------------------------------------------------
+  // SPIFFE's gate is its OWN variable, `SPIFFE_AVAILABLE`, and deriving it
+  // from LDAP_AVAILABLE would be the mistake tests/CLAUDE.md records about
+  // deriving LDAP's from the Kerberos one. Both workflows are missing from a
+  // static deployment for the same underlying reason — a browser cannot speak
+  // either protocol, so both need the api — but they are missing
+  // INDEPENDENTLY: a remote target could perfectly well be api-backed with a
+  // directory reachable and no SPIRE server, or the reverse, and deriving
+  // would turn "not this protocol" into a set of skipped jobs about a
+  // protocol that is there.
+  //
+  // It defaults to the LDAP answer only because that is the same question
+  // asked of a deployment — "does this target have an api at all" — and a
+  // target that is api-backed but has no SPIFFE server sets it false.
+  //
+  // THE ENGINE JOB IS DELIBERATELY NOT GATED. It needs no api, no mock and no
+  // browser: it reads the grammar, the bundle rules, the catalogue against
+  // the vendored protos and a certification request against OpenSSL. Gating
+  // it would silence the one SPIFFE job that says something true on every
+  // target, including the static ones.
+  // ------------------------------------------------------------------------
+  const spiffeOff = env.SPIFFE_AVAILABLE === "false" ||
+    (env.SPIFFE_AVAILABLE === undefined && ldapOff);
+  const spiffeSkip = spiffeOff
+    ? "SPIFFE is not on this deployment: two of its three surfaces are gRPC " +
+      "— HTTP/2 with a binary framing and its status in the trailers — which " +
+      "a browser cannot produce at all, so both live in the api and a static " +
+      "site has none. client/static_site.js leaves spiffe.html, its bundle " +
+      "and css/spiffe.css out of the build and greys the landing card. The " +
+      "SPIFFE ENGINE job still runs here and still means something, because " +
+      "it needs nothing. Run the rest against the containerized stack " +
+      "(./docker-run-tests.sh) or a local dev server, or set " +
+      "SPIFFE_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
+  const scimProtocolSkip = ldapOff
+    ? "the SCIM protocol job drives POST /scim on the debugger's api, and a " +
+      "static site has no api at all. The SCIM PAGE still runs against such " +
+      "a target — SCIM is ordinary HTTPS with a JSON body, so the browser " +
+      "calls the server directly — and it is only this backend-path job that " +
+      "cannot. Run it against the containerized stack " +
+      "(./docker-run-tests.sh) or a local dev server, or set " +
+      "LDAP_AVAILABLE=true for a remote target that IS api-backed."
+    : null;
+
   const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
       "api's port-88 relay, which a static site has not got, so " +
@@ -1416,7 +2309,7 @@ function buildJobs() {
     name: "Kerberos AS exchange page (wiring, CORS, the two-step flow, credential handling)",
     script: "kerberos_as_page.js",
     env: {
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       // "sts", not "localhost": this value is TYPED INTO THE PAGE and the address is
       // resolved by the API's relay, which runs in the api container — where localhost is
       // the api itself, listening on nothing. The mock KDC's port 88 is not published to
@@ -1457,7 +2350,7 @@ function buildJobs() {
     script: "kerberos_tgs_ap_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
       KRB5_SERVICE_HOST: env.KRB5_SERVICE_HOST || "sts",
@@ -1511,7 +2404,7 @@ function buildJobs() {
     script: "kerberos_spnego_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
       // The URL the API — not the browser — fetches, so it is the api's view of
@@ -1521,11 +2414,107 @@ function buildJobs() {
       // own variable rather than derived.
       KRB5_SPNEGO_URL: env.KRB5_SPNEGO_URL ||
         (env.KRB5_SPNEGO_HOST ? "http://" + env.KRB5_SPNEGO_HOST +
-          "/spnego/protected" : "http://sts:8081/spnego/protected"),
+          "/spnego/protected" : "https://sts:8081/spnego/protected"),
     },
   };
   if (kerberosPagesSkip) spnegoPageJob.skip = kerberosPagesSkip;
   jobs.push(spnegoPageJob);
+
+  // ---------------------------------------------------------------------
+  // KERBEROS AS A WAY OF SIGNING IN, which is the door the job above does not
+  // touch.
+  //
+  // `/spnego/protected` authenticates a person and throws the identity away.
+  // `/authn/spnego` is the same handshake with the last step added: past it
+  // there is a browser SESSION on that service, and `/oauth2/authorize`,
+  // `wsignin1.0`, a SAML AuthnRequest and `/admin` all read it. Nothing in
+  // either repository drove that door until 2026-08-27 — it shipped on
+  // 2026-08-26, was hand-verified once against a throwaway instance, and the
+  // driver that did it was a scratch script nobody kept.
+  //
+  // The job drives the debugger's own AS, TGS and SPNEGO pages to build the
+  // service ticket, spends it at the door, and then runs an ordinary OIDC
+  // Authorization Code flow on the session that comes back — with `amr` and
+  // `acr` read off the TICKET'S OWN FLAGS, which is the one place in that
+  // service where those claims are derived from a credential rather than from
+  // what somebody ticked on a screen.
+  //
+  // THE BROWSER DOES NOT ANSWER THE CHALLENGE, and the file's header says so
+  // at length: RFC 4559 is answered from GSSAPI, which needs a credential cache
+  // and an `--auth-server-allowlist` entry that this suite cannot assume. The
+  // debugger is the Kerberos client instead, which shows more of the protocol
+  // than a browser handing the work to GSSAPI ever would.
+  //
+  // Same gate and same three variables as the page job above, plus the OAuth
+  // client it registers before the flow starts.
+  const spnegoSignInJob = {
+    name: "SPNEGO sign-in (a Kerberos ticket becomes a session, and an OIDC " +
+        "flow completes on it)",
+    script: "kerberos_spnego_signin.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
+      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+      KRB5_REALM: env.KRB5_REALM || "EXAMPLE.COM",
+    },
+  };
+  if (kerberosPagesSkip) spnegoSignInJob.skip = kerberosPagesSkip;
+  jobs.push(spnegoSignInJob);
+
+  // ---------------------------------------------------------------------
+  // THE MOCK KDC, DRIVEN BY MIT KERBEROS ITSELF.
+  //
+  // Every other Kerberos job here — including the two above — drives that KDC
+  // with a client this project wrote, and not one of them can answer the
+  // question this one exists for: does any of it interoperate with a real
+  // Kerberos? The answer was NO until 2026-08-27, for as long as the mock KDC
+  // had existed, and nothing noticed: its KDC_ERR_PREAUTH_REQUIRED named the
+  // salt without naming the METHOD, so `kinit` could not authenticate and no
+  // browser could ever have signed in with Kerberos. Both ends of every test
+  // shared the assumption, so every test passed.
+  //
+  // NO BROWSER. It is `kinit`, `klist`, `kvno`, `kdestroy` and
+  // `curl --negotiate`, and it writes its own krb5.conf and credential cache
+  // under the system temp directory — so it needs no root, does not touch
+  // /etc/krb5.conf, and cannot disturb a Kerberos setup the machine already
+  // has.
+  //
+  // It SKIPS with a named reason where MIT Kerberos is absent or curl was
+  // built without GSS-API, which is most developer machines.
+  // `tests/Dockerfile` installs `krb5-user`, so the containerized suite always
+  // runs it — which is where this needs to be true.
+  // **NOT gated on `kerberosPagesSkip`**, and that is deliberate rather than an
+  // omission. That gate is about a deployment having the Kerberos PAGES — the
+  // api's port-88 relay and the five pages a static build drops — and this job
+  // uses neither: it talks to the mock's KDC over its own socket and to its
+  // HTTP doors with curl. Gating it there would skip the one job that can find
+  // an interoperability defect on precisely the targets where the mock is
+  // still reachable. Its own preconditions() decides, and says which of the
+  // four things was missing.
+  jobs.push({
+    name: "Kerberos with the REAL client (kinit, klist, kvno, kdestroy, " +
+        "curl --negotiate against the mock KDC)",
+    script: "krb5_mit_client.js",
+    env: {
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      // KRB5_TEST_* AND NOT KRB5_KDC_HOST, which every job above carries —
+      // the same split SPIFFE_TEST_* draws against SPIFFE_*, and the one
+      // this variable's own note further up already names as the mistake to
+      // avoid. Those jobs TYPE the address into a page and the api's relay
+      // resolves it, so `sts` is right on both stacks. This one has no page
+      // and no relay: `kinit` opens the socket out here, in the test's own
+      // process, where on a host launcher `sts` resolves to nothing and MIT
+      // answers `Cannot contact any KDC for realm 'EXAMPLE.COM'` — which is
+      // exactly what it did on 2026-08-27, the first run after this job
+      // existed, against a KDC that was up. So the default is this
+      // process's view, and run-tests-in-container.sh overrides it to the
+      // compose name for the bridge stack, as it does STS_URL.
+      KRB5_TEST_KDC_HOST: env.KRB5_TEST_KDC_HOST || "localhost",
+      KRB5_TEST_KDC_PORT: env.KRB5_TEST_KDC_PORT || "88",
+      KRB5_REALM: env.KRB5_REALM || "EXAMPLE.COM",
+    },
+  });
 
   // ---------------------------------------------------------------------------
   // LDAP. Two jobs, and the split between them is the same one the Kerberos
@@ -1588,7 +2577,7 @@ function buildJobs() {
     script: "api_ldap.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       LDAP_URL: env.LDAP_URL || "ldap://sts:389",
       LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
       LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
@@ -1628,7 +2617,7 @@ function buildJobs() {
     script: "ldap_page.js",
     env: {
       API_URL: env.API_URL || "http://localhost:4000",
-      STS_URL: env.STS_URL || "http://localhost:8081",
+      STS_URL: env.STS_URL || "https://localhost:8081",
       LDAP_URL: env.LDAP_URL || "ldap://sts:389",
       LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
       LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
@@ -1637,6 +2626,225 @@ function buildJobs() {
   };
   if (ldapPagesSkip) ldapPageJob.skip = ldapPagesSkip;
   jobs.push(ldapPageJob);
+
+  // ------------------------------------------------------------------------
+  // SCIM 2.0 — three jobs, split by what each one NEEDS rather than by what it
+  // covers. That split is the point: a failure in the first names a field, a
+  // failure in the second names a server, and a failure in the third names a
+  // page. Collapsing them would make every SCIM defect present as the same
+  // thing.
+  // ------------------------------------------------------------------------
+
+  // THE ENGINES, with no server and no browser. It needs NOTHING — not the
+  // api, not the mock, not Chrome — so it is never gated and never skipped,
+  // and it is the one SCIM job that runs on every target including the static
+  // ones. It asserts the endpoint catalogue against RFC 7644's own list, the
+  // generator against every optional attribute RFC 7643 section 4.1 defines,
+  // the Digest credential against the arithmetic node's crypto produces (which
+  // is what the mock uses), the length-prefixed HOBA blob, and every refusal
+  // the api's SCIM proxy can produce.
+  //
+  // It is FIRST of the three deliberately: a broken request builder makes the
+  // other two fail in ways that look like a broken server.
+  jobs.push({
+    name: "SCIM engines (the endpoint catalogue against RFC 7644, every " +
+        "optional attribute RFC 7643 defines, the Digest and HOBA " +
+        "credentials, the scenario planner, and the api proxy's refusals)",
+    script: "scim_engine.js",
+    env: {},
+  });
+
+  // THE PROTOCOL, through the api at the mock, then read back out of the
+  // DIRECTORY the mock wrote to. That second read is why this job exists at
+  // all: a SCIM 201 says the request was accepted, and only the directory says
+  // what was stored — so a field accepted and silently dropped, which is the
+  // most common real defect in a provisioning integration, is visible here and
+  // nowhere else.
+  //
+  // It also exercises all six RFC 7644 section 2 authentication schemes and
+  // the scope policy. Two of the six skip with a reason rather than passing
+  // vacuously: a session cookie needs a browser that has signed in, and a
+  // client certificate is chosen in a TLS handshake the api would make with
+  // its OWN key.
+  //
+  // SCIM_BASE_URL is the API's view of the mock rather than this test's — the
+  // same distinction LDAP_URL draws above, and on the containerized stack a
+  // different answer. It is its own variable for exactly that reason.
+  const scimProtocolJob = {
+    name: "SCIM protocol (every endpoint through the api, every optional " +
+        "attribute checked in the directory, and all six authentication " +
+        "schemes)",
+    script: "scim_protocol.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      SCIM_BASE_URL: env.SCIM_BASE_URL || "https://sts:8081/scim/v2",
+      LDAP_URL: env.LDAP_URL || "ldap://sts:389",
+      LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
+      LDAP_BIND_DN: env.LDAP_BIND_DN || "cn=admin,dc=example,dc=com",
+      LDAP_PASSWORD: env.LDAP_PASSWORD || "password!",
+    },
+  };
+  if (scimProtocolSkip) scimProtocolJob.skip = scimProtocolSkip;
+  jobs.push(scimProtocolJob);
+
+  // THE PAGE, which covers only what needs a browser — and unlike the LDAP
+  // page job it is NOT gated on the api, because the browser call path is the
+  // one the static deployments have and the one no other job exercises. Five
+  // things live here and nowhere else: that browser-direct call, the DPoP
+  // proof and the HOBA key signed with Web Crypto (scim_protocol.js signs with
+  // node's crypto, a different implementation), the two schemes that lock the
+  // call path because the api can carry neither, the scenario runner actually
+  // running, and what does and does not reach localStorage.
+  //
+  // SCIM_BROWSER_URL is the BROWSER's view of the mock — a third answer again,
+  // and the one that has cost this suite a run before on the LDAP and SPNEGO
+  // workflows.
+  jobs.push({
+    name: "SCIM page (the browser call path the hosted site depends on, the " +
+        "credentials signed with Web Crypto, the scenario runner, and what " +
+        "it remembers)",
+    script: "scim_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      SCIM_BROWSER_URL: env.SCIM_BROWSER_URL ||
+          (env.STS_URL || "https://localhost:8081") + "/scim/v2",
+    },
+  });
+
+  // ------------------------------------------------------------------------
+  // SPIFFE — four jobs, split by what each one NEEDS rather than by what it
+  // covers, which is the same division the SCIM three make and for the same
+  // reason: a failure in the first names a rule, in the second a server, in
+  // the third the api's own contract, and in the fourth a page. Collapsing
+  // them would make every SPIFFE defect present as the same thing.
+  //
+  // SPIFFE_WORKLOAD_ADDRESS and SPIFFE_SERVER_ADDRESS are the API's view of
+  // the two gRPC surfaces rather than this test's or the browser's — the same
+  // distinction LDAP_URL and KRB5_KDC_HOST draw, and on the containerized
+  // stack a different answer. They are their own variables for exactly that
+  // reason. Note the `spiffe_protocol.js` job is the exception: it drives the
+  // api's client IN PROCESS, so for that one job the address is this test's
+  // own view — which on the containerized stack happens to be the same name,
+  // and on a host run is loopback rather than `sts`.
+  // ------------------------------------------------------------------------
+
+  // THE ENGINES, with no server and no browser. It needs NOTHING — not the
+  // api, not the mock, not Chrome — so it is never gated and never skipped,
+  // and it is the one SPIFFE job that runs on every target including the
+  // static ones. It asserts the ID grammar against the specification's own
+  // rules, the trust bundle reader against documents wrong in one way each,
+  // the 49-method catalogue against the vendored protos BOTH WAYS ROUND, and
+  // those protos against the mock STS's copies byte for byte — which is the
+  // only thing standing between this debugger and a wire that agrees with the
+  // mock and interoperates with nothing.
+  //
+  // It is FIRST of the four deliberately: a broken address rule or a wrong
+  // catalogue makes the other three fail in ways that look like a broken
+  // server.
+  jobs.push({
+    name: "SPIFFE engines (the ID grammar against the specification, the " +
+        "trust bundle reader, the 49-method catalogue against the vendored " +
+        "protos, those protos against the mock's copies, every address and " +
+        "socket refusal by its code, and a PKCS#10 request checked with " +
+        "OpenSSL)",
+    script: "spiffe_engine.js",
+    env: {},
+  });
+
+  // THE PROTOCOL: all forty-nine methods against the mock, through the api's
+  // own client, driven in process. It acquires FOUR identities in order —
+  // nothing, a workload, an administrator, an agent — because this surface
+  // authorizes every method against what the caller IS, and forty of the
+  // forty-two SPIRE Server API methods are unreachable without the third.
+  //
+  // It holds the `sts-spiffe` lock: making the Workload API's own SVID an
+  // administrator means setting `spiffe.adminIds` on a shared process, and it
+  // also shortens `spiffe.svidTtl` to watch a rotation and turns
+  // `spiffe.autoCreateEntries` off to run a client's "I have no identity"
+  // path. Every one is read first and put back per setting in a `finally` —
+  // never with reset-all, which would also undo whatever a concurrent job had
+  // pinned.
+  //
+  // It is the slowest of the four at about forty seconds, and thirty of those
+  // are one assertion: the mock puts a FLOOR of thirty seconds under a
+  // Workload API stream's re-send, so watching an SVID rotate cannot be made
+  // cheaper by shortening its lifetime.
+  const spiffeProtocolJob = {
+    name: "SPIFFE protocol (all 49 methods against the mock as four " +
+        "different entities — nothing, a workload, an administrator and an " +
+        "agent — with every authorization refusal asserted as the answer it " +
+        "is, and an SVID rotation watched on a held stream)",
+    script: "spiffe_protocol.js",
+    env: {
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_TEST_WORKLOAD_ADDRESS ||
+          env.SPIFFE_WORKLOAD_ADDRESS || "localhost:8092",
+      SPIFFE_SERVER_ADDRESS: env.SPIFFE_TEST_SERVER_ADDRESS ||
+          env.SPIFFE_SERVER_ADDRESS || "localhost:8181",
+      // Empty by default and NOT derived from the setting's own default: the
+      // mock ships with spiffe.serverSocketEnabled OFF, so a path guessed
+      // from it would be a section that silently skips while claiming to
+      // cover the `local` entity — the only route to Debug.GetInfo.
+      SPIFFE_SERVER_SOCKET: env.SPIFFE_SERVER_SOCKET || "",
+      SPIFFE_TRUST_DOMAIN: env.SPIFFE_TRUST_DOMAIN || "example.org",
+    },
+  };
+  if (spiffeSkip) spiffeProtocolJob.skip = spiffeSkip;
+  jobs.push(spiffeProtocolJob);
+
+  // THE API'S OWN CONTRACT, over HTTP. What lives here and nowhere else is
+  // the STATUS-CODE RULE, which is the most consequential decision that
+  // endpoint makes: a refusal by the api is a 400, a network failure is a
+  // 502, and a gRPC status from the far end — PERMISSION_DENIED,
+  // UNAUTHENTICATED, UNIMPLEMENTED — is a **200** with the code, because
+  // those are SPIFFE answering and are the most interesting thing this
+  // workflow shows.
+  const apiSpiffeJob = {
+    name: "SPIFFE api endpoints (the status-code rule: a refusal is a 400, a " +
+        "network failure is a 502, and a gRPC status from the far end is a " +
+        "200 with the code)",
+    script: "api_spiffe.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092",
+      SPIFFE_SERVER_ADDRESS: env.SPIFFE_SERVER_ADDRESS || "sts:8181",
+      SPIFFE_BUNDLE_URL: env.SPIFFE_BUNDLE_URL ||
+          (env.API_STS_URL || "https://sts:8081") + "/spiffe/bundle",
+      SPIFFE_TRUST_DOMAIN: env.SPIFFE_TRUST_DOMAIN || "example.org",
+    },
+  };
+  if (spiffeSkip) apiSpiffeJob.skip = spiffeSkip;
+  jobs.push(apiSpiffeJob);
+
+  // THE PAGE, which covers only what needs a browser. Four things live here
+  // and nowhere else: that all forty-nine methods reach the two pickers (the
+  // whole claim this workflow makes is a claim about those dropdowns); the
+  // hand-off that takes an SVID from a surface which authenticates nobody and
+  // PRESENTS it on one that requires mutual TLS; the PKCS#10 request built
+  // with Web Crypto, which is a different implementation from the node one
+  // the engine job checks against OpenSSL; and the key-material opt-out,
+  // which must REMOVE a stored private key rather than only stop writing one.
+  const spiffePageJob = {
+    name: "SPIFFE page (all 49 methods in its pickers, the SVID hand-off " +
+        "from an unauthenticated surface to a mutual-TLS one, the " +
+        "certification request built in the browser, the three offline " +
+        "readers, and what it remembers)",
+    script: "spiffe_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+      SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092",
+      SPIFFE_SERVER_ADDRESS: env.SPIFFE_SERVER_ADDRESS || "sts:8181",
+      SPIFFE_BUNDLE_URL: env.SPIFFE_BUNDLE_URL ||
+          (env.API_STS_URL || "https://sts:8081") + "/spiffe/bundle",
+      SPIFFE_TRUST_DOMAIN: env.SPIFFE_TRUST_DOMAIN || "example.org",
+    },
+  };
+  if (spiffeSkip) spiffePageJob.skip = spiffeSkip;
+  jobs.push(spiffePageJob);
 
   // The DELEGATION page: S4U2Self, S4U2Proxy with both authorization routes, forwarding
   // and renewal. tests/krb5_tgs_ap.js already drives every one of those exchanges with no
@@ -1663,10 +2871,27 @@ function buildJobs() {
   // is a request a SERVICE makes and that is the commonest misunderstanding about it.
   // Needs the client, the api's relay and the mock KDC; without them it SKIPS naming what
   // was absent, since an environment capability is not a defect.
+  //
+  // Its env is the same three values the AS, TGS/AP and SPNEGO jobs carry, and
+  // it carried NONE of them until 2026-08-23 — which cost a run the moment the
+  // containerized stack stopped skipping this job. `sts`, not `localhost`, for
+  // the reason spelled out on the AS job above: that address is TYPED INTO THE
+  // PAGE and resolved by the relay inside the api container, where localhost is
+  // the api itself and port 88 is nothing. It stayed invisible because the two
+  // stacks disagree about localhost — under local-tests.yml every service is on
+  // host networking, so the api's loopback IS the host the mock KDC listens on
+  // and the default worked; on the bridge stack it is not, and the page
+  // reported `Could not talk to ::1:88` from a KDC that was up. The compose
+  // name is right on both, since local-tests.yml gives the api an
+  // `extra_hosts` entry mapping sts to 127.0.0.1.
   const delegationPageJob = {
     name: "Kerberos delegation page (S4U2Self, S4U2Proxy, RBCD, forwarding, renewal)",
     script: "kerberos_delegation_page.js",
-    env: {},
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
+      KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
+    },
   };
   if (kerberosPagesSkip) delegationPageJob.skip = kerberosPagesSkip;
   jobs.push(delegationPageJob);
@@ -1821,12 +3046,13 @@ function buildJobs() {
     // credential -> signature, and the last link is the one that matters: a DID
     // that resolves to the wrong key looks like success until something tries
     // to verify with it. Needs only the STS mock. The mock STS's own index of
-    // itself: GET /sts-metadata lists every endpoint it registers, with its
-    // methods, and every specification it implements. The list is read from the
-    // running Express router rather than kept by hand, and this job is what
-    // makes that worth something — it fails if a route is registered and
-    // undescribed (the page understates what is callable) or described and not
-    // registered (the page advertises a 404, which is what a rename produces).
+    // itself: GET /admin/sts-metadata lists every endpoint it registers,
+    // with its methods, and every specification it implements. The list is
+    // read from the running Express router rather than kept by hand, and this
+    // job is what makes that worth something — it fails if a route is
+    // registered and undescribed (the page understates what is callable) or
+    // described and not registered (the page advertises a 404, which is what
+    // a rename produces).
     // Needs only the STS mock. did-tools.html, the general-purpose DID verifier
     // reached from the VC Tools pane on every page of both workflows. The DIDs
     // it works on are GENERATED by the mock STS (GET /did/generate), which
@@ -1847,8 +3073,8 @@ function buildJobs() {
       },
     });
     jobs.push({
-      name: "STS metadata page (/sts-metadata lists exactly what the router " +
-          "registers)",
+      name: "STS metadata page (/admin/sts-metadata lists exactly what the " +
+          "router registers)",
       script: "sts_metadata.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
@@ -2111,26 +3337,215 @@ function buildJobs() {
   // remote-run-tests.sh sets SAML_BACKEND_AVAILABLE=false for those targets;
   // skip it there rather than fail.
   const samlBackendAvailable = env.SAML_BACKEND_AVAILABLE !== "false";
-  for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
-    const job = {
-      name: `SAML 2.0 SSO — HTTP-${SAML_BINDING === 'post' ?
-          'POST' : SAML_BINDING === 'artifact' ?
-          'Artifact' : 'Redirect'} binding`,
-      script: "saml_sso.js",
+  // ---------------------------------------------------------------------
+  // TWO IDENTITY PROVIDERS ANSWER THIS PROFILE, and every SSO job below is
+  // pushed once per IdP — the same arrangement the WS-Federation pair further
+  // down have had, and here for the same reason: a mock that is quietly more
+  // permissive than the real thing passes every test written against it alone.
+  //
+  //   * **Keycloak is somebody else's implementation**, and the only
+  //     interoperability evidence here. It VALIDATES the AuthnRequest
+  //     signature against the certificate common.sh registered for this run,
+  //     so a request the debugger builds sloppily fails there.
+  //   * **The mock STS grew this profile in 2026-08**, and it covers what
+  //     Keycloak cannot: it answers the HTTP Artifact binding with a real SOAP
+  //     back channel in a service that starts in seconds, it refuses a
+  //     ProtocolBinding it does not implement BY NAME, and it needs NOTHING
+  //     PROVISIONED — any entityID is accepted and a metadata document is
+  //     minted for anything asked for. It also publishes its metadata PER
+  //     SERVICE PROVIDER, which is what SAML_STS_METADATA_URL names.
+  //
+  // Each is gated on its own metadata URL, so an environment with one and not
+  // the other runs half of these and skips the other half naming which.
+  const samlIdps = [
+    {
+      key: "keycloak",
+      label: "Keycloak",
+      skip: (env.SAML_METADATA_URL || env.SAML_METADATA_FILE) ? null :
+        "the Keycloak SAML realm is not provisioned (SAML_METADATA_URL and " +
+        "SAML_METADATA_FILE both unset).",
       env: {
+        SAML_IDP: "keycloak",
         SAML_METADATA_URL: env.SAML_METADATA_URL,
         // When set (remote-run-tests.sh), the metadata is uploaded from this
         // local file instead of fetched from the URL — see loadIdpMetadata().
         SAML_METADATA_FILE: env.SAML_METADATA_FILE,
         SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
         SAML_USER: env.SAML_USER,
+        SAML_SLO_URL: env.SAML_SLO_URL,
+        // Where the MOCK is, which this half is not. Passed to both halves and
+        // self-selecting: the service provider is registered only when the
+        // identity provider this job was given is on that origin.
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+      },
+    },
+    {
+      key: "sts",
+      label: "mock STS",
+      skip: env.SAML_STS_METADATA_URL ? null :
+        "the mock STS is not reachable by the browser for SAML 2.0 " +
+        "(SAML_STS_METADATA_URL unset). The launchers set it wherever the STS " +
+        "is reachable — the containerized stack by compose DNS name, the host " +
+        "and live-site runs over loopback.",
+      env: {
+        SAML_IDP: "sts",
+        SAML_METADATA_URL: env.SAML_STS_METADATA_URL,
+        // The SAME service provider entityID Keycloak's client is provisioned
+        // for. It can be, and that is the point rather than a shortcut: the two
+        // runs describe the same service provider to two identity providers,
+        // which is what a federation looks like — and since 2026-08-27 each
+        // half REGISTERS it with the identity provider it is about to speak to,
+        // so both stores hold an entry rather than one holding an entry and the
+        // other holding whatever a sighting inferred. The mock still requires
+        // none of it and still accepts any entityID; what changed is that its
+        // entry now knows the ACS and the signing certificate too.
+        SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
+        SAML_USER: env.SAML_STS_USER || env.SAML_USER || "saml",
+        // Where a LogoutResponse is to be returned to. Only saml_logout.js
+        // reads it, and only to put it on the application entry: a
+        // LogoutRequest carries no return address, so this is a fact the
+        // service provider has to have DECLARED somewhere.
+        SAML_SLO_URL: env.SAML_STS_SLO_URL || env.SAML_SLO_URL,
+        // And its management API, so the service provider is in the registry
+        // before the first AuthnRequest rather than created by it. The comment
+        // above about there being nothing to provision described what the mock
+        // REQUIRES; it is still true, and it is exactly why the entry the
+        // sighting would have made knows nothing but the entityID.
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+      },
+    },
+  ];
+
+  for (const idp of samlIdps) {
+    for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
+      const job = {
+        name: `SAML 2.0 SSO — HTTP-${SAML_BINDING === 'post' ?
+            'POST' : SAML_BINDING === 'artifact' ?
+            'Artifact' : 'Redirect'} binding (${idp.label})`,
+        script: "saml_sso.js",
+        env: Object.assign({ SAML_BINDING }, idp.env),
+      };
+      if (idp.skip) {
+        job.skip = idp.skip;
+      } else if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
+        // The gate is about the TARGET rather than the IdP: resolving an
+        // artifact is a server-side SOAP call the SP has to make, so it needs
+        // the api backend whichever identity provider minted the artifact.
+        job.skip = "HTTP-Artifact needs the API backend (server-side SOAP ArtifactResolve); unavailable on the static deployment.";
+      }
+      jobs.push(job);
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // SAML **1.1**, which since 2026-08-25 is a working profile on this page
+  // rather than a reference-only entry in a dropdown. THREE kinds of job, and
+  // the distinction between them is worth reading before adding a fourth.
+  //
+  // 1. `saml11_sso.js` — the DEBUGGER's SAML 1.1 service provider, driven
+  //    through its pages by a browser, once per binding. `saml_sso.js`'s
+  //    sibling and deliberately its mirror image.
+  // 2. `saml11_options.js` — which of the SP / Request settings apply to SAML
+  //    1.1 and which are switched off. No identity provider at all.
+  // 3. `sts_saml11.js` — the mock STS's SAML 1.1 identity provider, driven
+  //    directly over HTTP with a relying party it writes itself, and almost
+  //    entirely NEGATIVES. It sits with `sts_metadata.js`, `sts_dpop.js`,
+  //    `admin_api.js` and `vc_did.js`, which is the family it belongs to.
+  //
+  // **THERE IS NO KEYCLOAK HALF OF ANY OF THEM, and there will not be one.**
+  // Every other browser-SSO job in this section is pushed once per identity
+  // provider, because a mock that is quietly more permissive than the real
+  // thing passes every test written against it alone. That argument still
+  // holds and there is nothing to act on it with: Keycloak dropped SAML 1.1
+  // years ago. So the mock is the only identity provider here, and
+  // `sts_saml11.js` is what compensates — it writes the relying party ITSELF
+  // rather than importing the debugger's, in the same spirit as `sts_dpop.js`
+  // writing its own DPoP client, so a shared misunderstanding between the two
+  // ends of the exchange cannot pass unnoticed.
+  //
+  // The three binding jobs and `sts_saml11.js` share a JOB_LOCK — see the note
+  // beside it, which is the "read tests/CLAUDE.md before adding a test that
+  // configures a shared service" case exactly.
+  // ---------------------------------------------------------------------
+  //
+  // The SAML 1.1 metadata URL is the mock's PER-RELYING-PARTY descriptor, the
+  // same device the SAML 2.0 job's `SAML_STS_METADATA_URL` is and computed the
+  // same way. Nothing has to be provisioned: that service accepts any
+  // identifier and mints the document on the ask.
+  for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
+    const job = {
+      name: `SAML 1.1 SSO — HTTP ${SAML_BINDING === 'post' ?
+          'POST' : SAML_BINDING === 'artifact' ?
+          'Artifact' : 'Redirect'} binding (mock STS)`,
+      script: "saml11_sso.js",
+      env: {
         SAML_BINDING,
+        SAML11_METADATA_URL: env.SAML11_METADATA_URL,
+        SAML11_METADATA_FILE: env.SAML11_METADATA_FILE,
+        SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
+        SAML_USER: env.SAML_STS_USER || env.SAML_USER || "saml",
+        // The mock's management API: the relying party is put in the registry
+        // before the flow starts. It matters more here than it does for SAML
+        // 2.0, because SAML 1.1 has no request message for the relying party
+        // to identify itself in — so what the entry holds is the only place
+        // this profile's audience is written down.
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
       },
     };
-    if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
-      job.skip = "HTTP-Artifact needs the API backend (server-side SOAP ArtifactResolve); unavailable on the static deployment.";
+    if (!env.SAML11_METADATA_URL && !env.SAML11_METADATA_FILE) {
+      job.skip = "the mock STS is not reachable by the browser for SAML 1.1 " +
+        "(SAML11_METADATA_URL and SAML11_METADATA_FILE both unset). The " +
+        "launchers set it wherever the STS is reachable — the containerized " +
+        "stack by compose DNS name, the host and live-site runs over " +
+        "loopback. Keycloak cannot stand in: it has spoken no SAML 1.1 for " +
+        "years.";
+    } else if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
+      // The same gate the SAML 2.0 artifact job carries, and about the TARGET
+      // rather than the identity provider: resolving an artifact is a SOAP
+      // call the service provider has to make server-side, whichever version
+      // minted it.
+      job.skip = "HTTP Artifact needs the API backend (the SAML 1.1 SOAP " +
+        "responder is a server-side call); unavailable on the static " +
+        "deployment.";
     }
     jobs.push(job);
+  }
+
+  // What the SP / Request pane offers on SAML 1.1 and what it must stop
+  // offering — the username hint, request signing, request encryption, Single
+  // Logout and the SLO endpoints, each asserted DISABLED and greyed rather than
+  // merely absent. No identity provider, so it is never skipped: a control
+  // wrongly left live is invisible in the round-trip jobs above as long as the
+  // flow works anyway, which it does.
+  jobs.push({
+    name: "SAML 1.1 SP/Request settings (what applies, what is switched off, " +
+        "the Shibboleth request shape, the 1.1 SP metadata)",
+    script: "saml11_options.js",
+    env: {},
+  });
+
+  // The mock STS's own SAML 1.1 identity provider, over HTTP with no browser:
+  // Browser/POST and Browser/Artifact end to end, the SOAP responder's four
+  // request types (which makes that service an attribute authority), the
+  // per-relying-party metadata, the NameIdentifier formats, and the four traps
+  // this profile hides — the confirmation method, the signature reference
+  // through the real AssertionID, an InResponseTo on a profile with no request,
+  // and the one-shot artifact.
+  //
+  // Gated on the STS alone, like the four tests it sits with. It restores every
+  // setting it changes, through /admin-api/config/reset rather than by writing
+  // the old value back, so it leaves no runtime override for admin_api.js to
+  // trip over on the next run against the same container.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "SAML 1.1 identity provider on the mock STS (Browser/POST, " +
+          "Browser/Artifact, the SOAP responder, per-RP metadata)",
+      script: "sts_saml11.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
   }
 
   // SAML 2.0 EncryptedAssertion decryption: SSO against a SAML client with
@@ -2157,6 +3572,15 @@ function buildJobs() {
   // ciphertext, which does not DEFLATE, so a redirect-bound one roughly doubles
   // in URL length — which is precisely why saml-profiles-2.0-os section 4.1.2
   // says the Redirect binding MUST NOT carry the Response.
+  //
+  // **THIS ONE IS KEYCLOAK-ONLY, and the reason is a documented non-feature
+  // rather than an omission in the test.** The mock STS's Web Browser SSO
+  // profile does not encrypt an assertion: there is no recipient certificate in
+  // an AuthnRequest to encrypt to unless SP metadata is consumed, and that
+  // service publishes metadata and does not consume it. (Its WS-Trust endpoint
+  // does encrypt, at /sts?encrypt=1, because a WS-Security signature carries
+  // the certificate.) So there is no `sts` half to add here — adding one would
+  // be a job that could only ever fail or be skipped.
   {
     const encJob = {
       name: "SAML 2.0 EncryptedAssertion — decrypt on Response page",
@@ -2185,19 +3609,27 @@ function buildJobs() {
   // and capture the NameID/SessionIndex), then send a signed LogoutRequest and
   // confirm the LogoutResponse renders with a Success status on the response
   // page.
-  jobs.push({
-    name: "SAML 2.0 Single Logout (login → LogoutRequest → " +
-        "LogoutResponse Success)",
-    script: "saml_logout.js",
-    env: {
-      SAML_METADATA_URL: env.SAML_METADATA_URL,
-      // When set (remote-run-tests.sh), the metadata is uploaded from this
-      // local file instead of fetched from the URL — see loadIdpMetadata().
-      SAML_METADATA_FILE: env.SAML_METADATA_FILE,
-      SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
-      SAML_USER: env.SAML_USER,
-    },
-  });
+  //
+  // Once per identity provider, like the SSO jobs above. The interesting
+  // difference between the two is where the LogoutResponse is SENT: a
+  // LogoutRequest carries no return address, so Keycloak reads the SP metadata
+  // it was configured with, and the mock — which publishes metadata and does
+  // not consume it — uses the samlSingleLogoutService declared on the service
+  // provider's directory entry, falling back to the assertion consumer service
+  // URL it last used. The launchers declare it; the fallback is right for this
+  // stack anyway, because the api's /samlacs and /samlslo are one handler.
+  for (const idp of samlIdps) {
+    const logoutJob = {
+      name: "SAML 2.0 Single Logout (login → LogoutRequest → " +
+          `LogoutResponse Success) (${idp.label})`,
+      script: "saml_logout.js",
+      env: Object.assign({}, idp.env),
+    };
+    if (idp.skip) {
+      logoutJob.skip = idp.skip;
+    }
+    jobs.push(logoutJob);
+  }
 
   // WS-Federation Passive Requestor Profile SSO, run twice: against the
   // dedicated Keycloak 8.0.1 + cloudtrust keycloak-wsfed side-car (the 26.x
@@ -2270,6 +3702,12 @@ function buildJobs() {
           WSFED_METADATA_URL: env.WSFED_METADATA_URL,
           WSFED_REALM: env.WSFED_REALM,
           WSFED_USER: env.WSFED_USER,
+          // Where the MOCK is, which this half is not. It is passed to both
+          // halves on purpose and selects itself out: the test registers the
+          // relying party only when the identity provider it was given is on
+          // that origin, so Keycloak's provisioned client is never also
+          // created in the mock's registry. See tests/sts_applications.js.
+          WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         },
       },
       {
@@ -2282,10 +3720,13 @@ function buildJobs() {
         env: {
           WSFED_IDP: "sts",
           WSFED_METADATA_URL: env.WSFED_STS_METADATA_URL,
-          // The mock registers no relying parties, so the wtrealm is any string
-          // and becomes the assertion's audience. It is given one that says
-          // where it came from rather than reusing Keycloak's provisioned
-          // client id, so an audience seen in a log names its own test.
+          // The mock REQUIRES no relying party registration, so the wtrealm is
+          // any string and becomes the assertion's audience. It is given one
+          // that says where it came from rather than reusing Keycloak's
+          // provisioned client id, so an audience seen in a log names its own
+          // test — and the job registers it before the first wsignin1.0, with
+          // the wreply the page will actually use. See
+          // tests/sts_applications.js.
           WSFED_REALM: env.WSFED_STS_REALM || "urn:wsfed:sts:rp",
           // It authenticates nobody: the username becomes the subject and the
           // only password refused is the literal "invalid".
@@ -2302,6 +3743,9 @@ function buildJobs() {
           // offer — so the jobs that send one ask for an assertion type it
           // advertises. See the note on WREQ_TOKEN_TYPE in wsfed_sso.js.
           WSFED_WREQ_TOKEN_TYPE: "urn:oasis:names:tc:SAML:2.0:assertion",
+          // And where its management API is, so the relying party is in the
+          // registry before the first wsignin1.0 rather than created by it.
+          WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         },
       },
     ];
@@ -2481,7 +3925,7 @@ function buildJobs() {
 
   // XML Signature & XML Encryption interop. A pure-Node test (no browser, no
   // IdP) that runs the WS-Trust workflow's in-browser crypto
-  // (client/src/xmldsig.js) and validates its output against official
+  // (common/xmldsig.js) and validates its output against official
   // libraries: xml-crypto verifies the WS-Security signature; xml-encryption
   // decrypts the XML-Encryption output.
   jobs.push({
@@ -2684,14 +4128,37 @@ function buildJobs() {
       " further job(s) beyond the pages.");
   }
 
+  // Label every job unit or browser. Done as a sweep for the same reason the
+  // Kerberos skip above is: a job pushed later inherits it without anybody
+  // remembering, and there are roughly a hundred push sites.
+  for (const job of jobs) {
+    job.type = jobTypeOf(job.script);
+  }
+  log.info("Roster: " + jobs.filter((j) => j.type === "unit").length +
+    " unit, " + jobs.filter((j) => j.type === "browser").length + " browser.");
+
   log.debug("Leaving buildJobs().");
   return jobs;
 }
 
+// A job's name is a sentence, not a label — the SPIFFE engines one is 250
+// characters — and every filesystem here caps a single NAME component at 255
+// bytes. Past that the run does not fail the test, it dies: the WriteStream
+// emits ENAMETOOLONG as an unhandled 'error' event and takes the whole runner
+// with it, naming a path rather than a job. So the slug is truncated; the
+// NN- index prefix is what makes the file unique, and the full name is in the
+// log's own header and in the report.
+const SLUG_MAX = 80;
+
 function slug(s) {
   log.debug("Entering slug().");
+  var out = s.toLowerCase().replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (out.length > SLUG_MAX) {
+    out = out.slice(0, SLUG_MAX).replace(/-+$/, "");
+  }
   log.debug("Leaving slug().");
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return out;
 }
 
 function logPathFor(name, index) {
@@ -2715,12 +4182,110 @@ function logHeader(name, script, startedAt) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Reaping a job's PROCESS TREE, which is not the same thing as its process.
+//
+// A browser job is `node` -> `chromedriver` -> `chrome`, and Chrome is itself
+// about FIFTEEN processes (browser, two crashpad handlers, two zygotes, a gpu
+// process, the network and storage services, a renderer per frame). Only the
+// first of those three is this runner's child. When a test dies without
+// reaching `driver.quit()` -- the `process.exit(1)`-inside-a-`catch` that
+// skipped its own `finally` was the usual way until 2026-08-26, and a Ctrl-C
+// is the other -- selenium's own exit hook (`io/exec.js`) sends SIGTERM to
+// CHROMEDRIVER and nothing at all to the browser it launched. Chromedriver
+// dies, Chrome is orphaned, and it keeps its share of the machine's memory
+// until somebody reboots. Measured that day: ONE failing job left 11 Chrome
+// processes behind, and a run of this suite left 559, which is what took the
+// laptop out.
+//
+// So every job is spawned `detached`, which gives it a process GROUP of its
+// own whose id is the child's pid. chromedriver inherits that group from node
+// and chrome inherits it from chromedriver, so a single `process.kill(-pgid)`
+// reaches the whole tree however deep it got. That is what makes this a
+// BACKSTOP rather than a second copy of the per-script fix: it does not care
+// why the tree survived, or whether the script that made it had been written
+// yet. It runs after every job, passing or failing -- a job that passed can
+// still have left a browser behind.
+//
+// `detached` has one consequence that has to be paid for right here, and
+// forgetting it would be worse than the leak: a child in its own process group
+// NO LONGER RECEIVES the terminal's Ctrl-C. Without the signal handlers below,
+// interrupting the runner would leave the entire pool running with nothing
+// left alive to reap it.
+// ---------------------------------------------------------------------------
+
+// A job that has printed nothing and not exited is not necessarily hung, so
+// this is deliberately far above the slowest real job rather than near it: the
+// longest single job in the 2026-08-26 run was 389 seconds and the run before
+// it had one at 415. Fifteen minutes bounds a hang without turning a slow
+// machine into a failure. TEST_JOB_TIMEOUT_MS overrides it, and 0 disables the
+// timeout while leaving the process-group reaping in place.
+const JOB_TIMEOUT_MS = (function () {
+  const asked = parseInt(process.env.TEST_JOB_TIMEOUT_MS || "", 10);
+  if (Number.isFinite(asked) && asked >= 0) {
+    return asked;
+  }
+  return 900000;
+})();
+
+// The process group of every job currently running: added at spawn, removed
+// once the group has been reaped.
+const liveJobGroups = new Set();
+
+// Kill one job's whole process group. Every failure here is ordinary rather
+// than exceptional, which is why nothing is thrown and nothing is returned.
+function killJobGroup(pgid, signal) {
+  log.debug("Entering killJobGroup().");
+  if (!pgid) {
+    log.debug("Leaving killJobGroup(). No group.");
+    return;
+  }
+  try {
+    process.kill(-pgid, signal);
+  } catch (e) {
+    // ESRCH is the ordinary case and means the group has already gone, which
+    // is exactly what a clean exit looks like. EPERM would mean the group is
+    // not ours, which cannot happen for one we created, so it is worth a line.
+    if (e.code !== "ESRCH") {
+      log.warn("killJobGroup(" + pgid + ", " + signal + "): " + e.message);
+    }
+  }
+  log.debug("Leaving killJobGroup().");
+}
+
+// Every live job's tree, killed synchronously. Safe to call from an 'exit'
+// handler, which cannot await anything -- process.kill() is a syscall that
+// returns immediately, and that is precisely why the backstop is a signal
+// rather than a driver.quit().
+function reapAllJobGroups() {
+  log.debug("Entering reapAllJobGroups().");
+  liveJobGroups.forEach(function (pgid) {
+    killJobGroup(pgid, "SIGKILL");
+  });
+  liveJobGroups.clear();
+  log.debug("Leaving reapAllJobGroups().");
+}
+
+process.on("exit", reapAllJobGroups);
+
+// Ctrl-C and friends. The runner exits with the conventional status for the
+// signal rather than a tidy 0, so a run that was interrupted does not read as
+// a run that finished.
+["SIGINT", "SIGTERM", "SIGHUP"].forEach(function (sig) {
+  process.on(sig, function () {
+    log.warn("Received " + sig + "; killing " + liveJobGroups.size +
+        " running job process group(s) before exiting.");
+    reapAllJobGroups();
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  });
+});
+
 // Run one test, streaming its stdout AND stderr live to the console while
 // simultaneously writing them to a per-test log file (a tee). The log is
 // opened and the header written before the child starts, and flushed as
 // output arrives, so the full output survives even if the suite is killed
 // or a test hangs. Returns a Promise resolving to the result.
-function runJob(job, index) {
+function runJob(job, index, live) {
   log.debug("Entering runJob().");
   log.debug("Leaving runJob().");
   return new Promise((resolve) => {
@@ -2729,29 +4294,74 @@ function runJob(job, index) {
     fs.mkdirSync(LOGS_DIR, { recursive: true });
     const logPath = logPathFor(job.name, index);
     const logStream = fs.createWriteStream(logPath);
+    // A WriteStream with no 'error' listener throws its error as an unhandled
+    // 'error' event, which is not a failed job — it is the whole runner
+    // exiting mid-pool, naming a path rather than a test. Losing one job's
+    // log file is the smaller loss: the output is still in `output` and so
+    // still reaches the report.
+    logStream.on("error", (e) => {
+      log.warn("Log file " + logPath + " is not writable (" + e.code +
+        "); continuing without it.");
+    });
     logStream.write(logHeader(job.name, job.script, startedAt));
 
     let output = "";
+    // The job's process group, its watchdog, and the guard that keeps the
+    // timeout path and the 'close' that follows it from finishing twice.
+    let pgid = null;
+    let timer = null;
+    let finished = false;
     const tee = (chunk) => {
       log.debug("Entering tee().");
       const s = chunk.toString();
       output += s;
       logStream.write(s); // capture
-      process.stdout.write(s); // live echo
+      if (live) {
+        process.stdout.write(s); // live echo
+      }
       log.debug("Leaving tee().");
     };
 
     const finish = (code, codeLabel) => {
       log.debug("Entering finish().");
+      // The timeout path kills the tree and finishes the job itself, so the
+      // 'close' that follows must not finish it a second time.
+      if (finished) {
+        log.debug("Leaving finish(). Already finished.");
+        return;
+      }
+      finished = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      // The backstop, and the whole reason the job was spawned detached:
+      // whatever it left running -- a chromedriver, a Chrome, both -- goes
+      // now. The PASSING path reaches this too, because a job that passed can
+      // still have leaked a browser.
+      killJobGroup(pgid, "SIGKILL");
+      liveJobGroups.delete(pgid);
       const durationMs = Date.now() - startMs;
       const passed = code === 0;
       logStream.end(
         `\n===== RESULT: ${passed ? "PASS" : "FAIL"} ` +
           `(exit ${codeLabel}, ${(durationMs / 1000).toFixed(1)}s) =====\n`
       );
+      // Buffered rather than echoed as it arrived (see CONCURRENCY), so write
+      // the whole of it now, in ONE call, as one block. Anything less and four
+      // browsers' lines arrive shuffled together.
+      if (!live) {
+        const secs = (durationMs / 1000).toFixed(1);
+        process.stdout.write(
+          `\n===== [${index + 1}] ${job.name} — ` +
+          `${passed ? "PASS" : "FAIL"} (${secs}s) =====\n` +
+          output +
+          `===== end of ${job.name} =====\n`);
+      }
       resolve({
         name: job.name,
         script: job.script,
+        type: job.type || "browser",
         passed,
         code: codeLabel,
         durationMs,
@@ -2761,10 +4371,33 @@ function runJob(job, index) {
       log.debug("Leaving finish().");
     };
 
+    // NODE_V8_COVERAGE makes the child write its own raw V8 coverage on exit;
+    // see the coverage block at the top of this file. It is set for EVERY job,
+    // not only the browserless ones, because a page test that also loads a
+    // shared module in-process covers real branches in it. Off unless
+    // COVERAGE=true, so an ordinary run is byte-for-byte what it was.
+    const childEnv = { ...process.env, ...job.env };
+    if (nodeCoverageOn) {
+      childEnv.NODE_V8_COVERAGE = NODE_COVERAGE_TMP;
+    }
     const child = spawn("node", [path.join(TESTS_DIR, job.script), "--url",
         BASE_URL], {
-      env: { ...process.env, ...job.env },
+      env: childEnv,
+      // A process group of this job's own, so its whole tree can be killed as
+      // one. See the reaping note above this function.
+      detached: true,
     });
+    pgid = child.pid;
+    liveJobGroups.add(pgid);
+    if (JOB_TIMEOUT_MS > 0) {
+      timer = setTimeout(() => {
+        const secs = (JOB_TIMEOUT_MS / 1000).toFixed(0);
+        tee("\n[runner] no exit after " + secs + "s; killing this job's " +
+            "process tree. Raise or disable with TEST_JOB_TIMEOUT_MS.\n");
+        killJobGroup(pgid, "SIGKILL");
+        finish(1, "timeout after " + secs + "s");
+      }, JOB_TIMEOUT_MS);
+    }
     child.stdout.on("data", tee);
     child.stderr.on("data", tee);
     child.on("error", (err) => {
@@ -2795,6 +4428,7 @@ function makeSkipResult(job, index) {
   return {
     name: job.name,
     script: job.script,
+    type: job.type || "browser",
     passed: true, // not a failure
     skipped: true,
     reason,
@@ -2803,6 +4437,144 @@ function makeSkipResult(job, index) {
     output: "SKIPPED: " + reason,
     logFile: path.relative(TESTS_DIR, logPath),
   };
+}
+
+// ---- scheduling ------------------------------------------------------------
+
+// One finished job's line in the runner's own log. Written when the job
+// FINISHES rather than when it starts, so with a pool the order of these lines
+// is the order things completed; the report itself is written in job order.
+function reportOne(result, index, total) {
+  log.debug("Entering reportOne().");
+  log.info(`----- [${index + 1}/${total}] ` +
+      `${result.passed ? "PASS" : "FAIL"} ` +
+      `(${(result.durationMs / 1000).toFixed(1)}s) → ${result.logFile} ` +
+      `— ${result.name}`);
+  log.debug("Leaving reportOne().");
+}
+
+// The first job that has not started and whose lock nothing is holding, or -1.
+// Called once per free slot rather than once per job, so it is not a hot path.
+function nextRunnableJob(jobs, started, held) {
+  log.debug("Entering nextRunnableJob().");
+  for (let i = 0; i < jobs.length; i++) {
+    if (started[i]) {
+      continue;
+    }
+    const lock = lockOf(jobs[i]);
+    if (lock && held.has(lock)) {
+      continue;
+    }
+    log.debug("Leaving nextRunnableJob(). " + i);
+    return i;
+  }
+  log.debug("Leaving nextRunnableJob(). Nothing runnable.");
+  return -1;
+}
+
+// The pool itself. It cannot deadlock: a lock is only ever held by a RUNNING
+// job, so when nothing is running nothing is held and the next job is always
+// runnable — which is also why `remaining` reaching 0 with nothing active is
+// the only exit.
+function runPool(jobs, results, started, total) {
+  log.debug("Entering runPool().");
+  return new Promise(function (resolve) {
+    const held = new Set();
+    let active = 0;
+    let remaining = started.filter(function (done) {
+      return !done;
+    }).length;
+
+    const pump = function () {
+      log.debug("Entering pump().");
+      while (active < CONCURRENCY) {
+        const i = nextRunnableJob(jobs, started, held);
+        if (i < 0) {
+          break;
+        }
+        const job = jobs[i];
+        const lock = lockOf(job);
+        started[i] = true;
+        if (lock) {
+          held.add(lock);
+        }
+        active = active + 1;
+        log.info(`===== [${i + 1}/${total}] ${job.name} — started` +
+            `${lock ? " (lock: " + lock + ")" : ""} =====`);
+        // runJob() resolves for every outcome a child can have, including a
+        // spawn that failed — so a REJECTION here is the runner itself
+        // breaking. Caught all the same: an unhandled one would leave this
+        // slot occupied and the pool would hang with no line saying why.
+        const settle = function (result) {
+          results[i] = result;
+          if (lock) {
+            held.delete(lock);
+          }
+          active = active - 1;
+          remaining = remaining - 1;
+          reportOne(result, i, total);
+          pump();
+        };
+        runJob(job, i, CONCURRENCY === 1).then(settle, function (err) {
+          settle({
+            name: job.name,
+            script: job.script,
+            type: job.type || "browser",
+            passed: false,
+            code: "runner error: " + (err && err.message),
+            durationMs: 0,
+            output: "the runner failed to run this job: " + (err && err.stack),
+            logFile: "",
+          });
+        });
+      }
+      if (active === 0 && remaining === 0) {
+        resolve();
+      }
+      log.debug("Leaving pump().");
+    };
+
+    pump();
+  });
+}
+
+// Skips first (they cost nothing and hold nothing), then the EXCLUSIVE jobs
+// alone, then everything else in the pool. The exclusive pass is first rather
+// than in its place in the list because draining a pool to make room for a
+// 0.3-second job means waiting out whatever longest job is in flight; the one
+// job in that class restores everything it changes, which is what makes its
+// position free to choose. See JOB_LOCKS.
+async function runAllJobs(jobs, results) {
+  log.debug("Entering runAllJobs().");
+  const total = jobs.length;
+  const started = jobs.map(function () {
+    return false;
+  });
+
+  for (const [i, job] of jobs.entries()) {
+    if (!job.skip) {
+      continue;
+    }
+    log.info(`===== [${i + 1}/${total}] ${job.name} — SKIPPED =====`);
+    log.info(`----- SKIP: ${job.skip}`);
+    results[i] = makeSkipResult(job, i);
+    started[i] = true;
+  }
+
+  for (const [i, job] of jobs.entries()) {
+    if (started[i] || lockOf(job) !== EXCLUSIVE) {
+      continue;
+    }
+    log.info(`===== [${i + 1}/${total}] ${job.name} — alone =====`);
+    started[i] = true;
+    // Live output: nothing else is running, so there is nothing to interleave
+    // with, and this pass is where a stack that came up wrong shows first.
+    results[i] = await runJob(job, i, true);
+    reportOne(results[i], i, total);
+  }
+
+  await runPool(jobs, results, started, total);
+  log.debug("Leaving runAllJobs().");
 }
 
 // ---- report rendering ------------------------------------------------------
@@ -2824,6 +4596,7 @@ function renderHtml(results, generatedAt, demo) {
   const passed = results.filter((r) => r.passed && !r.skipped).length;
   const failed = total - passed - skipped;
   const totalMs = results.reduce((a, r) => a + r.durationMs, 0);
+  const units = results.filter((r) => r.type === "unit").length;
 
   const rows = results
     .map((r, i) => {
@@ -2834,9 +4607,11 @@ function renderHtml(results, generatedAt, demo) {
         ? `<br><a href="logs/${esc(path.basename(r.logFile))}"><code>${esc(
             r.logFile)}</code></a>`
         : "";
+      const type = r.type === "unit" ? "unit" : "browser";
       return `
       <tr class="${cls}">
         <td><span class="badge ${cls}">${badge}</span></td>
+        <td><span class="type ${type}">${type}</span></td>
         <td>${esc(r.name)}<br><code>${esc(r.script)}</code></td>
         <td class="num">${(r.durationMs / 1000).toFixed(1)}s</td>
         <td class="num">${esc(r.code)}</td>
@@ -2864,6 +4639,8 @@ function renderHtml(results, generatedAt, demo) {
   tr.fail{background:#fff5f5}tr.skip{background:#fbfbf5}
   .badge{font-weight:700;font-size:.75rem;padding:.15rem .5rem;border-radius:4px;color:#fff}
   .badge.pass{background:#1a7f37}.badge.fail{background:#c1121f}.badge.skip{background:#8a6d00}
+  .type{font-size:.7rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #d0d0d0;color:#555;white-space:nowrap}
+  .type.unit{background:#eef4ff;border-color:#c3d4f5;color:#274b8f}
   code{background:#f3f3f3;padding:.05rem .3rem;border-radius:3px}
   pre{background:#0d1117;color:#e6edf3;padding:.8rem;border-radius:6px;overflow:auto;max-height:360px;font-size:.8rem}
   summary{cursor:pointer;color:#0969da}
@@ -2877,11 +4654,14 @@ ${demo ? '<div class="demo"><strong>SAMPLE REPORT</strong> — generated with <c
   <div class="card ok"><div class="n">${passed}</div><div>passed</div></div>
   <div class="card bad"><div class="n">${failed}</div><div>failed</div></div>
   ${skipped ? `<div class="card"><div class="n">${skipped}</div><div>skipped</div></div>` : ""}
+  ${runWallMs ? `<div class="card"><div class="n">${(runWallMs / 1000)
+      .toFixed(1)}s</div><div>wall clock</div></div>` : ""}
   <div class="card"><div class="n">${(totalMs / 1000)
-      .toFixed(1)}s</div><div>duration</div></div>
+      .toFixed(1)}s</div><div>job time</div></div>
+  <div class="card"><div class="n">${units}</div><div>unit (no browser)</div></div>
 </div>
 <table>
-  <thead><tr><th>Result</th><th>Test</th><th>Time</th><th>Exit</th><th>Output</th></tr></thead>
+  <thead><tr><th>Result</th><th>Type</th><th>Test</th><th>Time</th><th>Exit</th><th>Output</th></tr></thead>
   <tbody>${rows}</tbody>
 </table>
 </body></html>`;
@@ -3053,7 +4833,10 @@ function renderJUnit(results, generatedAt) {
         ? ""
         : `<failure message="exit ${esc(r.code)}">Test exited with status ${esc(
                                         r.code)}</failure>`;
-      return `    <testcase classname="selenium" name="${esc(r.name)}" time="${time}">${body}<system-out>${sys}</system-out></testcase>`;
+      // classname is what a CI dashboard groups by, so the two halves of the
+      // suite are told apart there rather than only in report.html.
+      const cls = r.type === "unit" ? "unit" : "selenium";
+      return `    <testcase classname="${cls}" name="${esc(r.name)}" time="${time}">${body}<system-out>${sys}</system-out></testcase>`;
     })
     .join("\n");
   log.debug("Leaving renderJUnit().");
@@ -3064,6 +4847,136 @@ ${cases}
   </testsuite>
 </testsuites>
 `;
+}
+
+// ---- node coverage ---------------------------------------------------------
+
+// Make (and empty) the directory the children will write raw V8 coverage into.
+//
+// Emptying it is not tidiness. NODE_V8_COVERAGE appends a file per process and
+// c8 reads whatever it finds, so a leftover pile from the previous run would be
+// merged into this one's numbers — a report that improves every time it is
+// rendered and never says why.
+function prepareNodeCoverage() {
+  log.debug("Entering prepareNodeCoverage().");
+  if (!nodeCoverageOn) {
+    log.debug("Leaving prepareNodeCoverage(). Not collecting.");
+    return;
+  }
+  try {
+    fs.rmSync(NODE_COVERAGE_TMP, { recursive: true, force: true });
+    fs.mkdirSync(NODE_COVERAGE_TMP, { recursive: true });
+  } catch (e) {
+    nodeCoverageOn = false;
+    log.warn("Node coverage is off: " + NODE_COVERAGE_TMP + " is not " +
+      "writable (" + e.message + "). Mount ./coverage into this container " +
+      "(docker-compose-coverage.yml) or set NODE_COVERAGE_DIR.");
+    log.debug("Leaving prepareNodeCoverage(). Disabled.");
+    return;
+  }
+  log.info("Node coverage: children will write V8 data to " +
+    NODE_COVERAGE_TMP + "; the report lands in " + NODE_COVERAGE_DIR + ".");
+  log.debug("Leaving prepareNodeCoverage().");
+}
+
+// What c8 must NOT report on: the test scripts themselves.
+//
+// The tests image copies the shared modules FLAT beside the test scripts, so
+// /usr/src/app holds both scim_engine.js (the test) and scim_client.js (the
+// module it drives) — there is no directory to separate them by, only the name.
+// The names are safe to exclude by: tests/jwk_pem_encoding.js already asserts
+// that no shared module collides with a test script in that flat copy, which is
+// what makes "exclude every job's script" mean "exclude the tests" and nothing
+// else.
+//
+// The helpers are named too. They are modules rather than jobs, so no job's
+// script names them and the sweep above would leave them in the report as
+// though they were product code.
+function coverageExcludes(jobs) {
+  log.debug("Entering coverageExcludes().");
+  const names = new Set(jobs.map((job) => job.script));
+  ["run-report.js", "module_paths.js", "wait_for.js", "random_username.js",
+    "common.sh"].forEach(function (name) {
+    names.add(name);
+  });
+  // Every pattern is `**/`-prefixed, and that is not cosmetic: a bare
+  // `scim_engine.js` matches NOTHING here. c8 reports on files above its own
+  // cwd (the modules live in ../client/src and ../api on a host run), so it
+  // resolves paths against a common ancestor rather than against cwd, and a
+  // pattern with no directory part never lines up with the relative path it is
+  // matched against. It fails silently — the report simply lists the test
+  // scripts as though they were product code.
+  //
+  // The mock STS is somebody else's checkout (a submodule), and node-ldapjs is
+  // vendored unmodified. A test that starts either one in-process would
+  // otherwise drag its files into this repository's report.
+  const out = Array.from(names).sort().map((name) => "**/" + name)
+    .concat(["**/node_modules/**", "**/sts/**", "**/node-ldapjs/**"]);
+  log.debug("Leaving coverageExcludes(). " + out.length + " pattern(s).");
+  return out;
+}
+
+// Render the pile the children left behind. Runs HERE, in the tests container,
+// for the same reason COVERAGE.md gives for rendering the frontend report
+// inside the client image: the paths recorded in the raw data are the paths the
+// modules were loaded from, and only this filesystem still has them.
+function renderNodeCoverage(jobs) {
+  log.debug("Entering renderNodeCoverage().");
+  if (!nodeCoverageOn) {
+    log.debug("Leaving renderNodeCoverage(). Not collecting.");
+    return;
+  }
+  let files = [];
+  try {
+    files = fs.readdirSync(NODE_COVERAGE_TMP);
+  } catch (e) {
+    log.warn("renderNodeCoverage(): cannot read " + NODE_COVERAGE_TMP + ": " +
+      e.message);
+  }
+  if (files.length === 0) {
+    // Not an error worth failing on, but it is never expected: every job is a
+    // node process and node writes this on exit. Say so loudly enough that a
+    // silently empty report is not read as "nothing is covered".
+    log.warn("Node coverage: no V8 data was written to " + NODE_COVERAGE_TMP +
+      ". No report rendered.");
+    log.debug("Leaving renderNodeCoverage(). Nothing collected.");
+    return;
+  }
+  const c8 = path.join(TESTS_DIR, "node_modules", ".bin", "c8");
+  if (!fs.existsSync(c8)) {
+    log.warn("Node coverage: c8 is not installed at " + c8 + ". The raw V8 " +
+      "data is still in " + NODE_COVERAGE_TMP + "; `npx c8 report " +
+      "--temp-directory " + NODE_COVERAGE_TMP + "` renders it.");
+    log.debug("Leaving renderNodeCoverage(). No c8.");
+    return;
+  }
+  // --allowExternal is required, not decorative: c8 drops every file outside
+  // its cwd by default, and on a HOST run the modules under test live in
+  // ../client/src and ../api. Without it that run renders an empty report and
+  // says nothing about why.
+  const args = ["report", "--temp-directory", NODE_COVERAGE_TMP,
+    "--reports-dir", NODE_COVERAGE_DIR, "--allowExternal",
+    "--reporter=html", "--reporter=lcov", "--reporter=text-summary"];
+  coverageExcludes(jobs).forEach(function (pattern) {
+    args.push("--exclude", pattern);
+  });
+  log.info("Node coverage: rendering " + files.length + " V8 file(s) with c8.");
+  try {
+    const out = execFileSync(c8, args, { cwd: TESTS_DIR, encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"] });
+    String(out || "").split(/\r?\n/).forEach(function (line) {
+      if (line.trim() !== "") {
+        log.info("c8: " + line);
+      }
+    });
+  } catch (e) {
+    log.warn("renderNodeCoverage(): c8 failed: " + e.message);
+    log.debug("Leaving renderNodeCoverage(). c8 failed.");
+    return;
+  }
+  log.info("Node coverage report written to " + NODE_COVERAGE_DIR +
+    "/index.html (and lcov.info).");
+  log.debug("Leaving renderNodeCoverage().");
 }
 
 function writeReports(results, demo) {
@@ -3115,6 +5028,7 @@ function demoResults() {
     const result = {
       name: j.name,
       script: j.script,
+      type: j.type || "browser",
       passed,
       code: passed ? 0 : 1,
       durationMs: 3000 + i * 1500,
@@ -3143,23 +5057,23 @@ async function main() {
     results = demoResults();
     log.info("Writing SAMPLE report (--demo); no tests executed.");
   } else {
-    results = [];
     const jobs = buildJobs();
-    log.info(`Running ${jobs.length} test(s) against ${BASE_URL}`);
-    for (const [i, job] of jobs.entries()) {
-      if (job.skip) {
-        log.info(`===== [${i + 1}/${jobs.length}] ${job.name} — SKIPPED =====`);
-        log.info(`----- SKIP: ${job.skip}`);
-        results.push(makeSkipResult(job, i));
-        continue;
-      }
-      log.info(`===== [${i + 1}/${jobs.length}] ${job.name} =====`);
-      const r = await runJob(job,
-          i); // sequential: keep streamed output readable
-      results.push(r);
-      log.info(`----- ${r.passed ? "PASS" : "FAIL"} (${(r.durationMs / 1000)
-               .toFixed(1)}s) → ${r.logFile}`);
-    }
+    // Filled BY INDEX rather than pushed: with a pool the jobs finish out of
+    // order, and the report is written in the order they were built.
+    results = new Array(jobs.length);
+    prepareNodeCoverage();
+    log.info(`Running ${jobs.length} test(s) against ${BASE_URL}, ` +
+        `${CONCURRENCY} at a time.`);
+    const wallStart = Date.now();
+    await runAllJobs(jobs, results);
+    runWallMs = Date.now() - wallStart;
+    const jobMs = results.reduce(function (sum, r) {
+      return sum + ((r && r.durationMs) || 0);
+    }, 0);
+    log.info(`Wall clock ${(runWallMs / 1000).toFixed(1)}s, for ` +
+        `${(jobMs / 1000).toFixed(1)}s of job time ` +
+        `(${(jobMs / Math.max(runWallMs, 1)).toFixed(1)}x).`);
+    renderNodeCoverage(jobs);
   }
 
   writeReports(results, demo);
@@ -3171,7 +5085,10 @@ async function main() {
   log.info(`Report written to ${rel}/report.html (and report.xml, logs/)`);
   log.info(`Latest run also at ${path.relative(process.cwd(),
            path.join(REPORT_DIR, "latest"))}`);
+  const units = results.filter((r) => r.type === "unit").length;
   log.info(`Summary: ${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`);
+  log.info(`Of those, ${units} are unit jobs (no browser) and ` +
+    `${results.length - units} drive one.`);
 
   // Don't fail the demo run; otherwise signal failures to the caller/CI.
   process.exit(demo ? 0 : failed > 0 ? 1 : 0);

@@ -459,8 +459,19 @@ function ellipticStaysOutOfTheBundles() {
   // nothing in this repository noticing — the Kerberos crypto reaches Web Crypto
   // through globalThis specifically to avoid it, and this is what holds it to
   // that.
-  const extraDirs = [path.join(__dirname, "..", "common", "krb5")]
+  //
+  // common/spiffe and common/xmldsig.js are staged the same way and are read
+  // here for the same reason. xmldsig.js is the one that would otherwise have
+  // slipped out of this check entirely: it USED to live in client/src and was
+  // moved to common/ when api/server.js started signing with it, and a scan
+  // that only reads client/src would have gone on reporting a pass over a
+  // module it no longer looks at — while that module is still browserified
+  // into eight bundles.
+  const extraDirs = [path.join(__dirname, "..", "common", "krb5"),
+                     path.join(__dirname, "..", "common", "spiffe")]
     .filter(function (d) { return fs.existsSync(d); });
+  const extraFiles = [path.join(__dirname, "..", "common", "xmldsig.js")]
+    .filter(function (f) { return fs.existsSync(f); });
   const banned = [
     { pattern: /require\(\s*['"]jwk-to-pem['"]\s*\)/, name: "jwk-to-pem",
       why: "builds its EC point through elliptic; use ./jwk_pem instead" },
@@ -492,6 +503,10 @@ function ellipticStaysOutOfTheBundles() {
   extraDirs.forEach(function (dir) {
     walkExtra(dir, path.relative(path.join(__dirname, ".."), dir));
   });
+  extraFiles.forEach(function (file) {
+    files.push({ path: file,
+                 label: path.relative(path.join(__dirname, ".."), file) });
+  });
   function walkExtra(dir, label) {
     fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
       const full = path.join(dir, entry.name);
@@ -506,6 +521,15 @@ function ellipticStaysOutOfTheBundles() {
     const rel = path.relative(path.join(__dirname, ".."), dir);
     assert.ok(files.some(function (f) { return f.label.indexOf(rel) === 0; }),
       "found no .js files under " + rel + ", which is staged into a bundle and must be scanned");
+  });
+  // The same non-vacuity check for the single staged FILES, and it matters
+  // more for them: a directory that vanishes is obvious, whereas a file that
+  // moves again leaves this list quietly naming nothing.
+  extraFiles.forEach(function (file) {
+    const rel = path.relative(path.join(__dirname, ".."), file);
+    assert.ok(files.some(function (f) { return f.label === rel; }),
+      "found no " + rel + ", which is staged into eight bundles and must " +
+      "be scanned");
   });
   files.forEach(function (file) {
     const text = fs.readFileSync(file.path, "utf8");
@@ -544,11 +568,13 @@ function ellipticStaysOutOfTheBundles() {
             "requires it for the PKCE " +
     "code_challenge, and it is currently only present as a transitive " +
             "dependency of browserify");
-  log.info("[bundles] OK — " + files.length + " files in client/src plus the staged" +
-           "directories (" +
-    extraDirs.map(function (d) { return path.relative(path.join(__dirname, ".."), d); }).join(", ") +
-    "), none requiring a package that " +
-           "reaches elliptic, and none of those packages declared.");
+  var stagedNames = extraDirs.concat(extraFiles).map(function (p) {
+    return path.relative(path.join(__dirname, ".."), p);
+  });
+  log.info("[bundles] OK — " + files.length + " files in client/src plus " +
+           "the staged " + stagedNames.join(", ") + ", none requiring a " +
+           "package that reaches elliptic, and none of those packages " +
+           "declared.");
   log.debug("Leaving ellipticStaysOutOfTheBundles().");
 }
 
@@ -808,7 +834,822 @@ function testsImageHasNoCollidingFilenames() {
   const total = Object.keys(flat).length;
   log.info("[collisions] OK — " + total + " files are copied flat into the tests image, every " +
     "one has a unique name, and every script run-report schedules is among them.");
+  stsModuleClosureIsCopied(dockerfile);
+  flatCopiedModulesHaveTheirPackages(dockerfile);
   log.debug("Leaving testsImageHasNoCollidingFilenames().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY sts/*.js THIS IMAGE COPIES MUST BRING ITS OWN REQUIRES WITH IT.
+//
+// Four tests load modules out of the mock STS submodule in process rather than
+// over HTTP — the mock-KDC jobs — so tests/Dockerfile copies a hand-picked set
+// of sts/*.js into ./sts/. A hand-picked set is exactly what goes stale, and it
+// goes stale WITHOUT THIS FILE OR THAT ONE CHANGING: the closure moves when the
+// sts/ GITLINK moves, because the mock gave a module it already had a new
+// `require`. It has happened four times, and tests/Dockerfile carries a
+// paragraph for each — admin_stats.js, config.js, audit.js, and then the RFC
+// 9700 bump, which gave app.js a require on ./oauth2_bcp and three others one
+// on ./applications.
+//
+// Every one of those failed the same way and none of them named the fix:
+// "Cannot find module './applications'" thrown at require time from inside a
+// file the image HAS, before a single test ran, while every host run stayed
+// green because a checkout has the whole submodule.
+//
+// So this walks it instead of listing it. Seed with what the Dockerfile copies,
+// follow each relative require, and require the result to be a subset of what
+// is copied. It reads the Dockerfile as STATEMENTS rather than lines for the
+// reason the file header gives: a check a reformat can silence is a check that
+// will be silenced.
+//
+// **AND IT FOLLOWS `../` AS WELL AS `./`, WHICH IT DID NOT USED TO NEED TO.**
+// Every module in that repository sat in its root until mock-sts 0f986b3
+// ("Reorganizing source code."), so every intra-mock require was `./x` and a
+// walker that only understood `./` saw the whole graph. After the move, the
+// cross-directory ones are `../common/app` — and a `./`-only walker would have
+// followed NOTHING between directories, reported "OK, every require resolves"
+// over a set it never traversed, and let exactly the failure it exists for
+// through. That is this project's recurring defect (a check that quietly does
+// nothing) hiding inside the check written to prevent another one, so the
+// names below are kept as PATHS relative to the mock's root and resolved the
+// way node resolves them.
+// ---------------------------------------------------------------------------
+function stsModuleClosureIsCopied(dockerfile) {
+  log.debug("Entering stsModuleClosureIsCopied().");
+  const stsDir = path.join(__dirname, "..", "sts");
+  if (!fs.existsSync(stsDir)) {
+    log.info("[sts-closure] skipped: sts/ is not checked out here.");
+    log.debug("Leaving stsModuleClosureIsCopied().");
+    return;
+  }
+  // What the image copies out of sts/, whatever the destination — ./sts/ for
+  // most of them, but bbs2023.js lands flat as sts_bbs2023.js and is required
+  // by that name, so the SOURCE is what matters here, not where it lands.
+  const copied = {};
+  // ANCHORED AT THE START OF A LINE, and that is not tidiness. An unanchored
+  // /COPY\s+/ also matches the word COPY inside a COMMENT — and this file is
+  // full of comments quoting the build error a missing COPY produces — so a
+  // sentence like `so \`COPY sts/krb5_kdc.js … ./sts/\` put a file next to` was
+  // read as an instruction and reported as a copied module that the submodule
+  // does not have. Docker requires the instruction at the start of a line and
+  // no COPY here uses a backslash continuation, so this is also the correct
+  // reading of the file.
+  const copyLine = /^COPY\s+([^\n]+)/gm;
+  fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
+    rest.split(/\s+/).forEach(function (src) {
+      if (src.indexOf("sts/") === 0 && /\.js$/.test(src)) {
+        copied[src.slice("sts/".length)] = true;
+      }
+    });
+    return _;
+  });
+  const seen = {};
+  const queue = Object.keys(copied);
+  const missing = [];
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen[name]) {
+      continue;
+    }
+    seen[name] = true;
+    const file = path.join(stsDir, name);
+    if (!fs.existsSync(file)) {
+      // A COPY naming a file the submodule does not have is the OTHER failure
+      // in this family: the image build itself stops, rather than a test.
+      missing.push(name + " (copied, but absent from the sts/ checkout)");
+      continue;
+    }
+    const src = fs.readFileSync(file, "utf8");
+    // Both `./x` and `../dir/x`, resolved against the requiring file's own
+    // directory and normalised back to a path relative to the mock's root —
+    // which is the form the COPY sources above are in.
+    const re = /require\((['"])(\.\.?\/[A-Za-z0-9_.\/-]+)\1\)/g;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+      let dep = path.posix.normalize(
+        path.posix.join(path.posix.dirname(name), m[2]));
+      if (!/\.js$/.test(dep)) {
+        dep = dep + ".js";
+      }
+      if (dep.indexOf("..") === 0) {
+        // A require reaching outside the mock's own tree. There is none today
+        // and one would not be copyable at all, so it is reported rather than
+        // silently normalised away.
+        missing.push(dep + " (required by sts/" + name + ", and it points " +
+          "outside the mock's own tree)");
+        continue;
+      }
+      if (!copied[dep]) {
+        missing.push(dep + " (required by sts/" + name + ")");
+        continue;
+      }
+      if (!seen[dep]) {
+        queue.push(dep);
+      }
+    }
+  }
+  const unique = missing.filter(function (v, i) {
+    return missing.indexOf(v) === i;
+  });
+  assert.deepStrictEqual(unique, [],
+    "tests/Dockerfile copies sts modules whose own requires it does " +
+    "not copy, so the in-process mock-KDC jobs die at load with " +
+    "\"Cannot find module\" naming a file this image HAS. This set moves " +
+    "when the sts/ GITLINK moves, not when a line here changes — add a " +
+    "COPY sts/<dir>/<name> ./sts/<dir>/ for each (the destination has to " +
+    "MIRROR the mock's own folder, or a require of ../common/x lands " +
+    "outside the image's sts/ tree): " + unique.join(", "));
+  log.info("[sts-closure] OK — " + Object.keys(seen).length + " sts " +
+    "modules are copied and every relative require among them resolves " +
+    "inside the image.");
+  log.debug("Leaving stsModuleClosureIsCopied().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY MODULE COPIED FLAT MUST HAVE ITS PACKAGES IN tests/package.json.
+//
+// The check above walks RELATIVE requires; this one walks the other kind, and
+// it is a different failure with the same shape. A module copied out of
+// client/src or common/ lands beside the test scripts, where the ONLY
+// resolution root is tests/node_modules — client/node_modules is not in the
+// image at all. So a package the client declares and this package does not is
+// a `Cannot find module` at require time, thrown from inside a file the image
+// HAS, while every host run stays green because there the module is loaded
+// from client/src and resolves against client/node_modules.
+//
+// That is exactly how `@noble/post-quantum` cost a run on 2026-08-22:
+// pk_encryption.js requires `@noble/post-quantum/ml-kem.js` for ML-KEM,
+// client/package.json has it, tests/package.json did not, and
+// crypto_engines.js — 14 sections of RFC vectors — died before the first one
+// with a message naming a package rather than a package.json.
+//
+// The set moves when a COPIED MODULE GAINS A require, not when a line here
+// changes, which is why this walks rather than lists. Only sources from
+// OUTSIDE tests/ are checked: a test script's own optional dependency is a
+// deliberate thing, whereas a module has no such fallback and no say in where
+// it is loaded from. (url_safety_schemes.js used to be the example here; its
+// dompurify/jsdom pair is declared now, because "optional" had turned into a
+// section that logged SKIPPED on every run and measured nothing.)
+// ---------------------------------------------------------------------------
+function flatCopiedModulesHaveTheirPackages(dockerfile) {
+  log.debug("Entering flatCopiedModulesHaveTheirPackages().");
+  const manifest = path.join(__dirname, "package.json");
+  if (!fs.existsSync(manifest)) {
+    log.info("[deps] skipped: tests/package.json is not present, so this is " +
+      "the tests image rather than a checkout.");
+    log.debug("Leaving flatCopiedModulesHaveTheirPackages().");
+    return;
+  }
+  const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
+  const declared = {};
+  ["dependencies", "optionalDependencies"].forEach(function (section) {
+    Object.keys(pkg[section] || {}).forEach(function (name) {
+      declared[name] = true;
+    });
+  });
+  const builtins = {};
+  require("module").builtinModules.forEach(function (name) {
+    builtins[name] = true;
+  });
+
+  // Only the FLAT destination: a module landing in ./sts/ or
+  // /usr/src/client/src resolves from a directory of its own, and
+  // client/server.js — copied there to be RUN rather than required — brings
+  // the client's own node_modules question with it.
+  const sources = [];
+  fs.readFileSync(dockerfile, "utf8").split("\n").forEach(function (line) {
+    const text = line.trim();
+    if (text.indexOf("COPY ") !== 0) {
+      return;
+    }
+    const parts = text.slice(5).split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      return;
+    }
+    const dest = parts[parts.length - 1];
+    if (dest !== "./" && dest !== ".") {
+      return;
+    }
+    parts.slice(0, -1).forEach(function (src) {
+      if (!/\.js$/.test(src)) {
+        return;
+      }
+      if (src.indexOf("tests/") === 0) {
+        return;
+      }
+      if (sources.indexOf(src) === -1) {
+        sources.push(src);
+      }
+    });
+  });
+
+  const missing = [];
+  const repo = path.join(__dirname, "..");
+  sources.forEach(function (src) {
+    const file = path.join(repo, src);
+    if (!fs.existsSync(file)) {
+      // A COPY naming a file this repository has not got stops the image
+      // build itself, which is loud; say so here anyway rather than reading
+      // it as "no requires".
+      missing.push(src + " is copied but absent from this checkout");
+      return;
+    }
+    const text = fs.readFileSync(file, "utf8");
+    const re = /require\(\s*['"]([^'"]+)['"]\s*\)/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const id = m[1];
+      if (id.charAt(0) === "." || id.charAt(0) === "/") {
+        continue;
+      }
+      if (builtins[id] || builtins[id.replace(/^node:/, "")]) {
+        continue;
+      }
+      // The package, not the subpath: `@noble/post-quantum/ml-kem.js` is
+      // declared as `@noble/post-quantum`.
+      const segments = id.split("/");
+      const name = id.charAt(0) === "@"
+        ? segments.slice(0, 2).join("/") : segments[0];
+      if (declared[name]) {
+        continue;
+      }
+      const entry = name + " (required by " + src + ")";
+      if (missing.indexOf(entry) === -1) {
+        missing.push(entry);
+      }
+    }
+  });
+  assert.deepStrictEqual(missing, [],
+    "tests/Dockerfile copies these modules FLAT into the image, where the " +
+    "only place node can resolve a package is tests/node_modules — and " +
+    "tests/package.json does not declare them, so the jobs that load those " +
+    "modules die at require with \"Cannot find module\" naming a package. " +
+    "A host run cannot see it: there the same module comes from client/src " +
+    "and resolves against client/node_modules. Add each to " +
+    "tests/package.json with the SAME specifier the owning package.json " +
+    "uses, so the image runs the code the browser bundle does: " +
+    missing.join(", "));
+  log.info("[deps] OK — " + sources.length + " modules are copied flat into " +
+    "the tests image and every package they require is declared in " +
+    "tests/package.json.");
+  log.debug("Leaving flatCopiedModulesHaveTheirPackages().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY BUNDLE MUST BE IN ALL THREE LISTS, AND THE THIRD ONE FAILS SILENTLY.
+//
+// A page's bundle is named in three places that are not near each other:
+//
+//   1. the `BUNDLES` array in `client/build.js`   — the static deployments,
+//   2. a `RUN browserify` line in `client/Dockerfile` — the container image,
+//   3. the `for entry in "src:standalone"` loop in that same Dockerfile's
+//      COVERAGE block — `./run-coverage.sh`, and nothing else.
+//
+// Miss (1) and the deployed static site is fine while the containerized page's
+// <script> 404s. Miss (2) and the reverse. Both of those are loud: a page that
+// does nothing fails its own suite immediately.
+//
+// **MISS (3) AND NOTHING ANYWHERE FAILS.** The page builds, ships, works and
+// passes every test it has; it simply reports no coverage. The only symptom is
+// a number in a report nobody diffs, and the plain launchers never execute that
+// block at all — so an ordinary run cannot see the gap even in principle.
+//
+// That is not hypothetical. On 2026-08-22 SEVEN bundles were missing from it —
+// all six Kerberos pages plus `pki` — and the Dockerfile had carried a comment
+// SAYING six of them were missing for months. A comment is not a check, which
+// is the whole reason this function exists rather than a longer comment.
+//
+// It reads the loop as a STATEMENT rather than as a line, for the reason
+// tests/CLAUDE.md records about source-inspection tests: a regex written
+// against one line stops seeing the thing it checks the moment somebody wraps
+// it, and it then fails by naming the property rather than the formatting.
+// ---------------------------------------------------------------------------
+function coverageListCoversEveryBundle() {
+  log.debug("Entering coverageListCoversEveryBundle().");
+  log.info("[bundle lists] Comparing client/build.js's BUNDLES, the " +
+           "RUN browserify lines and the coverage loop.");
+  const dockerfile = path.join(__dirname, "..", "client", "Dockerfile");
+  const buildJs = path.join(__dirname, "..", "client", "build.js");
+  if (!fs.existsSync(dockerfile) || !fs.existsSync(buildJs)) {
+    // The tests image copies client/Dockerfile in as `client_Dockerfile` and
+    // does not carry build.js, so this cannot run there. Say so rather than
+    // pass quietly — a check that skips silently is the defect this file is
+    // full of notes about.
+    log.info("[bundle lists] SKIPPED — client/Dockerfile and/or " +
+             "client/build.js are not both present in this layout (running " +
+             "from the tests image).");
+    log.debug("Leaving coverageListCoversEveryBundle().");
+    return;
+  }
+  const docker = fs.readFileSync(dockerfile, "utf8");
+  const build = fs.readFileSync(buildJs, "utf8");
+
+  // (2) The plain build. One RUN per bundle, each naming its source file and
+  // its --standalone global.
+  const plain = {};
+  // Built from a string rather than written as a literal only so it fits in
+  // eighty columns; a regex literal cannot be broken across lines.
+  const runLine = new RegExp(
+    "^RUN browserify src\\/([A-Za-z0-9_]+)\\.js" +
+    "[^\\n]*?--standalone ([A-Za-z0-9_]+)", "gm");
+  let match = runLine.exec(docker);
+  while (match !== null) {
+    plain[match[1]] = match[2];
+    match = runLine.exec(docker);
+  }
+  assert.ok(Object.keys(plain).length > 20,
+    "Only " + Object.keys(plain).length + " RUN browserify lines were found " +
+    "in client/Dockerfile, which cannot be right — this check's own regex " +
+    "has probably stopped matching, which would make it pass while testing " +
+    "nothing.");
+
+  // (3) The coverage loop, read as a statement: everything between
+  // `for entry in` and the `;` that closes it, however it is wrapped.
+  const loop = docker.match(/for entry in([\s\S]*?);\s*do/);
+  assert.ok(loop,
+    "The COVERAGE block's `for entry in ... ; do` loop was not found in " +
+    "client/Dockerfile at all. Either it has been removed — in which case " +
+    "./run-coverage.sh now instruments nothing — or this check can no longer " +
+    "see it.");
+  const coverage = {};
+  (loop[1].match(/"([^"]+)"/g) || []).forEach(function (quoted) {
+    const parts = quoted.slice(1, -1).split(":");
+    coverage[parts[0]] = parts[1];
+  });
+
+  // (1) build.js's BUNDLES.
+  const bundlesBlock = build.match(/const BUNDLES = \[([\s\S]*?)\n\];/);
+  assert.ok(bundlesBlock,
+    "The BUNDLES array was not found in client/build.js.");
+  const bundles = {};
+  (bundlesBlock[1].match(/\['([^']+)',\s*'([^']+)'\]/g) || [])
+    .forEach(function (entry) {
+      const parts = entry.match(/\['([^']+)',\s*'([^']+)'\]/);
+      bundles[parts[1]] = parts[2];
+    });
+
+  const problems = [];
+  Object.keys(plain).forEach(function (name) {
+    if (coverage[name] === undefined) {
+      problems.push("`" + name + "` is built by client/Dockerfile and is NOT " +
+        "in the COVERAGE loop, so ./run-coverage.sh reports nothing for that " +
+        "page — silently, because the page still builds and still works.");
+    }
+    if (bundles[name] === undefined) {
+      problems.push("`" + name + "` is built by client/Dockerfile and is NOT " +
+        "in client/build.js's BUNDLES, so the static deployments ship a page " +
+        "whose <script> 404s.");
+    }
+  });
+  Object.keys(bundles).forEach(function (name) {
+    if (plain[name] === undefined) {
+      problems.push("`" + name + "` is in client/build.js's BUNDLES and has " +
+        "no RUN browserify line in client/Dockerfile, so the containerized " +
+        "page's <script> 404s while the static site is fine.");
+    }
+  });
+  Object.keys(coverage).forEach(function (name) {
+    if (plain[name] === undefined) {
+      problems.push("`" + name + "` is in the COVERAGE loop and is not built " +
+        "by any RUN browserify line, so ./run-coverage.sh fails building it.");
+    } else if (coverage[name] !== plain[name]) {
+      // The --standalone name IS the global the page's inline onclick
+      // handlers call, so a disagreement means every click on that page is a
+      // silent no-op under coverage and works everywhere else.
+      problems.push("`" + name + "` is built --standalone " + plain[name] +
+        " normally and --standalone " + coverage[name] + " under coverage. " +
+        "That global is what every inline onclick on the page calls, so " +
+        "under ./run-coverage.sh every click there is a ReferenceError.");
+    }
+  });
+  assert.deepStrictEqual(problems, [],
+    "A page's bundle has to be named in THREE places — client/build.js's " +
+        "BUNDLES,\n" +
+    "a RUN browserify line in client/Dockerfile, and that file's COVERAGE " +
+        "loop.\n" +
+    "The third fails SILENTLY, which is why this check exists:\n  " +
+    problems.join("\n  "));
+  log.info("[bundle lists] OK — " + Object.keys(plain).length +
+           " bundle(s), all three lists agree.");
+  log.debug("Leaving coverageListCoversEveryBundle().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY SCHEDULED JOB MUST DECLARE `--url`, OR IT DIES BEFORE ITS FIRST LINE.
+//
+// run-report.js spawns each job as `node <script>.js --url <BASE_URL>`, and
+// commander exit(1)s on an option it was not told about. A test that has no use
+// for a base url — it reads source, or drives modules in process — still has to
+// ACCEPT one, or the report carries a job that failed in 0.06s with
+// `error: unknown option '--url'` and not one line of the test's own output.
+// That reads as a broken runner rather than as a missing option, and it has now
+// cost two runs: page_load_retry.js on 2026-08-20, then both SCIM node jobs on
+// 2026-08-22. tests/CLAUDE.md has said so since the first one, which is exactly
+// why this is a check rather than another paragraph.
+//
+// A job that parses no arguments at all is fine and is why this looks for
+// commander rather than for the option alone: node ignores the pair when
+// nothing reads it (crypto_engines.js relies on that, and says so).
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// A SHARED MODULE IN common/ IS STAGED INTO client/src BY A LIST, AND A LIST
+// GOES STALE.
+//
+// common/xmldsig.js is copied into client/src at build time so the eight
+// bundles that `require("./xmldsig")` can resolve it — client/build.js names
+// them in XMLDSIG_BUNDLES. Add a ninth consumer and nothing here notices: the
+// bundle builds locally (a developer usually has a staged copy lying around)
+// and fails in the image with `Cannot find module './xmldsig'`, a message
+// naming a file that exists, two directories away. That is precisely how the
+// Kerberos list failed when spnego.js was added — the comment above
+// KRB5_BUNDLES in build.js records it — so the list gets a check this time
+// rather than a comment.
+function stagedSharedModuleListsAreComplete() {
+  log.debug("Entering stagedSharedModuleListsAreComplete().");
+  const srcDir = path.join(__dirname, "..", "client", "src");
+  const buildJs = path.join(__dirname, "..", "client", "build.js");
+  if (!fs.existsSync(srcDir) || !fs.existsSync(buildJs)) {
+    log.info("[staged lists] SKIPPED — this is the tests image, which has no " +
+             "client/src tree or build.js to compare.");
+    log.debug("Leaving stagedSharedModuleListsAreComplete().");
+    return;
+  }
+  const build = fs.readFileSync(buildJs, "utf8");
+  // Every staged module that a bundle reaches by a bare relative require, and
+  // the build.js list that is supposed to name its consumers.
+  const staged = [
+    { module: "xmldsig", list: "XMLDSIG_BUNDLES" },
+    { module: "spiffe_id", list: "SPIFFE_BUNDLES" }
+  ];
+  let checked = 0;
+  staged.forEach(function (entry) {
+    const m = new RegExp("const " + entry.list +
+      "\\s*=\\s*\\[([^\\]]*)\\]").exec(build);
+    assert.ok(m, "client/build.js no longer declares " + entry.list +
+      ", which is what stages common/" + entry.module + ".js into client/src");
+    const declared = (m[1].match(/'[^']+'/g) || [])
+      .map(function (q) { return q.slice(1, -1); }).sort();
+    // Who actually requires it, read from the source rather than from a list.
+    const requires = new RegExp("require\\(\\s*[\"']\\./" +
+      entry.module + "(\\.js)?[\"']\\s*\\)");
+    const consumers = fs.readdirSync(srcDir)
+      .filter(function (f) { return /\.js$/.test(f); })
+      .filter(function (f) {
+        return requires.test(fs.readFileSync(path.join(srcDir, f), "utf8"));
+      })
+      .map(function (f) { return f.replace(/\.js$/, ""); });
+    // A consumer that is not itself a bundle entry point is reached THROUGH
+    // one, and the bundle that reaches it is what has to be in the list — so
+    // only compare the ones that are bundles.
+    const bundles = new Set((build.match(/\['([a-z0-9_]+)',\s*'[^']*'\]/g) ||
+      []).map(function (b) { return /\['([a-z0-9_]+)'/.exec(b)[1]; }));
+    const direct = consumers.filter(function (c) { return bundles.has(c); })
+      .sort();
+    direct.forEach(function (c) {
+      assert.ok(declared.indexOf(c) >= 0,
+        "client/src/" + c + ".js requires ./" + entry.module + " but " +
+        entry.list + " in client/build.js does not name it, so common/" +
+        entry.module + ".js will not be staged for that bundle and the image " +
+        "build fails with \"Cannot find module './" + entry.module + "'\".");
+    });
+    // ...and the other way, so the list cannot quietly name a bundle that
+    // stopped needing it and go on looking maintained.
+    declared.forEach(function (d) {
+      assert.ok(consumers.indexOf(d) >= 0,
+        entry.list + " in client/build.js names " + d + ", which no longer " +
+        "requires ./" + entry.module + ".");
+    });
+    checked += direct.length;
+  });
+  log.info("[staged lists] OK — " + checked + " bundle(s) that require a " +
+           "module staged out of common/ are named by the list that stages " +
+           "it, and no list names a bundle that does not.");
+  log.debug("Leaving stagedSharedModuleListsAreComplete().");
+}
+
+function everyJobDeclaresTheUrlOption() {
+  log.debug("Entering everyJobDeclaresTheUrlOption().");
+  const report = path.join(__dirname, "run-report.js");
+  if (!fs.existsSync(report)) {
+    log.info("[--url] skipped: no run-report.js beside this test.");
+    log.debug("Leaving everyJobDeclaresTheUrlOption().");
+    return;
+  }
+  const scripts = [];
+  fs.readFileSync(report, "utf8").replace(/script:\s*"([^"]+)"/g,
+      function (_, name) {
+        if (scripts.indexOf(name) === -1) scripts.push(name);
+        return _;
+      });
+  // The first argument of `.option(...)` / `new Option(...)` is the flag spec,
+  // and it is read as a STATEMENT rather than a line: these declarations wrap
+  // at 80 columns, and a check a reformat can silence is a check that will be
+  // silenced.
+  const SPEC = /(?:\.option|new\s+Option)\s*\(\s*(["'])((?:\\.|(?!\1).)*)\1/g;
+  const undeclared = [];
+  scripts.forEach(function (name) {
+    const file = path.join(__dirname, name);
+    if (!fs.existsSync(file)) {
+      // Absence is somebody else's check — testsImageHasNoCollidingFilenames()
+      // asserts every scheduled script reaches the image.
+      return;
+    }
+    const src = fs.readFileSync(file, "utf8");
+    if (!/require\(\s*["']commander["']\s*\)/.test(src)) {
+      return;
+    }
+    var takesUrl = false;
+    var m;
+    SPEC.lastIndex = 0;
+    while ((m = SPEC.exec(src)) !== null) {
+      if (m[2].split(/[\s,|]+/).indexOf("--url") !== -1) {
+        takesUrl = true;
+      }
+    }
+    if (!takesUrl) {
+      undeclared.push(name);
+    }
+  });
+  assert.deepStrictEqual(undeclared, [],
+    "run-report.js hands every job `--url <BASE_URL>` and these scripts use " +
+    "commander without declaring it, so each exits 1 in ~0.06s with " +
+    "`error: unknown option '--url'` before running a single check: " +
+    undeclared.join(", ") + ". Add the option and say it is ignored:\n" +
+    '  // Accepted and ignored: run-report.js passes --url to every job.\n' +
+    '  .addOption(new Option("-u, --url <url>",\n' +
+    '      "base url (unused: this test needs no browser)"))');
+  log.info("[--url] OK — " + scripts.length + " scheduled script(s), every " +
+    "one that parses arguments accepts --url.");
+  log.debug("Leaving everyJobDeclaresTheUrlOption().");
+}
+
+// ---------------------------------------------------------------------------
+// A BROWSER RECONFIGURING ITSELF MUST NOT COUNT AS A PAGE ERROR — AND MUST
+// NOT BECOME A LICENCE TO IGNORE FAILED LOADS.
+//
+// Chrome abandons a request whose certificate-verifier or network
+// configuration is replaced while it is in flight, and reports it with a code
+// of its own: net::ERR_CERT_VERIFIER_CHANGED, net::ERR_NETWORK_CHANGED. The
+// server was never asked and no certificate was rejected on its merits, so
+// neither is a verdict on the page — but the console line looks like every
+// other failed load, and the twenty-odd tests here that assert a clean console
+// read it as one. That is the single failure of 270 jobs on the
+// ./remote-run-tests.sh run of 2026-08-28: a stylesheet on a job whose every
+// functional assertion had already passed. browser_flags.js drops exactly
+// those two codes and logs every drop.
+//
+// Two properties, because each is silent when it breaks:
+//
+//   A. The filter still passes REAL failures through. Widening it to
+//      `Failed to load resource` would swallow every 404, every refused
+//      connection and every certificate this suite deliberately makes a
+//      browser reject — and those tests would keep passing while testing
+//      nothing.
+//   B. Every test that asserts a clean console actually applies it. A new
+//      browser test is written by copying the nearest one, and the copy that
+//      misses this reintroduces a flake that reproduces on nobody's machine.
+//
+// A file that only LOGS severe entries on its way to failing has nothing to
+// filter and is listed as an exception here rather than edited.
+//
+// Node only, no browser, no network: never skipped.
+// ---------------------------------------------------------------------------
+function transientLoadErrorsAreFilteredNotSwallowed() {
+  log.debug("Entering transientLoadErrorsAreFilteredNotSwallowed().");
+  const browserFlags = require("./browser_flags.js");
+
+  // (A) What it drops, and — the half that matters — what it does not.
+  const DROPPED = [
+    "https://test.idptools.com/css/bootstrap.css - Failed to load resource: " +
+        "net::ERR_CERT_VERIFIER_CHANGED",
+    "https://example.test/js/app.js - Failed to load resource: " +
+        "net::ERR_NETWORK_CHANGED"
+  ];
+  const KEPT = [
+    // A certificate that WAS verified and found wanting.
+    "https://sts.test/token - Failed to load resource: " +
+        "net::ERR_CERT_AUTHORITY_INVALID",
+    "https://sts.test/token - Failed to load resource: " +
+        "net::ERR_CERT_COMMON_NAME_INVALID",
+    // A service that is not there.
+    "http://localhost:4000/claimdescription - Failed to load resource: " +
+        "net::ERR_CONNECTION_REFUSED",
+    // A status the page asked for and got.
+    "https://idp.test/metadata - Failed to load resource: the server " +
+        "responded with a status of 404 (Not Found)",
+    // The thing every one of these assertions exists to catch.
+    "https://idptools.com/js/saml_tools.js 12:3 Uncaught ReferenceError: " +
+        "samlToolsInit is not defined"
+  ];
+  DROPPED.forEach(function (message) {
+    assert.strictEqual(browserFlags.isTransientLoadError(message), true,
+      "browser_flags.isTransientLoadError() must drop the browser's own " +
+      "configuration change, and did not for:\n  " + message);
+  });
+  KEPT.forEach(function (message) {
+    assert.strictEqual(browserFlags.isTransientLoadError(message), false,
+      "browser_flags.isTransientLoadError() must keep a real failure, and " +
+      "dropped this one — which would make every console assertion in this " +
+      "suite decorative:\n  " + message);
+  });
+  assert.deepStrictEqual(
+    browserFlags.withoutTransientLoadErrors(DROPPED.concat(KEPT)), KEPT,
+    "withoutTransientLoadErrors() must remove exactly the transient codes " +
+    "and preserve the rest, in order.");
+  // Neither an empty log nor a missing one is an error.
+  assert.deepStrictEqual(browserFlags.withoutTransientLoadErrors([]), []);
+  assert.deepStrictEqual(browserFlags.withoutTransientLoadErrors(null), []);
+  assert.strictEqual(browserFlags.isTransientLoadError(undefined), false);
+
+  // (B) Every test that JUDGES severe console entries applies it.
+  //
+  // The candidates are the files that compare a log entry's level against
+  // SEVERE. A file is satisfied by calling the helper, or by already dropping
+  // every failed load — `Failed to load resource` — which is a wider filter
+  // this cannot make wider.
+  const SATISFIED = new RegExp("isTransientLoadError|" +
+      "withoutTransientLoadErrors|Failed to load resource");
+  // Files that only PRINT severe entries while reporting a failure of their
+  // own. There is no assertion to protect, and filtering the diagnostic would
+  // remove the line that explains the failure.
+  const LOG_ONLY = ["kerberos_spnego_signin.js", "rfc9700_flows.js"];
+  const self = path.basename(__filename);
+  const missing = [];
+  var candidates = 0;
+  fs.readdirSync(__dirname).filter(function (name) {
+    return /\.js$/.test(name) && name !== self;
+  }).forEach(function (name) {
+    const src = fs.readFileSync(path.join(__dirname, name), "utf8");
+    if (!/name\s*[!=]==\s*(["'])SEVERE\1/.test(src)) {
+      return;
+    }
+    candidates++;
+    if (LOG_ONLY.indexOf(name) !== -1) {
+      return;
+    }
+    if (!SATISFIED.test(src)) {
+      missing.push(name);
+    }
+  });
+  assert.deepStrictEqual(missing, [],
+    "these tests assert on SEVERE browser console entries without filtering " +
+    "the browser's own configuration changes, so each carries the flake that " +
+    "cost the remote run of 2026-08-28: " + missing.join(", ") + ". Add\n" +
+    '  .filter(function (e) {\n' +
+    '    return !browserFlags.isTransientLoadError(e.message);\n' +
+    '  })\n' +
+    "to the filter, or list the file in LOG_ONLY here if it only logs them.");
+  log.info("[console noise] OK — the two configuration-change codes are " +
+    "dropped, five real failures are not, and all " + candidates +
+    " console-judging test(s) filter them.");
+  log.debug("Leaving transientLoadErrorsAreFilteredNotSwallowed().");
+}
+
+// ---------------------------------------------------------------------------
+// NO DOCKERFILE STAGE MAY OUTGROW DOCKER'S LAYER LIMIT.
+//
+// Docker's layer store refuses a chain deeper than 125 layers (`maxDepth` in
+// moby's layer package) and every RUN, COPY and ADD adds one. tests/Dockerfile
+// is almost entirely COPY — one line per test script, per borrowed module and
+// per vendored directory — so it grows with every protocol this suite learns,
+// and on 2026-08-25 it reached 126 and the build died with
+//
+//   Step 132/136 : RUN ls
+//   ...
+//   max depth exceeded
+//
+// naming no instruction, no file and no limit, three lines after that step's
+// own output. It reads as the `ls` failing. The fix was to split the COPYs
+// into two staging stages the final image copies /usr/src out of, which is
+// documented at the top of tests/Dockerfile — and a split is exactly the kind
+// of headroom that gets used up again without anybody noticing, because
+// nothing about adding one more COPY line looks different from the last
+// hundred.
+//
+// So this counts. It fails at a BUDGET well below the real ceiling, on
+// purpose: a check that fires at 125 fires only once the build is already
+// broken, which is the situation it exists to replace. At 100 there is room
+// for the base image's own layers (which count too — a `node:` base is about
+// eight) and enough warning to add a stage deliberately rather than under a
+// build failure.
+//
+// It reads every Dockerfile in the tree, not only this one: client/Dockerfile
+// is the next closest and has the same shape (one COPY per bundle). Runs in a
+// checkout; the tests image has no repository to walk and says so.
+// ---------------------------------------------------------------------------
+function everyDockerfileStaysUnderTheLayerLimit() {
+  log.debug("Entering everyDockerfileStaysUnderTheLayerLimit().");
+  // 125 is docker's; 100 is ours, and the gap is the base image plus warning.
+  const DOCKER_MAX_DEPTH = 125;
+  const BUDGET = 100;
+  const repo = path.join(__dirname, "..");
+  // `client/` IS NOT THE MARKER, AND THAT COST THE CONTAINERIZED RUN OF
+  // 2026-08-27. The tests image stages client/src at /usr/src/client/src (see
+  // tests/Dockerfile) precisely so the Kerberos and SPIFFE jobs can require
+  // their modules by the path a checkout uses — so this directory exists in
+  // the image, the guard did not fire, and the walk below found NO Dockerfile
+  // at all. The failure was the summary's `counted.reduce()` on an empty array
+  // — "Reduce of empty array with no initial value", naming Array.reduce and
+  // nothing about docker, layers or the missing tree. What the image does not
+  // carry is a Dockerfile, so that is what is asked about, and the walk's own
+  // result is checked below as well: this function is about Dockerfiles, and
+  // "none found" is the one condition it can never usefully assert on.
+  if (!fs.existsSync(path.join(repo, "tests", "Dockerfile"))) {
+    log.info("[layers] skipped: no tests/Dockerfile here, so this is the " +
+      "tests image rather than a checkout.");
+    log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
+    return;
+  }
+  // The submodules' own Dockerfiles ARE walked — sts/Dockerfile builds in
+  // this stack and a gitlink bump is exactly the kind of change that could
+  // push one over. node_modules and .git are not.
+  const skip = /(^|\/)(node_modules|\.git)(\/|$)/;
+  const found = [];
+  const walk = function (dir) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
+      const full = path.join(dir, entry.name);
+      if (skip.test(full)) {
+        return;
+      }
+      if (entry.isDirectory()) {
+        walk(full);
+        return;
+      }
+      if (entry.name === "Dockerfile" || /^Dockerfile\./.test(entry.name)) {
+        found.push(full);
+      }
+    });
+  };
+  walk(repo);
+  if (found.length === 0) {
+    log.info("[layers] skipped: the tree at " + repo + " holds no Dockerfile " +
+      "to walk.");
+    log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
+    return;
+  }
+
+  const over = [];
+  const counted = [];
+  found.forEach(function (file) {
+    const lines = fs.readFileSync(file, "utf8").split("\n");
+    // Per STAGE, because each FROM starts a fresh chain — that is what makes
+    // the split in tests/Dockerfile work at all.
+    let stage = "(before any FROM)";
+    let layers = 0;
+    let continued = false;
+    const report = function () {
+      if (layers === 0 && stage === "(before any FROM)") {
+        // Nothing between the top of the file and its first FROM; a stage
+        // with no layers of its own is not worth naming in the summary.
+        return;
+      }
+      const rel = path.relative(repo, file);
+      counted.push(rel + " [" + stage + "]: " + layers);
+      if (layers > BUDGET) {
+        over.push(rel + " stage " + stage + " has " + layers + " layer " +
+          "instructions");
+      }
+    };
+    lines.forEach(function (line) {
+      const wasContinued = continued;
+      continued = /\\\s*$/.test(line);
+      if (wasContinued) {
+        return;
+      }
+      const text = line.trim();
+      if (text.charAt(0) === "#" || text === "") {
+        return;
+      }
+      if (/^FROM\s/i.test(text)) {
+        report();
+        stage = text.replace(/^FROM\s+/i, "");
+        layers = 0;
+        return;
+      }
+      if (/^(RUN|COPY|ADD)\s/i.test(text)) {
+        layers++;
+      }
+    });
+    report();
+  });
+
+  assert.deepStrictEqual(over, [],
+    "docker refuses a layer chain deeper than " + DOCKER_MAX_DEPTH + " and " +
+    "every RUN/COPY/ADD adds one; these stages are past this suite's budget " +
+    "of " + BUDGET + ": " + over.join(" | ") + ". Split the stage the way " +
+    "tests/Dockerfile is split — a staging stage the image copies /usr/src " +
+    "out of — rather than merging COPY lines, whose comments are attached to " +
+    "the lines they explain. Left alone, the build fails with `max depth " +
+    "exceeded`, which names no instruction and no file.");
+
+  log.info("[layers] OK — " + found.length + " Dockerfile(s), " +
+    counted.length + " stage(s), the deepest at " +
+    counted.reduce(function (a, b) {
+      return Number(a.split(": ").pop()) > Number(b.split(": ").pop()) ? a : b;
+    }) + " layer instructions, budget " + BUDGET + " of docker's " +
+    DOCKER_MAX_DEPTH + ".");
+  log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
 }
 
 async function test() {
@@ -823,7 +1664,12 @@ async function test() {
   ellipticStaysOutOfTheBundles();
   bigIntLiteralsStayOutOfTheBundles();
   appendedBeaconNeedsNoModuleSystem();
+  coverageListCoversEveryBundle();
   testsImageHasNoCollidingFilenames();
+  everyDockerfileStaysUnderTheLayerLimit();
+  stagedSharedModuleListsAreComplete();
+  everyJobDeclaresTheUrlOption();
+  transientLoadErrorsAreFilteredNotSwallowed();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

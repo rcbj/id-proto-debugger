@@ -43,6 +43,8 @@ const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
+const { waitForFocus } = require("./wait_for.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -54,9 +56,18 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
+// The Analyzer's capture inbox is rebuilt from scratch on every refresh —
+// window.onload starts one and the Refresh button starts another — so a button
+// found in the old table is detached before it can be clicked. That is a
+// StaleElementReferenceError the test can do nothing about except re-find, and
+// it took out the run of 2026-08-25T20-23-22. clickStable() is the shared
+// re-finding click; see common/tests.js.
+const { clickStable } =
+      require("../common/tests.js")({ By, until, waitTime, log, assert });
+
 const STS = (process.env.OID4VCI_ISSUER_URL ||
              (process.env.WSTRUST_STS_URL ||
-              "http://localhost:8081/sts").replace(/\/sts\/?$/, ""));
+              "https://localhost:8081/sts").replace(/\/sts\/?$/, ""));
 const CLIENT_ID = "webauthn-extension-test";
 const REDIRECT = STS + "/oauth2/callback-sink";
 const USER = "extuser-" + process.pid.toString(36) + "-" +
@@ -145,6 +156,11 @@ async function runCeremony(driver, username) {
   await driver.findElement(By.id("username")).sendKeys(username);
   await driver.findElement(By.id("kc-login")).click();
   await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
+  // A headless window is neither focused nor visible for its first second or
+  // so, and WebAuthn refuses on such a page with a bare NotAllowedError that
+  // reads exactly like a declined prompt. See waitForFocus() in
+  // tests/wait_for.js.
+  await waitForFocus(driver, waitTime * 8);
   await driver.findElement(By.id("wa-go")).click();
   await driver.wait(until.urlContains("/oauth2/callback-sink"), waitTime * 8);
   const url = new URL(await driver.getCurrentUrl());
@@ -211,6 +227,27 @@ async function test() {
     log.debug("Leaving test().");
     return;
   }
+
+  // The relying party, in the mock's registry, before the extension is asked to
+  // do anything with it. `acr_values=mfa` travels on the request rather than on
+  // the entry, deliberately: what a client ASKS for at sign-in time is not a
+  // property of its registration, and putting it on one here would suggest this
+  // mock enforced an application-level authentication policy that it does not.
+  await registry.provision(registry.baseOf(STS), {
+    identifier: CLIENT_ID,
+    name: "WebAuthn extension test",
+    protocols: ["oauth2", "oidc"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      oauthRedirectUri: [REDIRECT],
+      oauthResponseType: ["code"],
+      oauthGrantType: ["authorization_code"],
+      oauthScope: ["openid", "profile", "email"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the client the extension performs the ceremony for"
+  });
 
   await section("the CI build differs from the shipped build in " +
                 "exactly one file", () => {
@@ -385,8 +422,11 @@ async function test() {
         "needs to quote: " + armedNote);
 
       // One click loads the WHOLE envelope, request half included, which is the
-      // point of the inbox over pasting a response.
-      await driver.findElement(By.css("input.wa-load-capture")).click();
+      // point of the inbox over pasting a response. Through clickStable(),
+      // because the row carrying this button is re-created by every render of
+      // the pane and one of those can land between finding it and clicking it.
+      await clickStable(driver, By.css("input.wa-load-capture"),
+                        "the inbox's Load button");
       let request = "";
       await driver.wait(async function () {
         request = await driver.findElement(By.id("wa_request_body")).getText();
@@ -482,6 +522,7 @@ async function ceremonyFingerprint(driver, username) {
   // Re-run the enrolment's artifacts out of the STS is not possible (it keeps
   // only the key), so the fingerprint is taken from a fresh ceremony driven in
   // the page and read back with the browser's own APIs.
+  await waitForFocus(driver, waitTime * 8);
   log.debug("Leaving ceremonyFingerprint().");
   return driver.executeAsyncScript(
     "var done = arguments[arguments.length - 1];" +

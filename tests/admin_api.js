@@ -55,15 +55,22 @@ var log = bunyan.createLogger({ name: "admin_api",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var base = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/, "");
 var api = base + "/admin-api";
 
-// The console pages that are not this API's to mirror. /sts-metadata is on the
-// console's nav because a reader wants it there; it is the whole service's
-// index rather than one of the console's own pages, and it is already asserted
-// by tests/sts_metadata.js.
-const NOT_MIRRORED = ["/sts-metadata"];
+// The name this file signs into the console AS. It is a name and not a
+// credential: the mock checks no password anywhere. It is distinctive so that
+// a row in /admin/audit or a directory entry seeded by the sign-in says which
+// test made it.
+const CONSOLE_USER = "admin-api-test";
+
+// The console pages that are not this API's to mirror. /admin/sts-metadata is
+// on the console's nav because a reader wants it there — it has been a page of
+// the console proper since 2026-08-24, and was at /sts-metadata before that —
+// but it is the whole service's index rather than one of the console's own
+// pages, and it is already asserted by tests/sts_metadata.js.
+const NOT_MIRRORED = ["/admin/sts-metadata"];
 
 // Properties a schema documents that a healthy reply may legitimately omit,
 // each with the reason. Without this list the check below would have to be
@@ -73,6 +80,89 @@ const CONDITIONAL = {
   // with one — which is every run of this suite — must not carry it.
   "GroupList.directory": true,
 };
+
+// ---------------------------------------------------------------------------
+// A browser sign-on session for the CONSOLE, which this file needs in exactly
+// two places and could not have needed before 2026-08-24.
+//
+// The API is unprotected and stays that way — mgmt-api/admin_api.js argues that
+// at length, and this test is the first reason it gives. The CONSOLE next door
+// is not: `admin.authRequired` is on by default, so every /admin page needs a
+// session from /authn/login and a console role, and a caller that asks for
+// `?format=json` is refused 401 `login_required` rather than redirected,
+// because a redirect to an HTML sign-in screen is not an answer a program can
+// read. That refusal is what failed theReadsAgreeWithTheConsole() below.
+//
+// The comparison is the point of that check — one list read through two doors —
+// so the answer is to walk through the door rather than to stop reading the
+// console. The dance is the one a browser does, in three steps:
+//
+//   1. GET a console page WITHOUT ?format=json and without following the
+//      redirect. A GET with no session is sent to the sign-in screen, and the
+//      `authn` id in that Location is what the screen is signing in FOR.
+//   2. POST that id with a username and a password to /authn/login. This
+//      service checks no password anywhere, so any pair is accepted; the reply
+//      sets the session cookie.
+//   3. Send the cookie on the console reads.
+//
+// The role comes from `admin.openWhenEmpty`, which is on by default: while
+// neither role group has a member, whoever signs in holds both. If some earlier
+// job has granted a role to somebody else the roster is enforced and this user
+// holds nothing — so the caller checks the read it makes rather than assuming,
+// and says which of the two states it met.
+//
+// A gate that has been turned OFF is a legitimate state too (the setting is
+// switchable on purpose), and it is reported rather than silently treated as a
+// pass: no redirect means no session is needed, and the reads below then work
+// exactly as they did before any of this existed.
+// ---------------------------------------------------------------------------
+async function signInToTheConsole() {
+  log.debug("Entering signInToTheConsole().");
+  const gated = await fetch(base + "/admin/tokens", { redirect: "manual" });
+  if (gated.status !== 302) {
+    log.info("[console] admin.authRequired is off (GET /admin/tokens " +
+             "answered " + gated.status + " with no redirect), so the reads " +
+             "below need no session.");
+    log.debug("Leaving signInToTheConsole(). The gate is off.");
+    return null;
+  }
+  const where = gated.headers.get("location") || "";
+  const authn = (where.match(/[?&]authn=([^&]+)/) || [])[1];
+  assert.ok(authn,
+    "a console GET with no session should be sent to the sign-in screen " +
+    "carrying the id of the request waiting there, and it went to \"" +
+    where + "\". Without that id the screen has nothing to sign in FOR and " +
+    "refuses the POST.");
+  const body = "authn_id=" + encodeURIComponent(authn) +
+      "&username=" + encodeURIComponent(CONSOLE_USER) +
+      "&password=" + encodeURIComponent(CONSOLE_USER);
+  const signedIn = await fetch(base + "/authn/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: body,
+    redirect: "manual",
+  });
+  const setCookie = signedIn.headers.get("set-cookie") || "";
+  const session = (setCookie.match(/(sts_mock_session=[^;]+)/) || [])[1];
+  assert.ok(session,
+    "signing in at /authn/login should set the session cookie; the reply was " +
+    signedIn.status + " and its Set-Cookie is \"" + setCookie + "\". This " +
+    "service checks no password, so a refusal here is about the request " +
+    "rather than the credential.");
+  log.info("[console] signed in as " + CONSOLE_USER + " for the console " +
+           "reads. admin.authRequired is on.");
+  log.debug("Leaving signInToTheConsole(). Holding a session.");
+  return session;
+}
+
+// One console read, carrying the session when there is one.
+async function consoleJson(path, session) {
+  log.debug("Entering consoleJson(). path=" + path);
+  const r = await common.httpJson(base + path,
+      session ? { headers: { Cookie: session } } : undefined);
+  log.debug("Leaving consoleJson(). status=" + r.status);
+  return r;
+}
 
 async function get(path) {
   log.debug("Entering get(). path=" + path);
@@ -380,7 +470,7 @@ async function theSchemasMatchTheReplies(doc) {
 // ---------------------------------------------------------------------------
 // The reads answer, are paged, and agree with the console.
 // ---------------------------------------------------------------------------
-async function theReadsAgreeWithTheConsole() {
+async function theReadsAgreeWithTheConsole(session) {
   log.debug("Entering theReadsAgreeWithTheConsole().");
   log.info("=== The API and the console see one service ===");
   const apiTokens = await get("/tokens?per=5");
@@ -388,9 +478,15 @@ async function theReadsAgreeWithTheConsole() {
     "the revocation check above has just minted three artifacts, so an " +
     "empty list here means this comparison would be 0 against 0 — which " +
     "passes and proves nothing.");
-  const consoleTokens = await common.httpJson(
-    base + "/admin/tokens?per=5&format=json");
-  assert.ok(consoleTokens.ok, "the console's JSON view should answer 200.");
+  const consoleTokens = await consoleJson("/admin/tokens?per=5&format=json",
+                                          session);
+  assert.ok(consoleTokens.ok,
+    "the console's JSON view should answer 200, and it answered " +
+    consoleTokens.status + ": " + String(consoleTokens.raw).slice(0, 300) +
+    ". A 401 or a 403 here is the console's own gate (admin.authRequired) " +
+    "rather than a broken read — see signInToTheConsole(); a 403 means the " +
+    "session is real and the role is not, which happens once some other job " +
+    "has granted a role and turned the empty roster into an enforced one.");
   assert.strictEqual(apiTokens.held, consoleTokens.body.held,
     "the API and the console must report the same number of held artifacts " +
     "— they are one list read through two doors. API " + apiTokens.held +
@@ -699,7 +795,7 @@ async function theBulkRevocationsWorkAndAreUndone() {
 // ---------------------------------------------------------------------------
 // The explorer, and the one clause it costs.
 // ---------------------------------------------------------------------------
-async function theExplorerIsServedUnderAScopedPolicy() {
+async function theExplorerIsServedUnderAScopedPolicy(session) {
   log.debug("Entering theExplorerIsServedUnderAScopedPolicy().");
   log.info("=== The explorer and its Content-Security-Policy ===");
   const page = await fetch(api + "/docs");
@@ -750,7 +846,18 @@ async function theExplorerIsServedUnderAScopedPolicy() {
   // The relaxation must be scoped. The console next door is the page that
   // would be most costly to have quietly loosened, since it renders values a
   // caller supplied.
-  const consolePage = await fetch(base + "/admin");
+  // WITH the session, and that is not a detail: without one this GET is a 302
+  // to the sign-in screen, fetch follows it, and the policy read back is that
+  // screen's rather than the console's. It happens to be the same policy
+  // today, so the check would have gone on passing while measuring a
+  // different page — which is the shape of a check that is silenced rather
+  // than broken.
+  const consolePage = await fetch(base + "/admin",
+      session ? { headers: { Cookie: session } } : undefined);
+  assert.strictEqual(consolePage.status, 200,
+    "the console's own page should answer 200 to a session that holds a " +
+    "role, so that the policy below is the console's; got " +
+    consolePage.status + ".");
   const consolePolicy =
     consolePage.headers.get("content-security-policy") || "";
   assert.ok(/script-src 'none'/.test(consolePolicy),
@@ -897,9 +1004,120 @@ async function configurationCanBeChangedAndPutBack(doc) {
   log.debug("Leaving configurationCanBeChangedAndPutBack().");
 }
 
+// ---------------------------------------------------------------------------
+// A SUCCESSFUL LIVENESS PROBE IS NOT AN EVENT.
+//
+// `/healthcheck` is asked every few seconds for the whole life of the service —
+// by the compose healthcheck in every launcher here, and by CI's wait loop —
+// and it always answers the same 200. Recorded, it is by a wide margin the most
+// common row in the audit log and it pushes everything a person opened that
+// page to read off the end of a capped list.
+//
+// THE ABSENCE IS ASSERTED WITH TWO CONTROLS BESIDE IT, because "no rows came
+// back" is the easiest passing check in this suite to write and the easiest to
+// be wrong:
+//
+//   * `audit.protocolCalls` must be ON. That setting turns off the whole
+//     category a `/healthcheck` row would belong to, and with it off the
+//     absence below proves nothing whatever.
+//   * A `POST /healthcheck`, which Express answers 404, MUST be recorded. Same
+//     path, same page, same query — so a row that is missing for any reason
+//     other than the rule under test takes this control with it. It is also
+//     the second half of the rule stated: the quiet one is a SUCCESSFUL probe,
+//     because a healthcheck answering anything else is exactly the event
+//     somebody hunting a start-up failure came looking for.
+//
+// And the counters are checked to have counted the probes anyway: this is a
+// rule about the event log, where one act is one line, and not about how much
+// the service was asked to do.
+// ---------------------------------------------------------------------------
+const PROBES = 3;
+
+async function successfulHealthchecksAreNotInTheAuditLog() {
+  log.debug("Entering successfulHealthchecksAreNotInTheAuditLog().");
+  log.info("=== The audit log ignores a successful liveness probe ===");
+  const before = await get("/metrics");
+  const countedBefore = healthcheckCalls(before);
+  for (let i = 0; i < PROBES; i++) {
+    const probe = await common.httpJson(base + "/healthcheck");
+    assert.strictEqual(probe.status, 200,
+        "GET /healthcheck answered " + probe.status + ". This test is about " +
+        "what that call does NOT write; if the call itself is broken, " +
+        "everything below would pass for the wrong reason.");
+  }
+  const refused = await common.httpJson(base + "/healthcheck",
+      { method: "POST" });
+  assert.ok(refused.status >= 400,
+      "POST /healthcheck answered " + refused.status + ", so the control " +
+      "this section leans on is not a refusal any more and the absence " +
+      "below would have nothing standing beside it.");
+
+  const view = await get("/audit?q=healthcheck&per=200");
+  assert.strictEqual(view.protocolCalls, true,
+      "audit.protocolCalls is off, so protocol endpoint calls get no row at " +
+      "all and the absence this section asserts is vacuous. Something " +
+      "earlier in the run turned it off and did not put it back.");
+  // `events`, and NOT `rows`: that is what the reply calls the page of the
+  // list, and reading a member that does not exist is an empty array and a
+  // green check.
+  const rows = view.events || [];
+  assert.ok(Array.isArray(view.events),
+      "The audit reply has no `events` array, so every assertion below is " +
+      "reading undefined and passing. Members: " +
+      Object.keys(view || {}).join(", ") + ".");
+  const onThePath = rows.filter(function (row) {
+    return String(row.target || "") === "/healthcheck";
+  });
+  const succeeded = onThePath.filter(function (row) {
+    return row.outcome === "success";
+  });
+  assert.deepStrictEqual(succeeded.map(function (row) {
+    return row.summary;
+  }), [],
+      "These successful /healthcheck rows are in the audit log. The probe " +
+      "runs every few seconds for the life of the service, so one row here " +
+      "means the log fills with nothing else and the page stops being " +
+      "readable — which is what recordHttp()'s QUIET_WHEN_OK exists to " +
+      "prevent.");
+  assert.ok(onThePath.length > 0,
+      "NO /healthcheck row of any kind came back, not even the POST that was " +
+      "just refused — so this section proved nothing: the query, the " +
+      "recording or the path could each be broken and it would still pass.");
+
+  const after = await get("/metrics");
+  assert.ok(healthcheckCalls(after) >= countedBefore + PROBES,
+      "The metrics page counted " + healthcheckCalls(after) + " calls to " +
+      "/healthcheck against " + countedBefore + " before " + PROBES + " were " +
+      "made. The audit rule is about the event LOG — a counter is one row " +
+      "however often it goes up, so the probes must still be counted.");
+  log.info("[audit] OK — " + PROBES + " successful probes wrote no row, the " +
+           "refused one wrote " + onThePath.length + ", and all of them were " +
+           "counted.");
+  log.debug("Leaving successfulHealthchecksAreNotInTheAuditLog().");
+}
+
+// Every call the metrics table has counted against /healthcheck, whatever the
+// method — the row is keyed on the route pattern AND the method, so a GET row
+// and a POST row are two of them.
+function healthcheckCalls(metrics) {
+  log.debug("Entering healthcheckCalls().");
+  const rows = (metrics && metrics.calls && metrics.calls.rows) || [];
+  let total = 0;
+  rows.forEach(function (row) {
+    if (String(row.path || "") === "/healthcheck") {
+      total += Number(row.count || 0);
+    }
+  });
+  log.debug("Leaving healthcheckCalls(). " + total);
+  return total;
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Running the management API checks against " + api);
+  // Before anything reads the console: the API needs no credential and the
+  // console now does.
+  const session = await signInToTheConsole();
   const doc = await theDocumentIsServedAndWellFormed();
   const index = await theIndexAgreesWithTheDocument(doc);
   const status = await get("/status");
@@ -910,13 +1128,14 @@ async function test() {
   // of 0 against 0, both pass and prove nothing.
   await revokingHereReachesIntrospection();
   await theSchemasMatchTheReplies(doc);
-  await theReadsAgreeWithTheConsole();
+  await theReadsAgreeWithTheConsole(session);
   await customClaimsCanBeChangedAndPutBack();
   await credentialClaimsCanBeChangedAndPutBack();
   await theVerifierRequestCanBeChangedAndPutBack();
   await configurationCanBeChangedAndPutBack(doc);
   await theBulkRevocationsWorkAndAreUndone();
-  await theExplorerIsServedUnderAScopedPolicy();
+  await theExplorerIsServedUnderAScopedPolicy(session);
+  await successfulHealthchecksAreNotInTheAuditLog();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

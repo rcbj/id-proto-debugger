@@ -46,6 +46,9 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
+const { usernameFor, requireKnownOrCreatable } =
+    require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -55,11 +58,17 @@ log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = "http://localhost:3000";
 var apiUrl = process.env.API_URL || "http://localhost:4000";
-var stsUrl = process.env.STS_URL || "http://localhost:8081";
+var stsUrl = process.env.STS_URL || "https://localhost:8081";
 var kdcHost = process.env.KRB5_KDC_HOST || "localhost";
 var kdcPort = process.env.KRB5_KDC_PORT || "88";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
-var principal = process.env.KRB5_PRINCIPAL || "alice";
+// Generated per run, prefixed with this file's name. The mock KDC registers a
+// USER account for any username on first sight, so this need not be a
+// configured principal — and should not be, because its table is never pruned
+// and a name every test shares makes a row in it untraceable. Note the contrast
+// with the SERVICE account below, whose identity is exactly what is being
+// exercised and is therefore not generated. KRB5_PRINCIPAL pins it.
+var principal = process.env.KRB5_PRINCIPAL || usernameFor("kerberos-spnego");
 // One password for every user in the mock KDC, whoever KRB5_PRINCIPAL names.
 var password = process.env.KRB5_PASSWORD || "password!";
 // The SPN this test drives, and it is deliberately the one the PAGE DERIVES from
@@ -177,6 +186,15 @@ async function preconditions() {
         ok: false,
         why: "the mock KDC serves realm " + body.realm + ", not " + realm
       };
+    }
+    // Asked rather than assumed: this test signs in as a generated name, which
+    // works only because this KDC creates USER accounts on demand. Without
+    // this the AS exchange fails as KDC_ERR_C_PRINCIPAL_UNKNOWN, an error
+    // about the KDC's table that says nothing about where the name came from.
+    const unusable = requireKnownOrCreatable(body, principal);
+    if (unusable) {
+      log.debug("Leaving preconditions(). Unusable principal.");
+      return { ok: false, why: unusable };
     }
     const advert = await fetch(stsUrl + "/spnego?format=json");
     if (!advert.ok) {
@@ -748,6 +766,25 @@ async function test() {
         "ticket. Set KRB5_SPN to override, or KRB5_SERVICE_DOMAINS on the mock " +
         "to include this host.");
   }
+
+  // ---------------------------------------------------------------------
+  // THE SPNEGO SERVICE, IN THE APPLICATIONS REGISTRY, BEFORE THE HANDSHAKE.
+  //
+  // The SPN registered is the DERIVED one — `HTTP/<the protected URL's host>`,
+  // which is the name a browser actually asks for — and never `advertisedSpn`,
+  // for the reason the block above is at such length about: substituting the
+  // mock's canonical name for the derived guess is exactly what kept this test
+  // green while the workflow led a person into KDC_ERR_S_PRINCIPAL_UNKNOWN.
+  // The registration has to describe the ticket that will really be asked
+  // for, or it is one more place agreeing with the wrong answer.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: spn,
+    name: "SPNEGO-protected service",
+    protocols: ["krb5"],
+    fields: { krb5ServicePrincipalName: [spn] },
+    why: "the SPN a browser derives from " + protectedUrl
+  });
 
   const options = new chrome.Options();
   // --headless=new, never bare --headless: the image's Chrome 121 ignores

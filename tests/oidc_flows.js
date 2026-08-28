@@ -81,6 +81,7 @@ const crypto = require("crypto");
 const assert = require("assert");
 const { Command, Option } = require('commander');
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -874,6 +875,11 @@ async function test() {
     .setLoggingPrefs(loggingPrefs)
     .build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     const flowKey = process.env.OIDC_FLOW;
     assert(flowKey, "OIDC_FLOW environment variable is not set (one of: " +
@@ -882,7 +888,7 @@ async function test() {
     assert(flow, "OIDC_FLOW=\"" + flowKey + "\" is not one of: " +
            Object.keys(FLOWS).join(", ") + ".");
 
-    const stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+    const stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
     const stsBase = stsUrl.replace(/\/sts\/?$/, "");
     const discovery_endpoint = process.env.DISCOVERY_ENDPOINT ||
                                (stsBase + "/.well-known/openid-configuration");
@@ -945,6 +951,49 @@ async function test() {
       user: user,
       verify: makeVerifier(jwks),
     };
+
+    // -----------------------------------------------------------------
+    // THE APPLICATION, IN THE MOCK'S REGISTRY, BEFORE THE BROWSER STARTS.
+    //
+    // Only for the mock half of this matrix: stsBaseFor() answers "" for the
+    // Keycloak jobs, whose client is provisioned by common.sh's
+    // configureKeycloak() and must not also appear in the mock's registry.
+    // The discovery endpoint is what decides, because it is the one thing
+    // that differs between the two halves and it is the server this job is
+    // actually about to speak to.
+    //
+    // Every field is what this job is ABOUT to send rather than a plausible
+    // value: the response type comes off the flow this job was scheduled for,
+    // the scope is the one the pane will carry, and the redirect URI is the
+    // string prepareAuthorizationRequest() types into the field a few lines
+    // below. A registration naming a callback the flow does not use would
+    // pass here and fail the moment anything checks it.
+    // -----------------------------------------------------------------
+    await registry.provision(registry.stsBaseFor(discovery_endpoint), {
+      identifier: clientId,
+      name: "OIDC flows (mock STS)",
+      protocols: ["oauth2", "oidc"],
+      fields: {
+        oauthClientId: clientId,
+        oauthRedirectUri: [baseUrl + "/callback"],
+        oauthResponseType: [flow.responseType],
+        // Read off the same three booleans the response assertions are, so
+        // the registration cannot describe a different flow from the one this
+        // job runs. A Hybrid response carries a code AND a front-channel
+        // token, so it is genuinely both grants; the pure code flow is only
+        // the first and the two Implicit ones only the second.
+        oauthGrantType: [].concat(flow.code ? ["authorization_code"] : [])
+            .concat((flow.accessToken || flow.idToken) ? ["implicit"] : []),
+        oauthScope: scope.split(/\s+/).filter(Boolean),
+        // Public: this matrix drives the debugger's public client and sends no
+        // secret anywhere. `none` is the RFC 7591 spelling of that, and it is
+        // stated rather than left absent because an omitted method says
+        // nothing while this one says which client this is.
+        oauthTokenEndpointAuthMethod: "none",
+        oauthConfidential: "FALSE"
+      },
+      why: "the public client the " + flow.label + " job signs in as"
+    });
 
     log.info("Running the " + flow.label + " flow against " + metadata.issuer +
              ", DPoP " + dpopSetting + ", signing in as " + user.login + ".");
@@ -1048,9 +1097,13 @@ async function test() {
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.stack || error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

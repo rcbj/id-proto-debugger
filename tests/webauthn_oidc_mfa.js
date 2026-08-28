@@ -34,6 +34,9 @@ const { VirtualAuthenticatorOptions, Transport, Protocol } =
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
+const { waitForFocus } = require("./wait_for.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -48,7 +51,7 @@ var waitTime = appconfig.waitTime;
 
 const STS = (process.env.OID4VCI_ISSUER_URL ||
              (process.env.WSTRUST_STS_URL ||
-              "http://localhost:8081/sts").replace(/\/sts\/?$/, ""));
+              "https://localhost:8081/sts").replace(/\/sts\/?$/, ""));
 const CLIENT_ID = "webauthn-mfa-test";
 // A username unique to this run. The STS remembers enrolled keys per username
 // for the life of its process, while a virtual authenticator lives only as long
@@ -58,9 +61,12 @@ const CLIENT_ID = "webauthn-mfa-test";
 // service fresh and would never show this, which is exactly why it is worth
 // fixing rather than relying on: a test that passes only against a pristine
 // service is one nobody can re-run while debugging it.
-const MFA_USER = "mfauser-" + process.pid.toString(36) + "-" +
-    Date.now().toString(36);
-const PWD_USER = "pwdonly-" + process.pid.toString(36);
+// Minted by tests/random_username.js rather than here, so that the reasoning
+// above lives in one place and every test in the suite leaves the same kind of
+// trail behind it. The prefixes still say which of the two identities a row in
+// the STS's user table belongs to.
+const MFA_USER = usernameFor("webauthn-mfa");
+const PWD_USER = usernameFor("webauthn-pwdonly");
 const REDIRECT = STS + "/oauth2/callback-sink";
 
 function authorizeUrl(extra) {
@@ -167,14 +173,41 @@ async function test() {
     return;
   }
 
+  // The relying party, in the mock's registry, before the first ceremony. It
+  // is an ordinary OIDC client here and nothing about WebAuthn belongs on the
+  // entry: the second factor is a property of the SIGN-IN, which is why what
+  // this test asserts is `amr` and `acr` on the token rather than anything the
+  // application declared. `oauthRedirectUri` is the mock's own callback sink,
+  // which is where this job sends the code because there is no application
+  // tier in it at all.
+  await registry.provision(registry.baseOf(STS), {
+    identifier: CLIENT_ID,
+    name: "WebAuthn OIDC second factor",
+    protocols: ["oauth2", "oidc"],
+    fields: {
+      oauthClientId: CLIENT_ID,
+      oauthRedirectUri: [REDIRECT],
+      oauthResponseType: ["code"],
+      oauthGrantType: ["authorization_code"],
+      oauthScope: ["openid", "profile", "email"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the client whose sign-in earns amr=[\"pwd\", \"webauthn\"]"
+  });
+
   const options = new chrome.Options();
   if (headless) {
     options.addArguments("--headless=new");
   }
   options.addArguments("--no-sandbox", "--disable-dev-shm-usage");
-  // The ceremony happens on the STS's own origin, which in the containerized
-  // stack is http://sts:8081 — not a secure context, where
-  // navigator.credentials does not exist at all. See tests/browser_flags.js.
+  // The ceremony happens on the STS's own origin. That origin is https since
+  // 2026-08-25 (STS_HTTPS=true on the `sts` service — the RFC 9700 pass is a
+  // trust realm on that instance now and a realm binds no scheme of its own),
+  // so it IS a secure context and the relaxation this call used to be needed
+  // for is a no-op. The call stays because the same helper is what hands Chrome
+  // the mock's SPKI pin, without which every page on that origin meets a
+  // certificate interstitial instead. See tests/browser_flags.js.
   browserFlags.addBrowserAccessFlags(options, STS);
   const prefs = new logging.Preferences();
   prefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
@@ -205,6 +238,12 @@ async function test() {
                   async () => {
       await signIn(driver, MFA_USER, authorizeUrl("&acr_values=mfa"));
       await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
+      // A headless window is neither focused nor visible for its first second
+      // or so, and WebAuthn refuses on such a page with a bare
+      // NotAllowedError that reads exactly like a declined prompt. This test
+      // signs in first and so was past that window by accident; the one on
+      // the Lab page was not. See waitForFocus() in tests/wait_for.js.
+      await waitForFocus(driver, waitTime * 8);
       const heading = await driver.findElement(By.css("h1")).getText();
       assert.ok(/Enrol/i.test(heading),
         "with no key enrolled the step should register one; the " +
@@ -277,7 +316,11 @@ async function test() {
     const all = (await driver.manage().logs().get(logging.Type.BROWSER))
       .filter((e) => e.level.name === "SEVERE");
     const severe = all.filter((e) => !EXPECTED_404.some((p) =>
-        p.test(e.message)));
+        p.test(e.message)))
+      // And a load the browser abandoned because its own certificate or
+      // network configuration changed under it, which is a browser event
+      // rather than a ceremony one. See browser_flags.js.
+      .filter((e) => !browserFlags.isTransientLoadError(e.message));
     assert.strictEqual(severe.length, 0,
       "the ceremony pages logged browser errors:\n" + severe.map((e) =>
           e.message).join("\n"));

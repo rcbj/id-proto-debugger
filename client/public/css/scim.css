@@ -1,0 +1,1054 @@
+/* scim.css — the SCIM 2.0 Provisioning Debugger's look.
+ *
+ * Every class here is prefixed `scim-`, and tests/navigation.js's
+ * checkStylesheetsLoaded() knows that prefix: a page using a `scim-` class this
+ * sheet does not define fails that test. That guard exists because the
+ * WS-Federation pages once linked the wrong stylesheet after a rename and
+ * rendered completely unstyled — the link resolved, so nothing 404'd and
+ * nothing noticed.
+ *
+ * THIS PAGE DOES NOT LINK css/saml_common.css, which is why a few of the
+ * classes here duplicate that sheet's. The alternative — `saml-*` names on a
+ * page with nothing to do with SAML — is what the Kerberos and LDAP pages
+ * deliberately did not do.
+ *
+ * TWO LAYOUT CONSTRAINTS ARE LOAD-BEARING HERE, and both are the same one the
+ * LDAP sheet records, worse:
+ *
+ *   * **The ids are DNs.** A SCIM id is opaque and against this project's mock
+ *     STS it is an LDAP distinguished name, percent-encoded into a URL path
+ *     segment: `/Users/uid%3Dalice%2Cou%3Dusers%2Cdc%3Dexample%2Cdc%3Dcom`.
+ *     That is a long unbroken string with no space in it, and bootstrap's
+ *     `code { white-space: nowrap }` plus an auto-layout table sized to
+ *     min-content is exactly how one of them pushes a pane past the edge of the
+ *     viewport. Everything that can hold one breaks on any character.
+ *
+ *   * **The runner table is unbounded in ROWS.** A fifty-user scenario is over
+ *     150 steps, so that table scrolls inside a fixed height rather than making
+ *     the page thousands of pixels tall — the same measure-it-populated lesson
+ *     the SD-JWT VC panes cost. A pane whose height is fine empty and enormous
+ *     once it has content is the failure mode, not the other way round.
+ */
+
+.scim-return {
+  float: right;
+  margin: 4px 0 0;
+  font-size: 0.95em;
+}
+
+.scim-title { margin-bottom: 6px; margin-top: 2px; line-height: 1.25; }
+
+.scim-intro {
+  max-width: 900px;
+  margin-bottom: 10px;
+}
+
+/* The one banner on this page that is meant to be read before anything is
+   clicked. These endpoints delete accounts. */
+.scim-warning {
+  max-width: 900px;
+  font-size: 13px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  color: #5d4200;
+}
+
+.scim-pane {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px 14px 14px;
+  margin-bottom: 14px;
+  background: #fcfcfd;
+}
+
+.scim-pane > legend {
+  width: auto;
+  border: 0;
+  margin-bottom: 4px;
+  padding: 0 6px;
+  font-size: 15px;
+  font-weight: bold;
+  color: #12107c;
+  line-height: 1.2;
+}
+
+.scim-sub {
+  border-top: 1px solid #e6e6ea;
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.scim-subhead {
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+  margin: 10px 0 4px;
+}
+
+/* THE ELEMENT-AND-ATTRIBUTE SELECTOR OUTRANKS A BARE CLASS, so the class has
+   to name the element too. Bootstrap's `input[type="text"], select, textarea
+   { margin-bottom: 10px }` is (0,1,1) and a bare `.scim-field` is (0,1,0) — the
+   4px asked for here would lose to 10px on every text input on the page, which
+   looks like generous spacing rather than a rule that is not applying. The
+   Kerberos and LDAP sheets record the same trap; it is not specific to any of
+   the three. */
+.scim-field {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+}
+
+input.scim-field,
+select.scim-field,
+textarea.scim-field {
+  margin-bottom: 4px;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.scim-body,
+.scim-token {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.scim-label {
+  display: block;
+  font-weight: bold;
+  margin-top: 6px;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+.scim-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0 14px;
+}
+
+/* A field that should take the whole row rather than a grid cell — the service
+   root, the operation select, the body. `1 / -1` spans every column the grid
+   ended up with, which is the only spelling that survives the auto-fit count
+   changing with the viewport. */
+.scim-wide { grid-column: 1 / -1; }
+
+.scim-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  flex-wrap: wrap;
+}
+
+.scim-radio {
+  font-size: 12px;
+  font-weight: normal;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+}
+
+/* The wrapper radioPair() builds. It carries the row's id and the two radios
+   sit inside it, so it has to lay them out on one line and take only the width
+   it needs — a configuration cell is narrow and `.scim-field`'s 100% would
+   stretch this across it. */
+.scim-radio-pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.scim-check {
+  font-size: 12px;
+  font-weight: normal;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 4px 0;
+  max-width: 900px;
+}
+
+/* Bootstrap gives a checkbox inside a label `float: left`, which takes it out
+   of the flex row and drops the text onto the line above it. */
+.scim-check input[type="checkbox"],
+.scim-radio input[type="radio"] {
+  float: none;
+  margin: 2px 0 0;
+}
+
+.scim-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+  align-items: center;
+}
+
+/* THE DISCOVERY LINE — the service root and the three buttons that read from
+   it, on ONE row.
+
+   .scim-buttons above wraps, which is right everywhere else on this page: a
+   row of buttons that runs out of width should go to a second line rather than
+   squeeze. Here it is wrong, because wrapping puts the box on its own line and
+   the arrangement is then the one that was just moved away from. So this row
+   does not wrap, and the give has to come from somewhere: it comes from the
+   box, which shrinks, and never from the buttons, whose labels are the names
+   of the three documents (ServiceProviderConfig is the long one) and are
+   unreadable clipped.
+
+   The label keeps its bold weight but loses the block display and the top
+   margin that space it in a grid — both of them push it off the line here. */
+.scim-discovery-line {
+  flex-wrap: nowrap;
+}
+
+.scim-discovery-line .scim-btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.scim-discovery-line .tooltip {
+  flex: 0 0 auto;
+}
+
+.scim-discovery-line .scim-label {
+  display: inline;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.scim-discovery-line input.scim-field {
+  flex: 1 1 10em;
+  min-width: 6em;
+  margin-bottom: 0;
+}
+
+.scim-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: #f4f4f8;
+  cursor: pointer;
+}
+
+.scim-btn:hover { background: #ececf4; }
+
+/* The one button in each pane that actually sends something. */
+.scim-btn-primary {
+  border-color: #2680eb;
+  background: #eaf2fd;
+  font-weight: bold;
+}
+
+.scim-btn-primary:hover { background: #dcebfc; }
+
+.scim-status {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.scim-grow { flex: 1 1 320px; min-width: 220px; }
+
+/* The configuration's warnings about the request about to be sent. Amber and
+   not red on purpose: none of these is an error, and several are expected —
+   sending something a server said it does not support is a legitimate and
+   common thing to do here. Red would train the reader to ignore them. */
+.scim-config-warnings {
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border-left: 3px solid #c8a200;
+  background: #fffbe8;
+  font-size: 12px;
+}
+
+.scim-config-warning {
+  margin: 2px 0;
+  color: #6b5200;
+}
+
+.scim-ok { color: #2e7d32; }
+.scim-bad { color: #b00; }
+.scim-pending { color: #8a6d00; }
+
+/* Hidden by a CLASS as well as by an inline style, and both halves are needed.
+   pki.js records why: an element hidden by a class in the markup stays hidden
+   however the inline style is set, so a pane asked for by script never appeared
+   for as long as only one of the two was toggled. show() in scim.js sets
+   both. */
+.scim-hidden { display: none; }
+
+.scim-note {
+  font-size: 12px;
+  color: #555;
+  margin: 4px 0 6px;
+  max-width: 900px;
+}
+
+.scim-limits,
+.scim-challenges {
+  font-size: 12px;
+  color: #444;
+  background: #f6f6fa;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+.scim-preview {
+  font-size: 12px;
+  color: #444;
+  margin: 8px 0 4px;
+}
+
+/* The composed URL and the request line. Both carry a percent-encoded DN and
+   must be allowed to break anywhere — see the header. */
+.scim-preview code,
+.scim-request-line code {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #12107c;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.scim-request-line { margin: 2px 0 6px; }
+
+/* THE `pre`-BASED READOUT THAT USED TO BE HERE IS GONE, and the reason is
+   worth keeping because it looks like a style change and is not.
+   `.scim-output` was a `pre` with `overflow: auto` and a max-height, which is
+   the obvious shape for a JSON readout and does not work in a `fieldset`: a
+   pre's min-content width is its longest line, a SCIM response is full of
+   percent-encoded DNs and base64 certificates with no space in them, and a
+   fieldset carries `min-inline-size: min-content` in the UA stylesheet — so
+   the PANE was made wide enough to avoid the overflow and the `overflow: auto`
+   never scrolled anything. The text went past the pane and past the page.
+   Every readout is now a `textarea.scim-box`, defined below: an intrinsic size
+   content cannot change, scrolling in both directions by construction, and
+   draggable or Expand-able by the reader. See `.scim-pane`'s `min-inline-size`
+   too — both halves are needed. */
+
+/* The `code` element holding the HOBA to-be-signed blob. It is one unbroken
+   length-prefixed string and there is nothing in it to break at. */
+#scim_hoba_tbs {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: normal;
+  word-break: break-all;
+}
+
+.scim-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.scim-table th,
+.scim-table td {
+  border: 1px solid #e0e0e6;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.scim-table th { background: #f0f0f5; }
+
+/* The ServiceProviderConfig readout: six booleans and two numbers, which is
+   what a reader actually wants from that document. */
+.scim-capability-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0 10px;
+}
+
+.scim-capability-table td {
+  border: 1px solid #e0e0e6;
+  padding: 3px 6px;
+  vertical-align: top;
+}
+
+.scim-capability-name {
+  width: 11em;
+  font-family: Menlo, Consolas, monospace;
+  font-weight: bold;
+  word-break: break-all;
+}
+
+.scim-capability-value { width: 12em; word-break: break-word; }
+.scim-capability-note { color: #555; }
+
+/* ---------------------------------------------------------------------------
+   The scenario runner.
+
+   BOUNDED IN HEIGHT AND SCROLLED, because the row count is the user's: a
+   fifty-user scenario is over 150 steps. A pane that is fine empty and
+   thousands of pixels tall once populated is the failure mode this project has
+   already paid for once on the SD-JWT VC panes, so the height is fixed here
+   rather than measured later.
+   ------------------------------------------------------------------------ */
+.scim-runner-scroll {
+  max-height: 460px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+.scim-runner { margin: 0; }
+
+.scim-runner td:first-child { width: 3em; }
+.scim-runner td:nth-child(3) { width: 9em; }
+.scim-runner td:nth-child(4) { width: 8em; }
+.scim-runner td:nth-child(5) { width: 8em; }
+
+.scim-runner td { word-break: break-word; }
+
+/* The one-line reason under a step's title. Smaller and quieter than the title
+   because it is there to be read when a step fails, not on every row. */
+.scim-step-why {
+  color: #666;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.scim-step-result {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.scim-step-verdict { font-weight: bold; }
+
+/* ---------------------------------------------------------------------------
+   The Operations History pane. op_history.js emits `<prefix>-history-scroll`,
+   `<prefix>-table`, `<prefix>-history`, `<prefix>-history-time` and
+   `<prefix>-history-empty` with the prefix this workflow passes it (`scim`), so
+   all five have to be defined here or checkStylesheetsLoaded() fails the page —
+   which is exactly the mistake the Kerberos pages made when they first reused
+   that module.
+   ------------------------------------------------------------------------ */
+.scim-history-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+.scim-history { margin: 0; }
+
+.scim-history-time {
+  white-space: nowrap;
+  color: #666;
+  width: 6.5em;
+}
+
+.scim-history-empty {
+  font-size: 12px;
+  color: #666;
+  margin: 6px 0;
+}
+
+.scim-history-target,
+.scim-history-uri {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+/* ---------------------------------------------------------------------------
+   THE TOP ROW: Connection, Authentication and Discovery side by side.
+
+   Three panes across, because none of the three is a step — they are the
+   settings every other pane on this page reads, and stacking them put the
+   thing somebody actually came here to press (Send, Run) two screens down.
+
+   TWO COLUMNS AND NOT THREE, since the Connection and Authentication panes
+   were folded into the configuration table: the table OWNS the service root,
+   the call path and the scheme now, so a pane of its own for each would be a
+   second copy of a value rather than a second place to read it.
+
+   `minmax(0, 1fr)` and not `1fr`: a grid item's automatic minimum size is its
+   MIN-CONTENT size, so a column holding a percent-encoded DN — a long unbroken
+   string with no space in it — grows the track rather than scrolling inside
+   it, and the whole page then scrolls sideways. That is the same failure the
+   header of this sheet records, one level further out.
+
+   The single-column fallback is a real one and not a nicety: this page is on
+   the static deployments, where it is read on whatever the reader has.
+   ------------------------------------------------------------------------ */
+.scim-topgrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .scim-topgrid { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---------------------------------------------------------------------------
+   THE CREDENTIAL BLOCK, under the configuration table rather than in it.
+
+   A password, a generated signing key and a minted proof are not settings:
+   they are not read out of a document, they cannot be compared against one,
+   and two of the three must never be written down at all — so they cannot be
+   rows of a table whose whole subject is where a value came from and whether
+   it is still current. They sit below it instead, ruled off, and only the
+   blocks the selected scheme actually uses are ever on screen.
+   ------------------------------------------------------------------------ */
+.scim-credentials {
+  margin-top: 10px;
+  padding-top: 6px;
+  border-top: 1px solid #e0e0e6;
+}
+
+/* A `fieldset` carries `min-inline-size: min-content` in the UA stylesheet,
+   which is why a pane holding one long unbreakable token grows past its
+   container instead of letting the box inside it scroll — the `overflow: auto`
+   on the readout never gets the chance, because the fieldset around it has
+   already been made wide enough to avoid the overflow. This is the rule that
+   makes every `max-width`, `overflow` and `word-break` below actually bind.
+   Both spellings: `min-width` for the browsers that do not honour the logical
+   property on a fieldset. */
+.scim-pane {
+  min-width: 0;
+  min-inline-size: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   TOOLTIPS ON A FIELD LABEL.
+
+   The shared `.tooltip` / `.tooltiptext` pair (css/bootstrap.css, customised
+   long ago) is 120 characters wide, centred over its own middle, and carries a
+   dotted underline — it was written for a hoverable WORD IN A SENTENCE. A page
+   whose every field label is one needs the opposite of all three: a readable
+   column of text, left-aligned with the field it describes, and no dotted rule
+   under every label on the page.
+
+   THE `pointer-events: none` IS NOT DECORATION AND MUST NOT BE REMOVED.
+   Bootstrap hides `.tooltiptext` with `visibility: hidden` rather than
+   `display: none`, so the span still occupies layout and the browser will
+   report it as the topmost element at a nearby control's position — which is
+   `element click intercepted: ... <span class="tooltiptext">` from Selenium,
+   on a click at coordinates that look perfectly correct in a screenshot.
+   css/common.css already carries the same rule for the debugger pages and this
+   page loads it; the copy here is deliberate, because this page puts a tooltip
+   on EVERY field and the guard should not depend on which other sheet happened
+   to be linked. See tests/scim_page.js, which asserts it in the browser rather
+   than trusting either copy.
+   ------------------------------------------------------------------------ */
+.scim-tip {
+  display: block;
+  border-bottom: 0;
+  position: relative;
+}
+
+.scim-tip > .scim-label,
+.scim-tip > .scim-check,
+.scim-tip > .scim-radio { margin-bottom: 1px; }
+
+.scim-tip .tooltiptext {
+  pointer-events: none;
+  width: 280px;
+  max-width: 90vw;
+  margin-left: 0;
+  left: 0;
+  bottom: 118%;
+  text-align: left;
+  white-space: normal;
+  font-size: 11px;
+  font-weight: normal;
+  line-height: 1.35;
+  padding: 6px 8px;
+  z-index: 5;
+}
+
+/* The arrow bootstrap draws under the box is centred on the box; with the box
+   moved to the left edge it has to move with it, or it points at nothing. */
+.scim-tip .tooltiptext::after {
+  left: 18px;
+  margin-left: 0;
+}
+
+/* A tooltip on the LAST pane column would hang off the right of the viewport,
+   which is the one place `max-width` cannot help — so those open leftwards.
+   `right: 0` rather than a negative offset, so the box is inside the pane
+   whatever the pane's width turned out to be. */
+.scim-tip-left .tooltiptext {
+  left: auto;
+  right: 0;
+}
+
+.scim-tip-left .tooltiptext::after {
+  left: auto;
+  right: 18px;
+}
+
+/* ---------------------------------------------------------------------------
+   TABS INSIDE A PANE — the same shape the Kerberos pages use, and deliberately
+   plain: the pane's own title is already a heading, and a second heavy control
+   beside it makes one pane read as two.
+
+   `.scim-tabpanel` MUST STAY ABOVE `.scim-tabpanel-off`. Both selectors are
+   (0,1,0), so source order decides `display`, and a `display: block` written
+   below the `-off` rule shows every panel at once — which reads as the tab
+   strip having no effect rather than as a CSS precedence problem.
+   ------------------------------------------------------------------------ */
+.scim-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 6px 0 8px;
+  border-bottom: 1px solid #ddd;
+  flex-wrap: wrap;
+}
+
+.scim-tab {
+  border: 1px solid transparent;
+  border-bottom: none;
+  background: none;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: #555;
+  cursor: pointer;
+  border-radius: 3px 3px 0 0;
+}
+
+.scim-tab:hover { background: #f2f2f2; }
+
+.scim-tab-on {
+  border-color: #ddd;
+  background: #fff;
+  color: #12107c;
+  font-weight: bold;
+  margin-bottom: -1px;
+  border-bottom: 1px solid #fff;
+}
+
+.scim-tabpanel { display: block; }
+.scim-tabpanel-off { display: none; }
+
+/* ---------------------------------------------------------------------------
+   THE READOUT BOXES.
+
+   A `<textarea>` rather than a `<pre>`, and the difference is not cosmetic. A
+   pre is a block box whose min-content width is its longest line, so a SCIM
+   response — which carries percent-encoded DNs, base64 certificates and
+   Location URLs, none of which has a space in it — makes the box, the pane and
+   then the page as wide as its widest line. `overflow: auto` does not save it,
+   because the fieldset above has already been sized to avoid the overflow (see
+   `.scim-pane` at the top of this section). A textarea has an intrinsic size of
+   its own that content cannot change, scrolls in BOTH directions by
+   construction, and can be dragged taller by the reader.
+
+   `resize: vertical` and not `both`: dragging one of these wider is how the
+   pane gets pushed past the edge again by hand.
+   ------------------------------------------------------------------------ */
+textarea.scim-box {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  background: #fbfbfd;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 2px 0 6px;
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
+}
+
+/* What the Expand button toggles. A height rather than a row count, because
+   the button has to be able to put it back and `rows` is the markup's. */
+textarea.scim-box-tall {
+  height: 560px;
+  max-height: 80vh;
+}
+
+.scim-boxhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.scim-boxlabel {
+  font-weight: bold;
+  font-size: 12px;
+  color: #333;
+}
+
+.scim-expand {
+  padding: 1px 8px;
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------------------
+   THE EXCHANGE PANE: request beside response.
+
+   Two columns, because they are read against each other — a header sent and a
+   header that came back, a body posted and the resource it produced. Stacked,
+   the pair is a screen apart and the comparison is done from memory.
+   ------------------------------------------------------------------------ */
+.scim-exchange-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .scim-exchange-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.scim-exchange-col { min-width: 0; }
+
+/* ---------------------------------------------------------------------------
+   THE CONFIGURATION PARAMETERS PANE.
+
+   One table, every setting this workflow has, and the SOURCE of each — because
+   the question that pane exists to answer is not "what is the value" (which is
+   in the field it came from) but "did I choose this, or did the server say
+   it". A parameter the reader typed and one read out of a ServiceProviderConfig
+   behave identically until the server changes its mind, and then only one of
+   them is stale.
+   ------------------------------------------------------------------------ */
+/* BOUNDED AND SCROLLED, for the reason the runner table records: this table
+   has forty rows in it and a pane that is fine empty and thirteen hundred
+   pixels tall once populated is the failure mode, not the other way round.
+   Everything below it — the endpoint pane, the generator, the scenarios — is
+   what somebody came to this page to use, and a settings table is not worth a
+   screen and a half of scrolling past. */
+.scim-config-scroll {
+  max-height: 520px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+/* THAT THE BOX ABOVE SCROLLS HAS TO BE VISIBLE, and this is the fix for a real
+   confusion rather than a decoration. A 520px box with `overflow-y: auto` and a
+   flat bottom edge looks exactly like a table that ENDS there — the rows below
+   the fold are not merely hard to reach, they are invisible in a way that reads
+   as "this pane does not have that setting". That was reported as a missing
+   feature, and the same edge fooled the author of this comment while looking at
+   a screenshot of it.
+
+   Two cues, because one of them is not enough on its own:
+
+     * the count above the box, which says how many parameters there ARE. It is
+       the only one of the two that survives a screenshot, and the only one that
+       tells you the size of what you are missing;
+     * the fades, which say WHICH WAY there is more. They appear only when
+       there is actually something in that direction, so a table short enough
+       to fit shows neither and nothing is ever hinted at that is not there.
+
+   The fades are overlays rather than a background on the scroll box, because
+   the table's own group headings and header row have opaque backgrounds and
+   would paint straight over a background gradient. */
+.scim-config-scrollwrap {
+  position: relative;
+}
+
+.scim-config-cue {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  height: 24px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.scim-config-cue-top {
+  top: 1px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0));
+  border-top: 1px solid #c9c9d4;
+}
+
+.scim-config-cue-bottom {
+  bottom: 1px;
+  background: linear-gradient(to top, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0));
+  border-bottom: 1px solid #c9c9d4;
+}
+
+.scim-config-scrollwrap.scim-more-above .scim-config-cue-top,
+.scim-config-scrollwrap.scim-more-below .scim-config-cue-bottom {
+  opacity: 1;
+}
+
+.scim-config-count {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  color: #555;
+}
+
+.scim-config-count strong { color: #333; }
+
+.scim-config-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.scim-config-table th,
+.scim-config-table td {
+  border: 1px solid #e0e0e6;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.scim-config-table th { background: #f0f0f5; }
+
+/* A generated group's heading is a button so it can be reached from the
+   keyboard — every row it folds away is an editable setting, so a fold only a
+   mouse can open would hide settings from anybody not using one. It is styled
+   back down to look like the heading it replaced. */
+.scim-config-fold {
+  all: unset;
+  display: block;
+  width: 100%;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 12px;
+}
+
+.scim-config-fold:hover { text-decoration: underline; }
+
+.scim-config-fold:focus-visible {
+  outline: 2px solid #2b6cb0;
+  outline-offset: -2px;
+}
+
+.scim-config-group td {
+  background: #f6f6fa;
+  font-weight: bold;
+  color: #12107c;
+}
+
+/* ---------------------------------------------------------------------------
+   A BLOCK ROW: one cell across the table, holding an element that was authored
+   in the markup and moved here by renderConfig(). There is one — the access
+   token — and it is here rather than in the Credential block below because the
+   button beside it goes and GETS a token, which is no use a screen away from
+   the scheme select that decides whether one is sent.
+
+   No monospace and no break-all: the cell holds a form, not a value. The
+   padding matches the group headings above it rather than the value cells, so
+   the block reads as part of the Authentication section and not as a
+   parameter that has grown too big for its row.
+   ------------------------------------------------------------------------ */
+.scim-config-block td {
+  background: #fbfbfe;
+  padding: 6px 8px;
+}
+
+.scim-config-block .scim-buttons { margin: 4px 0 0 0; }
+
+.scim-config-name {
+  width: 15em;
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.scim-config-source { width: 12em; color: #555; }
+
+.scim-config-value input,
+.scim-config-value select {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+/* A value the reader has changed away from what discovery said. Not an error —
+   an override is the point of the pane — but it must be visible, because a
+   parameter that no longer matches the server is the one that will produce the
+   next inexplicable 404. */
+.scim-config-overridden input,
+.scim-config-overridden select {
+  background: #fffbe6;
+  border-color: #e0c97a;
+}
+
+.scim-config-was {
+  display: block;
+  color: #8a6d00;
+  font-size: 11px;
+  margin-top: 2px;
+  word-break: break-all;
+}
+
+.scim-config-empty {
+  font-size: 12px;
+  color: #666;
+  margin: 6px 0;
+}
+
+/* ---------------------------------------------------------------------------
+   The described views of the two discovery documents that were previously
+   dumped as JSON and nothing else.
+   ------------------------------------------------------------------------ */
+.scim-described-name {
+  width: 9em;
+  font-family: Menlo, Consolas, monospace;
+  font-weight: bold;
+  word-break: break-all;
+}
+
+.scim-described-value {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.scim-described-note { color: #555; }
+
+/* ---------------------------------------------------------------------------
+   THE DESCRIBED TABLES SCROLL SIDEWAYS RATHER THAN WRAPPING TO NOTHING.
+
+   These three tables — the ServiceProviderConfig capabilities, ResourceTypes
+   and Schemas — are rendered into the Discovery pane, which is the THIRD
+   column of the top row and therefore about a third of the page wide. Their
+   last column is PROSE: a sentence or two saying what the row means, which is
+   the half a reader came for. At ~400px, with a name column of 11em and a
+   value column of 12em ahead of it, that column gets a strip a few words wide
+   and the cell grows to a dozen lines — the text runs down past the pane and
+   past the two panes beside it.
+
+   Wrapping harder cannot fix that; there is no width at which prose fits in
+   150px. So the tables keep a usable minimum width and the BOX scrolls,
+   which is the same trade the runner and history panes below already make in
+   the other axis. `min-width` and not `width`: on a wide viewport, or in the
+   single-column fallback under 1100px, the tables take the room they are
+   given and nothing scrolls at all.
+   ------------------------------------------------------------------------ */
+.scim-described-scroll {
+  overflow-x: auto;
+  /* A flex/grid item's automatic minimum size is its MIN-CONTENT size, and a
+     `min-width: 0` is what lets this box be narrower than the table in it —
+     without it the pane grows instead and the overflow never fires. This is
+     the same rule `.scim-pane` carries, one level in. */
+  min-width: 0;
+  min-inline-size: 0;
+}
+
+/* 46em, and the number is arithmetic rather than taste. The capability table
+   spends 11em on the name and 12em on the value before the note starts, so a
+   34em minimum leaves the note about 11em — roughly twenty characters a line,
+   which turned a two-sentence note into a 247px row. 46em gives it ~23em,
+   about forty-five characters, and the same row measures 78px. The four
+   -column tables are `table-layout: fixed` and split this evenly at ~11.5em a
+   column, which is what a schema URN needs to stop wrapping every other
+   word. */
+.scim-described-scroll .scim-capability-table,
+.scim-described-scroll .scim-table {
+  min-width: 46em;
+}
+
+/* And the two fixed columns give some of themselves back, so that a useful
+   strip of the note is on screen before anybody scrolls at all. The pane is
+   381px at 1400: 11em + 12em of name and value left about 75px of the note
+   visible, which is a column of two-letter fragments — enough to look broken
+   and not enough to read. At 9.5em and 10.5em it is about 110px, and the
+   names (`changePassword`, `authenticationSchemes`) still fit because they
+   wrap on the capital. Scoped to the scroll box: the same classes are not
+   used anywhere else, but the widths are only right for this column of the
+   grid. */
+.scim-described-scroll .scim-capability-name { width: 9.5em; }
+.scim-described-scroll .scim-capability-value { width: 10.5em; }
+
+/* ---------------------------------------------------------------------------
+   THE SHARED PANE CHROME (css/debugger.css), adjusted for this page.
+
+   Each pane is now a `div.scim-pane.dbg-pane` holding a `.dbg-legend` title
+   and the `fieldset` that title collapses, which is the markup every other
+   workflow here uses. Two consequences need naming.
+   ------------------------------------------------------------------------ */
+
+/* The fieldset that WAS the pane is now inside it, and it is the one carrying
+   the UA stylesheet's `min-inline-size: min-content` — so the rule that keeps
+   a percent-encoded DN from sizing the pane to its longest line has to follow
+   it inwards. Without this the Exchange pane goes back to 7511px on one long
+   id, which is the defect `tests/scim_page.js` section 7b plants a value to
+   catch. Both spellings, for browsers that do not honour the logical property
+   on a fieldset. */
+.scim-pane > fieldset {
+  min-width: 0;
+  min-inline-size: 0;
+}
+
+/* bootstrap sets `legend { line-height: 40px }` for its own 21px legends, so a
+   15px title in one leaves ~19px of dead space PER PANE. `.scim-pane > legend`
+   above already sets 1.2; this keeps the collapse triangle on the same line as
+   the words rather than letting `.dbg-legend`'s own metrics reassert. */
+.scim-pane > .dbg-legend {
+  line-height: 1.2;
+}
+
+/* ---------------------------------------------------------------------------
+   FOLDED PROSE, the way the Kerberos pages fold theirs (`.krb-more`).
+
+   The explanations are the reason this workflow is worth using — what a 409
+   on a duplicate userName means, why a wrong Digest hash reads exactly like a
+   wrong password — so they are kept verbatim and FOLDED rather than cut. A
+   debugger that omits why a thing fails is the thing nobody needed.
+   ------------------------------------------------------------------------ */
+.scim-more {
+  margin: 6px 0;
+}
+
+.scim-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.scim-more > summary:hover {
+  text-decoration: underline;
+}
+
+/* A READOUT FOLD, which ships OPEN, and the distinction is not cosmetic.
+
+   The folds above hold explanations — what a 409 on a duplicate userName
+   means, why a wrong Digest hash reads exactly like a wrong password — and
+   those start closed, because prose that shipped open is prose back on the
+   page. These hold the page's own ANSWERS: what this operation needs, what
+   the server said it accepts, how the run went. Shipping one of those closed
+   would hide the result of pressing Send behind a click nobody knows to make.
+
+   The class is what makes the difference assertable: tests/scim_page.js
+   requires every `.scim-more` WITHOUT it to be closed and every one WITH it to
+   be open, so neither kind can quietly become the other. */
+.scim-readout > summary {
+  color: #555;
+}
+
+/* Inside the warning box the summary has to read as part of the warning
+   rather than as a link away from it, so it takes the warning's own colour.
+   The sentence that says these endpoints delete accounts is NOT in here — it
+   stays outside the fold, because a safety notice that can be collapsed out
+   of sight is one somebody will not have read. */
+.scim-more-warning {
+  margin: 4px 0 0;
+}
+
+.scim-more-warning > summary {
+  color: #5d4200;
+}

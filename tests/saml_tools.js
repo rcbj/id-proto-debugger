@@ -37,6 +37,9 @@ const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+// Only for its console-noise filter: this file builds its Chrome options by
+// hand (see the secure-origin block in test()) and adds no flags from here.
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1269,6 +1272,10 @@ async function testNoConsoleErrors(driver) {
   var severe = (entries || []).filter(function (e) {
     return e.level && e.level.name === 'SEVERE';
   }).map(function (e) { return e.message; });
+  // A load the browser abandoned because its own certificate or network
+  // configuration changed under it is not something this page did. See
+  // browser_flags.js.
+  severe = browserFlags.withoutTransientLoadErrors(severe);
   assert.strictEqual(severe.length, 0, "the page logged console errors:\n  " +
                      severe.join("\n  "));
   log.info("[console] OK — no console errors across " + (entries || []).length +
@@ -1424,8 +1431,12 @@ async function test() {
   var secureOrigin = baseUrl.replace(/\/+$/, "");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        secureOrigin);
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
   options.addArguments("--user-data-dir=/tmp/saml-assertion-chrome-" +
-                       Date.now());
+                       Date.now() + "-" + process.pid);
   // Collect browser-side errors so the run can assert the page logged none.
   try {
     const prefs = new logging.Preferences();
@@ -1437,6 +1448,11 @@ async function test() {
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     log.info("Starting Test run.");
     await driver.manage().setTimeouts({ script: scriptWait });
@@ -1445,9 +1461,13 @@ async function test() {
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

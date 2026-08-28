@@ -103,7 +103,16 @@ exports.handler = async function (event) {
 
   var read = common.readParams(request);
   var samlResponse = read.params.SAMLResponse || '';
-  var relayState = read.params.RelayState || '';
+  // THE RELAY STATE HAS TWO NAMES, one per protocol version. `RelayState` is
+  // SAML 2.0's and did not exist before it; SAML 1.1's browser profiles
+  // round-trip `TARGET`, which the Browser/POST profile posts alongside the
+  // SAMLResponse exactly as 2.0 posts RelayState. Reading only the first hands
+  // the response page an empty relay state on every SAML 1.1 sign-in — which
+  // is not fatal there (the Operations History row is closed from the SAML
+  // status, not from this) and is still a value the IdP sent and this landing
+  // dropped. `api/server.js`'s handleSamlAcs() reads both for the same reason,
+  // where it IS load-bearing: the artifact context handle rides in it.
+  var relayState = read.params.RelayState || read.params.TARGET || '';
   var artifact = read.params.SAMLart || '';
   var samlRequest = read.params.SAMLRequest || '';
 
