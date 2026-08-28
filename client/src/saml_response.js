@@ -61,6 +61,7 @@ var appconfig = require(process.env.CONFIG_FILE);
 var history = require("./saml_history");
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
+var sm = require("./saml_message"); // the wire-format reader, shared
 var edge = require("./edge_landing"); // the static landings' hand-off contract
 var log = bunyan.createLogger({ name: 'saml_response',
     level: appconfig.logLevel });
@@ -85,41 +86,11 @@ var lastAssertionXml = '';
 // option.
 var lastEncryptedXml = '';
 
-// SAML 1.0/1.1 protocol and assertion namespaces. Both carry `1.0` and that is
-// not a typo: the schemas were never renamed between 1.0 and 1.1 — the version
-// travels in MajorVersion/MinorVersion attributes instead.
-var NS_SAML1P = 'urn:oasis:names:tc:SAML:1.0:protocol';
-
 // The version of a SAML protocol message or assertion, as "2.0" or "1.1"
 // ("1.0" for a MinorVersion of 0). Read off the element rather than guessed
 // from the namespace, because MajorVersion/MinorVersion is where SAML 1.x puts
 // it and a 1.0 document and a 1.1 one share every namespace they have.
-function samlVersionOf(elem) {
-  log.debug("Entering samlVersionOf().");
-  if (!elem || !elem.getAttribute) {
-    log.debug("Leaving samlVersionOf(). No element.");
-    return '';
-  }
-  var v = elem.getAttribute('Version');
-  if (v) {
-    log.debug("Leaving samlVersionOf(). From Version.");
-    return v;
-  }
-  var major = elem.getAttribute('MajorVersion');
-  var minor = elem.getAttribute('MinorVersion');
-  if (major) {
-    log.debug("Leaving samlVersionOf(). From MajorVersion/MinorVersion.");
-    return major + '.' + (minor || '0');
-  }
-  // Nothing said. A SAML 1.x namespace is the only remaining evidence, and it
-  // cannot tell 1.0 from 1.1 — so say 1.x rather than pick one.
-  if (elem.namespaceURI === NS_SAML1P) {
-    log.debug("Leaving samlVersionOf(). From the namespace alone.");
-    return '1.x';
-  }
-  log.debug("Leaving samlVersionOf(). Unknown.");
-  return '';
-}
+var samlVersionOf = sm.samlVersionOf;
 
 function isSaml1(version) {
   log.debug("Entering isSaml1().");
@@ -178,114 +149,22 @@ function qp(name) {
   log.debug("Leaving qp().");
   return new URLSearchParams(window.location.search).get(name);
 }
-function tags(root, localName) {
-  log.debug("Entering tags().");
-  log.debug("Leaving tags().");
-  return root.getElementsByTagNameNS('*', localName);
-}
+var tags = sm.tags;
 
-// Minimal, dependency-free XML pretty-printer.
-function formatXml(xml) {
-  log.debug("Entering formatXml().");
-  if (!xml) {
-    log.debug("Leaving formatXml().");
-    return '';
-  }
-  var reg = /(>)(<)(\/*)/g;
-  xml = xml.replace(reg, '$1\n$2$3');
-  var pad = 0, out = '';
-  xml.split('\n').forEach(function (node) {
-    var indent = 0;
-    if (/^<\/\w/.test(node)) { pad = Math.max(pad - 1, 0); }
-    else if (/^<\w[^>]*[^\/]>.*$/.test(node) && !/<\/\w/.test(node)) { indent =
-             1; }
-    out += new Array(pad + 1).join('  ') + node + '\n';
-    pad += indent;
-  });
-  log.debug("Leaving formatXml().");
-  return out.trim();
-}
-
-function serialize(node) {
-  log.debug("Entering serialize().");
-  try {
-    log.debug("Leaving serialize().");
-    return new XMLSerializer().serializeToString(node);
-  } catch (e) {
-    log.debug("Leaving serialize().");
-    return '';
-  }
-}
-
-// --- decoding a SAMLResponse handed in via the URL query --------------------
-// Backendless (static) deployments have no ACS server: the IdP is asked to
-// return its response over the HTTP-Redirect binding, so it arrives here as a
-// GET ?SAMLResponse= parameter that we decode in the browser. Redirect-binding
-// messages are DEFLATE-compressed then base64-encoded; POST-binding messages
-// (or a value pasted in for manual testing) are just base64. decodeSamlParam()
-// tries inflate first and falls back to a plain base64 decode.
-function base64ToBytes(b64) {
-  log.debug("Entering base64ToBytes().");
-  var bin = atob(b64);
-  var bytes = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  log.debug("Leaving base64ToBytes().");
-  return bytes;
-}
-function bytesToUtf8(bytes) {
-  log.debug("Entering bytesToUtf8().");
-  try {
-    log.debug("Leaving bytesToUtf8().");
-    return new TextDecoder('utf-8').decode(bytes);
-  } catch (e) {
-    var s = '';
-    for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
-    try {
-      log.debug("Leaving bytesToUtf8().");
-      return decodeURIComponent(escape(s));
-    } catch (e2) {
-      // Not UTF-8 after all: hand back the byte-per-character reading.
-      log.debug("Leaving bytesToUtf8().");
-      return s;
-    }
-  }
-  log.debug("Leaving bytesToUtf8().");
-}
-// RAW DEFLATE inflate (no zlib header) via the native DecompressionStream — the
-// mirror of the deflate-raw saml_request.js uses to build a Redirect request.
-function inflateRaw(bytes) {
-  log.debug("Entering inflateRaw().");
-  if (typeof DecompressionStream === 'undefined') {
-    log.debug("Leaving inflateRaw().");
-    return Promise.reject(new Error('This browser lacks DecompressionStream; ' +
-                          'cannot inflate a Redirect-binding response.'));
-  }
-  var ds = new DecompressionStream('deflate-raw');
-  var writer = ds.writable.getWriter();
-  writer.write(bytes);
-  writer.close();
-  log.debug("Leaving inflateRaw().");
-  return new Response(ds.readable).arrayBuffer().then(function (buf) {
-    return bytesToUtf8(new Uint8Array(buf));
-  });
-}
+// The pretty-printer, the base64/UTF-8 helpers, the RAW DEFLATE inflate and
+// decodeSamlParam() all moved into saml_message.js on 2026-08-27, unchanged.
+// They were this file's own until the SAML Request Decoder needed the same
+// five: formatXml() alone existed FOUR times in client/src, and a fifth copy
+// for a page whose whole job is decoding would have been the one that drifted.
+// decodeSamlParam() there returns { xml, deflated } rather than a bare string,
+// because the decoder page has to SAY which binding the bytes came from; this
+// page only ever wanted the XML.
+var formatXml = sm.formatXml;
+var serialize = sm.serialize;
 function decodeSamlParam(b64) {
   log.debug("Entering decodeSamlParam().");
-  var bytes;
-  try {
-    bytes = base64ToBytes(b64);
-  } catch (e) {
-    log.debug("Leaving decodeSamlParam().");
-    return Promise.reject(new Error('not valid base64: ' + e.message));
-  }
   log.debug("Leaving decodeSamlParam().");
-  return inflateRaw(bytes)
-    // A successful inflate that yields XML is a Redirect-binding message; if
-    // the bytes weren't actually deflated, treat the base64 as a raw (POST)
-    // message.
-    .then(function (xml) { return (xml && xml.indexOf('<') >= 0) ?
-        xml : bytesToUtf8(bytes); })
-    .catch(function () { return bytesToUtf8(bytes); });
+  return sm.decodeSamlParam(b64).then(function (res) { return res.xml; });
 }
 
 // ---------------------------------------------------------------------------
@@ -623,18 +502,7 @@ function kv(k, v) {
 
 // Text of a direct-child element by local name (avoids grabbing a nested
 // element of the same name, e.g. the assertion's Issuer vs the response's).
-function directChildText(parent, localName) {
-  log.debug("Entering directChildText().");
-  var kids = parent.childNodes;
-  for (var i = 0; i < kids.length; i++) {
-    if (kids[i].nodeType === 1 && kids[i].localName === localName) {
-      log.debug("Leaving directChildText().");
-      return (kids[i].textContent || '').trim();
-    }
-  }
-  log.debug("Leaving directChildText().");
-  return '';
-}
+var directChildText = sm.directChildText;
 
 // The X509Certificate from the response-level <Signature> (a direct child of
 // <Response>), not the assertion's signature.

@@ -100,6 +100,7 @@ const BUNDLES = [
   ['saml_cert', 'saml_cert'],
   ['saml_tools', 'saml_tools'],
   ['saml_response', 'saml_response'],
+  ['saml_authnrequest', 'saml_authnrequest'],
   ['wstrust_tools', 'wstrust_tools'],
   ['wstrust_response', 'wstrust_response'],
   ['vc_issuance_0', 'vcissuance0'],
@@ -292,7 +293,7 @@ const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
 // than a list — but it is written the same way so the next module added here
 // does not have to work out which shape to follow.
 // And the same again for common/xmldsig.js, which is ONE file rather than a
-// directory and is required by eight bundles. It lives in common/ because
+// directory and is required by nine bundles. It lives in common/ because
 // api/server.js signs a SAML AuthnRequest with it for the redirect binding —
 // that used to be the `xml-crypto` package, a third implementation of XML
 // Signature in an application that already had two of its own. A
@@ -300,8 +301,8 @@ const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
 // is three chances to disagree with the verifier at the far end.
 const XMLDSIG_FILE = path.join(CLIENT_DIR, '..', 'common', 'xmldsig.js');
 const XMLDSIG_BUNDLES = ['digital_signature', 'saml_request', 'saml_response',
-  'saml_tools', 'wsfed_request', 'wsfed_response', 'wstrust_response',
-  'wstrust_tools'];
+  'saml_tools', 'saml_authnrequest', 'wsfed_request', 'wsfed_response',
+  'wstrust_response', 'wstrust_tools'];
 const needsXmldsig = BUILT_BUNDLES.some(function (entry) {
   return XMLDSIG_BUNDLES.indexOf(entry[0]) !== -1;
 });
