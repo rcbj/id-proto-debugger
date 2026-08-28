@@ -567,6 +567,9 @@ async function theBrowserConsoleIsClean(driver) {
   const severe = entries.filter(function (entry) {
     if (entry.level.name !== "SEVERE") return false;
     if (/favicon/.test(entry.message)) return false;
+    // Nor is a load the browser abandoned because its own certificate or
+    // network configuration changed under it. See browser_flags.js.
+    if (browserFlags.isTransientLoadError(entry.message)) return false;
     return true;
   });
   assert.deepStrictEqual(severe.map(function (e) { return e.message; }), [],

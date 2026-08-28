@@ -37,6 +37,9 @@ const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+// Only for its console-noise filter: this file builds its Chrome options by
+// hand (see the secure-origin block in test()) and adds no flags from here.
+const browserFlags = require("./browser_flags.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1269,6 +1272,10 @@ async function testNoConsoleErrors(driver) {
   var severe = (entries || []).filter(function (e) {
     return e.level && e.level.name === 'SEVERE';
   }).map(function (e) { return e.message; });
+  // A load the browser abandoned because its own certificate or network
+  // configuration changed under it is not something this page did. See
+  // browser_flags.js.
+  severe = browserFlags.withoutTransientLoadErrors(severe);
   assert.strictEqual(severe.length, 0, "the page logged console errors:\n  " +
                      severe.join("\n  "));
   log.info("[console] OK — no console errors across " + (entries || []).length +
