@@ -146,13 +146,20 @@ Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automat
 
 # The jobs run in a POOL — TEST_CONCURRENCY at a time, defaulting to one less
 # than the machine's cores and held between 2 and 4. It reaches every launcher,
-# the containerized one included (docker-compose-run-tests.yml passes it
-# through). TEST_CONCURRENCY=1 restores the old one-at-a-time run with live
-# streamed output, which is the first thing to try when a job fails in the pool
-# and passes on its own. What must not overlap is declared in JOB_LOCKS at the
-# top of tests/run-report.js — read tests/CLAUDE.md before adding a test that
-# configures a shared service.
+# the two CONTAINERIZED ones included, and there it crosses TWO boundaries:
+# docker-compose-run-tests.yml substitutes it into the tests service, and
+# common/common.sh forwards it past `sudo`, which empties the environment and
+# passes only what COMPOSE_FORWARDED_VARS names. Both halves are needed — until
+# 2026-08-27 only the first existed, so this line reached compose as EMPTY and
+# the pool sized itself from the container's cores with no warning anywhere.
+# tests/compose_env_forwarding.js now fails when a variable a compose file
+# reads is not forwarded. TEST_CONCURRENCY=1 restores the old one-at-a-time run
+# with live streamed output, which is the first thing to try when a job fails
+# in the pool and passes on its own. What must not overlap is declared in
+# JOB_LOCKS at the top of tests/run-report.js — read tests/CLAUDE.md before
+# adding a test that configures a shared service.
 TEST_CONCURRENCY=6 ./docker-run-tests.sh
+TEST_CONCURRENCY=6 ./run-coverage.sh
 
 # Each job is spawned in a PROCESS GROUP of its own and the whole group is
 # killed when the job ends — passing or failing. A browser job is node ->
@@ -164,6 +171,8 @@ TEST_CONCURRENCY=6 ./docker-run-tests.sh
 # kills a job's tree if it never exits. See tests/CLAUDE.md — and note that
 # `process.exit()` in a catch SKIPS the finally that quits the driver, which
 # is the bug that made the backstop necessary.
+# It is forwarded to the containerized launchers the same way TEST_CONCURRENCY
+# is, so it works on all three.
 TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
 
 # Tests from local shell, dependencies still in containers

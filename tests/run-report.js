@@ -353,6 +353,24 @@ function buildJobs() {
     env: {},
   });
 
+  // What crosses `sudo` on the way to compose. docker_compose() in
+  // common/common.sh runs compose under sudo, which empties the environment,
+  // so a variable a compose file reads reaches it only if
+  // COMPOSE_FORWARDED_VARS names it. Every failure of that is silent:
+  // `${NAME:-}` substitutes to the empty string with no warning and a bare
+  // `- NAME` passes nothing, so a setting the launchers document is simply
+  // ignored and the run reports success. That is what TEST_CONCURRENCY did
+  // on the containerized stack for as long as its passthrough existed — the
+  // pool sized itself from the container's cores no matter what was asked
+  // for, and the wall clock was the only evidence. Node only — no browser,
+  // no services — so it never skips.
+  jobs.push({
+    name: "Compose environment forwarding (what survives sudo: " +
+        "TEST_CONCURRENCY, TEST_JOB_TIMEOUT_MS, STS_LOG_LEVEL)",
+    script: "compose_env_forwarding.js",
+    env: {},
+  });
+
   jobs.push({
     name: "OAuth2 Client Credentials",
     script: "oauth2_client_credentials.js",

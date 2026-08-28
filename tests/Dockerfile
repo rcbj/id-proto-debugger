@@ -127,6 +127,25 @@ COPY client/public/index.html ./
 COPY client/public/css/landing.css ./
 COPY client/Dockerfile ./client_Dockerfile
 
+# What survives `sudo` on the way to compose. docker_compose() in common.sh
+# (copied above) runs compose under sudo, which empties the environment, so a
+# variable a compose file reads reaches compose only if COMPOSE_FORWARDED_VARS
+# names it — and every failure of that is silent, which is why the check exists
+# at all. It needs the compose files themselves, and it needs them by name
+# rather than by glob: this directory is flat and a glob here would find
+# whatever else ends in .yml. The two the launchers actually use come first;
+# the remaining three are checked too, since the same rule governs them and a
+# `${NAME}` added to any of them has the same silent failure.
+#
+# A missing file does NOT make the test skip — it fails, because a check that
+# compares nothing is the exact shape of bug it is here to catch.
+COPY tests/compose_env_forwarding.js ./
+COPY docker-compose-run-tests.yml ./
+COPY docker-compose-coverage.yml ./
+COPY docker-compose.yml ./
+COPY local-tests.yml ./
+COPY keycloak-tests.yml ./
+
 # The XML Signature/Encryption interop test drives the frontend crypto module
 # directly (no browser); copy it next to the test so it can require('./xmldsig.js')
 # and resolve its deps (node-forge, etc.) from this image's node_modules. The

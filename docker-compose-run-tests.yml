@@ -406,6 +406,14 @@ services:
       # means "decide there" (2..4, one less than the cores); 1 restores the
       # old sequential run with live output. See run-report.js.
       TEST_CONCURRENCY: ${TEST_CONCURRENCY:-}
+      # The per-job watchdog, passed through beside it so the pool is tunable
+      # from one place. run-report.js kills the process TREE of a job that has
+      # not exited in this long (default 900000 — 15 minutes) and records it as
+      # a timeout; 0 disables the clock while leaving the reaping in place.
+      # It matters more here than on the host: every other service in this
+      # stack shares the machine with the pool, so a job that is merely starved
+      # looks exactly like one that has hung.
+      TEST_JOB_TIMEOUT_MS: ${TEST_JOB_TIMEOUT_MS:-}
       # Where the mock's SPIRE Server API private socket is mounted in this
       # container. It is the `local` entity and the only route to a method
       # SPIRE's own table marks local-only.
