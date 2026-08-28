@@ -126,7 +126,7 @@ variable "tags" {
 # The delegation fixture.
 #
 # Four accounts, and they mirror the mock KDC's four exactly
-# (sts/krb5_principals.js) so that ONE test can drive either KDC with nothing
+# (sts/kerberos/krb5_principals.js) so that ONE test can drive either KDC with nothing
 # but the realm differing. The roles are what matter, not the names:
 #
 #   frontend   classic constrained delegation: msDS-AllowedToDelegateTo names

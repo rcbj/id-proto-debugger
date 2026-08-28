@@ -43,6 +43,7 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
+var jws = require("./jws");
 var sdJwtVc = require("./sd_jwt_vc");
 
 var KEYS = {
@@ -454,22 +455,20 @@ function signKbJwt(opts) {
     nonce: opts.nonce,
     sd_hash: opts.sdHash
   };
-  var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) + "." +
-                     metadataClient.utf8ToB64u(JSON.stringify(payload));
   log.debug("Leaving signKbJwt().");
-  return crypto.subtle.importKey("jwk", opts.holderPrivateJwk,
-      { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])
-    .then(function (key) {
-      return crypto.subtle.sign({ name: "ECDSA", hash: { name: "SHA-256" } },
-                                key,
-        new TextEncoder().encode(signingInput));
-    })
-    .then(function (sig) {
-      // Web Crypto returns raw r||s, which is the JWS ES256 encoding.
-      log.debug("Leaving signKbJwt().");
-      return { jwt: signingInput + "." + metadataClient.bytesToB64u(sig),
-              header: header, payload: payload };
-    });
+  // VERBATIM header: a Key Binding JWT's `typ` is `kb+jwt` and the SD-JWT VC
+  // specification fixes the rest, so the bytes are not this module's to
+  // rearrange. jws.js does the signing input and the Web Crypto call.
+  return jws.signJwsAsync({
+    algId: KB_ALG,
+    protectedHeader: header,
+    payload: payload,
+    privateKey: { jwk: opts.holderPrivateJwk },
+    backend: "webcrypto"
+  }).then(function (signed) {
+    log.debug("Leaving signKbJwt().");
+    return { jwt: signed.serialized, header: header, payload: payload };
+  });
 }
 
 // The whole presentation: the prefix above with the KB-JWT appended.
@@ -528,21 +527,17 @@ function signVpJwt(opts) {
       verifiableCredential: [opts.credential]
     }
   };
-  var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) + "." +
-                     metadataClient.utf8ToB64u(JSON.stringify(payload));
   log.debug("Leaving signVpJwt().");
-  return crypto.subtle.importKey("jwk", opts.holderPrivateJwk,
-      { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"])
-    .then(function (key) {
-      return crypto.subtle.sign({ name: "ECDSA", hash: { name: "SHA-256" } },
-                                key,
-        new TextEncoder().encode(signingInput));
-    })
-    .then(function (sig) {
-      log.debug("Leaving signVpJwt().");
-      return { jwt: signingInput + "." + metadataClient.bytesToB64u(sig),
-              header: header, payload: payload };
-    });
+  return jws.signJwsAsync({
+    algId: "ES256",
+    protectedHeader: header,
+    payload: payload,
+    privateKey: { jwk: opts.holderPrivateJwk },
+    backend: "webcrypto"
+  }).then(function (signed) {
+    log.debug("Leaving signVpJwt().");
+    return { jwt: signed.serialized, header: header, payload: payload };
+  });
 }
 
 // Build whichever presentation the held credential's format calls for. The two

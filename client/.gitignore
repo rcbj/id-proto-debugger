@@ -5,3 +5,9 @@ dist
 src/data.js
 # Build stamp written by version.js --stamp (ships inside the image / dist)
 public/version.json
+# The browserified bundles. client/Dockerfile writes these INSIDE the image
+# (one `browserify src/X.js -o public/js/X.js` per entry) and build.js writes
+# the static-site copies into dist/; a local run of the server needs them here
+# too, which is how 38 generated files come to be sitting in a working tree.
+# Committing one would pin a bundle built from some other revision of src/.
+public/js/

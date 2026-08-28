@@ -76,11 +76,27 @@
    * viewport by five pixels, which is not a fit: the containerized run differs
    * from a host run by around eight. The icon and the card padding below give
    * that back. Measure with landingFitsOnOneScreen() rather than by looking.
+   *
+   * EIGHT across as of the FIFTEENTH card (SPIFFE), and this one was CHEAP
+   * where the thirteenth was expensive — because the fix was not another
+   * column of narrower cards but the 230px this grid had been leaving on the
+   * table. `max-width` was 940px, which is bootstrap 2's `.container` width;
+   * but bootstrap-responsive.css widens that container to 1170px at a viewport
+   * of 1200px or more, and the test viewport is 1366 wide. So 1070px
+   * (8*125 + 7*10) fits eight columns of the SAME 125px the seven had, which
+   * means the same wrapping, the same two rows and the same height: 8+7 rather
+   * than 7+7+1. Measured, not assumed.
+   *
+   * Below a 1200px viewport the container is 940px again and auto-fit falls
+   * back to seven columns, where fifteen cards are three rows. That is the
+   * ordinary responsive degradation this grid has always had at narrower
+   * widths, and landingFitsOnOneScreen() measures the viewport the suite
+   * actually runs at.
    */
   grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
   gap: 10px;
   align-items: stretch;
-  max-width: 940px;
+  max-width: 1070px;
   margin: 0 auto;
 }
 
@@ -156,6 +172,22 @@
    took the column count to seven. It still needs its own accent rule, or
    landingFitsOnOneScreen() fails naming the card rather than this file. */
 .landing-card:nth-child(13) .landing-icon { color: #8a3d3d; }
+/* The fourteenth card (SCIM). The first addition since the twelfth that cost
+   no layout change: seven across turns 7+6 into a filled 7+7, which is the
+   same two rows and therefore the same height — the grid note above predicted
+   this one would be free, and the FIFTEENTH is the next expensive one: 7+7+1
+   puts a third row below the fold, so it will need eight columns. The same
+   arithmetic run again gives min <= 108.75 at the current 10px gap
+   (8*108 + 7*10 = 934 <= 940), and as at every previous step anything larger
+   fails SILENTLY by staying at seven, with the height as the only symptom.
+   Eight columns will also take another ~17px off every card, so every
+   description wraps again — measure with landingFitsOnOneScreen() at each
+   step rather than estimating.
+
+   It still needs this accent rule like every other card, or its icon silently
+   falls back to the text colour. */
+.landing-card:nth-child(14) .landing-icon { color: #1f6b4a; }
+.landing-card:nth-child(15) .landing-icon { color: #4a3d8a; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

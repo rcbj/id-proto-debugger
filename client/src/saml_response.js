@@ -25,6 +25,37 @@
 //                     Also useful for pasting a response in by hand.
 //   none              nothing arrived; the last rendered response is restored
 //                     from localStorage, or paste one in.
+//
+// ---------------------------------------------------------------------------
+// IT READS BOTH PROTOCOL VERSIONS, AND SAML 1.1 IS NOT SAML 2.0 WITH OLDER
+// NAMES. Every field this page shows is spelled differently there, and each of
+// the differences below produced a blank cell rather than an error when this
+// file knew only 2.0:
+//
+//   the message id        ResponseID, not ID
+//   the version           MajorVersion="1" MinorVersion="1", not Version="2.0"
+//   the issuer            an ATTRIBUTE on the message and on the assertion,
+//                         not a <saml:Issuer> child element
+//   where it was sent     Recipient, not Destination
+//   the status code       a **QName** (`samlp:Success`), resolved against the
+//                         document's namespace declarations — NOT a URI. This
+//                         is the one that matters most: `Value` ends in
+//                         ":status:Success" in 2.0 and in ":Success" in 1.1,
+//                         so a check written for one reads the other as a
+//                         failure and the Operations History row goes red on a
+//                         sign-in that worked.
+//   the assertion id      AssertionID, not ID
+//   the subject           <saml:NameIdentifier>, not <saml:NameID>
+//   the audience          <saml:AudienceRestrictionCondition>, not
+//                         <saml:AudienceRestriction>
+//   an attribute's name   AttributeName + AttributeNamespace, two halves of
+//                         what 2.0 spells as one Name
+//   how it was confirmed  <saml:ConfirmationMethod> — and in the browser
+//                         profiles it IS the profile: cm:artifact for
+//                         Browser/Artifact, cm:bearer for Browser/POST
+//
+// There is no Single Logout in SAML 1.1, so a 1.1 message is always a login
+// Response and nothing here saves a subject for a logout that cannot happen.
 
 var appconfig = require(process.env.CONFIG_FILE);
 var history = require("./saml_history");
@@ -53,6 +84,72 @@ var lastAssertionXml = '';
 // message/wrapper-level EncryptedData), serialized — used by the decrypt
 // option.
 var lastEncryptedXml = '';
+
+// SAML 1.0/1.1 protocol and assertion namespaces. Both carry `1.0` and that is
+// not a typo: the schemas were never renamed between 1.0 and 1.1 — the version
+// travels in MajorVersion/MinorVersion attributes instead.
+var NS_SAML1P = 'urn:oasis:names:tc:SAML:1.0:protocol';
+
+// The version of a SAML protocol message or assertion, as "2.0" or "1.1"
+// ("1.0" for a MinorVersion of 0). Read off the element rather than guessed
+// from the namespace, because MajorVersion/MinorVersion is where SAML 1.x puts
+// it and a 1.0 document and a 1.1 one share every namespace they have.
+function samlVersionOf(elem) {
+  log.debug("Entering samlVersionOf().");
+  if (!elem || !elem.getAttribute) {
+    log.debug("Leaving samlVersionOf(). No element.");
+    return '';
+  }
+  var v = elem.getAttribute('Version');
+  if (v) {
+    log.debug("Leaving samlVersionOf(). From Version.");
+    return v;
+  }
+  var major = elem.getAttribute('MajorVersion');
+  var minor = elem.getAttribute('MinorVersion');
+  if (major) {
+    log.debug("Leaving samlVersionOf(). From MajorVersion/MinorVersion.");
+    return major + '.' + (minor || '0');
+  }
+  // Nothing said. A SAML 1.x namespace is the only remaining evidence, and it
+  // cannot tell 1.0 from 1.1 — so say 1.x rather than pick one.
+  if (elem.namespaceURI === NS_SAML1P) {
+    log.debug("Leaving samlVersionOf(). From the namespace alone.");
+    return '1.x';
+  }
+  log.debug("Leaving samlVersionOf(). Unknown.");
+  return '';
+}
+
+function isSaml1(version) {
+  log.debug("Entering isSaml1().");
+  log.debug("Leaving isSaml1().");
+  return String(version || '').charAt(0) === '1';
+}
+
+// WHETHER A STATUS SAYS SUCCESS, in either version's spelling — and this is the
+// single most consequential difference between them on this page.
+//
+// SAML 2.0's StatusCode/@Value is a URI ending
+// `:status:Success`. SAML 1.1's is a **QName**: `samlp:Success`, resolved
+// against the namespace declarations in scope, so what a strict reader sees is
+// `{urn:oasis:names:tc:SAML:1.0:protocol}Success`. The old check was
+// `indexOf(':status:Success') >= 0`, which is false for every SAML 1.1
+// success — so a sign-in that worked rendered a red status and closed its
+// Operations History row as a FAILURE, which is the worst possible way to be
+// wrong about a working flow.
+//
+// Matching the LOCAL PART after the last colon covers both and refuses a
+// lookalike: `Success` as the whole value, `samlp:Success` as a QName, and
+// `urn:…:status:Success` as a URI all pass, while `RequesterSuccess` or a
+// status message containing the word does not.
+function isSuccessStatus(value) {
+  log.debug("Entering isSuccessStatus().");
+  var text = String(value || '');
+  var local = text.substring(text.lastIndexOf(':') + 1);
+  log.debug("Leaving isSuccessStatus().");
+  return local === 'Success';
+}
 
 function el(id) {
   log.debug("Entering el().");
@@ -231,7 +328,7 @@ function resolveHistoryFromStatus(doc, msgType) {
     log.debug("Leaving resolveHistoryFromStatus().");
     return;
   }
-  if (top.indexOf(':status:Success') >= 0) {
+  if (isSuccessStatus(top)) {
     history.resolvePending(history.SUCCESS, 'IdP returned Success', operation);
     renderOperationHistory();
     log.debug("Leaving resolveHistoryFromStatus().");
@@ -278,6 +375,7 @@ function render(responseXml, isFresh) {
   // Issuer/Signature/Status; only a login Response carries an <Assertion>.
   var msgType = doc.documentElement ? doc.documentElement.localName : '';
   var isLogout = msgType === 'LogoutResponse';
+  var version = samlVersionOf(doc.documentElement);
 
   buildResponseDetailsTable(doc);
 
@@ -299,12 +397,26 @@ function render(responseXml, isFresh) {
   }
   var noAssertionNote = isLogout
     ? '(LogoutResponse carries no assertion — see the Details tab for the logout status.)'
-    : '(no <Assertion> — the response may be an error or encrypted)';
+    : (isSaml1(version)
+       ? '(no <saml:Assertion> — the Response carries a status and nothing ' +
+         'else. SAML 1.1 has no encrypted assertion in the browser profiles, ' +
+         'so this is an error rather than something to decrypt; see the ' +
+         'Details tab.)'
+       : '(no <Assertion> — the response may be an error or encrypted)');
   setVal('saml_assertion_xml', assertionXml ?
          formatXml(assertionXml) : noAssertionNote);
 
   buildAttributesTable(assertion);
   saveSubjectForLogout(assertion);
+  if (isSaml1(version)) {
+    // Not a warning and not an omission: SAML 1.1 has no Single Logout, so
+    // there is nothing on the request page for a saved subject to drive. Said
+    // here so the absence of the usual "logout is ready" state is explained on
+    // the page rather than discovered on the other one.
+    log.info('A SAML ' + version + ' Response was rendered. No subject was ' +
+             'saved for Single Logout: SAML 1.1 has no logout message and no ' +
+             'endpoint for one.');
+  }
   // Only a response that just arrived closes out a pending Operations History
   // entry; a cached one redisplayed on a later visit says nothing about it.
   if (isFresh) resolveHistoryFromStatus(doc, msgType);
@@ -318,6 +430,15 @@ function saveSubjectForLogout(assertion) {
   log.debug("Entering saveSubjectForLogout().");
   if (!assertion || !window.localStorage) {
     log.debug("Leaving saveSubjectForLogout().");
+    return;
+  }
+  // ONLY SAML 2.0 WRITES HERE. A SAML 1.1 assertion has a subject and a session
+  // of a sort, and there is no LogoutRequest in that protocol to spend them on
+  // — writing them would leave the request page's Logout button looking armed
+  // on a version where it is disabled, and would overwrite a genuine 2.0
+  // session's NameID with one that cannot log anything out.
+  if (isSaml1(samlVersionOf(assertion))) {
+    log.debug("Leaving saveSubjectForLogout(). SAML 1.x has no Single Logout.");
     return;
   }
   var subj = tags(assertion, 'Subject')[0];
@@ -349,11 +470,26 @@ function buildAttributesTable(assertion) {
     return;
   }
 
+  var version = samlVersionOf(assertion);
+  var saml1 = isSaml1(version);
+
   var html = '<table class="saml-table"><tr><th>Name</th><th>Value(s)</th><th>Format</th><th>FriendlyName</th></tr>';
 
-  // Assertion metadata.
+  // Assertion metadata. SAML 1.1 spells the id `AssertionID` and carries the
+  // issuer as an ATTRIBUTE rather than a child element, so both are read here
+  // — a 2.0-only reader shows an empty cell for each and says nothing about
+  // why.
   html += row(['<span class="saml-key">Assertion ID</span>',
-              esc(assertion.getAttribute('ID') || ''), '', '']);
+              esc(assertion.getAttribute('ID') ||
+                  assertion.getAttribute('AssertionID') || ''), '', '']);
+  if (version) {
+    html += row(['<span class="saml-key">Assertion Version</span>',
+                esc(version), '', '']);
+  }
+  if (saml1 && assertion.getAttribute('Issuer')) {
+    html += row(['<span class="saml-key">Assertion Issuer</span>',
+                esc(assertion.getAttribute('Issuer')), '', '']);
+  }
   html += row(['<span class="saml-key">IssueInstant</span>',
               esc(assertion.getAttribute('IssueInstant') || ''), '', '']);
 
@@ -374,12 +510,18 @@ function buildAttributesTable(assertion) {
       var cc = cond.firstChild;
       while (cc) {
         if (cc.nodeType === 1) {
-          if (cc.localName === 'AudienceRestriction') {
+          if (cc.localName === 'AudienceRestriction' ||
+              cc.localName === 'AudienceRestrictionCondition') {
             var auds = tags(cc, 'Audience'), list = [];
             for (var ci = 0; ci < auds.length; ci++) { list.push(esc((auds[ci]
                  .textContent || '').trim())); }
+            // Labelled with the element's OWN name rather than a fixed string:
+            // SAML 1.1 spells it AudienceRestrictionCondition and 2.0 spells it
+            // AudienceRestriction, and which one arrived is exactly the kind of
+            // thing somebody reads this table to find out. A fixed label would
+            // report a 1.1 document in 2.0's vocabulary.
             html += row(['<span class="saml-key">Condition: ' +
-                        'AudienceRestriction</span>', list.join('<br>'), '',
+                        esc(cc.localName) + '</span>', list.join('<br>'), '',
                         '']);
           } else {
             html += row(['<span class="saml-key">Condition: ' +
@@ -394,21 +536,59 @@ function buildAttributesTable(assertion) {
     log.error('buildAttributesTable conditions: ' + e.message);
   }
 
-  // NameID (from Subject) shown first.
+  // The subject, shown first. <saml:NameID> in SAML 2.0 and
+  // <saml:NameIdentifier> in 1.1 — a different element, not a renamed
+  // attribute, so a reader that knows one finds nothing in the other and the
+  // table renders without the row every SSO test looks for.
   var subj = tags(assertion, 'Subject')[0];
   if (subj) {
-    var nameId = tags(subj, 'NameID')[0];
+    var nameId = tags(subj, 'NameID')[0] || tags(subj, 'NameIdentifier')[0];
     if (nameId) {
       html += row([
         '<span class="saml-key">NameID</span>',
         esc((nameId.textContent || '').trim()),
         esc(nameId.getAttribute('Format') || ''),
-        ''
+        esc(nameId.getAttribute('NameQualifier') || '')
       ]);
+    }
+    // HOW THE ASSERTION CLAIMS TO HAVE ARRIVED, which in the SAML 1.1 browser
+    // profiles IS the profile: saml-profile-1.1 section 4.1.1.4 requires
+    // cm:artifact for Browser/Artifact and 4.2.1.4 requires cm:bearer for
+    // Browser/POST. A relying party that does not check works perfectly with
+    // either, which is exactly why it is worth showing.
+    var cms = tags(subj, 'ConfirmationMethod');
+    for (var c = 0; c < cms.length; c++) {
+      html += row(['<span class="saml-key">ConfirmationMethod</span>',
+                  esc((cms[c].textContent || '').trim()), '', '']);
     }
   }
 
-  // Attributes from every AttributeStatement.
+  // The authentication statement. SAML 1.1 puts the method and the instant on
+  // <saml:AuthenticationStatement>; SAML 2.0 spells them as a child
+  // <saml:AuthnContextClassRef> and an AuthnInstant attribute, which the
+  // Details tab already covers for that version.
+  var authnStmt = tags(assertion, 'AuthenticationStatement')[0];
+  if (authnStmt) {
+    html += row(['<span class="saml-key">AuthenticationMethod</span>',
+                esc(authnStmt.getAttribute('AuthenticationMethod') || ''),
+                '', '']);
+    html += row(['<span class="saml-key">AuthenticationInstant</span>',
+                esc(authnStmt.getAttribute('AuthenticationInstant') || ''),
+                '', '']);
+    var locality = tags(authnStmt, 'SubjectLocality')[0];
+    if (locality) {
+      html += row(['<span class="saml-key">SubjectLocality</span>',
+                  esc((locality.getAttribute('IPAddress') || '') +
+                      (locality.getAttribute('DNSAddress') ?
+                       ' / ' + locality.getAttribute('DNSAddress') : '')),
+                  '', '']);
+    }
+  }
+
+  // Attributes from every AttributeStatement. SAML 1.1 splits what 2.0 spells
+  // as one `Name` URI into `AttributeName` and `AttributeNamespace`, so the
+  // name column joins them the way the claim URI they came from was written
+  // and the format column shows the namespace half on its own.
   var attrs = tags(assertion, 'Attribute');
   for (var i = 0; i < attrs.length; i++) {
     var a = attrs[i];
@@ -417,10 +597,15 @@ function buildAttributesTable(assertion) {
     for (var j =
          0; j < vals.length; j++) { valStrs.push(esc((vals[j].textContent ||
          '').trim())); }
+    var ns = a.getAttribute('AttributeNamespace') || '';
+    var name = a.getAttribute('Name') || a.getAttribute('AttributeName') || '';
+    var shown = (ns && !a.getAttribute('Name'))
+      ? (ns.replace(/\/$/, '') + '/' + name)
+      : name;
     html += row([
-      esc(a.getAttribute('Name') || ''),
+      esc(shown),
       valStrs.join('<br>'),
-      esc(a.getAttribute('NameFormat') || ''),
+      esc(a.getAttribute('NameFormat') || ns),
       esc(a.getAttribute('FriendlyName') || '')
     ]);
   }
@@ -493,16 +678,38 @@ function buildResponseDetailsTable(doc) {
     certCell = '<em>(not signed / no certificate)</em>';
   }
 
+  // EVERY ROW BELOW IS SPELLED DIFFERENTLY IN THE TWO VERSIONS, so each reads
+  // both. What SAML 1.1 does NOT have is worth as much as what it has: no
+  // Destination (it has Recipient, which names where the response was sent),
+  // and no <saml:Issuer> element — the issuer is an attribute, and on a
+  // Browser/POST Response there is often none at all, because the assertion
+  // inside carries it.
+  var version = samlVersionOf(msg);
   var html = '<table class="saml-table">';
   html += kv('Message Type', esc(msg.localName || ''));
-  html += kv('SAML Version', esc(msg.getAttribute('Version') || ''));
+  html += kv('SAML Version', esc(version));
   html += kv('Issue Date (IssueInstant)',
              esc(msg.getAttribute('IssueInstant') || ''));
   html += kv('In Response To', esc(msg.getAttribute('InResponseTo') || ''));
-  html += kv('ID', esc(msg.getAttribute('ID') || ''));
+  html += kv('ID', esc(msg.getAttribute('ID') ||
+                       msg.getAttribute('ResponseID') || ''));
   var dest = msg.getAttribute('Destination') || '';
   if (dest) html += kv('Destination', esc(dest));
-  html += kv('Issuer', esc(directChildText(msg, 'Issuer')));
+  var recipient = msg.getAttribute('Recipient') || '';
+  if (recipient) html += kv('Recipient', esc(recipient));
+  // The assertion's issuer stands in when the message has none, which is the
+  // ordinary case on a SAML 1.1 Browser/POST Response — an empty Issuer row
+  // over a signed assertion reads as an unidentified identity provider.
+  var issuer = directChildText(msg, 'Issuer') ||
+      msg.getAttribute('Issuer') || '';
+  if (!issuer) {
+    var firstAssertion = tags(msg, 'Assertion')[0];
+    if (firstAssertion) {
+      issuer = firstAssertion.getAttribute('Issuer') ||
+          directChildText(firstAssertion, 'Issuer') || '';
+    }
+  }
+  html += kv('Issuer', esc(issuer));
   html += kv('Signer Certificate', certCell);
   html += kv('SAML Status', statusHtml(msg));
   html += '</table>';
@@ -527,7 +734,7 @@ function statusHtml(msg) {
   var smEl = tags(statusEl, 'StatusMessage')[0];
   var sm = smEl ? (smEl.textContent || '').trim() : '';
 
-  var isSuccess = top.indexOf(':status:Success') >= 0;
+  var isSuccess = isSuccessStatus(top);
   var out = '<strong style="color:' + (isSuccess ? '#2e7d32' : '#b00') + ';">' +
       esc(shortStatus(top)) + '</strong>';
   if (top) out += ' <span style="color:#888; word-break:break-all;">' +
@@ -538,7 +745,12 @@ function statusHtml(msg) {
   return out;
 }
 
-// Last segment of a SAML status URI (…:status:Success -> "Success").
+// The readable part of a status code, in either version's spelling: the last
+// segment of a SAML 2.0 URI (…:status:Success -> "Success") and the local part
+// of a SAML 1.1 QName (samlp:Success -> "Success"). One rule covers both,
+// because a colon is the separator in each — which is also why the full value
+// is printed beside it: `Requester` means different things in the two and the
+// short form alone does not say which was read.
 function shortStatus(uri) {
   log.debug("Entering shortStatus().");
   if (!uri) {

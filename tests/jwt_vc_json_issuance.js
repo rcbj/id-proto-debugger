@@ -49,7 +49,7 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime || 15000;
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 
@@ -63,6 +63,11 @@ function severeErrors(driver) {
                        .then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
       .filter(function (e) { return !/favicon/.test(e.message); })
+      // Nor is a load the BROWSER abandoned because its own certificate or
+      // network configuration changed underneath it. See browser_flags.js.
+      .filter(function (e) {
+        return !browserFlags.isTransientLoadError(e.message);
+      })
       .map(function (e) { return e.message; });
   });
 }
@@ -213,6 +218,13 @@ async function test() {
         "format is untested. Offered: " +
     Object.keys(found.meta.credential_configurations_supported ||
                 {}).join(", "));
+
+  // The wallet, declared at the mock issuer before it asks for anything, and
+  // after the checks above so that a missing service still fails with the
+  // message naming what to start. A no-op against any other issuer — see
+  // common.provisionWallet().
+  await common.provisionWallet(issuerBase,
+    { why: "the wallet this job collects a jwt_vc_json credential with" });
 
   await metadataAdvertisesTheFormat();
   const held = await issuesARealVcJwt(found);

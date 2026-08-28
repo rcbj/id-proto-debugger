@@ -221,8 +221,8 @@ function parseKeytab(bytes) {
 
 // The keys from a keytab in the shape the decoder's decryption wants.
 function keysFromKeytab(parsed) {
-  log.debug("Leaving keysFromKeytab().");
   log.debug("Entering keysFromKeytab().");
+  log.debug("Leaving keysFromKeytab().");
   return (parsed.entries ||
       []).filter(function (e) { return e.supported; }).map(function (e) {
     return {

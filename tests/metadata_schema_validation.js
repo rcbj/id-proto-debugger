@@ -35,6 +35,7 @@ const paths = require("./module_paths.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({ name: "metadata_schema_test",
                                 level: appconfig.logLevel || "info" });
 
@@ -51,6 +52,21 @@ var schema = paths.requireSharedModule(
   [path.join(__dirname, "metadata_schema.js"),
    path.join(__dirname, "..", "client", "src", "metadata_schema.js")],
   "the metadata schema module");
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 // --- documents that satisfy every rule --------------------------------------
 // Deliberately https and complete, so any error at all is the validator's fault
@@ -862,6 +878,7 @@ async function populateRunsTheCheck() {
   const { Builder, By, until } = require("selenium-webdriver");
   const chrome = require("selenium-webdriver/chrome");
   const browserFlags = require("./browser_flags.js");
+  const waitForContent = require("./wait_for.js");
 
   var options = new chrome.Options();
   if (headless) options.addArguments("--headless=new");
@@ -874,6 +891,7 @@ async function populateRunsTheCheck() {
     var plant = async function (vci, as) {
       log.debug("Entering plant().");
       await driver.get(baseUrl + "/vc-issuance-1.html");
+      await pageBundleReady(driver);
       await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                         waitTime);
       await driver.executeScript(
@@ -882,19 +900,26 @@ async function populateRunsTheCheck() {
         "localStorage.setItem('discovery_info', arguments[1]);",
         JSON.stringify(vci), JSON.stringify(as));
       await driver.navigate().refresh();
+      await pageBundleReady(driver);
       await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                         waitTime);
       await driver.sleep(700);
       log.debug("Leaving plant().");
     };
-    var clickPopulate = async function (buttonId, reportId) {
-      log.debug("Entering clickPopulate().");
-      await driver.executeScript(
-        "var b = document.getElementById(arguments[0]); if (b) b.click();",
-            buttonId);
-      await driver.sleep(700);
-      log.debug("Leaving clickPopulate().");
-      return await driver.executeScript(
+    // WAIT FOR THE REPORT, not for 700ms after the click. Populate re-applies
+    // the stored document — re-render the table, the credential list, the
+    // Configuration Parameters — and only then writes the schema report, so
+    // clicking and reading on a fixed sleep is a bet on how long all of that
+    // takes. It wins on an idle machine and loses under a full suite run, where
+    // it failed as "should say the document is clean. Said: " with nothing
+    // after the colon: the pane had not been written yet, and the message named
+    // the document rather than the wait. Every caller below expects a summary
+    // line, clean or not, so a non-empty one IS the signal that the check has
+    // run. See tests/wait_for.js for the general form of this.
+    var readReport = function (reportId) {
+      log.debug("Entering readReport().");
+      log.debug("Leaving readReport().");
+      return driver.executeScript(
         "var host = document.getElementById(arguments[0]);" +
         "if (!host) return null;" +
         "var head = host.querySelector('p');" +
@@ -902,6 +927,18 @@ async function populateRunsTheCheck() {
         "         rows: host.querySelectorAll('tbody tr').length," +
         "         errors: host.querySelectorAll('td.vc-bad').length };",
             reportId);
+    };
+    var clickPopulate = async function (buttonId, reportId) {
+      log.debug("Entering clickPopulate().");
+      await driver.executeScript(
+        "var b = document.getElementById(arguments[0]); if (b) b.click();",
+            buttonId);
+      var report = await waitForContent.waitFor(driver,
+        function () { return readReport(reportId); },
+        function (r) { return !!r && r.text !== ""; },
+        "Populate should write a schema report into #" + reportId, waitTime);
+      log.debug("Leaving clickPopulate().");
+      return report;
     };
 
     // A clean document: the pane should say so, with no findings listed.

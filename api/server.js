@@ -142,6 +142,15 @@ const MAX_CONTENT_LENGTH = resolvePositiveNumber(
 // home page into a pane nobody will read.
 const SPNEGO_BODY_CHARS = 16384;
 
+// How much of a token endpoint's response body POST /token hands back in its
+// HTTP trace, for the same reason and with the same distinction as the constant
+// above: MAX_CONTENT_LENGTH bounds the TRANSFER, this bounds what is put in
+// front of a reader. A token response is JSON of a few kilobytes even when it
+// carries three JWTs, so this is generous; what it stops is an identity
+// provider answering an HTML error page — or a login page — and that page
+// arriving in a pane as a wall of markup.
+const TRACE_BODY_CHARS = 16384;
+
 /**
  * Read one non-negative integer setting out of the environment config.
  *
@@ -414,6 +423,161 @@ function withUserAgent(headers) {
   log.debug("Leaving withUserAgent().");
   return Object.assign({}, headers || {}, {
     'User-Agent': USER_AGENT });
+}
+
+// ---------------------------------------------------------------------------
+// THE HTTP TRACE: what this service saw of a call it made on the caller's
+// behalf.
+//
+// The browser cannot see any of it. When the token endpoint call is proxied —
+// which is this page's default, because a great many identity providers refuse
+// a browser-origin Token Request outright — the request that matters is the
+// one THIS process sends, and the only thing that reaches the browser is the
+// parsed token payload. So the method, the URL, the headers each way, the
+// bytes on the wire and how long the far end took are all observable here and
+// nowhere else, and a debugger that cannot show them is asking its user to
+// take the exchange on trust.
+//
+// It is OPT-IN, per call, and it rides in the response body under
+// `http_exchange` (see POST /token). Opt-in rather than always-on because the
+// trace repeats the request verbatim, credentials included: it is a debugging
+// artifact for the caller that asked for it, not a thing this service adds to
+// every answer it gives.
+//
+// The shape is deliberately the SAME as POST /krb5/spnego's, which is the
+// other endpoint here that hands an HTTP exchange back for display —
+// { request: {method, url, headers, body}, response: {status, statusText,
+// headers, body, bodyTruncated, bodyLength}, timing: {totalMs} }. Two shapes
+// for one idea would mean two renderers in the client for no reason.
+// ---------------------------------------------------------------------------
+
+// Capture the response body as it was RECEIVED, on its way through the JSON
+// parse axios would have done anyway.
+//
+// axios's default transformResponse parses a string body as JSON and silently
+// keeps the string when it is not JSON; this does exactly that and keeps the
+// raw text as well. Replacing the default is what makes the raw text reachable
+// at all: by the time a handler sees `response.data` the bytes are gone, and
+// re-serializing the parsed object gives a body the far end never sent —
+// different whitespace, different key order, and no sign of a duplicated
+// member. The sink is per-call (created in the handler), so concurrent
+// requests cannot see each other's bodies.
+function captureRawBody(sink) {
+  log.debug("Entering captureRawBody().");
+  log.debug("Leaving captureRawBody().");
+  return function (data) {
+    if (typeof data === 'string') {
+      sink.raw = data;
+      try {
+        return JSON.parse(data);
+      } catch (e) {
+        // Not JSON. Exactly what axios's own transform does with it, and the
+        // trace keeps the text either way.
+        return data;
+      }
+    }
+    sink.raw = (data === null || data === undefined) ? '' : String(data);
+    return data;
+  };
+}
+
+// The headers of an axios response, as a plain object. axios 1.x returns an
+// AxiosHeaders instance, which JSON.stringify renders as {} without toJSON().
+function traceHeaders(headers) {
+  log.debug("Entering traceHeaders().");
+  if (!headers) {
+    log.debug("Leaving traceHeaders(). None.");
+    return {};
+  }
+  if (typeof headers.toJSON === 'function') {
+    log.debug("Leaving traceHeaders(). AxiosHeaders.");
+    return headers.toJSON();
+  }
+  log.debug("Leaving traceHeaders(). Plain object.");
+  return headers;
+}
+
+/**
+ * Build one HTTP trace.
+ *
+ * @param {object} request - {method, url, headers, body} as SENT, including
+ *   whatever this service added to it, so the trace shows the request rather
+ *   than the caller's intent.
+ * @param {object|null} response - the axios response, or null when there was
+ *   none (a timeout, a refused connection, a blocked address).
+ * @param {string|null} rawBody - the response body as received.
+ * @param {number} startedAt - Date.now() from immediately before the call.
+ * @param {string|null} failure - the error message, when there was no response.
+ * @returns {object} the trace
+ */
+function buildHttpTrace(request, response, rawBody, startedAt, failure) {
+  log.debug("Entering buildHttpTrace().");
+  var body = (rawBody === null || rawBody === undefined) ? '' : String(rawBody);
+  var shown = body.slice(0, TRACE_BODY_CHARS);
+  var trace = {
+    request: {
+      method: request.method,
+      url: request.url,
+      headers: request.headers || {},
+      body: request.body === undefined ? '' : String(request.body)
+    },
+    response: response === null || response === undefined ? null : {
+      status: response.status,
+      statusText: response.statusText || '',
+      headers: traceHeaders(response.headers),
+      body: shown,
+      bodyTruncated: body.length > shown.length,
+      bodyLength: body.length
+    },
+    // Measured around the outbound call and nothing else, so it is the far
+    // end's time plus the network — not this service's own handling, and not
+    // the browser's round trip to this service, which the browser measures for
+    // itself and shows beside this one.
+    timing: {
+      totalMs: Date.now() - startedAt },
+    error: failure || null
+  };
+  log.debug("Leaving buildHttpTrace(). status=" +
+            (trace.response ? trace.response.status : 'none') + " in " +
+            trace.timing.totalMs + "ms.");
+  return trace;
+}
+
+/**
+ * Attach a trace to the payload that is about to be sent back, when the caller
+ * asked for one and the payload can carry it.
+ *
+ * A token endpoint's response is a JSON object in every case this service is
+ * built for, but nothing obliges one to be: an error page is a string and an
+ * empty 204 is nothing at all. Rather than change the shape of the reply for
+ * those — every existing caller reads `data.access_token` and an error
+ * handler reads `responseText` — the trace is simply not attached, and the
+ * client falls back to what the browser itself can see of the call. A payload
+ * that already HAS an `http_exchange` member keeps its own: it is somebody
+ * else's data and overwriting it would be a debugger lying about the response
+ * it is showing.
+ *
+ * @returns {*} the payload to send, with or without the trace
+ */
+function withHttpTrace(payload, trace, wanted) {
+  log.debug("Entering withHttpTrace(). wanted=" + !!wanted);
+  if (!wanted || !trace) {
+    log.debug("Leaving withHttpTrace(). Not wanted.");
+    return payload;
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    log.debug("Leaving withHttpTrace(). Payload cannot carry it.");
+    return payload;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'http_exchange')) {
+    log.warn('The token endpoint response has an http_exchange member of its ' +
+             'own, so the HTTP trace was not attached.');
+    log.debug("Leaving withHttpTrace(). Member taken.");
+    return payload;
+  }
+  log.debug("Leaving withHttpTrace(). Attached.");
+  return Object.assign({}, payload, {
+    http_exchange: trace });
 }
 
 log.info("Outbound call timeout: " + CALL_TIMEOUT +
@@ -806,37 +970,41 @@ function xmlTextEscape(s) {
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-function signXmlEnveloped(xml, privateKeyPem, certPem, rootLocalName) {
+// THE XML SIGNATURE HERE IS THE SAME ONE THE BROWSER USES.
+//
+// This was the `xml-crypto` package, which made three implementations of XML
+// Signature in one application: xml-crypto here, and two copies of a
+// hand-written one in the browser (client/src/saml_request.js had its own and
+// common/xmldsig.js had the other). A canonicalizer is a reading of a
+// specification, and three readings is three chances to disagree with the
+// verifier at the far end — which for SAML is an identity provider that says
+// only "invalid signature".
+//
+// common/xmldsig.js needs the two DOM constructors, which node does not have;
+// @xmldom/xmldom supplies them and was already a dependency of this file for
+// the artifact SOAP handling further down.
+var xmldom = require('@xmldom/xmldom');
+if (!global.DOMParser) global.DOMParser = xmldom.DOMParser;
+if (!global.XMLSerializer) global.XMLSerializer = xmldom.XMLSerializer;
+var xmldsig = require('./xmldsig.js');
+
+function signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg) {
   log.debug("Entering signXmlEnveloped().");
-  var root = rootLocalName || 'AuthnRequest';
-  var xmlcrypto = require('xml-crypto');
-  var SignedXml = xmlcrypto.SignedXml;
-  // The root element's ID becomes the signature Reference URI (#ID).
-  var m = xml.match(/\bID="([^"]+)"/);
-  var id = m ? m[1] : '';
-  var sig = new SignedXml({
-    privateKey: privateKeyPem,
-    publicCert: certPem || undefined
-  });
-  sig.signatureAlgorithm = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
-  sig.canonicalizationAlgorithm = 'http://www.w3.org/2001/10/xml-exc-c14n#';
-  sig.addReference({
-    xpath: "/*[local-name(.)='" + root + "']",
-    transforms: [
-      'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
-      'http://www.w3.org/2001/10/xml-exc-c14n#'
-    ],
-    digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256',
-    uri: id ? ('#' + id) : ''
-  });
-  // Per the SAML schema the <Signature> must follow <Issuer>.
-  sig.computeSignature(xml, {
-    location: {
-      reference: "/*[local-name(.)='" + root + "']/*[local-name(.)='Issuer']",
-          action: 'after' }
+  // The Reference URI, the enveloped-signature + exclusive-C14N transform
+  // pair, the X509Data KeyInfo and the placement directly after <Issuer> are
+  // all signEnveloped()'s defaults — which is not a coincidence: those
+  // defaults ARE the SAML profile, which is what that function was written
+  // for. `rootLocalName` is gone with the xpath that needed it; the module
+  // finds the root's ID attribute itself.
+  var signed = xmldsig.signEnveloped(xml, {
+    privateKeyPem: privateKeyPem,
+    certPem: certPem || '',
+    sigAlg: sigAlg || 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
+    placement: 'after-issuer',
+    includeKeyInfo: !!certPem
   });
   log.debug("Leaving signXmlEnveloped().");
-  return sig.getSignedXml();
+  return signed;
 }
 
 /**
@@ -865,8 +1033,7 @@ app.post('/samlsign', function (req, res) {
     }
 
     if (binding === 'post') {
-      var signedXml = signXmlEnveloped(xml, privateKeyPem, certPem,
-          rootElement);
+      var signedXml = signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg);
       var params = {
         SAMLRequest: Buffer.from(signedXml, 'utf8').toString('base64') };
       if (relayState) params.RelayState = relayState;
@@ -899,10 +1066,15 @@ app.post('/samlsign', function (req, res) {
     var qs = 'SAMLRequest=' + encodeURIComponent(samlRequest);
     if (relayState) qs += '&RelayState=' + encodeURIComponent(relayState);
     qs += '&SigAlg=' + encodeURIComponent(sigAlg);
-    var signer = crypto.createSign('RSA-SHA256');
-    signer.update(qs);
-    var signature = signer.sign(privateKeyPem, 'base64');
-    qs += '&Signature=' + encodeURIComponent(signature);
+    // THE DIGEST NOW FOLLOWS SigAlg. This was `crypto.createSign('RSA-SHA256')`
+    // whatever the caller asked for, so a request that declared
+    // SigAlg=…#rsa-sha512 was signed with SHA-256 and the query string said
+    // otherwise — a document that verifies nowhere, and whose only symptom at
+    // the identity provider is "invalid signature". signQueryString() reads
+    // the digest out of the SigAlg it is given.
+    qs += '&Signature=' + encodeURIComponent(
+      xmldsig.signQueryString(qs, { privateKeyPem: privateKeyPem,
+                                    sigAlg: sigAlg }));
     // Full GET URL when a destination is known; otherwise just the signed query
     // string (e.g. "Build Request" before metadata is loaded).
     var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
@@ -929,18 +1101,36 @@ app.post('/samlsign', function (req, res) {
 app.post('/samlartifactctx', function (req, res) {
   var b = req.body || {
     };
-  if (!b.privateKeyPem || !b.arsUrl) {
+  // THE KEY IS OPTIONAL AND THE ADDRESS IS NOT, which is a change of shape
+  // rather than a relaxation. SAML 2.0 section 3.6.3 does not require the
+  // <ArtifactResolve> to be signed either, and SAML 1.1 has no request document
+  // to sign at all — the browser sends four unsigned query parameters. Refusing
+  // without a key made "the service provider generated no key pair" fail HERE,
+  // in a call whose error text names privateKeyPem and nothing else, several
+  // steps before anything SAML-shaped happens. resolveArtifact() below signs
+  // when there is a key and sends it unsigned when there is not.
+  if (!b.arsUrl) {
     return res.status(STATUS_400).json({
-      error: 'privateKeyPem and arsUrl are required.'
+      error: 'arsUrl is required.'
     });
   }
   var id = stashArtifactCtx({
     arsUrl: b.arsUrl,
-    privateKeyPem: b.privateKeyPem,
+    privateKeyPem: b.privateKeyPem || '',
     certPem: b.certPem || '',
     spEntityId: b.spEntityId || '',
     sigAlg: b.sigAlg || 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
-    // Optional WS-Addressing headers for the ArtifactResolve SOAP envelope.
+    // WHICH PROTOCOL VERSION'S BACK-CHANNEL THIS IS. '1.1' means the endpoint
+    // is a SAML 1.1 SAML RESPONDER (saml-bindings-1.1 section 3.1), which
+    // answers a <samlp:Request> carrying an <AssertionArtifact> — NOT a SAML
+    // 2.0 Artifact Resolution Service, which answers an <ArtifactResolve>. The
+    // two are different messages in different namespaces returning differently
+    // shaped answers, and sending one where the other is expected produces a
+    // status a relying party reads as "that artifact does not resolve".
+    samlVersion: b.samlVersion === '1.1' ? '1.1' : '2.0',
+    // Optional WS-Addressing headers for the SOAP envelope. They apply to both
+    // versions: WS-Addressing is a SOAP-layer mechanism and knows nothing about
+    // what is inside the body.
     wsa: b.wsa || {}
   });
   res.json({
@@ -968,7 +1158,17 @@ function decodeSamlMessage(b64) {
   log.debug("Leaving decodeSamlMessage().");
 }
 
-// Pull the <samlp:Response> element out of a SOAP <ArtifactResponse> envelope.
+// Pull the <samlp:Response> element out of the SOAP envelope that came back.
+//
+// It sits at a different DEPTH in the two versions and the difference is not
+// cosmetic. A SAML 2.0 Artifact Resolution Service answers with an
+// <ArtifactResponse> WRAPPING the <Response> that would otherwise have been
+// POSTed — two protocol messages, each with its own status. A SAML 1.1 SAML
+// responder answers with the <Response> itself, built at resolution time so it
+// can carry InResponseTo naming this SOAP request. Selecting on the local name
+// and the namespace finds the right element in both, and the namespace has to
+// be part of it: SAML 1.1's protocol namespace ends `:1.0:protocol`, which is
+// not a typo — the schemas were never renamed between 1.0 and 1.1.
 function extractResponseFromArtifactResponse(soapXml) {
   log.debug("Entering extractResponseFromArtifactResponse().");
   var xmldom = require('@xmldom/xmldom');
@@ -976,7 +1176,8 @@ function extractResponseFromArtifactResponse(soapXml) {
   var doc = new xmldom.DOMParser().parseFromString(soapXml, 'text/xml');
   var nodes = xpath.select(
     "//*[local-name(.)='Response' and " +
-        "namespace-uri(.)='urn:oasis:names:tc:SAML:2.0:protocol']",
+        "(namespace-uri(.)='urn:oasis:names:tc:SAML:2.0:protocol' or " +
+         "namespace-uri(.)='urn:oasis:names:tc:SAML:1.0:protocol')]",
     doc
   );
   if (!nodes || !nodes.length) {
@@ -985,6 +1186,46 @@ function extractResponseFromArtifactResponse(soapXml) {
   }
   log.debug("Leaving extractResponseFromArtifactResponse().");
   return new xmldom.XMLSerializer().serializeToString(nodes[0]);
+}
+
+// The message that asks for an artifact to be resolved, in whichever version's
+// spelling. Returns the XML and the id the enveloped signature must reference —
+// SAML 1.1 spells that attribute `RequestID`, which is on none of the lists
+// xmldsig's signEnveloped() searches, so it is passed explicitly rather than
+// found. Told nothing, xml-crypto-style signers INVENT an `Id` and point the
+// reference at that; it verifies, and it is not the id a SAML 1.1 responder
+// looks for.
+function buildArtifactResolveMessage(artifact, ctx) {
+  log.debug("Entering buildArtifactResolveMessage(). version=" +
+      ctx.samlVersion);
+  var id = '_' + crypto.randomBytes(16).toString('hex');
+  var instant = new Date().toISOString();
+  if (ctx.samlVersion === '1.1') {
+    // saml-bindings-1.1 section 3.2.3. MajorVersion/MinorVersion rather than a
+    // Version attribute, RequestID rather than ID, and NO <Issuer> — SAML 1.1
+    // has no element for a requester to name itself in, which is why the
+    // responder identifies the caller by the transport or not at all.
+    var req = '<samlp:Request ' +
+        'xmlns:samlp="urn:oasis:names:tc:SAML:1.0:protocol"' +
+        ' xmlns:saml="urn:oasis:names:tc:SAML:1.0:assertion"' +
+        ' RequestID="' + id + '" MajorVersion="1" MinorVersion="1"' +
+        ' IssueInstant="' + instant + '">' +
+        '<samlp:AssertionArtifact>' + xmlTextEscape(artifact) +
+        '</samlp:AssertionArtifact>' +
+        '</samlp:Request>';
+    log.debug("Leaving buildArtifactResolveMessage(). A SAML 1.1 Request.");
+    return { xml: req, id: id, refUri: '#' + id };
+  }
+  var ar = '<samlp:ArtifactResolve ' +
+      'xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
+           ' xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"' +
+           ' ID="' + id + '" Version="2.0" IssueInstant="' + instant + '">' +
+           '<saml:Issuer>' + xmlTextEscape(ctx.spEntityId || '') +
+               '</saml:Issuer>' +
+           '<samlp:Artifact>' + xmlTextEscape(artifact) + '</samlp:Artifact>' +
+           '</samlp:ArtifactResolve>';
+  log.debug("Leaving buildArtifactResolveMessage(). An ArtifactResolve.");
+  return { xml: ar, id: id, refUri: '#' + id };
 }
 
 // Resolve an artifact via the SOAP back-channel: build + sign an
@@ -1002,21 +1243,39 @@ function resolveArtifact(artifact, relayState) {
       return reject(new Error('no artifact context / ARS URL (RelayState ' +
                     'missing or expired)'));
     }
-    var id = '_' + crypto.randomBytes(16).toString('hex');
-    var instant = new Date().toISOString();
-    var ar = '<samlp:ArtifactResolve ' +
-        'xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"' +
-             ' xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"' +
-             ' ID="' + id + '" Version="2.0" IssueInstant="' + instant + '">' +
-             '<saml:Issuer>' + (ctx.spEntityId || '') + '</saml:Issuer>' +
-             '<samlp:Artifact>' + artifact + '</samlp:Artifact>' +
-             '</samlp:ArtifactResolve>';
-    var signed;
-    try {
-      signed = signXmlEnveloped(ar, ctx.privateKeyPem, ctx.certPem,
-          'ArtifactResolve');
-    } catch (e) {
-      return reject(new Error('signing ArtifactResolve failed: ' + e.message));
+    var msg = buildArtifactResolveMessage(artifact, ctx);
+    var signed = msg.xml;
+    if (ctx.privateKeyPem) {
+      try {
+        signed = xmldsig.signEnveloped(msg.xml, {
+          privateKeyPem: ctx.privateKeyPem,
+          certPem: ctx.certPem || '',
+          sigAlg: ctx.sigAlg ||
+              'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
+          includeKeyInfo: !!ctx.certPem,
+          // Named rather than found: SAML 1.1's id attribute is `RequestID`,
+          // which signEnveloped() does not look for, and a signature that
+          // referenced the wrong id verifies against the document it invented
+          // instead of the one that was sent.
+          refUri: msg.refUri,
+          // WHERE ds:Signature GOES, and the two versions disagree. A SAML 2.0
+          // <ArtifactResolve> has an <Issuer> and the signature follows it. A
+          // SAML 1.1 <samlp:Request> has no Issuer at all and its schema's
+          // sequence is RespondWith*, ds:Signature?, then the query or the
+          // artifact — so the signature is the FIRST child, and a document that
+          // put it after the <AssertionArtifact> is schema-invalid.
+          placement: ctx.samlVersion === '1.1' ? 'first' : 'after-issuer'
+        });
+      } catch (e) {
+        return reject(new Error('signing the artifact resolution request ' +
+                      'failed: ' + e.message));
+      }
+    } else {
+      log.info('resolveArtifact: no SP private key was registered for this ' +
+               'flow, so the artifact resolution request is being sent ' +
+               'UNSIGNED. Neither version requires a signature here; an ' +
+               'identity provider that wants one refuses with a SAML status ' +
+               'rather than an HTTP error.');
     }
 
     // Optional WS-Addressing SOAP headers. WS-Addressing is a SOAP-layer
@@ -1080,8 +1339,19 @@ function handleSamlAcs(req, res) {
   try {
     var samlResponse = (req.body && req.body.SAMLResponse) ||
         req.query.SAMLResponse;
+    // THE RELAY STATE HAS TWO NAMES, one per protocol version. `RelayState` is
+    // SAML 2.0's and did not exist before it; SAML 1.1's browser profiles
+    // round-trip `TARGET`, which the profile intends as the URL of the resource
+    // the person was trying to reach and which the binding guarantees comes
+    // back byte for byte. That guarantee is the whole of what this endpoint
+    // needs from it: the Browser/Artifact flow carries the `art:<id>` handle
+    // naming the stashed SP context, and SAML 1.1 has nowhere else to put one.
+    // Reading only RelayState made every 1.1 artifact resolution fail with "no
+    // artifact context", which reads as an expired stash rather than as a
+    // parameter this handler never looked at.
     var relayState = (req.body && req.body.RelayState) ||
-        req.query.RelayState || '';
+        req.query.RelayState ||
+        (req.body && req.body.TARGET) || req.query.TARGET || '';
     if (typeof relayState !== 'string') {
       log.debug("Leaving handleSamlAcs().");
       return res.status(STATUS_400).send('ACS: invalid RelayState.');
@@ -1314,6 +1584,7 @@ app.post('/wstrust', function (req, res) {
  * @property {string} client_secret - The client secret for a confidential client
  * @property {object} customParams - List of key:value pairs
  * @property {string} code_verifier - PKCE RFC code_verifier parameter
+ * @property {boolean} http_trace - Also return the HTTP exchange with the token endpoint, for display
  */
 
 /**
@@ -1323,6 +1594,7 @@ app.post('/wstrust', function (req, res) {
  * @property {string} refresh_token - The OAuth2 Refresh Token
  * @property {string} expires_in.required - How long the access token is valid (seconds)
  * @property {string} token_type - The OAuth2 Access Token type
+ * @property {object} http_exchange - The HTTP exchange, when http_trace asked for it. See buildHttpTrace()
  */
 
 /**
@@ -1366,6 +1638,25 @@ app.post('/token', (req, res) => {
     }
     var tokenEndpoint = body.token_endpoint;
     var sslValidate = body.sslValidate; 
+    // The HTTP trace this call is to be shown with, if the caller asked for
+    // one. Opt-in per call: it repeats the request verbatim, Authorization
+    // header and all, so it is built for the caller that wants to read it and
+    // for nobody else. See buildHttpTrace().
+    const wantsTrace = body.http_trace === true || body.http_trace === 'true';
+    // Filled in by the transform below, on the way past axios's JSON parse.
+    // Per call, so two requests in flight cannot see each other's bodies.
+    var received = {
+      raw: null };
+    const sentHeaders = withUserAgent(headers);
+    const sentRequest = {
+      method: 'POST',
+      url: tokenEndpoint,
+      // What actually goes out, including the User-Agent this service adds and
+      // the Authorization header it may have built — the trace shows the
+      // request, not the intent behind it.
+      headers: sentHeaders,
+      body: parameterString };
+    const startedAt = Date.now();
     log.debug("Making call to Token Endpoint.");
     log.debug("POST " + tokenEndpoint);
     log.debug("Headers: " + JSON.stringify(headers));
@@ -1373,11 +1664,12 @@ app.post('/token', (req, res) => {
     axios({
       method: 'post',
       url: tokenEndpoint,
-      headers: withUserAgent(headers),
+      headers: sentHeaders,
       data: parameterString,
       timeout: CALL_TIMEOUT,
       maxContentLength: MAX_CONTENT_LENGTH,
       maxRedirects: MAX_REDIRECTS,
+      transformResponse: [captureRawBody(received)],
       httpAgent: outboundHttpAgent(),
       httpsAgent: outboundHttpsAgent(sslValidate)
     })
@@ -1386,7 +1678,10 @@ app.post('/token', (req, res) => {
                 JSON.stringify(response.data));
       log.debug('Headers: ' + response.headers);
       res.status(response.status);
-      res.json(response.data);
+      res.json(withHttpTrace(response.data,
+                             buildHttpTrace(sentRequest, response,
+                                            received.raw, startedAt, null),
+                             wantsTrace));
     })
     .catch(function (error) {
       log.error('Error from OAuth2 Token Endpoint: ' + error);
@@ -1402,7 +1697,12 @@ app.post('/token', (req, res) => {
           log.error("Error Response headers: " + error.response.headers);
         }
         res.status(error.response.status || STATUS_500);
-        res.json(error.response.data);
+        // A refusal is an exchange like any other, and the one a reader most
+        // wants the headers and the elapsed time for.
+        res.json(withHttpTrace(error.response.data,
+                               buildHttpTrace(sentRequest, error.response,
+                                              received.raw, startedAt, null),
+                               wantsTrace));
         return;
       }
       // No response: the call timed out, the connection never opened, the body
@@ -1413,9 +1713,17 @@ app.post('/token', (req, res) => {
       // waiting on a reply that was never sent. Those failures are exactly what
       // the outbound limits produce, so this is now the common path, not a rare
       // one.
-      res.status(STATUS_500).json({
+      // There is no response to trace, and that IS the trace: the request that
+      // went out, the reason nothing came back, and how long it took to fail
+      // — which is the number that tells a timeout apart from a refused
+      // connection.
+      res.status(STATUS_500).json(withHttpTrace({
         error: 'The outbound call failed: ' +
-               (error && error.message ? error.message : String(error)) });
+               (error && error.message ? error.message : String(error)) },
+        buildHttpTrace(sentRequest, null, null, startedAt,
+                       (error && error.message) ? error.message :
+                           String(error)),
+        wantsTrace));
     });
   } catch (e) {
     log.error('An error occurred: ' + e);
@@ -2405,6 +2713,9 @@ app.get('/krb5/limits', function (req, res) {
 //     behind an error page.
 // ---------------------------------------------------------------------------
 const ldapClient = require('./ldap_client.js');
+// The SCIM proxy's decision half. It has no axios and no network — see the top
+// of that file — so requiring it here moves nothing and it cannot join a cycle.
+const scimProxy = require('./scim_proxy.js');
 // The LDAP client reuses the guard's address DECISION for the same reason the
 // Kerberos relay does: the guard's INSTALLATION is hooks on the axios agents,
 // and this transport is a raw socket with no axios in the path. Two
@@ -2728,6 +3039,326 @@ app.get('/tls/limits', function (req, res) {
   log.debug('Entering GET /tls/limits.');
   log.debug('Leaving GET /tls/limits.');
   return res.status(STATUS_200).json(tlsProbe.limits());
+});
+
+// ---------------------------------------------------------------------------
+// SCIM 2.0 (RFC 7644) — the second way the SCIM workflow can make a call.
+//
+// Unlike LDAP and Kerberos, this endpoint is NOT here because a browser cannot
+// speak the protocol: SCIM is ordinary HTTPS with a JSON body and
+// `client/public/scim.html` calls it directly by default — which is what makes
+// that page work on the static deployments, where there is no api at all. It
+// is here for the three things the browser path cannot do: reach a server that
+// sends no CORS headers (which is essentially every real SCIM endpoint), reach
+// one with a self-signed certificate, and report the exchange in full, since a
+// browser withholds the headers it adds and CORS withholds most of those that
+// come back.
+//
+// The decisions — the five methods, the framing headers it will not forward,
+// the request size cap, and how an answer is read — are in `api/scim_proxy.js`
+// with no axios in it, so `tests/scim_protocol.js` can drive every refusal
+// without a server on the other end. This handler is the call.
+//
+// **THE STATUS RULE IS THE ONE `POST /ldap/*` DRAWS AND IT IS THE POINT OF THE
+// ENDPOINT.** A refusal by this service is a 400; a network failure is a 502;
+// and a SCIM error from the far end is a **200** carrying that status and its
+// `scimType`. A 409 `uniqueness`, a 404 on an id that names nothing, a 403 from
+// an access control policy and the 501 on `/Me` are the server ANSWERING, and
+// they are the most interesting thing a SCIM server ever says. Collapsing them
+// into a failure would make a provisioning debugger unable to show the errors
+// it exists to show.
+// ---------------------------------------------------------------------------
+/**
+ * Perform one SCIM request on the caller's behalf.
+ * @route POST /scim
+ * @group SCIM - SCIM 2.0 provisioning support
+ * @param {object} request.body.required - {url, method, headers, body,
+ *     sslValidate, http_trace}
+ * @returns {object} 200 - {ok, status, headers, body, rawBody, scimType,
+ *     detail, http_exchange} — including a SCIM error, which is an answer
+ * @returns {object} 400 - this service refused to send it (see the reason)
+ * @returns {object} 502 - the SCIM server could not be reached
+ */
+app.post('/scim', function (req, res) {
+  log.debug('Entering POST /scim.');
+  var described = scimProxy.describeRequest(req.body || {}, appconfig);
+  if (!described.ok) {
+    log.debug('Leaving POST /scim. Refused: ' + described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  var wantsTrace = (req.body || {}).http_trace === true ||
+      (req.body || {}).http_trace === 'true';
+  var sink = {};
+  var startedAt = Date.now();
+  var sentHeaders = withUserAgent(described.headers);
+  axios({
+    method: described.method.toLowerCase(),
+    url: described.url,
+    data: described.body === null ? undefined : described.body,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    // A 4xx from a SCIM server is an ANSWER, so it must not throw. See the
+    // status rule above.
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      var answer = scimProxy.readResponse(response.status,
+          traceHeaders(response.headers), sink.raw);
+      var trace = buildHttpTrace({ method: described.method,
+          url: described.url, headers: sentHeaders,
+          body: described.body === null ? '' : described.body },
+          response, sink.raw, startedAt, null);
+      log.debug('Leaving POST /scim. The server answered ' + answer.status +
+          (answer.scimType ? ' ' + answer.scimType : '') + '.');
+      return res.status(STATUS_200).json(withHttpTrace(answer, trace,
+          wantsTrace));
+    })
+    .catch(function (error) {
+      // THE NO-RESPONSE BRANCH MUST ANSWER. There is no response here at all —
+      // a refused connection, a timeout, a blocked address, a body past
+      // maxContentLength — so this is a 502 and NOT a SCIM status, because
+      // nothing SCIM-shaped happened.
+      var message = (error && error.message) ? error.message : String(error);
+      log.warn('POST /scim to ' + described.url + ' failed: ' + message);
+      var trace = buildHttpTrace({ method: described.method,
+          url: described.url, headers: sentHeaders,
+          body: described.body === null ? '' : described.body },
+          null, sink.raw, startedAt, message);
+      log.debug('Leaving POST /scim. 502.');
+      return res.status(502).json(withHttpTrace({
+        error: 'The SCIM server could not be reached: ' + message,
+        code: (error && error.code) || '' }, trace, wantsTrace));
+    });
+});
+
+/**
+ * What the SCIM proxy will and will not do, so the page can say so before a
+ * call fails rather than reporting its own limits as somebody else's fault.
+ * It is also how the page knows there is an api at all.
+ * @route GET /scim/limits
+ * @returns {object} 200 - the methods, refused headers, caps and status rule
+ */
+app.get('/scim/limits', function (req, res) {
+  log.debug('Entering GET /scim/limits.');
+  log.debug('Leaving GET /scim/limits.');
+  return res.status(STATUS_200).json(scimProxy.limits(appconfig));
+});
+
+// ---------------------------------------------------------------------------
+// SPIFFE — POST /spiffe/bundle, POST /spiffe/call, GET /spiffe/limits
+//
+// SPIFFE's server side is three surfaces and only ONE of them is HTTP, which is
+// why two of these endpoints exist and the third is an ordinary fetch:
+//
+//   the bundle endpoint    plain HTTPS returning a JWK Set. POST /spiffe/bundle
+//                          is an axios call like /token and /scim, so the SSRF
+//                          guard installed once on the shared instance already
+//                          covers it and nothing is re-implemented here. It is
+//                          here at all for the three reasons the SCIM proxy is:
+//                          a bundle endpoint sends no CORS headers, a staging
+//                          one's certificate is self-signed, and only this side
+//                          can report the whole exchange.
+//   the Workload API       gRPC, and a browser cannot produce gRPC at all — no
+//                          HTTP/2 stream, no trailers, no `grpc-status`, no
+//                          client certificate. So POST /spiffe/call carries it.
+//   the SPIRE Server API   gRPC over MUTUAL TLS. Same endpoint, same reason,
+//                          plus a client certificate a page could never present.
+//
+// ONE endpoint for forty-nine methods rather than forty-nine endpoints, which
+// is the opposite of the choice `POST /ldap/*` made and is deliberate. There,
+// eight operations have eight different shapes and each route documents its
+// own. Here every method is `(service, method, request)` over one wire format,
+// the METHOD LIST IS DERIVED FROM THE PROTOS rather than typed, and a route per
+// method would be forty-nine places for that list to drift from the protos it
+// is supposed to mirror. `GET /spiffe/limits` publishes the catalogue, so the
+// page builds its picker from what this service can actually call.
+//
+// THE THREE OUTCOMES, which is the rule POST /ldap/* and POST /scim already
+// follow and which matters more on this surface than on either:
+//
+//   * a refusal by THIS service — an address it will not dial, a socket path
+//     outside the allowlist, a method that is not on the surface — is a **400**;
+//   * a network failure, and a server whose SPIFFE ID was not the one the
+//     caller required, are **502**s;
+//   * **a gRPC STATUS from the far end is a 200**, with `ok: false` and the
+//     code. `PERMISSION_DENIED` on a method this caller's entity may not use,
+//     `UNAUTHENTICATED` when it presented nothing, `UNIMPLEMENTED` with the
+//     reason a server gives for declining, `INVALID_ARGUMENT` on a JWT-SVID
+//     request with no audience — every one of those is SPIFFE ANSWERING, and
+//     they are the most interesting thing this workflow shows. SPIRE goes to
+//     the trouble of distinguishing "authenticate" from "you may not"; an api
+//     that reported both as a failure would throw that away.
+// ---------------------------------------------------------------------------
+const spiffeClientModule = require('./spiffe_client.js');
+const spiffeBundle = require('../common/spiffe/spiffe_bundle.js');
+// The SPIFFE client reuses the guard's address DECISION for the reason the
+// Kerberos relay and the LDAP client do: the guard's INSTALLATION is hooks on
+// the axios agents, and gRPC opens a socket with no axios in the path.
+const spiffe = spiffeClientModule.createSpiffeClient(appconfig, guard, log);
+
+// Refusals this service made itself. Listed rather than matched on a prefix, so
+// that adding a code forces a decision about which of the two outcomes it is —
+// and note that ESPIFFESERVERIDENTITY is deliberately NOT here: a server that
+// answered and turned out to be somebody else is a fact about the far end.
+const SPIFFE_REFUSED_BY_POLICY = [
+  'ESPIFFEBADADDRESS', 'ESPIFFEPORTNOTALLOWED', 'EBLOCKEDADDRESS',
+  'ESPIFFESOCKETNOTALLOWED', 'ESPIFFESOCKETMISSING', 'ESPIFFENOTASOCKET',
+  'ESPIFFESOCKETPATHTOOLONG', 'ESPIFFENOSERVICE', 'ESPIFFENOMETHOD',
+  'ESPIFFEBADMETADATA', 'ESPIFFEBADMODE', 'ESPIFFENOSERVERID',
+  'ESPIFFENOTRUSTDOMAIN', 'ESPIFFEBADTRUSTDOMAIN', 'ESPIFFENOTRUSTBUNDLE',
+  'ESPIFFEBADTRUSTBUNDLE', 'ESPIFFEBADIDENTITY', 'ESPIFFEREFUSED'
+];
+
+/**
+ * One call on either gRPC surface: the Workload API or the SPIRE Server API.
+ * @route POST /spiffe/call
+ * @param {string} address.body.required - host:port, tcp://host:port or unix:///path
+ * @param {string} service.body.required - workload, entry, agent, bundle, svid, trustdomain or debug
+ * @param {string} method.body.required - the method name as the .proto writes it
+ * @param {object} request.body - the request message; bytes fields take base64
+ * @param {object} identity.body - {certPem, keyPem}: the X509-SVID to present
+ * @param {string} trustBundle.body - PEM or base64 DER to verify the server against
+ * @param {string} serverIdentityMode.body - spiffe-id, trust-domain or none
+ * @returns {object} 200 - the answer, INCLUDING a gRPC status that is not OK
+ * @returns {object} 400 - this service refused the request (see the reason)
+ * @returns {object} 502 - the server could not be reached, or was not who it had to be
+ */
+app.post('/spiffe/call', function (req, res) {
+  log.debug('Entering POST /spiffe/call.');
+  const body = req.body || {};
+  if (!body.address) {
+    log.debug('Leaving POST /spiffe/call. No address.');
+    return res.status(STATUS_400).json({
+      error: 'address is required: host:port, tcp://host:port or ' +
+             'unix:///path/to/api.sock. Note that a unix: path is resolved ' +
+             'on the machine running this api, which is not the machine ' +
+             'running your browser.' });
+  }
+  const startedAt = Date.now();
+  spiffe.call(body).then(function (answer) {
+    answer.timing = { totalMs: Date.now() - startedAt };
+    log.info('POST /spiffe/call ' + answer.serviceLabel + '.' + answer.method +
+             ' ' + answer.target + ' -> ' + answer.status.name +
+             ' in ' + answer.timing.totalMs + 'ms');
+    log.debug('Leaving POST /spiffe/call. ok=' + answer.ok);
+    // 200 even when ok is false: see the note above. The caller reads `ok` and
+    // `status`, which is what SPIFFE actually told it.
+    return res.status(STATUS_200).json(answer);
+  }).catch(function (error) {
+    // THE NO-RESPONSE BRANCH MUST ANSWER, and on this endpoint — as on the
+    // Kerberos relay — it is a common branch rather than a rare one, because
+    // pointing it at a server that may not be there is the point.
+    const refusedByPolicy =
+      SPIFFE_REFUSED_BY_POLICY.indexOf(error && error.code) !== -1;
+    const status = refusedByPolicy ? STATUS_400 : 502;
+    log.warn('POST /spiffe/call failed [' +
+             ((error && error.code) || 'no code') + ']: ' +
+             (error && error.message));
+    log.debug('Leaving POST /spiffe/call. status=' + status);
+    return res.status(status).json({
+      error: (error && error.message) ? error.message : String(error),
+      code: (error && error.code) || null,
+      // True when a server answered, presented a certificate a trusted
+      // authority had signed, and was somebody else. Separated from an
+      // ordinary network failure because those are different facts and the
+      // page shows them differently.
+      identityMismatch: !!(error && error.identityMismatch),
+      peer: (error && error.answer && error.answer.peer) || null,
+      timing: { totalMs: Date.now() - startedAt } });
+  });
+});
+
+/**
+ * Fetch a SPIFFE bundle endpoint and say what is wrong with what came back.
+ * @route POST /spiffe/bundle
+ * @param {string} url.body.required - the bundle endpoint URL
+ * @param {boolean} sslValidate.body - verify the endpoint's TLS certificate
+ * @returns {object} 200 - the document and the report, INCLUDING a bad one
+ * @returns {object} 400 - this service refused the request
+ * @returns {object} 502 - the endpoint could not be reached
+ */
+app.post('/spiffe/bundle', function (req, res) {
+  log.debug('Entering POST /spiffe/bundle.');
+  const body = req.body || {};
+  const url = String(body.url || '').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    log.debug('Leaving POST /spiffe/bundle. Not an http(s) URL.');
+    return res.status(STATUS_400).json({
+      error: 'url is required and must be an http:// or https:// URL. A ' +
+             'SPIFFE bundle endpoint is plain HTTPS — it is the ONE surface ' +
+             'of SPIFFE that is, which is why this endpoint is an ordinary ' +
+             'fetch and the other one is gRPC.' });
+  }
+  const startedAt = Date.now();
+  const sink = {};
+  const sentHeaders = withUserAgent({ Accept: 'application/json' });
+  axios({
+    method: 'get',
+    url: url,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    // A 404 from a bundle endpoint is an ANSWER — usually the answer that the
+    // path is wrong — so it must not throw.
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(body.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      // The document is described whatever the status was, because a bundle
+      // endpoint that answers 200 with an HTML error page from a proxy is the
+      // case this report exists to name.
+      const report = spiffeBundle.describe(sink.raw || '');
+      log.info('POST /spiffe/bundle ' + url + ' -> ' + response.status + ', ' +
+               report.keys.length + ' usable key(s), ' +
+               report.errors.length + ' error(s)');
+      log.debug('Leaving POST /spiffe/bundle. status=' + response.status);
+      return res.status(STATUS_200).json({
+        ok: response.status >= 200 && response.status < 300 && report.ok,
+        url: url,
+        httpStatus: response.status,
+        headers: traceHeaders(response.headers),
+        body: sink.raw || '',
+        report: report,
+        timing: { totalMs: Date.now() - startedAt } });
+    })
+    .catch(function (error) {
+      const message = (error && error.message) ? error.message : String(error);
+      log.warn('POST /spiffe/bundle ' + url + ' failed: ' + message);
+      log.debug('Leaving POST /spiffe/bundle. 502.');
+      return res.status(502).json({
+        error: 'The bundle endpoint could not be reached: ' + message,
+        code: (error && error.code) || '',
+        timing: { totalMs: Date.now() - startedAt } });
+    });
+});
+
+/**
+ * What the SPIFFE client will and will not do, and every method it can call.
+ *
+ * The catalogue here is DERIVED from the vendored protos rather than typed, so
+ * the page's method picker cannot drift from what this service can dial. It is
+ * also how the page tells an older api from a broken one: a build without
+ * SPIFFE answers 404 here, which is a different thing from a SPIRE server that
+ * will not answer.
+ * @route GET /spiffe/limits
+ * @returns {object} 200 - the ports, socket paths, timeouts, caps and catalogue
+ */
+app.get('/spiffe/limits', function (req, res) {
+  log.debug('Entering GET /spiffe/limits.');
+  log.debug('Leaving GET /spiffe/limits.');
+  return res.status(STATUS_200).json(spiffe.limits());
 });
 
 expressSwagger(options)

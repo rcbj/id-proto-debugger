@@ -44,7 +44,7 @@ The motivating case is the one that is hardest to debug from anything else: *get
 
 The only mature OS-independent implementation in any language with a browser-capable target is **[Devolutions `sspi-rs`](https://github.com/Devolutions/sspi-rs)** — pure Rust Kerberos, NTLM, SPNEGO and CredSSP, compiled to WASM for the IronRDP web client and driven through a KDC proxy. It is rejected anyway, for a reason that is about this product rather than about the library: its interface is SSPI-shaped, `InitializeSecurityContext` in and an opaque token out. **A debugger's entire product is the fields.** Wrapping an implementation that hides them would leave the tool able to say "authentication succeeded" and nothing else, which is the one answer nobody needs. It would also put a Rust toolchain and `wasm-pack` into a build that has never needed one.
 
-So Kerberos v5 gets written in JavaScript, here. That is the same call already made for `client/src/xmldsig.js` (XML-DSig signing, verification and encryption in the browser) and for `client/src/jose_jwe.js`, and for the same reason.
+So Kerberos v5 gets written in JavaScript, here. That is the same call already made for `common/xmldsig.js` (XML-DSig signing, verification and encryption in the browser) and for `client/src/jose_jwe.js`, and for the same reason.
 
 ---
 
@@ -155,7 +155,7 @@ Two frictions specific to this repository's layout, both of which need deciding 
 
 **The codec cannot be shared across the submodule boundary.** Compose builds the STS with `context: ./sts`, so it cannot `COPY ../common/krb5`. The realistic answer is a vendored copy in `mock-sts` plus a `sync-krb5.sh`, and — more importantly — **a conformance test in `tests/` that round-trips a fixture corpus through both copies and fails on divergence.** Without that test, a drifted codec talks happily to itself and the divergence is discovered against a real DC, weeks later. The alternative is to put the KDC in a side-car in this repository, the way `keycloak-wsfed/` is, which costs the submodule's tidiness and buys back a single implementation; this plan follows the stated preference for the mock STS, with the sync test as the price.
 
-**`GET /sts-metadata` walks the Express router, so a raw TCP listener on port 88 is invisible to it.** The page's whole design is that it cannot go stale, and a protocol family it cannot see is the one way it can. The listener needs an explicit entry — and the drift test needs to tolerate an entry that has no route behind it, which today is the failure it is specifically written to catch.
+**`GET /admin/sts-metadata` walks the Express router, so a raw TCP listener on port 88 is invisible to it.** The page's whole design is that it cannot go stale, and a protocol family it cannot see is the one way it can. The listener needs an explicit entry — and the drift test needs to tolerate an entry that has no route behind it, which today is the failure it is specifically written to catch.
 
 ---
 

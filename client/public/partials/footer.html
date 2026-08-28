@@ -13,5 +13,117 @@
       <span>Supported by Iya CyberSecurity Solutions, LLC</span>
     </a>
   </div>
+  <!-- The social accounts of the footer of rcbj.net (its Footer.astro
+       + the `social` block of its config.mjs), in that order. The
+       icons are inlined rather than linked so they take the
+       surrounding text colour through fill="currentColor" and cost no
+       request; the path data is that site's own artwork, rewrapped to
+       80 columns at token boundaries -- a newline only ever replaces a
+       separator between two path tokens, never a character inside a
+       number.
+
+       One of them differs from that footer on purpose: its
+       mastodon.svg is byte-identical to its dribbble.svg (the theme it
+       came from ships the dribbble glyph under both names, so the live
+       site draws a basketball for Mastodon) -- the glyph here is the
+       real one, from simple-icons, which publishes its icons under
+       CC0 1.0. -->
+  <ul class="footer-social">
+    <li><a href="https://www.linkedin.com/company/18811689/"
+           target="_blank" rel="noopener noreferrer"
+           aria-label="LinkedIn" title="LinkedIn">
+      <svg viewBox="0 0 24 24" aria-hidden="true"
+           focusable="false">
+        <path fill="currentColor"
+              d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0
+                 1 2-2zm-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52
+                 -2.32 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a
+                 1.4 1.4 0 0 1 1.4 1.4v4.93zM6.88 8.56a1.68 1.68 0 0 0 1.68
+                 -1.68c0-.93-.75-1.69-1.68-1.69a1.69 1.69 0 0 0-1.69 1.69c0 .93
+                 .76 1.68 1.69 1.68m1.39 9.94v-8.37H5.5v8.37z" />
+      </svg>
+    </a></li>
+    <li><a href="https://medium.com/@robert.broeckelmann"
+           target="_blank" rel="noopener noreferrer"
+           aria-label="Medium" title="Medium">
+      <svg viewBox="0 0 24 24" aria-hidden="true"
+           focusable="false">
+        <path fill="currentColor"
+              d="M13.54 12a6.77 6.77 0 1 1-13.54 0 6.77 6.77 0 0 1 13.54 0Zm
+                 7.42 0c0 3.54-1.51 6.42-3.38 6.42s-3.39-2.88-3.39-6.42 1.52
+                 -6.42 3.39-6.42S20.96 8.46 20.96 12ZM24 12c0 3.17-.53 5.75
+                 -1.19 5.75s-1.19-2.58-1.19-5.75.53-5.75 1.19-5.75S24 8.83 24
+                 12Z" />
+      </svg>
+    </a></li>
+    <li><a href="https://github.com/rcbj"
+           target="_blank" rel="noopener noreferrer"
+           aria-label="GitHub" title="GitHub">
+      <svg viewBox="0 0 496 512" aria-hidden="true"
+           focusable="false">
+        <path fill="currentColor"
+              d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3
+                 -3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3
+                 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm
+                 44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9
+                 -2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0
+                 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1
+                 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8
+                 -36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6
+                 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3
+                 -14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3
+                 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8
+                 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9
+                 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2
+                 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3
+                 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM
+                 97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1
+                 -3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3
+                 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7z
+                 m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3
+                 -1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1
+                 -1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2
+                 -1.4-2.3-4-3.3-5.6-2z" />
+      </svg>
+    </a></li>
+    <li><a href="https://x.com/rcbj001"
+           target="_blank" rel="noopener noreferrer"
+           aria-label="X" title="X">
+      <svg viewBox="0 0 512 512" aria-hidden="true"
+           focusable="false">
+        <path fill="currentColor"
+              d="M389.2 48h70.6L305.6 224.2 487 464H345L233.7 318.6 106.5 464H
+                 35.8L200.7 275.5 26.8 48H172.4L272.9 180.9 389.2 48zM364.4
+                 421.8h39.1L151.1 88h-42L364.4 421.8z" />
+      </svg>
+    </a></li>
+    <li><a href="https://mastodon.social/@rcbj"
+           target="_blank" rel="me noopener noreferrer"
+           aria-label="Mastodon" title="Mastodon">
+      <svg viewBox="0 0 24 24" aria-hidden="true"
+           focusable="false">
+        <path fill="currentColor"
+              d="M23.268 5.313c-.35-2.578-2.617-4.61-5.304-5.004C17.51.242
+                 15.792 0 11.813 0h-.03c-3.98 0-4.835.242-5.288.309C3.882.692
+                 1.496 2.518.917 5.127.64 6.412.61 7.837.661 9.143c.074 1.874
+                 .088 3.745.26 5.611.118 1.24.325 2.47.62 3.68.55 2.237 2.777
+                 4.098 4.96 4.857 2.336.792 4.849.923 7.256.38.265-.061.527
+                 -.132.786-.213.585-.184 1.27-.39 1.774-.753a.057.057 0 0 0
+                 .023-.043v-1.809a.052.052 0 0 0-.02-.041.053.053 0 0 0-.046
+                 -.01 20.282 20.282 0 0 1-4.709.545c-2.73 0-3.463-1.284-3.674
+                 -1.818a5.593 5.593 0 0 1-.319-1.433.053.053 0 0 1 .066-.054c
+                 1.517.363 3.072.546 4.632.546.376 0 .75 0 1.125-.01 1.57-.044
+                 3.224-.124 4.768-.422.038-.008.077-.015.11-.024 2.435-.464
+                 4.753-1.92 4.989-5.604.008-.145.03-1.52.03-1.67.002-.512.167
+                 -3.63-.024-5.545zm-3.748 9.195h-2.561V8.29c0-1.309-.55-1.976
+                 -1.67-1.976-1.23 0-1.846.79-1.846 2.35v3.403h-2.546V8.663c0
+                 -1.56-.617-2.35-1.848-2.35-1.112 0-1.668.668-1.67 1.977v6.218H
+                 4.822V8.102c0-1.31.337-2.35 1.011-3.12.696-.77 1.608-1.164
+                 2.74-1.164 1.311 0 2.302.5 2.962 1.498l.638 1.06.638-1.06c.66
+                 -.999 1.65-1.498 2.96-1.498 1.13 0 2.043.395 2.74 1.164.675.77
+                 1.012 1.81 1.012 3.12z" />
+      </svg>
+    </a></li>
+  </ul>
   <div class="footer-copyright">&copy; 2017&ndash;{{YEAR}} IDPTools. All rights reserved.</div>
   <div class="footer-version" title="{{BUILD_INFO}}">v{{VERSION}}</div>

@@ -38,6 +38,7 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
+var jws = require("./jws");
 var dpopLib = require("./dpop");
 
 // The proof of possession is a JWT of its own media type (OID4VCI Appendix D,
@@ -137,16 +138,12 @@ function generateResponseEncryptionKey(enc) {
 // have chosen RS256 for that. Signing an RSA key's proof with the ECDSA
 // parameters fails in Web Crypto with an unhelpful DataError, so the two are
 // matched here once instead of at each call site.
-var PROOF_ALGS = {
-  ES256: {
-    importAs: { name: "ECDSA", namedCurve: "P-256" },
-    sign: { name: "ECDSA", hash: { name: "SHA-256" } }
-  },
-  RS256: {
-    importAs: { name: "RSASSA-PKCS1-v1_5", hash: { name: "SHA-256" } },
-    sign: { name: "RSASSA-PKCS1-v1_5" }
-  }
-};
+// The Web Crypto parameters that used to be here are jws.js's now — the same
+// mapping was written out in dpop.js and twice in sd_jwt_vp.js. What this
+// module still decides is WHICH algorithm, which is a wallet question rather
+// than a JOSE one: under Holder of Key the key being proved is the DPoP key,
+// and a wallet may have chosen RS256 for that.
+var PROOF_ALGS = { ES256: true, RS256: true };
 
 function proofAlgFor(key) {
   log.debug("Entering proofAlgFor().");
@@ -168,7 +165,6 @@ function proofAlgFor(key) {
 function signProof(key, opts) {
   log.debug("Entering signProof().");
   var alg = proofAlgFor(key);
-  var spec = PROOF_ALGS[alg];
   var header = { typ: PROOF_TYP, alg: alg, jwk: key.publicJwk };
   var payload = {
     iss: opts.clientId || "",
@@ -176,20 +172,16 @@ function signProof(key, opts) {
     iat: Math.floor(Date.now() / 1000)
   };
   if (opts.nonce) payload.nonce = opts.nonce;
-  var signingInput = metadataClient.utf8ToB64u(JSON.stringify(header)) + "." +
-                     metadataClient.utf8ToB64u(JSON.stringify(payload));
   log.debug("Leaving signProof(). alg=" + alg);
-  return crypto.subtle.importKey("jwk", key.privateJwk, spec.importAs, false,
-                                 ["sign"])
-    .then(function (imported) {
-      return crypto.subtle.sign(spec.sign, imported,
-        new TextEncoder().encode(signingInput));
-    })
-    .then(function (sig) {
-      // Web Crypto returns ECDSA signatures as the raw r||s pair, which is
-      // exactly the JWS encoding; RSA signatures need no unwrapping either.
-      return signingInput + "." + metadataClient.bytesToB64u(sig);
-    });
+  // VERBATIM header: OID4VCI section 8.2.1.1 fixes what a jwt proof carries,
+  // and the proof is the base64url of these exact bytes.
+  return jws.signJwsAsync({
+    algId: alg,
+    protectedHeader: header,
+    payload: payload,
+    privateKey: { jwk: key.privateJwk },
+    backend: "webcrypto"
+  }).then(function (signed) { return signed.serialized; });
 }
 
 function signProofs(keys, opts) {

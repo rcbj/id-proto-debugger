@@ -320,7 +320,10 @@ async function test() {
     });
 
     const severe = (await driver.manage().logs().get(logging.Type.BROWSER))
-      .filter((e) => e.level.name === "SEVERE");
+      .filter((e) => e.level.name === "SEVERE")
+      // A load the browser abandoned because its own certificate or network
+      // configuration changed under it is not a page error. browser_flags.js.
+      .filter((e) => !browserFlags.isTransientLoadError(e.message));
     assert.strictEqual(severe.length, 0,
       "the page logged browser errors:\n" + severe.map((e) =>
           e.message).join("\n"));

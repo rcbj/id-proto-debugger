@@ -60,8 +60,11 @@ header is the bare word.
 | RFC 4178 codec | `common/krb5/krb5_spnego.js` | NegTokenInit, NegTokenResp, the OID coder, mechListMIC, the section 5 rule. No DOM, no HTTP, no Kerberos beyond one OID |
 | The page | `client/public/spnego.html`, `client/src/spnego.js` | assembly and panes. No protocol |
 | The relay | `POST /krb5/spnego` (`api/server.js`) | one HTTP GET, and the `Authorization` header built from a validated token |
-| The acceptor | the mock STS's `spnego.js` | the negotiation and the HTTP; every Kerberos check is `krb5_service.js`'s |
-| The advert | the mock STS's `GET /spnego` | what a real intranet site never tells you: the SPN, the realm, the mechanisms |
+| The acceptor | the mock STS's `spnego_exchange.js` | the negotiation and the HTTP; every Kerberos check is `krb5_service.js`'s |
+| The advert | the mock STS's `GET /spnego` (`spnego.js`) | what a real intranet site never tells you: the SPN, the realm, the mechanisms |
+| The sign-in | the mock STS's `/authn/spnego` (`spnego_authn.js`) | the same exchange, ending in a browser SESSION. **Not driven by this workflow** — see below |
+
+**The acceptor was one file until the 2026-08-27 `sts/` bump and is three now**, which matters here only because the table above names them: `spnego_exchange.js` holds the negotiation, `spnego.js` the page that advertises it, and `spnego_authn.js` a THIRD thing this workflow does not touch — `/authn/spnego`, where the same verified ticket becomes a browser session the mock's own `/oauth2/authorize`, `/wsfed` and `/saml2/sso` read. The debugger still drives `/spnego/protected`, which authenticates and deliberately hands back no session, because what this page exists to show is the exchange rather than what an intranet does with the result. See `docs/mock-sts.md`.
 
 `krb5_spnego.js` is **vendored into the mock STS** like the other seven codec
 modules (`common/krb5/sync-to-mock-sts.sh`), and it is the module with the most

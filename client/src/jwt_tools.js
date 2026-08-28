@@ -20,6 +20,21 @@ var jose = require("./jose_jwe");
 // here is this page's DOM around them.
 var keys = require("./key_material");
 var x509 = require("./x509");
+// THE JWS ITSELF IS NOT THIS PAGE'S ANY MORE.
+//
+// Signing and verifying a compact JWS used to be written out here — an
+// algorithm table, a signing input, three verification helpers — and the same
+// four functions, under the same four names, were written out again in
+// token_detail.js, whose copy this file's own comment described as the one it
+// "mirrors". Two readings of RFC 7515 in one application is two chances to be
+// wrong about the same thing, and the ways a JWS goes wrong are exactly the
+// ways a round trip through one page cannot see. So the JOSE is jws.js's, and
+// tests/jws_engine.js holds it against node's OpenSSL and against
+// `jsonwebtoken`.
+//
+// What stayed here is what is genuinely this page's: which key material the
+// fields hold, and how the panes read.
+var jwsLib = require("./jws");
 var log = bunyan.createLogger({ name: 'jwt_tools',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -537,56 +552,71 @@ async function generateSigningKeys() {
   return false;
 }
 
-async function importSigningKey(meta, keyText) {
-  log.debug("Entering importSigningKey().");
-  if (meta.kind === 'hmac') {
-    var secret = isJwk(keyText) ? (JSON.parse(keyText).k ||
-        '') : keyText.trim();
-    log.debug("Leaving importSigningKey().");
-    return crypto.subtle.importKey('raw', b64uToBytes(secret),
-      { name: 'HMAC', hash: meta.hash }, false, ['sign']);
+// The page's dropdown holds JOSE `alg` values; jws.js keys its table by
+// algorithm AND curve, because RFC 8037 gives Ed25519 and Ed448 the same
+// `alg` and the curve is in the key. This page offers only Ed25519 — Web
+// Crypto has no Ed448 — so the bridge is one line and says why.
+function jwsAlgId(alg) {
+  log.debug("Entering jwsAlgId().");
+  log.debug("Leaving jwsAlgId().");
+  return alg === 'EdDSA' ? 'EdDSA-Ed25519' : alg;
+}
+
+// What the key fields hold, in the vocabulary jws.js takes. The HMAC secret is
+// read as BASE64URL here and that is deliberate: this page generates it with
+// key_material.generateSecret(), which returns base64url, and the JWK export
+// beside it carries the same string as `k`. The Token Detail page reads its
+// own secret field as UTF-8 TEXT, because a secret pasted from an identity
+// provider's configuration is text — the two pages disagreed silently before,
+// and now each says which it means.
+function signingKeyInput(alg, keyText) {
+  log.debug("Entering signingKeyInput().");
+  var meta = SIGN_ALGS[alg];
+  var text = (keyText || '').trim();
+  if (meta && meta.kind === 'hmac') {
+    log.debug("Leaving signingKeyInput(). Secret.");
+    return { secret: isJwk(text) ? (JSON.parse(text).k || '') : text,
+             encoding: 'b64u' };
   }
-  var params = meta.kind === 'rsa'
-    ? { name: meta.name, hash: meta.hash }
-    : meta.kind === 'okp'
-      ? { name: meta.name }
-      : { name: 'ECDSA', namedCurve: meta.namedCurve };
-  log.debug("Leaving importSigningKey().");
-  return importKeyFlexible(keyText, 'pkcs8', params, ['sign']);
+  if (isJwk(text)) {
+    log.debug("Leaving signingKeyInput(). JWK.");
+    return { jwk: JSON.parse(text) };
+  }
+  log.debug("Leaving signingKeyInput(). PEM.");
+  return text;
 }
 
 async function signJWT() {
   log.debug("Entering signJWT().");
   var alg = val('sign_alg');
-  var meta = SIGN_ALGS[alg];
   setVal('sign_status', 'Signing with ' + alg + '...');
   try {
-    // Force the header alg to match the selected signing algorithm.
+    // Force the header alg to match the selected signing algorithm, then hand
+    // the header over VERBATIM. The JWS is the base64url of these exact bytes,
+    // so the member order the user sees in the box is the member order that
+    // gets signed — jws.js is told not to rebuild it.
     var header = parseJson('jwt_tools_header', 'JWT Header');
     header.alg = alg;
     setVal('jwt_tools_header', JSON.stringify(header, null, 2));
     var payload = parseJson('jwt_tools_payload', 'JWT Payload');
 
-    var signingInput = strToB64u(JSON.stringify(header)) + '.' +
-        strToB64u(JSON.stringify(payload));
-    var key = await importSigningKey(meta, val('sign_private_key'));
+    // backend: 'webcrypto' keeps this pane on crypto.subtle, which is what it
+    // has always signed with. jws.js's pure-JS backend produces byte-identical
+    // output for every deterministic algorithm here (tests/jws_engine.js
+    // asserts exactly that), so this is a choice about blast radius rather
+    // than about correctness: nothing this page emits changes.
+    var result = await jwsLib.signJwsAsync({
+      algId: jwsAlgId(alg),
+      protectedHeader: header,
+      payload: payload,
+      privateKey: signingKeyInput(alg, val('sign_private_key')),
+      backend: 'webcrypto'
+    });
 
-    var signParams;
-    if (meta.kind === 'hmac') signParams = { name: 'HMAC' };
-    else if (meta.kind === 'rsa' && meta.name === 'RSA-PSS') signParams =
-             { name: 'RSA-PSS', saltLength: meta.saltLength };
-    else if (meta.kind === 'rsa') signParams = { name: 'RSASSA-PKCS1-v1_5' };
-    else if (meta.kind === 'okp') signParams = { name: meta.name };
-    else signParams = { name: 'ECDSA', hash: meta.hash };
-
-    var sig = await crypto.subtle.sign(signParams, key,
-        new TextEncoder().encode(signingInput));
-    var jws = signingInput + '.' + bytesToB64u(sig);
-
-    setVal('jwt_tools_signed', jws);
-    setVal('jwt_tools_encoded', jws);
-    setVal('verify_input', jws);
-    setVal('jwe_plaintext', jws);
+    setVal('jwt_tools_signed', result.serialized);
+    setVal('jwt_tools_encoded', result.serialized);
+    setVal('verify_input', result.serialized);
+    setVal('jwe_plaintext', result.serialized);
     await syncVerificationKey(); // keep X.509 verification key in sync
     setVal('sign_status', 'Signed JWT produced with ' + alg + '.');
     setVal('jwt_tools_sync_status', 'Encoded field now holds the signed JWT.');
@@ -598,68 +628,35 @@ async function signJWT() {
   return false;
 }
 
-// ---- Signature verification (mirrors token_detail.js) ----
-async function verifyHMAC(jwt_, secret, alg) {
-  log.debug("Entering verifyHMAC().");
-  var meta = SIGN_ALGS[alg];
-  if (!meta ||
-      meta.kind !== 'hmac') throw new Error('Unsupported HMAC algorithm: ' +
-      alg);
-  var key = await crypto.subtle.importKey('raw', b64uToBytes(secret.trim()),
-    { name: 'HMAC', hash: meta.hash }, false, ['verify']);
-  var data = new TextEncoder().encode(jwt_.split('.').slice(0, 2).join('.'));
-  log.debug("Leaving verifyHMAC().");
-  return crypto.subtle.verify('HMAC', key, b64uToBytes(jwt_.split('.')[2]),
-                              data);
-}
-
-async function verifyX509(jwt_, pem, alg) {
-  log.debug("Entering verifyX509().");
-  var meta = SIGN_ALGS[alg];
-  if (!meta || (meta.kind !== 'rsa' && meta.kind !== 'ec' &&
-      meta.kind !== 'okp')) {
-    throw new Error('Unsupported asymmetric algorithm: ' + alg);
+// ---- Signature verification ----
+//
+// Three key forms, one verifier. Each of these used to be a function here and
+// a second function of the same name in token_detail.js, and both copies were
+// RSA-only for the certificate and JWKS cases — so a token signed with ES256
+// could be produced by the pane above and not verified by the pane below it.
+// jws.js takes any of the forms, so all of them work for every algorithm.
+//
+// The X.509 case is the one that changed most. Both pages labelled that field
+// "X.509 Certificate (PEM)" and both handed the PEM to importKey('spki'),
+// which reads a SubjectPublicKeyInfo and cannot read a Certificate at all —
+// so an actual certificate failed there with a bare Web Crypto DataError, and
+// the only thing that ever worked was the public KEY this page's own
+// auto-fill happened to supply. jws.js walks a certificate to its SPKI, so
+// the field now accepts what its label promises, and still accepts a bare
+// public key.
+function verificationKeyInput(type, keyText) {
+  log.debug("Entering verificationKeyInput().");
+  var text = (keyText || '').trim();
+  if (type === 'hmac') {
+    log.debug("Leaving verificationKeyInput(). Secret.");
+    return { secret: text, encoding: 'b64u' };
   }
-  var importParams, verifyParams;
-  if (meta.kind === 'ec') {
-    importParams = { name: 'ECDSA', namedCurve: meta.namedCurve };
-    verifyParams = { name: 'ECDSA', hash: meta.hash };
-  } else if (meta.kind === 'okp') {
-    importParams = { name: meta.name };
-    verifyParams = { name: meta.name };
-  } else {
-    importParams = { name: meta.name, hash: meta.hash };
-    verifyParams = meta.name === 'RSA-PSS' ? { name: 'RSA-PSS',
-        saltLength: meta.saltLength } : { name: 'RSASSA-PKCS1-v1_5' };
+  if (type === 'jwks') {
+    log.debug("Leaving verificationKeyInput(). JWK Set.");
+    return { jwks: JSON.parse(text) };
   }
-  var key = await crypto.subtle.importKey('spki', pemToDer(pem), importParams,
-      false, ['verify']);
-  var data = new TextEncoder().encode(jwt_.split('.').slice(0, 2).join('.'));
-  log.debug("Leaving verifyX509().");
-  return crypto.subtle.verify(verifyParams, key,
-                              b64uToBytes(jwt_.split('.')[2]), data);
-}
-
-async function verifyJWKS(jwt_, jwks) {
-  log.debug("Entering verifyJWKS().");
-  var header = JSON.parse(b64uToStr(jwt_.split('.')[0]));
-  if (!header.kid) throw new Error('No "kid" found in JWT header.');
-  var jwk = jwks.keys.find(function (k) { return k.kid === header.kid; });
-  if (!jwk) throw new Error('Matching "kid" not found in JWKS.');
-  if (jwk.kty !== 'RSA') throw new Error('Only RSA keys are supported for ' +
-      'JWKS verification.');
-  var meta = SIGN_ALGS[header.alg];
-  if (!meta || meta.kind !== 'rsa') throw new Error('Unsupported algorithm: ' +
-      header.alg);
-  var key = await crypto.subtle.importKey('jwk', { kty: jwk.kty, n: jwk.n,
-      e: jwk.e },
-    { name: meta.name, hash: meta.hash }, false, ['verify']);
-  var data = new TextEncoder().encode(jwt_.split('.').slice(0, 2).join('.'));
-  var verifyParams = meta.name === 'RSA-PSS' ? { name: 'RSA-PSS',
-      saltLength: meta.saltLength } : { name: 'RSASSA-PKCS1-v1_5' };
-  log.debug("Leaving verifyJWKS().");
-  return crypto.subtle.verify(verifyParams, key,
-                              b64uToBytes(jwt_.split('.')[2]), data);
+  log.debug("Leaving verificationKeyInput(). PEM.");
+  return text;
 }
 
 async function verifyJWT() {
@@ -667,21 +664,29 @@ async function verifyJWT() {
   var type = val('jwt_verification_type');
   var key = val('jwt_verification_key');
   var jwt_ = val('verify_input').trim();
-  var isValid = false;
   try {
-    var parts = jwt_.split('.');
-    if (parts.length !== 3 || !parts[0] || !parts[1] ||
-        !parts[2]) throw new Error('Invalid JWS compact format.');
-    var header = JSON.parse(b64uToStr(parts[0]));
-    if (type === 'hmac') isValid = await verifyHMAC(jwt_, key, header.alg);
-    else if (type === 'x509') isValid = await verifyX509(jwt_, key, header.alg);
-    else if (type === 'jwks') isValid = await verifyJWKS(jwt_, JSON.parse(key));
-    else if (type === 'jwks_url') {
+    var keyInput;
+    if (type === 'jwks_url') {
       var response = await fetch(key);
       if (!response.ok) throw new Error('Failed to fetch JWKS.');
-      isValid = await verifyJWKS(jwt_, await response.json());
-    } else throw new Error('Unsupported verification method.');
-    setVal('jwt_verification_output', 'Signature Verified: ' + isValid);
+      keyInput = { jwks: await response.json() };
+    } else if (type === 'hmac' || type === 'x509' || type === 'jwks') {
+      keyInput = verificationKeyInput(type, key);
+    } else {
+      throw new Error('Unsupported verification method.');
+    }
+    // No algId: this pane verifies a token somebody else produced and has no
+    // algorithm selector, so the header's `alg` is all there is to go on.
+    // That is RFC 8725 §3.1's bad case, and it is what a debugger is FOR —
+    // the pane's job is to tell you what the token says, not to decide.
+    var result = await jwsLib.verifyJwsAsync({
+      jws: jwt_, publicKey: keyInput, backend: 'webcrypto'
+    });
+    var first = result.signatures[0] || {};
+    setVal('jwt_verification_output', result.valid
+      ? 'Signature Verified: true'
+      : 'Signature Verified: false' +
+        (first.reason ? ' — ' + first.reason : ''));
   } catch (err) {
     log.error('verifyJWT: ' + err.message);
     setVal('jwt_verification_output', 'Error: ' + err.message);
@@ -855,12 +860,6 @@ var pubToPem = keys.pubToPem;
 // shared JOSE module does exactly this (and also accepts a JWK object or an
 // already-imported CryptoKey), so this is its name on this page rather than a
 // second copy.
-function importKeyFlexible(text, format, params, usages) {
-  log.debug("Entering importKeyFlexible().");
-  log.debug("Leaving importKeyFlexible().");
-  return jose.importKey(text, format, params, usages);
-}
-
 // Make both key fields of a step match the current toggle (PEM or JWK).
 async function applyKeyFormat(step) {
   log.debug("Entering applyKeyFormat().");
@@ -951,20 +950,21 @@ async function syncVerificationKey() {
 // import an Ed25519 public key and cannot sign with one, so this page gained
 // Ed25519 certificates by deleting code. The subject and the fixed validity are
 // this page's, because this certificate exists only to carry a key.
+// The throwaway certificate a PKCS#12 has to wrap the key in, and the one the
+// View certificate button shows. It is x509.js's now — the Encryption /
+// Decryption page's key panes need the same thing for the same reason, and a
+// second copy of a certificate profile is a second set of extensions to get
+// wrong. Only the subject differs between the two callers.
 async function buildSelfSignedCertPem(privPem, pubPem, desc) {
   log.debug("Entering buildSelfSignedCertPem().");
-  var issued = await x509.issueCertificate({
+  var pem = await x509.selfSignedCertPem({
     subject: 'CN=jwt-tools generated key',
-    subjectPublicKey: pubPem,
-    issuerPrivateKey: privPem,
-    signatureAlg: x509.defaultSignatureAlgorithm(desc),
-    serial: '01',
-    notBefore: new Date(Date.UTC(2020, 0, 1)),
-    notAfter: new Date(Date.UTC(2035, 0, 1)),
-    extensions: x509.defaultExtensions('tls-server')
+    publicPem: pubPem,
+    privatePem: privPem,
+    desc: desc
   });
   log.debug("Leaving buildSelfSignedCertPem().");
-  return issued.pem;
+  return pem;
 }
 
 // Build a self-signed cert from the current signing key pair and open the

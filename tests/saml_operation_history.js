@@ -151,19 +151,29 @@ async function operationHistoryActivities(driver) {
       "The Operations History pane should span the page, below the columns.");
   log.info("[pane] OK — present, empty, and positioned below Tools.");
 
-  // ---- Failure: SAML 1.x cannot be sent -----------------------------------
+  // ---- Failure: a reference-only protocol version cannot be sent ----------
+  //
+  // **THIS USED TO BE SAML 1.1, and it had to move.** That version became a
+  // working profile on this page — Shibboleth's request, both browser profiles,
+  // all three bindings — so selecting it and clicking Call IdP now hands the
+  // browser to an identity provider instead of recording a refusal, and this
+  // check would hang waiting for a row on a page that had navigated away.
+  // SAML 1.0 is what is left of the original case: it is 1.1 with a
+  // MinorVersion of 0, nothing here builds one, and the refusal says so.
+  // tests/saml11_options.js covers SAML 1.1's OWN pre-dispatch refusals (no
+  // inter-site transfer address, no shire), which are a different shape.
   log.info("=== Recording failures ===");
-  await selectValue(driver, 'saml_version', '1.1');
+  await selectValue(driver, 'saml_version', '1.0');
   await click(driver, btn('callIdp'));
   var rows = await waitForRows(driver, 1,
-      "the SAML 1.1 send attempt was not recorded.");
+      "the SAML 1.0 send attempt was not recorded.");
   assert.strictEqual(rows[0].operation, 'Send AuthnRequest',
                      "wrong operation recorded: " + rows[0].operation);
-  assert.strictEqual(rows[0].version, '1.1',
+  assert.strictEqual(rows[0].version, '1.0',
                      "the SAML version was not recorded: " + rows[0].version);
   assert.ok(rows[0].result.indexOf('Failure') === 0,
             "expected a failure, got: " + rows[0].result);
-  assert.ok(rows[0].result.indexOf('IdP-initiated') !== -1,
+  assert.ok(rows[0].result.indexOf('reference only') !== -1,
             "the reason is missing: " + rows[0].result);
   assert.strictEqual(rows[0].resultClass, 'saml-bad',
                      "a failure should be styled as one.");
@@ -349,7 +359,9 @@ async function operationHistoryActivities(driver) {
   log.info("[response page] OK — Clear History clears the shared log.");
 
   // Re-record one entry so the request page's own Clear History is exercised.
-  await selectValue(driver, 'saml_version', '1.1');
+  // SAML 1.0 rather than 1.1, for the reason given at the first failure above:
+  // 1.1 now SENDS, and a click that navigates cannot record anything here.
+  await selectValue(driver, 'saml_version', '1.0');
   await click(driver, btn('callIdp'));
   await waitForRows(driver, 1, "could not re-record an entry.");
   await selectValue(driver, 'saml_version', '2.0');
@@ -378,11 +390,20 @@ async function test() {
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        baseUrl.replace(/\/+$/, ""));
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
   options.addArguments("--user-data-dir=/tmp/saml-history-chrome-" +
-                       Date.now());
+                       Date.now() + "-" + process.pid);
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     log.info("Starting Test run.");
     await driver.manage().deleteAllCookies();
@@ -390,9 +411,13 @@ async function test() {
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

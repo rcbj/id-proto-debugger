@@ -75,6 +75,23 @@ var SD_JWT_VC_TYP = "dc+sd-jwt";
 var PRE_AUTHORIZED_GRANT =
     "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 
+const waitForContent = require("./wait_for.js");
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
+
 // ---------------------------------------------------------------------------
 // helpers (same shapes as sd_jwt_vc_issuance.js, so the two read alike)
 // ---------------------------------------------------------------------------
@@ -130,7 +147,49 @@ async function click(driver, locator) {
 // stand in for that lost the race periodically. It also reports what the field
 // LAST held on a timeout, which the local copy of waitForStatus could not — its
 // message was built before the first poll, so it always said "(last status: )".
-const { text, value, waitForStatus, waitForValue } = require("./wait_for");
+const { text, value, waitFor, waitForStatus, waitForValue } =
+    require("./wait_for");
+
+// ---------------------------------------------------------------------------
+// Step 3's checks table arrives in TWO passes, and reading it after the first
+// one reports a page bug for a network round-trip that had not finished. The
+// rows below are appended when their promises settle — "Disclosure digests"
+// once every Disclosure has been hashed, "Issuer signature" once the issuer's
+// keys have been resolved (here out of the did:jwk in iss, or off walt.id's
+// own metadata) and the JWS verified against them. Both are appended on the
+// failure path too, so this waits on the page having FINISHED, never on it
+// having succeeded. The full account is in the note above
+// readStepThreeChecks() in tests/sd_jwt_vc_issuance.js, which lost a run to
+// exactly this on 2026-08-24.
+// ---------------------------------------------------------------------------
+var CHECK_ROWS_SCRIPT =
+  "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
+      "tbody tr')).map(function (tr) {" +
+  "  var td = tr.querySelectorAll('td');" +
+  "  return { name: td[0].textContent.trim(), result: " +
+      "td[1].textContent.trim(), detail: td[2].textContent.trim() };" +
+  "});";
+
+var LATE_CHECKS = ["Disclosure digests", "Issuer signature"];
+
+async function readStepThreeChecks(driver, message) {
+  log.debug("Entering readStepThreeChecks().");
+  var rows = await waitFor(driver,
+    function () {
+      return driver.executeScript(CHECK_ROWS_SCRIPT);
+    },
+    function (got) {
+      var names = (got || []).map(function (c) { return c.name; });
+      return LATE_CHECKS.every(function (name) {
+        return names.indexOf(name) !== -1;
+      });
+    },
+    (message || "step 3") + " should finish its checks — the digests and " +
+        "the issuer signature are appended after their promises settle");
+  log.debug("Leaving readStepThreeChecks().");
+  return rows;
+}
+
 function severeErrors(driver) {
   log.debug("Entering severeErrors().");
   log.debug("Leaving severeErrors().");
@@ -139,6 +198,11 @@ function severeErrors(driver) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
       // A favicon that is not there is not a page error.
       .filter(function (e) { return !/favicon/.test(e.message); })
+      // Nor is a load the BROWSER abandoned because its own certificate or
+      // network configuration changed underneath it. See browser_flags.js.
+      .filter(function (e) {
+        return !browserFlags.isTransientLoadError(e.message);
+      })
       .map(function (e) { return e.message; });
   });
 }
@@ -155,6 +219,7 @@ var WRONG_ISSUER = "http://localhost:1/not-the-offering-issuer";
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -457,14 +522,7 @@ async function checkCredential(driver, what, opts) {
   }
 
   // And the page's own verdicts, which are what a user reads.
-  var checks = await driver.executeScript(
-    "return Array.prototype.slice.call(document.querySelectorAll('#vc_checks " +
-        "tbody tr')).map(function (tr) {" +
-    "  var td = tr.querySelectorAll('td');" +
-    "  return { name: td[0].textContent.trim(), result: " +
-        "td[1].textContent.trim()," +
-    "           detail: td[2].textContent.trim() };" +
-    "});");
+  var checks = await readStepThreeChecks(driver, "step 3");
   assert.ok(checks.length >= 7, "step 3 should report its checks, got " +
             checks.length + ".");
   var failed = checks.filter(function (c) { return c.result === "FAILED"; });
@@ -503,6 +561,7 @@ async function walletInitiated(driver) {
   log.debug("Entering walletInitiated().");
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_usecase_wallet-initiated")),
                     waitTime);
   await click(driver, By.id("vc_usecase_wallet-initiated"));
@@ -683,6 +742,7 @@ async function crossDeviceOffer(driver) {
   // ---- the wallet takes what the QR code carried --------------------------
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
     "document.getElementById('scan_offer_input').value = arguments[0];",
@@ -794,6 +854,7 @@ async function deferredNotSupportedHere(driver) {
   // Deferred Credential Request into a 404 the moment an issuer took its time.
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -881,6 +942,7 @@ async function optionalFeaturesAbsentHere(driver) {
   // ---- the wallet's configuration pane says so ---------------------------
   await misconfigureTheWallet(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
   await driver.executeScript(
@@ -954,6 +1016,7 @@ async function optionalFeaturesAbsentHere(driver) {
 
   await signOutOfKeycloak(driver);
   await driver.get(baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("start_issuance_button")),
                     waitTime);
   await authorizeAtWaltid(driver);

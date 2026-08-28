@@ -63,6 +63,22 @@ services:
     image: rcbj/api
     environment:
       - CONFIG_FILE=./env/docker-tests.js
+      # ---------------------------------------------------------------------
+      # THE MOCK STS'S CERTIFICATE, IN THIS SERVICE'S TRUSTSTORE.
+      #
+      # That mock serves its main port over TLS on this stack (see STS_HTTPS on
+      # the `sts` service for why the scheme moved to the process when the RFC
+      # 9700 pass became a trust realm), on a self-signed certificate it
+      # regenerates every start — so nothing can have an anchor for it ahead of
+      # time. api/sts_truststore.sh, this image's entrypoint, fetches it from
+      # this URL before the server starts and points NODE_EXTRA_CA_CERTS at it.
+      # Unset, the entrypoint does nothing, which is what a deployed api wants.
+      #
+      # This is a truststore addition, not a verification switch: every other
+      # certificate this service meets is still verified, which is what
+      # api_ssrf_guard.js, api_tls_probe.js and url_safety_schemes.js assert.
+      # ---------------------------------------------------------------------
+      - STS_CERT_URL=https://sts:8081/tls/server-certificate
     build:
       context: .
       dockerfile: api/Dockerfile
@@ -74,6 +90,11 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-}
     depends_on:
       keycloak:
+        condition: service_healthy
+      # So the entrypoint's certificate fetch has something to fetch from. It
+      # retries regardless (see api/sts_truststore.sh), but depends_on turns the
+      # ordinary case into no retries at all.
+      sts:
         condition: service_healthy
     healthcheck:
       test: curl -X GET http://localhost:4000
@@ -121,6 +142,28 @@ services:
     environment:
       # Log level, chosen the same way as for api and client.
       - CONFIG_FILE=./env/docker-tests.js
+      # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
+      # rather than given a value here.
+      #
+      # THE BARE FORM IS LOAD-BEARING AND THE OBVIOUS ALTERNATIVE BREAKS THE
+      # CONTAINER. With no `=`, compose passes the variable through ONLY if the
+      # host shell has it set and leaves it unset here otherwise, so the
+      # appconfig file's own level keeps applying when nobody asked for
+      # anything else. Written as `STS_LOG_LEVEL=${STS_LOG_LEVEL:-}` it would
+      # instead be set to the EMPTY STRING, and that is not a harmless default:
+      # bunyan throws `unknown level name: ""` from config.js's registerLogger()
+      # at require time, so the mock does not start at all. `docker compose
+      # config` tells the two apart — the bare form renders null, the assigned
+      # one renders "".
+      #
+      # Why it is worth having: the mock logs every request, every response and
+      # every artifact before and after signing, at debug. That is the point of
+      # a mock and is the record of what it issued when a test fails, so debug
+      # stays the default. It is also about half the service's CPU, and a
+      # benchmark of it wrote 156MB in sixteen seconds — so a run with several
+      # jobs hitting one instance at once can set STS_LOG_LEVEL=info and roughly
+      # double what that instance can answer.
+      - STS_LOG_LEVEL
       # Where the WALLET lives, as a base URL the BROWSER can use.
       #
       # The mock issuer's Credential Offer pages and the mock verifier's request
@@ -132,18 +175,90 @@ services:
       # and presentation flows timed out waiting for a page that never loaded.
       # OID4VP_WALLET_URL falls back to this, so one setting covers both.
       - OID4VCI_WALLET_URL=http://client:3000
+      # THE SPIRE SERVER API'S PRIVATE UNIX SOCKET, which ships OFF.
+      #
+      # It is on here for one reason: it is the `local` entity, and `local` is
+      # a whole class in SPIRE's authorization table that nothing else can
+      # reach. `Debug.GetInfo` is LOCAL-ONLY — an administrator's X509-SVID
+      # over TCP is refused it — so without this socket the suite can assert
+      # that refusal and can never see the method answer, which leaves half of
+      # that row untested.
+      - STS_SPIFFE_SERVER_SOCKET_ENABLED=true
+      # A SHORT path, and the shortness is load-bearing: a Unix socket path is
+      # bounded by `sun_path` at 108 bytes, and past it bind and connect fail
+      # with a message about the address already being in use — naming
+      # something that is not the problem. This one is well inside it and is
+      # the directory the volume below is mounted at on both sides.
+      - STS_SPIFFE_SERVER_SOCKET=/spire-sock/server.sock
+      # ---------------------------------------------------------------------
+      # THE MAIN PORT IS HTTPS, AND THE WHOLE SUITE TALKS TO IT THAT WAY.
+      #
+      # This replaced a SECOND mock instance (`sts-rfc9700`, deleted). RFC 9700
+      # mode used to need one: `oauth2.rfc9700` derives `global.https` in that
+      # service, so it binds 8081 as TLS, and one process could not serve the
+      # permissive pass and the compliant one. Since mock-sts marks that flag
+      # `realmRuntime` it can be set on a TRUST REALM — a realm binds no socket,
+      # so only the mode's checks change — and `/realm/rfc9700/...` is the
+      # compliant server while `/...` stays permissive. See common/common.sh's
+      # configureStsRfc9700Realm().
+      #
+      # WHAT A REALM CANNOT BRING WITH IT IS A SCHEME. The port is HTTPS or it
+      # is not, for every realm at once, and the RFC 9700 pass is only honest
+      # over TLS — requirement 8.1 is that every configured endpoint is https,
+      # and the debugger enforces it. So the scheme moves to the PROCESS.
+      #
+      # `STS_HTTPS` rather than `STS_OAUTH2_RFC9700`: that one would turn the
+      # mode on for the DEFAULT realm too, and the permissive pass — twelve
+      # jobs — is the other half of the matrix. This is the setting that exists
+      # to separate the two.
+      #
+      # The certificate is self-signed and regenerated every start, so nothing
+      # can have an anchor for it ahead of time. The `api` service fetches it
+      # in its own entrypoint (STS_CERT_URL) and the tests container fetches it
+      # in trustStsCertificate() (common/common.sh).
+      - STS_HTTPS=true
+    volumes:
+      # Shared with the tests container so `spiffe_protocol.js` can dial it.
+      # A socket is a rendezvous point rather than a file — it holds no bytes,
+      # it is unlinked on close, and a fresh process makes a fresh one — so
+      # what crosses here is reachability and nothing else.
+      - spire-server-socket:/spire-sock
     build:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
       context: ./sts
+    # https, and `rejectUnauthorized:false` — the certificate is self-signed and
+    # regenerated every start, so nothing in this container can have an anchor
+    # for it. Liveness is this check's question, not trust.
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8081/healthcheck',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
+      test: ["CMD-SHELL", "node -e \"require('https').get({host:'localhost',port:8081,path:'/healthcheck',rejectUnauthorized:false},function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
     networks:
-      - keycloak
+      keycloak:
+        aliases:
+          # A SECOND NAME FOR THIS CONTAINER, AND THE POINT IS THAT ITS
+          # CERTIFICATE DOES NOT CARRY IT.
+          #
+          # tests/api_ldap.js binds this service's LDAPS socket under this name
+          # to prove that the `api` still VERIFIES certificates. It cannot
+          # prove that with an untrusted certificate any more: that service's
+          # entrypoint fetches this one's self-signed certificate into
+          # NODE_EXTRA_CA_CERTS on every start (STS_CERT_URL), so the anchor is
+          # deliberately there and the connection deliberately succeeds. What a
+          # truststore entry does NOT do is switch off hostname verification,
+          # so a name outside the certificate's subjectAltName is the one
+          # refusal left that only a verifying client can produce — which is
+          # what keeps every `rejectUnauthorized: false` in that file from
+          # being a decoration.
+          #
+          # The certificate is generated with SANs localhost, sts, sts-mock,
+          # sts.example.com and 127.0.0.1, so this name must stay OUT of that
+          # list. local-tests.yml provides the same name through the api's
+          # extra_hosts, because that stack has no Docker DNS at all.
+          - sts-not-in-the-certificate
     ports:
       - 8081:8081
   # walt.id issuer-api2 — a REAL OpenID4VCI 1.0 Credential Issuer, run beside the
@@ -285,6 +400,24 @@ services:
     environment:
       KEYCLOAK_WSFED_BASE_URL: http://keycloak-wsfed:8080
       KEYCLOAK_WSFED_LOCALHOST_BASE_URL: http://keycloak-wsfed:8080
+      # How many jobs run at once. Passed THROUGH from the host so
+      # `TEST_CONCURRENCY=6 ./docker-run-tests.sh` reaches run-report.js, which
+      # otherwise sizes the pool from this container's view of the cores. Empty
+      # means "decide there" (2..4, one less than the cores); 1 restores the
+      # old sequential run with live output. See run-report.js.
+      TEST_CONCURRENCY: ${TEST_CONCURRENCY:-}
+      # The per-job watchdog, passed through beside it so the pool is tunable
+      # from one place. run-report.js kills the process TREE of a job that has
+      # not exited in this long (default 900000 — 15 minutes) and records it as
+      # a timeout; 0 disables the clock while leaving the reaping in place.
+      # It matters more here than on the host: every other service in this
+      # stack shares the machine with the pool, so a job that is merely starved
+      # looks exactly like one that has hung.
+      TEST_JOB_TIMEOUT_MS: ${TEST_JOB_TIMEOUT_MS:-}
+      # Where the mock's SPIRE Server API private socket is mounted in this
+      # container. It is the `local` entity and the only route to a method
+      # SPIRE's own table marks local-only.
+      SPIFFE_SERVER_SOCKET: unix:///spire-sock/server.sock
     # Chrome crashes tabs on heavy pages when limited to Docker's default 64MB
     # /dev/shm. The tests also pass --disable-dev-shm-usage; this raises the cap
     # as a belt-and-suspenders mitigation.
@@ -295,6 +428,11 @@ services:
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report
+      # The mock's SPIRE Server API Unix socket — see the sts service above.
+      # SPIFFE_SERVER_SOCKET names it for spiffe_protocol.js; without the
+      # variable that test SKIPS its local-socket section with a reason rather
+      # than passing vacuously.
+      - spire-server-socket:/spire-sock
     depends_on:
       client:
         condition: service_healthy
@@ -302,6 +440,12 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      # The RFC 9700 pass no longer has a server of its own: it is a TRUST
+      # REALM on this one, created by configureStsRfc9700Realm() in
+      # common/common.sh once the service is healthy. So this single wait is
+      # what keeps the five compliant jobs from starting against a port that
+      # has not bound — a compliant server that is not listening is
+      # indistinguishable, from a test, from one that refused.
       sts:
         condition: service_healthy
       waltid-issuer:
@@ -314,6 +458,9 @@ services:
      - keycloak
 
 volumes:
+  # The mock STS's SPIRE Server API Unix socket, shared with the tests
+  # container. See both services above.
+  spire-server-socket:
   postgres_data:
 
 networks:

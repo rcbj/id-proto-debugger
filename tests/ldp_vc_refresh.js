@@ -60,14 +60,19 @@ if (typeof globalThis.btoa !== "function") {
   };
 }
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 const ROOT = path.join(__dirname, "..");
 const paths = require("./module_paths.js");
 const stsSuite = paths.requireSharedModule(
-  [path.join(__dirname, "sts_bbs2023.js"), path.join(ROOT, "sts",
-   "bbs2023.js")],
+  // The tests image's flattened copy first, then wherever the submodule keeps
+  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: mock-sts 0f986b3
+  // ("Reorganizing source code.") moved every module into a subdirectory, and
+  // this one is in common/vendored/. mockStsModule() is the single place that
+  // answers that question — see tests/module_paths.js.
+  [path.join(__dirname, "sts_bbs2023.js"),
+   paths.mockStsModule("bbs2023.js") || ""],
   "the STS's bbs-2023 cryptosuite");
 // The wallet's own module — the one both issuance step 2 and step 4 use.
 // Driving it is the point: it is the code under test, not a stand-in for it.
@@ -180,6 +185,16 @@ async function test() {
     "no credential issuer metadata at " + issuerBase + ". Start the STS mock.");
   assert.ok((meta.credential_configurations_supported || {})[LDP_CONFIG_ID],
     "this issuer offers no ldp_vc configuration \"" + LDP_CONFIG_ID + "\".");
+
+  // The wallet, declared before the token endpoint is called. This job uses the
+  // PASSWORD grant to get the token set it then refreshes, so both grants are
+  // declared: a registration naming only the pre-authorized code would describe
+  // a client that cannot reach the first line of this test.
+  await common.provisionWallet(issuerBase, { clientId: CLIENT_ID,
+    grantTypes: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
+                 "password", "refresh_token"],
+    scopes: ["openid"],
+    why: "the wallet whose refresh token this job spends twice" });
 
   // --- the credential the wallet already holds ------------------------------
   log.info("=== The credential in hand ===");

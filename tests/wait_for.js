@@ -229,7 +229,150 @@ async function waitForJson(driver, id, message, timeout) {
   return parsed;
 }
 
+// ---------------------------------------------------------------------------
+// WAIT FOR THE PAGE'S BUNDLE TO HAVE RUN, which is a different question from
+// whether its markup is there, and it is the one that broke ten jobs at once on
+// 2026-08-20.
+//
+// Nearly every control in this application is wired with an INLINE handler —
+// `onclick="didtools.resolveDid(); return false;"`, and the same shape on the
+// VC issuance and presentation pages. That name is the browserify
+// `--standalone` global (see client/Dockerfile: one `-o public/js/X.js
+// --standalone <name>` per page), so it exists only once the bundle has
+// finished executing. The markup carrying the handler is in the HTML from the
+// moment the page parses, so `until.elementLocated` succeeds long before that,
+// and a click in the gap does not queue, retry or fail: it raises
+// `ReferenceError: didtools is not defined` inside the page and the test sees
+// a control that was pressed and did nothing, for ever.
+//
+// The gap is not small. These bundles are one to three megabytes of
+// unminified JavaScript with an inline source map, and a suite run has the
+// whole stack — Postgres, two Keycloaks, two mock STS instances, walt.id and
+// Chrome — on the machine that has to parse them, so `elementLocated` plus
+// `sleep(500)` is a bet that loses reliably rather than occasionally. It cost
+// two consecutive runs, and every one of the ten failures named a product
+// behaviour rather than a page that was not ready: "the credential issuer
+// metadata was not retrieved", "resolving the generated did:jwk produced no
+// verdict", "a ticked box that silently does nothing".
+//
+// So: after any navigation to a page whose controls this test is going to
+// press, wait for the global rather than for the element.
+async function waitForBundle(driver, globalName, message, timeout) {
+  log.debug("Entering waitForBundle(). " + globalName);
+  try {
+    await driver.wait(async function () {
+      return await driver.executeScript(
+        "return typeof window[arguments[0]] !== 'undefined';", globalName);
+    }, timeout || defaultTimeout);
+  } catch (e) {
+    e.message = (message || ("the page's " + globalName + " bundle")) +
+      " did not finish loading, so its inline onclick handlers would have " +
+      "thrown ReferenceError and every click been a silent no-op — " +
+      e.message;
+    throw e;
+  }
+  log.debug("Leaving waitForBundle().");
+}
+
+// The same wait, without having to name the global. It reads the page's own
+// `<script src="/js/X.js">` tags and waits for each one's `--standalone`
+// export, trying both the file's name and that name with the underscores
+// removed — the two forms client/Dockerfile actually uses (`saml_request` keeps
+// them, `vc_issuance_1` becomes `vcissuance1`, `did_tools` becomes
+// `didtools`). Prefer this at a navigation: it cannot go stale when a page is
+// renamed or a bundle is split, and a test that opens six pages does not have
+// to carry a table of six global names.
+async function waitForPageBundle(driver, message, timeout) {
+  log.debug("Entering waitForPageBundle().");
+  var loaded = null;
+  try {
+    await driver.wait(async function () {
+      loaded = await driver.executeScript(
+        "var out = [];" +
+        "var tags = document.querySelectorAll('script[src]');" +
+        "for (var i = 0; i < tags.length; i++) {" +
+        "  var src = tags[i].getAttribute('src') || '';" +
+        "  var m = src.match(/\\/js\\/([A-Za-z0-9_]+)\\.js/);" +
+        "  if (!m) continue;" +
+        "  var name = m[1];" +
+        "  var bare = name.replace(/_/g, '');" +
+        "  out.push({ name: name," +
+        "             ready: typeof window[name] !== 'undefined' ||" +
+        "                    typeof window[bare] !== 'undefined' });" +
+        "}" +
+        "return out;");
+      if (!loaded || !loaded.length) return false;
+      return loaded.every(function (b) { return b.ready; });
+    }, timeout || defaultTimeout);
+  } catch (e) {
+    e.message = (message || "the page's bundle") + " did not finish loading, " +
+      "so its inline onclick handlers would have thrown ReferenceError and " +
+      "every click been a silent no-op (" + JSON.stringify(loaded) + ") — " +
+      e.message;
+    throw e;
+  }
+  log.debug("Leaving waitForPageBundle().");
+}
+
+// ---------------------------------------------------------------------------
+// Wait until the BROWSER considers this page focused and visible.
+//
+// WebAuthn is the one API this suite drives that refuses to run at all on a
+// page the browser does not consider focused. Chrome states the reason
+// plainly —
+//
+//     NotAllowedError: The operation is not allowed at this time because the
+//     page does not have focus.
+//
+// — but the page only ever sees the ERROR NAME, and `NotAllowedError` is the
+// name WebAuthn deliberately gives to a declined prompt, a missing credential
+// and a timeout as well. So nothing on screen, and nothing in a test that
+// reads the screen, says "focus": tests/webauthn_lab_page.js reported "the
+// registration never produced a credential", three sections after the one that
+// had already checked the environment and found it usable.
+//
+// A freshly launched headless Chrome does NOT start focused. Measured on
+// Chrome 151 against http://localhost:3000/webauthn.html: at 708ms after
+// `driver.get()` returned, `document.hasFocus()` was false, `visibilityState`
+// was "hidden", and a ceremony was refused; at 1540ms both had flipped and the
+// same click registered a credential. That is the whole failure, and it is why
+// the two WebAuthn tests that sign in to an identity provider first passed on
+// the same machine in the same run — a Keycloak login is more than 1.5s of
+// navigation, so they were already past it by accident.
+//
+// Both halves are load-bearing: a page can report hasFocus() === true while
+// the window is still "hidden", and Chrome refuses the ceremony in that state
+// too — measured immediately after a `navigate().refresh()`.
+//
+// A fixed sleep would be the same bet this whole module exists to avoid, so
+// this polls the state and still fails, loudly, if it never arrives.
+// ---------------------------------------------------------------------------
+async function waitForFocus(driver, timeout) {
+  log.debug("Entering waitForFocus().");
+  var last;
+  try {
+    await driver.wait(async function () {
+      // Runs IN THE BROWSER, so it has no bunyan and no `log` — see the
+      // repo-root CLAUDE.md. What it returns is logged out here.
+      last = await driver.executeScript(
+        "return document.hasFocus() + '/' + document.visibilityState;");
+      return last === "true/visible";
+    }, timeout || defaultTimeout);
+  } catch (e) {
+    e.message = "the browser never gave this page focus (last state: " +
+      forMessage(last) + "). WebAuthn refuses a ceremony on an unfocused or " +
+      "hidden page and reports it as a bare NotAllowedError, which is " +
+      "indistinguishable from a declined prompt — " + e.message;
+    log.debug("Leaving waitForFocus(). Never focused.");
+    throw e;
+  }
+  log.debug("Leaving waitForFocus(). " + last);
+}
+
 module.exports = {
+  waitForBundle: waitForBundle,
+  waitForPageBundle: waitForPageBundle,
+  waitForFocus: waitForFocus,
   configure: configure,
   forMessage: forMessage,
   text: text,

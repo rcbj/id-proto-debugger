@@ -44,6 +44,9 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const registry = require("./sts_applications.js");
+const { usernameFor, requireKnownOrCreatable } =
+    require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -53,13 +56,17 @@ log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = "http://localhost:3000";
 var apiUrl = process.env.API_URL || "http://localhost:4000";
-var stsUrl = process.env.STS_URL || "http://localhost:8081";
+var stsUrl = process.env.STS_URL || "https://localhost:8081";
 var kdcHost = process.env.KRB5_KDC_HOST || "localhost";
 var kdcPort = process.env.KRB5_KDC_PORT || "88";
 var serviceHost = process.env.KRB5_SERVICE_HOST || kdcHost;
 var servicePort = process.env.KRB5_SERVICE_PORT || "8888";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
-var principal = process.env.KRB5_PRINCIPAL || "alice";
+// Generated per run, prefixed with this file's name. The mock KDC registers an
+// account for any username on first sight, so this need not be a configured
+// principal — and should not be, because its table is never pruned and a name
+// shared by every test makes a row in it untraceable. KRB5_PRINCIPAL pins it.
+var principal = process.env.KRB5_PRINCIPAL || usernameFor("kerberos-tgs-ap");
 // One password for every user in the mock KDC, whoever KRB5_PRINCIPAL names.
 var password = process.env.KRB5_PASSWORD || "password!";
 var spn = process.env.KRB5_SPN || "HTTP/web.example.com";
@@ -113,6 +120,16 @@ async function preconditions() {
         ok: false,
         why: "the mock KDC serves realm " + body.realm + ", not " + realm
       };
+    }
+    // Asked rather than assumed: this test signs in as a generated name, which
+    // works only because this KDC creates accounts on demand. If that ever
+    // stops being true the exchange fails as KDC_ERR_C_PRINCIPAL_UNKNOWN, an
+    // error about the KDC's table that says nothing about where the name came
+    // from.
+    const unusable = requireKnownOrCreatable(body, principal);
+    if (unusable) {
+      log.debug("Leaving preconditions().");
+      return { ok: false, why: unusable };
     }
     if ((body.implemented || []).indexOf("TGS exchange") === -1) {
       log.debug("Leaving preconditions().");
@@ -492,6 +509,30 @@ async function test() {
         ready.servicePort + "; using that.");
     servicePort = ready.servicePort;
   }
+
+  // ---------------------------------------------------------------------
+  // THE KERBEROS SERVICE, IN THE APPLICATIONS REGISTRY, BEFORE THE TGS
+  // EXCHANGE ASKS FOR A TICKET FOR IT.
+  //
+  // `krb5ServicePrincipalName` is the identifier attribute of the `krb5`
+  // family, and the SPN is what a Kerberos application IS: there is no other
+  // name for it in the protocol. The mock issues a ticket for any SPN it can
+  // find a key for and creates the entry from that sighting, so this changes
+  // nothing about whether the exchange works — what it changes is that the
+  // entry knows the service was DECLARED rather than only that a ticket was
+  // once asked for.
+  //
+  // The SPN is the environment's (KRB5_SPN) and is genuinely shared with the
+  // other Kerberos jobs, so it is not stamped the way the principals in this
+  // file are — a per-run service would be a service nothing has a key for.
+  // ---------------------------------------------------------------------
+  await registry.provision(registry.baseOf(stsUrl), {
+    identifier: spn,
+    name: "Kerberos ticket-protected service",
+    protocols: ["krb5"],
+    fields: { krb5ServicePrincipalName: [spn] },
+    why: "the service the TGS and AP pages obtain and present a ticket for"
+  });
 
   const options = new chrome.Options();
   // --headless=new, never bare --headless: the image's Chrome 121 ignores

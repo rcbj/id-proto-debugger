@@ -501,36 +501,12 @@ async function buildPkcs12(options) {
   return new Uint8Array(pfx.toSchema().toBER(false));
 }
 
-// Password-protect an arbitrary string as a compact PBES2 JWE (RFC 7518 §4.8).
-async function pbes2JweEncrypt(plaintext, password) {
-  log.debug("Entering pbes2JweEncrypt().");
-  var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
-  var p2s = crypto.getRandomValues(new Uint8Array(16));
-  var p2c = 100000;
-  var pwKey = await crypto.subtle.importKey('raw',
-      new TextEncoder().encode(password), 'PBKDF2', false, ['deriveKey']);
-  var saltInput = concatBytes(new TextEncoder().encode(alg),
-      new Uint8Array([0]), p2s);
-  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2',
-      salt: saltInput, iterations: p2c, hash: 'SHA-256' },
-    pwKey, { name: 'AES-KW', length: 128 }, false, ['wrapKey']);
-  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 },
-      true, ['encrypt']);
-  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey,
-      'AES-KW'));
-  var ph = { alg: alg, enc: enc, p2s: bytesToB64u(p2s), p2c: p2c };
-  var phB64 = strToB64u(JSON.stringify(ph));
-  var iv = crypto.getRandomValues(new Uint8Array(12));
-  var full = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv, additionalData: new TextEncoder().encode(phB64),
-     tagLength: 128 },
-    cek, new TextEncoder().encode(plaintext)));
-  var ct = full.slice(0, full.length - 16);
-  var tag = full.slice(full.length - 16);
-  log.debug("Leaving pbes2JweEncrypt().");
-  return [phB64, bytesToB64u(wrapped), bytesToB64u(iv), bytesToB64u(ct),
-          bytesToB64u(tag)].join('.');
-}
+// Password-protecting a string as a compact PBES2 JWE (RFC 7518 section 4.8)
+// is jose_jwe.js's, where the rest of JWE lives — this module had the only
+// copy until the Encryption / Decryption page needed the same thing for its
+// own key-pair panes. Re-exported below, so every existing caller of
+// key_material.pbes2JweEncrypt() is unchanged.
+var pbes2JweEncrypt = jose.pbes2JweEncrypt;
 
 // The keystore formats every pane offers, in the order they are offered.
 var KEYSTORE_FORMATS = ['pem', 'der', 'jwk', 'pkcs12'];

@@ -48,6 +48,13 @@ var nobleKmac256 = require("@noble/hashes/sha3-addons").kmac256;
 // that it did not have — the second ciphersuite, KeyGen — belongs there rather
 // than here, so both callers get it and tests/bbs_crypto.js checks it.
 var bbs = require("./bbs");
+// Panes #6 and #7. Both are engines with NO DOM, for the reason the header of
+// each one gives: a JWS and an XML Signature are wire formats somebody else's
+// library has to read, so the bytes are asserted in node against OpenSSL and
+// against xml-crypto rather than against a round trip through this page, which
+// would agree with itself whatever the implementation did.
+var jws = require("./jws");
+var xmldsig = require("./xmldsig");
 var log = bunyan.createLogger({ name: 'digital_signature',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -80,108 +87,53 @@ var ML_PARAM_SETS = {
 };
 
 // ---------------------------------------------------------------------------
-// Small DOM helpers
+// THE HELPERS THIS PAGE USED TO OWN NOW LIVE IN THREE SHARED MODULES.
+//
+// The byte, base64, hex and PEM-framing conversions are crypto_bytes.js; the
+// DOM accessors, the clipboard, the collapse/expand behaviour and the download
+// are tool_panes.js; the AES/Poly1305/SipHash MAC primitives are
+// symmetric_crypto.js. Each of them was written here first and then wanted by
+// the Encryption / Decryption page, which is the same page with different
+// cryptography in it — see the header of each module for what a second copy
+// would have cost.
+//
+// They are aliased to their old local names rather than rewritten at every
+// call site: this file has about two hundred of them, and a rename touching
+// all two hundred is a diff nobody can review against a 967-line Selenium test
+// that already passes.
+//
+// ONE BEHAVIOURAL CHANGE, and it is an improvement the MAC panes already cope
+// with: crypto_bytes' hexToBytes() REFUSES a non-hex character or an odd digit
+// count instead of reading it as zero. macCompute() and macVerify() wrap their
+// work in a try/catch and report the message, so a mistyped key field now says
+// "Value is not hexadecimal" where it used to compute a tag under a key that
+// was not the one on the screen.
 // ---------------------------------------------------------------------------
-function val(id) {
-  log.debug("Entering val().");
-  var el = document.getElementById(id);
-  log.debug("Leaving val().");
-  return el ? el.value : '';
-}
-function setVal(id, v) {
-  log.debug("Entering setVal().");
-  var el = document.getElementById(id);
-  if (el) el.value = v;
-  log.debug("Leaving setVal().");
-}
+var bytesLib = require("./crypto_bytes");
+var symmetric = require("./symmetric_crypto");
+var panes = require("./tool_panes");
+var jose = require("./jose_jwe");
+var keyMaterial = require("./key_material");
+var pkEncryption = require("./pk_encryption");
+var x509 = require("./x509");
 
-// ---------------------------------------------------------------------------
-// Byte / base64 / hex helpers
-// ---------------------------------------------------------------------------
-function strBytes(s) {
-  log.debug("Entering strBytes().");
-  log.debug("Leaving strBytes().");
-  return new TextEncoder().encode(s);
-}
+var val = panes.val;
+var setVal = panes.setVal;
+var triggerDownload = panes.triggerDownload;
+var defer = panes.defer;
 
-function bytesToB64(bytes) {
-  log.debug("Entering bytesToB64().");
-  var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  var bin = '';
-  for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
-  log.debug("Leaving bytesToB64().");
-  return btoa(bin);
-}
-function b64ToBytes(b64) {
-  log.debug("Entering b64ToBytes().");
-  var bin = atob(String(b64).replace(/\s+/g, ''));
-  var bytes = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  log.debug("Leaving b64ToBytes().");
-  return bytes;
-}
-function bytesToHex(bytes) {
-  log.debug("Entering bytesToHex().");
-  var s = '';
-  for (var i = 0; i < bytes.length; i++) s += ('0' +
-       bytes[i].toString(16)).slice(-2);
-  log.debug("Leaving bytesToHex().");
-  return s;
-}
-function hexToBytes(hex) {
-  log.debug("Entering hexToBytes().");
-  var h = String(hex).replace(/\s+/g, '');
-  var a = new Uint8Array(h.length >> 1);
-  for (var i = 0; i < a.length; i++) a[i] = parseInt(h.substr(i * 2, 2), 16);
-  log.debug("Leaving hexToBytes().");
-  return a;
-}
-function concatBytes() {
-  log.debug("Entering concatBytes().");
-  var total = 0, i;
-  for (i = 0; i < arguments.length; i++) total += arguments[i].length;
-  var out = new Uint8Array(total), off = 0;
-  for (i = 0; i < arguments.length; i++) { out.set(arguments[i],
-       off); off += arguments[i].length; }
-  log.debug("Leaving concatBytes().");
-  return out;
-}
-function bytesEqual(a, b) {
-  log.debug("Entering bytesEqual().");
-  if (a.length !== b.length) {
-    log.debug("Leaving bytesEqual().");
-    return false;
-  }
-  var diff = 0;
-  for (var i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
-  log.debug("Leaving bytesEqual().");
-  return diff === 0;
-}
-function randomBytes(n) {
-  log.debug("Entering randomBytes().");
-  var a = new Uint8Array(n);
-  crypto.getRandomValues(a);
-  log.debug("Leaving randomBytes().");
-  return a;
-}
-
-// PEM framing over raw bytes (used by SLH-DSA, whose keys are opaque bytes).
-function rawToPem(bytes, label) {
-  log.debug("Entering rawToPem().");
-  var b64 = bytesToB64(bytes);
-  var lines = b64.match(/.{1,64}/g).join('\n');
-  log.debug("Leaving rawToPem().");
-  return '-----BEGIN ' + label + '-----\n' + lines + '\n-----END ' + label +
-      '-----\n';
-}
-function pemToRaw(pem) {
-  log.debug("Entering pemToRaw().");
-  var b64 = String(pem).split(/\r?\n/)
-    .filter(function (line) { return line.indexOf('-----') === -1; })
-    .join('').replace(/\s+/g, '');
-  log.debug("Leaving pemToRaw().");
-  return b64ToBytes(b64);
-}
+var strBytes = bytesLib.strBytes;
+var bytesToB64 = bytesLib.bytesToB64;
+var b64ToBytes = bytesLib.b64ToBytes;
+var bytesToHex = bytesLib.bytesToHex;
+var hexToBytes = bytesLib.hexToBytes;
+var concatBytes = bytesLib.concatBytes;
+var bytesEqual = bytesLib.bytesEqual;
+var randomBytes = bytesLib.randomBytes;
+var rawToPem = bytesLib.rawToPem;
+var pemToRaw = bytesLib.pemToRaw;
+var b64u = bytesLib.bytesToB64u;
+var bigToBytes = bytesLib.bigToBytes;
 
 // ---------------------------------------------------------------------------
 // Hash registry (shared by the RSA and ECC panes). `oid` is the DER-encoded
@@ -246,14 +198,6 @@ var CURVES = {
   'bls12-381':         { kind: 'bls',     curve: bls12_381 }
 };
 
-// SLH-DSA / RSA key generation can block for a moment; defer so the "…" status
-// paints first.
-function defer(fn) {
-  log.debug("Entering defer().");
-  setTimeout(fn, 15);
-  log.debug("Leaving defer().");
-}
-
 // ===========================================================================
 // Pane #1 — SLH-DSA (post-quantum)
 // ===========================================================================
@@ -264,20 +208,6 @@ function currentAlg() {
   if (!alg) throw new Error('Unknown parameter set: ' + name);
   log.debug("Leaving currentAlg().");
   return alg;
-}
-
-function triggerDownload(filename, data, mime) {
-  log.debug("Entering triggerDownload().");
-  var blob = new Blob([data], { type: mime || 'application/octet-stream' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-  log.debug("Leaving triggerDownload().");
 }
 
 function generateKeys() {
@@ -313,75 +243,10 @@ function generateKeys() {
 // the panes' deliberate avoidance of crypto.subtle for *signing* (which exists
 // only to allow non-SHA hashes); PBES2 here is standard and hash-agnostic.
 // ---------------------------------------------------------------------------
-function b64u(bytes) {
-  log.debug("Entering b64u().");
-  var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  var bin = '';
-  for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
-  log.debug("Leaving b64u().");
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-function forgeBnB64u(bn) {
-  log.debug("Entering forgeBnB64u().");
-  var h = bn.toString(16); if (h.length % 2) h = '0' + h;
-  log.debug("Leaving forgeBnB64u().");
-  return b64u(hexToBytes(h));
-}
-function derBytes(asn1) {
-  log.debug("Entering derBytes().");
-  log.debug("Leaving derBytes().");
-  return new Uint8Array(forge.util.binary.raw.decode(forge.asn1.toDer(asn1)
-                        .getBytes()));
-}
-// A native BigInt (from @noble affine coords) as fixed-length big-endian bytes.
-function bigToBytes(x, len) {
-  log.debug("Entering bigToBytes().");
-  var h = x.toString(16); while (h.length < len * 2) h = '0' + h;
-  log.debug("Leaving bigToBytes().");
-  return hexToBytes(h);
-}
-
-// Password-protect a string as a compact PBES2 JWE (RFC 7518 §4.8), via subtle.
-async function pbes2JweEncrypt(plaintext, password) {
-  log.debug("Entering pbes2JweEncrypt().");
-  var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
-  var p2s = randomBytes(16), p2c = 100000;
-  var pwKey = await crypto.subtle.importKey('raw', strBytes(password), 'PBKDF2',
-      false, ['deriveKey']);
-  var salt = concatBytes(strBytes(alg), new Uint8Array([0]), p2s);
-  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2', salt: salt,
-      iterations: p2c, hash: 'SHA-256' },
-    pwKey, { name: 'AES-KW', length: 128 }, false, ['wrapKey']);
-  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 },
-      true, ['encrypt']);
-  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey,
-      'AES-KW'));
-  var ph = { alg: alg, enc: enc, p2s: b64u(p2s), p2c: p2c };
-  var phB64 = b64u(strBytes(JSON.stringify(ph)));
-  var iv = randomBytes(12);
-  var full = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv, additionalData: strBytes(phB64),
-     tagLength: 128 }, cek, strBytes(plaintext)));
-  log.debug("Leaving pbes2JweEncrypt().");
-  return [phB64, b64u(wrapped), b64u(iv), b64u(full.slice(0, full.length - 16)),
-          b64u(full.slice(full.length - 16))].join('.');
-}
-
-// Emit a JWK set (public + private), optionally PBES2-encrypted, as a download.
-async function downloadJwkSet(jwks, password, baseName, statusId) {
-  log.debug("Entering downloadJwkSet().");
-  var text = JSON.stringify({ keys: jwks }, null, 2);
-  if (password) {
-    triggerDownload(baseName + '.jwe', await pbes2JweEncrypt(text, password),
-                    'application/jose');
-    setVal(statusId, 'Downloaded PBES2-encrypted JWK set (' + baseName +
-           '.jwe).');
-  } else {
-    triggerDownload(baseName + '.jwk.json', text, 'application/jwk+json');
-    setVal(statusId, 'Downloaded JWK set (' + baseName + '.jwk.json).');
-  }
-  log.debug("Leaving downloadJwkSet().");
-}
+// Password-protecting a JWK set is jose_jwe.js's PBES2 and tool_panes.js's
+// download — the same two functions the Encryption / Decryption page's key
+// panes call, so a .jwe written by either page is the same artifact.
+var downloadJwkSet = panes.downloadJwkSet;
 
 // ---------------------------------------------------------------------------
 // Pane #1 SLH-DSA download: PEM (raw, unencrypted) and JWK (+password) are
@@ -702,19 +567,23 @@ function rsaPaddingLabel(p) {
   return p === 'pss' ? 'PSS' : 'PKCS#1 v1.5';
 }
 
-// Generate a 2048-bit RSA key pair with node-forge (pure JS); display as PEM.
+// An RSA key pair, through pk_encryption.js — the same function the Encryption
+// / Decryption page's RSA pane calls, and the reason it is shared rather than
+// repeated is the PRIVATE KEY'S ENCODING. forge's privateKeyToPem() emits
+// PKCS#1 (`BEGIN RSA PRIVATE KEY`); key_material.js, jose_jwe.js and Web
+// Crypto's importKey('pkcs8', …) all want PKCS#8, so the keystore matrix below
+// refuses a PKCS#1 key with a bare `DataError` and no message. That defect was
+// found on the other page and fixed in one place.
 function rsaGenerateKeys() {
   log.debug("Entering rsaGenerateKeys().");
   var bits = parseInt(val('ds_rsa_bits'), 10) || 2048;
   setVal('ds_rsa_status', 'Generating RSA ' + bits +
-         '-bit key pair… (pure JS — larger sizes take longer)');
+         '-bit key pair — pure JS, so larger sizes take longer…');
   defer(function () {
     try {
-      var kp = forge.pki.rsa.generateKeyPair({ bits: bits, e: 0x10001 });
-      setVal('ds_rsa_private_key',
-             forge.pki.privateKeyToPem(kp.privateKey).trim() + '\n');
-      setVal('ds_rsa_public_key',
-             forge.pki.publicKeyToPem(kp.publicKey).trim() + '\n');
+      var pair = pkEncryption.rsaGenerateKeyPair(bits);
+      setVal('ds_rsa_private_key', pair.privatePem);
+      setVal('ds_rsa_public_key', pair.publicPem);
       setVal('ds_rsa_status', 'Generated RSA ' + bits + '-bit key pair.');
     } catch (e) {
       log.error('rsaGenerateKeys: ' + e.message);
@@ -725,18 +594,21 @@ function rsaGenerateKeys() {
   return false;
 }
 
-function rsaSelfSignedCert(privateKey, publicKey) {
-  log.debug("Entering rsaSelfSignedCert().");
-  var cert = forge.pki.createCertificate();
-  cert.publicKey = publicKey;
-  cert.serialNumber = '01';
-  cert.validity.notBefore = new Date(Date.UTC(2020, 0, 1));
-  cert.validity.notAfter = new Date(Date.UTC(2035, 0, 1));
-  var attrs = [{ name: 'commonName', value: 'digital-signature-tool' }];
-  cert.setSubject(attrs); cert.setIssuer(attrs);
-  cert.sign(privateKey, forge.md.sha256.create());
-  log.debug("Leaving rsaSelfSignedCert().");
-  return cert;
+// The throwaway certificate a PKCS#12 wraps the key in, and the one View
+// certificate shows. x509.js's, shared with jwt_tools and the Encryption /
+// Decryption page — a certificate profile written three times is three sets of
+// extensions to get wrong, and this tree already records five defects that
+// produced certificates which parse, display plausibly and are then refused.
+async function rsaSelfSignedCertPem() {
+  log.debug("Entering rsaSelfSignedCertPem().");
+  var pem = await x509.selfSignedCertPem({
+    subject: 'CN=digital-signature-tool',
+    privatePem: val('ds_rsa_private_key'),
+    publicPem: val('ds_rsa_public_key'),
+    desc: { kind: 'rsa', hash: 'SHA-256' }
+  });
+  log.debug("Leaving rsaSelfSignedCertPem().");
+  return pem;
 }
 
 // Build a self-signed X.509 cert from the current RSA key pair and open the
@@ -750,80 +622,61 @@ function viewRsaCert() {
     log.debug("Leaving viewRsaCert().");
     return false;
   }
-  try {
-    var cert = rsaSelfSignedCert(forge.pki.privateKeyFromPem(privPem),
-        forge.pki.publicKeyFromPem(pubPem));
-    var pem = forge.pki.certificateToPem(cert);
+  rsaSelfSignedCertPem().then(function (pem) {
     if (window.localStorage) localStorage.setItem('saml_cert_view', pem);
     window.open('/saml_cert.html?from=digital_signature.html', '_blank');
-  } catch (e) {
+  }).catch(function (e) {
     log.error('viewRsaCert: ' + e.message);
     setVal('ds_rsa_status', 'Certificate error: ' + e.message);
-  }
+  });
   log.debug("Leaving viewRsaCert().");
   return false;
 }
 
+// THE KEYSTORE MATRIX IS key_material.js's, NOT THIS FILE'S.
+//
+// This pane had its own node-forge implementation of PEM / DER / JWK /
+// PKCS#12 — a second reading of four wire formats, which is exactly what
+// key_material.js's own header says must not exist twice: these encodings are
+// read by OpenSSL, keytool and somebody else's TLS stack, and two
+// implementations can agree with each other and both be wrong. It is now the
+// one the PKI page, JWT Tools and the Encryption / Decryption page all use,
+// and tests/pki_key_formats.js checks all 49 cells of it against OpenSSL in
+// node.
+//
+// The only thing this function still decides is the CERTIFICATE a PKCS#12
+// wraps the key in, which key_material deliberately does not mint.
 async function rsaDownloadKeys() {
   log.debug("Entering rsaDownloadKeys().");
-  var fmt = val('ds_rsa_ks_format') || 'pem', pw = val('ds_rsa_ks_password');
-  var privPem = val('ds_rsa_private_key'), pubPem = val('ds_rsa_public_key');
-  if (!privPem.trim() || !pubPem.trim()) {
+  var format = val('ds_rsa_ks_format') || 'pem';
+  var password = val('ds_rsa_ks_password');
+  var privatePem = val('ds_rsa_private_key');
+  var publicPem = val('ds_rsa_public_key');
+  if (!privatePem.trim() || !publicPem.trim()) {
     setVal('ds_rsa_status',
            'No key pair to export. Generate a key pair first.');
-    log.debug("Leaving rsaDownloadKeys().");
+    log.debug("Leaving rsaDownloadKeys(). Nothing to export.");
     return false;
   }
   try {
-    var key = forge.pki.privateKeyFromPem(privPem);
-    var pub = forge.pki.publicKeyFromPem(pubPem);
-    var pkcs8 = forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(
-        key)); // PrivateKeyInfo
-
-    if (fmt === 'pem') {
-      var privBlock = pw
-        ? forge.pki.encryptedPrivateKeyToPem(forge.pki.encryptPrivateKeyInfo(
-            pkcs8, pw, { algorithm: 'aes256' }))
-        : forge.pki.privateKeyInfoToPem(pkcs8);
-      triggerDownload('rsa-keys.pem', privBlock.trim() + '\n' +
-                      forge.pki.publicKeyToPem(pub).trim() + '\n',
-                      'application/x-pem-file');
-      setVal('ds_rsa_status', pw ? 'Downloaded PEM (encrypted private key + public key).' : 'Downloaded PEM (private + public key).');
-    } else if (fmt === 'der') {
-      var privDer = pw ? derBytes(forge.pki.encryptPrivateKeyInfo(pkcs8, pw,
-          { algorithm: 'aes256' })) : derBytes(pkcs8);
-      triggerDownload('rsa-private.der', privDer, 'application/pkcs8');
-      triggerDownload('rsa-public.der',
-                      derBytes(forge.pki.publicKeyToAsn1(pub)),
-                      'application/octet-stream');
-      setVal('ds_rsa_status', pw ? 'Downloaded DER (encrypted private + public), two files.' : 'Downloaded DER (private + public), two files.');
-    } else if (fmt === 'jwk') {
-      var pubJwk = { kty: 'RSA', n: forgeBnB64u(key.n), e: forgeBnB64u(key.e),
-          use: 'sig' };
-      var privJwk = { kty: 'RSA', n: forgeBnB64u(key.n), e: forgeBnB64u(key.e),
-          d: forgeBnB64u(key.d),
-        p: forgeBnB64u(key.p), q: forgeBnB64u(key.q), dp: forgeBnB64u(key.dP),
-                       dq: forgeBnB64u(key.dQ), qi: forgeBnB64u(key.qInv),
-                       use: 'sig' };
-      await downloadJwkSet([pubJwk, privJwk], pw, 'rsa-keys', 'ds_rsa_status');
-    } else if (fmt === 'pkcs12') {
-      if (!pw) {
-        setVal('ds_rsa_status',
-               'PKCS#12 requires a password. Enter one in the password field.');
-        log.debug("Leaving rsaDownloadKeys().");
-        return false;
-      }
-      var p12 = forge.pkcs12.toPkcs12Asn1(key, [rsaSelfSignedCert(key, pub)],
-          pw, { algorithm: '3des' });
-      triggerDownload('rsa-keys.p12', derBytes(p12), 'application/x-pkcs12');
-      setVal('ds_rsa_status',
-             'Downloaded password-protected PKCS#12 (rsa-keys.p12).');
-    } else {
-      setVal('ds_rsa_status', 'Unknown keystore format: ' + fmt);
-    }
+    var descriptor = { kind: 'rsa', hash: 'SHA-256' };
+    var certs = format === 'pkcs12' ? [await rsaSelfSignedCertPem()] : [];
+    var result = await keyMaterial.exportKeyPair({
+      privatePem: privatePem,
+      publicPem: publicPem,
+      desc: descriptor,
+      format: format,
+      password: password,
+      friendlyName: 'digital-signature-tool',
+      use: 'sig',
+      certs: certs,
+      baseName: 'rsa-keys'
+    });
+    keyMaterial.downloadFiles(result.files);
+    setVal('ds_rsa_status', result.status);
   } catch (e) {
     log.error('rsaDownloadKeys: ' + e.message);
-    setVal('ds_rsa_status', 'Download error: ' + e.message);
+    setVal('ds_rsa_status', e.message);
   }
   log.debug("Leaving rsaDownloadKeys().");
   return false;
@@ -1298,147 +1151,15 @@ async function bbsDownloadKeys() {
 // Grouped into panes by family: keyed-hash, block-cipher, universal-hash.
 // ===========================================================================
 
-// --- AES single 16-byte block (raw ECB via forge), for CMAC/CBC-MAC ---
-function aesBlock(keyBytes, block16) {
-  log.debug("Entering aesBlock().");
-  var c = forge.cipher.createCipher('AES-ECB',
-      forge.util.createBuffer(forge.util.binary.raw.encode(keyBytes)));
-  c.start(); c.update(forge.util.createBuffer(forge.util.binary.raw.encode(
-          block16))); c.finish();
-  log.debug("Leaving aesBlock().");
-  return forge.util.binary.raw.decode(c.output.getBytes()).slice(0, 16);
-}
-function xorBytes(a, b) {
-  log.debug("Entering xorBytes().");
-  var o = new Uint8Array(a.length);
-  for (var i = 0; i < a.length; i++) o[i] = a[i] ^ b[i];
-  log.debug("Leaving xorBytes().");
-  return o;
-}
-function shl1(b) {
-  log.debug("Entering shl1().");
-  var o = new Uint8Array(16), carry = 0;
-  for (var i = 15; i >= 0; i--) { o[i] = ((b[i] << 1) | carry) & 0xff; carry =
-       (b[i] & 0x80) ? 1 : 0; }
-  log.debug("Leaving shl1().");
-  return o;
-}
-
-// AES-CMAC (RFC 4493), verified against the RFC test vectors.
-function aesCmac(key, msg) {
-  log.debug("Entering aesCmac().");
-  var Rb = new Uint8Array(16); Rb[15] = 0x87;
-  var L = aesBlock(key, new Uint8Array(16));
-  var K1 = shl1(L); if (L[0] & 0x80) K1 = xorBytes(K1, Rb);
-  var K2 = shl1(K1); if (K1[0] & 0x80) K2 = xorBytes(K2, Rb);
-  var n = Math.ceil(msg.length / 16) || 1;
-  var complete = msg.length > 0 && msg.length % 16 === 0;
-  var last;
-  if (complete) { last = xorBytes(msg.slice((n - 1) * 16), K1); }
-  else { var pad = new Uint8Array(16); var rem = msg.slice((n -
-        1) * 16); pad.set(rem); pad[rem.length] = 0x80; last = xorBytes(pad,
-        K2); }
-  var x = new Uint8Array(16);
-  for (var i = 0; i < n - 1; i++) x = aesBlock(key, xorBytes(x,
-       msg.slice(i * 16, i * 16 + 16)));
-  log.debug("Leaving aesCmac().");
-  return aesBlock(key, xorBytes(x, last));
-}
-
-// AES-CBC-MAC (legacy; zero IV, last block). Insecure for variable-length msgs.
-function aesCbcMac(key, msg) {
-  log.debug("Entering aesCbcMac().");
-  var n = Math.ceil(msg.length / 16) || 1;
-  var x = new Uint8Array(16);
-  for (var i = 0; i < n; i++) {
-    var blk = new Uint8Array(16); blk.set(msg.slice(i * 16, i * 16 + 16));
-    x = aesBlock(key, xorBytes(x, blk));
-  }
-  log.debug("Leaving aesCbcMac().");
-  return x;
-}
-
-// AES-GMAC via forge GCM (empty plaintext, message as AAD). DEMO NOTE: uses a
-// fixed all-zero nonce for a deterministic key+value->tag; real GMAC needs a
-// unique nonce per message per key.
-function aesGmac(key, msg) {
-  log.debug("Entering aesGmac().");
-  var g = forge.cipher.createCipher('AES-GCM',
-      forge.util.createBuffer(forge.util.binary.raw.encode(key)));
-  g.start({ iv: forge.util.binary.raw.encode(new Uint8Array(12)),
-          additionalData: forge.util.binary.raw.encode(msg), tagLength: 128 });
-  g.finish();
-  log.debug("Leaving aesGmac().");
-  return forge.util.binary.raw.decode(g.mode.tag.getBytes()).slice(0, 16);
-}
-
-// Poly1305 (RFC 8439), verified against the RFC vector. One-time authenticator:
-// the 32-byte key MUST be unique per message.
-function poly1305(key, msg) {
-  log.debug("Entering poly1305().");
-  var P = (BigInt(1) << BigInt(130)) - BigInt(5), M128 =
-      (BigInt(1) << BigInt(128)) - BigInt(1);
-  var r = BigInt(0), i;
-  for (i = 15; i >= 0; i--) r = (r << BigInt(8)) | BigInt(key[i]);
-  r &= BigInt('0x0ffffffc0ffffffc0ffffffc0fffffff');
-  var s = BigInt(0); for (i = 15; i >= 0; i--) s =
-      (s << BigInt(8)) | BigInt(key[16 + i]);
-  var acc = BigInt(0);
-  for (i = 0; i < msg.length; i += 16) {
-    var ch = msg.slice(i, i + 16), n = BigInt(0), j;
-    for (j = ch.length - 1; j >= 0; j--) n = (n << BigInt(8)) | BigInt(ch[j]);
-    n += (BigInt(1) << BigInt(8 * ch.length));
-    acc = ((acc + n) * r) % P;
-  }
-  acc = (acc + s) & M128;
-  var out = new Uint8Array(16); for (i = 0; i < 16; i++) { out[i] =
-      Number(acc & BigInt(0xff)); acc >>= BigInt(8); }
-  log.debug("Leaving poly1305().");
-  return out;
-}
-
-// SipHash-2-4 (reference), verified against the reference vector.
-function siphash24(key, msg) {
-  log.debug("Entering siphash24().");
-  var M = (BigInt(1) << BigInt(64)) - BigInt(1);
-  function rotl(x, b) {
-    log.debug("Entering rotl().");
-    log.debug("Leaving rotl().");
-    return ((x << BigInt(b)) | (x >> BigInt(64 - b))) & M;
-  }
-  function rd(b, o) {
-    log.debug("Entering rd().");
-    var v = BigInt(0);
-    for (var i = 7; i >= 0; i--) v = (v << BigInt(8)) | BigInt(b[o + i]);
-    log.debug("Leaving rd().");
-    return v;
-  }
-  var k0 = rd(key, 0), k1 = rd(key, 8);
-  var v0 = BigInt('0x736f6d6570736575') ^ k0, v1 =
-      BigInt('0x646f72616e646f6d') ^ k1,
-      v2 = BigInt('0x6c7967656e657261') ^ k0, v3 =
-          BigInt('0x7465646279746573') ^ k1;
-  function round() {
-    log.debug("Entering round().");
-    v0 = (v0 + v1) & M; v1 = rotl(v1, 13); v1 ^= v0; v0 = rotl(v0, 32);
-    v2 = (v2 + v3) & M; v3 = rotl(v3, 16); v3 ^= v2;
-    v0 = (v0 + v3) & M; v3 = rotl(v3, 21); v3 ^= v0;
-    v2 = (v2 + v1) & M; v1 = rotl(v1, 17); v1 ^= v2; v2 = rotl(v2, 32);
-    log.debug("Leaving round().");
-  }
-  var len = msg.length, end = len - (len % 8), off, i;
-  for (off = 0; off < end; off += 8) { var m = rd(msg,
-       off); v3 ^= m; round(); round(); v0 ^= m; }
-  var b = BigInt(len & 0xff) << BigInt(56);
-  for (i = 0; i < (len % 8); i++) b |= BigInt(msg[end + i]) << BigInt(8 * i);
-  v3 ^= b; round(); round(); v0 ^= b;
-  v2 ^= BigInt(0xff); round(); round(); round(); round();
-  var outv = (v0 ^ v1 ^ v2 ^ v3) & M;
-  var o = new Uint8Array(8); for (i = 0; i < 8; i++) { o[i] =
-      Number(outv & BigInt(0xff)); outv >>= BigInt(8); }
-  log.debug("Leaving siphash24().");
-  return o;
-}
+// The five primitives these three panes are built on are symmetric_crypto.js's
+// now. Poly1305 is the one that forced the move: ChaCha20-Poly1305 on the
+// Encryption page needs the same RFC 8439 section 2.5 implementation, and two
+// readings of that section can agree with each other and be wrong together.
+var aesCmac = symmetric.aesCmac;
+var aesCbcMac = symmetric.aesCbcMac;
+var aesGmac = symmetric.aesGmac;
+var poly1305 = symmetric.poly1305;
+var siphash24 = symmetric.siphash24;
 
 // MAC registry. fn(keyBytes, msgBytes) -> tag bytes; keyBytes = length to
 // generate with "Generate Key".
@@ -1582,69 +1303,734 @@ function macVerify(prefix) {
   return false;
 }
 
-// ---------------------------------------------------------------------------
-// Collapse / expand all panes.
-// ---------------------------------------------------------------------------
-function setAllCollapsed(collapsed) {
-  log.debug("Entering setAllCollapsed().");
-  var panes = document.querySelectorAll('.ds-grid > fieldset');
-  for (var i = 0; i < panes.length; i++) {
-    if (collapsed) panes[i].classList.add('ds-collapsed');
-    else panes[i].classList.remove('ds-collapsed');
+// ===========================================================================
+// Pane #6 — JWS (JSON Web Signature, RFC 7515)
+//
+// The pane that is about a SERIALIZATION rather than about a primitive. Every
+// algorithm here is one the panes above already have — HMAC, RSA in both
+// paddings, ECDSA, EdDSA — and what this one adds is the envelope they travel
+// in: which octets are signed (RFC 7515 section 5.1, and it is NOT the JSON,
+// it is the base64url of the JSON, with a period in the middle), how the three
+// parts are packed, and what the header says about all of it.
+//
+// The cryptography and the serialization are in ./jws. What lives here is the
+// pane: reading its fields, choosing a key representation, and reporting.
+// ===========================================================================
+
+// The key fields hold what the pane above them holds: RSA is a PEM, an
+// elliptic-curve key is raw hex, and an HMAC secret is whatever the encoding
+// selector says. That selector exists because a shared secret is the one piece
+// of key material people paste from somewhere else — a JWK's `k` is base64url,
+// a config file's is usually text, and a test vector's is hex, and reading one
+// as another produces a valid signature under a key that is not the one on the
+// screen.
+function jwsSecretBytes(text) {
+  log.debug("Entering jwsSecretBytes().");
+  var encoding = val('ds_jws_secret_encoding') || 'hex';
+  var raw = (text || '').trim();
+  if (encoding === 'text') {
+    log.debug("Leaving jwsSecretBytes(). UTF-8.");
+    return strBytes(raw);
   }
-  log.debug("Leaving setAllCollapsed().");
+  if (encoding === 'b64u') {
+    log.debug("Leaving jwsSecretBytes(). base64url.");
+    return bytesLib.b64uToBytes(raw);
+  }
+  log.debug("Leaving jwsSecretBytes(). Hex.");
+  return hexToBytes(raw);
+}
+
+function jwsKeyFor(algId, which) {
+  log.debug("Entering jwsKeyFor().");
+  var spec = jws.algSpec(algId);
+  var text = val(which === 'private' ? 'ds_jws_private_key'
+                                     : 'ds_jws_public_key');
+  if (spec.family === 'none') {
+    log.debug("Leaving jwsKeyFor(). Unsecured.");
+    return null;
+  }
+  if (spec.family === 'rsa') {
+    log.debug("Leaving jwsKeyFor(). PEM.");
+    return text;
+  }
+  if (spec.family === 'hmac') {
+    log.debug("Leaving jwsKeyFor(). Secret.");
+    return jwsSecretBytes(text);
+  }
+  log.debug("Leaving jwsKeyFor(). Raw hex.");
+  return hexToBytes(text);
+}
+
+function jwsShowKeys(algId, pair) {
+  log.debug("Entering jwsShowKeys().");
+  var spec = jws.algSpec(algId);
+  if (spec.family === 'rsa') {
+    setVal('ds_jws_private_key', pair.privateKey);
+    setVal('ds_jws_public_key', pair.publicKey);
+  } else if (spec.family === 'hmac') {
+    var encoding = val('ds_jws_secret_encoding') || 'hex';
+    var shown;
+    if (encoding === 'b64u') {
+      shown = bytesLib.bytesToB64u(pair.privateKey);
+    } else {
+      // Random bytes are not text. Rather than emit mojibake that the "UTF-8
+      // text" selector would then read back as different bytes, the generator
+      // switches the pane to hex — a key that changes when it is displayed is
+      // worse than a selector that moved.
+      if (encoding === 'text') setVal('ds_jws_secret_encoding', 'hex');
+      shown = bytesToHex(pair.privateKey);
+    }
+    setVal('ds_jws_private_key', shown);
+    setVal('ds_jws_public_key', shown);
+  } else {
+    setVal('ds_jws_private_key', bytesToHex(pair.privateKey));
+    setVal('ds_jws_public_key', bytesToHex(pair.publicKey));
+  }
+  log.debug("Leaving jwsShowKeys().");
+}
+
+function jwsGenerateKeys() {
+  log.debug("Entering jwsGenerateKeys().");
+  var algId = val('ds_jws_alg');
+  var spec = jws.algSpec(algId);
+  if (spec.family === 'none') {
+    setVal('ds_jws_private_key', '');
+    setVal('ds_jws_public_key', '');
+    setVal('ds_jws_status', 'alg=none has no key. That is the whole point of ' +
+           'it, and the reason a relying party that accepts one is broken.');
+    log.debug("Leaving jwsGenerateKeys(). Unsecured.");
+    return false;
+  }
+  var bits = parseInt(val('ds_jws_rsa_bits'), 10) || 2048;
+  setVal('ds_jws_status', 'Generating a ' + algId + ' key' +
+         (spec.family === 'rsa' ? ' pair (RSA ' + bits +
+          '-bit, pure JS — larger sizes take longer)' : '') + '…');
+  defer(function () {
+    try {
+      jwsShowKeys(algId, jws.generateKey(algId, { bits: bits }));
+      setVal('ds_jws_status', 'Generated ' + algId + ' key material (' +
+             spec.spec + ', ' + spec.req.toLowerCase() + ' to implement).');
+    } catch (e) {
+      log.error('jwsGenerateKeys: ' + e.message);
+      setVal('ds_jws_status', 'Key generation error: ' + e.message);
+    }
+  });
+  log.debug("Leaving jwsGenerateKeys().");
   return false;
 }
+
+// The payload check the pane exists to make. RFC 7515 lets a payload be any
+// octet sequence; this pane requires JSON, so Sign refuses a payload that is
+// not — and this button says the same thing without signing anything.
+function jwsValidatePayload() {
+  log.debug("Entering jwsValidatePayload().");
+  var checked = jws.validateJson(val('ds_jws_payload'));
+  if (!checked.valid) {
+    setVal('ds_jws_status', 'Payload is NOT valid JSON ✗ — ' + checked.error);
+    log.debug("Leaving jwsValidatePayload(). Invalid.");
+    return false;
+  }
+  setVal('ds_jws_status', 'Payload is valid JSON ✓ — a JSON ' + checked.kind +
+         (checked.members === null ? '' : ' with ' + checked.members +
+          ' member(s)') + '.');
+  log.debug("Leaving jwsValidatePayload().");
+  return false;
+}
+
+// Re-indent the payload. Deliberately a BUTTON rather than something Sign
+// does: reformatting changes the octets under the signature, so it is the
+// user's decision and it happens before signing, visibly, in the field they
+// are looking at.
+function jwsFormatPayload() {
+  log.debug("Entering jwsFormatPayload().");
+  var checked = jws.validateJson(val('ds_jws_payload'));
+  if (!checked.valid) {
+    setVal('ds_jws_status', 'Cannot format — ' + checked.error);
+    log.debug("Leaving jwsFormatPayload(). Invalid.");
+    return false;
+  }
+  setVal('ds_jws_payload', JSON.stringify(checked.value, null, 2));
+  setVal('ds_jws_status', 'Payload re-indented. The signature covers these ' +
+         'octets, so sign again.');
+  log.debug("Leaving jwsFormatPayload().");
+  return false;
+}
+
+function jwsHeaderObject(id, label) {
+  log.debug("Entering jwsHeaderObject().");
+  var raw = (val(id) || '').trim();
+  if (!raw) {
+    log.debug("Leaving jwsHeaderObject(). Empty.");
+    return {};
+  }
+  var parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(label + ' is not well-formed JSON: ' + e.message);
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(label + ' must be a JSON object.');
+  }
+  log.debug("Leaving jwsHeaderObject().");
+  return parsed;
+}
+
+function jwsSign() {
+  log.debug("Entering jwsSign().");
+  var algId = val('ds_jws_alg');
+  setVal('ds_jws_status', 'Signing with ' + algId + '…');
+  try {
+    var checked = jws.validateJson(val('ds_jws_payload'));
+    if (!checked.valid) {
+      setVal('ds_jws_status', 'Refusing to sign — ' + checked.error);
+      log.debug("Leaving jwsSign(). Payload is not JSON.");
+      return false;
+    }
+    var payload = panes.isChecked('ds_jws_compact_payload')
+      ? JSON.stringify(checked.value) : val('ds_jws_payload');
+    var result = jws.signJws({
+      algId: algId,
+      payload: payload,
+      privateKey: jwsKeyFor(algId, 'private'),
+      publicKey: jwsKeyFor(algId, 'public'),
+      serialization: val('ds_jws_serialization') || 'compact',
+      typ: val('ds_jws_typ'),
+      cty: val('ds_jws_cty'),
+      kid: val('ds_jws_kid'),
+      header: jwsHeaderObject('ds_jws_header_extra',
+          'The extra protected header'),
+      unprotected: jwsHeaderObject('ds_jws_unprotected',
+          'The unprotected header'),
+      // The checkbox says "unencoded", not "encoded": a missing element (an
+      // older cached page) then means b64 stays ON, which is RFC 7515's
+      // behaviour rather than RFC 7797's.
+      b64: panes.isChecked('ds_jws_unencoded') ? false : true,
+      detached: panes.isChecked('ds_jws_detached'),
+      embedJwk: panes.isChecked('ds_jws_embed_jwk')
+    });
+    if (panes.isChecked('ds_jws_compact_payload')) {
+      setVal('ds_jws_payload', payload);
+    }
+    setVal('ds_jws_signature', result.serialized);
+    setVal('ds_jws_decoded', 'Protected header:\n' +
+           JSON.stringify(result.header, null, 2) +
+           '\n\nSigning input (RFC 7515 §5.1):\n' + result.signingInput);
+    setVal('ds_jws_status', 'Signed — ' + result.alg + ', ' +
+           result.serialization + ' serialization' +
+           (result.detached ? ', detached payload' : '') +
+           (result.b64 === false ? ', unencoded payload (RFC 7797)' : '') +
+           '. Signature is ' +
+           bytesLib.b64uToBytes(result.signature).length + ' bytes.');
+  } catch (e) {
+    log.error('jwsSign: ' + e.message);
+    setVal('ds_jws_status', 'Sign error: ' + e.message);
+  }
+  log.debug("Leaving jwsSign().");
+  return false;
+}
+
+function jwsValidate() {
+  log.debug("Entering jwsValidate().");
+  var algId = val('ds_jws_alg');
+  setVal('ds_jws_status', 'Validating…');
+  try {
+    var fromHeader = panes.isChecked('ds_jws_trust_header');
+    var result = jws.verifyJws({
+      jws: val('ds_jws_signature'),
+      publicKey: jwsKeyFor(algId, 'public'),
+      algId: fromHeader ? null : algId,
+      detachedPayload: val('ds_jws_payload')
+    });
+    var first = result.signatures[0] || {};
+    setVal('ds_jws_decoded', 'Protected header:\n' +
+           JSON.stringify(first.header || {}, null, 2) +
+           (first.unprotected ? '\n\nUnprotected header:\n' +
+            JSON.stringify(first.unprotected, null, 2) : '') +
+           '\n\nPayload:\n' + (first.payload === undefined ? '(detached)'
+                                : first.payload));
+    if (result.unsecured && result.valid) {
+      setVal('ds_jws_status', 'Unsecured JWS (alg=none) — well-formed, and ' +
+             'NOTHING about it is authenticated. RFC 7515 §6.');
+    } else if (result.valid) {
+      setVal('ds_jws_status', 'Signature VALID ✓ — ' +
+             (first.header ? first.header.alg : algId) + ', ' +
+             result.serialization + ' serialization' +
+             (result.detached ? ', detached payload' : '') + '.');
+    } else {
+      setVal('ds_jws_status', 'Signature INVALID ✗ — ' +
+             (first.reason || 'the signature does not verify.'));
+    }
+  } catch (e) {
+    log.error('jwsValidate: ' + e.message);
+    setVal('ds_jws_status', 'Validation error: ' + e.message);
+  }
+  log.debug("Leaving jwsValidate().");
+  return false;
+}
+
+async function jwsDownloadKeys() {
+  log.debug("Entering jwsDownloadKeys().");
+  var algId = val('ds_jws_alg');
+  var spec = jws.algSpec(algId);
+  var fmt = val('ds_jws_ks_format') || 'jwk', pw = val('ds_jws_ks_password');
+  var priv = val('ds_jws_private_key'), pub = val('ds_jws_public_key');
+  if (!priv && !pub) {
+    setVal('ds_jws_status', 'Nothing to download — generate a key first.');
+    log.debug("Leaving jwsDownloadKeys(). Nothing to export.");
+    return false;
+  }
+  try {
+    if (spec.family === 'none') {
+      setVal('ds_jws_status', 'alg=none has no key to export.');
+    } else if (spec.family === 'rsa') {
+      // The shared keystore matrix, exactly as the RSA pane uses it —
+      // key_material.js's, checked against OpenSSL in node.
+      var certs = fmt === 'pkcs12' ? [await x509.selfSignedCertPem({
+        subject: 'CN=jws-signing-key', privatePem: priv, publicPem: pub,
+        desc: { kind: 'rsa', hash: 'SHA-256' } })] : [];
+      var out = await keyMaterial.exportKeyPair({
+        privatePem: priv, publicPem: pub,
+        desc: { kind: 'rsa', hash: 'SHA-256' },
+        format: fmt, password: pw, friendlyName: 'jws-signing-key',
+        use: 'sig', certs: certs, baseName: 'jws-keys'
+      });
+      keyMaterial.downloadFiles(out.files);
+      setVal('ds_jws_status', out.status);
+    } else if (fmt === 'jwk') {
+      var kid = val('ds_jws_kid');
+      var set;
+      if (spec.family === 'hmac') {
+        // ONE key, not two. An `oct` JWK is the whole of a shared secret —
+        // there is no public half to publish beside it, and a set carrying
+        // the same key twice invites somebody to hand the first one out.
+        set = [jws.publicJwk(algId, jwsSecretBytes(priv), kid)];
+      } else {
+        set = [jws.publicJwk(algId, hexToBytes(pub), kid),
+               jws.privateJwk(algId, hexToBytes(priv), hexToBytes(pub), kid)];
+      }
+      await downloadJwkSet(set, pw, 'jws-keys', 'ds_jws_status');
+    } else {
+      setVal('ds_jws_status', fmt.toUpperCase() + ' export is not supported ' +
+             'for a raw ' + algId + ' key. Use JWK, which is the form JOSE ' +
+             'defines for it.');
+    }
+  } catch (e) {
+    log.error('jwsDownloadKeys: ' + e.message);
+    setVal('ds_jws_status', 'Download error: ' + e.message);
+  }
+  log.debug("Leaving jwsDownloadKeys().");
+  return false;
+}
+
+// ===========================================================================
+// Pane #7 — XML Digital Signature (W3C XMLDSIG, RFC 3275)
+//
+// The other pane about an envelope rather than a primitive, and the one with
+// the most ways to produce a signature that is cryptographically perfect and
+// verifies nowhere: the canonicalization is a choice, the transforms are an
+// ORDERED LIST whose output feeds the next one, the Reference names what is
+// covered, and every one of those is written into the document a verifier
+// reads back. So they are all on the screen.
+//
+// The engine is ./xmldsig, shared with the SAML, WS-Trust and WS-Federation
+// pages — a canonicalizer is a reading of a specification, and two readings
+// of C14N agree with each other and interoperate with nobody. What that module
+// does NOT carry is elliptic-curve and HMAC cryptography, deliberately (it
+// would land in three bundles that sign nothing with a curve), so this pane
+// hands it a signer built from the curves the ECC pane above already loaded.
+// ===========================================================================
+
+var XML_CURVES = {
+  'P-256': { curve: p256, fieldBytes: 32,
+             oid: 'urn:oid:1.2.840.10045.3.1.7' },
+  'P-384': { curve: p384, fieldBytes: 48, oid: 'urn:oid:1.3.132.0.34' },
+  'P-521': { curve: p521, fieldBytes: 66, oid: 'urn:oid:1.3.132.0.35' },
+  'secp256k1': { curve: secp256k1, fieldBytes: 32,
+                 oid: 'urn:oid:1.3.132.0.10' }
+};
+
+// The XMLDSIG hash names are lower-case and unhyphenated where this page's
+// hash registry spells them SHA-256; mapping rather than renaming, because the
+// registry above is shared with the RSA and ECC panes and their dropdowns.
+var XML_HASHES = { sha1: 'SHA-1', sha256: 'SHA-256', sha384: 'SHA-384',
+                   sha512: 'SHA-512' };
+
+function xmlCurve() {
+  log.debug("Entering xmlCurve().");
+  var name = val('ds_xml_curve') || 'P-256';
+  var c = XML_CURVES[name];
+  if (!c) throw new Error('Unknown curve: ' + name);
+  log.debug("Leaving xmlCurve().");
+  return c;
+}
+
+// A signer/verifier pair for the families xmldsig.js deliberately does not
+// implement. `octets` is a forge binary string on the way in and out — that is
+// the engine's currency, and converting at this boundary keeps every byte
+// conversion in one place.
+function xmlSigner() {
+  log.debug("Entering xmlSigner().");
+  log.debug("Leaving xmlSigner().");
+  return function (octets, spec) {
+    var bytes = forge.util.binary.raw.decode(octets);
+    if (spec.family === 'hmac') {
+      var key = hexToBytes(val('ds_xml_private_key'));
+      return forge.util.binary.raw.encode(
+          nobleHmac(HASHES[XML_HASHES[spec.hash]].fn, key, bytes));
+    }
+    var c = xmlCurve();
+    var priv = hexToBytes(val('ds_xml_private_key'));
+    var sig = c.curve.sign(digestOf(XML_HASHES[spec.hash], bytes), priv);
+    return forge.util.binary.raw.encode(sig.toCompactRawBytes());
+  };
+}
+
+function xmlVerifier() {
+  log.debug("Entering xmlVerifier().");
+  log.debug("Leaving xmlVerifier().");
+  return function (octets, signature, spec) {
+    var bytes = forge.util.binary.raw.decode(octets);
+    var sig = forge.util.binary.raw.decode(signature);
+    if (spec.family === 'hmac') {
+      var key = hexToBytes(val('ds_xml_public_key') ||
+                           val('ds_xml_private_key'));
+      var tag = nobleHmac(HASHES[XML_HASHES[spec.hash]].fn, key, bytes);
+      return bytesEqual(tag, sig);
+    }
+    var c = xmlCurve();
+    var pub = hexToBytes(val('ds_xml_public_key'));
+    // lowS:false on VERIFICATION only. @noble refuses a high-S secp256k1
+    // signature by default — a Bitcoin malleability rule that XMLDSIG does
+    // not have — so a perfectly good signature from OpenSSL would be reported
+    // as a bad one. Signing keeps the default, which is always acceptable.
+    return c.curve.verify(sig, digestOf(XML_HASHES[spec.hash], bytes), pub,
+                          { lowS: false });
+  };
+}
+
+function xmlGenerateKeys() {
+  log.debug("Entering xmlGenerateKeys().");
+  var spec;
+  try {
+    spec = xmldsig.sigMethod(val('ds_xml_sigalg'));
+  } catch (e) {
+    setVal('ds_xml_status', e.message);
+    log.debug("Leaving xmlGenerateKeys(). Unknown method.");
+    return false;
+  }
+  if (spec.family === 'hmac') {
+    var secret = randomBytes(32);
+    setVal('ds_xml_private_key', bytesToHex(secret));
+    setVal('ds_xml_public_key', bytesToHex(secret));
+    setVal('ds_xml_cert', '');
+    setVal('ds_xml_status', 'Generated a 256-bit shared secret. An HMAC ' +
+           'SignatureMethod is a MAC: it proves integrity, it gives no ' +
+           'non-repudiation, and both parties hold this one key.');
+    log.debug("Leaving xmlGenerateKeys(). HMAC.");
+    return false;
+  }
+  if (spec.family === 'ecdsa') {
+    try {
+      var c = xmlCurve();
+      var priv = c.curve.utils.randomPrivateKey();
+      setVal('ds_xml_private_key', bytesToHex(priv));
+      setVal('ds_xml_public_key', bytesToHex(c.curve.getPublicKey(priv,
+          false)));
+      setVal('ds_xml_cert', '');
+      setVal('ds_xml_status', 'Generated an ECDSA ' + val('ds_xml_curve') +
+             ' key pair. KeyInfo for it is a dsig11:ECKeyValue — no X.509 ' +
+             'certificate is minted for a curve here.');
+    } catch (e) {
+      log.error('xmlGenerateKeys: ' + e.message);
+      setVal('ds_xml_status', 'Key generation error: ' + e.message);
+    }
+    log.debug("Leaving xmlGenerateKeys(). ECDSA.");
+    return false;
+  }
+  var bits = parseInt(val('ds_xml_rsa_bits'), 10) || 2048;
+  setVal('ds_xml_status', 'Generating an RSA ' + bits + '-bit key pair and a ' +
+         'self-signed certificate — pure JS, so this takes a moment…');
+  defer(function () {
+    try {
+      // The SHARED generator, so the private key is PKCS#8 and the keystore
+      // matrix below can export it; the certificate comes from xmldsig.js,
+      // which is where forge certificate minting for XML signing already
+      // lives.
+      var pair = pkEncryption.rsaGenerateKeyPair(bits);
+      setVal('ds_xml_private_key', pair.privatePem);
+      setVal('ds_xml_public_key', pair.publicPem);
+      setVal('ds_xml_cert', xmldsig.selfSignedCertFor(pair.privatePem,
+          pair.publicPem, 'xml-signature-tool'));
+      setVal('ds_xml_status', 'Generated an RSA ' + bits + '-bit key pair ' +
+             'and a self-signed certificate for KeyInfo.');
+    } catch (e) {
+      log.error('xmlGenerateKeys: ' + e.message);
+      setVal('ds_xml_status', 'Key generation error: ' + e.message);
+    }
+  });
+  log.debug("Leaving xmlGenerateKeys(). RSA.");
+  return false;
+}
+
+// The transform CHAIN, in the order XMLDSIG applies it: remove the signature,
+// then filter, then decode, then canonicalize. The order is not a preference —
+// each transform's output is the next one's input, and a canonicalization
+// anywhere but last ends the chain (the engine says so by name).
+function xmlTransforms() {
+  log.debug("Entering xmlTransforms().");
+  var list = [];
+  if (panes.isChecked('ds_xml_t_enveloped')) {
+    list.push({ algorithm: xmldsig.TRANSFORM_ENVELOPED });
+  }
+  var kind = val('ds_xml_t_xpath_kind') || 'none';
+  var expr = (val('ds_xml_t_xpath') || '').trim();
+  if (kind === 'xpath' && expr) {
+    list.push({ algorithm: xmldsig.TRANSFORM_XPATH, xpath: expr });
+  } else if (kind === 'filter2' && expr) {
+    list.push({ algorithm: xmldsig.TRANSFORM_XPATH_FILTER2,
+                filters: [{ filter: val('ds_xml_t_filter') || 'intersect',
+                            xpath: expr }] });
+  }
+  var base64 = panes.isChecked('ds_xml_t_base64');
+  if (base64) list.push({ algorithm: xmldsig.TRANSFORM_BASE64 });
+  var c14n = val('ds_xml_t_c14n');
+  var notes = [];
+  if (c14n && base64) {
+    // The base64 transform already produces OCTETS, and a canonicalization
+    // takes a node-set — so the two cannot both be on the chain and the
+    // engine refuses the pair by name. Dropping the canonicalization is the
+    // only reading of "base64 and this c14n" that means anything, and it is
+    // said out loud rather than done quietly: a transform silently missing
+    // from a Reference is the class of defect this whole pane is for.
+    notes.push('The base64 transform ends the chain — it produces octets, ' +
+        'and a canonicalization needs a node-set. The Reference ' +
+        'canonicalization was left off.');
+  } else if (c14n) {
+    list.push({ algorithm: c14n, prefixList: val('ds_xml_t_prefixes') });
+  }
+  log.debug("Leaving xmlTransforms().");
+  return { list: list, notes: notes };
+}
+
+// The check the pane exists to make, and the mirror of the JWS pane's JSON
+// one. XMLDSIG signs the exact octets that get canonicalized, so nothing here
+// "cleans" the input — a document that is not well-formed is refused, by name,
+// before anything is signed.
+function xmlValidateDocument() {
+  log.debug("Entering xmlValidateDocument().");
+  try {
+    var doc = xmldsig.parseXmlStrict(val('ds_xml_value'), 'the XML');
+    var root = doc.documentElement;
+    setVal('ds_xml_status', 'The XML is well-formed ✓ — root <' +
+           root.nodeName + '>' +
+           (root.namespaceURI ? ' in ' + root.namespaceURI : '') +
+           ', ' + doc.getElementsByTagName('*').length + ' element(s).');
+  } catch (e) {
+    setVal('ds_xml_status', 'The XML is NOT well-formed ✗ — ' + e.message);
+  }
+  log.debug("Leaving xmlValidateDocument().");
+  return false;
+}
+
+function xmlSignOptions(spec, paneTransforms) {
+  log.debug("Entering xmlSignOptions().");
+  var keyInfo = val('ds_xml_keyinfo') || 'x509';
+  var opts = {
+    mode: val('ds_xml_mode') || 'enveloped',
+    sigAlg: val('ds_xml_sigalg'),
+    digestUri: val('ds_xml_digest'),
+    c14nAlg: val('ds_xml_c14n'),
+    c14nPrefixList: val('ds_xml_c14n_prefixes'),
+    transforms: paneTransforms.list,
+    refUri: val('ds_xml_ref_uri'),
+    placement: val('ds_xml_placement'),
+    objectId: val('ds_xml_object_id'),
+    signatureId: val('ds_xml_sig_id'),
+    keyInfo: keyInfo,
+    keyName: val('ds_xml_keyname'),
+    certPem: val('ds_xml_cert'),
+    publicKeyPem: spec.family === 'rsa' ? val('ds_xml_public_key') : ''
+  };
+  if (spec.family === 'ecdsa') {
+    var c = xmlCurve();
+    opts.ecNamedCurve = c.oid;
+    opts.ecPublicPoint = hexToBytes(val('ds_xml_public_key'));
+  }
+  if (spec.family === 'rsa') opts.privateKeyPem = val('ds_xml_private_key');
+  else opts.signer = xmlSigner();
+  log.debug("Leaving xmlSignOptions().");
+  return opts;
+}
+
+function xmlSign() {
+  log.debug("Entering xmlSign().");
+  var alg = val('ds_xml_sigalg');
+  setVal('ds_xml_status', 'Signing…');
+  try {
+    var spec = xmldsig.sigMethod(alg);
+    if (spec.family !== 'rsa' && val('ds_xml_keyinfo') === 'x509') {
+      setVal('ds_xml_status', 'A ' + spec.label + ' signature has no X.509 ' +
+             'certificate here. Choose KeyValue (ECDSA) or KeyName / none ' +
+             '(HMAC) for KeyInfo.');
+      log.debug("Leaving xmlSign(). KeyInfo does not fit the key.");
+      return false;
+    }
+    var paneTransforms = xmlTransforms();
+    var result = xmldsig.signXml(val('ds_xml_value'),
+        xmlSignOptions(spec, paneTransforms));
+    var notes = paneTransforms.notes.concat(result.notes);
+    setVal('ds_xml_signature', result.xml);
+    if (result.referencedXml) setVal('ds_xml_value', result.referencedXml);
+    setVal('ds_xml_report',
+      'SignedInfo (canonicalized — these are the signed octets):\n' +
+      result.signedInfo + '\n\nReference URI: ' +
+      (result.referenceUri || '(empty — the whole document)') +
+      '\nTransforms: ' + (result.transforms.join('\n            ') ||
+       '(none)') +
+      '\nDigestValue: ' + result.digestValue +
+      '\nSignatureValue: ' + result.signatureValue +
+      (notes.length ? '\n\nNotes:\n- ' + notes.join('\n- ') : ''));
+    setVal('ds_xml_status', 'Signed — ' + spec.label + ', ' +
+           xmldsig.c14nMethod(result.canonicalization).label + ', ' +
+           result.mode + (notes.length ? '. ' + notes[0] : '.'));
+  } catch (e) {
+    log.error('xmlSign: ' + e.message);
+    setVal('ds_xml_status', 'Sign error: ' + e.message);
+  }
+  log.debug("Leaving xmlSign().");
+  return false;
+}
+
+function xmlValidate() {
+  log.debug("Entering xmlValidate().");
+  setVal('ds_xml_status', 'Validating…');
+  try {
+    var mode = val('ds_xml_mode') || 'enveloped';
+    var spec = xmldsig.sigMethod(val('ds_xml_sigalg'));
+    var opts = {
+      certPem: val('ds_xml_cert'),
+      publicKeyPem: spec.family === 'rsa' ? val('ds_xml_public_key') : '',
+      referencedXml: mode === 'detached' ? val('ds_xml_value') : null
+    };
+    if (spec.family !== 'rsa') opts.verifier = xmlVerifier();
+    var result = xmldsig.verifyXml(val('ds_xml_signature'), opts);
+    if (result.error) {
+      setVal('ds_xml_status', 'Validation error: ' + result.error);
+      log.debug("Leaving xmlValidate(). Engine reported an error.");
+      return false;
+    }
+    var lines = ['SignatureMethod: ' + result.signatureMethod,
+                 'CanonicalizationMethod: ' + result.canonicalization,
+                 'SignatureValue over SignedInfo: ' +
+                 (result.signatureValid ? 'VALID' : 'INVALID' +
+                  (result.signatureError ? ' (' + result.signatureError + ')'
+                                         : '')),
+                 'KeyInfo: ' + result.keyInfo +
+                 (result.signerSubject ? ' (CN=' + result.signerSubject + ')'
+                                       : '')];
+    result.references.forEach(function (r, n) {
+      lines.push('Reference ' + (n + 1) + ' URI="' + r.uri + '": ' +
+        (r.ok ? 'digest matches' : 'FAILED — ' + (r.reason || 'unknown')) +
+        (r.declared ? '\n  declared ' + r.declared + '\n  computed ' +
+         r.computed : ''));
+    });
+    setVal('ds_xml_report', lines.join('\n'));
+    setVal('ds_xml_status', result.valid
+      ? 'Signature VALID ✓ — the SignatureValue and every Reference digest ' +
+        'check out.'
+      : 'Signature INVALID ✗ — ' + (!result.signatureValid
+          ? 'the SignatureValue does not verify over SignedInfo.'
+          : 'a Reference digest does not match; the signed content changed.'));
+  } catch (e) {
+    log.error('xmlValidate: ' + e.message);
+    setVal('ds_xml_status', 'Validation error: ' + e.message);
+  }
+  log.debug("Leaving xmlValidate().");
+  return false;
+}
+
+async function xmlDownloadKeys() {
+  log.debug("Entering xmlDownloadKeys().");
+  var fmt = val('ds_xml_ks_format') || 'pem', pw = val('ds_xml_ks_password');
+  var priv = val('ds_xml_private_key'), pub = val('ds_xml_public_key');
+  if (!priv && !pub) {
+    setVal('ds_xml_status', 'Nothing to download — generate a key first.');
+    log.debug("Leaving xmlDownloadKeys(). Nothing to export.");
+    return false;
+  }
+  try {
+    var spec = xmldsig.sigMethod(val('ds_xml_sigalg'));
+    if (spec.family === 'rsa') {
+      var certPem = val('ds_xml_cert');
+      var out = await keyMaterial.exportKeyPair({
+        privatePem: priv, publicPem: pub,
+        desc: { kind: 'rsa', hash: 'SHA-256' },
+        format: fmt, password: pw, friendlyName: 'xml-signature-tool',
+        use: 'sig', certs: fmt === 'pkcs12' && certPem ? [certPem] : [],
+        baseName: 'xmldsig-keys'
+      });
+      keyMaterial.downloadFiles(out.files);
+      setVal('ds_xml_status', out.status);
+    } else if (spec.family === 'ecdsa' && fmt === 'jwk') {
+      var c = xmlCurve();
+      var pt = c.curve.ProjectivePoint.fromHex(pub).toAffine();
+      var x = b64u(bigToBytes(pt.x, c.fieldBytes));
+      var y = b64u(bigToBytes(pt.y, c.fieldBytes));
+      await downloadJwkSet([
+        { kty: 'EC', crv: val('ds_xml_curve'), x: x, y: y, use: 'sig' },
+        { kty: 'EC', crv: val('ds_xml_curve'), x: x, y: y,
+          d: b64u(hexToBytes(priv)), use: 'sig' }
+      ], pw, 'xmldsig-keys', 'ds_xml_status');
+    } else if (spec.family === 'hmac') {
+      setVal('ds_xml_status', 'A shared secret has no keystore format here. ' +
+             'Copy the hex from the key field.');
+    } else {
+      setVal('ds_xml_status', fmt.toUpperCase() + ' export is not supported ' +
+             'for a raw ECDSA key. Use JWK.');
+    }
+  } catch (e) {
+    log.error('xmlDownloadKeys: ' + e.message);
+    setVal('ds_xml_status', 'Download error: ' + e.message);
+  }
+  log.debug("Leaving xmlDownloadKeys().");
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Page chrome — collapse/expand, the clipboard, and the "Return to" link.
+// All three are tool_panes.js's, shared with the Encryption / Decryption page.
+// ---------------------------------------------------------------------------
 function expandAll() {
   log.debug("Entering expandAll().");
   log.debug("Leaving expandAll().");
-  return setAllCollapsed(false);
+  return panes.expandAll();
 }
+
 function collapseAll() {
   log.debug("Entering collapseAll().");
   log.debug("Leaving collapseAll().");
-  return setAllCollapsed(true);
+  return panes.collapseAll();
 }
 
-// ---------------------------------------------------------------------------
-// Copy a field's contents to the clipboard.
-// ---------------------------------------------------------------------------
 function copyField(elementId) {
   log.debug("Entering copyField().");
-  var el = document.getElementById(elementId);
-  if (!el) {
-    log.error('copyField: element not found: ' + elementId);
-    log.debug("Leaving copyField().");
-    return false;
-  }
-  var text = el.value || '';
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).catch(function (err) { log.error(
-                                  'copyField: ' + err); });
-  } else {
-    try {
-      el.focus();
-      el.select();
-      document.execCommand('copy');
-    } catch (e) {
-      log.error('copyField fallback: ' + e.message);
-    }
-  }
   log.debug("Leaving copyField().");
-  return false;
+  return panes.copyField(elementId);
 }
 
-// ---------------------------------------------------------------------------
-// "Return to debugger" link — point back at whichever page sent us here.
-// ---------------------------------------------------------------------------
+// The pages that may send you here. A whitelist rather than a redirect — see
+// the note on setReturnLink() in tool_panes.js.
+var RETURN_TARGETS = {
+  'oauth2_oidc_1.html': { href: '/oauth2_oidc_1.html' },
+  'oauth2_oidc_2.html': { href: '/oauth2_oidc_2.html' },
+  'encryption_tools.html': { href: '/encryption_tools.html',
+                             label: 'Encryption / Decryption' }
+};
+
 function setReturnLink() {
   log.debug("Entering setReturnLink().");
-  var allowed = { 'oauth2_oidc_1.html': '/oauth2_oidc_1.html',
-      'oauth2_oidc_2.html': '/oauth2_oidc_2.html' };
-  var from = new URLSearchParams(window.location.search).get('from');
-  var target = allowed[from] || '/oauth2_oidc_1.html';
-  var link = document.getElementById('return_link');
-  if (link) link.setAttribute('href', target);
+  panes.setReturnLink(RETURN_TARGETS, '/oauth2_oidc_1.html');
   log.debug("Leaving setReturnLink().");
 }
 
@@ -1664,6 +2050,24 @@ window.onload = function () {
   setVal('ds_bbs_header', 'BBS demo header');
   setVal('ds_bbs_ph', 'verifier nonce 12345');
   setVal('ds_bbs_disclosed', '0, 2');
+  // The JWS pane signs JSON and nothing else, so its seed is JSON — and it is
+  // indented, which is the point: a JWS payload is base64url of the octets as
+  // they stand, so the whitespace is inside the signature.
+  setVal('ds_jws_payload', JSON.stringify({
+    iss: 'https://as.example.com',
+    sub: 'alice',
+    aud: 'https://api.example.com',
+    scope: 'read write'
+  }, null, 2));
+  // The XML pane's seed carries a comment and a namespace on purpose: the
+  // comment is what tells the two halves of each canonicalization method
+  // apart, and the namespace is what exclusive C14N is about.
+  setVal('ds_xml_value',
+    '<Order xmlns="urn:example:order" ID="order-1">\n' +
+    '  <!-- exclusive vs inclusive C14N shows up here -->\n' +
+    '  <Item sku="A1">Widget</Item>\n' +
+    '  <Total currency="USD">42.00</Total>\n' +
+    '</Order>');
   // Symmetric MAC panes: seed a value and an initial random key.
   setVal('ds_khmac_value',
          'MAC me with a keyed hash!'); macGenerateKey('khmac');
@@ -1673,11 +2077,7 @@ window.onload = function () {
          'MAC me with a universal hash!'); macGenerateKey('uhmac');
 
   // Make each pane collapsible: clicking its legend toggles the fieldset.
-  var legends = document.querySelectorAll('.ds-grid > fieldset > legend');
-  for (var i = 0; i < legends.length; i++) {
-    legends[i].addEventListener('click',
-            function () { this.parentNode.classList.toggle('ds-collapsed'); });
-  }
+  panes.wireCollapsibleLegends();
 
   // Default to all panes minimized on load; the user expands the ones they need
   // (or clicks "Expand all"). Clicking a pane's title toggles it individually.
@@ -1711,6 +2111,17 @@ module.exports = {
   macGenerateKey,
   macCompute,
   macVerify,
+  jwsGenerateKeys,
+  jwsValidatePayload,
+  jwsFormatPayload,
+  jwsSign,
+  jwsValidate,
+  jwsDownloadKeys,
+  xmlGenerateKeys,
+  xmlValidateDocument,
+  xmlSign,
+  xmlValidate,
+  xmlDownloadKeys,
   viewRsaCert,
   expandAll,
   collapseAll,

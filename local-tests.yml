@@ -80,8 +80,44 @@ services:
     # Only the api needs it: it is the only process that resolves the KDC's name.
     extra_hosts:
       - "sts:127.0.0.1"
+      # A SECOND NAME FOR THE SAME SERVICE, AND THE POINT IS THAT THE
+      # CERTIFICATE DOES NOT CARRY IT.
+      #
+      # tests/api_ldap.js binds the mock's LDAPS socket under this name to
+      # prove that this service still VERIFIES certificates. It cannot prove
+      # that with an untrusted certificate any more: the entrypoint above
+      # fetches the mock's own self-signed certificate into NODE_EXTRA_CA_CERTS
+      # on every start, so the anchor is deliberately there and the connection
+      # deliberately succeeds. What a truststore entry does NOT do is switch
+      # off hostname verification, so a name outside the certificate's
+      # subjectAltName is the one refusal left that only a verifying client can
+      # produce — which is what keeps every `rejectUnauthorized: false` in that
+      # file from being a decoration.
+      #
+      # The mock generates the certificate with SANs localhost, sts, sts-mock,
+      # sts.example.com and 127.0.0.1, so this name must stay OUT of that list.
+      # docker-compose-run-tests.yml provides the same name as a network alias
+      # on the `sts` service, because there is no Docker DNS on this stack and
+      # no /etc/hosts to edit on that one.
+      - "sts-not-in-the-certificate:127.0.0.1"
     environment:
       - CONFIG_FILE=./env/local.js
+      # ---------------------------------------------------------------------
+      # THE MOCK STS'S CERTIFICATE, IN THIS SERVICE'S TRUSTSTORE.
+      #
+      # That mock serves its main port over TLS on this stack (see STS_HTTPS on
+      # the `sts` service for why the scheme moved to the process when the RFC
+      # 9700 pass became a trust realm), on a self-signed certificate it
+      # regenerates every start — so nothing can have an anchor for it ahead of
+      # time. api/sts_truststore.sh, this image's entrypoint, fetches it from
+      # this URL before the server starts and points NODE_EXTRA_CA_CERTS at it.
+      # Unset, the entrypoint does nothing, which is what a deployed api wants.
+      #
+      # This is a truststore addition, not a verification switch: every other
+      # certificate this service meets is still verified, which is what
+      # api_ssrf_guard.js, api_tls_probe.js and url_safety_schemes.js assert.
+      # ---------------------------------------------------------------------
+      - STS_CERT_URL=https://localhost:8081/tls/server-certificate
     build:
       context: .
       dockerfile: api/Dockerfile
@@ -93,6 +129,11 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-}
     depends_on:
       keycloak:
+        condition: service_healthy
+      # So the entrypoint's certificate fetch has something to fetch from. It
+      # retries regardless (see api/sts_truststore.sh), but depends_on turns the
+      # ordinary case into no retries at all.
+      sts:
         condition: service_healthy
     healthcheck:
       test: curl -X GET http://localhost:4000
@@ -126,12 +167,70 @@ services:
     hostname: sts
     image: rcbj/sts
     network_mode: "host"
+    environment:
+      # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
+      # rather than given a value here.
+      #
+      # THE BARE FORM IS LOAD-BEARING AND THE OBVIOUS ALTERNATIVE BREAKS THE
+      # CONTAINER. With no `=`, compose passes the variable through ONLY if the
+      # host shell has it set and leaves it unset here otherwise, so the
+      # appconfig file's own level keeps applying when nobody asked for
+      # anything else. Written as `STS_LOG_LEVEL=${STS_LOG_LEVEL:-}` it would
+      # instead be set to the EMPTY STRING, and that is not a harmless default:
+      # bunyan throws `unknown level name: ""` from config.js's registerLogger()
+      # at require time, so the mock does not start at all. `docker compose
+      # config` tells the two apart — the bare form renders null, the assigned
+      # one renders "".
+      #
+      # Why it is worth having: the mock logs every request, every response and
+      # every artifact before and after signing, at debug. That is the point of
+      # a mock and is the record of what it issued when a test fails, so debug
+      # stays the default. It is also about half the service's CPU, and a
+      # benchmark of it wrote 156MB in sixteen seconds — so a run with several
+      # jobs hitting one instance at once can set STS_LOG_LEVEL=info and roughly
+      # double what that instance can answer.
+      - STS_LOG_LEVEL
+      # ---------------------------------------------------------------------
+      # THE MAIN PORT IS HTTPS, AND THE WHOLE SUITE TALKS TO IT THAT WAY.
+      #
+      # This replaced a SECOND mock instance. RFC 9700 mode used to need one:
+      # `oauth2.rfc9700` derives `global.https` in that service, so it binds
+      # 8081 as TLS, and one process could not serve the permissive pass and
+      # the compliant one. Since mock-sts marks that flag `realmRuntime` it can
+      # be set on a TRUST REALM — a realm binds no socket, so only the mode's
+      # checks change — and `/realm/rfc9700/...` is the compliant server while
+      # `/...` stays permissive. See common/common.sh's
+      # configureStsRfc9700Realm().
+      #
+      # WHAT A REALM CANNOT BRING WITH IT IS A SCHEME. The port is HTTPS or it
+      # is not, for every realm at once, and the RFC 9700 pass is only honest
+      # over TLS — requirement 8.1 is that every configured endpoint is https,
+      # and the debugger enforces it. So the scheme moves to the PROCESS, here,
+      # and every STS URL in the suite is https.
+      #
+      # `STS_HTTPS` rather than `STS_OAUTH2_RFC9700`: that one would turn the
+      # mode on for the DEFAULT realm too, and the permissive pass — twelve
+      # jobs — is the other half of the matrix. This is the setting that exists
+      # to separate the two.
+      #
+      # THE COST IS A CERTIFICATE NOBODY HAS AN ANCHOR FOR: it is self-signed
+      # and regenerated on every start, so it cannot be baked into an image or
+      # a truststore ahead of time. It is fetched from
+      # /tls/server-certificate once the service is up and installed for the
+      # two things that verify — node, through NODE_EXTRA_CA_CERTS, and Chrome,
+      # through an exact SPKI pin. common/common.sh's trustStsCertificate()
+      # does it for the host-side launchers; the `api` service above does its
+      # own, because it starts before any launcher could hand it one.
+      - STS_HTTPS=true
     build:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
       context: ./sts
+    # https, and `rejectUnauthorized:false` — the certificate is self-signed and
+    # regenerated every start, so nothing in this container can have an anchor
+    # for it. Liveness is this check's question, not trust.
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:8081/healthcheck',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
+      test: ["CMD-SHELL", "node -e \"require('https').get({host:'localhost',port:8081,path:'/healthcheck',rejectUnauthorized:false},function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
       interval: 10s
       timeout: 5s
       retries: 5

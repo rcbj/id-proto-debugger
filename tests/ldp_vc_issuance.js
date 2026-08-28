@@ -47,14 +47,19 @@ if (typeof globalThis.btoa !== "function") {
   };
 }
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 const ROOT = path.join(__dirname, "..");
 const paths = require("./module_paths.js");
 const stsSuite = paths.requireSharedModule(
-  [path.join(__dirname, "sts_bbs2023.js"), path.join(ROOT, "sts",
-   "bbs2023.js")],
+  // The tests image's flattened copy first, then wherever the submodule keeps
+  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: mock-sts 0f986b3
+  // ("Reorganizing source code.") moved every module into a subdirectory, and
+  // this one is in common/vendored/. mockStsModule() is the single place that
+  // answers that question — see tests/module_paths.js.
+  [path.join(__dirname, "sts_bbs2023.js"),
+   paths.mockStsModule("bbs2023.js") || ""],
   "the STS's bbs-2023 cryptosuite");
 // The wallet's own half of the exchange, loaded so this test covers what the
 // PAGE does with the response and not only what the issuer sends. Both are
@@ -82,6 +87,11 @@ async function test() {
   assert.ok(entry, "this issuer offers no ldp_vc configuration \"" +
             LDP_CONFIG_ID + "\". Offered: " +
     Object.keys(configs).join(", "));
+
+  // The wallet, after the checks above so a missing service still fails with
+  // the message naming what to start.
+  await common.provisionWallet(issuerBase,
+    { why: "the wallet this job collects an ldp_vc credential with" });
 
   log.info("=== What the issuer advertises ===");
   assert.strictEqual(entry.format, "ldp_vc",

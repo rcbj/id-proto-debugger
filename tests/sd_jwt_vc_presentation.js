@@ -51,6 +51,7 @@ const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
@@ -63,7 +64,7 @@ var fetchWait = Math.max(waitTime, 20000);
 // runs per process.
 require("./wait_for").configure({ timeout: fetchWait });
 
-var stsUrl = process.env.WSTRUST_STS_URL || "http://localhost:8081/sts";
+var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 var VCI_CONFIG_ID = process.env.OID4VCI_CONFIG_ID || "IdentityCredential";
@@ -79,6 +80,21 @@ var DCQL_ID = "identity_credential";
 // page below sets it — and a request that inherits a jwt_vc_json default is one
 // this SD-JWT wallet cannot answer at all.
 var FORMAT = "dc+sd-jwt";
+
+// "The page's bundle has run", which is a different question from "the page's
+// markup is there" and the one that matters before pressing anything: every
+// control in this application is wired with an inline onclick naming a
+// browserify --standalone global, so a click that lands before the bundle has
+// executed raises ReferenceError inside the page and does nothing at all out
+// here. waitForPageBundle() in tests/wait_for.js reads the page's own script
+// tags, so this needs no table of global names, and its note records what the
+// missing wait cost.
+async function pageBundleReady(driver) {
+  log.debug("Entering pageBundleReady().");
+  await waitForContent.waitForPageBundle(driver,
+    "the page this test just navigated to");
+  log.debug("Leaving pageBundleReady().");
+}
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -149,6 +165,11 @@ function severeErrors(driver) {
                        .then(function (entries) {
     return entries.filter(function (e) { return e.level.name === "SEVERE"; })
       .filter(function (e) { return !/favicon/.test(e.message); })
+      // Nor is a load the BROWSER abandoned because its own certificate or
+      // network configuration changed underneath it. See browser_flags.js.
+      .filter(function (e) {
+        return !browserFlags.isTransientLoadError(e.message);
+      })
       .map(function (e) { return e.message; });
   });
 }
@@ -237,6 +258,7 @@ async function mintCredential(label) {
 async function planCredentialIntoWallet(driver, held) {
   log.debug("Entering planCredentialIntoWallet().");
   await driver.get(baseUrl + "/vc-presentation-0.html");
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -263,6 +285,7 @@ async function planCredentialIntoWallet(driver, held) {
                      requestedAt: new Date().toISOString() }),
     issuerBase);
   await driver.navigate().refresh();
+  await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), waitTime);
   await driver.sleep(400);
   log.debug("Leaving planCredentialIntoWallet().");
@@ -385,13 +408,26 @@ function claimsAskedFor(request) {
 // service's account of itself, and what a presentation is judged against is
 // the dcql_query it was sent. A setup step that quietly does nothing is worse
 // than no setup step at all.
+//
+// It is pinned through the MANAGEMENT API rather than through the console page
+// that owns the setting, and the reason is the console's own gate: since the
+// mock STS grew `admin.authRequired` (on by default) every /admin form needs a
+// browser sign-on session, and a program posting JSON to one is refused 401
+// `login_required` rather than redirected — which is what failed this whole
+// file on 2026-08-24, before a browser had been started. /admin-api is
+// deliberately NOT gated, for exactly this caller, and
+// /admin-api/verifier-request/select is the same handler behind the same
+// resource: the action moves from the body to the path and the answer is the
+// same object. A setup step is not the thing under test, so it goes through
+// the door meant for programs.
 // ---------------------------------------------------------------------------
 async function pinVerifierRequest() {
   log.debug("Entering pinVerifierRequest().");
-  var configured = await httpJson(issuerBase + "/admin/vc-verifier-config", {
+  var configured = await httpJson(
+    issuerBase + "/admin-api/verifier-request/select", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "select", claims: REQUESTED })
+    body: JSON.stringify({ claims: REQUESTED })
   });
   assert.ok(configured.ok,
     "the mock verifier should accept what it is asked to ask for, got HTTP " +

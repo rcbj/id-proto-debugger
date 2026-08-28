@@ -316,6 +316,27 @@ async function setTextarea(driver, id, text) {
   log.debug("Leaving setTextarea().");
 }
 
+// A checkbox, set directly. Nothing on this page listens for a change event on
+// one — every option is read at the moment Sign or Validate runs — so this is
+// the state the handler will see, without depending on where the label happens
+// to sit in the layout.
+async function setCheckbox(driver, id, on) {
+  log.debug("Entering setCheckbox().");
+  await driver.executeScript(
+    "var e = document.getElementById(arguments[0]); e.checked = arguments[1];",
+    id, !!on);
+  log.debug("Leaving setCheckbox().");
+}
+
+// A status line that has stopped moving. Both new panes paint a "…" line
+// first and replace it when the work finishes, so waiting for a non-empty
+// value would read the "…" and go on to assert against it.
+function statusSettled(v) {
+  log.debug("Entering statusSettled().");
+  log.debug("Leaving statusSettled().");
+  return v.trim().length > 0 && v.slice(-1) !== "\u2026";
+}
+
 // Click a BBS button and wait for the status line it produces. The pane defers
 // its work so the "…" status paints first, so waiting for the *field* a button
 // fills is not enough on its own — every check here waits on the status.
@@ -850,8 +871,629 @@ async function testDownloads(driver) {
                          'BBS DER (unsupported)');
   await downloadKeystore(driver, BBS, 'pkcs12', '', 'not supported',
                          'BBS PKCS#12 (unsupported)');
+  // JWS: an RSA key takes the shared keystore matrix; a raw curve key or a
+  // shared secret exports as the JWK that JOSE defines for it, and says so
+  // for anything else rather than emitting a file nothing can read.
+  await selectValue(driver, 'ds_jws_alg', 'ES256');
+  await jwsClickAndWait(driver, 'jwsGenerateKeys', "[JWS] download key.");
+  await downloadKeystore(driver, JWS, 'jwk', '', 'Downloaded JWK set',
+                         'JWS EC JWK');
+  await downloadKeystore(driver, JWS, 'jwk', 'pw123', 'PBES2-encrypted JWK',
+                         'JWS EC JWK+pw');
+  await downloadKeystore(driver, JWS, 'pem', '', 'not supported',
+                         'JWS EC PEM (unsupported)');
+  await selectValue(driver, 'ds_jws_alg', 'HS256');
+  await jwsClickAndWait(driver, 'jwsGenerateKeys', "[JWS] secret download.");
+  await downloadKeystore(driver, JWS, 'jwk', '', 'Downloaded JWK set',
+                         'JWS oct JWK');
+  await selectValue(driver, 'ds_jws_alg', 'RS256');
+  await jwsClickAndWait(driver, 'jwsGenerateKeys', "[JWS] RSA download key.");
+  await downloadKeystore(driver, JWS, 'pem', '',
+                         'Downloaded PEM (private + public key)', 'JWS PEM');
+  await downloadKeystore(driver, JWS, 'jwk', '', 'Downloaded JWK set',
+                         'JWS RSA JWK');
+  await downloadKeystore(driver, JWS, 'pkcs12', '', 'requires a password',
+                         'JWS PKCS#12 (password required)');
+  await downloadKeystore(driver, JWS, 'pkcs12', 'pw123',
+                         'Downloaded password-protected PKCS#12',
+                         'JWS PKCS#12');
+
+  // XML Signature: the same split, plus the shared secret that has no
+  // keystore format at all — which has to be said rather than silently
+  // producing nothing.
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_RSA);
+  await xmlClickAndWait(driver, 'xmlGenerateKeys', "[XML] download key.");
+  await downloadKeystore(driver, XMLSIG, 'pem', '',
+                         'Downloaded PEM (private + public key)', 'XML PEM');
+  await downloadKeystore(driver, XMLSIG, 'jwk', '', 'Downloaded JWK set',
+                         'XML RSA JWK');
+  await downloadKeystore(driver, XMLSIG, 'pkcs12', 'pw123',
+                         'Downloaded password-protected PKCS#12',
+                         'XML PKCS#12');
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_ECDSA);
+  await selectValue(driver, 'ds_xml_curve', 'P-256');
+  await xmlClickAndWait(driver, 'xmlGenerateKeys', "[XML] EC download key.");
+  await downloadKeystore(driver, XMLSIG, 'jwk', '', 'Downloaded JWK set',
+                         'XML EC JWK');
+  await downloadKeystore(driver, XMLSIG, 'pem', '', 'not supported',
+                         'XML EC PEM (unsupported)');
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_HMAC);
+  await xmlClickAndWait(driver, 'xmlGenerateKeys', "[XML] secret download.");
+  await downloadKeystore(driver, XMLSIG, 'jwk', '',
+                         'no keystore format', 'XML HMAC (no keystore)');
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_RSA);
   log.debug("Leaving testDownloads().");
 }
+
+// ===========================================================================
+// Pane #6 — JWS
+//
+// Every registered algorithm through every serialization, then the parts of
+// RFC 7515 that are rules rather than bytes. The BYTES are asserted elsewhere:
+// tests/jws_engine.js hands each signature to node's own OpenSSL and to
+// `jsonwebtoken`, because a round trip through this page agrees with itself
+// whatever the implementation does. What only a browser can say is that the
+// PANE is wired to the engine — that a checkbox reaches the option it names,
+// and that a refusal reaches the status line.
+// ===========================================================================
+var JWS_ALGS = ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512',
+                'PS256', 'PS384', 'PS512', 'ES256', 'ES384', 'ES512',
+                'EdDSA-Ed25519', 'EdDSA-Ed448', 'ES256K', 'none'];
+var JWS_SERIALIZATIONS = ['compact', 'flattened', 'general'];
+
+async function jwsClickAndWait(driver, fn, message) {
+  log.debug("Entering jwsClickAndWait().");
+  await click(driver, onclickBtn(fn));
+  var status = await waitForValue(driver, By.id('ds_jws_status'),
+      statusSettled, message, rsaWait);
+  log.debug("Leaving jwsClickAndWait().");
+  return status;
+}
+
+async function jwsGenerate(driver, alg, label) {
+  log.debug("Entering jwsGenerate().");
+  await selectValue(driver, 'ds_jws_alg', alg);
+  var status = await jwsClickAndWait(driver, 'jwsGenerateKeys',
+      "[JWS " + label + "] key generation did not finish.");
+  assert.ok(/Generated|has no key/.test(status),
+    "[JWS " + label + "] key generation reported: " + status);
+  log.debug("Leaving jwsGenerate().");
+}
+
+async function testJws(driver) {
+  log.debug("Entering testJws().");
+  log.info("=== JWS (RFC 7515) ===");
+  await setTextarea(driver, 'ds_jws_payload',
+      JSON.stringify({ iss: 'https://as.example.com', sub: 'alice' }, null, 2));
+
+  // The RSA key pair is generated ONCE and reused across RS*/PS*: six 2048-bit
+  // generations in pure JS is a minute of runtime that asserts the same thing
+  // six times. Changing the algorithm does not touch the key fields.
+  var rsaReady = false;
+  for (var a = 0; a < JWS_ALGS.length; a++) {
+    var alg = JWS_ALGS[a];
+    var isRsa = /^(RS|PS)/.test(alg);
+    if (!isRsa || !rsaReady) {
+      await jwsGenerate(driver, alg, alg);
+      if (isRsa) rsaReady = true;
+    } else {
+      await selectValue(driver, 'ds_jws_alg', alg);
+    }
+    for (var t = 0; t < JWS_SERIALIZATIONS.length; t++) {
+      var serialization = JWS_SERIALIZATIONS[t];
+      await selectValue(driver, 'ds_jws_serialization', serialization);
+      var signed = await jwsClickAndWait(driver, 'jwsSign',
+          "[JWS " + alg + "/" + serialization + "] signing did not finish.");
+      assert.ok(/^Signed/.test(signed),
+        "[JWS " + alg + "/" + serialization + "] sign reported: " + signed);
+      var verified = await jwsClickAndWait(driver, 'jwsValidate',
+          "[JWS " + alg + "/" + serialization + "] validation did not " +
+          "finish.");
+      assert.ok(/VALID \u2713|Unsecured JWS/.test(verified),
+        "[JWS " + alg + "/" + serialization + "] validate reported: " +
+        verified);
+    }
+    await selectValue(driver, 'ds_jws_serialization', 'compact');
+    log.info("[JWS " + alg + "] OK — signed and validated in all three " +
+             "serializations.");
+  }
+
+  // The rule this pane exists for: the payload must be JSON, and Sign says so
+  // rather than signing whatever is in the box.
+  await selectValue(driver, 'ds_jws_alg', 'HS256');
+  await jwsGenerate(driver, 'HS256', 'HS256');
+  await setTextarea(driver, 'ds_jws_payload', '{not json');
+  var status = await jwsClickAndWait(driver, 'jwsSign',
+      "[JWS] the non-JSON refusal did not finish.");
+  assert.ok(/Refusing to sign/.test(status),
+    "[JWS] a payload that is not JSON must be refused. Status: " + status);
+  status = await jwsClickAndWait(driver, 'jwsValidatePayload',
+      "[JWS] Validate JSON did not finish.");
+  assert.ok(/NOT valid JSON/.test(status),
+    "[JWS] Validate JSON must report an invalid payload. Status: " + status);
+  await setTextarea(driver, 'ds_jws_payload', '{"a":1,"b":[1,2]}');
+  status = await jwsClickAndWait(driver, 'jwsValidatePayload',
+      "[JWS] Validate JSON did not finish on a good payload.");
+  assert.ok(/is valid JSON \u2713/.test(status),
+    "[JWS] Validate JSON must accept a good payload. Status: " + status);
+  await click(driver, onclickBtn('jwsFormatPayload'));
+  await waitForValue(driver, By.id('ds_jws_payload'),
+      function (v) { return v.indexOf("\n") > 0; },
+      "[JWS] Format JSON did not re-indent the payload.");
+  log.info("[JWS] OK — a payload that is not JSON is refused by name.");
+
+  // A changed payload must not verify. The signature is left alone and only
+  // the middle part is swapped, so what fails is the signature rather than
+  // the parsing.
+  await jwsClickAndWait(driver, 'jwsSign', "[JWS] sign before tampering.");
+  var jwsValue = await getValue(driver, By.id('ds_jws_signature'));
+  var parts = jwsValue.split(".");
+  await setTextarea(driver, 'ds_jws_signature', parts[0] + "." +
+      Buffer.from('{"a":2}').toString("base64url") + "." + parts[2]);
+  status = await jwsClickAndWait(driver, 'jwsValidate',
+      "[JWS] the tampered validation did not finish.");
+  assert.ok(/INVALID \u2717/.test(status),
+    "[JWS] a tampered payload must not validate. Status: " + status);
+  log.info("[JWS] OK — a tampered payload is refused.");
+
+  // RFC 7515 App. F — a detached payload leaves the middle part empty, and
+  // Validate reads it back out of the Payload box.
+  await setCheckbox(driver, 'ds_jws_detached', true);
+  await jwsClickAndWait(driver, 'jwsSign', "[JWS] detached signing.");
+  jwsValue = await getValue(driver, By.id('ds_jws_signature'));
+  assert.strictEqual(jwsValue.split(".")[1], "",
+    "[JWS] a detached compact JWS must have an empty payload part.");
+  status = await jwsClickAndWait(driver, 'jwsValidate',
+      "[JWS] detached validation.");
+  assert.ok(/VALID \u2713/.test(status),
+    "[JWS] a detached JWS must validate against the Payload box. Status: " +
+    status);
+  await setCheckbox(driver, 'ds_jws_detached', false);
+  log.info("[JWS] OK — detached payload (RFC 7515 App. F).");
+
+  // RFC 7797 — an unencoded payload cannot ride in the compact serialization
+  // when it contains a period, and a JSON payload hits that on any decimal
+  // number. The refusal is the interesting half.
+  await setTextarea(driver, 'ds_jws_payload', '{"pi":3.14}');
+  await setCheckbox(driver, 'ds_jws_unencoded', true);
+  status = await jwsClickAndWait(driver, 'jwsSign',
+      "[JWS] the RFC 7797 compact refusal did not finish.");
+  assert.ok(/RFC 7797/.test(status),
+    "[JWS] an unencoded compact payload containing a period must be refused " +
+    "by name. Status: " + status);
+  await selectValue(driver, 'ds_jws_serialization', 'flattened');
+  status = await jwsClickAndWait(driver, 'jwsSign',
+      "[JWS] the RFC 7797 JSON signing did not finish.");
+  assert.ok(/unencoded payload/.test(status),
+    "[JWS] an unencoded payload must sign in a JSON serialization. Status: " +
+    status);
+  var doc = JSON.parse(await getValue(driver, By.id('ds_jws_signature')));
+  var header = JSON.parse(Buffer.from(doc.protected,
+      "base64url").toString("utf8"));
+  assert.strictEqual(header.b64, false,
+    "[JWS] b64 must be in the PROTECTED header (RFC 7797 §3).");
+  assert.ok(header.crit && header.crit.indexOf("b64") >= 0,
+    "[JWS] b64 MUST be listed in crit, so a recipient that does not " +
+    "implement RFC 7797 rejects the JWS instead of verifying it against a " +
+    "base64url that was never produced.");
+  status = await jwsClickAndWait(driver, 'jwsValidate',
+      "[JWS] the RFC 7797 validation did not finish.");
+  assert.ok(/VALID \u2713/.test(status),
+    "[JWS] an unencoded payload must validate. Status: " + status);
+  await setCheckbox(driver, 'ds_jws_unencoded', false);
+  await selectValue(driver, 'ds_jws_serialization', 'compact');
+  log.info("[JWS] OK — RFC 7797 unencoded payload, and its compact refusal.");
+
+  // RFC 7515 §7.1 — the compact serialization has nowhere to put an
+  // unprotected header, so asking for one is an error rather than a silent
+  // drop. A dropped member is one the caller believes is present.
+  await setTextarea(driver, 'ds_jws_payload', '{"a":1}');
+  await setTextarea(driver, 'ds_jws_unprotected', '{"note":"not signed"}');
+  status = await jwsClickAndWait(driver, 'jwsSign',
+      "[JWS] the unprotected-header refusal did not finish.");
+  assert.ok(/unprotected header/.test(status),
+    "[JWS] an unprotected header in the compact serialization must be " +
+    "refused. Status: " + status);
+  await selectValue(driver, 'ds_jws_serialization', 'flattened');
+  status = await jwsClickAndWait(driver, 'jwsSign',
+      "[JWS] the unprotected-header signing did not finish.");
+  assert.ok(/^Signed/.test(status),
+    "[JWS] an unprotected header belongs in a JSON serialization. Status: " +
+    status);
+  doc = JSON.parse(await getValue(driver, By.id('ds_jws_signature')));
+  assert.strictEqual(doc.header.note, "not signed",
+    "[JWS] the unprotected header must reach the serialization.");
+  await setTextarea(driver, 'ds_jws_unprotected', '');
+  await selectValue(driver, 'ds_jws_serialization', 'compact');
+  log.info("[JWS] OK — the unprotected header, and where it may not go.");
+
+  // The header fields, and the embedded jwk — which must be the PUBLIC half.
+  await jwsGenerate(driver, 'ES256', 'ES256');
+  await setInput(driver, By.id('ds_jws_typ'), 'JWT');
+  await setInput(driver, By.id('ds_jws_cty'), 'application/json');
+  await setInput(driver, By.id('ds_jws_kid'), 'key-1');
+  await setTextarea(driver, 'ds_jws_header_extra', '{"custom":"yes"}');
+  await setCheckbox(driver, 'ds_jws_embed_jwk', true);
+  await jwsClickAndWait(driver, 'jwsSign', "[JWS] header signing.");
+  header = JSON.parse(Buffer.from(
+      (await getValue(driver, By.id('ds_jws_signature'))).split(".")[0],
+      "base64url").toString("utf8"));
+  assert.strictEqual(header.typ, 'JWT');
+  assert.strictEqual(header.cty, 'application/json');
+  assert.strictEqual(header.kid, 'key-1');
+  assert.strictEqual(header.custom, 'yes');
+  assert.strictEqual(header.jwk.crv, 'P-256',
+    "[JWS] the embedded jwk must describe the signing key.");
+  assert.strictEqual(header.jwk.d, undefined,
+    "[JWS] an embedded jwk must NEVER carry the private key.");
+  await setCheckbox(driver, 'ds_jws_embed_jwk', false);
+  await setInput(driver, By.id('ds_jws_typ'), '');
+  await setInput(driver, By.id('ds_jws_cty'), '');
+  await setInput(driver, By.id('ds_jws_kid'), '');
+  await setTextarea(driver, 'ds_jws_header_extra', '');
+  log.info("[JWS] OK — typ/cty/kid, extra header members, embedded jwk.");
+
+  // RFC 8725 §3.1 — the VERIFIER decides the algorithm. Selecting one and
+  // being handed a token that names another is refused, because accommodating
+  // it is the algorithm-confusion attack.
+  await selectValue(driver, 'ds_jws_alg', 'ES384');
+  status = await jwsClickAndWait(driver, 'jwsValidate',
+      "[JWS] the algorithm-mismatch validation did not finish.");
+  assert.ok(/INVALID \u2717/.test(status),
+    "[JWS] a token naming an algorithm the verifier did not choose must be " +
+    "refused. Status: " + status);
+  await selectValue(driver, 'ds_jws_alg', 'ES256');
+  log.info("[JWS] OK — an algorithm the verifier did not choose is refused.");
+
+  // The three ways a shared secret can be written down. Reading one as
+  // another produces a valid signature under a key that is not the one on the
+  // screen, which is exactly why the selector exists.
+  await selectValue(driver, 'ds_jws_alg', 'HS256');
+  await setTextarea(driver, 'ds_jws_payload', '{"a":1}');
+  var encodings = ['hex', 'b64u', 'text'];
+  for (var e = 0; e < encodings.length; e++) {
+    await selectValue(driver, 'ds_jws_secret_encoding', encodings[e]);
+    if (encodings[e] === 'text') {
+      await setTextarea(driver, 'ds_jws_private_key', 'correct horse battery');
+      await setTextarea(driver, 'ds_jws_public_key', 'correct horse battery');
+    } else {
+      await jwsClickAndWait(driver, 'jwsGenerateKeys',
+          "[JWS] secret generation (" + encodings[e] + ").");
+    }
+    await jwsClickAndWait(driver, 'jwsSign',
+        "[JWS] signing with a " + encodings[e] + " secret.");
+    status = await jwsClickAndWait(driver, 'jwsValidate',
+        "[JWS] validating with a " + encodings[e] + " secret.");
+    assert.ok(/VALID \u2713/.test(status),
+      "[JWS] an HMAC secret read as " + encodings[e] + " did not round-trip. " +
+      "Status: " + status);
+  }
+  await selectValue(driver, 'ds_jws_secret_encoding', 'hex');
+  log.info("[JWS] OK — a shared secret read as hex, base64url and text.");
+  log.debug("Leaving testJws().");
+}
+
+// ===========================================================================
+// Pane #7 — XML Digital Signature
+//
+// The choices, rather than the bytes: the bytes are tests/xmlsec_interop.js's,
+// which hands what this engine produces to xml-crypto and drives its ECDSA and
+// HMAC halves with node's own OpenSSL. What only a browser can do is the two
+// XPath transforms — they are evaluated by the DOM's own XPath engine, which
+// @xmldom does not have — and the wiring of every selector to the URI it
+// writes into the document.
+// ===========================================================================
+var XML_SIG_RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
+var XML_SIG_PSS = 'http://www.w3.org/2007/05/xmldsig-more#sha256-rsa-MGF1';
+var XML_SIG_ECDSA = 'http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256';
+var XML_SIG_HMAC = 'http://www.w3.org/2001/04/xmldsig-more#hmac-sha256';
+var XML_C14N = [
+  'http://www.w3.org/2001/10/xml-exc-c14n#',
+  'http://www.w3.org/2001/10/xml-exc-c14n#WithComments',
+  'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
+  'http://www.w3.org/TR/2001/REC-xml-c14n-20010315#WithComments'
+];
+var XML_DIGESTS = [
+  'http://www.w3.org/2001/04/xmlenc#sha256',
+  'http://www.w3.org/2001/04/xmldsig-more#sha384',
+  'http://www.w3.org/2001/04/xmlenc#sha512',
+  'http://www.w3.org/2000/09/xmldsig#sha1'
+];
+// The comment is not decoration: it is the ONLY thing that tells a
+// canonicalization method from its "#WithComments" twin, and a document
+// without one passes under either.
+var XML_DOC = '<Order xmlns="urn:example:order" ID="order-1">' +
+  '<!-- the comment that separates the two canonicalizations -->' +
+  '<Item sku="A1">Widget</Item>' +
+  '<Total currency="USD">42.00</Total></Order>';
+
+async function xmlClickAndWait(driver, fn, message) {
+  log.debug("Entering xmlClickAndWait().");
+  await click(driver, onclickBtn(fn));
+  var status = await waitForValue(driver, By.id('ds_xml_status'),
+      statusSettled, message, rsaWait);
+  log.debug("Leaving xmlClickAndWait().");
+  return status;
+}
+
+async function xmlSignAndValidate(driver, label) {
+  log.debug("Entering xmlSignAndValidate().");
+  var signed = await xmlClickAndWait(driver, 'xmlSign',
+      "[XML " + label + "] signing did not finish.");
+  assert.ok(/^Signed/.test(signed),
+    "[XML " + label + "] sign reported: " + signed);
+  var verified = await xmlClickAndWait(driver, 'xmlValidate',
+      "[XML " + label + "] validation did not finish.");
+  assert.ok(/VALID \u2713/.test(verified),
+    "[XML " + label + "] validate reported: " + verified);
+  log.debug("Leaving xmlSignAndValidate().");
+  return verified;
+}
+
+async function testXmlSignature(driver) {
+  log.debug("Entering testXmlSignature().");
+  log.info("=== XML Digital Signature (W3C XMLDSIG) ===");
+
+  // The rule this pane exists for, in both directions.
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  var status = await xmlClickAndWait(driver, 'xmlValidateDocument',
+      "[XML] the well-formedness check did not finish.");
+  assert.ok(/well-formed \u2713/.test(status),
+    "[XML] a well-formed document must be reported as one. Status: " + status);
+  await setTextarea(driver, 'ds_xml_value', '<a><b></a>');
+  status = await xmlClickAndWait(driver, 'xmlValidateDocument',
+      "[XML] the malformed check did not finish.");
+  assert.ok(/NOT well-formed \u2717/.test(status),
+    "[XML] malformed XML must be reported as such. Status: " + status);
+  status = await xmlClickAndWait(driver, 'xmlSign',
+      "[XML] the malformed signing refusal did not finish.");
+  assert.ok(/Sign error/.test(status),
+    "[XML] malformed XML must be refused before anything is signed. " +
+    "Status: " + status);
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  log.info("[XML] OK — XML that is not well-formed is refused by name.");
+
+  // RSA, and all three signature types. The RSA key pair carries a
+  // certificate, which is what KeyInfo/X509Data needs.
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_RSA);
+  await selectValue(driver, 'ds_xml_keyinfo', 'x509');
+  await xmlClickAndWait(driver, 'xmlGenerateKeys',
+      "[XML] RSA key generation did not finish.");
+  var cert = await getValue(driver, By.id('ds_xml_cert'));
+  assert.ok(cert.indexOf('BEGIN CERTIFICATE') >= 0,
+    "[XML] the RSA key pair must come with a certificate for KeyInfo.");
+  var modes = ['enveloped', 'enveloping', 'detached'];
+  for (var m = 0; m < modes.length; m++) {
+    await selectValue(driver, 'ds_xml_mode', modes[m]);
+    await setCheckbox(driver, 'ds_xml_t_enveloped', modes[m] === 'enveloped');
+    await setTextarea(driver, 'ds_xml_value', XML_DOC);
+    await xmlSignAndValidate(driver, modes[m]);
+    log.info("[XML " + modes[m] + "] OK — signed and validated.");
+  }
+
+  // A changed element must not validate.
+  await selectValue(driver, 'ds_xml_mode', 'enveloped');
+  await setCheckbox(driver, 'ds_xml_t_enveloped', true);
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  await xmlClickAndWait(driver, 'xmlSign', "[XML] signing before tampering.");
+  var signedXml = await getValue(driver, By.id('ds_xml_signature'));
+  await setTextarea(driver, 'ds_xml_signature',
+      signedXml.replace('Widget', 'Gadget'));
+  status = await xmlClickAndWait(driver, 'xmlValidate',
+      "[XML] the tampered validation did not finish.");
+  assert.ok(/INVALID \u2717/.test(status),
+    "[XML] a modified document must not validate. Status: " + status);
+  log.info("[XML] OK — a modified document is refused.");
+
+  // The four canonicalization methods. What is asserted is not only that each
+  // verifies — it is that the two halves of each pair produce DIFFERENT
+  // reference digests, because otherwise the WithComments option would be a
+  // label on a control that does nothing.
+  var digests = [];
+  for (var c = 0; c < XML_C14N.length; c++) {
+    await selectValue(driver, 'ds_xml_c14n', XML_C14N[c]);
+    await selectValue(driver, 'ds_xml_t_c14n', XML_C14N[c]);
+    await setTextarea(driver, 'ds_xml_value', XML_DOC);
+    // The digest is read BETWEEN Sign and Validate. One detail pane serves
+    // both, and Validate replaces what Sign wrote — so reading it afterwards
+    // finds the verification report and no DigestValue at all.
+    var signedC14n = await xmlClickAndWait(driver, 'xmlSign',
+        "[XML c14n " + XML_C14N[c] + "] signing did not finish.");
+    assert.ok(/^Signed/.test(signedC14n),
+      "[XML c14n " + XML_C14N[c] + "] sign reported: " + signedC14n);
+    var report = await getValue(driver, By.id('ds_xml_report'));
+    var match = report.match(/DigestValue: (\S+)/);
+    assert.ok(match, "[XML] the detail pane must report the DigestValue " +
+      "after Sign. Detail pane held: " + report.slice(0, 200));
+    digests.push(match[1]);
+    var verifiedC14n = await xmlClickAndWait(driver, 'xmlValidate',
+        "[XML c14n " + XML_C14N[c] + "] validation did not finish.");
+    assert.ok(/VALID \u2713/.test(verifiedC14n),
+      "[XML c14n " + XML_C14N[c] + "] validate reported: " + verifiedC14n);
+  }
+  assert.notStrictEqual(digests[0], digests[1],
+    "[XML] exclusive C14N with and without comments produced the SAME " +
+    "digest over a document that contains one — the option does nothing.");
+  assert.notStrictEqual(digests[2], digests[3],
+    "[XML] inclusive C14N with and without comments produced the SAME " +
+    "digest over a document that contains one — the option does nothing.");
+  await selectValue(driver, 'ds_xml_c14n', XML_C14N[0]);
+  await selectValue(driver, 'ds_xml_t_c14n', XML_C14N[0]);
+  log.info("[XML] OK — four canonicalization methods, and comments really " +
+           "change the digest.");
+
+  // Every DigestMethod.
+  for (var d = 0; d < XML_DIGESTS.length; d++) {
+    await selectValue(driver, 'ds_xml_digest', XML_DIGESTS[d]);
+    await setTextarea(driver, 'ds_xml_value', XML_DOC);
+    await xmlSignAndValidate(driver, 'digest ' + XML_DIGESTS[d]);
+  }
+  await selectValue(driver, 'ds_xml_digest', XML_DIGESTS[0]);
+  log.info("[XML] OK — every DigestMethod.");
+
+  // RSASSA-PSS, ECDSA over every curve, and HMAC. The last is a MAC and the
+  // pane says so; what is checked here is that its KeyInfo choice is a
+  // KeyName, since a shared secret has no public half to publish.
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_PSS);
+  await xmlClickAndWait(driver, 'xmlGenerateKeys', "[XML] PSS key.");
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  await xmlSignAndValidate(driver, 'RSASSA-PSS');
+  var curves = ['P-256', 'P-384', 'P-521', 'secp256k1'];
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_ECDSA);
+  await selectValue(driver, 'ds_xml_keyinfo', 'keyvalue');
+  for (var v = 0; v < curves.length; v++) {
+    await selectValue(driver, 'ds_xml_curve', curves[v]);
+    await xmlClickAndWait(driver, 'xmlGenerateKeys',
+        "[XML] ECDSA " + curves[v] + " key generation.");
+    await setTextarea(driver, 'ds_xml_value', XML_DOC);
+    await xmlSignAndValidate(driver, 'ECDSA ' + curves[v]);
+  }
+  signedXml = await getValue(driver, By.id('ds_xml_signature'));
+  assert.ok(signedXml.indexOf('ECKeyValue') > 0,
+    "[XML] an EC public key belongs in a dsig11:ECKeyValue.");
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_HMAC);
+  await selectValue(driver, 'ds_xml_keyinfo', 'keyname');
+  await setInput(driver, By.id('ds_xml_keyname'), 'shared-key-1');
+  await xmlClickAndWait(driver, 'xmlGenerateKeys', "[XML] HMAC secret.");
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  await xmlSignAndValidate(driver, 'HMAC-SHA256');
+  signedXml = await getValue(driver, By.id('ds_xml_signature'));
+  assert.ok(signedXml.indexOf('<ds:KeyName>shared-key-1</ds:KeyName>') > 0,
+    "[XML] a MAC key is identified by a KeyName, not published.");
+  log.info("[XML] OK — RSASSA-PSS, ECDSA over four curves, HMAC.");
+
+  // An X.509 KeyInfo over a key that has no certificate must be refused
+  // rather than producing a Signature with an empty X509Data.
+  await selectValue(driver, 'ds_xml_keyinfo', 'x509');
+  status = await xmlClickAndWait(driver, 'xmlSign',
+      "[XML] the KeyInfo mismatch refusal did not finish.");
+  assert.ok(/no X.509 certificate/.test(status),
+    "[XML] an X509Data KeyInfo over an HMAC key must be refused. Status: " +
+    status);
+  log.info("[XML] OK — a KeyInfo that does not fit the key is refused.");
+
+  // Back to RSA for the transform work.
+  await selectValue(driver, 'ds_xml_sigalg', XML_SIG_RSA);
+  await selectValue(driver, 'ds_xml_keyinfo', 'x509');
+  await xmlClickAndWait(driver, 'xmlGenerateKeys', "[XML] RSA key (2).");
+
+  // THE XPATH TRANSFORMS, which only a browser can run: they are evaluated by
+  // the DOM's own XPath engine, and the node-side job asserts that it says so
+  // by name where there is none.
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  await selectValue(driver, 'ds_xml_t_xpath_kind', 'xpath');
+  await setInput(driver, By.id('ds_xml_t_xpath'),
+      'not(ancestor-or-self::ds:Signature)');
+  await xmlSignAndValidate(driver, 'XPath transform');
+  log.info("[XML] OK — the XPath transform of RFC 3275 §6.6.3.");
+
+  // XPath Filter 2.0, and the assertion that makes it mean something: a
+  // SUBTRACTED subtree is genuinely outside the signature, and everything
+  // else is genuinely inside it. Checking only that it verifies would pass
+  // just as happily if the filter had been ignored.
+  await selectValue(driver, 'ds_xml_t_xpath_kind', 'filter2');
+  await selectValue(driver, 'ds_xml_t_filter', 'subtract');
+  await setInput(driver, By.id('ds_xml_t_xpath'),
+      "//*[local-name()='Total']");
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  await xmlSignAndValidate(driver, 'XPath Filter 2.0');
+  signedXml = await getValue(driver, By.id('ds_xml_signature'));
+  await setTextarea(driver, 'ds_xml_signature',
+      signedXml.replace('42.00', '99.00'));
+  status = await xmlClickAndWait(driver, 'xmlValidate',
+      "[XML] the subtracted-subtree validation did not finish.");
+  assert.ok(/VALID \u2713/.test(status),
+    "[XML] a SUBTRACTED subtree must not be covered by the signature — " +
+    "changing it invalidated the signature, so the filter did nothing. " +
+    "Status: " + status);
+  await setTextarea(driver, 'ds_xml_signature',
+      signedXml.replace('Widget', 'Gadget'));
+  status = await xmlClickAndWait(driver, 'xmlValidate',
+      "[XML] the kept-subtree validation did not finish.");
+  assert.ok(/INVALID \u2717/.test(status),
+    "[XML] everything the filter KEPT must still be covered. Status: " +
+    status);
+  await selectValue(driver, 'ds_xml_t_xpath_kind', 'none');
+  log.info("[XML] OK — XPath Filter 2.0 subtract, proved in both " +
+           "directions.");
+
+  // The base64 transform digests the DECODED octets, and it ends the chain —
+  // so the Reference canonicalization is dropped and the pane says so rather
+  // than leaving a transform silently missing.
+  await selectValue(driver, 'ds_xml_mode', 'enveloping');
+  await setCheckbox(driver, 'ds_xml_t_enveloped', false);
+  await setCheckbox(driver, 'ds_xml_t_base64', true);
+  await setTextarea(driver, 'ds_xml_value',
+      '<Data ID="d1">' + Buffer.from('hello world').toString('base64') +
+      '</Data>');
+  status = await xmlClickAndWait(driver, 'xmlSign', "[XML] base64 signing.");
+  assert.ok(/base64 transform ends the chain/.test(status),
+    "[XML] dropping the Reference canonicalization must be said out loud. " +
+    "Status: " + status);
+  status = await xmlClickAndWait(driver, 'xmlValidate',
+      "[XML] base64 validation.");
+  assert.ok(/VALID \u2713/.test(status),
+    "[XML] the base64 transform must round-trip. Status: " + status);
+  await setCheckbox(driver, 'ds_xml_t_base64', false);
+  await selectValue(driver, 'ds_xml_mode', 'enveloped');
+  await setCheckbox(driver, 'ds_xml_t_enveloped', true);
+  log.info("[XML] OK — the base64 transform, and the note it forces.");
+
+  // Every KeyInfo form.
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  var keyInfos = ['x509', 'keyvalue', 'x509+keyvalue', 'keyname', 'none'];
+  for (var k = 0; k < keyInfos.length; k++) {
+    await selectValue(driver, 'ds_xml_keyinfo', keyInfos[k]);
+    await setInput(driver, By.id('ds_xml_keyname'), 'demo-key');
+    await setTextarea(driver, 'ds_xml_value', XML_DOC);
+    await xmlSignAndValidate(driver, 'KeyInfo ' + keyInfos[k]);
+  }
+  await selectValue(driver, 'ds_xml_keyinfo', 'x509');
+  await setInput(driver, By.id('ds_xml_keyname'), '');
+  log.info("[XML] OK — every KeyInfo form, including none at all.");
+
+  // The InclusiveNamespaces PrefixList must reach the document: it is the
+  // difference between a signed subtree that keeps a prefix used only inside
+  // an attribute VALUE and one that loses it.
+  await setInput(driver, By.id('ds_xml_c14n_prefixes'), 'soap #default');
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  await xmlSignAndValidate(driver, 'PrefixList');
+  signedXml = await getValue(driver, By.id('ds_xml_signature'));
+  assert.ok(signedXml.indexOf('PrefixList="soap #default"') > 0,
+    "[XML] the PrefixList must be written into the CanonicalizationMethod.");
+  await setInput(driver, By.id('ds_xml_c14n_prefixes'), '');
+  log.info("[XML] OK — InclusiveNamespaces PrefixList.");
+
+  // An enveloped signature whose Reference does not remove itself can never
+  // verify, so the transform is added and the pane reports that it was.
+  await setCheckbox(driver, 'ds_xml_t_enveloped', false);
+  await setTextarea(driver, 'ds_xml_value', XML_DOC);
+  status = await xmlClickAndWait(driver, 'xmlSign',
+      "[XML] the auto-added transform signing did not finish.");
+  assert.ok(/Added the enveloped-signature transform/.test(status),
+    "[XML] a missing enveloped-signature transform must be added, and said. " +
+    "Status: " + status);
+  status = await xmlClickAndWait(driver, 'xmlValidate',
+      "[XML] the auto-added transform validation did not finish.");
+  assert.ok(/VALID \u2713/.test(status),
+    "[XML] the repaired transform chain must verify. Status: " + status);
+  await setCheckbox(driver, 'ds_xml_t_enveloped', true);
+  log.info("[XML] OK — a missing enveloped-signature transform is repaired " +
+           "and reported.");
+  log.debug("Leaving testXmlSignature().");
+}
+
+// Pane descriptors for the keystore-download helper. The two new panes have no
+// single "the key pair" — the JWS one holds an RSA PEM, a raw curve key or a
+// shared secret depending on the algorithm, and the XML one the same — so the
+// download cases below select the algorithm first and these only name the
+// fields.
+var JWS = { name: 'JWS', statusId: 'ds_jws_status',
+  ksFormatId: 'ds_jws_ks_format', ksPwId: 'ds_jws_ks_password',
+  download: 'jwsDownloadKeys', wait: rsaWait };
+var XMLSIG = { name: 'XML Signature', statusId: 'ds_xml_status',
+  ksFormatId: 'ds_xml_ks_format', ksPwId: 'ds_xml_ks_password',
+  download: 'xmlDownloadKeys', wait: rsaWait };
 
 async function digitalSignatureActivities(driver) {
   log.debug("Entering digitalSignatureActivities().");
@@ -872,6 +1514,8 @@ async function digitalSignatureActivities(driver) {
   await testEcc(driver);
   await testMldsa(driver);
   await testBbs(driver);
+  await testJws(driver);
+  await testXmlSignature(driver);
   await testMacs(driver);
   await testDownloads(driver);
   log.debug("Leaving digitalSignatureActivities().");
@@ -913,8 +1557,12 @@ async function test() {
   var secureOrigin = baseUrl.replace(/\/+$/, "");
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        secureOrigin);
+  // Date.now() alone is NOT unique: run-report.js runs jobs in a pool,
+  // and two starting in the same millisecond would share a profile —
+  // one Chrome then refuses to start on the other's. See CONCURRENCY
+  // in run-report.js.
   options.addArguments("--user-data-dir=/tmp/digital-signature-chrome-" +
-                       Date.now());
+                       Date.now() + "-" + process.pid);
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 
@@ -928,6 +1576,11 @@ async function test() {
     /* older Chrome/driver — the user-preferences download dir applies */
   }
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     log.info("Starting Test run.");
     await driver.manage().deleteAllCookies();
@@ -935,7 +1588,7 @@ async function test() {
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
     try {
@@ -944,6 +1597,10 @@ async function test() {
       /* ignore */
     }
   }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
+  }
   log.debug("Leaving test().");
 }
 
@@ -951,7 +1608,10 @@ const program = new Command();
 program
   .name('digital_signature')
   .description("Run Digital Signature UI test (SLH-DSA, RSA, ECC, ML-DSA, " +
-      "BBS — all hashes, both BBS ciphersuites, plus the symmetric MACs).")
+      "BBS — all hashes, both BBS ciphersuites; JWS in every registered " +
+      "algorithm and all three serializations; XML Signature in all three " +
+      "types with every canonicalization, digest and transform; plus the " +
+      "symmetric MACs).")
   .addOption(new Option("-u, --url <url>",
       "Set base URL.").makeOptionMandatory())
   .addOption(new Option("-b, --browser",

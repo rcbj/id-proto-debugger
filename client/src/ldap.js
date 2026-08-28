@@ -86,6 +86,7 @@ var REMEMBERED = [
   'ldap_url', 'ldap_bind_dn', 'ldap_base_dn',
   'ldap_search_base', 'ldap_search_scope', 'ldap_search_filter',
   'ldap_search_attributes', 'ldap_search_size_limit',
+  'ldap_search_page_size',
   'ldap_user_uid', 'ldap_user_cn', 'ldap_user_sn', 'ldap_user_given_name',
   'ldap_user_mail', 'ldap_user_title',
   'ldap_group_cn', 'ldap_group_description',
@@ -168,6 +169,7 @@ function loadState() {
     ldap_search_filter: '(objectClass=*)',
     ldap_search_attributes: '',
     ldap_search_size_limit: '100',
+    ldap_search_page_size: '25',
     ldap_user_uid: 'dave',
     ldap_user_cn: 'Dave Davis',
     ldap_user_sn: 'Davis',
@@ -493,15 +495,180 @@ function runSearch() {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Paging the search results.
+//
+// This is DISPLAY paging over the answer to ONE search, and on this page the
+// distinction has to be made out loud, because LDAP has a paged results
+// control of its own — RFC 2696, the one an AD administrator means by "paged"
+// — and this is not it. That control is a CONVERSATION: the server returns a
+// page and a cookie, and the client hands the cookie back to ask for the next
+// one. The cookie belongs to the connection and the operation that issued it,
+// and this api opens a connection per operation and closes it again
+// (api/ldap_client.js, withConnection()), so there is nothing left for a
+// second HTTP request to hand a cookie back to. Adding it means giving the api
+// a session that outlives a request, which is a different change from this one
+// and is written up in docs/ldap.md.
+//
+// What follows from that is the wording, which is deliberate everywhere it
+// appears: the pager says how many entries THIS SEARCH RETURNED, never how
+// many the directory holds, and it repeats the fact when the answer was capped
+// (by the size limit in the request, or by the api's ldapMaxEntries on top of
+// it). Ten pages of fifty rows read as completeness, and "you have seen
+// everything" is the one thing this pane must not imply.
+// ---------------------------------------------------------------------------
+var searchPayload = null;
+var searchPage = 0;
+
+// Rows per page. 0 is the "All" option and means one page of everything, which
+// is the pre-pagination behaviour and stays reachable.
+function searchPageSize() {
+  log.debug("Entering searchPageSize().");
+  var size = parseInt(val('ldap_search_page_size'), 10);
+  if (isNaN(size) || size < 0) {
+    log.debug("Leaving searchPageSize(). Unreadable; using 25.");
+    return 25;
+  }
+  log.debug("Leaving searchPageSize(). size=" + size);
+  return size;
+}
+
+// How many pages the current answer makes. Always at least one, so that "Page
+// 1 of 1" is what an unpaged answer says rather than "Page 1 of 0".
+function searchPageCount(total, size) {
+  log.debug("Entering searchPageCount(). total=" + total + " size=" + size);
+  if (size <= 0 || total <= 0) {
+    log.debug("Leaving searchPageCount(). One page.");
+    return 1;
+  }
+  log.debug("Leaving searchPageCount(). " + Math.ceil(total / size) +
+            " page(s).");
+  return Math.ceil(total / size);
+}
+
+// One pager button, wired with a listener rather than an inline onclick: it is
+// created BY the bundle, so the handler is in scope by definition — where an
+// inline onclick in generated markup is a call into a global that may not
+// exist yet when the markup lands.
+function pagerButton(id, label, target, disabled) {
+  log.debug("Entering pagerButton(). id=" + id);
+  var button = document.createElement('button');
+  button.type = 'button';
+  button.id = id;
+  button.className = 'ldap-btn ldap-pager-btn';
+  button.textContent = label;
+  if (disabled) {
+    button.disabled = true;
+  }
+  button.addEventListener('click', function () {
+    goToSearchPage(target);
+  });
+  log.debug("Leaving pagerButton().");
+  return button;
+}
+
+// The bar above the table: where you are, how to move, and what the numbers on
+// it actually count.
+function renderSearchPager(total, size, offset, shown) {
+  log.debug("Entering renderSearchPager().");
+  var host = el('ldap_search_pager');
+  if (!host) {
+    log.debug("Leaving renderSearchPager(). There is no pager box.");
+    return;
+  }
+  while (host.firstChild) host.removeChild(host.firstChild);
+  if (!total) {
+    log.debug("Leaving renderSearchPager(). Nothing to page.");
+    return;
+  }
+  var pages = searchPageCount(total, size);
+  // The buttons appear only when there is somewhere to go. The RANGE below
+  // them does not: "Showing 1–3 of 3" is worth saying on a single page,
+  // because it is the sentence that distinguishes three entries from three
+  // entries and a cap.
+  if (pages > 1) {
+    host.appendChild(pagerButton('ldap_search_prev', '\u2039 Prev',
+                                 searchPage - 1, searchPage === 0));
+    var where = document.createElement('span');
+    where.className = 'ldap-pager-where';
+    where.id = 'ldap_search_page_of';
+    where.textContent = 'Page ' + (searchPage + 1) + ' of ' + pages;
+    host.appendChild(where);
+    host.appendChild(pagerButton('ldap_search_next', 'Next \u203a',
+                                 searchPage + 1, searchPage >= pages - 1));
+  }
+  var range = document.createElement('span');
+  range.className = 'ldap-pager-range';
+  range.id = 'ldap_search_range';
+  range.textContent = 'Showing ' + (offset + 1) + '\u2013' +
+      (offset + shown) + ' of ' + total +
+      (total === 1 ? ' entry' : ' entries') + ' this search returned.';
+  host.appendChild(range);
+  if (searchPayload && searchPayload.truncated) {
+    // Said again, here, next to the row count it qualifies. It is already in
+    // the result line above, and that is where a reader looks for a result
+    // code — not where they look while walking pages.
+    var capped = document.createElement('span');
+    capped.className = 'ldap-pager-capped';
+    capped.id = 'ldap_search_capped';
+    capped.textContent = 'The answer was capped, so these pages are not the ' +
+        'whole directory — see the result line above.';
+    host.appendChild(capped);
+  }
+  log.debug("Leaving renderSearchPager(). " + pages + " page(s).");
+}
+
+// Move to a page. Clamped rather than trusted: the buttons are rebuilt on
+// every draw and a page index can outlive the answer it was computed for.
+function goToSearchPage(index) {
+  log.debug("Entering goToSearchPage(). index=" + index);
+  var entries = (searchPayload && searchPayload.entries) || [];
+  var pages = searchPageCount(entries.length, searchPageSize());
+  var wanted = index;
+  if (wanted < 0) {
+    wanted = 0;
+  }
+  if (wanted > pages - 1) {
+    wanted = pages - 1;
+  }
+  searchPage = wanted;
+  drawSearchPage();
+  log.debug("Leaving goToSearchPage(). page=" + searchPage);
+  return false;
+}
+
+// Rows per page changed. Back to the first page rather than to whatever the
+// old index now points at: the same offset under a new page size is a place
+// the reader did not ask for.
+function onChangePageSize() {
+  log.debug("Entering onChangePageSize().");
+  saveState();
+  searchPage = 0;
+  drawSearchPage();
+  log.debug("Leaving onChangePageSize().");
+  return false;
+}
+
+// A new answer. The entries are kept so that paging through them costs no
+// further searches — this is one answer being read, not ten searches.
+function renderEntries(payload) {
+  log.debug("Entering renderEntries().");
+  searchPayload = payload;
+  searchPage = 0;
+  drawSearchPage();
+  log.debug("Leaving renderEntries().");
+}
+
 // The result table, built with DOM APIs and textContent rather than a string of
 // HTML. Everything in it — DNs, attribute names, attribute values — came out of
 // a directory this page does not control, which is precisely the content that
 // must not be handed to innerHTML. The same rule the WebAuthn panes follow.
-function renderEntries(payload) {
-  log.debug("Entering renderEntries().");
+function drawSearchPage() {
+  log.debug("Entering drawSearchPage(). page=" + searchPage);
+  var payload = searchPayload;
   var box = el('ldap_search_results');
   if (!box) {
-    log.debug("Leaving renderEntries(). There is no results box.");
+    log.debug("Leaving drawSearchPage(). There is no results box.");
     return;
   }
   while (box.firstChild) box.removeChild(box.firstChild);
@@ -509,6 +676,7 @@ function renderEntries(payload) {
   setText('ldap_search_count', entries.length +
           (entries.length === 1 ? ' entry' : ' entries'));
   if (!entries.length) {
+    renderSearchPager(0, searchPageSize(), 0, 0);
     var empty = document.createElement('p');
     empty.className = 'ldap-note';
     empty.textContent = payload && payload.ok
@@ -517,9 +685,17 @@ function renderEntries(payload) {
         'satisfied it.'
       : 'No entries. See the result code above.';
     box.appendChild(empty);
-    log.debug("Leaving renderEntries(). There were no entries.");
+    log.debug("Leaving drawSearchPage(). There were no entries.");
     return;
   }
+  var size = searchPageSize();
+  var pages = searchPageCount(entries.length, size);
+  if (searchPage > pages - 1) {
+    searchPage = pages - 1;
+  }
+  var offset = size > 0 ? searchPage * size : 0;
+  var page = size > 0 ? entries.slice(offset, offset + size) : entries;
+  renderSearchPager(entries.length, size, offset, page.length);
   var table = document.createElement('table');
   table.className = 'ldap-table ldap-entries';
   var head = document.createElement('thead');
@@ -532,10 +708,13 @@ function renderEntries(payload) {
   head.appendChild(headRow);
   table.appendChild(head);
   var body = document.createElement('tbody');
-  entries.forEach(function (entry, index) {
+  page.forEach(function (entry, index) {
     var row = document.createElement('tr');
     var number = document.createElement('td');
-    number.textContent = String(index + 1);
+    // The entry's number in the ANSWER, not on the page. A reader who moves
+    // to page 3 and sees rows numbered 1..25 again has lost the only handle
+    // they had on where they are in a result set of 312.
+    number.textContent = String(offset + index + 1);
     row.appendChild(number);
     var dn = document.createElement('td');
     dn.className = 'ldap-entry-dn';
@@ -559,7 +738,8 @@ function renderEntries(payload) {
   });
   table.appendChild(body);
   box.appendChild(table);
-  log.debug("Leaving renderEntries(). " + entries.length + " entry/entries.");
+  log.debug("Leaving drawSearchPage(). " + page.length + " of " +
+            entries.length + " entry/entries drawn.");
 }
 
 // The four presets FILL THE FIELDS and then run. Filling rather than running a
@@ -1043,6 +1223,8 @@ if (typeof window !== 'undefined') {
 module.exports = {
   testBind: testBind,
   runSearch: runSearch,
+  onChangePageSize: onChangePageSize,
+  goToSearchPage: goToSearchPage,
   presetUsers: presetUsers,
   presetGroups: presetGroups,
   presetGroupMembers: presetGroupMembers,

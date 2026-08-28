@@ -20,6 +20,12 @@ const { populateMetadata, getAccessTokenAuthCode, verifyAccessToken } =
        require("../common/tests.js")({ By, until, Select, waitTime, log, jwt,
        assert });
 
+// What client/src/oauth2_oidc_2.js puts in a credential's place before an
+// exchange is stored (its HTTP_REDACTED). Spelled here rather than matched
+// loosely, so that a build which stored some OTHER placeholder — or the value
+// itself — is a failure rather than a match on the word "redacted".
+const REDACTED_MARKER = "(redacted \u2014 not stored)";
+
 function decodeJWT(jwt_) {
   log.debug("Entering decodeJWT().");
   log.debug("Leaving decodeJWT().");
@@ -285,8 +291,13 @@ async function tokenDetailPage(driver, type)
                       waitTime);
     log.info("Leaving tokenDetailPage().");
   } catch(e) {
+    // Rethrow rather than exit. This helper is called from inside test()'s
+    // try, whose finally quits the browser; process.exit() here would skip
+    // that finally and leave a full Chrome resident. test()'s own catch logs
+    // this and exits after the driver has gone.
     log.error("An error occurred: " + e.stack);
-    process.exit(1);
+    log.debug("Leaving tokenDetailPage(). Failed.");
+    throw e;
   }
   log.debug("Leaving tokenDetailPage().");
 }
@@ -355,6 +366,155 @@ async function refresh_token_call(driver, client_id, scope, user, access,
 
   log.info("Leaving refresh_token_call().");
   log.debug("Leaving refresh_token_call().");
+}
+
+// ---------------------------------------------------------------------------
+// The REFRESH channel's HTTP tab, asserted where a real Refresh Request is
+// actually made.
+//
+// `tests/token_http_exchange.js` is the file about this tab and it covers the
+// Token Request, the two panes that show it, the copy kept in `token_history`
+// and the Currently Viewing pane that reads it back. What it cannot cover is
+// this: it drives Client Credentials, which returns no refresh token, so the
+// only refresh state it can reach is the empty one. Everything below is the
+// state that needs a refresh token to exist at all.
+//
+// Both refresh panes are asserted, for the reason that file gives about the
+// token pair: they are fed by ONE renderHttpExchange() call into two hosts,
+// and a shared renderer whose second host is missing draws nothing and says
+// nothing.
+// ---------------------------------------------------------------------------
+async function verifyRefreshHttpTab(driver, client_secret) {
+  log.debug("Entering verifyRefreshHttpTab().");
+  log.info("Entering verifyRefreshHttpTab().");
+  await driver.wait(until.elementLocated(By.id("refresh_result_tab_http")),
+                    waitTime);
+  await driver.findElement(By.id("refresh_result_tab_http")).click();
+  await driver.findElement(By.id("refresh_tab_http")).click();
+  // NOTE: the function below is serialized and evaluated IN THE BROWSER, where
+  // there is no bunyan and no `log` — see the repo-root CLAUDE.md. It and
+  // everything it declares are exempt from the Entering/Leaving convention.
+  const state = await driver.executeScript(function () {
+    function textOf(id) {
+      var el = document.getElementById(id);
+      return el ? el.textContent : null;
+    }
+    function classOf(id) {
+      var el = document.getElementById(id);
+      return el ? el.className : null;
+    }
+    return {
+      formLabel: textOf("refresh_tab_http"),
+      resultLabel: textOf("refresh_result_tab_http"),
+      formPanel: textOf("refresh_http_exchange"),
+      resultPanel: textOf("refresh_result_http_exchange"),
+      resultPanelClass: classOf("refresh_result_tabpanel_http"),
+      strips: document.querySelectorAll(
+          "#refresh_endpoint_result .dbg-tabs").length,
+      history: localStorage.getItem("token_history") };
+  });
+  log.info("Refresh HTTP tab: form=" + state.formLabel + ", result=" +
+           state.resultLabel + ", strips=" + state.strips);
+  log.info("Refresh HTTP panel:\n" + (state.resultPanel || ""));
+
+  assert.ok(/^HTTP · 2\d\d$/.test(state.resultLabel || ""),
+    "After a successful refresh the results pane's HTTP tab should carry " +
+    "the status, and it reads \"" + state.resultLabel + "\".");
+  assert.strictEqual(state.strips, 1,
+    "The refresh results pane carries " + state.strips + " tab strips. It " +
+    "is rebuilt on every refresh and the tab re-attached after each " +
+    "rebuild, so two strips driving one panel is what a non-idempotent " +
+    "attach looks like.");
+  assert.strictEqual(state.resultPanelClass, "dbg-tabpanel",
+    "Clicking the refresh results pane's HTTP tab should display its panel; " +
+    "its class is \"" + state.resultPanelClass + "\".");
+  const panel = state.resultPanel || "";
+  assert.ok(/grant_type=refresh_token/.test(panel),
+    "The refresh exchange should show the request BODY, which carries " +
+    "grant_type=refresh_token. It reads: " + JSON.stringify(panel.slice(0,
+    400)));
+  assert.ok(/HTTP 2\d\d/.test(panel),
+    "The refresh exchange should show the response status line.");
+  assert.ok(/access_token/.test(panel),
+    "The refresh exchange should show the response BODY.");
+  assert.ok(/:\s*\d+\s*ms/.test(panel),
+    "The refresh exchange should report how long the response took.");
+
+  // ONE view drawn twice, exactly as for the token pair.
+  assert.strictEqual((state.resultPanel || "").replace(/\s+/g, ""),
+                     (state.formPanel || "").replace(/\s+/g, ""),
+    "The two refresh panes show different text for the same exchange. They " +
+    "are fed by one renderHttpExchange() call into two hosts, so a " +
+    "difference means one of them is being drawn from something else.");
+
+  // And the refreshed generation carries its own stored, redacted copy.
+  var history = [];
+  try {
+    history = JSON.parse(state.history || "[]");
+  } catch (e) {
+    log.error("token_history is not JSON: " + e.message);
+    history = [];
+  }
+  const refreshed = history.filter(function (entry) {
+    return entry.source === "refresh";
+  });
+  log.info("token_history holds " + refreshed.length +
+           " refreshed generation(s).");
+  assert.ok(refreshed.length > 0,
+    "The refresh should have written a generation to token_history with " +
+    "source=refresh, and it holds none.");
+  const kept = refreshed[refreshed.length - 1].http_exchange;
+  assert.ok(kept,
+    "The refresh exchange should be KEPT with the token set it produced, " +
+    "and the newest refreshed generation carries none. The Currently " +
+    "Viewing pane's HTTP tab has nothing to show without it.");
+  assert.ok(/grant_type=refresh_token/.test(kept.request.body || ""),
+    "The stored refresh exchange should keep the request body apart from " +
+    "its credentials, and grant_type is gone from it: " +
+    JSON.stringify(kept.request.body));
+  // The credential, and then the proof that looking for it meant something.
+  //
+  // The value comes from the environment, and for a PUBLIC client there is no
+  // secret to put there: Keycloak answers `"secret": null` and `jq -r` turns
+  // that into the four characters "null", which is a substring of the
+  // `"failure":null` every stored generation carries — so this check failed
+  // both public jobs on 2026-08-24 over a credential that does not exist.
+  // common/common.sh now substitutes a named placeholder for that case, so the
+  // field still holds something, it is still sent, and it still must not reach
+  // storage. Nothing here needs to know which of the two it was given.
+  assert.ok((state.history || "").indexOf(client_secret) === -1,
+    "THE CLIENT SECRET IS IN token_history. Redaction is by parameter and " +
+    "header NAME (redactExchangeForStorage() in " +
+    "client/src/oauth2_oidc_2.js).");
+  // An absence proves nothing on its own: a page that stored no request body
+  // at all would pass the line above. So count what WAS redacted — the
+  // authorization code exchange sends client_secret whatever the field holds,
+  // and the stored copy must carry the parameter with the marker in place of
+  // the value.
+  const secretParams = (state.history || "").match(/client_secret=[^&"]*/g) ||
+      [];
+  const unredacted = secretParams.filter(function (pair) {
+    return pair.indexOf(encodeURIComponent(REDACTED_MARKER)) === -1;
+  });
+  log.info("token_history carries " + secretParams.length +
+           " client_secret parameter(s), " + unredacted.length +
+           " of them with a value.");
+  assert.ok(secretParams.length > 0,
+    "No client_secret parameter reached token_history at all, so the check " +
+    "above compared a credential against a document that could not have " +
+    "contained one. Either the page stopped sending the parameter or it " +
+    "stopped storing the request body; both change what that check means.");
+  assert.deepStrictEqual(unredacted, [],
+    "A client_secret in token_history still has its value: " +
+    JSON.stringify(unredacted));
+  assert.ok(!/"[Aa]uthorization"\s*:\s*"Basic /.test(state.history || ""),
+    "An HTTP Basic Authorization header is in token_history.");
+
+  // Back to the form: the pane is a form first.
+  await driver.findElement(By.id("refresh_tab_form")).click();
+  await driver.findElement(By.id("refresh_result_tab_tokens")).click();
+  log.info("Leaving verifyRefreshHttpTab().");
+  log.debug("Leaving verifyRefreshHttpTab().");
 }
 
 async function logout(driver) {
@@ -430,6 +590,11 @@ async function test() {
     .setChromeOptions(options)
     .build();
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     const discovery_endpoint = process.env.DISCOVERY_ENDPOINT;
     const client_id = process.env.CLIENT_ID;
@@ -453,8 +618,12 @@ async function test() {
     } else if (pkce_enabled === "false") {
       pkce_enabled = false;
     } else {
-      log.info("PKCE_ENABLED must be true or false.");
-      process.exit(1);
+      // Throw rather than exit. This is inside the try whose finally quits
+      // the browser, and process.exit() is synchronous termination: it would
+      // skip that finally and orphan a full Chrome. The catch below records
+      // the failure and the exit happens once the driver is gone.
+      throw new Error("PKCE_ENABLED must be true or false. Got: " +
+                      pkce_enabled);
     }
 
     log.info("Clear all cookies.");
@@ -490,6 +659,11 @@ async function test() {
     log.info("Making refresh_token_call().");
     await refresh_token_call(driver, client_id, scope, user, "account",
                              audience);
+    // The Refresh Request's own HTTP tab, asserted on the FIRST refresh —
+    // before the token detail pages below navigate away and rebuild the
+    // panes. See verifyRefreshHttpTab().
+    log.info("Checking the refresh HTTP tab.");
+    await verifyRefreshHttpTab(driver, client_secret);
     log.info("Go to refresh_access_token detail page.");
     await tokenDetailPage(driver, "refresh_access_token");
     log.info("Go to refresh_refresh_token detail page.");
@@ -510,9 +684,13 @@ async function test() {
     log.info("Test completed successfully.")
   } catch (error) {
     log.error(error.message);
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

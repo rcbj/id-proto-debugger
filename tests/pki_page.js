@@ -1768,6 +1768,9 @@ async function theBrowserConsoleIsClean(driver) {
     // A failed fetch to an api that is not there is this page saying so, not
     // a defect in it; the assertions above cover whether it said so.
     if (/favicon/.test(entry.message)) return false;
+    // Nor is a load the browser abandoned because its own certificate or
+    // network configuration changed under it. See browser_flags.js.
+    if (browserFlags.isTransientLoadError(entry.message)) return false;
     return true;
   });
   assert.deepStrictEqual(severe.map(function (e) { return e.message; }), [],
@@ -1830,6 +1833,11 @@ async function test() {
   // than inherited.
   await driver.manage().setTimeouts({ script: 60000 });
 
+  // process.exit() is synchronous termination, so it would skip the finally
+  // below and orphan the browser — and one headless Chrome is ~15 processes,
+  // which is how a run of this suite once left 559 of them on the machine.
+  // Record the failure, let the finally quit the driver, THEN exit.
+  let testFailed = false;
   try {
     await thePageOffersWhatTheModulesDefine(driver);
     await theConfigurationIsOnePane(driver);
@@ -1858,9 +1866,13 @@ async function test() {
     } catch (e) {
       log.error("could not collect the browser log: " + e.message);
     }
-    process.exit(1);
+    testFailed = true;
   } finally {
     await driver.quit();
+  }
+  if (testFailed) {
+    log.debug("Leaving test(). Failed.");
+    process.exit(1);
   }
   log.debug("Leaving test().");
 }

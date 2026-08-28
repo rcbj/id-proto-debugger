@@ -759,6 +759,192 @@ function readsKeytabsInBothByteOrders() {
 }
 
 // ---------------------------------------------------------------------------
+// The keytab reader's REFUSALS, one per bounds check.
+//
+// readsKeytabsInBothByteOrders() above covers the file-level negatives — too
+// short, wrong magic, unknown version, over the size cap, the wrong byte order
+// — and every one of them is caught by parseKeytab() before the reader is
+// reached. The reader has five bounds checks of its own, and none of them was
+// exercised by anything: they fire when a length INSIDE a well-formed-looking
+// entry points past the end of the file, which is what a keytab truncated in
+// transit or edited by hand actually looks like.
+//
+// They matter because of what the alternative is. Without them a counted string
+// whose length field is 65535 reads 65535 bytes from beyond the buffer — in
+// node that is a run of `undefined`s concatenated into a principal name, and on
+// the page it is a decoder that cheerfully displays sixty kilobytes of rubbish
+// as a service principal rather than saying the file is damaged.
+//
+// Every case here is built as a RAW entry rather than through buildKeytab(),
+// because each one is a body that a correct writer could not produce. The
+// declared entry size is always honest — it has to be, or the size check above
+// catches the file first and none of this is reached.
+// ---------------------------------------------------------------------------
+function rawKeytab(version, bodies) {
+  log.debug("Entering rawKeytab().");
+  const big = version === 0x02;
+  const parts = [new Uint8Array([0x05, version])];
+  bodies.forEach(function (body) {
+    const b = [(body.length >>> 24) & 255, (body.length >>> 16) & 255,
+      (body.length >>> 8) & 255, body.length & 255];
+    parts.push(new Uint8Array(big ? b : b.reverse()), body);
+  });
+  log.debug("Leaving rawKeytab(). " + bodies.length + " entry body(ies).");
+  return prim.concat(parts);
+}
+
+// u16/u32 in the byte order a 0x0502 keytab uses, for the bodies below.
+function beU16(n) {
+  log.debug("Entering beU16().");
+  log.debug("Leaving beU16().");
+  return new Uint8Array([(n >> 8) & 255, n & 255]);
+}
+
+function beU32(n) {
+  log.debug("Entering beU32().");
+  log.debug("Leaving beU32().");
+  return new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255,
+    n & 255]);
+}
+
+function beCounted(text) {
+  log.debug("Entering beCounted().");
+  log.debug("Leaving beCounted().");
+  return prim.concat([beU16(text.length), prim.utf8(text)]);
+}
+
+function refusesAKeytabWhoseOwnLengthsRunPastTheEnd() {
+  log.debug("Entering refusesAKeytabWhoseOwnLengthsRunPastTheEnd().");
+
+  // Each case is [bytes, expected message, what it is]. The message matters as
+  // much as the refusal: this reader's whole job on the decoder page is to say
+  // what is wrong with a file somebody pasted, and "truncated at offset 6" is
+  // the difference between re-exporting the keytab and re-installing Kerberos.
+  const cases = [
+    // The entry declares one byte of body, so the size check passes — and then
+    // the component count, a u16, has one byte to live in.
+    [rawKeytab(0x01, [new Uint8Array(1)]), /truncated at offset/,
+      "a u16 with one byte left"],
+
+    // Realm, one component, and then the file stops where the 32-bit name type
+    // begins.
+    [rawKeytab(0x02, [prim.concat([beU16(1), beCounted("R"), beCounted("C"),
+      new Uint8Array(2)])]), /truncated at offset/,
+      "a u32 with two bytes left"],
+
+    // Everything up to the key version byte, and not the byte itself.
+    [rawKeytab(0x02, [prim.concat([beU16(1), beCounted("R"), beCounted("C"),
+      beU32(1), beU32(1755000000)])]), /truncated at offset/,
+      "a u8 at the very end"],
+
+    // A realm whose length field says 65535. This is the one that would
+    // otherwise render as a principal made of sixty kilobytes of nothing.
+    [rawKeytab(0x02, [prim.concat([beU16(1), beU16(0xffff)])]),
+      /string of 65535 bytes runs past the end/,
+      "a counted string longer than the file"],
+
+    // And the same in the key itself, which is worse: the caller would hand
+    // that to a decryption routine as a key.
+    [rawKeytab(0x02, [prim.concat([beU16(1), beCounted("R"), beCounted("C"),
+      beU32(1), beU32(1755000000), new Uint8Array([5]), beU16(18),
+      beU16(0xffff)])]),
+      /key of 65535 bytes runs past the end/,
+      "a key longer than the file"],
+
+    // Sixty-four name components is not a keytab with sixty-four components, it
+    // is a file being read in the wrong byte order — so the message says so
+    // rather than reporting a truncation four fields later.
+    [rawKeytab(0x02, [prim.concat([beU16(64), new Uint8Array(4)])]),
+      /not credible/, "an implausible component count"],
+
+    // The other side of that check, and it is only reachable on 0x0501: that
+    // version counts the realm as a component, so a count of zero becomes -1.
+    [rawKeytab(0x01, [prim.concat([new Uint8Array([0, 0]),
+      new Uint8Array(4)])]), /not credible/,
+      "a component count of zero on a 0x0501 keytab"]
+  ];
+  cases.forEach(function (c) {
+    let threw = null;
+    try {
+      keytab.parseKeytab(c[0]);
+    } catch (e) {
+      threw = e;
+    }
+    assert.ok(threw, "expected a refusal for " + c[2]);
+    assert.ok(c[1].test(threw.message), c[2] + ": the refusal must explain " +
+      "itself — got " + threw.message + ", wanted " + c[1]);
+  });
+
+  // The byte-order hint, the OTHER way round. readsKeytabsInBothByteOrders()
+  // mislabels a little-endian file as big-endian; this is a genuine 0x0501
+  // file whose first size field is nonsense read little-endian, which is what a
+  // keytab produced on a big-endian host and copied over looks like. The hint
+  // has a branch per direction and only one of them had ever run.
+  const littleEndianNonsense = new Uint8Array([0x05, 0x01,
+    0x00, 0x00, 0x01, 0x00,                  // 0x00010000 read little-endian
+    0x00, 0x00]);
+  let hinted = null;
+  try {
+    keytab.parseKeytab(littleEndianNonsense);
+  } catch (e) {
+    hinted = e;
+  }
+  assert.ok(hinted, "an entry size larger than the file must be refused");
+  assert.ok(/little-endian/.test(hinted.message),
+    "the hint must name the order this file DECLARES: " + hinted.message);
+  assert.ok(/read the other way those four bytes are 256\b/
+      .test(hinted.message),
+    "and must say what those bytes are the other way round, which is the " +
+      "fact that turns the diagnosis into a fix: " + hinted.message);
+
+  log.debug("Leaving refusesAKeytabWhoseOwnLengthsRunPastTheEnd().");
+}
+
+// ---------------------------------------------------------------------------
+// The three quiet paths: trailing padding, an entry with no timestamp, and a
+// caller with nothing to offer.
+// ---------------------------------------------------------------------------
+function readsAKeytabsPaddingAndItsAbsentFields() {
+  log.debug("Entering readsAKeytabsPaddingAndItsAbsentFields().");
+
+  const entry = {
+    realm: "EXAMPLE.COM",
+    components: ["HTTP", "web.example.com"],
+    nameType: 3,
+    kvno: 5,
+    etype: 18,
+    key: kcrypto.randomBytes(32),
+    timestamp: 0
+  };
+
+  // ktutil leaves the tail of a keytab zeroed when an entry is removed from the
+  // end. A zero size is the end of the FILE, not an entry of no length — read
+  // as a length it is an infinite loop, and read as a deleted slot it is a
+  // deletion that never advances.
+  const padded = prim.concat([buildKeytab(0x02, [entry]),
+    new Uint8Array([0, 0, 0, 0])]);
+  const parsed = keytab.parseKeytab(padded);
+  assert.strictEqual(parsed.entries.length, 1,
+    "four zero bytes after the last entry are padding, and the entry before " +
+      "them must still be read");
+  assert.strictEqual(parsed.deletedSlots, 0,
+    "padding is not a deleted slot — a zero size has no space to reserve");
+
+  // A zero timestamp means the writer recorded none, and 1970 is not a date to
+  // show anybody. The page prints this field directly.
+  assert.strictEqual(parsed.entries[0].timestamp, null,
+    "a zero timestamp must come back as null rather than as 1 January 1970");
+
+  // keysFromKeytab() is called with whatever the page has, and before a file is
+  // pasted that is an object with no entries at all.
+  assert.deepStrictEqual(keytab.keysFromKeytab({}), [],
+    "keysFromKeytab() must offer no keys rather than throw when there are no " +
+      "entries to offer");
+
+  log.debug("Leaving readsAKeytabsPaddingAndItsAbsentFields().");
+}
+
+// ---------------------------------------------------------------------------
 // A keytab decrypting a real ticket — the two modules together, which is the
 // whole reason the keytab reader exists.
 // ---------------------------------------------------------------------------
@@ -1795,6 +1981,8 @@ async function test() {
   await describesErrorsAndMeasuresSkew();
   await fallsBackToStructureRatherThanRefusing();
   readsKeytabsInBothByteOrders();
+  refusesAKeytabWhoseOwnLengthsRunPastTheEnd();
+  readsAKeytabsPaddingAndItsAbsentFields();
   await aKeytabOpensATicket();
   await aTicketsPacIsDecodedAndItsSignaturesReported();
   await aDelegatedCredentialIsDescribedAsACapability();

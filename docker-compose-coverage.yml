@@ -34,3 +34,22 @@ services:
       - COVERAGE_DIR=/coverage/frontend/.nyc_output
     volumes:
       - ./coverage:/coverage
+  # The THIRD domain, and the one the first two could not see. About thirty jobs
+  # here never open a browser: they load the real client/src and api modules
+  # in-process (module_paths.requireSharedModule) and drive them against the
+  # RFCs' own vectors. Nothing instrumented that copy, so every branch they
+  # covered was reported UNCOVERED — api/krb5_frame.js read 29.7% while
+  # api_krb5_relay.js asserts each of its malformed-frame rejections by name.
+  #
+  # No wrapper binary and no change to how a job is run: run-report.js sets
+  # NODE_V8_COVERAGE on each child it spawns (see the coverage block at the top
+  # of that file), node writes the raw data on exit, and c8 renders it at the
+  # end of the run, in this container, where the paths still resolve. The image
+  # is unchanged — c8 is an ordinary tests/package.json dependency — so only
+  # the environment and the mount are needed here.
+  tests:
+    environment:
+      COVERAGE: "true"
+      NODE_COVERAGE_DIR: /coverage/node
+    volumes:
+      - ./coverage:/coverage

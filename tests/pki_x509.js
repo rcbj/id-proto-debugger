@@ -991,6 +991,57 @@ async function everyProfileIssuesWhatItPromises() {
 }
 
 // ---------------------------------------------------------------------------
+// 12a. The ECDSA signature's two INTEGERs are minimally encoded.
+//
+// THIS IS A UNIT CHECK OF A CASE THE MATRIX BELOW ONLY SEES BY LUCK, and that
+// is the whole reason it exists. Web Crypto returns an ECDSA signature as
+// fixed-width r||s; asn1js's Integer.toDER() strips ONE leading zero octet, so
+// a value small enough to carry two — about one P-521 signature in 256, that
+// curve's r and s being 66 octets for a 521-bit order — reached the certificate
+// as a NON-MINIMAL DER INTEGER. OpenSSL's ECDSA_verify re-encodes what it
+// parsed and compares the bytes, so it refused such a certificate with
+//
+//     error 7 at 0 depth lookup: certificate signature failure
+//     ...asn1 encoding routines:ASN1_item_verify_ctx:EVP lib
+//
+// which names neither the encoding nor the curve. It failed one cell of the
+// matrix in a containerized run on 2026-08-21 and passed on the five runs
+// either side of it: at ~32 P-521 signatures per run the matrix catches this
+// about one time in eight, so the matrix is how it was FOUND and is not a
+// check anybody could rely on. These vectors are the check.
+// ---------------------------------------------------------------------------
+function ecdsaSignatureIntegersAreMinimal() {
+  log.debug("Entering ecdsaSignatureIntegersAreMinimal().");
+  const hex = function (bytes) { return Buffer.from(bytes).toString("hex"); };
+  const cases = [
+    // The regression: two leading zero octets, both of which must go.
+    { name: "two leading zero octets",
+      der: "300b" + "020400001df9" + "0203008001",
+      want: "3009" + "02021df9" + "0203008001" },
+    // The other half of the same rule, which must NOT be undone: a value whose
+    // top bit is set keeps its zero octet, or the INTEGER turns negative.
+    { name: "a high bit that needs its pad",
+      der: "3008" + "0202008f" + "020200ff",
+      want: "3008" + "0202008f" + "020200ff" },
+    // Already minimal, including the legitimate single zero of a P-521 value.
+    { name: "already minimal",
+      der: "3006" + "02017f" + "020101",
+      want: "3006" + "02017f" + "020101" }
+  ];
+  cases.forEach(function (c) {
+    const got = hex(x509.minimalEcdsaSignature(Buffer.from(c.der, "hex")));
+    assert.strictEqual(got, c.want,
+      "minimalEcdsaSignature(" + c.name + ") produced " + got +
+      " rather than " + c.want + ". A non-minimal INTEGER here is a " +
+      "certificate every field of which is right, which this codebase's own " +
+      "verifyChain() accepts and OpenSSL refuses as a signature failure.");
+  });
+  log.info("Checked " + cases.length +
+    " ECDSA (r, s) encodings, including the two-leading-zero case.");
+  log.debug("Leaving ecdsaSignatureIntegersAreMinimal().");
+}
+
+// ---------------------------------------------------------------------------
 // 13. The refusals: things that must NOT be issued.
 // ---------------------------------------------------------------------------
 async function badInputIsRefusedByName() {
@@ -1205,6 +1256,7 @@ async function test() {
   await nameConstraintsAreEnforcedByOpenssl();
   await basicConstraintsAreEnforcedByOpenssl();
   await anUnknownCriticalExtensionIsRefused();
+  ecdsaSignatureIntegersAreMinimal();
   await badInputIsRefusedByName();
   // Last, because it is by far the longest.
   await everyAlgorithmCombinationIssuesAndVerifies();

@@ -95,6 +95,7 @@ const BUNDLES = [
   ['jwt_tools', 'jwt_tools'],
   ['encoding_tools', 'encoding_tools'],
   ['digital_signature', 'digital_signature'],
+  ['encryption_tools', 'encryption_tools'],
   ['saml_request', 'saml_request'],
   ['saml_cert', 'saml_cert'],
   ['saml_tools', 'saml_tools'],
@@ -123,6 +124,8 @@ const BUNDLES = [
   ['spnego', 'spnego'],
   ['ldap', 'ldap'],
   ['pki', 'pki'],
+  ['scim', 'scim'],
+  ['spiffe', 'spiffe'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>
@@ -281,6 +284,48 @@ const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
       return dest;
     })
   : [];
+// The same staging for common/spiffe, and for the same reason: the SPIFFE ID
+// grammar and the trust-bundle reader live in common/ because api/, tests/ and
+// this bundle all need them and a grammar implemented three times is a grammar
+// that disagrees with itself. Only spiffe.js requires them, so unlike the
+// Kerberos list this is one bundle and the test can stay a comparison rather
+// than a list — but it is written the same way so the next module added here
+// does not have to work out which shape to follow.
+// And the same again for common/xmldsig.js, which is ONE file rather than a
+// directory and is required by eight bundles. It lives in common/ because
+// api/server.js signs a SAML AuthnRequest with it for the redirect binding —
+// that used to be the `xml-crypto` package, a third implementation of XML
+// Signature in an application that already had two of its own. A
+// canonicalizer is a reading of a specification, and three readings of C14N
+// is three chances to disagree with the verifier at the far end.
+const XMLDSIG_FILE = path.join(CLIENT_DIR, '..', 'common', 'xmldsig.js');
+const XMLDSIG_BUNDLES = ['digital_signature', 'saml_request', 'saml_response',
+  'saml_tools', 'wsfed_request', 'wsfed_response', 'wstrust_response',
+  'wstrust_tools'];
+const needsXmldsig = BUILT_BUNDLES.some(function (entry) {
+  return XMLDSIG_BUNDLES.indexOf(entry[0]) !== -1;
+});
+const stagedXmldsig = (needsXmldsig && fs.existsSync(XMLDSIG_FILE))
+  ? (function () {
+      const dest = path.join(SRC, 'xmldsig.js');
+      log.info('staging common/xmldsig.js -> src/xmldsig.js');
+      fs.copyFileSync(XMLDSIG_FILE, dest);
+      return [dest];
+    })()
+  : [];
+const SPIFFE_DIR = path.join(CLIENT_DIR, '..', 'common', 'spiffe');
+const SPIFFE_BUNDLES = ['spiffe'];
+const needsSpiffe = BUILT_BUNDLES.some(function (entry) {
+  return SPIFFE_BUNDLES.indexOf(entry[0]) !== -1;
+});
+const stagedSpiffe = (needsSpiffe && fs.existsSync(SPIFFE_DIR))
+  ? fs.readdirSync(SPIFFE_DIR).filter((f) => f.endsWith('.js')).map((f) => {
+      const dest = path.join(SRC, f);
+      log.info('staging common/spiffe/' + f + ' -> src/' + f);
+      fs.copyFileSync(path.join(SPIFFE_DIR, f), dest);
+      return dest;
+    })
+  : [];
 try {
   for (const [name, standalone] of BUILT_BUNDLES) {
     const out = path.join(DIST, 'js', name + '.js');
@@ -305,6 +350,8 @@ try {
 } finally {
   fs.rmSync(stagedData, { force: true });
   stagedKrb5.forEach((f) => fs.rmSync(f, { force: true }));
+  stagedSpiffe.forEach((f) => fs.rmSync(f, { force: true }));
+  stagedXmldsig.forEach((f) => fs.rmSync(f, { force: true }));
 }
 
 // 4. Resolve <!--#include file="/partials/x.html"--> directives in-place
@@ -450,9 +497,24 @@ if (MINIFY) {
       '--remove-comments',
       '--minify-css', 'true',
       '--minify-js', 'true',
-      // Some source pages contain minor markup quirks (e.g. a stray quote in a
-      // tag). Don't fail the deploy build over them — skip and pass through.
-      '--continue-on-parse-error',
+      // NO --continue-on-parse-error, and that is the whole point of this
+      // comment. It used to be here, with a note saying that some source pages
+      // contained minor markup quirks and the deploy build should not fail over
+      // them. "Skip and pass through" is not what the flag does: the minifier
+      // recovers from the quirk and keeps going, and its recovery is not the
+      // browser's. On encryption_tools.html a title attribute containing
+      // unescaped quotes made it drop the </label> and </textarea> around one
+      // field, so <textarea id="enc_pbe_ciphertext"> swallowed the next field
+      // whole and enc_pbe_tag DID NOT EXIST on the deployed site — AES-GCM had
+      // no tag to verify and Decrypt refused every ciphertext. The page was
+      // fine locally, because Chrome recovers differently; the only symptom was
+      // a remote test waiting 150 seconds for a box to fill.
+      //
+      // So a parse error fails the build now, naming the file and the tag. The
+      // three quirks in this tree were fixed with it (two stray quotes in
+      // oauth2_oidc_1.html, three unescaped ones in encryption_tools.html), and
+      // tests/page_markup_well_formed.js keeps new ones from being written —
+      // which is the check that runs without a deploy.
     ], file);
     log.info('html-minifier-terser ' + path.relative(DIST, file));
   });

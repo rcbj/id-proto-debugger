@@ -50,81 +50,36 @@ var log = bunyan.createLogger({
 });
 
 // ---------------------------------------------------------------------------
-// Bytes and base64url
+// Bytes and base64url — one implementation, in crypto_bytes.js.
+//
+// These eight lived here, and digital_signature.js had its own copy of most of
+// them, and key_material.js took THESE rather than writing a third set. They
+// are now all one set, for the reason that module's header gives: base64 and
+// base64url differ by two characters and a padding rule, and a conversion
+// written twice is a decision made twice.
+//
+// They are still re-exported from here, because a caller that has this module
+// for JWE should not need a second require to read the value it just got back.
 // ---------------------------------------------------------------------------
-function bytesToB64u(input) {
-  log.debug("Entering bytesToB64u().");
-  var bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
-  var bin = '';
-  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  log.debug("Leaving bytesToB64u().");
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
+var bytes = require("./crypto_bytes");
 
-function strToB64u(str) {
-  log.debug("Entering strToB64u().");
-  log.debug("Leaving strToB64u().");
-  return bytesToB64u(new TextEncoder().encode(str));
-}
+var bytesToB64u = bytes.bytesToB64u;
+var strToB64u = bytes.strToB64u;
+var b64uToBytes = bytes.b64uToBytes;
+var b64uToStr = bytes.b64uToStr;
+var derToPem = bytes.derToPem;
+var concatBytes = bytes.concatBytes;
+var uint32be = bytes.uint32be;
 
-function b64uToBytes(b64u) {
-  log.debug("Entering b64uToBytes().");
-  var s = String(b64u).replace(/-/g, '+').replace(/_/g, '/');
-  var pad = '==='.slice(0, (4 - s.length % 4) % 4);
-  var bin = atob(s + pad);
-  var bytes = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  log.debug("Leaving b64uToBytes().");
-  return bytes;
-}
-
-function b64uToStr(b64u) {
-  log.debug("Entering b64uToStr().");
-  log.debug("Leaving b64uToStr().");
-  return new TextDecoder().decode(b64uToBytes(b64u));
-}
-
-function derToPem(der, label) {
-  log.debug("Entering derToPem().");
-  var bytes = new Uint8Array(der);
-  var bin = '';
-  for (var i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-  var b64 = btoa(bin);
-  var lines = b64.match(/.{1,64}/g).join('\n');
-  log.debug("Leaving derToPem().");
-  return '-----BEGIN ' + label + '-----\n' + lines + '\n-----END ' + label +
-      '-----\n';
-}
-
+// The one that is NOT a straight re-export. Every caller here hands the result
+// to crypto.subtle.importKey(), which takes a BufferSource — but this has
+// returned an ArrayBuffer since it was written, and something reading
+// `.byteLength` off it would keep working while something reading `.length`
+// would silently see undefined. Preserved rather than "tidied".
 function pemToDer(pem) {
   log.debug("Entering pemToDer().");
-  var b64 = String(pem).replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
-  var bin = atob(b64);
-  var bytes = new Uint8Array(bin.length);
-  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   log.debug("Leaving pemToDer().");
-  return bytes.buffer;
-}
-
-function concatBytes() {
-  log.debug("Entering concatBytes().");
-  var total = 0, i;
-  for (i = 0; i < arguments.length; i++) total += arguments[i].length;
-  var out = new Uint8Array(total);
-  var offset = 0;
-  for (i = 0; i < arguments.length; i++) {
-    out.set(arguments[i], offset);
-    offset += arguments[i].length;
-  }
-  log.debug("Leaving concatBytes().");
-  return out;
-}
-
-function uint32be(n) {
-  log.debug("Entering uint32be().");
-  log.debug("Leaving uint32be().");
-  return new Uint8Array([(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff,
-                        n & 0xff]);
+  return bytes.pemToDer(pem).buffer;
 }
 
 // ---------------------------------------------------------------------------
@@ -564,6 +519,50 @@ async function decryptCompact(options) {
   return { plaintext: new TextDecoder().decode(plaintext), header: header };
 }
 
+// ---------------------------------------------------------------------------
+// PBES2 — a password instead of a key (RFC 7518 section 4.8).
+//
+// The one JWE `alg` in this file that wraps with something derived from a
+// PASSWORD rather than from a key pair, and the reason it is here rather than
+// beside the code that calls it: it is what password-protects a downloaded
+// JWK set, and THREE places wanted that — jwt_tools and the PKI page through
+// key_material.js, and both key-pair panes on the Digital Signature and
+// Encryption pages. It was written twice before it was written here.
+//
+// PBES2-HS256+A128KW over A256GCM, 100,000 iterations. Note the salt Web
+// Crypto is given is not p2s: RFC 7518 says the PBKDF2 salt is the alg name,
+// a zero octet, and then p2s — get that wrong and the output is a JWE that
+// only this code can open.
+// ---------------------------------------------------------------------------
+async function pbes2JweEncrypt(plaintext, password) {
+  log.debug("Entering pbes2JweEncrypt().");
+  var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
+  var p2s = crypto.getRandomValues(new Uint8Array(16));
+  var p2c = 100000;
+  var pwKey = await crypto.subtle.importKey('raw',
+      bytes.strBytes(password), 'PBKDF2', false, ['deriveKey']);
+  var saltInput = concatBytes(bytes.strBytes(alg), new Uint8Array([0]), p2s);
+  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2',
+      salt: saltInput, iterations: p2c, hash: 'SHA-256' },
+    pwKey, { name: 'AES-KW', length: 128 }, false, ['wrapKey']);
+  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 },
+      true, ['encrypt']);
+  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey,
+      'AES-KW'));
+  var protectedHeader = { alg: alg, enc: enc, p2s: bytesToB64u(p2s), p2c: p2c };
+  var phB64 = strToB64u(JSON.stringify(protectedHeader));
+  var iv = crypto.getRandomValues(new Uint8Array(12));
+  var full = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv, additionalData: bytes.strBytes(phB64),
+     tagLength: 128 },
+    cek, bytes.strBytes(plaintext)));
+  var ct = full.slice(0, full.length - 16);
+  var tag = full.slice(full.length - 16);
+  log.debug("Leaving pbes2JweEncrypt().");
+  return [phB64, bytesToB64u(wrapped), bytesToB64u(iv), bytesToB64u(ct),
+          bytesToB64u(tag)].join('.');
+}
+
 module.exports = {
   // bytes / base64url, exported so callers do not keep their own copies
   bytesToB64u: bytesToB64u,
@@ -595,6 +594,8 @@ module.exports = {
   concatKdf: concatKdf,
   deriveCek: deriveCek,
   unwrapCek: unwrapCek,
+  // password-based key wrapping
+  pbes2JweEncrypt: pbes2JweEncrypt,
   // and the whole thing
   encryptCompact: encryptCompact,
   parseCompact: parseCompact,

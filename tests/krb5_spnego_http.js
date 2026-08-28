@@ -43,6 +43,7 @@ const http = require("http");
 const net = require("net");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -73,6 +74,12 @@ function stsModule(name) {
 const REALM = "EXAMPLE.COM";
 const SERVICE = ["HTTP", "web.example.com"];
 const USER_PASSWORD = process.env.KRB5_USER_PASSWORD || "password!";
+// Who authenticates to the protected page, generated per run with a prefix
+// naming this file. The mock KDC creates a USER account for any name on first
+// sight, so nothing here needs a configured principal — and the table it keeps
+// is never pruned, so a name shared with every other Kerberos test makes a row
+// in it say nothing about where it came from. KRB5_PRINCIPAL pins it.
+const CLIENT = process.env.KRB5_PRINCIPAL || usernameFor("krb5-spnego-http");
 
 // What a Windows client actually offers, in this order. Kerberos first, its
 // mis-typed Microsoft twin second, NTLM last as the fallback. Used as-is so
@@ -382,9 +389,9 @@ async function theOptimisticTokenAuthenticatesInOneRoundTrip(serviceTicket) {
   assert.strictEqual(resp.status, 200,
     "a valid ticket in a NegTokenInit must be accepted, got " + resp.status +
     ": " + resp.body.slice(0, 400));
-  assert.ok(/alice@EXAMPLE\.COM/.test(resp.body),
-      "and the page must name the authenticated client: " +
-      resp.body.slice(0, 400));
+  assert.ok(resp.body.indexOf(CLIENT + "@" + REALM) !== -1,
+      "and the page must name the authenticated client (" + CLIENT + "@" +
+      REALM + "): " + resp.body.slice(0, 400));
 
   assert.ok(resp.negotiate,
     "the 200 must carry the acceptor's token in WWW-Authenticate. Without it " +
@@ -1020,7 +1027,8 @@ async function test() {
   const spnegoPath = stsModule("spnego.js");
   if (!kdcPath || !appPath || !spnegoPath) {
     throw new Error("could not find the mock KDC, the express app and the " +
-      "SPNEGO module (sts/krb5_kdc.js, sts/app.js, sts/spnego.js). sts/ is a " +
+      "SPNEGO module (sts/kerberos/krb5_kdc.js, sts/common/app.js, " +
+      "sts/kerberos/spnego.js). sts/ is a " +
       "SUBMODULE — run `git submodule update --init sts`; an uninitialised " +
       "submodule is an EMPTY DIRECTORY rather than a missing one. If the " +
       "submodule IS initialised and only spnego.js is missing, the gitlink " +
@@ -1061,7 +1069,7 @@ async function test() {
       httpPort);
 
   try {
-    const tgt = await getTgt("alice");
+    const tgt = await getTgt(CLIENT);
     const serviceTicket = await getServiceTicket(tgt);
 
     await theProtectedPageIsAdvertised();

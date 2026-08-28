@@ -506,11 +506,11 @@ Two things in eight lines of code, both of which fail silently:
   was in. `css/pki.css` gives it `min-width: 0` and 0.78em, and the
   no-control-outside-its-column assertion is what proves it landed.
 
-## Four things about certificates that are wrong and self-consistent
+## Five things about certificates that are wrong and self-consistent
 
 Each of these produces a certificate that parses, that `openssl x509 -text`
 displays plausibly, and that something else then refuses. Each was real. All
-four are why `tests/pki_x509.js` asserts by asking **OpenSSL** what it reads
+five are why `tests/pki_x509.js` asserts by asking **OpenSSL** what it reads
 rather than by reading back what this codebase just wrote.
 
 **1. pkijs builds a Name as one multi-valued RDN.** A `Name` is an
@@ -552,7 +552,34 @@ certificate that expired seventy years ago, reported by every validator as
 expired and by none as misencoded. `issueCertificate()` switches the type at the
 boundary. A twenty-year root issued in 2031 crosses it.
 
-And a fifth, which is not pkijs's fault: **an IP name constraint is the address
+**5. An ECDSA signature's `r` and `s` must be MINIMALLY encoded DER
+INTEGERs, and asn1js strips only one leading zero octet.** Web Crypto returns
+the signature as fixed-width `r||s`; pkijs converts it with asn1js's
+`Integer.toDER()`, which removes exactly one leading zero. A value small enough
+to carry two — about **one P-521 signature in 256**, that curve's `r` and `s`
+being 66 octets for a 521-bit order — therefore reaches the certificate as
+`00 1d f9 …` where DER requires `1d f9 …`. Nothing about the certificate looks
+wrong, and `verifyChain()` here accepts it, because pkijs's own reader
+right-aligns whatever length it finds. OpenSSL refuses it, because
+`ECDSA_verify` re-encodes what it parsed and compares the bytes:
+
+```
+error 7 at 0 depth lookup: certificate signature failure
+...asn1 encoding routines:ASN1_item_verify_ctx:EVP lib
+```
+
+naming neither the encoding nor the curve. `minimalEcdsaSignature()` re-encodes
+the pair once, in `signCertificate()`, where the signature is made.
+
+**This is also the one of the five that the matrix could only catch by luck**,
+and it is worth knowing why. At ~32 P-521 signatures per run it shows up in
+roughly one run in eight — it failed the containerized run of 2026-08-21 on
+`ec-p384` under an `ec-p521` CA at `sha1-ecdsa`, and passed on the five runs
+either side. So the matrix is how it was *found* and is not what guards it:
+`ecdsaSignatureIntegersAreMinimal()` feeds the two-leading-zero case in as a
+vector, deterministically, on every run.
+
+And a sixth, which is not pkijs's fault: **an IP name constraint is the address
 followed by its mask** — eight bytes for IPv4, not four. It is the one place a
 general name's `iPAddress` is not just an address, and encoding it as one
 produces a constraint that constrains nothing while looking correct in every
@@ -973,7 +1000,7 @@ above in place of the section it cannot run there.
 
 | Test | Covers | Skips? |
 |---|---|---|
-| `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles; a four-deep chain; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers | never |
+| `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles; a four-deep chain; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers; and the minimal DER encoding of an ECDSA signature's `r` and `s`, fed in as vectors because the matrix only meets that case about one run in eight | never |
 | `tests/pki_key_formats.js` | 7 algorithms × 4 formats × password on/off, read back by OpenSSL; a PKCS#12 carrying a whole chain; the refusals by name; PEM↔JWK round trips | never |
 | `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, and the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success | node-only, so it never skips for want of a service — but `PKI_TLS_AVAILABLE=false` (a deployed static target) skips it, because it would pass there and mean nothing |
 | `tests/pki_page.js` | the hierarchy built through the form, the *View certificate details* hand-off read back on `saml_cert.html` for every key algorithm, the store surviving a reload, the private-key opt-out in both states, the serial number (shown, persisted, signed, rotated, and typed over), the subject-DN defaults and the profile subjectAltName, a tooltip on every one of the 131 controls, the validity pickers and the ISO-8601 values an older build stored, the list-field syntax, the TLS test end to end, no browser-side TLS option, the pane **switched off** when the build has no api — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, no control drawn outside its column, and every folded note still holding its prose and no control | needs the client; without an api the TLS section is replaced by the switched-off assertion rather than skipped |
