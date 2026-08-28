@@ -40,7 +40,23 @@ common_setup()
 # LIVE_WSTRUST_STS_URL) was consumed only by docker-compose-live-tests.yml, which
 # is gone: the live-site workflows call remote-run-tests.sh directly now, and it
 # runs the suite on the host rather than substituting those into a compose file.
-COMPOSE_FORWARDED_VARS="CONFIG_FILE COMPOSE_PROJECT_NAME OID4VCI_WALLET_URL BUILD_NUMBER GIT_COMMIT"
+# THE THREE THAT TUNE A CONTAINERIZED RUN are here for exactly the same reason
+# and each was silently doing nothing before 2026-08-27. TEST_CONCURRENCY sizes
+# run-report.js's job pool and STS_LOG_LEVEL turns the mock's per-request debug
+# logging down — the two settings a slow containerized run reaches for — and
+# both are read by COMPOSE ITSELF (`${TEST_CONCURRENCY:-}` in the tests service,
+# the bare `- STS_LOG_LEVEL` on every sts service), which is the environment
+# sudo had just emptied. So `TEST_CONCURRENCY=6 ./docker-run-tests.sh` reached
+# compose as empty, the pool sized itself from the container's cores as though
+# nothing had been asked for, and the run gave no sign either way.
+# TEST_JOB_TIMEOUT_MS is the per-job watchdog and joins them so the whole pool
+# is tunable from one place. All three are absent from ./local-run-tests.sh's
+# problems: that launcher runs run-report.js on the host, where the variables
+# are simply inherited.
+COMPOSE_FORWARDED_VARS="CONFIG_FILE COMPOSE_PROJECT_NAME OID4VCI_WALLET_URL"
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} BUILD_NUMBER GIT_COMMIT"
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_CONCURRENCY TEST_JOB_TIMEOUT_MS"
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_LOG_LEVEL"
 
 docker_compose() {
   echo "Entering docker_compose()."

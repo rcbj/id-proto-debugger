@@ -65,6 +65,63 @@ export CONFIG_FILE="${CONFIG_FILE:-./env/docker-tests.js}"
 if [ -n "${STS_LOG_LEVEL:-}" ]; then
   export STS_LOG_LEVEL
 fi
+
+# ---------------------------------------------------------------------------
+# HOW MANY JOBS RUN AT ONCE, and how long one may take before it is killed.
+#
+# The suite is ~200 independent jobs and run-report.js runs them in a POOL. Both
+# settings are read INSIDE the tests container, so both have to cross two
+# boundaries to get there: `sudo`, which empties the environment and forwards
+# only what common/common.sh lists in COMPOSE_FORWARDED_VARS, and compose, which
+# substitutes them into the tests service (docker-compose-run-tests.yml). Until
+# 2026-08-27 neither name was on that list, so a value set here reached compose
+# as empty and the pool sized itself from the CONTAINER's view of the cores as
+# though nothing had been asked for — no warning, and a wall clock that looked
+# like the default because it WAS the default.
+#
+#   TEST_CONCURRENCY   jobs at once. Unset means decide in the container: one
+#                      less than its cores, held between 2 and 4. The cap is not
+#                      politeness — the longest jobs are CPU-bound in-browser
+#                      crypto, and on THIS stack Keycloak, Postgres, the mock
+#                      STS, both walt.id containers and the WS-Fed side-car are
+#                      all on the same machine, so raising it past the cores
+#                      trades the suite's wall clock for those services'
+#                      response times and buys nothing.
+#   TEST_JOB_TIMEOUT_MS  per-job watchdog in ms (default 900000 — 15 minutes;
+#                      0 disables it). Raise it if a heavily loaded pool starts
+#                      reporting timeouts on jobs that pass alone.
+#
+#   TEST_CONCURRENCY=6 ./run-coverage.sh
+#   TEST_CONCURRENCY=1 ./run-coverage.sh   # sequential, live output
+#
+# NOTHING ABOUT COVERAGE SERIALISES A RUN, which is worth saying because it
+# looks as though it should. The three sinks are all per-process or per-payload:
+# the api's c8 writes once when its container is stopped, the browser bundles
+# POST each page's window.__coverage__ to the client server, which names every
+# file with a timestamp AND a random suffix, and the in-process jobs get their
+# own NODE_V8_COVERAGE directory entry per node process. No two jobs write the
+# same path. What the instrumentation does cost is SPEED — an Istanbul-built
+# bundle is several times slower to execute — so the pool's own default is if
+# anything more conservative than this run wants, and a machine with the cores
+# to spare will see more from raising TEST_CONCURRENCY here than on the plain
+# suite.
+#
+# TEST_CONCURRENCY=1 IS THE FIRST THING TO TRY when a job fails in the pool and
+# passes on its own: it restores the old one-at-a-time run exactly, streamed
+# output included. What must not overlap is declared in JOB_LOCKS at the top of
+# tests/run-report.js — the mock STS keeps its /admin configuration in memory
+# and it survives between jobs, so a test that reconfigures a shared service
+# and does not hold a lock fails in somebody ELSE's assertion.
+#
+# NEITHER IS ASSIGNED OR EXPORTED HERE, and unlike STS_LOG_LEVEL above that is
+# not an oversight to be corrected. `VAR=x ./this-script` already puts the name
+# in this shell, docker_compose()'s forwarding loop reads it with an `eval` on
+# the shell variable rather than out of the exported environment, and it skips
+# a name whose value is empty. So an assignment with an empty default would add
+# nothing and a default with a VALUE would silently override what the caller
+# asked for — the pool's own sizing (which can see the container's cores, as
+# this shell cannot) is the better fallback. Leave this a comment.
+# ---------------------------------------------------------------------------
 # The base file plus the coverage override, which touches only api and client.
 COMPOSE="docker_compose -f docker-compose-run-tests.yml -f docker-compose-coverage.yml"
 # The BASE file alone is enough for `ps` / `logs` / a single-service `up` below:
