@@ -1,8 +1,8 @@
 {
-  "name": "idptools-api",
+  "name": "id-proto-debugger-api",
   "version": "0.9.0",
   "private": true,
-  "description": "idptools client project",
+  "description": "id-proto-debugger api service",
   "author": "Robert C. Broeckelmann Jr. <info@iyasec.io>",
   "scripts": {
     "start": "node server.js"
