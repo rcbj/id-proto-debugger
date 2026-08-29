@@ -900,6 +900,15 @@ runSamlOnly()
   then
     CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml keycloak
     check_return_code $?
+    # Delete any pre-existing debugger-testing realm first, so provisioning is
+    # idempotent. Nothing here tears the local stack down between runs — the
+    # `up -d` in startDocker() reuses a running keycloak and its postgres
+    # volume — so a realm left by the previous run survives, and every POST
+    # below then 409s. The client and scope lookups still find the STALE
+    # objects and only the user creation shows it, as a blank USER_ID and
+    # "Required variable is blank." naming nothing. See common.sh.
+    resetKeycloakRealm
+    check_return_code $?
     # No compose-file argument: configureKeycloak() takes none, unlike
     # configureKeycloakWsfed(). It is what exports SAML_METADATA_URL and
     # SAML_USER for the realm, so the keycloak branch below reads them from
@@ -1542,6 +1551,11 @@ CONFIG_FILE=./env/local.js verifyComposeServicesRunning local-tests.yml
 # error that says nothing about the cause. The compose file is passed so that a
 # service which never comes up has its own log printed here.
 waitForWaltid local-tests.yml
+# Same reason as in runSamlOnly(): the local stack is not torn down between
+# runs, so a debugger-testing realm from the previous one is still there and
+# every create below would 409. See resetKeycloakRealm() in common.sh.
+resetKeycloakRealm
+check_return_code $?
 configureKeycloak
 check_return_code $?
 # Provision the WS-Federation side-car (no-op / skip if it isn't up). The compose
